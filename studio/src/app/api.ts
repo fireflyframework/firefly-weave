@@ -88,6 +88,30 @@ const replayable = (status: number, code: string, retryAfter: string | null) =>
   (status === 503 &&
     code === "WV-COMPATIBILITY" &&
     !(Number(retryAfter) > longestPause));
+/** A signal that aborts when `signal` does, or after `timeout` milliseconds. */
+function cancellable(signal: AbortSignal, timeout: number): AbortSignal {
+  const controller = new AbortController();
+  const follow = () => controller.abort(signal.reason);
+  const timer = setTimeout(
+    () =>
+      controller.abort(
+        new DOMException("The request took too long.", "TimeoutError"),
+      ),
+    timeout,
+  );
+  controller.signal.addEventListener(
+    "abort",
+    () => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", follow);
+    },
+    { once: true },
+  );
+  if (signal.aborted) follow();
+  else signal.addEventListener("abort", follow, { once: true });
+  return controller.signal;
+}
+
 export class StudioApi {
   session: Session = {
     paired: false,
@@ -103,6 +127,8 @@ export class StudioApi {
   /**
    * Calls the paired local host. `timeout` (milliseconds) bounds the wait;
    * platform checks that reach a remote server or identity provider pass more.
+   * `signal` lets the caller cancel (a model test); a canceled request is never
+   * sent again.
    */
   async request<T>(
     path: string,
@@ -110,6 +136,7 @@ export class StudioApi {
     body?: unknown,
     headers: Record<string, string> = {},
     timeout = 15000,
+    signal?: AbortSignal,
   ): Promise<T> {
     if (!path.startsWith("/studio/") || path.startsWith("//"))
       throw Error("Studio requests must use the same-origin host boundary.");
@@ -126,7 +153,9 @@ export class StudioApi {
         credentials: "same-origin",
         headers: h,
         body: body === undefined ? undefined : JSON.stringify(body),
-        signal: AbortSignal.timeout(timeout),
+        signal: signal
+          ? cancellable(signal, timeout)
+          : AbortSignal.timeout(timeout),
       });
       const value: unknown = await response
         .json()

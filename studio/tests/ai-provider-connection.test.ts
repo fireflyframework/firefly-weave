@@ -20,6 +20,8 @@ import {
   aiConnectionRequest,
   aiConnections,
   aiConnector,
+  latestByName,
+  secretRefs,
 } from "../src/app/integrations/ai-provider-connection";
 const draft = {
   name: "azure-models",
@@ -106,5 +108,31 @@ describe("AI provider connection authority", () => {
         { ...valid, id: "http", connector: "weave-http@2.0.0" },
       ]),
     ).toEqual([valid]);
+  });
+});
+describe("AI connection lists", () => {
+  const base = {
+    connector: aiConnector,
+    config: { provider: "openai-chat", endpoint: "http://ollama:11434/v1" },
+  };
+  it("keeps the latest revision of each name, newest first by name", () => {
+    const rows = [
+      { ...base, id: "a1", name: "ollama-local", revision: 1 },
+      { ...base, id: "b1", name: "openai", revision: 1 },
+      { ...base, id: "a2", name: "ollama-local", revision: 2 },
+    ];
+    expect(latestByName(rows as never).map((row) => row.id)).toEqual([
+      "a2",
+      "b1",
+    ]);
+  });
+  it("reads secret handles under either wire spelling", () => {
+    expect(
+      secretRefs({ secretRef: { apiKey: "no-credential" } } as never),
+    ).toEqual({ apiKey: "no-credential" });
+    expect(secretRefs({ secret_refs: { apiKey: "k" } } as never)).toEqual({
+      apiKey: "k",
+    });
+    expect(secretRefs({} as never)).toEqual({});
   });
 });

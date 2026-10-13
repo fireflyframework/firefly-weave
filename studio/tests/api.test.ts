@@ -259,3 +259,61 @@ describe("capacity rejections", () => {
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 });
+describe("cancellable requests", () => {
+  it("stops a request when its caller cancels it", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (_path: string, options: RequestInit) =>
+          new Promise((_resolve, reject) =>
+            options.signal!.addEventListener("abort", () =>
+              reject(options.signal!.reason),
+            ),
+          ),
+      ),
+    );
+    const api = new StudioApi();
+    const controller = new AbortController();
+    const pending = api.request(
+      "/studio/api/x",
+      "POST",
+      {},
+      {},
+      150000,
+      controller.signal,
+    );
+    controller.abort(new DOMException("The test was canceled.", "AbortError"));
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+  });
+  it("still stops a cancellable request at its deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(
+          (_path: string, options: RequestInit) =>
+            new Promise((_resolve, reject) =>
+              options.signal!.addEventListener("abort", () =>
+                reject(options.signal!.reason),
+              ),
+            ),
+        ),
+      );
+      const pending = new StudioApi().request(
+        "/studio/api/x",
+        "GET",
+        undefined,
+        {},
+        100,
+        new AbortController().signal,
+      );
+      const outcome = expect(pending).rejects.toMatchObject({
+        name: "TimeoutError",
+      });
+      await vi.advanceTimersByTimeAsync(150);
+      await outcome;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

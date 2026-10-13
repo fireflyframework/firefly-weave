@@ -24,6 +24,26 @@ export interface AiConnection {
   revision: number;
   connector: string;
   config: { provider: string; endpoint: string; apiVersion?: string };
+  /** The secret handle by slot; never a secret value. */
+  secretRef?: Record<string, string>;
+}
+/** The secret handles of a connection revision, whichever spelling the platform used. */
+export function secretRefs(connection: AiConnection): Record<string, string> {
+  const value =
+    connection.secretRef ??
+    (connection as unknown as { secret_refs?: Record<string, string> })
+      .secret_refs;
+  return value && typeof value === "object" ? value : {};
+}
+/** The newest revision of each connection name, sorted by name. */
+export function latestByName(connections: AiConnection[]): AiConnection[] {
+  const latest = new Map<string, AiConnection>();
+  for (const connection of connections) {
+    const known = latest.get(connection.name);
+    if (!known || connection.revision > known.revision)
+      latest.set(connection.name, connection);
+  }
+  return [...latest.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 export interface AiConnectionDraft {
   name: string;
