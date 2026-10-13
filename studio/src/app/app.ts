@@ -551,6 +551,9 @@ export class App implements CanvasHost {
   }
   set view(view: View) {
     if (view === this.currentView) return;
+    // Add a step belongs to the designer it opened in: leaving closes it
+    // quietly, so it never comes back, or speaks, on another workflow.
+    if (this.currentView === "designer" && this.addStep) this.closePicker();
     this.currentView = view;
     this.focusBeforeView = document.activeElement;
     this.viewFocusPending = true;
@@ -8112,6 +8115,9 @@ export class App implements CanvasHost {
       this.reportSignOut(result, name);
       this.notify(`Signed out of ${name}.`);
       void this.draftCanvases.forgetPlatform(name);
+      void import("./editor/add-step/catalog-sources").then((sources) =>
+        sources.forgetCatalog(name),
+      );
       await this.refresh();
     } catch (e) {
       this.platformFail(e, name);
@@ -8140,6 +8146,9 @@ export class App implements CanvasHost {
       this.applyConnection(result, active, name);
       this.notify(`Removed ${name}.`);
       void this.draftCanvases.forgetPlatform(name);
+      void import("./editor/add-step/catalog-sources").then((sources) =>
+        sources.forgetCatalog(name),
+      );
       if (active) await this.refresh();
     } catch (e) {
       this.platformFail(e, name);

@@ -296,6 +296,21 @@ describe("choosing an entry", () => {
     ]);
   });
 
+  it("refuses when only the step before the place changes", async () => {
+    const host = fakeHost();
+    for (const _ of [1, 2, 3]) host.model.insert("transform");
+    // Between transform-2 and transform-3.
+    const request = fresh(host, { owner: "root", index: 2 });
+    host.model.renameStep("transform-2", "check");
+    expect(placeMark(host.model, request.at)).toEqual({
+      before: "check",
+      after: "transform-3",
+    });
+    expect(await insertEntry(host, pick("kind:wait"), request)).toBe("gone");
+    expect(host.calls).toEqual([`notify ${GONE}`]);
+    expect(ids(host.model)).toEqual(["transform-1", "check", "transform-3"]);
+  });
+
   it("refuses when the workflow changes while unapplied edits are settled", async () => {
     const host = fakeHost();
     host.model.insert("transform");

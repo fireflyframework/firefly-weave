@@ -214,10 +214,11 @@ SPDX-License-Identifier: Apache-2.0
     --as-target: var(--control-touch);
   }
 }
-/* Key hints are for a keyboard: none on touch. */
+/* Key hints, and the footer's key legend, are for a keyboard: none on touch. */
 @media (pointer: coarse) {
   .add-step-kbd,
-  .entry-enter {
+  .entry-enter,
+  .add-step-foot {
     display: none;
   }
 }

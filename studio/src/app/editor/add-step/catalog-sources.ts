@@ -18,7 +18,8 @@ SPDX-License-Identifier: Apache-2.0
 // What the Add a step panel reads from the target once per workspace: the
 // language manifest (the features it runs, and what Studio can't edit yet).
 // Connected, the platform's `language.read`; locally, the Studio host's copy.
-// A read that fails is tried again the next time the panel opens.
+// Connected, also the installed apps, kept per platform, account and
+// workspace. A read that fails is tried again the next time the panel opens.
 import type { StudioApi } from "../../api";
 import type { ConnectorInfo, LanguageTarget } from "./entries";
 
@@ -84,14 +85,49 @@ export function connectorPage(
 }
 
 const apps = new Map<string, Promise<ConnectorInfo[] | null>>();
+/** Separates a scope's parts; never in a platform's name. */
+const PART = "\u0000";
 
-/** The installed apps, up to ten pages; null when they can't be read. */
+/**
+ * Whose installed apps a list is: the saved platform, the signed-in account
+ * and the workspace. Two platforms, or two accounts, never share one.
+ */
+export function catalogScope(
+  profile: { name: string } | null,
+  identity: unknown,
+  api: Pick<StudioApi, "project">,
+): string {
+  const principal =
+    isRecord(identity) && typeof identity["principal_id"] === "string"
+      ? identity["principal_id"]
+      : "";
+  return [profile?.name ?? "", principal, api.project].join(PART);
+}
+
+/** Forgets the installed apps of one platform (on sign-out or removal), or of all. */
+export function forgetCatalog(platform?: string) {
+  for (const key of [...apps.keys()])
+    if (platform === undefined || key.startsWith(platform + PART))
+      apps.delete(key);
+}
+
+const forbidden = (error: unknown) =>
+  !!error &&
+  typeof error === "object" &&
+  (error as { status?: unknown }).status === 403;
+
+/**
+ * The installed apps, up to ten pages; null when they can't be read. A read
+ * the account may not make is not sent again until the platform signs out
+ * or the page reloads; any other failure is tried again next time.
+ */
 export function loadConnectors(
   api: StudioApi,
+  scope: string,
 ): Promise<ConnectorInfo[] | null> {
-  const key = api.project;
-  let pending = apps.get(key);
+  let pending = apps.get(scope);
   if (!pending) {
+    let keep = false;
     pending = (async (): Promise<ConnectorInfo[] | null> => {
       const found: ConnectorInfo[] = [];
       let cursor: string | undefined;
@@ -105,10 +141,13 @@ export function loadConnectors(
         cursor = parsed.next;
       }
       return found;
-    })().catch(() => null);
-    apps.set(key, pending);
+    })().catch((error: unknown) => {
+      keep = forbidden(error);
+      return null;
+    });
+    apps.set(scope, pending);
     void pending.then((list) => {
-      if (!list) apps.delete(key);
+      if (!list && !keep && apps.get(scope) === pending) apps.delete(scope);
     });
   }
   return pending;

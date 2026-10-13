@@ -21,7 +21,7 @@ SPDX-License-Identifier: Apache-2.0
 import { expect, test, type Page } from "@playwright/test";
 import { AddStepPanel } from "./add-step-po";
 import { CanvasPage, openNewWorkflow, openWorkflow } from "./canvas-po";
-import { expectHitTarget } from "./support";
+import { expectHitTarget, newWorkflow } from "./support";
 
 const triggers = [
   "Manual form",
@@ -336,6 +336,23 @@ test.describe("Add a step when the workflow changes under it", () => {
     ).toBeFocused();
     return panel;
   }
+  test("leaving the designer closes the panel quietly: a new workflow opens without it or its sentence", async ({
+    page,
+  }) => {
+    const canvas = await openWorkflow(page);
+    await openAfter(page, canvas, "approval");
+    // By keyboard: focus moves to Home and Enter opens it.
+    const home = page.getByRole("button", { name: "Home", exact: true });
+    await home.focus();
+    await page.keyboard.press("Enter");
+    await expect(page.locator(".editor-bar")).toHaveCount(0);
+    await newWorkflow(page);
+    await expect(new AddStepPanel(page).root).toHaveCount(0);
+    await page.waitForTimeout(300);
+    await expect(
+      page.locator(".toast").filter({ hasText: changed }),
+    ).toHaveCount(0);
+  });
 
   test("Undo from the panel that moves its place closes it and inserts nothing", async ({
     page,
@@ -485,5 +502,9 @@ for (const size of [
       for (const hint of [".add-step-kbd", ".entry-enter"])
         if (size.touch) await expect(panel.root.locator(hint)).toBeHidden();
         else await expect(panel.root.locator(hint).first()).toBeVisible();
+      // The footer's key legend: a keyboard and a fine pointer, from 768 px.
+      const legend = panel.root.locator(".add-step-foot");
+      if (size.touch || size.width < 768) await expect(legend).toBeHidden();
+      else await expect(legend).toBeVisible();
     });
   });

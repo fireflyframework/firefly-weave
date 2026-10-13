@@ -43,7 +43,7 @@ import { triggerInputs, type TriggerIntent } from "../state/canvas-sidecar";
 import { keyPlatform } from "../state/canvas-commands";
 import { commandFor, eventCombo } from "../state/keymap";
 import type { AddStepHost, AddStepRequest } from "./add-step-host";
-import { loadConnectors, loadLanguage } from "./catalog-sources";
+import { catalogScope, loadConnectors, loadLanguage } from "./catalog-sources";
 import {
   buildCatalog,
   type Catalog,
@@ -110,7 +110,10 @@ export class AddStepPanel implements OnInit, DoCheck {
       this.cdr.markForCheck();
     });
     if (h.profile)
-      void loadConnectors(h.api).then((connectors) => {
+      void loadConnectors(
+        h.api,
+        catalogScope(h.profile, h.identity, h.api),
+      ).then((connectors) => {
         this.connectors = connectors;
         this.cdr.markForCheck();
       });
@@ -129,14 +132,13 @@ export class AddStepPanel implements OnInit, DoCheck {
       this.state = startState(request.start);
       this.focusSearch();
     }
-    // Another workflow, a simulation or a source error: the place is gone
-    // too, and the panel says so. Its own insert changes the place while
-    // busy; a change made while it waits is refused by the insert itself.
-    if (
-      h.model.opened !== request.opened ||
-      h.editingLocked ||
-      h.model.readonly
-    ) {
+    // Another workflow opened: the panel closes quietly, since the person
+    // is looking at a different workflow now.
+    if (h.model.opened !== request.opened) return this.close(false);
+    // A simulation or a source error: the place is gone too, and the panel
+    // says so. Its own insert changes the place while busy; a change made
+    // while it waits is refused by the insert itself.
+    if (h.editingLocked || h.model.readonly) {
       h.notify(GONE);
       return this.close(false);
     }

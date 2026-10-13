@@ -258,6 +258,31 @@ test("selection Duplicate uses neutral toolbar text", async ({ page }) => {
   ).toHaveCSS("color", await tokenColor(page, "--text"));
 });
 
+test("selecting steps that are in view, and opening and closing their details, leaves the canvas's pan and zoom alone", async ({
+  page,
+}) => {
+  const canvas = await openWorkflow(page);
+  await canvas.closeInspector();
+  const view = async () => ({
+    zoom: await canvas.zoomPercent(),
+    tile: await canvas.tileBody("prepare-request").boundingBox(),
+  });
+  const before = await view();
+  await canvas.tileBody("prepare-request").click();
+  await canvas.tileBody("approval").click({ modifiers: ["Shift"] });
+  await canvas.tileBody("approval").click();
+  expect(await view()).toEqual(before);
+  for (const id of ["approval", "prepare-request"]) {
+    await canvas.tileBody(id).focus();
+    await page.keyboard.press("Enter");
+    await expect(
+      page.getByRole("dialog", { name: `Step details: ${id}`, exact: true }),
+    ).toBeVisible();
+    await canvas.closeInspector();
+  }
+  expect(await view()).toEqual(before);
+});
+
 test("selecting steps keeps the exported canvas file and workflow source unchanged", async ({
   page,
 }) => {
