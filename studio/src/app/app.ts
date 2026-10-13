@@ -15,7 +15,7 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-import { canvasFromStored } from "./editor/state/canvas-sidecar";
+import { canvasFromStored, ownedRecipes } from "./editor/state/canvas-sidecar";
 import {
   stepDetailsEnabled,
   type StepDetailsHost,
@@ -71,7 +71,7 @@ import {
 import { HomeDashboard } from "./home-dashboard";
 import { ApiError, StudioApi, Validation, Session } from "./api";
 import { Autofocus, DialogHost, DialogService, Modal } from "./dialog";
-import { describeError, PlainError } from "./errors";
+import { commandNotLoaded, describeError, PlainError } from "./errors";
 import {
   ExportedFile,
   exportFile,
@@ -3005,13 +3005,16 @@ export class App implements CanvasHost {
             )
             .then(conditions(source, format))
             .then(async (result) =>
-              (
-                await import("./editor/ndv/owned/owned-pending")
-              ).withOwnedPending(
-                result,
-                this.parseSource(source, format),
-                canvas,
-              ),
+              // Its code loads only for a workflow that owns actions.
+              Object.keys(ownedRecipes(canvas)).length
+                ? (
+                    await import("./editor/ndv/owned/owned-pending")
+                  ).withOwnedPending(
+                    result,
+                    this.parseSource(source, format),
+                    canvas,
+                  )
+                : result,
             );
         },
       },
@@ -6760,9 +6763,21 @@ export class App implements CanvasHost {
     check = async () => true,
   ): Promise<"none" | "published" | "stopped"> {
     if (purpose === "publish") this.ownedPublishedNow = 0;
-    const { result, published } = await (
-      await import("./editor/ndv/owned/owned-commands")
-    ).publishOwnedFirst(this, purpose, check);
+    let commands: typeof import("./editor/ndv/owned/owned-commands");
+    try {
+      commands = await import("./editor/ndv/owned/owned-commands");
+    } catch (error) {
+      console.error(`Studio couldn't load what ${purpose} needs`, error);
+      this.error = commandNotLoaded(purpose);
+      this.errorCode = "";
+      this.cdr.markForCheck();
+      return "stopped";
+    }
+    const { result, published } = await commands.publishOwnedFirst(
+      this,
+      purpose,
+      check,
+    );
     if (published) {
       // The project catalog changed: compiles cached before it are stale.
       this.validation?.invalidate();

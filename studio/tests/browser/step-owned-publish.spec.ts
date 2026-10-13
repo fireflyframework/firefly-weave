@@ -799,6 +799,37 @@ test.describe("saving a draft on the platform", () => {
   });
 });
 
+// Publish… and Simulate load the code that publishes the workflow's own
+// actions on first use; when it can't load, they stop and say so.
+test.describe("when the publishing code can't load", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  for (const [name, purpose] of [
+    ["Publish…", "Publish…"],
+    ["Simulate", "Simulate"],
+  ])
+    test(`${name} stops and says so`, async ({ page }) => {
+      const { platform } = await withOwnedSteps(page);
+      let refused = 0;
+      await page.route(/\.m?js(\?.*)?$/, async (route) => {
+        const response = await route.fetch();
+        const body = await response.text();
+        if (body.includes("Turn on Try the new editor in Settings")) {
+          refused++;
+          return route.abort();
+        }
+        return route.fulfill({ response, body });
+      });
+      await command(page, name);
+      await expect(page.locator("#main")).toContainText(
+        `Studio couldn't load what ${purpose} needs. Check that Weave Studio is still running, reload the page and try again.`,
+      );
+      expect(refused).toBeGreaterThan(0);
+      await expect(publishDialog(page)).toHaveCount(0);
+      expect(platform.calls).toEqual([]);
+    });
+});
+
 // Publishing records into the last undo step. A workflow opened again has
 // none: the record then adds no undo step of its own, which would change
 // nothing a person sees.
