@@ -406,3 +406,31 @@ async def test_cancel_at_full_ordinary_quota_updates_facts_from_control_reserve(
         from operations_support import assert_usage
 
         await assert_usage(owner, {"tenant": before["tenant_id"], "project": before["project_id"]})
+
+
+async def test_sql_signal_timeout_of_a_step_instance_matches_the_kernel(
+    waiting_run, access_db, author, services, monkeypatch
+):
+    import firefly_weave.runtime.repository as repository
+    from firefly_weave.persistence.uow import UnitOfWork
+    from firefly_weave.runtime.deadlines import DeadlineService
+
+    identifier = UUID(waiting_run)
+    async with access_db[1].begin() as owner:
+        await owner.execute(
+            text(
+                "UPDATE run_deadlines SET node_id='approval[2]',deadline=clock_timestamp()-interval '1 second' "
+                "WHERE node_id='approval'"
+            )
+        )
+        before = (await owner.execute(text("SELECT * FROM runs WHERE id=:id"), {"id": identifier})).mappings().one()
+        await exhaust_pools(owner, author[2].project_id)
+    monkeypatch.setattr(repository, "RUN_FETCH_BYTES", 1)
+    async with UnitOfWork(access_db[0]).open(author[2]) as tx:
+        assert await services(access_db[0]).resolve(DeadlineService).tick(tx, 100) == 1
+    async with access_db[1]() as owner:
+        await assert_equivalent(owner, before, "timed_out")
+        data = await owner.scalar(
+            text("SELECT data FROM run_events WHERE run_id=:id AND type='timed_out'"), {"id": identifier}
+        )
+    assert data["node_id"] == "approval[2]"

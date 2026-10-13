@@ -22,6 +22,7 @@ from uuid import uuid4
 from firefly_weave.compiler.api import import_artifact
 from firefly_weave.compiler.canonical import canonical_digest
 from firefly_weave.compiler.ir import SignalNode, WaitNode
+from firefly_weave.contracts.instance_keys import node_of
 from firefly_weave.runtime.kernel import deadline_order, workflow
 from firefly_weave.runtime.kernel import transition_async as transition
 from firefly_weave.runtime.models import RuntimeEvent
@@ -59,7 +60,8 @@ async def settle(repository: RuntimeRepository, row: dict[str, Any], *, terminal
         if deadline["deadline"] > now:
             continue
         # A buffered receipt strictly before this wait deadline wins. Overall timeout always stops the run.
-        signal = next((n for n in ir.graph.nodes if isinstance(n, SignalNode) and n.id == deadline["node_id"]), None)
+        step = node_of(deadline["node_id"])
+        signal = next((n for n in ir.graph.nodes if isinstance(n, SignalNode) and n.id == step), None)
         earlier = (
             []
             if signal is None
@@ -73,7 +75,7 @@ async def settle(repository: RuntimeRepository, row: dict[str, Any], *, terminal
         )
         if earlier:
             continue
-        elapsed = deadline["node_id"] in duration_nodes
+        elapsed = step in duration_nodes
         if terminal_only and elapsed:
             continue
         if not elapsed:
@@ -181,7 +183,7 @@ async def _unavailable_timeout(repository: RuntimeRepository, row: dict[str, Any
         if candidate["node_id"] == "@run":
             selected = candidate
             break
-        name = signals.get(candidate["node_id"])
+        name = signals.get(node_of(candidate["node_id"]))
         if name is not None:
             earlier = await repository.rows(
                 f"SELECT 1 FROM signal_receipts WHERE {SCOPE} AND run_id=:run AND name=:name "

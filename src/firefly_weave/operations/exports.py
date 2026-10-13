@@ -17,12 +17,14 @@
 """Pure safe evidence projection and stable comparison; no storage or executors."""
 
 import json
+from collections.abc import Mapping
 from typing import Final, cast, get_args
 
 from firefly_weave.compiler.api import CompiledArtifact
 from firefly_weave.compiler.canonical import canonical_digest
-from firefly_weave.compiler.ir import ActionNode, HumanTaskNode, SignalNode
+from firefly_weave.compiler.ir import ActionNode, HumanTaskNode, IRNode, SignalNode
 from firefly_weave.contracts.definitions import ActionDefinition, load_definition
+from firefly_weave.contracts.instance_keys import InvalidInstanceKey, split_instance
 from firefly_weave.contracts.run_views import RunOrigin
 from firefly_weave.contracts.values import JsonObject, JsonValue
 from firefly_weave.contracts.workers import TaskError
@@ -31,6 +33,16 @@ from firefly_weave.runtime.kernel import action_schemas, workflow
 from firefly_weave.runtime.models import RuntimeEvent, Transition
 
 RUN_ORIGINS: Final = frozenset(get_args(RunOrigin.__value__))
+
+
+def event_node(nodes: Mapping[str, IRNode], key: object) -> IRNode | None:
+    """The step named by an event's instance key; None unless the key is canonical and names a step."""
+    if not isinstance(key, str):
+        return None
+    try:
+        return nodes.get(split_instance(key).node_id)
+    except InvalidInstanceKey:
+        return None
 
 
 def lock_digest(artifact: CompiledArtifact) -> str:
@@ -111,7 +123,7 @@ def safe_event(event: RuntimeEvent, artifact: CompiledArtifact | None, *, unavai
     ):
         assert artifact is not None
         ir = workflow(artifact)
-        node = next((n for n in ir.graph.nodes if n.id == data.get("node_id")), None)
+        node = event_node({n.id: n for n in ir.graph.nodes}, data.get("node_id"))
         schemas: list[JsonObject] = []
         if isinstance(node, ActionNode) and event.type in {"task_completed", "incident_resolved"}:
             definition = load_definition(next(d.document for d in ir.dependencies if d.digest == node.dependency))

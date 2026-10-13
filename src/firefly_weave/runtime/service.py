@@ -35,6 +35,7 @@ from firefly_weave.compiler.expressions import ExpressionFailure
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.catalog import Activation
 from firefly_weave.contracts.human_tasks import ManualControlRequest
+from firefly_weave.contracts.instance_keys import node_of
 from firefly_weave.contracts.operations import CancelRunRequest
 from firefly_weave.contracts.run_views import RunListQuery
 from firefly_weave.contracts.runtime import (
@@ -419,7 +420,8 @@ class RuntimeService:
         action = next(
             d for d in ir.dependencies if d.kind == "Action" and d.digest == verified.task["payload"]["action_digest"]
         )
-        node = next(n for n in ir.graph.nodes if n.id == verified.task["node_id"])
+        step = node_of(verified.task["node_id"])
+        node = next(n for n in ir.graph.nodes if n.id == step)
         assert isinstance(node, ActionNode)
         bundle = {d.reference: d.document for d in ir.dependencies if d.kind == "Schema"}
         try:

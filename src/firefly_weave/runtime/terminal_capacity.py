@@ -22,6 +22,7 @@ from typing import Any, Literal, cast
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from firefly_weave.compiler.api import import_artifact
+from firefly_weave.contracts.instance_keys import node_of
 from firefly_weave.contracts.integration_events import EventMetadata, IntegrationEvent
 from firefly_weave.contracts.operations import RecordedEvidence, SignalFact, WaitReceipt
 from firefly_weave.contracts.runtime import CapacityRunAcknowledgment
@@ -54,13 +55,13 @@ async def due_terminal(repository: RuntimeRepository, row: dict[str, Any]) -> Ru
     due = await repository.rows(
         f"SELECT id,node_id,deadline FROM run_deadlines WHERE {SCOPE} AND run_id=:run "
         "AND NOT consumed AND deadline<=clock_timestamp() "
-        "AND (node_id='@run' OR node_id=ANY(cast(:signals AS text[]))) "
+        "AND (node_id='@run' OR substring(node_id from '^[^[#~]+')=ANY(cast(:signals AS text[]))) "
         "ORDER BY (node_id='@run') DESC,deadline,node_id LIMIT 1001",
         run=row["id"],
         signals=list(signals or {}),
     )
     for deadline in due:
-        name = (signals or {}).get(deadline["node_id"])
+        name = (signals or {}).get(node_of(deadline["node_id"]))
         if deadline["node_id"] != "@run" and name is None:
             continue
         if name is not None and await repository.rows(
