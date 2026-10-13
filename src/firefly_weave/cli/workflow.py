@@ -41,6 +41,7 @@ from firefly_weave.compiler.ir import (
     ArtifactEnvelope,
     BranchOutputNode,
     EndNode,
+    ForEachNode,
     SwitchNode,
     TransformNode,
 )
@@ -85,6 +86,8 @@ def _explain(artifact: CompiledArtifact) -> None:
             span = envelope.source_map.get(node.path)
             location = f"{span.file or '<source>'}:{span.line}:{span.column}" if span else node.path or "/"
             detail = f" uses={dependencies[node.dependency].reference}" if isinstance(node, ActionNode) else ""
+            if isinstance(node, ForEachNode):
+                detail = f" concurrency={node.concurrency} maxItems={node.max_items} collect={node.collect}"
             click.echo(f"  {node.id} ({node.kind}) {location}{detail}")
             expressions: list[Expression] = []
             if isinstance(node, ActionNode):
@@ -95,6 +98,8 @@ def _explain(artifact: CompiledArtifact) -> None:
                 expressions.append(node.output)
             elif isinstance(node, SwitchNode):
                 expressions.extend(case.when for case in node.cases)
+            elif isinstance(node, ForEachNode):
+                expressions.append(node.items)
             for expression in expressions:
                 for reference in _references(expression):
                     click.echo(f"    reads {reference}")

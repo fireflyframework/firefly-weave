@@ -117,7 +117,7 @@ class _Lowerer:
             following = steps[i + 1].id if i + 1 < len(steps) else successor
             value = step.definition.value
             base: JsonObject = {"id": step.id, "kind": step.kind, "scope": list(step.scope), "path": step.path}
-            if step.kind in {"switch", "parallel"}:
+            if step.kind in {"switch", "parallel", "forEach"}:
                 join_id = "@join:" + step.id
                 branch_ids: list[JsonValue] = []
                 branches: list[JsonValue] = []
@@ -144,6 +144,9 @@ class _Lowerer:
                     if step.kind == "parallel":
                         branches.append({"name": branch.name, "target": target})
                         self.edge(step.id, target, "fork", branch.name)
+                    elif step.kind == "forEach":
+                        base["target"] = target
+                        self.edge(step.id, target, "each", branch.name)
                     elif branch.name == "default":
                         default = target
                         self.edge(step.id, target, "default", "default")
@@ -157,7 +160,7 @@ class _Lowerer:
                         "scope": list(step.scope),
                         "path": step.path,
                         "owner": step.id,
-                        "mode": "all" if step.kind == "parallel" else "selected",
+                        "mode": {"parallel": "all", "forEach": "each"}.get(step.kind, "selected"),
                         "branches": branch_ids,
                         "completes": step.completes,
                     }
@@ -165,6 +168,8 @@ class _Lowerer:
                 base["join"] = join_id
                 if step.kind == "parallel":
                     base.update({"branches": branches, "concurrency": value["concurrency"]})
+                elif step.kind == "forEach":
+                    base.update({key: value[key] for key in ("items", "concurrency", "maxItems", "collect")})
                 else:
                     base.update({"cases": branches, "default": default})
                 if step.completes:

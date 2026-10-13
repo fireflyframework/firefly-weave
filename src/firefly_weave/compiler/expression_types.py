@@ -305,6 +305,25 @@ def _infer(expression: JsonObject, context_schemas: dict[str, JsonObject], budge
     return InferredType(budget.object((("anyOf", budget.array(item.schema for item in alternatives)),)))
 
 
+def nonnull_schema(
+    schema: JsonObject, *, limits: Limits = DEFAULT_LIMITS, schema_limits: SchemaLimits = DEFAULT_INFERENCE_LIMITS
+) -> JsonObject | None:
+    """``schema`` without ``null``, the narrowing ``coalesce`` applies to a fallback; ``None`` when only null is left.
+
+    A schema whose types are not listed directly (``{}``, ``anyOf``) stays ``{}``.
+    """
+    schema_domain_limits = limits.model_copy(
+        update={
+            "max_depth": schema_limits.max_schema_depth,
+            "max_payload_bytes": schema_limits.max_schema_bytes,
+            "max_document_nodes": schema_limits.max_schema_nodes,
+        }
+    )
+    budget = _InferenceBudget(schema_domain_limits, schema_limits.max_expansion_nodes)
+    narrowed = _nonnull(InferredType(schema, "known" if schema else "unknown"), budget)
+    return None if narrowed is None else cast(JsonObject, _copy(narrowed.schema))
+
+
 def infer_expression(
     expression: JsonObject,
     context_schemas: dict[str, JsonObject],
