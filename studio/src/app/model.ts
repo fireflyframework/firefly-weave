@@ -187,10 +187,12 @@ function branches(step: Step): [string, Branch][] {
 /**
  * The steps that changed only their ID between two versions of a workflow,
  * as an Undo or Redo of a rename leaves them: every step in the same place
- * with the same kind and the same branches, and an ID gone after that wasn't
- * there before. Anything else that changed shape (a step added, removed or
- * moved) means no rename is told, and so does a move between two steps of
- * the same kind: both IDs are still there, each on its own step.
+ * with the same kind and the same branches. Anything else that changed shape
+ * (a step added, removed or moved) means no rename is told. IDs that only
+ * trade places among themselves are a move between steps of the same kind,
+ * each ID still on its own step, so no rename either. A chain of renames
+ * made in one edit (a to b, b to c) is told from its end, so applying them
+ * in order never puts one step's things on the step that took its old ID.
  */
 export function renamedSteps(
   before: Workflow,
@@ -217,16 +219,20 @@ export function renamedSteps(
     });
   };
   if (!walk(before.spec?.steps, after.spec?.steps)) return [];
-  const was = new Set(stepIds(before.spec?.steps));
-  const is = new Set(stepIds(after.spec?.steps));
-  return renames.filter(({ from, to }) => !is.has(from) && !was.has(to));
-}
-/** Every step's ID, nested ones included. */
-function stepIds(steps: Step[] | undefined): string[] {
-  return (steps ?? []).flatMap((step) => [
-    step.id,
-    ...branches(step).flatMap(([, branch]) => stepIds(branch?.steps)),
-  ]);
+  // IDs are unique, so each ID is renamed from and to at most once: the
+  // renames form chains, which start at an ID that is gone, and loops, which
+  // are moves.
+  const next = new Map(renames.map(({ from, to }) => [from, to]));
+  const targets = new Set(next.values());
+  const told: { from: string; to: string }[] = [];
+  for (const { from } of renames) {
+    if (targets.has(from)) continue;
+    const chain: { from: string; to: string }[] = [];
+    for (let at = from; next.has(at); at = next.get(at)!)
+      chain.push({ from: at, to: next.get(at)! });
+    told.push(...chain.reverse());
+  }
+  return told;
 }
 function preserveYamlComments(old: unknown, replacement: unknown): void {
   if (!isNode(old) || !isNode(replacement)) return;

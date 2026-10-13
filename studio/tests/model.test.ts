@@ -33,6 +33,7 @@ import {
   withOwnedRecipe,
   withStepNote,
 } from "../src/app/editor/state/canvas-sidecar";
+import { PendingEntries } from "../src/app/editor/ndv/pending-entries";
 describe("structured workflow authoring", () => {
   it("renames a human answer and matching nested decision conditions in one undo", () => {
     const model = new StructuredCanvasAdapter();
@@ -165,6 +166,64 @@ describe("structured workflow authoring", () => {
         workflow({ id: "hold", kind: "wait", durationSeconds: 60 }),
       ),
     ).toEqual([{ from: "pause", to: "hold" }]);
+  });
+  it("tells a chain of renames made in one edit in the order that keeps each step's entries on it", () => {
+    const workflow = (ids: string[]) =>
+      ({
+        spec: {
+          steps: ids.map((id) => ({ id, kind: "wait", durationSeconds: 60 })),
+        },
+      }) as unknown as Workflow;
+    const owner = { descriptor: "d", baseline: "1", structure: "" };
+    const entry = (text: string) => ({
+      kind: "number" as const,
+      text,
+      message: "",
+      label: "Seconds",
+    });
+    // Source renamed a to b and b to c in one edit; Undo takes both back, and
+    // Redo makes them again.
+    for (const [before, after, renames] of [
+      [
+        ["b", "c", "x"],
+        ["a", "b", "x"],
+        [
+          { from: "b", to: "a" },
+          { from: "c", to: "b" },
+        ],
+      ],
+      [
+        ["a", "b", "x"],
+        ["b", "c", "x"],
+        [
+          { from: "b", to: "c" },
+          { from: "a", to: "b" },
+        ],
+      ],
+    ] as const) {
+      expect(renamedSteps(workflow([...before]), workflow([...after]))).toEqual(
+        renames,
+      );
+      // Each step's entry follows it to its new ID, never onto the step
+      // that took its old one.
+      const pending = new PendingEntries();
+      before.forEach((id) =>
+        pending.hold(id, `typed on ${id}`, owner, entry(id)),
+      );
+      for (const { from, to } of renamedSteps(
+        workflow([...before]),
+        workflow([...after]),
+      ))
+        pending.rename(from, to);
+      before.forEach((id, at) =>
+        expect(pending.has(after[at], `typed on ${id}`)).toBe(true),
+      );
+      expect(pending.size).toBe(before.length);
+    }
+    // A move between twin steps next to a rename tells the rename only.
+    expect(
+      renamedSteps(workflow(["a", "b", "c"]), workflow(["b", "a", "d"])),
+    ).toEqual([{ from: "c", to: "d" }]);
   });
   it("keeps the rendered node identity stable until rename teardown", () => {
     const model = new StructuredCanvasAdapter();
