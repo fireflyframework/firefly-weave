@@ -910,6 +910,8 @@ class DefinitionService:
                 retired=True,
                 connector_execution_pins=selected.connector_execution_pins,
                 assignment_pins=selected.assignment_pins,
+                workflow_call_pins=selected.workflow_call_pins,
+                call_depth=selected.call_depth,
             )
             await self._insert_activation(repository, activation)
             await audit(

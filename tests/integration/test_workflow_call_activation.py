@@ -97,3 +97,10 @@ async def test_activation_pins_one_live_activation_of_each_called_workflow(platf
         "WV-READINESS-CALL",
         "A pinned workflow activation or its version is retired",
     )
+
+    retired_caller = await definitions.retire_activation(
+        actor, scope, activation.id, "retire-caller", 1, context=AuditContext()
+    )
+    assert retired_caller.retired
+    assert (retired_caller.workflow_call_pins, retired_caller.call_depth) == (activation.workflow_call_pins, 1)
+    assert await stored(access_db, retired_caller.id) == retired_caller
