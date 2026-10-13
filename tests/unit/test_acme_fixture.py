@@ -20,6 +20,7 @@ import hashlib
 import http.client
 import importlib.util
 import json
+import re
 import socket
 import sys
 import threading
@@ -253,3 +254,63 @@ def test_a_body_shorter_than_its_content_length_is_refused_and_journaled(servers
     assert journal(control) == [("POST", "/approvals", 400)]
     # Nothing was received: the next approval gets the first receipt.
     assert call(api + "/approvals", "POST", {"customerId": "C-1001", "lines": []})[1]["id"] == "A-1"
+
+
+def raw_responses(base, request):
+    """Send raw request bytes and read until the service closes; returns every (status, body) it answered."""
+    url = urllib.parse.urlsplit(base)
+    received = b""
+    with socket.create_connection((url.hostname, url.port), timeout=3) as connection:
+        connection.sendall(request)
+        while chunk := connection.recv(65536):
+            received += chunk
+    answers = []
+    for part in re.split(rb"(?=HTTP/1\.[01] \d{3} )", received):
+        if part:
+            head, _, body = part.partition(b"\r\n\r\n")
+            answers.append((int(head.split(b" ")[1]), body))
+    return answers
+
+
+SMUGGLED = b"GET /customers/C-1001 HTTP/1.1\r\nHost: acme\r\nX-Api-Key: " + KEY.encode() + b"\r\n\r\n"
+CHUNKED = b"%x\r\n%s\r\n0\r\n\r\n" % (len(SMUGGLED), SMUGGLED)
+UNFRAMED = {
+    "chunked POST": (
+        b"POST /approvals HTTP/1.1\r\nHost: acme\r\nTransfer-Encoding: chunked\r\n\r\n" + CHUNKED,
+        ("POST", "/approvals"),
+        "Send the body with one Content-Length; Transfer-Encoding is not supported.",
+    ),
+    "chunked GET": (
+        b"GET /customers/C-1002 HTTP/1.1\r\nHost: acme\r\nTransfer-Encoding: chunked\r\n\r\n" + CHUNKED,
+        ("GET", "/customers/C-1002"),
+        "Send the body with one Content-Length; Transfer-Encoding is not supported.",
+    ),
+    "GET with a body": (
+        b"GET /orders/O-1/status HTTP/1.1\r\nHost: acme\r\nContent-Length: %d\r\n\r\n" % len(SMUGGLED) + SMUGGLED,
+        ("GET", "/orders/O-1/status"),
+        "A GET, HEAD or DELETE request takes no body.",
+    ),
+    "DELETE with a body": (
+        b"DELETE /customers/C-1001 HTTP/1.1\r\nHost: acme\r\nContent-Length: %d\r\n\r\n" % len(SMUGGLED) + SMUGGLED,
+        ("DELETE", "/customers/C-1001"),
+        "A GET, HEAD or DELETE request takes no body.",
+    ),
+}
+
+
+@pytest.mark.parametrize(("request_bytes", "expected", "message"), UNFRAMED.values(), ids=UNFRAMED.keys())
+def test_a_body_without_a_single_content_length_is_refused_and_never_read_as_a_request(
+    servers, request_bytes, expected, message
+):
+    api, control = servers
+    answers = raw_responses(api, request_bytes)
+    assert [(status, json.loads(body)) for status, body in answers] == [(400, {"error": message})]
+    assert journal(control) == [(*expected, 400)]
+
+
+def test_the_control_api_refuses_a_chunked_body(servers):
+    _, control = servers
+    request = b"POST /_control/reset HTTP/1.1\r\nHost: acme\r\nTransfer-Encoding: chunked\r\n\r\n2\r\n{}\r\n0\r\n\r\n"
+    answers = raw_responses(control, request)
+    message = "Send the body with one Content-Length; Transfer-Encoding is not supported."
+    assert [(status, json.loads(body)) for status, body in answers] == [(400, {"error": message})]

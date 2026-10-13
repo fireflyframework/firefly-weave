@@ -28,7 +28,9 @@ import hmac
 import json
 import os
 import re
+import socket
 import threading
+import time
 from contextlib import suppress
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -39,6 +41,7 @@ DATA: dict[str, Any] = json.loads(Path(__file__).with_name("data.json").read_tex
 ORIGIN = "http://acme.acceptance.test:8080"
 MAX_BODY = 65536
 MAX_LENGTH_DIGITS = 12
+BODY_METHODS = frozenset({"POST", "PUT", "PATCH"})
 CUSTOMER = re.compile(r"/customers/([A-Z0-9-]{1,32})")
 ORDERS = re.compile(r"/customers/([A-Z0-9-]{1,32})/orders")
 STATUS = re.compile(r"/orders/([A-Z0-9-]{1,32})/status")
@@ -199,11 +202,44 @@ class _Handler(BaseHTTPRequestHandler):
     sys_version = ""
     # Socket timeout in seconds: a client that stalls mid-request loses its connection.
     timeout = 10.0
+    # Set when the answer refuses input the client may still be sending.
+    _discard = False
     state: State
 
     def log_message(self, format: str, *args: Any) -> None:
         # No access log: request lines and headers stay out of container logs.
         return
+
+    def _refuse_input(self) -> None:
+        """Close after the answer and discard what the client still sends, so it is never read as a request."""
+        self.close_connection = True
+        self._discard = True
+
+    def finish(self) -> None:
+        super().finish()
+        if self._discard:
+            # Closing with unread input resets the connection and can destroy the answer in flight:
+            # end our side, then read and drop the rest for a bounded time and size.
+            with suppress(OSError):
+                self.connection.shutdown(socket.SHUT_WR)
+                self.connection.settimeout(1)
+                discarded, deadline = 0, time.monotonic() + 2
+                while discarded <= 4 * MAX_BODY and time.monotonic() < deadline:
+                    chunk = self.connection.recv(65536)
+                    if not chunk:
+                        break
+                    discarded += len(chunk)
+
+    def _framing_error(self) -> str | None:
+        """Why the body framing is refused: any Transfer-Encoding, or a body on GET, HEAD or DELETE."""
+        if self.headers.get_all("Transfer-Encoding"):
+            self._refuse_input()
+            return "Send the body with one Content-Length; Transfer-Encoding is not supported."
+        lengths = self.headers.get_all("Content-Length") or []
+        if self.command not in BODY_METHODS and any(length != "0" for length in lengths):
+            self._refuse_input()
+            return "A GET, HEAD or DELETE request takes no body."
+        return None
 
     def _read_body(self) -> bytes | None:
         """The request body, or None when it is over 64 KiB (drained when at most 256 KiB).
@@ -213,11 +249,11 @@ class _Handler(BaseHTTPRequestHandler):
         """
         lengths = self.headers.get_all("Content-Length") or ["0"]
         if len(lengths) > 1:
-            self.close_connection = True
+            self._refuse_input()
             raise _BadRequest("Send one Content-Length.")
         length = lengths[0]
         if not (length.isascii() and length.isdigit() and len(length) <= MAX_LENGTH_DIGITS):
-            self.close_connection = True
+            self._refuse_input()
             raise _BadRequest("Send a decimal Content-Length.")
         size = int(length)
         if size > MAX_BODY:
@@ -226,7 +262,7 @@ class _Handler(BaseHTTPRequestHandler):
                 with suppress(OSError):
                     drained = self.rfile.read(size)
             if len(drained) != size:
-                self.close_connection = True
+                self._refuse_input()
             return None
         try:
             body = self.rfile.read(size)
@@ -234,7 +270,7 @@ class _Handler(BaseHTTPRequestHandler):
             # A stalled client: whatever arrived is not the whole body.
             body = b""
         if len(body) != size:
-            self.close_connection = True
+            self._refuse_input()
             raise _BadRequest("The request body is shorter than its Content-Length.")
         return body
 
@@ -270,11 +306,13 @@ class ApiHandler(_Handler):
 
     def _serve(self) -> None:
         path = self.path.split("?", 1)[0]
-        refused: str | None = None
-        try:
-            body = self._read_body() if self.command in {"POST", "PUT", "PATCH"} else b""
-        except _BadRequest as error:
-            body, refused = b"", error.message
+        refused = self._framing_error()
+        body: bytes | None = b""
+        if refused is None and self.command in BODY_METHODS:
+            try:
+                body = self._read_body()
+            except _BadRequest as error:
+                refused = error.message
         key = self.headers.get("X-Api-Key")
         key_sha256 = None if key is None else _digest(key.encode())
         # A malformed or oversized request never consumes an armed fault.
@@ -362,14 +400,21 @@ def _fault(body: bytes) -> tuple[str, int, int] | None:
 
 class ControlHandler(_Handler):
     def do_GET(self) -> None:
-        if self.path != "/_control/journal":
+        refused = self._framing_error()
+        if refused is not None:
+            self._send(400, {"error": refused})
+        elif self.path != "/_control/journal":
             self._send(404, {"error": "Not found."})
-            return
-        with self.state.lock:
-            entries = list(self.state.journal)
-        self._send(200, {"entries": entries})
+        else:
+            with self.state.lock:
+                entries = list(self.state.journal)
+            self._send(200, {"entries": entries})
 
     def do_POST(self) -> None:
+        refused = self._framing_error()
+        if refused is not None:
+            self._send(400, {"error": refused})
+            return
         try:
             body = self._read_body()
         except _BadRequest as error:
