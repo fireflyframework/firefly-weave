@@ -16,7 +16,6 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 import { expect, test } from "@playwright/test";
-import { resolve } from "node:path";
 import {
   closeSheet,
   insertStep,
@@ -383,9 +382,6 @@ for (const size of screenSizes) {
     }) => {
       const details = await openStepFixture(page);
       await details.open("lookup");
-      await page.screenshot({
-        path: resolve(`../build/editor-m3/task-10/shell-${size.tag}.png`),
-      });
       const controls = details.dialog.locator(
         "button:not([disabled]):visible, a[href]:visible, input:visible",
       );

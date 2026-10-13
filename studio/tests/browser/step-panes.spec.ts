@@ -17,7 +17,7 @@ SPDX-License-Identifier: Apache-2.0
 */
 import { expect, test, type Page } from "@playwright/test";
 import { parse, stringify } from "yaml";
-import { readFileSync, mkdirSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import {
   openStepFixture,
   stepFixture,
@@ -190,10 +190,6 @@ for (const size of [
       await expect
         .poll(() => page.evaluate(() => Object.values(localStorage).join("")))
         .not.toContain("Alicia");
-      mkdirSync("../build/editor-m3/task-14", { recursive: true });
-      await details.dialog.screenshot({
-        path: `../build/editor-m3/task-14/sample-${size.tag}.png`,
-      });
       await expect(details.dialog).toBeVisible();
       const bounds = await output.locator(".sd-pane-body").evaluate((el) => ({
         width: el.clientWidth,
@@ -300,9 +296,6 @@ for (const size of [
         expect(
           await body.evaluate((el) => el.scrollWidth <= el.clientWidth + 1),
         ).toBe(true);
-        await details.dialog.screenshot({
-          path: `../build/editor-m3/task-14/geometry-${size.tag}-${name.replace(" ", "-")}.png`,
-        });
       }
     });
   });
@@ -395,11 +388,6 @@ test.describe("sample boundary regressions", () => {
     await output.getByRole("radio", { name: "JSON", exact: true }).click();
     return output;
   }
-  async function capture(details: StepDetailsPage, name: string) {
-    const folder = "../build/editor-m3/task-14-fix1/screenshots";
-    mkdirSync(folder, { recursive: true });
-    await details.dialog.screenshot({ path: `${folder}/${name}.png` });
-  }
   test("generated additional-property secrets stay outside Output", async ({
     page,
   }) => {
@@ -414,7 +402,6 @@ test.describe("sample boundary regressions", () => {
       .getByRole("button", { name: "Generate sample", exact: true })
       .click();
     const output = await json(details);
-    await capture(details, "additional-properties");
     await expect(output).not.toContainText("SAMPLE-PRIVATE");
     await expect(output.locator("pre")).toHaveText("{}");
     await details.close();
@@ -434,7 +421,6 @@ test.describe("sample boundary regressions", () => {
       .getByRole("textbox", { name: /Value/ })
       .fill('["SAMPLE-PRIVATE","public"]');
     const output = await json(details);
-    await capture(details, "tuple");
     await expect(output).not.toContainText("SAMPLE-PRIVATE");
     await expect(output.locator("pre")).toHaveCount(0);
     await details.close();
@@ -460,7 +446,6 @@ test.describe("sample boundary regressions", () => {
     await field.press("End");
     await field.pressSequentially(" Smith");
     await expect(output.locator("pre")).toHaveText('"Alice Smith"');
-    await capture(details, "scalar-reference");
   });
   test("array item reference keeps text items and edits across reopen", async ({
     page,
@@ -482,7 +467,6 @@ test.describe("sample boundary regressions", () => {
     await expect(field).toHaveValue("first");
     await field.fill("updated");
     await expect(output.locator("pre")).toContainText('"updated"');
-    await capture(details, "array-reference");
   });
   test("reference-hidden composition is refused without a generated output", async ({
     page,
@@ -510,7 +494,6 @@ test.describe("sample boundary regressions", () => {
       details.dialog.locator(".sd-input").getByRole("alert"),
     ).toContainText("couldn't generate a sample");
     await expect(output.locator("pre")).toHaveCount(0);
-    await capture(details, "composition-refusal");
   });
   test("nullable default generates an explicit null sample", async ({
     page,
@@ -564,9 +547,6 @@ test.describe("composed sample secrecy", () => {
       );
       const output = details.dialog.locator(".sd-output");
       await output.getByRole("radio", { name: "JSON", exact: true }).click();
-      const folder = "../build/editor-m3/task-14-fix2/screenshots";
-      mkdirSync(folder, { recursive: true });
-      await details.dialog.screenshot({ path: `${folder}/${name}.png` });
       await expect(output).not.toContainText("SAMPLE-PRIVATE");
       await expect(output.locator("pre")).toHaveText("{}");
       expect(

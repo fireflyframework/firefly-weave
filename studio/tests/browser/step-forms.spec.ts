@@ -17,7 +17,6 @@ SPDX-License-Identifier: Apache-2.0
 */
 import { parse, stringify } from "yaml";
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import {
   openStepFixture,
@@ -316,9 +315,6 @@ for (const size of sizes)
       await page.keyboard.press("Alt+ArrowDown");
       await expect(second).toHaveValue("escalate");
       await expect(second).toBeFocused();
-      await details.dialog.screenshot({
-        path: resolve(`../build/editor-m3/task-13-fix1/chips-${size.tag}.png`),
-      });
       await details.close();
       const saved = parse(await sourceText(page));
       expect(saved.spec.steps[2].cases[0].steps[0].decisions).toEqual([
@@ -347,11 +343,6 @@ for (const size of sizes)
         .getByRole("menuitem", { name: /Reset to default/ });
       await expect(reset).toHaveAttribute("aria-disabled", "true");
       await expect(reset).toContainText("Move or delete its steps first.");
-      await page.screenshot({
-        path: resolve(
-          `../build/editor-m3/task-13-fix2/protected-path-${size.tag}.png`,
-        ),
-      });
       await reset.focus();
       await reset.press("Enter");
       await page.keyboard.press("Escape");
@@ -424,11 +415,6 @@ for (const size of sizes)
         .getByRole("menuitem", { name: /Reset to default/ });
       await expect(reset).toHaveAttribute("aria-disabled", "true");
       await expect(reset).toContainText("Keep at least 1.");
-      await page.screenshot({
-        path: resolve(
-          `../build/editor-m3/task-13-fix2/required-path-${size.tag}.png`,
-        ),
-      });
       await reset.focus();
       await reset.press("Enter");
       await page.keyboard.press("Escape");
@@ -466,11 +452,6 @@ for (const size of sizes)
       await expect(
         rows.nth(2).getByRole("textbox", { name: "City", exact: true }),
       ).toHaveCount(0);
-      await details.dialog.screenshot({
-        path: resolve(
-          `../build/editor-m3/task-13-fix1/object-items-${size.tag}.png`,
-        ),
-      });
       await rows
         .nth(3)
         .getByRole("textbox", { name: "City", exact: true })
@@ -620,9 +601,6 @@ for (const size of sizes)
           .first()
           .getByRole("textbox", { name: "Value", exact: true }),
       ).toHaveValue(JSON.stringify({ nested: [1, true, null] }, null, 2));
-      await details.dialog.screenshot({
-        path: resolve(`../build/editor-m3/task-13/keyed-${size.tag}.png`),
-      });
       // Rows are 32 px on desktop with a fine pointer and 44 px for touch;
       // no target is under 24 px.
       const sizes = await density(page);
@@ -656,9 +634,6 @@ for (const size of sizes)
         .getByRole("button", { name: "Remove Path 2 of 3", exact: true })
         .click();
       await expect(cases.locator(".param-row.is-card")).toHaveCount(2);
-      await details.dialog.screenshot({
-        path: resolve(`../build/editor-m3/task-13/paths-${size.tag}.png`),
-      });
       await details.close();
       await details.openWithKeyboard("notify-sales");
       await details
@@ -669,9 +644,6 @@ for (const size of sizes)
         .field("answers")
         .getByRole("textbox", { name: "Answer 1 of 2" })
         .press("Tab");
-      await details.dialog.screenshot({
-        path: resolve(`../build/editor-m3/task-13/answers-${size.tag}.png`),
-      });
       await details.close();
       const saved = parse(await sourceText(page));
       expect(saved.spec.steps[2].cases[0].steps[0].decisions).toEqual([
@@ -755,9 +727,6 @@ for (const size of [
       expect(
         await page.evaluate(() => document.documentElement.scrollWidth),
       ).toBeLessThanOrEqual(size.width);
-      await page.screenshot({
-        path: resolve(`../build/editor-m3/task-12/parameters-${size.tag}.png`),
-      });
       await details.close();
     });
 
@@ -805,11 +774,6 @@ for (const size of [
         await page.evaluate(() => document.documentElement.scrollWidth),
       ).toBeLessThanOrEqual(size.width);
       await items.locator(".param-row").first().scrollIntoViewIfNeeded();
-      await details.dialog.screenshot({
-        path: resolve(
-          `../build/editor-m3/task-13-fix1/object-geometry-${size.tag}.png`,
-        ),
-      });
       await details.close();
     });
 
@@ -832,9 +796,6 @@ for (const size of [
       await values
         .getByRole("textbox", { name: "Name of row 1" })
         .scrollIntoViewIfNeeded();
-      await details.dialog.screenshot({
-        path: resolve(`../build/editor-m3/task-13/collections-${size.tag}.png`),
-      });
       await details.close();
       await details.openWithKeyboard("notify-sales");
       const answers = details.field("answers");
@@ -850,9 +811,6 @@ for (const size of [
       expect(
         await page.evaluate(() => document.documentElement.scrollWidth),
       ).toBeLessThanOrEqual(size.width);
-      await details.dialog.screenshot({
-        path: resolve(`../build/editor-m3/task-13/chips-${size.tag}.png`),
-      });
       await details.close();
     });
   });

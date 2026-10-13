@@ -15,7 +15,6 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-import { resolve } from "node:path";
 import { expect, test } from "@playwright/test";
 import { openStepFixture, sizes, yamlFile } from "./step-details-po";
 import {
@@ -908,9 +907,6 @@ for (const size of screenSizes) {
       const first = await audit();
       expect(first.width).toBeLessThanOrEqual(first.viewport);
       expect(first.failures).toEqual([]);
-      await page.screenshot({
-        path: resolve(`../build/editor-m3/task-11/layout-${size.tag}.png`),
-      });
       if (size.width < 768) {
         const tabs = details.dialog.getByRole("tablist", {
           name: "Step details panes",
