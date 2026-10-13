@@ -869,3 +869,48 @@ for (const viewport of [
       ).toBeVisible();
     });
   });
+
+for (const size of [
+  { name: "a mouse at 1440x900", width: 1440, height: 900, touch: false },
+  { name: "touch at 1440x900", width: 1440, height: 900, touch: true },
+  { name: "a phone at 360x640", width: 360, height: 640, touch: true },
+])
+  test.describe(`filter checkboxes with ${size.name}`, () => {
+    test.use({
+      viewport: { width: size.width, height: size.height },
+      hasTouch: size.touch,
+    });
+
+    test("are targets as tall as a control, with the box centered on the label", async ({
+      page,
+    }) => {
+      await workers(page, ["status.read"]);
+      await page.goto("/operate/workers");
+      await expect(rows(page).first()).toBeVisible();
+      const labels = page.locator(".operate-filters .checkbox-field");
+      expect(await labels.count()).toBeGreaterThan(0);
+      const figures = await labels.evaluateAll((nodes) =>
+        nodes.map((node) => {
+          const label = node.getBoundingClientRect();
+          const box = node
+            .querySelector("input[type=checkbox]")!
+            .getBoundingClientRect();
+          return {
+            height: label.height,
+            boxCenter: box.top + box.height / 2,
+            labelCenter: label.top + label.height / 2,
+          };
+        }),
+      );
+      const coarse = await page.evaluate(
+        () => matchMedia("(pointer: coarse)").matches,
+      );
+      const target = coarse || size.width < 768 ? 44 : 36;
+      for (const figure of figures) {
+        expect(figure.height).toBeGreaterThanOrEqual(target - 0.5);
+        expect(
+          Math.abs(figure.boxCenter - figure.labelCenter),
+        ).toBeLessThanOrEqual(0.5);
+      }
+    });
+  });

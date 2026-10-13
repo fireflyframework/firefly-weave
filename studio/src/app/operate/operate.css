@@ -122,6 +122,16 @@ SPDX-License-Identifier: Apache-2.0
 .operate-filters select {
   max-width: 100%;
 }
+/* A checkbox among the filters is a target as tall as a control: 36 px with a
+   mouse, 44 px on a narrow screen or a touch pointer. */
+.operate-filters .checkbox-field {
+  min-height: var(--control-md);
+}
+@media (max-width: 767px), (pointer: coarse) {
+  .operate-filters .checkbox-field {
+    min-height: var(--control-touch);
+  }
+}
 .operate-count {
   font: var(--type-caption);
   font-weight: 400;
