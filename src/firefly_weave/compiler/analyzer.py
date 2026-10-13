@@ -50,6 +50,7 @@ from firefly_weave.compiler.language_support import unsupported_uses
 from firefly_weave.compiler.llm import llm_action_valid, llm_input, llm_output_schema
 from firefly_weave.compiler.loops import (
     LOOP_ROOTS,
+    MAX_CONCURRENT_TASKS,
     LoopScope,
     index_schema,
     item_schema,
@@ -62,7 +63,7 @@ from firefly_weave.compiler.schemas import validate_contract_payload, validate_p
 from firefly_weave.compiler.source_map import pointer_child
 from firefly_weave.compiler.typecheck import TypeCheckLimit, check_compatibility, schema_types
 from firefly_weave.contracts.definitions import load_definition
-from firefly_weave.contracts.diagnostics import Diagnostic, RelatedLocation, SourceRange
+from firefly_weave.contracts.diagnostics import Diagnostic, RelatedLocation, SourceRange, SuggestedEdit
 from firefly_weave.contracts.limits import Limits
 from firefly_weave.contracts.values import JsonObject, JsonValue
 
@@ -94,7 +95,12 @@ _MESSAGES = {
     "LOOP_SCOPE": (
         "/item, /index and /loops are available only inside a forEach body, and /loops/ID must name an enclosing loop."
     ),
+    "LOOP_SIGNAL": "A loop body cannot wait for a signal; move the wait before or after the loop.",
     "LOOP_BODY_INCOMPLETE": "The loop body never completes, so any non-empty list would stop the run.",
+    "LOOP_FANOUT": (
+        f"Nested concurrency can issue more than {MAX_CONCURRENT_TASKS:,} tasks at once; "
+        "work will be spread over several turns."
+    ),
 }
 
 
@@ -230,6 +236,8 @@ class _Analyzer:
         self.definition: FrozenDocument | None = None
         # Loops enclosing the position being analyzed, outermost first.
         self.loops: tuple[LoopScope, ...] = ()
+        # Every loop as (path, product of the enclosing loops' maxItems, its maxItems, whether it holds no loop).
+        self.loop_chains: list[tuple[str, int, int, bool]] = []
 
     def location(self, path: str) -> SourceRange | None:
         while path not in self.source.locations and path:
@@ -260,15 +268,19 @@ class _Analyzer:
         unknown: bool = False,
         stage: Literal["resolution", "semantic"] = "semantic",
         related: str | None = None,
+        severity: Literal["error", "warning"] | None = None,
+        message: str | None = None,
+        edit: SuggestedEdit | None = None,
     ) -> None:
         self.add(
             Diagnostic(
                 code="WV-COMP-" + code,
-                severity=severity_for_unknown(self.strict) if unknown else "error",
+                severity=severity or (severity_for_unknown(self.strict) if unknown else "error"),
                 stage=stage,
                 path=path,
-                message=_message(code),
+                message=message or _message(code),
                 related=[] if related is None else [RelatedLocation(path=related, source=self.location(related))],
+                suggestedEdit=edit,
             )
         )
 
@@ -853,6 +865,8 @@ class _Analyzer:
                 }
                 self.guard(location, "human_output", output)
             elif kind == "signal":
+                if self.loops:
+                    self.issue("LOOP_SIGNAL", location)
                 output = cast(JsonObject, step["payloadSchema"])
                 self.guard(location, "signal_payload", output)
             elif kind == "forEach":
@@ -926,6 +940,23 @@ class _Analyzer:
         """Check one forEach and its body; returns the loop's output schema and its analyzed body."""
         identifier = cast(str, step["id"])
         concurrency, max_items = cast(int, step["concurrency"]), cast(int, step["maxItems"])
+        if len(self.loops) >= self.limits.max_loop_depth:
+            self.issue(
+                "LOOP_DEPTH", location, message=f"Loops can be nested at most {self.limits.max_loop_depth} deep."
+            )
+        if concurrency > self.concurrency:
+            self.issue("CONCURRENCY_LIMIT", location + "/concurrency")
+        if max_items > self.limits.max_loop_items:
+            self.issue(
+                "LOOP_MAX_ITEMS",
+                location + "/maxItems",
+                message=f"maxItems exceeds this platform's limit of {self.limits.max_loop_items:,}.",
+            )
+        tasks = 1
+        for enclosing in self.loops:
+            tasks *= enclosing.concurrency
+        if self.loops and tasks <= MAX_CONCURRENT_TASKS < tasks * concurrency:
+            self.issue("LOOP_FANOUT", location, severity="warning")
         items = cast(JsonObject, step["items"])
         before = self.error_count
         source = self.expression(items, location + "/items", visible)
@@ -936,6 +967,7 @@ class _Analyzer:
         scope_entry = LoopScope(identifier, item_schema(source), index_schema(max_items), concurrency, max_items, quiet)
         body = cast(JsonObject, step["body"])
         expression = cast(JsonObject, body["output"])
+        nested = len(self.loop_chains)
         self.loops += (scope_entry,)
         try:
             children, body_visible, completes = self.block(
@@ -950,6 +982,10 @@ class _Analyzer:
                 body_schema = {}
         finally:
             self.loops = self.loops[:-1]
+        outer = 1
+        for enclosing in self.loops:
+            outer *= enclosing.max_items
+        self.loop_chains.append((location, outer, max_items, len(self.loop_chains) == nested))
         self.guard(location + "/body/output", "branch_output", body_schema)
         branch = AnalyzedBranch(
             "body",
@@ -974,6 +1010,25 @@ class _Analyzer:
             if not self.reads_pending(items):
                 self.issue("UNKNOWN_COMPATIBILITY", path, unknown=True)
             self.guard(path, "loop_items", {"type": "array"})
+
+    def loop_budget(self) -> None:
+        """All loops together, each multiplied by the loops around it, stay within the run's iteration budget."""
+        limit = self.limits.max_run_iterations
+        total = sum(outer * max_items for _, outer, max_items, _ in self.loop_chains)
+        if total <= limit:
+            return
+        location, outer, max_items, _ = max(
+            (chain for chain in self.loop_chains if chain[3]), key=lambda chain: chain[1] * chain[2]
+        )
+        lowered = (limit - (total - outer * max_items)) // outer
+        self.issue(
+            "LOOP_BUDGET",
+            location,
+            message=(
+                f"Nested loops could run more than {limit:,} iterations in one run; lower maxItems on an inner loop."
+            ),
+            edit=SuggestedEdit(path=location + "/maxItems", value=lowered) if lowered >= 1 else None,
+        )
 
     def settle_pending(self) -> None:
         """Catalog-pending notes are the lowest priority: they only fill capacity that findings left.
@@ -1103,6 +1158,7 @@ class _Analyzer:
                 "Connector", cast(str, cast(JsonObject, slot)["connector"]), pointer_child("/spec/connections", name)
             )
         graph, visible, completes = self.block(cast(list[JsonObject], spec["steps"]), "/spec/steps", {}, ())
+        self.loop_budget()
         if completes:
             self.expression(
                 cast(JsonObject, spec["output"]), "/spec/output", visible, cast(JsonObject, spec["outputSchema"])
