@@ -29,7 +29,9 @@ SPDX-License-Identifier: Apache-2.0
   loop iteration; both are omitted for every other task.
 - The capacity check of one event's work runs at its end and after every 64
   steps or 1 MiB of new step output, instead of after every step. Work over
-  capacity is still refused; only the step at which the refusal happens can move.
+  capacity is still refused, but the refusal can happen at a later step of the
+  same event, and when a later step of that event fails, the run opens that
+  step's incident instead.
 - Keep typing in the selected form field when deferred row autofocus completes.
   Rapid row additions focus the newest item without overriding a later choice.
 - Update Studio's YAML parser to 2.8.3 so deeply nested documents produce a
