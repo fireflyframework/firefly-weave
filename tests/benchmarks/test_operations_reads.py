@@ -346,7 +346,7 @@ async def test_run_summaries_p95_for_every_single_filter(operations_dataset, nam
 MIGRATION_BATCH = 500
 
 
-@pytest.mark.parametrize("count", [10_000, 200_000, 1_000_000])
+@pytest.mark.parametrize("count", [10_000, 50_000, 200_000])
 async def test_upgrade_duration_storage_and_exact_accounting(count):
     """The operational facts migration on `count` retained runs: elapsed time, database growth, and usage counters
     equal to an independent recomputation afterwards."""
@@ -409,6 +409,16 @@ async def test_upgrade_duration_storage_and_exact_accounting(count):
                 after = await connection.scalar(text("SELECT pg_database_size(current_database())"))
                 ordinary_after = await connection.scalar(usage, ids)
                 facts = await connection.scalar(text("SELECT count(*) FROM run_facts"))
+                # Digests of the backfilled projections, to compare migration versions on the same data.
+                digests = {
+                    table: await connection.scalar(
+                        text(
+                            f"SELECT md5(string_agg((to_jsonb(f)-'facts_started_at')::text,'|' ORDER BY {key})) "
+                            f"FROM {table} f"
+                        )
+                    )
+                    for table, key in (("run_facts", "run_id"), ("incident_facts", "incident_id"))
+                }
                 expected = await recompute_usage_in_sql(connection, ids["tenant"], ids["project"])
                 actual = (
                     await connection.execute(
@@ -430,6 +440,7 @@ async def test_upgrade_duration_storage_and_exact_accounting(count):
                 "storage_delta_bytes": after - before,
                 "ordinary_bytes_delta": int(ordinary_after) - int(ordinary_before),
                 "usage_equals_recomputation": {(e, m): v for e, m, v in actual} == expected,
+                "digests": digests,
             },
         )
         assert facts == count

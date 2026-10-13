@@ -184,3 +184,33 @@ async def test_incident_source_and_fact_share_statements(operations_case, captur
     print(json.dumps({"phase": "incident_close", "normalized_counts": dict(Counter(closed))}))
     fact = (await case.rows("SELECT active_incidents FROM run_facts WHERE run_id=:id", id=run.id))[0]
     assert fact["active_incidents"] == 0
+
+
+async def test_fact_updates_charge_usage_without_refreshing_the_run_reservation(operations_case):
+    """A fact update changes no fact count, so only inserts and deletes of counted facts refresh the reservation."""
+    from sqlalchemy import text
+
+    case = operations_case
+    run = await case.start()
+    async with case.owner.begin() as session:
+        await session.execute(text("SET LOCAL track_functions='pl'"))
+
+        async def calls(name):
+            return await session.scalar(
+                text("SELECT coalesce(pg_stat_get_xact_function_calls(cast(:name AS regproc)),0)"), {"name": name}
+            )
+
+        refreshes, charges = await calls("public.weave_reserve_refresh"), await calls("public.weave_usage_charge")
+        for table in ("run_facts", "step_facts", "task_facts"):
+            await session.execute(text(f"UPDATE {table} SET run_id=run_id WHERE run_id=:run"), {"run": run.id})
+        assert await calls("public.weave_reserve_refresh") == refreshes
+        assert await calls("public.weave_usage_charge") == charges + 3
+        await session.execute(
+            text(
+                "INSERT INTO step_facts(tenant_id,project_id,environment_id,run_id,node_id,instance_key,kind,status) "
+                "SELECT tenant_id,project_id,environment_id,run_id,node_id,'work[9]',kind,status FROM step_facts "
+                "WHERE run_id=:run LIMIT 1"
+            ),
+            {"run": run.id},
+        )
+        assert await calls("public.weave_reserve_refresh") == refreshes + 1

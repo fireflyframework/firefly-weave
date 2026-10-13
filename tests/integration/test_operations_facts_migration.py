@@ -16,6 +16,8 @@
 
 """Real PostgreSQL upgrade, isolation and allocation checks for operational facts."""
 
+import json
+
 import pytest
 from operations_support import FACT_TABLES, assert_usage, seed_prior_head
 from sqlalchemy import text
@@ -1028,3 +1030,53 @@ async def test_latest_event_lifecycle_must_match_retained_source(
             await assert_usage(connection, ids)
     finally:
         await engine.dispose()
+
+
+async def test_backfill_reads_each_distinct_artifact_once_and_gives_its_facts_statistics(empty_settings):
+    """Runs that share an artifact are classified once, and later batches plan their reads on analyzed facts."""
+    from sqlalchemy import event
+
+    engine = create_async_engine(empty_settings.database_url.get_secret_value(), hide_parameters=True)
+    statements: list[str] = []
+
+    def capture(connection, cursor, statement, parameters, context, executemany):
+        statements.append(" ".join(statement.lower().split()))
+
+    try:
+        async with engine.begin() as connection:
+            await upgrade(connection, PRIOR_HEAD)
+            await seed_prior_head(connection, count=2000)
+            event.listen(engine.sync_engine, "before_cursor_execute", capture)
+            try:
+                await upgrade(connection, "0032_operations_facts")
+            finally:
+                event.remove(engine.sync_engine, "before_cursor_execute", capture)
+            assert await connection.scalar(text("SELECT count(*) FROM run_facts")) == 2000
+            assert await connection.scalar(text("SELECT reltuples FROM pg_class WHERE relname='run_facts'")) > 0
+        fetches = [sql for sql in statements if sql.startswith("select artifact") and "from runs" in sql]
+        # The seeded runs share one artifact; corrupted copies add their own few.
+        assert 0 < len(fetches) <= 10, len(fetches)
+        assert any(sql == "analyze run_facts" for sql in statements)
+    finally:
+        await engine.dispose()
+
+
+async def test_reservation_refresh_counts_task_facts_by_run_through_an_index(retained):
+    engine, ids = retained
+    async with engine.begin() as connection:
+        definition = await connection.scalar(text("SELECT indexdef FROM pg_indexes WHERE indexname='task_facts_run'"))
+        assert definition is not None and definition.endswith("(tenant_id, project_id, environment_id, run_id)")
+        await connection.execute(text("SET LOCAL enable_seqscan=off"))
+        plan = await connection.scalar(
+            text(
+                "EXPLAIN (FORMAT JSON) SELECT count(*) FROM public.task_facts WHERE tenant_id=:tenant "
+                "AND project_id=:project AND environment_id=:environment AND run_id=:first_run"
+            ),
+            ids,
+        )
+        assert "task_facts_run" in json.dumps(plan)
+        # The patched refresh keeps the key-collation lookups by primary key.
+        body = await connection.scalar(
+            text("SELECT pg_get_functiondef('public.weave_reserve_refresh(text,uuid,boolean)'::regprocedure)")
+        )
+        assert body.count('kind=(kind_name COLLATE "default")') == 2 and "public.task_facts" in body

@@ -200,6 +200,8 @@ def indexes() -> None:
         f"CREATE INDEX task_facts_ready ON task_facts({SCOPE_KEY},task_type,ready_since) WHERE ready_since IS NOT NULL"
     )
     op.execute(f"CREATE INDEX incident_facts_node_opened ON incident_facts({SCOPE_KEY},node_id,opened_at,incident_id)")
+    # A run's reservation refresh counts its task facts by run.
+    op.execute(f"CREATE INDEX task_facts_run ON task_facts({SCOPE_KEY},run_id)")
     # Incident pages newest (or oldest) opened first: known opening times walk this index in either direction.
     op.execute(
         f"CREATE INDEX incident_facts_opened ON incident_facts({SCOPE_KEY},opened_at DESC,incident_id DESC) "
@@ -252,6 +254,15 @@ def control_accounting() -> None:
                 i.tenant_id=f.tenant_id AND i.project_id=f.project_id AND i.environment_id=f.environment_id
                 AND i.id=f.incident_id WHERE f.tenant_id=tenant AND f.project_id=project
                 AND f.environment_id=(item->>'environment_id')::uuid AND i.run_id=identifier));""",
+    )
+    # A fact update changes no fact count and run facts are not counted, so only inserts and deletes of the counted
+    # facts refresh the run's reservation; every fact write is still charged to usage.
+    anchor = "PERFORM public.weave_reservation_touch(TG_TABLE_NAME,item);"
+    patch_function(
+        "public.weave_usage_charge()",
+        anchor,
+        "IF NOT (TG_TABLE_NAME='run_facts' OR (TG_OP='UPDATE' AND TG_TABLE_NAME IN "
+        "('step_facts','task_facts','incident_facts'))) THEN " + anchor + " END IF;",
     )
     anchor = "ELSIF relation_name IN ('task_intents','task_leases','incidents','run_deadlines') THEN"
     patch_function(
@@ -306,6 +317,37 @@ def classification(row: dict[str, Any]) -> dict[str, Any]:
     except (ValueError, TypeError, KeyError, AttributeError, RecursionError):
         result.update(classification_state="unavailable", node_kinds="{}")
     return result
+
+
+MEMO_ENTRIES = 1024
+
+
+def classify(connection, params, run_id, row: dict[str, Any], memo: dict) -> dict[str, Any]:
+    """`classification` of one run, reading its artifact only for an artifact this scope has not classified yet.
+
+    Once the run's own state, activation and request validate, the result depends only on the stored artifact, the
+    state's `unavailable` flag and whether the state names the current admission policy, so runs that share those
+    share the result. A row that does not validate is unavailable without reading its artifact.
+    """
+    try:
+        RunState.model_validate_json(json.dumps(row["state"]))
+        Activation.model_validate_json(json.dumps(row["activation"]))
+        StartRunRequest.model_validate_json(json.dumps(row["request"]))
+        key = (
+            bytes(row["artifact_key"]),
+            bool(row["state"].get("unavailable")),
+            row["state"].get("admission_policy") == POLICY,
+        )
+    except (ValueError, TypeError, KeyError, AttributeError, RecursionError):
+        return classification({})
+    if key not in memo:
+        artifact = connection.scalar(
+            sa.text(f"SELECT artifact FROM runs WHERE {SCOPE} AND id=:id"), {**params, "id": run_id}
+        )
+        if len(memo) >= MEMO_ENTRIES:
+            memo.pop(next(iter(memo)))
+        memo[key] = classification({**row, "artifact": artifact})
+    return dict(memo[key])
 
 
 EVENTS = f"""WITH ordered AS (
@@ -424,6 +466,8 @@ def backfill_incidents(connection, params, events) -> None:
 
 def backfill_scope(connection, params) -> None:
     after = None
+    # Classifications of the artifacts already seen in this scope (see classify).
+    memo: dict[tuple[bytes, bool, bool], dict[str, Any]] = {}
     while True:
         ids = list(
             connection.execute(
@@ -471,13 +515,16 @@ def backfill_scope(connection, params) -> None:
             if item["bytes"] <= FETCH_BYTES:
                 row = (
                     connection.execute(
-                        sa.text(f"SELECT artifact,state,activation,request FROM runs WHERE {SCOPE} AND id=:id"),
+                        sa.text(
+                            "SELECT state,activation,request,sha256(convert_to(artifact::text,'UTF8')) AS artifact_key "
+                            f"FROM runs WHERE {SCOPE} AND id=:id"
+                        ),
                         {**params, "id": item["id"]},
                     )
                     .mappings()
                     .one()
                 )
-                cached = classification(dict(row))
+                cached = classify(connection, params, item["id"], dict(row), memo)
                 state = row["state"]
             if not (
                 event.get("coherent")
@@ -541,6 +588,9 @@ def backfill_scope(connection, params) -> None:
             jsonb),:last_event_sequence)"""),
             facts,
         )
+        # The facts table is new in this transaction and has no statistics: without them the next statements of
+        # this batch and every later batch plan as if it were empty and read every fact inserted so far.
+        connection.execute(sa.text("ANALYZE run_facts"))
         backfill_incidents(connection, batch, events)
         after = ids[-1]
     connection.execute(
