@@ -211,6 +211,15 @@ test("asks for an OpenAI secret handle, never a key, and shows the operator comm
       .locator("code")
       .filter({ hasText: "weave platform secret set --handle openai-api-key" }),
   ).toBeVisible();
+  // A pasted key is never echoed: the command keeps its placeholder.
+  const pasted = "sk-proj-CANARY0123456789abcdefCANARY";
+  await form.getByLabel("Secret handle").fill(pasted);
+  await expect(
+    form
+      .locator("code")
+      .filter({ hasText: "weave platform secret set --handle HANDLE" }),
+  ).toBeVisible();
+  await expect(form).not.toContainText(pasted);
   await form.getByLabel("Secret handle").fill("no-credential");
   await form.getByRole("button", { name: "Save connection" }).click();
   await expect(form.getByRole("alert")).toContainText(

@@ -276,10 +276,8 @@ export interface AiTestRecord {
               on the platform:
             </p>
             <div class="command">
-              <code
-                >weave platform secret set --handle
-                {{ draft.handle.trim() || "HANDLE" }}</code
-              >
+              <!-- A pasted key is never echoed: anything that isn't a handle shows HANDLE. -->
+              <code>{{ secretCommand }}</code>
               <button
                 type="button"
                 class="tertiary"
