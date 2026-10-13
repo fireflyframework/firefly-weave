@@ -247,8 +247,40 @@ function stringSize(value: string, limits: Limits, path: string): number {
 
 interface Measured {
   size: number;
-  /** Whole numbers seen: each could be two bytes longer as a float (1500.0). */
-  integral: number;
+  /**
+   * Bytes the value could gain if its whole numbers were floats: two for
+   * each (1500 or 1500.0), three for a negative zero (0 or -0.0).
+   */
+  slack: number;
+}
+/** Bytes a whole number could gain if it were a float. */
+const slackOf = (value: number): number => (Object.is(value, -0) ? 3 : 2);
+
+/**
+ * Runs `walk` for a value measured at `path` once the value may already be
+ * over the byte budget when its whole numbers are floats (`over()`). Read
+ * as floats, the platform stops there with RESOURCE_LIMIT at `path`; read
+ * as whole numbers, it goes on. Only when it goes on to that same failure is
+ * the answer certain; any other ending is AMBIGUOUS.
+ */
+function settled<T>(path: string, over: () => boolean, walk: () => T): T {
+  let result: T;
+  try {
+    result = walk();
+  } catch (error) {
+    if (
+      over() &&
+      !(
+        error instanceof Failure &&
+        error.code === "WV-EXPR-RESOURCE_LIMIT" &&
+        error.path === path
+      )
+    )
+      throw failure(AMBIGUOUS, path);
+    throw error;
+  }
+  if (over()) throw failure(AMBIGUOUS, path);
+  return result;
 }
 
 /** compiler/expressions.py `measure_value`: bounded bytes, nodes and depth. */
@@ -261,52 +293,63 @@ function measure(
 ): Measured {
   let size = 0;
   let nodes = 0;
-  let integral = 0;
+  let slack = 0;
+  let over = false;
   const active = new Set<object>();
   const stack: [unknown, number, boolean][] = [[value, 0, false]];
-  while (stack.length) {
-    const [item, depth, leaving] = stack.pop()!;
-    if (leaving) {
-      active.delete(item as object);
-      continue;
-    }
-    nodes += 1;
-    work?.charge(path);
-    if (nodes > limits.maxDocumentNodes) throw failure("RESOURCE_LIMIT", path);
-    if (Array.isArray(item) || isRecord(item)) {
-      if (active.has(item)) throw failure("INVALID_JSON", path);
-      if (depth + 1 > limits.maxDepth) throw failure("RESOURCE_LIMIT", path);
-      active.add(item);
-      stack.push([item, depth, true]);
-      const keys = Array.isArray(item) ? null : Object.keys(item);
-      const length = Array.isArray(item) ? item.length : keys!.length;
-      size += 2 + Math.max(0, length - 1);
-      if (length > limits.maxDocumentNodes - nodes)
-        throw failure("RESOURCE_LIMIT", path);
-      if (Array.isArray(item))
-        for (const child of item) stack.push([child, depth + 1, false]);
-      else
-        for (const key of keys!) {
-          size += stringSize(key, limits, path) + 1;
-          stack.push([(item as Node)[key], depth + 1, false]);
+  return settled(
+    path,
+    () => over,
+    () => {
+      while (stack.length) {
+        const [item, depth, leaving] = stack.pop()!;
+        if (leaving) {
+          active.delete(item as object);
+          continue;
         }
-    } else if (typeof item === "string") size += stringSize(item, limits, path);
-    else if (item === null) size += 4;
-    else if (typeof item === "boolean") size += item ? 4 : 5;
-    else if (typeof item === "number") {
-      if (!Number.isFinite(item)) throw failure("INVALID_JSON", path);
-      if (Number.isInteger(item)) {
-        if (Math.abs(item) > MAX_SAFE_INTEGER) throw failure(AMBIGUOUS, path);
-        size += String(item).length;
-        integral += 1;
-      } else size += pythonFloatText(item).length;
-    } else throw failure("INVALID_JSON", path);
-    if (!context && size > limits.maxPayloadBytes)
-      throw failure("RESOURCE_LIMIT", path);
-  }
-  if (!context && size + 2 * integral > limits.maxPayloadBytes)
-    throw failure(AMBIGUOUS, path);
-  return { size, integral };
+        nodes += 1;
+        work?.charge(path);
+        if (nodes > limits.maxDocumentNodes)
+          throw failure("RESOURCE_LIMIT", path);
+        if (Array.isArray(item) || isRecord(item)) {
+          if (active.has(item)) throw failure("INVALID_JSON", path);
+          if (depth + 1 > limits.maxDepth)
+            throw failure("RESOURCE_LIMIT", path);
+          active.add(item);
+          stack.push([item, depth, true]);
+          const keys = Array.isArray(item) ? null : Object.keys(item);
+          const length = Array.isArray(item) ? item.length : keys!.length;
+          size += 2 + Math.max(0, length - 1);
+          if (length > limits.maxDocumentNodes - nodes)
+            throw failure("RESOURCE_LIMIT", path);
+          if (Array.isArray(item))
+            for (const child of item) stack.push([child, depth + 1, false]);
+          else
+            for (const key of keys!) {
+              size += stringSize(key, limits, path) + 1;
+              stack.push([(item as Node)[key], depth + 1, false]);
+            }
+        } else if (typeof item === "string")
+          size += stringSize(item, limits, path);
+        else if (item === null) size += 4;
+        else if (typeof item === "boolean") size += item ? 4 : 5;
+        else if (typeof item === "number") {
+          if (!Number.isFinite(item)) throw failure("INVALID_JSON", path);
+          if (Number.isInteger(item)) {
+            if (Math.abs(item) > MAX_SAFE_INTEGER)
+              throw failure(AMBIGUOUS, path);
+            size += String(item).length;
+            slack += slackOf(item);
+          } else size += pythonFloatText(item).length;
+        } else throw failure("INVALID_JSON", path);
+        if (!context && size > limits.maxPayloadBytes)
+          throw failure("RESOURCE_LIMIT", path);
+        // Read as floats, the value may already be over the budget here.
+        if (!context && size + slack > limits.maxPayloadBytes) over = true;
+      }
+      return { size, slack };
+    },
+  );
 }
 
 function childrenOf(
@@ -517,52 +560,63 @@ class Evaluator {
     } else if (tag === "object") {
       const built: Record<string, Json> = {};
       let size = 2;
-      let integral = 0;
+      let slack = 0;
       let first = true;
-      for (const [key, child] of Object.entries(body as Node)) {
-        const value = this.run(
-          child as Node,
-          pointerChild(`${path}/object`, key),
-        ) as Json;
-        const keySize = stringSize(key, this.limits, path);
-        const measured = measure(
-          value,
-          this.limits,
-          path,
-          false,
-          this.valueWork,
-        );
-        size += keySize + 1 + measured.size + (first ? 0 : 1);
-        integral += measured.integral;
-        if (size > this.limits.maxPayloadBytes)
-          throw failure("RESOURCE_LIMIT", path);
-        put(built, key, value);
-        first = false;
-      }
-      if (size + 2 * integral > this.limits.maxPayloadBytes)
-        throw failure(AMBIGUOUS, path);
+      let over = false;
+      settled(
+        path,
+        () => over,
+        () => {
+          for (const [key, child] of Object.entries(body as Node)) {
+            const value = this.run(
+              child as Node,
+              pointerChild(`${path}/object`, key),
+            ) as Json;
+            const keySize = stringSize(key, this.limits, path);
+            const measured = measure(
+              value,
+              this.limits,
+              path,
+              false,
+              this.valueWork,
+            );
+            size += keySize + 1 + measured.size + (first ? 0 : 1);
+            slack += measured.slack;
+            if (size > this.limits.maxPayloadBytes)
+              throw failure("RESOURCE_LIMIT", path);
+            if (size + slack > this.limits.maxPayloadBytes) over = true;
+            put(built, key, value);
+            first = false;
+          }
+        },
+      );
       result = built;
     } else if (tag === "array") {
       const built: Json[] = [];
       let size = 2;
-      let integral = 0;
-      (body as Node[]).forEach((child, i) => {
-        const value = this.run(child, `${path}/array/${i}`) as Json;
-        const measured = measure(
-          value,
-          this.limits,
-          path,
-          false,
-          this.valueWork,
-        );
-        size += measured.size + (i > 0 ? 1 : 0);
-        integral += measured.integral;
-        if (size > this.limits.maxPayloadBytes)
-          throw failure("RESOURCE_LIMIT", path);
-        built.push(value);
-      });
-      if (size + 2 * integral > this.limits.maxPayloadBytes)
-        throw failure(AMBIGUOUS, path);
+      let slack = 0;
+      let over = false;
+      settled(
+        path,
+        () => over,
+        () =>
+          (body as Node[]).forEach((child, i) => {
+            const value = this.run(child, `${path}/array/${i}`) as Json;
+            const measured = measure(
+              value,
+              this.limits,
+              path,
+              false,
+              this.valueWork,
+            );
+            size += measured.size + (i > 0 ? 1 : 0);
+            slack += measured.slack;
+            if (size > this.limits.maxPayloadBytes)
+              throw failure("RESOURCE_LIMIT", path);
+            if (size + slack > this.limits.maxPayloadBytes) over = true;
+            built.push(value);
+          }),
+      );
       result = built;
     } else {
       const { name, args } = body as { name: string; args: Node[] };

@@ -47,6 +47,7 @@ const corpus = JSON.parse(
   limits: Record<string, number>;
   contexts: unknown[];
   floatText: { value: number; text: string }[];
+  ambiguous: Omit<Case, "result">[];
   cases: Case[];
 };
 const camel: Record<string, keyof Limits> = {
@@ -100,6 +101,21 @@ describe("the formula evaluator", () => {
     expect(wrong).toEqual([]);
   });
 
+  it("refuses every case whose result depends on how numbers are read", () => {
+    expect(corpus.ambiguous.length).toBeGreaterThanOrEqual(20);
+    const answered: string[] = [];
+    for (const item of corpus.ambiguous) {
+      const context =
+        typeof item.context === "number"
+          ? corpus.contexts[item.context]
+          : item.context;
+      const result = evaluate(item.expression, context, limitsOf(item.limits));
+      if (result.ok || result.code !== AMBIGUOUS)
+        answered.push(`${item.name}: ${JSON.stringify(result)}`);
+    }
+    expect(answered).toEqual([]);
+  });
+
   it("writes floats as Python does, for the byte budget", () => {
     for (const { value, text } of corpus.floatText)
       expect(pythonFloatText(value), String(value)).toBe(text);
@@ -132,6 +148,42 @@ describe("the formula evaluator", () => {
       { ...DEFAULT_LIMITS, maxPayloadBytes: 7 },
     );
     expect(near).toMatchObject({ ok: false, code: AMBIGUOUS });
+  });
+
+  it("refuses near the budget wherever a float reading could change the answer", () => {
+    const tight = (bytes: number) => ({
+      ...DEFAULT_LIMITS,
+      maxPayloadBytes: bytes,
+    });
+    // The literal alone: "[1500]" is six bytes, "[1500.0]" eight.
+    expect(evaluate({ literal: [1500] }, {}, tight(7))).toMatchObject({
+      ok: false,
+      code: AMBIGUOUS,
+    });
+    expect(evaluate({ literal: [1500] }, {}, tight(8))).toEqual({
+      ok: true,
+      value: [1500],
+    });
+    // A negative zero is "0" or "-0.0": three bytes apart.
+    expect(evaluate({ literal: -0 }, {}, tight(3))).toMatchObject({
+      ok: false,
+      code: AMBIGUOUS,
+    });
+    expect(evaluate({ literal: -0 }, {}, tight(4))).toMatchObject({
+      ok: true,
+    });
+    // As floats, the first item already fills the budget; read as whole
+    // numbers, the second would fail on its own, with another error.
+    expect(
+      evaluate({ array: [{ ref: "/l" }, { ref: "/m" }] }, { l: [1] }, tight(6)),
+    ).toMatchObject({ ok: false, code: AMBIGUOUS });
+    expect(
+      evaluate(
+        { object: { a: { ref: "/l" }, b: { ref: "/m" } } },
+        { l: [1] },
+        tight(10),
+      ),
+    ).toMatchObject({ ok: false, code: AMBIGUOUS });
   });
 
   it("reads __proto__ and constructor as plain data and never runs code", () => {

@@ -21,11 +21,12 @@ evaluates hand-written and seeded random expressions with the Python evaluator a
 expression, its context (inline, or the index of a shared context), any smaller limits, and the result: a value, or
 the error code and the expression path where it happened. Studio's vitest suite evaluates every case and must agree.
 
-JavaScript reads JSON differently in two ways: it can't tell ``2`` from ``2.0``, and it lists integer-like object
-keys first. Each case is written the way JavaScript reads it. A case whose result would change under either reading,
-or that holds a whole number beyond 9,007,199,254,740,991 in size (which JavaScript can't read exactly), is left out
-and counted under ``excluded``. The corpus also records how Python writes floats, which the evaluator's byte budget
-counts, and how the HTTP connector encodes a path segment.
+JavaScript reads JSON differently in two ways: it can't tell ``2`` from ``2.0`` (or ``0`` from ``-0.0``), and it
+lists integer-like object keys first. Each case is written the way JavaScript reads it. A case whose result would
+change under either reading, or that holds a whole number beyond 9,007,199,254,740,991 in size (which JavaScript
+can't read exactly), is left out and counted under ``excluded``. Cases left out because of how numbers are read are
+listed under ``ambiguous``: Studio must refuse to preview each of them. The corpus also records how Python writes
+floats, which the evaluator's byte budget counts, and how the HTTP connector encodes a path segment.
 
 Run ``uv run --locked --all-extras python scripts/studio_expression_corpus.py`` to regenerate the file, or add
 ``--check`` to fail when it is out of date.
@@ -60,7 +61,8 @@ COLLECTIONS = ("contains", "notContains", "in", "notIn", "startsWith", "endsWith
 OPERATORS = (*COMPARISONS, *COLLECTIONS, "and", "or", "not", "exists", "coalesce", "concat", "join")
 _ARRAY_INDEX = re.compile(r"0|[1-9][0-9]*")
 UNSAFE = "a whole number beyond 9,007,199,254,740,991 in size"
-READING = "a result that depends on how JavaScript reads numbers or key order"
+NUMBERS = "a result that depends on whether a whole number is read as a float"
+KEY_ORDER = "a result that depends on the order JavaScript lists integer-like keys in"
 
 CONTEXTS: tuple[Any, ...] = (
     {
@@ -275,6 +277,32 @@ def _lit(value: Any) -> dict[str, Any]:
     return {"literal": value}
 
 
+def _nested_list(depth: int) -> Any:
+    value: Any = 1
+    for _ in range(depth):
+        value = [value]
+    return value
+
+
+def _nested_array(depth: int) -> Any:
+    value: Any = _lit(1)
+    for _ in range(depth):
+        value = {"array": [value]}
+    return value
+
+
+def _nested_not(depth: int) -> Any:
+    value: Any = _lit(True)
+    for _ in range(depth):
+        value = _op("not", value)
+    return value
+
+
+def _size(value: Any) -> int:
+    """Bytes of ``value`` as compact JSON with Python's number text, as the byte budget counts them."""
+    return len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+
+
 # (name, expression, context index or inline context, smaller limits or None)
 HAND: tuple[tuple[str, Any, Any, dict[str, int] | None], ...] = (
     ("a reference reads the input", _ref("/input/amount"), 0, None),
@@ -399,25 +427,95 @@ HAND: tuple[tuple[str, Any, Any, dict[str, int] | None], ...] = (
         {"input": {"a": [1, 2, 3, 4, 5]}, "steps": {}},
         {"max_document_nodes": 6},
     ),
-    ("text over the byte budget, in UTF-8 bytes", _lit("😀😀"), 2, {"max_payload_bytes": 9}),
-    ("text within the byte budget", _lit("😀"), 2, {"max_payload_bytes": 9}),
+    ("text over the byte budget, in UTF-8 bytes", _lit("😀😀"), {}, {"max_payload_bytes": 9}),
+    ("text within the byte budget", _lit("😀"), {}, {"max_payload_bytes": 9}),
     (
         "text work counts code points across comparisons",
         _op("and", *[_op("contains", _ref("/input/emoji3"), _lit("😀")) for _ in range(5)]),
         3,
         {"max_payload_bytes": 30},
     ),
-    ("Python writes 1e-07 in five characters", _lit(1e-07), 2, {"max_payload_bytes": 4}),
-    ("Python writes 1.5e-05 in seven characters", _lit(1.5e-05), 2, {"max_payload_bytes": 7}),
-    ("a control character counts six bytes", _lit("\u0001"), 2, {"max_payload_bytes": 7}),
-    ("a line break counts two bytes", _lit("\n"), 2, {"max_payload_bytes": 4}),
+    ("Python writes 1e-07 in five characters", _lit(1e-07), {}, {"max_payload_bytes": 5}),
+    ("Python writes 1e-07 in more than four characters", _lit(1e-07), {}, {"max_payload_bytes": 4}),
+    ("Python writes 1.5e-05 in seven characters", _lit(1.5e-05), {}, {"max_payload_bytes": 7}),
+    ("Python writes 1.5e-05 in more than six characters", _lit(1.5e-05), {}, {"max_payload_bytes": 6}),
+    ("a control character counts six bytes", _lit("\u0001"), {}, {"max_payload_bytes": 8}),
+    ("a control character counts more than five bytes", _lit("\u0001"), {}, {"max_payload_bytes": 7}),
+    ("a line break counts two bytes", _lit("\n"), {}, {"max_payload_bytes": 4}),
+    ("a line break counts more than one byte", _lit("\n"), {}, {"max_payload_bytes": 3}),
     (
         "a built group over the byte budget",
         {"object": {"a": _lit("xxxx"), "b": _lit("yyyy")}},
-        2,
+        {},
         {"max_payload_bytes": 16},
     ),
-    ("join within its budget", _op("join", _lit(["a", "b", "c"]), _lit("--")), 2, {"max_payload_bytes": 13}),
+    ("join within its budget", _op("join", _lit(["a", "b", "c"]), _lit("--")), {}, {"max_payload_bytes": 13}),
+    ("lt is false for equal numbers", _op("lt", _lit(2), _lit(2)), 0, None),
+    ("gt is false for equal text", _op("gt", _lit("b"), _lit("b")), 0, None),
+    ("lt is false for equal text", _op("lt", _ref("/input/name"), _lit("Ada")), 0, None),
+    ("gt is false for equal numbers", _op("gt", _lit(2.5), _ref("/input/price")), 0, None),
+    (
+        "join charges its separators to the text budget",
+        _op(
+            "eq",
+            _op("join", _lit(["a", "b"]), _lit("xxxxxxxxxx")),
+            _op("join", _lit(["a", "b"]), _lit("xxxxxxxxxx")),
+        ),
+        {},
+        {"max_payload_bytes": 20},
+    ),
+    ("a negative zero is zero", _op("eq", _lit(-0.0), _lit(0)), 0, None),
+    ("a negative zero within the byte budget", _lit(-0.0), {}, {"max_payload_bytes": 4}),
+    ("a built group keeps integer-like keys", {"object": {"b": _lit(1), "1": _lit(2), "a": _lit(3)}}, 2, None),
+    (
+        "text beyond the Basic Multilingual Plane at the byte budget",
+        _lit("😀" * 1023),
+        {},
+        {"max_payload_bytes": 4094},
+    ),
+    (
+        "text beyond the Basic Multilingual Plane over the byte budget",
+        _lit("😀" * 1023),
+        {},
+        {"max_payload_bytes": 4093},
+    ),
+    ("three-byte characters at the byte budget", _lit("\uffff" * 1364), {}, {"max_payload_bytes": 4094}),
+    ("three-byte characters over the byte budget", _lit("\uffff" * 1364), {}, {"max_payload_bytes": 4093}),
+    (
+        "text work counts code points beyond the Basic Multilingual Plane",
+        _op(
+            "and",
+            _op("startsWith", _lit("😀" * 600), _lit("😀" * 600)),
+            _op("endsWith", _lit("😀" * 600), _lit("😀" * 600)),
+        ),
+        {},
+        {"max_payload_bytes": 2402},
+    ),
+    *((f"a list nested {depth} deep", _lit(_nested_list(depth)), {}, None) for depth in (31, 32, 33)),
+    *(
+        (f"an array expression nested {depth} deep", _nested_array(depth), {}, None)
+        for depth in (15, 16, 17, 31, 32, 33)
+    ),
+    *((f"not nested {depth} deep", _nested_not(depth), {}, None) for depth in (15, 16, 17, 31, 32, 33)),
+    *(
+        (f"a context nested {depth} deep", _ref("/input"), {"input": _nested_list(depth - 1)}, None)
+        for depth in (31, 32, 33)
+    ),
+    *(
+        (f"{value!r} with a budget of {budget}", _lit(value), {}, {"max_payload_bytes": budget})
+        for value in (0, -7, 1500, -0.0, 2.0, [1, 2], {"a": 1500}, [[0], {"b": -0.0}], 0.5)
+        for budget in range(max(1, _size(value) - 3), _size(value) + 4)
+    ),
+    *(
+        (
+            f"a built list of {value!r} with a budget of {budget}",
+            {"array": [_ref("/l"), _ref("/m")]},
+            {"l": value},
+            {"max_payload_bytes": budget},
+        )
+        for value in ([1], -0.0, {"a": 2})
+        for budget in range(max(1, _size(value) - 1), _size(value) + 6)
+    ),
 )
 
 
@@ -426,6 +524,9 @@ def js_view(value: Any) -> Any:
     if value is None or isinstance(value, (bool, str)):
         return value
     if isinstance(value, float):
+        # JavaScript keeps a negative zero; JSON writes it as -0.0.
+        if math.copysign(1.0, value) < 0 and value == 0:
+            return value
         return int(value) if math.isfinite(value) and value.is_integer() else value
     if isinstance(value, int):
         return value
@@ -446,6 +547,17 @@ def float_view(value: Any) -> Any:
     if isinstance(value, list):
         return [float_view(item) for item in value]
     return {key: float_view(item) for key, item in value.items()}
+
+
+def int_view(value: Any) -> Any:
+    """``value`` with a negative zero read as the whole number 0, as a platform reading ``-0`` would."""
+    if isinstance(value, float):
+        return 0 if value == 0 else value
+    if isinstance(value, list):
+        return [int_view(item) for item in value]
+    if isinstance(value, dict):
+        return {key: int_view(item) for key, item in value.items()}
+    return value
 
 
 def unsafe(value: Any) -> bool:
@@ -469,11 +581,17 @@ def outcome(expression: Any, context: Any, limits: dict[str, int]) -> dict[str, 
 
 
 def _same(left: dict[str, Any], right: dict[str, Any]) -> bool:
-    return json.dumps(js_view(left), sort_keys=True) == json.dumps(js_view(right), sort_keys=True)
+    # A negative zero equals zero as a JSON value.
+    return json.dumps(int_view(js_view(left)), sort_keys=True) == json.dumps(int_view(js_view(right)), sort_keys=True)
 
 
 def record(
-    name: str, expression: Any, context: Any, limits: dict[str, int] | None, excluded: Counter[str]
+    name: str,
+    expression: Any,
+    context: Any,
+    limits: dict[str, int] | None,
+    excluded: Counter[str],
+    ambiguous: list[dict[str, Any]],
 ) -> dict[str, Any] | None:
     merged = {**DEFAULTS, **(limits or {})}
     inline = CONTEXTS[context] if type(context) is int else context
@@ -482,10 +600,21 @@ def record(
         return None
     seen = (js_view(expression), js_view(inline))
     result = outcome(seen[0], seen[1], merged)
-    for view in ((expression, inline), (float_view(seen[0]), float_view(seen[1]))):
+    for view in ((float_view(seen[0]), float_view(seen[1])), (int_view(seen[0]), int_view(seen[1]))):
         if not _same(outcome(view[0], view[1], merged), result):
-            excluded[READING] += 1
+            excluded[NUMBERS] += 1
+            entry: dict[str, Any] = {
+                "name": name,
+                "expression": seen[0],
+                "context": context if type(context) is int else seen[1],
+            }
+            if limits:
+                entry["limits"] = limits
+            ambiguous.append(entry)
             return None
+    if not _same(outcome(expression, inline, merged), result):
+        excluded[KEY_ORDER] += 1
+        return None
     case: dict[str, Any] = {
         "name": name,
         "expression": seen[0],
@@ -541,7 +670,8 @@ def random_limits(rng: random.Random) -> dict[str, int] | None:
 
 def build() -> dict[str, Any]:
     excluded: Counter[str] = Counter()
-    cases = [case for args in HAND if (case := record(*args, excluded)) is not None]
+    ambiguous: list[dict[str, Any]] = []
+    cases = [case for args in HAND if (case := record(*args, excluded, ambiguous)) is not None]
     rng = random.Random(SEED)
     attempt = 0
     added = 0
@@ -549,7 +679,7 @@ def build() -> dict[str, Any]:
         attempt += 1
         expression = random_expression(rng, 0)
         context = rng.randrange(len(CONTEXTS))
-        case = record(f"random {attempt}", expression, context, random_limits(rng), excluded)
+        case = record(f"random {attempt}", expression, context, random_limits(rng), excluded, ambiguous)
         if case is not None:
             cases.append(case)
             added += 1
@@ -561,6 +691,7 @@ def build() -> dict[str, Any]:
         "contexts": [js_view(context) for context in CONTEXTS],
         "floatText": [{"value": value, "text": str(value)} for value in FLOATS],
         "pathSegments": [{"text": text, "encoded": quote(text, safe="-._~")} for text in SEGMENTS],
+        "ambiguous": ambiguous,
         "cases": cases,
     }
 
@@ -574,7 +705,7 @@ def render() -> str:
     lines = ["{"]
     for key in ("generator", "seed", "limits", "excluded"):
         lines.append(f"{_line(key)}:{_line(corpus[key])},")
-    lists = ("contexts", "floatText", "pathSegments", "cases")
+    lists = ("contexts", "floatText", "pathSegments", "ambiguous", "cases")
     for key in lists:
         items = corpus[key]
         lines.append(f"{_line(key)}:[")

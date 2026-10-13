@@ -111,6 +111,21 @@ def test_the_corpus_covers_every_operator_every_error_code_the_loop_roots_and_ch
     }
 
 
+def test_every_number_reading_refusal_is_a_case_the_readings_disagree_on():
+    generator = runpy.run_path("scripts/studio_expression_corpus.py")
+    data = corpus()
+    assert len(data["ambiguous"]) >= 20
+    for case in data["ambiguous"]:
+        limits = {**data["limits"], **case.get("limits", {})}
+        context = context_of(data, case)
+        seen = generator["outcome"](case["expression"], context, limits)
+        others = [
+            generator["outcome"](view(case["expression"]), view(context), limits)
+            for view in (generator["float_view"], generator["int_view"])
+        ]
+        assert any(not generator["_same"](seen, other) for other in others), case["name"]
+
+
 def test_floats_and_path_segments_are_written_as_python_and_the_http_connector_write_them():
     data = corpus()
     assert all(entry["text"] == str(entry["value"]) for entry in data["floatText"])
