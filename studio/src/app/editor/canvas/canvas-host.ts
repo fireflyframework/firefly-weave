@@ -101,4 +101,6 @@ export interface CanvasHost {
     content: ClipboardContent,
     at: Insertion,
   ): Promise<PastePlan | null>;
+  /** Tidy layout: clears legacy positions and moves notes as one undo step, with a toast; false when refused. */
+  tidyCanvas(next: CanvasSidecar | null): boolean;
 }

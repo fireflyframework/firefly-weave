@@ -87,6 +87,12 @@ describe("canvas keys", () => {
       "addStickyNote",
     );
     expect(canvasCommand(press("ArrowLeft"), on)).toBe("previousStep");
+    expect(
+      canvasCommand(
+        press("T", { altKey: true, shiftKey: true, code: "KeyT" }),
+        on,
+      ),
+    ).toBe("tidyLayout");
   });
 
   it("leave rows for features the canvas doesn't have yet to those features", () => {
@@ -176,11 +182,11 @@ describe("canvas keys", () => {
       "Cut",
       "Paste",
       "Add a sticky note",
+      "Tidy layout",
     ])
       expect(canvas).toContain(label);
     for (const label of [
       "Pin output or unpin",
-      "Tidy layout",
       "Execute workflow",
       "Toggle a breakpoint",
     ])

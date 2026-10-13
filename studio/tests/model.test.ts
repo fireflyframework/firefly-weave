@@ -1193,6 +1193,29 @@ describe("the canvas sidecar follows the workflow", () => {
     model.redo();
     expect(model.definition.spec.steps).toHaveLength(2);
   });
+  it("tidies as one undo step: legacy positions go, notes move, and Undo brings both back", () => {
+    const model = new StructuredCanvasAdapter();
+    const step = model.insert("transform");
+    model.position(step.id, { x: 400, y: 80 });
+    model.updateCanvas({ ...model.canvas, notes: [note("note-00000001")] });
+    const revision = model.revision;
+    expect(
+      model.tidy({
+        ...model.canvas,
+        notes: [{ ...note("note-00000001"), x: 512 }],
+      }),
+    ).toBe(true);
+    expect(model.layout.positions).toEqual({});
+    expect(model.canvas.notes?.[0].x).toBe(512);
+    expect(model.revision).toBe(revision + 1);
+    model.undo();
+    expect(model.layout.positions).toEqual({ [step.id]: { x: 400, y: 80 } });
+    expect(model.canvas.notes?.[0].x).toBe(0);
+    const tidy = new StructuredCanvasAdapter();
+    const before = tidy.revision;
+    expect(tidy.tidy(null)).toBe(false);
+    expect(tidy.revision).toBe(before);
+  });
 });
 
 describe("pasting into the model", () => {

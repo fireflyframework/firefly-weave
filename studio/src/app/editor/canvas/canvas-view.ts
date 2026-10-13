@@ -69,8 +69,10 @@ import {
 } from "../state/canvas-commands";
 import { minimapPinned, setMinimapPinned } from "../state/canvas-preferences";
 import {
+  CANVAS_TOO_BIG,
   NOTE_SIZES,
   addNote,
+  canvasBytes,
   removeNote,
   stepNoteLine,
   triggerInputs,
@@ -130,6 +132,8 @@ import { SubNodeRow, chipIcon, type SubNodeView } from "./sub-node-row";
 import { TRIGGER_LABELS, triggerNoteKey, triggerTile } from "./trigger-tiles";
 import { noteTitle } from "./note-markdown";
 import { NotesLayer, type NoteEdit, type NoteView } from "./notes-layer";
+import { tidyNotes, tileBoxes } from "./tidy";
+import { CANVAS_MAX_BYTES } from "../state/test-data";
 import { ownedActionsOf } from "../ndv/owned/owned-store";
 import {
   CLIPBOARD_WEB_FORMAT,
@@ -1777,6 +1781,9 @@ export class CanvasView implements OnInit, DoCheck {
       case "paste":
         // The browser's paste event brings the clipboard's text: pasteEvent.
         return false;
+      case "tidyLayout":
+        this.tidy();
+        return true;
       case "addStickyNote":
         this.addNote();
         return true;
@@ -2022,7 +2029,28 @@ export class CanvasView implements OnInit, DoCheck {
       return h.notify(error instanceof Error ? error.message : String(error));
     }
     if (next !== h.model.canvas) h.changeCanvas(next);
+  } /** Tidy layout: legacy positions go, free notes leave the steps they cover, then Fit view. */
+  tidy() {
+    const h = this.host();
+    const moves = tidyNotes(
+      this.noteViews().map((note) => ({ ...note, anchored: !!note.anchor })),
+      tileBoxes(this.layout()),
+    );
+    const canvas = h.model.canvas;
+    const next = moves.size
+      ? {
+          ...canvas,
+          notes: (canvas.notes ?? []).map((note) => {
+            const to = moves.get(note.id);
+            return to ? { ...note, x: to.x, y: to.y } : note;
+          }),
+        }
+      : null;
+    if (next && canvasBytes(next) > CANVAS_MAX_BYTES)
+      return h.notify(CANVAS_TOO_BIG);
+    if (h.tidyCanvas(next)) this.fit();
   }
+
   /** A moved anchored note keeps following its step from its new offset. */
   private boxPatch(edit: {
     id: string;

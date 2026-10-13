@@ -3935,6 +3935,32 @@ export class App implements CanvasHost {
     );
     return planned;
   }
+  /** Tidy layout on the new canvas: one undo step, with an Undo toast. */
+  tidyCanvas(next: CanvasSidecar | null): boolean {
+    if (this.editingLocked || this.model.readonly) {
+      this.notify(
+        this.model.readonly
+          ? "Fix the source before tidying the canvas."
+          : "Editing is paused while the simulation runs.",
+      );
+      return false;
+    }
+    if (!next && !Object.keys(this.model.layout.positions).length) {
+      this.notify("The canvas is already tidy.");
+      return true;
+    }
+    this.perform(() => this.model.tidy(next));
+    if (this.error) return false;
+    const revision = this.model.revision;
+    this.notify("Tidied the canvas.", {
+      label: "Undo",
+      run: () =>
+        this.model.revision === revision
+          ? this.undo()
+          : this.notify("The workflow changed since. Use Undo in the toolbar."),
+    });
+    return true;
+  }
   /** Selects a step and moves focus into its details: their title, or the step name to rename it. */
   async openStep(id: string, focus: "details" | "rename" | "issues") {
     // Blur can rename the tile before its double-click reaches the canvas.

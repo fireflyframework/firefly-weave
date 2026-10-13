@@ -687,7 +687,23 @@ export class StructuredCanvasAdapter {
       note.x = Math.round(point.x);
       note.y = Math.round(point.y);
     }
+  } /**
+   * Tidy layout: clears legacy positions and applies the tidied canvas as
+   * one undo step. False when there was nothing to do.
+   */
+  tidy(next: CanvasSidecar | null): boolean {
+    const positions = Object.keys(this.layout.positions).length > 0;
+    if (!positions && !next) return false;
+    if (this.readonly) throw Error("Fix source before editing the graph.");
+    this.checkpoint();
+    if (positions) {
+      this.layout.positions = {};
+      this.layout.revision++;
+    }
+    if (next) this.canvas = next;
+    return true;
   }
+
   private computeLayout() {
     return computeLaneLayout(this.definition, this.layout.positions);
   }

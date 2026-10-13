@@ -43,6 +43,7 @@ export const CANVAS_COMMANDS: ReadonlySet<KeymapCommand> =
     "cut",
     "paste",
     "addStickyNote",
+    "tidyLayout",
     "selectAll",
     "duplicate",
     "deleteSelection",
