@@ -263,6 +263,37 @@ test.describe("sticky notes at 1440x900", () => {
       .toBe(true);
   });
 
+  test("the text box counts 4000 characters as the note keeps them, and says when it cuts a paste", async ({
+    page,
+  }) => {
+    const canvas = await openStoredWorkflow(page, {
+      id: "notes-limit",
+      source,
+      canvas: canvasWith([note("note-0000000e", "Short")]),
+    });
+    const text = canvas.root.getByRole("textbox", { name: "Note text" });
+    const codePoints = () =>
+      text.evaluate((box: HTMLTextAreaElement) => [...box.value].length);
+    await canvas.root.getByRole("group", { name: "Note: Short" }).dblclick();
+    await text.press("ControlOrMeta+a");
+    // 3,000 emoji are 6,000 UTF-16 units but 3,000 characters: all fit.
+    await page.keyboard.insertText("\u{1F642}".repeat(3000));
+    await expect.poll(codePoints).toBe(3000);
+    await text.press("ControlOrMeta+a");
+    await page.keyboard.insertText("x".repeat(4500));
+    await expect.poll(codePoints).toBe(4000);
+    await expect(
+      toast(
+        page,
+        "A note holds at most 4000 characters, so Studio cut the rest.",
+      ),
+    ).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(canvas.root.locator(".sticky-note-body")).toHaveText(
+      "x".repeat(4000),
+    );
+  });
+
   test("long words wrap inside the note, and the canvas's 256 KB cap refuses an edit with its reason", async ({
     page,
   }) => {

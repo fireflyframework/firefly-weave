@@ -132,8 +132,9 @@ export class NoteBody {
         <textarea
           class="sticky-note-text"
           aria-label="Note text"
-          [attr.maxlength]="maxText"
           [value]="note.text"
+          (input)="limit($event)"
+          (compositionend)="limit($event)"
           (keydown)="textKey($event, note)"
           (blur)="commit($event, note)"
         ></textarea>
@@ -183,7 +184,8 @@ export class NotesLayer {
   editing = input("");
   edit = output<NoteEdit>();
   editingChange = output<string>();
-  readonly maxText = MAX_NOTE_TEXT;
+  /** A sentence for the canvas to show, as when a paste was cut. */
+  notice = output<string>();
   private readonly element: HTMLElement = inject(ElementRef).nativeElement;
   private readonly injector = inject(Injector);
   private drag: {
@@ -340,6 +342,30 @@ export class NotesLayer {
           .querySelector<HTMLElement>(`[data-note="${CSS.escape(note.id)}"]`)
           ?.focus(),
       { injector: this.injector },
+    );
+  }
+  /**
+   * Keeps the text within the note's limit, counted as the stored note
+   * counts it (characters, so an emoji is one, not two as `maxlength`
+   * counts). What goes over is cut from the end of what was just typed or
+   * pasted, right before the caret, and the canvas says so.
+   */
+  limit(event: Event) {
+    if ((event as InputEvent).isComposing) return;
+    const box = event.target as HTMLTextAreaElement;
+    const over = [...box.value].length - MAX_NOTE_TEXT;
+    if (over <= 0) return;
+    const caret = box.selectionEnd;
+    const before = [...box.value.slice(0, caret)];
+    const kept = before.slice(0, Math.max(0, before.length - over)).join("");
+    const after = [...box.value.slice(caret)].slice(
+      0,
+      MAX_NOTE_TEXT - [...kept].length,
+    );
+    box.value = kept + after.join("");
+    box.setSelectionRange(kept.length, kept.length);
+    this.notice.emit(
+      `A note holds at most ${MAX_NOTE_TEXT} characters, so Studio cut the rest.`,
     );
   }
   commit(event: FocusEvent, note: NoteView) {

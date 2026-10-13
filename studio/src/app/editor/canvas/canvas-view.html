@@ -78,6 +78,7 @@ SPDX-License-Identifier: Apache-2.0
             [editing]="editingNote"
             (edit)="noteEdit($event)"
             (editingChange)="editingNote = $event"
+            (notice)="h.notify($event)"
           />
           <weave-edge-layer
             [edges]="edges()"
