@@ -21,7 +21,6 @@ from pathlib import Path
 from types import MappingProxyType
 
 import httpx
-import pytest
 from starlette.requests import Request
 from starlette.testclient import TestClient
 
@@ -84,7 +83,10 @@ def test_a_model_test_may_outlast_the_ordinary_deadline(tmp_path, monkeypatch):
     monkeypatch.setattr(studio_service, "BRIDGE_SECONDS", 0.2)
     monkeypatch.setattr(studio_service, "LONG_OPERATIONS", MappingProxyType({"ai_connections.test": 3.0}))
 
+    reads: dict[str, float] = {}
+
     async def upstream(request: httpx.Request) -> httpx.Response:
+        reads[request.url.path.rsplit("/", 1)[-1]] = request.extensions["timeout"]["read"]
         await asyncio.sleep(0.5)
         if request.url.path.endswith("/test"):
             return httpx.Response(200, json={"ok": True, "code": "ok", "latency_ms": 500, "model": "qwen3:4b"})
@@ -97,6 +99,8 @@ def test_a_model_test_may_outlast_the_ordinary_deadline(tmp_path, monkeypatch):
         slow = browser.get("/studio/api" + READINESS)
         assert slow.status_code == 502
         assert slow.json()["code"] == "WV-STUDIO-UPSTREAM"
+    # The HTTP client's own read timeout follows the longer deadline, so it cannot cut a slow test short.
+    assert reads == {"test": 3.0, "readiness": 30}
 
 
 async def test_a_model_test_stops_when_the_browser_leaves(tmp_path):
@@ -140,8 +144,10 @@ async def test_a_model_test_stops_when_the_browser_leaves(tmp_path):
         "root_path": "",
     }
     try:
-        with pytest.raises(asyncio.CancelledError):
-            await service.bridge(Request(scope, receive), MODEL_TEST)
+        # Nobody is left to read the answer; the bridge ends quietly instead of raising into the server's log.
+        response = await asyncio.wait_for(service.bridge(Request(scope, receive), MODEL_TEST), 10)
+        assert response.status_code == 499
+        assert response.body == b""
         assert cancelled.is_set()
     finally:
         await service.close()

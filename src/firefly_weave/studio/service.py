@@ -56,6 +56,8 @@ COOKIE = "weave_studio_session"
 # so the bridge waits a little longer for its answer and cancels it if the browser leaves first.
 BRIDGE_SECONDS = 35.0
 LONG_OPERATIONS: Mapping[str, float] = MappingProxyType({"ai_connections.test": 140.0})
+# The status a bridge answer gets when its browser left before it was ready (nothing is sent).
+CLIENT_GONE = 499
 STUDIO_FAMILIES = frozenset(
     {
         "identity",
@@ -387,7 +389,14 @@ class StudioService:
 
             if long is not None:
                 # A person can cancel a long model test; the platform call stops when the browser leaves.
-                return await until_disconnect(forward(), request.receive)
+                try:
+                    return await until_disconnect(forward(), request.receive)
+                except asyncio.CancelledError:
+                    task = asyncio.current_task()
+                    if task is not None and task.cancelling():
+                        raise
+                    # The browser left: nobody reads this answer, and the server logs no traceback for it.
+                    return Response(status_code=CLIENT_GONE)
             return await forward()
         except (AuthError, CredentialError):
             return problem(401, "WV-AUTH-REQUIRED", "Sign in again with weave auth login using the selected profile")
