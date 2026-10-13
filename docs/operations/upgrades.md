@@ -371,19 +371,24 @@ decisions. The scheduler login reaches tenants through the new execute-only
 moves the recovery traversal's cursors. The migration does not add columns to
 stored runs or events. Apply it explicitly with all writers stopped, using the procedure above.
 
-The migration holds schema locks in one transaction and reads retained runs in
-UUID order, at most 10,000 IDs per batch. Its history work is proportional to the
-number of runs and events. Classification fetches one bounded run at a time;
-event timestamps are aggregated per batch. Allow temporary disk space for all
-five projections, their indexes, and transaction/WAL overhead. Rehearse against a
-restored copy to measure the maintenance window. On a development machine
-(PostgreSQL 17 in a 4-CPU, 8 GiB virtual machine with default memory settings,
-before `0031_operations_key_collation`), the migration took about 2 minutes for
-10,000 retained runs and about 70 minutes for 200,000, and the database grew by
-about 1.6 KB per retained run (16 MB and 272 MB). Its duration grows faster than
-the number of runs, so allow well over five hours for 1,000,000 runs; that size
-was not measured. The usage counters equaled an independent recomputation
-afterwards in both measurements.
+The migration runs in one transaction and reads retained runs in UUID order, at
+most 10,000 IDs per batch. It validates each run's state, activation and request,
+classifies each distinct stored artifact once, and aggregates event timestamps per
+batch. The indexes it adds to existing tables (`run_deadlines`, `event_deliveries`
+and `incidents`) are built inside that transaction, so their locks last until the
+whole migration commits: the maintenance window is the migration's duration, which
+is one more reason to stop every writer first. Allow temporary disk space for all
+five projections, their indexes, and transaction/WAL overhead.
+
+Rehearse against a restored copy to measure your maintenance window. On a
+development machine (PostgreSQL 17 in a 4-CPU, 8 GiB virtual machine with default
+memory settings, upgrading from `0031_operations_key_collation`), the migration
+took 17 seconds for 10,000 retained runs and 32 seconds for 50,000, and the
+database grew by 1.4 to 1.6 KB per retained run (16 MB and 70 MB). Usage counters
+equaled an independent recomputation afterwards in both. Larger sizes were not
+measured: if the time keeps growing linearly, 1,000,000 runs would take roughly 10
+to 15 minutes on similar hardware, but treat that as an estimate, not a
+measurement.
 
 Historical run times come from accepted events. Missing, malformed or oversized
 evidence remains unavailable, and malformed lifecycle values remain unknown
