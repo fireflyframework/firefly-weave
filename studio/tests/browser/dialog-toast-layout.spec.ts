@@ -17,10 +17,12 @@ SPDX-License-Identifier: Apache-2.0
 */
 // The shared dialog frame and toasts at every density: a dialog's heading
 // sits on its close button's center, a phone stacks a dialog's answers full
-// width, a toast's dismiss button and action are full targets without making
-// the toast taller, a toast over step details sits in their panes' corner
-// inside one pane and off the focused control, and Save to file delivers its
-// files even when code loaded on demand can't load.
+// width, only a dialog's own footer holds on to its bottom edge, so a focused
+// button in its content is never under it, a toast's dismiss button and
+// action are full targets without making the toast taller, a toast over step
+// details sits in their panes' corner inside one pane and off the focused
+// control, and Save to file delivers its files even when code loaded on
+// demand can't load.
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import {
   addCommonStep,
@@ -39,6 +41,7 @@ import {
 import { command, connected } from "./support";
 import { hasPython, stopLocalAuthoring } from "./local-authoring";
 import { publishDialog, withOwnedSteps } from "./owned-actions";
+import { openActivation, platform } from "./activation-po";
 
 // Desktop with a fine pointer, then the touch density: a coarse pointer, or
 // a window under 768 px.
@@ -87,6 +90,18 @@ interface Footer {
 /** Measures the footer of a dialog: its answers and the rule above them. */
 async function footerOf(dialog: Locator): Promise<Footer> {
   const footer = dialog.locator(".dialog-actions, .dialog-footer").last();
+  // One footer: nothing else in the panel holds on to its bottom edge.
+  const held = await dialog.evaluate((panel) =>
+    [...panel.querySelectorAll("*")]
+      .filter((element) => {
+        const style = getComputedStyle(element);
+        return style.position === "sticky" && style.bottom !== "auto";
+      })
+      .map((element) => element.textContent?.trim()),
+  );
+  expect(held, "rows held at the panel's bottom").toEqual([
+    (await footer.textContent())?.trim(),
+  ]);
   const panel = await box(dialog);
   const shown = await box(footer);
   const answers = await boxes(footer.locator(":scope > button"));
@@ -139,6 +154,34 @@ async function removedBodyToast(page: Page) {
   await expect(toast).toContainText("Removed Body.");
   await settled(toast);
   return { details, toast };
+}
+
+/**
+ * The activation dialog of a version whose export Studio can't read: its
+ * worker releases and assignment bindings can be added by hand.
+ */
+async function activationWithAddedPins(page: Page): Promise<Locator> {
+  const captured = await platform(page, { exportStatus: 404 });
+  const dialog = await openActivation(page, captured.contracts);
+  await expect(dialog).toContainText(
+    "Studio couldn't read this version's requirements",
+  );
+  await expect(
+    dialog.getByRole("button", { name: "Add worker release" }),
+  ).toBeAttached();
+  // Measured once its content has stopped growing.
+  await expect
+    .poll(() =>
+      dialog.evaluate(async (panel) => {
+        const before = panel.scrollHeight;
+        await new Promise((done) =>
+          requestAnimationFrame(() => requestAnimationFrame(done)),
+        );
+        return panel.scrollHeight === before;
+      }),
+    )
+    .toBe(true);
+  return dialog;
 }
 
 /** Waits until the toast has slid in and no longer moves. */
@@ -243,6 +286,10 @@ for (const size of sizes)
       page,
     }) => {
       const footers: [string, Footer][] = [];
+      // Activating a version whose requirements Studio can't read, so its
+      // pins can be added by hand above the footer.
+      const activation = await activationWithAddedPins(page);
+      footers.push(["Activation", await footerOf(activation)]);
       const details = await openStepFixture(page);
       // A question asked through the shared dialog.
       const question = await askAboutSource(page);
@@ -338,6 +385,47 @@ for (const size of sizes)
           `${name}: main answer's edge`,
         );
       }
+    });
+
+    test("a focused button in a dialog's content is never under its footer", async ({
+      page,
+    }) => {
+      test.skip(
+        !["1440x900", "600x500", "360x640"].includes(size.tag),
+        "measured on a desktop, a short window and a phone",
+      );
+      const dialog = await activationWithAddedPins(page);
+      const footer = dialog.locator(".dialog-footer");
+      for (const name of ["Add worker release", "Add assignment binding"]) {
+        await dialog.evaluate((panel) => panel.scrollTo({ top: 0 }));
+        const add = dialog.getByRole("button", { name });
+        await add.focus();
+        await expect(add).toBeFocused();
+        await expect(add).toBeVisible();
+        // Focus scrolls the button into the panel's free band, between the
+        // title and the footer, and what is under its center is the button.
+        const shown = await box(add);
+        expect(shown.bottom, `${name} above the footer`).toBeLessThanOrEqual(
+          (await box(footer)).y + 0.5,
+        );
+        expect(
+          await add.evaluate((button) => {
+            const r = button.getBoundingClientRect();
+            const top = document.elementFromPoint(
+              r.x + r.width / 2,
+              r.y + r.height / 2,
+            );
+            return !!top && button.contains(top);
+          }),
+          `${name} not covered`,
+        ).toBe(true);
+      }
+      // A click reaches it: the new row takes focus.
+      await dialog.evaluate((panel) => panel.scrollTo({ top: 0 }));
+      await dialog.getByRole("button", { name: "Add worker release" }).click();
+      await expect(
+        dialog.getByLabel("Worker task type", { exact: true }),
+      ).toBeFocused();
     });
 
     test("a toast's dismiss button is a full target, and the toast keeps its height", async ({
