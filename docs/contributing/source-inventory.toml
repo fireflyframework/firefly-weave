@@ -283,6 +283,14 @@ author = "Firefly Software Foundation"
 license = "Apache-2.0"
 
 [[exceptions]]
+path = "tests/fixtures/contracts/operations-0.1.0a14.json"
+kind = "commentless"
+reason = "Operation IDs of the 0.1.0a14 release, generated from its tagged source; strict JSON cannot carry a source comment header."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
 path = "tests/fixtures/golden/corpus.json"
 kind = "generated"
 source = "scripts/golden_corpus.py"

@@ -1,0 +1,90 @@
+# Copyright 2026 Firefly Software Foundation.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# Author: Firefly Software Foundation
+# SPDX-License-Identifier: Apache-2.0
+
+"""The authorization matrix (tests/acceptance/authorization.toml) and who holds each capability."""
+
+from __future__ import annotations
+
+import json
+import tomllib
+import uuid
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+ROOT = Path(__file__).resolve().parents[2]
+MATRIX = ROOT / "tests/acceptance/authorization.toml"
+RANDOM = "random"
+TABLES = ("operations", "controls")
+KEYS = {"capability", "identifier", "query", "body", "collection"}
+
+
+@dataclass(frozen=True)
+class Row:
+    operation: str
+    table: str
+    capability: str
+    identifier: bool
+    query: Mapping[str, Any] = field(default_factory=dict)
+    body: Mapping[str, Any] | None = None
+    collection: str | None = None
+
+
+def load(path: Path = MATRIX) -> tuple[Path, list[Row]]:
+    data = tomllib.loads(path.read_text(encoding="utf-8"))
+    if set(data) != {"baseline", *TABLES}:
+        raise ValueError("authorization.toml has baseline, [operations] and [controls]")
+    rows = []
+    for table in TABLES:
+        for operation, row in data[table].items():
+            if set(row) - KEYS or "capability" not in row or row.get("identifier", RANDOM) != RANDOM:
+                raise ValueError(
+                    f'{table}.{operation}: use capability, identifier = "random", query, body and collection'
+                )
+            rows.append(
+                Row(
+                    operation,
+                    table,
+                    row["capability"],
+                    "identifier" in row,
+                    row.get("query", {}),
+                    row.get("body"),
+                    row.get("collection"),
+                )
+            )
+    return ROOT / data["baseline"], rows
+
+
+def baseline_operations(path: Path) -> set[str]:
+    return set(json.loads(path.read_text(encoding="utf-8"))["operations"])
+
+
+def holds(roles: Iterable[str], capability: str, role_capabilities: Mapping[str, frozenset[str]]) -> bool:
+    """True when one of the roles grants the capability, or one of its alternatives ("a or b")."""
+    options = [part.strip() for part in capability.split(" or ")]
+    return any(option in role_capabilities.get(role, frozenset()) for role in roles for option in options)
+
+
+def materialize(value: Any) -> Any:
+    """The value with every "random" replaced by a new UUID string."""
+    if value == RANDOM:
+        return str(uuid.uuid4())
+    if isinstance(value, Mapping):
+        return {key: materialize(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [materialize(item) for item in value]
+    return value
