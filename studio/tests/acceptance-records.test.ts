@@ -197,6 +197,23 @@ describe("acceptance step records", () => {
     ]);
   });
 
+  it("allows the callback path only on the plain-HTTP loopback address", () => {
+    expect(
+      networkProblems(
+        [
+          "https://evil.example/callback?code=abc",
+          "http://localhost:43123/callback?code=abc",
+          "https://127.0.0.1:43123/callback?code=abc",
+        ],
+        ["http://127.0.0.1:41000"],
+      ),
+    ).toEqual([
+      "request to https://evil.example",
+      "request to http://localhost:43123",
+      "request to https://127.0.0.1:43123",
+    ]);
+  });
+
   it("fails a step whose enabled check never ran", () => {
     const steps = {
       "J9.2": { applies: true, missing: [] },

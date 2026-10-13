@@ -187,7 +187,9 @@ export function networkProblems(
     if (/\/lumi\.(png|svg)$/i.test(parsed.pathname))
       problems.push(`mascot asset ${parsed.pathname}`);
     const callback =
-      parsed.hostname === "127.0.0.1" && parsed.pathname === "/callback";
+      parsed.protocol === "http:" &&
+      parsed.hostname === "127.0.0.1" &&
+      parsed.pathname === "/callback";
     if (!callback && !allowedOrigins.includes(parsed.origin))
       problems.push(`request to ${parsed.origin}`);
   }
