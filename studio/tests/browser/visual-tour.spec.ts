@@ -3476,12 +3476,6 @@ async function panIntoView(
 }
 
 /**
- * Hides the step details so the canvas has the room. Above 1280 px they are a
- * column that is open on its own; narrower, a click on a step opens them
- * (`opened`). It waits for them to show, then closes them with the panel's
- * own button where it has one (1280 px and narrower), else the toolbar's.
- */
-/**
  * Hides the inspector beside the canvas. Up to 1280 px it isn't there: a
  * click on a step on the new canvas only selects it.
  */
