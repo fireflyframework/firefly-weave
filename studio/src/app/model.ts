@@ -21,6 +21,7 @@ import {
   emptyCanvas,
   pruneCanvas,
   renameInCanvas,
+  syncCalled,
   type CanvasSidecar,
 } from "./editor/state/canvas-sidecar";
 export type Kind =
@@ -457,16 +458,45 @@ export class StructuredCanvasAdapter {
    * a person sees. When an edit fails, the workflow is left as it was.
    */
   amend<T>(edits: () => T): T {
-    if (this.past.length) return this.continueEdit(this.revision, edits);
-    const before = this.snapshot();
+    let result: T;
+    if (this.past.length) result = this.continueEdit(this.revision, edits);
+    else {
+      const before = this.snapshot();
+      const batching = this.batching;
+      this.batching = true;
+      try {
+        result = edits();
+      } catch (error) {
+        this.restore(before);
+        throw error;
+      } finally {
+        this.batching = batching;
+      }
+    }
+    this.amendRedo(edits);
+    return result;
+  }
+  /**
+   * What Studio learned holds in every state Redo brings back too; a state
+   * the record doesn't apply to (it throws there) stays as it was.
+   */
+  private amendRedo(edits: () => unknown) {
+    if (!this.future.length) return;
+    const now = this.snapshot();
     const batching = this.batching;
     this.batching = true;
     try {
-      return edits();
-    } catch (error) {
-      this.restore(before);
-      throw error;
+      this.future = this.future.map((state) => {
+        this.restore(state);
+        try {
+          edits();
+          return this.snapshot();
+        } catch {
+          return state;
+        }
+      });
     } finally {
+      this.restore(now);
       this.batching = batching;
     }
   }
@@ -531,7 +561,12 @@ export class StructuredCanvasAdapter {
       this.assertStructure(value);
       this.definition = value;
       this.readonly = false;
-      this.canvas = pruneCanvas(this.canvas, this.stepIdSet());
+      const present = this.stepIdSet();
+      this.canvas = syncCalled(
+        pruneCanvas(this.canvas, present),
+        value,
+        present.size > 0,
+      );
     } catch (e) {
       this.error = e instanceof Error ? e.message : "Invalid source";
       this.readonly = true;
@@ -608,6 +643,18 @@ export class StructuredCanvasAdapter {
     if (this.readonly) throw Error("Fix source before editing the graph.");
     this.checkpoint();
     this.canvas = next;
+  }
+  /**
+   * Remembers where anchored notes are drawn now, so a note keeps its last
+   * place when its step goes. Not an edit: no undo step, nothing to save.
+   */
+  cacheNotePositions(points: ReadonlyMap<string, Point>) {
+    for (const note of this.canvas.notes ?? []) {
+      const point = note.anchor ? points.get(note.id) : undefined;
+      if (!point) continue;
+      note.x = Math.round(point.x);
+      note.y = Math.round(point.y);
+    }
   }
   private computeLayout() {
     return computeLaneLayout(this.definition, this.layout.positions);

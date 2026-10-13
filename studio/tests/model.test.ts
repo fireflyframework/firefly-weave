@@ -32,6 +32,7 @@ import {
   stepNotesOf,
   withOwnedRecipe,
   withStepNote,
+  type StickyNote,
 } from "../src/app/editor/state/canvas-sidecar";
 import { PendingEntries } from "../src/app/editor/ndv/pending-entries";
 describe("structured workflow authoring", () => {
@@ -1120,4 +1121,75 @@ describe("deletion keeps canvas metadata and workflow history together", () => {
         unplaced: model.unplaced,
       }).toEqual(before);
     });
+});
+
+describe("the canvas sidecar follows the workflow", () => {
+  const note = (id: string, stepId?: string): StickyNote => ({
+    id,
+    text: "",
+    color: "yellow",
+    x: 0,
+    y: 0,
+    width: 240,
+    height: 120,
+    ...(stepId ? { anchor: { stepId, dx: 0, dy: 168 } } : {}),
+  });
+
+  it("keeps a deleted step's note where it was drawn last, without its anchor, and Undo restores the anchor", () => {
+    const model = new StructuredCanvasAdapter();
+    const step = model.insert("transform");
+    model.updateCanvas({
+      ...model.canvas,
+      notes: [note("note-00000001", step.id)],
+    });
+    const revision = model.revision;
+    model.cacheNotePositions(new Map([["note-00000001", { x: 328, y: 264 }]]));
+    expect(model.revision).toBe(revision);
+    model.removeSteps([step.id]);
+    expect(model.canvas.notes?.[0]).toEqual({
+      ...note("note-00000001"),
+      x: 328,
+      y: 264,
+    });
+    model.undo();
+    expect(model.canvas.notes?.[0].anchor?.stepId).toBe(step.id);
+  });
+
+  it("shows Called by a workflow while the source makes the workflow callable", () => {
+    const model = new StructuredCanvasAdapter();
+    model.insert("transform");
+    const definition = structuredClone(model.definition);
+    definition.spec["callable"] = {};
+    model.setSource(JSON.stringify(definition), "json");
+    expect(model.canvas.triggers?.map((intent) => intent.kind)).toEqual([
+      "manual",
+      "called",
+    ]);
+    delete definition.spec["callable"];
+    model.setSource(JSON.stringify(definition), "json");
+    expect(model.canvas.triggers?.map((intent) => intent.kind)).toEqual([
+      "manual",
+    ]);
+  });
+
+  it("keeps what Studio recorded when Redo brings a later state back", () => {
+    const model = new StructuredCanvasAdapter();
+    const wait = model.insert("wait");
+    model.insert("wait");
+    model.undo();
+    model.amend(() =>
+      model.update(wait.id, JSON.stringify({ ...wait, durationSeconds: 99 })),
+    );
+    model.redo();
+    expect(
+      model.definition.spec.steps.map((step) => step["durationSeconds"]),
+    ).toEqual([99, 60]);
+    // A record that doesn't apply to a later state leaves that state alone.
+    model.undo();
+    model.amend(() => {
+      if (model.definition.spec.steps.length > 1) throw Error("not here");
+    });
+    model.redo();
+    expect(model.definition.spec.steps).toHaveLength(2);
+  });
 });
