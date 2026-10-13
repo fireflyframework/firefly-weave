@@ -15,7 +15,7 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { parse, stringify } from "yaml";
 import {
   NOT_STEPS,
@@ -673,6 +673,43 @@ describe("pasting at the limits", () => {
     expect(performance.now() - started).toBeLessThan(150);
     expect(planned.ids.slice(0, 3)).toEqual(["a", "a-5001", "a-5002"]);
     expect(new Set(planned.ids).size).toBe(500);
+  });
+
+  it("never looks back over a base's numbers it already gave", () => {
+    const content = read(
+      stringify(
+        Array.from({ length: 500 }, () => ({
+          id: "a",
+          kind: "wait",
+          durationSeconds: 1,
+        })),
+      ),
+    );
+    const taken = new Set(Array.from({ length: 5000 }, (_, i) => `a-${i + 1}`));
+    const has = vi.spyOn(Set.prototype, "has");
+    try {
+      plan(freshWorkflow(), content, { owner: "root", index: 0 }, taken);
+      // One pass over the taken numbers, then a few checks per step;
+      // starting again from 1 for each step would take millions.
+      expect(has.mock.calls.length).toBeLessThan(50_000);
+    } finally {
+      has.mockRestore();
+    }
+  });
+
+  it("keeps a renumbered 128-character ID within 128 characters", () => {
+    const long = "a".repeat(128);
+    const content = read(
+      stringify([{ id: long, kind: "wait", durationSeconds: 1 }]),
+    );
+    const [id] = plan(
+      freshWorkflow(),
+      content,
+      { owner: "root", index: 0 },
+      new Set([long]),
+    ).ids;
+    expect(id).toBe(`${"a".repeat(120)}-1`);
+    expect(id.length).toBeLessThanOrEqual(128);
   });
 
   it("gives a step ID longer than 128 characters a new one, as for any ID the language can't read", () => {
