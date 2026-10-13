@@ -515,6 +515,15 @@ class DefinitionService:
             connector_pins = await self.execution_readiness(
                 actor, scope, request, artifact, capability="release.activate", context=context, tx=tx
             )
+            from firefly_weave.definitions.calls import call_pins, pinned_callee
+
+            workflow_call_pins, call_depth = await call_pins(
+                row["name"],
+                scope,
+                artifact.executable,
+                request.workflow_activation_ids,
+                lambda identifier: pinned_callee(repository, scope, identifier),
+            )
             from firefly_weave.compiler.ir import ActionNode, HumanTaskNode
             from firefly_weave.human_tasks.service import pin_assignments
             from firefly_weave.runtime.kernel import workflow
@@ -556,6 +565,8 @@ class DefinitionService:
                 request=request,
                 connector_execution_pins=connector_pins,
                 assignment_pins=assignment_pins,
+                workflow_call_pins=workflow_call_pins,
+                call_depth=call_depth,
             )
             await self._insert_activation(repository, activation)
             for slot, identifier in request.connection_revision_ids.items():
