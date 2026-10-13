@@ -457,6 +457,14 @@ proves who you are; your administrator's link and grants on the platform decide
 what you may do. Follow [People and access](people-and-access.md) for that
 onboarding step.
 
+**Settings has a tab for each kind of setup, each at its own address.**
+**Platforms** (`/settings/platforms`) holds your saved platforms; **People and
+access** (`/settings/people`) appears for administrators; **AI models**
+(`/settings/ai`) appears once a platform is connected and holds provider cards,
+your AI connections, the readiness checklist and the Weave AI card (see
+[Set up models in Studio](ollama.md#set-up-models-in-studio)); **Preferences**
+(`/settings/preferences`) holds Studio's own options.
+
 ### Manage saved platforms
 
 **Saved platforms are shared with the `weave` command line on this computer.**

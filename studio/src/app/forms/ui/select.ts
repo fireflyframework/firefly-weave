@@ -172,6 +172,18 @@ let sequence = 0;
         background: var(--surface);
         color: var(--text);
       }
+      /* data-control: exactly one control height (--select-height, 36 px by
+         default), as the inputs beside it, instead of growing around the
+         chevron button's own height. */
+      :host([data-control]) .choice-field {
+        box-sizing: border-box;
+        height: var(--select-height, var(--control-md));
+        min-height: 0;
+      }
+      :host([data-control]) .choice-field button {
+        min-height: 0;
+        height: 100%;
+      }
       .choice-field:focus-within {
         outline: 2px solid var(--focus);
         outline-offset: 2px;

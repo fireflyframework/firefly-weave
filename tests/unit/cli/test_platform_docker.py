@@ -221,6 +221,32 @@ def test_new_up_sets_mode_before_setup_and_creates_account_only_once(tmp_path, m
     assert calls == ["setup", "start", "user", "start"]
 
 
+def test_up_gives_its_new_account_the_local_owner_roles(tmp_path, monkeypatch):
+    directory = tmp_path / "owner"
+    state = {
+        "mode": "docker",
+        "context": "owned",
+        "directory": str(directory),
+        "stage": "ready",
+        "id": "d" * 24,
+        "ports": {"container_api": 55201},
+    }
+    seen = []
+
+    def setup(*args, **kwargs):
+        directory.mkdir(mode=0o700)
+
+    monkeypatch.setattr(platform, "setup", setup)
+    monkeypatch.setattr(platform, "_load", lambda p: state)
+    monkeypatch.setattr(platform, "start", lambda *a: None)
+    monkeypatch.setattr(platform, "demo", lambda *a: {"receipt": {"status": "succeeded"}})
+    monkeypatch.setattr(platform, "user", lambda d, u, roles: seen.append(tuple(roles)) or {"username": u})
+    platform.up(directory, tmp_path, "owned", username="owner")
+    assert seen == [platform.LOCAL_OWNER_ROLES]
+    receipt = json.loads((directory / "up-user.json").read_text())
+    assert receipt["roles"] == list(platform.LOCAL_OWNER_ROLES)
+
+
 def test_uncertain_account_creation_blocks_replay(owned, monkeypatch):
     directory, state = owned
     platform._write(directory / "up-user.json", {"stage": "attempted", "username": "developer"})
@@ -229,6 +255,38 @@ def test_uncertain_account_creation_blocks_replay(owned, monkeypatch):
     monkeypatch.setattr(platform, "user", lambda *a: pytest.fail("repeated unknown account operation"))
     with pytest.raises(platform.PlatformError, match="incomplete"):
         platform.up(directory, Path("."), None, username="developer")
+
+
+def test_up_refuses_an_unreadable_people_record_before_marking_an_account_attempt(owned, monkeypatch):
+    directory, state = owned
+    (directory / "people.json").write_text("{not json")
+    (directory / "people.json").chmod(0o600)
+    monkeypatch.setattr(platform, "start", lambda *a: None)
+    monkeypatch.setattr(platform, "demo", lambda *a: {"receipt": {"status": "succeeded"}})
+    monkeypatch.setattr(platform, "user", lambda *a: pytest.fail("created an account"))
+    with pytest.raises(platform.PlatformError, match="not readable"):
+        platform.up(directory, Path("."), None, username="developer")
+    assert not (directory / "up-user.json").exists()
+
+
+def test_up_returns_the_new_password_when_its_receipt_cannot_be_completed(owned, monkeypatch):
+    directory, state = owned
+    monkeypatch.setattr(platform, "start", lambda *a: None)
+    monkeypatch.setattr(platform, "demo", lambda *a: {"receipt": {"status": "succeeded"}})
+    monkeypatch.setattr(platform, "user", lambda *a: {"username": "developer", "password": "once"})
+    write = platform._write
+
+    def failing_write(path, value, **kwargs):
+        if value.get("stage") == "ready":
+            raise OSError("No space left on device")
+        return write(path, value, **kwargs)
+
+    monkeypatch.setattr(platform, "_write", failing_write)
+    result = platform.up(directory, Path("."), None, username="developer")
+    assert result["account"]["password"] == "once"
+    assert result["account"]["receipt_saved"] is False
+    assert "up-user.json" in result["account"]["receipt_hint"]
+    assert "once" not in (directory / "up-user.json").read_text()
 
 
 def test_container_configuration_mounts_only_selected_values_and_literal_environment(owned, monkeypatch):

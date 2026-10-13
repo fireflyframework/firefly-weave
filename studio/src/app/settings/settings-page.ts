@@ -16,8 +16,9 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 // Settings: Platforms (saved platforms, how Studio starts, keyboard controls),
-// People and access for administrators, and Preferences, each tab at its own
-// address (/settings/<tab>). The shell (App)
+// People and access for administrators, AI models once a platform is
+// connected, and Preferences, each tab at its own address (/settings/<tab>).
+// The shell (App)
 // owns the state and the commands; this page loads lazily (@defer).
 import {
   ChangeDetectionStrategy,
@@ -32,6 +33,7 @@ import { ModalSheet, sheetWhen } from "../modal-sheet";
 import { PlatformList } from "../platform-list";
 import { RowMenu, type RowMenuItem } from "../row-menu";
 import { statusLabel } from "../status-labels";
+import { AiModelsPage } from "./ai-models-page";
 import {
   settingsPath,
   settingsTab,
@@ -55,7 +57,7 @@ interface AccountRow {
   selector: "weave-settings-page",
   changeDetection: ChangeDetectionStrategy.Eager,
   standalone: true,
-  imports: [Icon, PlatformList, RowMenu, ModalSheet],
+  imports: [Icon, PlatformList, RowMenu, ModalSheet, AiModelsPage],
   styleUrl: "./settings-page.css",
   template: `@let h = host();
     <div class="page-heading">
@@ -66,40 +68,6 @@ interface AccountRow {
         </p>
       </div>
     </div>
-    @if (h.profile) {
-      <section class="settings-card" aria-label="AI models">
-        <h2>AI models</h2>
-        <p>
-          Provider connections are shared environment resources. Weave AI uses
-          its own model settings; workflow AI profiles stay in each workflow.
-        </p>
-        @if (h.can("connection.manage")) {
-          <button type="button" (click)="h.openAiConnectionDialog()">
-            New AI connection
-          </button>
-        }
-        @if (h.can("lumi.manage")) {
-          <button
-            type="button"
-            (click)="h.lumiSettingsRequested = true; h.lumiOpen = true"
-          >
-            Weave AI settings
-          </button>
-        }
-        @if (!h.can("lumi.manage") || !h.can("connection.manage")) {
-          <p>
-            Ask an administrator for Weave AI manager and connection.manage
-            grants in this environment to set up Weave AI and its provider
-            connection.
-          </p>
-        }
-        <p>
-          For a workflow model, add an AI task and open Configure workflow AI
-          profiles. A platform operator installs the Agentic worker and Weave AI
-          gateway and provisions approved secret handles.
-        </p>
-      </section>
-    }
     @let current = tab();
     <div
       class="settings-tabs"
@@ -539,6 +507,18 @@ interface AccountRow {
           </section>
         }
       </div>
+    } @else if (current === "ai") {
+      <div
+        role="tabpanel"
+        id="settings-panel-ai"
+        aria-labelledby="settings-tab-ai"
+      >
+        @defer (on immediate) {
+          <weave-ai-models-page [host]="h" />
+        } @placeholder {
+          <p role="status">Loading AI models…</p>
+        }
+      </div>
     } @else {
       <div
         role="tabpanel"
@@ -578,13 +558,17 @@ export class SettingsPage {
     ["project", "This project"],
     ["tenant", "Whole tenant"],
   ];
+  /** Which optional tabs this person sees. */
+  access() {
+    return { people: this.showPeople(), ai: !!this.host().profile };
+  }
   /** The tabs this person sees. */
   tabs() {
-    return settingsTabs(this.showPeople());
+    return settingsTabs(this.access());
   }
   /** The tab the address names. */
   tab(): SettingsTab {
-    return settingsTab(location.pathname, this.showPeople());
+    return settingsTab(location.pathname, this.access());
   }
   open(tab: SettingsTab) {
     return this.router.navigateByUrl(settingsPath(tab));
@@ -679,7 +663,15 @@ export class SettingsPage {
     if (!keys.includes(event.key)) return;
     event.preventDefault();
     const order = this.tabs().map((tab) => tab.id);
-    const index = order.indexOf(this.tab());
+    // Arrows move from the focused tab, which may differ from the open one.
+    const focused = (event.target as HTMLElement | null)?.id?.replace(
+      /^settings-tab-/,
+      "",
+    );
+    const from = order.includes(focused as SettingsTab)
+      ? (focused as SettingsTab)
+      : this.tab();
+    const index = order.indexOf(from);
     const next =
       event.key === "Home"
         ? 0

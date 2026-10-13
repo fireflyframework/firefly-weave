@@ -53,6 +53,8 @@ function fixture() {
     contractRevision: 0,
     knownRuns: new Map(),
     workflowVersions: new Map(),
+    aiTests: new Map(),
+    aiSetupGeneration: 0,
     contractCache: new Map(),
     cdr: { markForCheck() {} },
     closeRecord() {},
