@@ -47,8 +47,16 @@ export async function draftCanvasKey(
   }
 }
 
+/** How many canvases an account keeps on this computer, and their total size in characters. */
+export const KEPT_CANVASES = 50;
+export const KEPT_CHARACTERS = 2 * 1024 * 1024;
+const KEPT_AT = /^\{"keptAt":(\d+),/;
+
 export class DraftCanvases {
-  constructor(private readonly backend: StoreBackend = browserBackend()) {}
+  constructor(
+    private readonly backend: StoreBackend = browserBackend(),
+    private readonly now: () => number = Date.now,
+  ) {}
 
   /** The stored canvas, as JSON, or null when none is kept for this account. */
   async read(scope: AccountScope, draftId: string): Promise<unknown | null> {
@@ -57,13 +65,21 @@ export class DraftCanvases {
     const raw = await this.backend.get(key);
     if (raw === null) return null;
     try {
-      return JSON.parse(raw) as unknown;
+      const kept = JSON.parse(raw) as unknown;
+      return kept && typeof kept === "object" && "canvas" in kept
+        ? (kept.canvas as unknown)
+        : null;
     } catch {
       return null;
     }
   }
 
-  /** Keeps the canvas (an empty one removes the key); "memory" when it can't. */
+  /**
+   * Keeps the canvas (an empty one removes the key); "memory" when it can't,
+   * and then the older canvas goes too, so it never comes back in its place.
+   * Each account keeps its KEPT_CANVASES most recently changed canvases,
+   * within KEPT_CHARACTERS: older ones go first.
+   */
   async write(
     scope: AccountScope,
     draftId: string,
@@ -75,9 +91,41 @@ export class DraftCanvases {
       await this.backend.remove(key);
       return "computer";
     }
-    return (await this.backend.set(key, JSON.stringify(canvas)))
-      ? "computer"
-      : "memory";
+    const value = JSON.stringify({ keptAt: this.now(), canvas });
+    const before = (await this.backend.get(key))?.length ?? -1;
+    if (!(await this.backend.set(key, value))) {
+      await this.backend.remove(key);
+      return "memory";
+    }
+    // Only a new or larger canvas can take the account over what it keeps.
+    if (value.length > before)
+      await this.ageOut(
+        key.slice(0, key.length - `canvas.${draftId}`.length),
+        key,
+      );
+    return "computer";
+  }
+
+  /** Removes the account's oldest canvases beyond the count and size it keeps. */
+  private async ageOut(prefix: string, written: string) {
+    const kept: { key: string; at: number; size: number }[] = [];
+    for (const key of await this.backend.keys(`${prefix}canvas.`)) {
+      const raw = await this.backend.get(key);
+      if (raw === null) continue;
+      const at = KEPT_AT.exec(raw.slice(0, 40));
+      kept.push({ key, at: at ? Number(at[1]) : 0, size: raw.length });
+    }
+    kept.sort((a, b) => a.at - b.at);
+    let total = kept.reduce((sum, item) => sum + item.size, 0);
+    let count = kept.length;
+    for (const item of kept) {
+      if (count <= KEPT_CANVASES && total <= KEPT_CHARACTERS) break;
+      if (item.key === written) continue;
+      if (await this.backend.remove(item.key)) {
+        count--;
+        total -= item.size;
+      }
+    }
   }
 
   /** Deletes every key of a saved platform; returns how many went. */

@@ -96,6 +96,59 @@ describe("a platform draft's canvas on this computer", () => {
     );
   });
 
+  it("forgets the older canvas when a newer one can't be written, so it never comes back in its place", async () => {
+    const backend = memory();
+    const kept = new DraftCanvases(backend);
+    await kept.write(scope, draft, noted);
+    backend.set = async () => false;
+    const changed = { ...noted, stepNotes: { check: { text: "Ask Bo" } } };
+    expect(await kept.write(scope, draft, changed)).toBe("memory");
+    expect(await kept.read(scope, draft)).toBeNull();
+  });
+
+  it("keeps the 50 most recently changed canvases of an account, within 2 MiB", async () => {
+    const backend = memory();
+    let clock = 0;
+    const kept = new DraftCanvases(backend, () => ++clock);
+    const id = (n: number) =>
+      `6a1f8c52-1d2e-4f3a-9b8c-${String(n).padStart(12, "0")}`;
+    for (let n = 0; n < 50; n++) await kept.write(scope, id(n), noted);
+    // Changing the oldest makes it the newest.
+    await kept.write(scope, id(0), { ...noted, collapsed: ["check"] });
+    await kept.write(scope, id(50), noted);
+    expect(await kept.read(scope, id(1))).toBeNull();
+    expect(await kept.read(scope, id(0))).not.toBeNull();
+    expect(await kept.read(scope, id(50))).toEqual(noted);
+    expect(backend.values.size).toBe(50);
+    // Another account's canvases are its own.
+    const other = { ...scope, subject: "someone-else" };
+    await kept.write(other, id(1), noted);
+    expect(await kept.read(scope, id(2))).toEqual(noted);
+    // Large canvases: the oldest go until the account's total fits 2 MiB.
+    const big = {
+      ...emptyCanvas(),
+      stepNotes: Object.fromEntries(
+        Array.from({ length: 120 }, (_, n) => [
+          `s${n}`,
+          { text: "x".repeat(1900) },
+        ]),
+      ),
+    };
+    for (let n = 100; n < 112; n++) await kept.write(scope, id(n), big);
+    const own = (await draftCanvasKey(scope, draft))!.replace(
+      /canvas\..*$/,
+      "",
+    );
+    const sizes = [...backend.values.entries()]
+      .filter(([key]) => key.startsWith(own))
+      .map(([, value]) => value.length);
+    expect(sizes.reduce((sum, size) => sum + size, 0)).toBeLessThanOrEqual(
+      2 * 1024 * 1024,
+    );
+    expect(await kept.read(scope, id(111))).toEqual(big);
+    expect(await kept.read(scope, id(100))).toBeNull();
+  });
+
   it("forgets every kept canvas of a platform when it signs out or is removed", async () => {
     const backend = memory();
     const kept = new DraftCanvases(backend);

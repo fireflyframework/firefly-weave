@@ -1677,6 +1677,8 @@ export class App implements CanvasHost {
   private draftCanvasWrite: (() => Promise<KeptWhere>) | null = null;
   /** A platform draft waits for the signed-in account before its canvas comes back. */
   private draftCanvasPending: { draftId: string; opened: number } | null = null;
+  /** The pending draft whose kept canvas is being read. */
+  private draftCanvasReading: { draftId: string; opened: number } | null = null;
   /** The account a platform draft's canvas belongs to; null when it can't be told. */
   private accountScope(): AccountScope | null {
     const profile = this.profile;
@@ -1697,6 +1699,9 @@ export class App implements CanvasHost {
   private keepDraftCanvas() {
     if (this.draftCanvasWrite && this.draftCanvasFor !== this.draftId)
       void this.flushDraftCanvas();
+    // A draft whose kept canvas hasn't come back yet writes nothing: its
+    // canvas lacks what is kept, and would replace it.
+    if (this.draftCanvasPending?.draftId === this.draftId) return;
     if (this.draftCanvasTimer) clearTimeout(this.draftCanvasTimer);
     const profile = this.profile;
     const draftId = this.draftId;
@@ -1705,9 +1710,12 @@ export class App implements CanvasHost {
     this.draftCanvasWrite = async () => {
       // The account is read when writing: it may arrive after the change.
       const scope = this.profile === profile ? this.accountScope() : null;
-      return (this.draftCanvasKept = scope
+      const kept = scope
         ? await this.draftCanvases.write(scope, draftId, canvas)
-        : "memory");
+        : "memory";
+      // Another draft opened meanwhile keeps its own state.
+      if (this.draftId === draftId) this.draftCanvasKept = kept;
+      return kept;
     };
     this.draftCanvasTimer = setTimeout(() => void this.flushDraftCanvas(), 800);
   }
@@ -1723,19 +1731,22 @@ export class App implements CanvasHost {
   private async restoreDraftCanvas() {
     const pending = this.draftCanvasPending;
     const scope = this.accountScope();
-    if (!pending || !scope?.subject) return;
-    this.draftCanvasPending = null;
-    const model = this.model;
-    const revision = model.revision;
-    const stored = await this.draftCanvases.read(scope, pending.draftId);
-    if (
-      stored === null ||
-      this.model !== model ||
-      model.opened !== pending.opened ||
-      model.revision !== revision ||
-      this.draftId !== pending.draftId
-    )
+    if (!pending || !scope?.subject || this.draftCanvasReading === pending)
       return;
+    // The draft writes nothing until its kept canvas is read (keepDraftCanvas).
+    this.draftCanvasReading = pending;
+    const model = this.model;
+    const canvas = model.canvas;
+    const stored = await this.draftCanvases.read(scope, pending.draftId);
+    this.draftCanvasReading = null;
+    if (this.draftCanvasPending === pending) this.draftCanvasPending = null;
+    const same =
+      this.model === model &&
+      model.opened === pending.opened &&
+      this.draftId === pending.draftId;
+    // A canvas changed while it was read keeps that change, and is kept now.
+    if (same && model.canvas !== canvas) this.keepDraftCanvas();
+    if (stored === null || !same || model.canvas !== canvas) return;
     const read = canvasFromStored(stored, model.definition, model.stepIdSet());
     this.draftCanvasKept = "computer";
     if (read.problems.length) {
@@ -1929,6 +1940,19 @@ export class App implements CanvasHost {
       "danger",
     );
     return false;
+  }
+  /**
+   * A published version opens under an identity of its own, set before its
+   * workflow replaces the one open: the draft open until now keeps its last
+   * change and its canvas, and is never saved over.
+   */
+  private openPublished(record: Record<string, unknown>) {
+    void this.flushDraftCanvas();
+    this.draftId = crypto.randomUUID();
+    this.draftRevision = undefined;
+    this.published = record;
+    this.draftCanvasPending = null;
+    this.draftCanvasKept = "memory";
   }
   /** Opens a platform draft in the designer. */
   private openPlatformDraft(
@@ -6106,20 +6130,18 @@ export class App implements CanvasHost {
         if (d && typeof d === "object" && this.libraryCollection === "drafts")
           this.openPlatformDraft(detail, d as Workflow);
         else if (d && typeof d === "object") {
+          this.openPublished(record);
           this.model.replace(d as Workflow);
           this.resetValidation();
           this.changed();
           this.dirty = false;
           this.view = "designer";
           this.activation = null;
-          // A published version is never saved over the draft opened before it.
-          this.draftId = crypto.randomUUID();
-          this.draftRevision = undefined;
-          this.published = record;
           this.saveState = "Published";
           this.openTab();
           void this.router.navigateByUrl(`/workflows/${this.draftId}/designer`);
         } else if (typeof detail["source"] === "string") {
+          this.openPublished(record);
           this.model.setSource(
             detail["source"],
             detail["format"] === "json" ? "json" : "yaml",
@@ -6130,10 +6152,7 @@ export class App implements CanvasHost {
           this.changed();
           this.dirty = false;
           this.view = "designer";
-          this.draftId = crypto.randomUUID();
-          this.draftRevision = undefined;
           this.activation = null;
-          this.published = record;
           this.saveState = "Published";
           this.openTab();
           void this.router.navigateByUrl(`/workflows/${this.draftId}/designer`);

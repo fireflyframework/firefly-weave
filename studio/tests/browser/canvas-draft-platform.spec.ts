@@ -177,3 +177,142 @@ test("a platform draft keeps its canvas on this computer after it closes, for it
   expect(other["stepNotes"]).toBeUndefined();
   expect(other["triggers"]).toBeUndefined();
 });
+
+test("a platform draft keeps its canvas when a published workflow opens after it", async ({
+  page,
+}) => {
+  const full = {
+    ...definition,
+    spec: {
+      ...definition.spec,
+      steps: [
+        ...definition.spec.steps,
+        // Calls the action this workflow owns: its settings live in the canvas.
+        {
+          id: "get-customer-orders",
+          kind: "action",
+          uses: "order-intake.get-customer-orders@1.0.0",
+          with: { object: {} },
+        },
+      ],
+    },
+  };
+  const kept = {
+    ...canvas,
+    notes: [
+      {
+        id: "note-1a2b3c4d",
+        text: "Reviewed with ops",
+        color: "blue",
+        x: 40,
+        y: 260,
+        width: 240,
+        height: 120,
+      },
+    ],
+    ownedActions: ["order-intake.get-customer-orders"],
+    actionRecipes: {
+      "order-intake.get-customer-orders": {
+        kind: "http",
+        method: "GET",
+        pathTemplate: "/orders",
+        statuses: [200],
+        timeoutSeconds: 30,
+      },
+    },
+  };
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await useNewEditor(page);
+  await platform(page, "human");
+  await page.route(`**/projects/${project}/drafts/*`, (route) =>
+    route.fulfill({
+      json: {
+        id: route.request().url().split("/").pop(),
+        revision: 1,
+        document: full,
+      },
+    }),
+  );
+  await page.route(/\/projects\/[^/]+\/workflows(\?.*)?$/, (route) =>
+    route.fulfill({
+      json: {
+        items: [
+          {
+            id: "published-1",
+            name: "published-one",
+            version: "2.0.0",
+            workflow_name: "published-one",
+          },
+        ],
+        next_cursor: null,
+      },
+    }),
+  );
+  await page.route(
+    `**/projects/${project}/workflows/published-1/export`,
+    (route) =>
+      route.fulfill({
+        json: {
+          definition: {
+            ...definition,
+            metadata: { name: "published-one", version: "2.0.0" },
+          },
+        },
+      }),
+  );
+  const signedIn = page.waitForResponse("**/studio/api/api/v1/identity");
+  await page.goto("/");
+  await signedIn;
+  await page.getByLabel("Choose a workflow file").setInputFiles([
+    {
+      name: "order-intake.yaml",
+      mimeType: "application/yaml",
+      buffer: Buffer.from(stringify(full)),
+    },
+    {
+      name: "order-intake.canvas.json",
+      mimeType: "application/json",
+      buffer: Buffer.from(JSON.stringify(kept)),
+    },
+  ]);
+  const view = new CanvasPage(page);
+  await view.ready();
+  const id = /\/workflows\/([^/]+)\/designer/.exec(page.url())![1];
+  const keys = () =>
+    page.evaluate(
+      (draft) =>
+        Object.keys(localStorage).filter((key) =>
+          key.endsWith(`:canvas.${draft}`),
+        ).length,
+      id,
+    );
+  await expect.poll(keys).toBe(1);
+  // Reopen it as the platform draft, then open a published workflow from Workflows.
+  await page.goto(`/workflows/${id}/designer`);
+  await view.ready();
+  await expect
+    .poll(async () => (await savedCanvas(page))["stepNotes"])
+    .toEqual(kept.stepNotes);
+  await page
+    .getByRole("button", { name: "Workflows", exact: true })
+    .first()
+    .click();
+  const published = page.getByRole("tab", { name: /Published/ });
+  if (await published.count()) await published.first().click();
+  await page.getByText("published-one").first().click();
+  await expect(page).not.toHaveURL(new RegExp(id));
+  await view.ready();
+  // A canvas change is kept 800 ms after it happens: give a wrong write time to land.
+  await page.waitForTimeout(1200);
+  expect(await keys()).toBe(1);
+  await page.goto(`/workflows/${id}/designer`);
+  await view.ready();
+  await expect
+    .poll(async () => (await savedCanvas(page))["stepNotes"])
+    .toEqual(kept.stepNotes);
+  const back = await savedCanvas(page);
+  expect(back["notes"]).toEqual(kept.notes);
+  expect(back["triggers"]).toEqual(kept.triggers);
+  expect(back["ownedActions"]).toEqual(kept.ownedActions);
+  expect(back["actionRecipes"]).toMatchObject(kept.actionRecipes);
+});
