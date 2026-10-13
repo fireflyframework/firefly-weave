@@ -27,6 +27,22 @@ const INDEX = /^(?:0|[1-9][0-9]*)$/;
 const POINTER = /^(?:\/(?:[^~/]|~[01])*)*$/;
 const LOGICAL = new Set(["and", "or", "not"]);
 const UNPRINTABLE = Symbol("unprintable");
+/**
+ * How deeply a printed tree may nest: well past the 32 levels workflows
+ * allow and well inside what the parser reads back.
+ */
+const MAX_DEPTH = 128;
+let depth = 0;
+/** Runs one nested step of printing; deeper trees are outside the language. */
+function nested<T>(print: () => T): T {
+  if (depth >= MAX_DEPTH) throw UNPRINTABLE;
+  depth++;
+  try {
+    return print();
+  } finally {
+    depth--;
+  }
+}
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -51,6 +67,9 @@ function number(value: number): string {
 }
 
 function json(value: unknown): string {
+  return nested(() => jsonText(value));
+}
+function jsonText(value: unknown): string {
   if (value === null) return "null";
   if (typeof value === "boolean") return String(value);
   if (typeof value === "number") return number(value);
@@ -124,6 +143,9 @@ function operation(op: unknown): string {
 }
 
 function print(node: unknown): string {
+  return nested(() => printNode(node));
+}
+function printNode(node: unknown): string {
   if (!isRecord(node) || Object.keys(node).length !== 1) throw UNPRINTABLE;
   const [tag] = Object.keys(node);
   const body = node[tag];

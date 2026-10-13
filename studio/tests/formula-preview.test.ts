@@ -169,6 +169,26 @@ describe("formula previews", () => {
       error: { code: "WV-EXPR-TYPE", message: "`join` needs a list first." },
     });
   });
+  it("never crashes on a tree nested beyond what workflows allow, and still finds secrets", () => {
+    const wrap = (inner: unknown) => {
+      let node = inner;
+      for (let i = 0; i < 20_000; i++)
+        node = { op: { name: "not", args: [node] } };
+      return node as never;
+    };
+    const at = {
+      scope: referenceScope(workflow, "use", "/value"),
+      inputSchema: workflow.spec.inputSchema,
+      data: data({ ...input, password: "s3cret" }),
+    };
+    expect(previewFormula(wrap({ ref: "/input/password" }), at)).toMatchObject({
+      ok: false,
+      error: { code: SECRET },
+    });
+    expect(previewFormula(wrap({ ref: "/input/amount" }), at)).toMatchObject({
+      ok: false,
+    });
+  });
   it("reads __proto__ and constructor as plain data", () => {
     const tricky = JSON.parse(
       '{"__proto__":{"polluted":true},"constructor":"c"}',

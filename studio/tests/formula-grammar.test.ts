@@ -494,3 +494,121 @@ describe("the tokenizer", () => {
     );
   });
 });
+
+describe("formulas nested too deeply", () => {
+  const deep = "This formula nests too deeply.";
+  const shapes: [string, string, ParseOptions][] = [
+    ["1,000 lists", "[".repeat(1000) + "1" + "]".repeat(1000), plain],
+    ["1,000 groups", "{a: ".repeat(1000) + "1" + "}".repeat(1000), plain],
+    ["1,000 calls", "coalesce(".repeat(1000) + "1" + ")".repeat(1000), plain],
+    [
+      "1,000 backtick templates",
+      "`{{ ".repeat(1000) + "1" + " }}`".repeat(1000),
+      text,
+    ],
+    ["2,000 parentheses", "(".repeat(2000) + "1" + ")".repeat(2000), plain],
+    ["20,000 not", "not ".repeat(20_000) + "true", plain],
+    ["20,000 !", "!".repeat(20_000) + "true", plain],
+    ["a pasted run of backtick placeholders", "`{{".repeat(22_000), text],
+  ];
+  for (const [name, source, options] of shapes)
+    it(`answers an error, never a crash, for ${name}`, () => {
+      const started = performance.now();
+      const result = parseFormula(source, options);
+      expect(performance.now() - started).toBeLessThan(1000);
+      expect(result.kind).toBe("error");
+      if (result.kind !== "error") return;
+      expect(result.error.code).toBe("WV-FORMULA-TOKEN");
+      expect(result.error.message).toBe(deep);
+      expect(result.error.from).toBeGreaterThan(0);
+      expect(result.error.to).toBeGreaterThan(result.error.from);
+    });
+  it("answers an error for a template nested too deeply", () => {
+    const result = parseTemplate(
+      "{{ " + "[".repeat(1000) + "1" + "]".repeat(1000) + " }}",
+      text,
+    );
+    expect(result).toMatchObject({
+      kind: "error",
+      error: { code: "WV-FORMULA-TOKEN", message: deep },
+    });
+  });
+  it("still reads formulas nested more deeply than a workflow allows", () => {
+    expect(tree("[".repeat(100) + "1" + "]".repeat(100))).toBeTruthy();
+    expect(tree("not ".repeat(100) + "true")).toBeTruthy();
+    expect(tree("(".repeat(100) + "1" + ")".repeat(100))).toEqual(lit(1));
+  });
+});
+
+describe("more errors in plain words", () => {
+  it("asks for an escape instead of a raw line break or tab in text", () => {
+    expect(problem('"a\tb"')).toEqual({
+      code: "WV-FORMULA-STRING",
+      message: "Text can't hold a tab here; write `\\t` instead.",
+      from: 2,
+      to: 3,
+    });
+    expect(problem("'a\nb'")).toEqual({
+      code: "WV-FORMULA-STRING",
+      message: "Text can't hold a line break here; write `\\n` instead.",
+      from: 2,
+      to: 3,
+    });
+    expect(problem('"a\u0001"')).toEqual({
+      code: "WV-FORMULA-STRING",
+      message:
+        "Text can't hold this control character; write `\\u0001` instead.",
+      from: 2,
+      to: 3,
+    });
+  });
+  it("refuses a big number that would be saved as a whole number workflows can't hold", () => {
+    const words =
+      "This number would be saved as a whole number beyond 9,007,199,254,740,991, which workflows can't hold. Use a smaller number, or 1e21 or more.";
+    for (const source of ["1e16", "9007199254740993.0", "-2.5e17", "9.99e20"])
+      expect(problem(source), source).toEqual({
+        code: "WV-FORMULA-NUMBER",
+        message: words,
+        from: 0,
+        to: source.length,
+      });
+    expect(tree("1e21")).toEqual(lit(1e21));
+    expect(tree("1e15")).toEqual(lit(1e15));
+    expect(tree("9007199254740991.0")).toEqual(lit(9007199254740991));
+  });
+  it("counts the values of not()", () => {
+    expect(problem("not()")).toEqual({
+      code: "WV-FORMULA-ARITY",
+      message: "`not` takes 1 value; this has 0.",
+      from: 0,
+      to: 5,
+    });
+  });
+  it("refuses text with a broken character escape", () => {
+    expect(problem('"\\ud800"')).toEqual({
+      code: "WV-FORMULA-STRING",
+      message: "This text has a broken character escape.",
+      from: 0,
+      to: 8,
+    });
+  });
+  it("reads an escaped {{ as the two braces", () => {
+    expect(parseTemplate("a \\{{ b", text)).toMatchObject({
+      kind: "ok",
+      expression: lit("a {{ b"),
+    });
+    expect(parseTemplate("\\{{{ input.a }}", text)).toMatchObject({
+      kind: "ok",
+      expression: lit("{{{ input.a }}"),
+    });
+  });
+});
+
+describe("the tokenizer within a range", () => {
+  it("stops at the end of the range after braces", () => {
+    expect(
+      tokenize("{{{", "template", 0, 2).map((t) => [t.type, t.text]),
+    ).toEqual([["open", "{{"]]);
+    expect(tokenize("`{{{", "formula", 0, 3).length).toBeLessThan(5);
+  });
+});

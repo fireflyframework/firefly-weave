@@ -162,6 +162,12 @@ describe("formula warnings", () => {
       "`and` needs Yes/No values; `index` is Whole number.",
     ]);
   });
+  it("never crashes on a tree nested beyond what workflows allow", () => {
+    let deep: unknown = { ref: "/input/amout" };
+    for (let i = 0; i < 20_000; i++)
+      deep = { op: { name: "not", args: [deep] } };
+    expect(() => checkFormula(deep, scope)).not.toThrow();
+  });
   it("finds a key below a schema, or says why not", () => {
     const closed = {
       type: "object",

@@ -81,19 +81,22 @@ const failed = (code: string, message: string): PreviewResult => ({
 
 /** Every pointer the formula reads, in reading order. */
 export function referencesOf(expression: unknown): string[] {
+  // A stack, not recursion: every reference is found however deep the tree.
   const found: string[] = [];
-  const visit = (node: unknown) => {
-    if (Array.isArray(node)) node.forEach(visit);
-    else if (isRecord(node)) {
-      if (Object.keys(node).length === 1 && typeof node["ref"] === "string") {
-        found.push(node["ref"]);
-        return;
-      }
-      if (Object.keys(node).length === 1 && "literal" in node) return;
-      Object.values(node).forEach(visit);
-    }
-  };
-  visit(expression);
+  const stack: unknown[] = [expression];
+  while (stack.length) {
+    const node = stack.pop();
+    const children = Array.isArray(node)
+      ? node
+      : isRecord(node)
+        ? Object.keys(node).length === 1 && typeof node["ref"] === "string"
+          ? (found.push(node["ref"]), [])
+          : Object.keys(node).length === 1 && "literal" in node
+            ? []
+            : Object.values(node)
+        : [];
+    for (let i = children.length - 1; i >= 0; i--) stack.push(children[i]);
+  }
   return found;
 }
 

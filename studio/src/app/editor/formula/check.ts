@@ -233,8 +233,20 @@ export function checkFormula(
   scope: CheckScope,
 ): FormulaWarning[] {
   const found: FormulaWarning[] = [];
+  // Past the depth workflows allow the compiler reports the tree; warnings
+  // stop there instead of exhausting the stack.
+  let depth = 0;
   const visit = (node: unknown): void => {
-    if (!isRecord(node) || Object.keys(node).length !== 1) return;
+    if (depth >= 128 || !isRecord(node) || Object.keys(node).length !== 1)
+      return;
+    depth++;
+    try {
+      visitNode(node);
+    } finally {
+      depth--;
+    }
+  };
+  const visitNode = (node: Record<string, unknown>): void => {
     if (typeof node["ref"] === "string") {
       const warning = referenceWarning(node as { ref: string }, scope);
       if (warning) found.push(warning);

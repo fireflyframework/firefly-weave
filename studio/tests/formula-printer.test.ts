@@ -256,6 +256,17 @@ describe("the canonical printer", () => {
   });
 });
 
+describe("trees nested beyond what formulas show", () => {
+  it("prints nothing for them, never a crash", () => {
+    let deep: unknown = ref("/input/a");
+    for (let i = 0; i < 20_000; i++) deep = op("not", deep);
+    expect(printFormula(deep)).toBeNull();
+    let shallow: unknown = ref("/input/a");
+    for (let i = 0; i < 100; i++) shallow = op("not", shallow);
+    expect(printFormula(shallow)).toBe("not ".repeat(100) + "input.a");
+  });
+});
+
 describe("round trips", () => {
   it("parses back every one of 10,000 random trees", () => {
     const next = random(20261013);

@@ -133,6 +133,16 @@ function readText(
 
 type Read = { value: string; end: number } | { error: Token };
 
+/** Words for a raw control character inside quoted text. */
+function controlWords(character: string): string {
+  if (character === "\n" || character === "\r")
+    return "Text can't hold a line break here; write `\\n` instead.";
+  if (character === "\t")
+    return "Text can't hold a tab here; write `\\t` instead.";
+  const code = character.charCodeAt(0).toString(16).padStart(4, "0");
+  return `Text can't hold this control character; write \`\\u${code}\` instead.`;
+}
+
 function readString(source: string, at: number, end: number): Read {
   const quote = source[at];
   let value = "";
@@ -153,7 +163,22 @@ function readString(source: string, at: number, end: number): Read {
         };
       return { value, end: i + 1 };
     }
-    if (character.charCodeAt(0) < 0x20) break;
+    if (character.charCodeAt(0) < 0x20) {
+      const close = source.indexOf(quote, i);
+      // A closed text with a raw control character asks for its escape; an
+      // unclosed one says so below.
+      if (close < 0 || close >= end) break;
+      return {
+        error: {
+          type: "error",
+          from: i,
+          to: i + 1,
+          text: character,
+          code: "WV-FORMULA-STRING",
+          message: controlWords(character),
+        },
+      };
+    }
     if (character === "\\") {
       const next = source[i + 1] ?? "";
       if (next === "'" && quote === "'") {
@@ -244,8 +269,8 @@ export function tokenize(
       }
       if (
         source.startsWith("{{", at) &&
-        source[at + 2] !== "{" &&
-        at + 2 <= to
+        at + 2 <= to &&
+        (at + 2 === to || source[at + 2] !== "{")
       ) {
         push("open", at, at + 2);
         stack.push({ kind: "formula", braces: 0, placeholder: true });
@@ -350,6 +375,21 @@ export function tokenize(
           end,
           "WV-FORMULA-NUMBER",
           "Whole numbers must be between −9,007,199,254,740,991 and 9,007,199,254,740,991.",
+        );
+        return tokens;
+      }
+      // Below 1e21 JavaScript writes a whole number in plain digits, so
+      // the workflow would hold a whole number the platform rejects.
+      if (
+        Number.isInteger(value) &&
+        Math.abs(value) > MAX_SAFE_INTEGER &&
+        Math.abs(value) < 1e21
+      ) {
+        error(
+          at,
+          end,
+          "WV-FORMULA-NUMBER",
+          "This number would be saved as a whole number beyond 9,007,199,254,740,991, which workflows can't hold. Use a smaller number, or 1e21 or more.",
         );
         return tokens;
       }

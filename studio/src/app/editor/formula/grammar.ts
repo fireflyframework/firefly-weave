@@ -164,8 +164,15 @@ class Stop extends Error {
   }
 }
 
+/**
+ * How deeply formulas may nest while being read. Workflows allow 32 levels;
+ * the bound only keeps a pasted or runaway text from exhausting the stack.
+ */
+const MAX_NESTING = 256;
+
 class Parser {
   private at = 0;
+  private depth = 0;
   readonly spans = new WeakMap<object, Span>();
   constructor(
     private readonly source: string,
@@ -290,8 +297,26 @@ class Parser {
       ? args[0]
       : this.node({ op: { name, args } }, from);
   }
+  /** Reads one nested part, refusing text nested beyond MAX_NESTING. */
+  private nested<T>(token: Token, read: () => T): T {
+    if (this.depth >= MAX_NESTING)
+      this.fail(
+        "WV-FORMULA-TOKEN",
+        "This formula nests too deeply.",
+        token.from,
+        token.to,
+      );
+    this.depth++;
+    try {
+      return read();
+    } finally {
+      this.depth--;
+    }
+  }
   private orExpr(): Expression {
-    return this.chain("or", () => this.andExpr());
+    return this.nested(this.want(), () =>
+      this.chain("or", () => this.andExpr()),
+    );
   }
   private andExpr(): Expression {
     return this.chain("and", () => this.notExpr());
@@ -306,6 +331,15 @@ class Parser {
     this.next();
     if (this.isPunct("(")) {
       const open = this.next();
+      if (this.isPunct(")")) {
+        this.next();
+        this.fail(
+          "WV-FORMULA-ARITY",
+          "`not` takes 1 value; this has 0.",
+          token.from,
+          this.previousEnd(),
+        );
+      }
       const items = [this.orExpr()];
       while (this.isPunct(",")) {
         this.next();
@@ -322,7 +356,7 @@ class Parser {
       const operand = this.compareRest(items[0], open.from);
       return this.node({ op: { name: "not", args: [operand] } }, token.from);
     }
-    const operand = this.notExpr();
+    const operand = this.nested(token, () => this.notExpr());
     return this.node({ op: { name: "not", args: [operand] } }, token.from);
   }
 
