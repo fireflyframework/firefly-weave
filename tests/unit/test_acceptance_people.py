@@ -30,7 +30,11 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 ISSUER = "http://localhost:18080"
-AUTHORIZE = ISSUER + "/realms/weave/protocol/openid-connect/auth?client_id=weave-cli&state=s"
+AUTHORIZE = (
+    ISSUER
+    + "/realms/weave/protocol/openid-connect/auth?client_id=weave-cli&state=s&"
+    + urlencode({"redirect_uri": "http://127.0.0.1:43123/callback"})
+)
 ACTION = ISSUER + "/realms/weave/login-actions/authenticate?session_code=c"
 CALLBACK = "http://127.0.0.1:43123/callback?code=abc&state=s"
 PASSWORD = "pw-" + uuid4().hex
@@ -89,6 +93,50 @@ async def test_sign_in_errors_never_carry_the_password():
     with pytest.raises(people.SignInFailed, match="redirect bound") as raised:
         await people.follow_sign_in(AUTHORIZE, ISSUER, "builder", PASSWORD, transport=httpx.MockTransport(answer))
     assert PASSWORD not in str(raised.value) and PASSWORD not in repr(raised.value)
+
+
+@pytest.mark.parametrize(
+    "callback",
+    [
+        "http://127.0.0.1:43124/callback?code=abc&state=s",
+        "http://[::1]:43123/callback?code=abc&state=s",
+        "http://127.0.0.1:43123/other?code=abc&state=s",
+        "https://127.0.0.1:43123/callback?code=abc&state=s",
+    ],
+)
+async def test_the_sign_in_follows_only_the_callback_the_authorization_request_names(callback):
+    seen = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        seen.append((request.method, str(request.url)))
+        if request.method == "GET" and str(request.url) == AUTHORIZE:
+            return httpx.Response(200, text=FORM)
+        if request.method == "POST":
+            return httpx.Response(302, headers={"location": callback})
+        return httpx.Response(200)
+
+    with pytest.raises(people.SignInFailed, match="outside the platform's Keycloak"):
+        await people.follow_sign_in(AUTHORIZE, ISSUER, "builder", PASSWORD, transport=httpx.MockTransport(answer))
+    assert [method for method, _ in seen] == ["GET", "POST"]
+
+
+@pytest.mark.parametrize(
+    "redirect",
+    [None, "http://evil.example/callback", "http://127.0.0.1/callback?x=1", "http://localhost:43123/callback"],
+)
+async def test_the_sign_in_needs_a_loopback_redirect_uri_in_the_authorization_request(redirect):
+    seen = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        seen.append(request.method)
+        return httpx.Response(200, text=FORM)
+
+    url = ISSUER + "/realms/weave/protocol/openid-connect/auth?client_id=weave-cli&state=s"
+    if redirect is not None:
+        url += "&" + urlencode({"redirect_uri": redirect})
+    with pytest.raises(people.SignInFailed, match="loopback redirect_uri"):
+        await people.follow_sign_in(url, ISSUER, "builder", PASSWORD, transport=httpx.MockTransport(answer))
+    assert seen == []
 
 
 @pytest.mark.parametrize(

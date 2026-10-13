@@ -32,7 +32,7 @@ from contextlib import asynccontextmanager
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import parse_qs, urljoin, urlsplit
 from uuid import UUID
 
 import httpx
@@ -67,6 +67,27 @@ class _Form(HTMLParser):
             self.inputs[str(values["name"])] = values.get("value") or ""
 
 
+def _loopback_redirect(url: str) -> tuple[str, str, str]:
+    """Scheme, host and port, and path of the authorization request's loopback redirect_uri."""
+    values = parse_qs(urlsplit(url).query).get("redirect_uri", [])
+    redirect = urlsplit(values[0]) if len(values) == 1 else None
+    try:
+        port = redirect.port if redirect is not None else None
+    except ValueError:
+        port = None
+    if (
+        redirect is None
+        or redirect.scheme != "http"
+        or redirect.hostname not in {"127.0.0.1", "::1"}
+        or port is None
+        or redirect.username is not None
+        or redirect.query
+        or redirect.fragment
+    ):
+        raise SignInFailed("The authorization request names no loopback redirect_uri")
+    return redirect.scheme, redirect.netloc, redirect.path
+
+
 async def follow_sign_in(
     url: str,
     issuer_origin: str,
@@ -75,7 +96,11 @@ async def follow_sign_in(
     *,
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> None:
-    """Complete one authorization request in the identity provider's pages, ending at the loopback callback."""
+    """Complete one authorization request in the identity provider's pages, ending at the loopback callback.
+
+    The only off-provider redirect followed is the loopback redirect_uri the authorization request names.
+    """
+    callback = _loopback_redirect(url)
     async with httpx.AsyncClient(timeout=10, trust_env=False, follow_redirects=False, transport=transport) as browser:
         response = await browser.get(url)
         for _ in range(REDIRECTS):
@@ -86,7 +111,7 @@ async def follow_sign_in(
             if response.is_redirect:
                 destination = urljoin(str(response.url), response.headers["location"])
                 parsed = urlsplit(destination)
-                if parsed.hostname in {"127.0.0.1", "::1"} and parsed.path == "/callback":
+                if (parsed.scheme, parsed.netloc, parsed.path) == callback:
                     answer = await browser.get(destination)
                     if answer.status_code != 200:
                         raise SignInFailed(f"The loopback callback answered HTTP {answer.status_code}")
