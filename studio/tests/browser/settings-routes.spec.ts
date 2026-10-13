@@ -16,7 +16,7 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 import { expect, test } from "@playwright/test";
-import { offline } from "./support";
+import { allCapabilities, connected, offline } from "./support";
 
 test("Settings tabs have their own addresses, and Preferences turns on the new editor", async ({
   page,
@@ -66,4 +66,36 @@ test("/settings opens Platforms, and the tabs follow the arrow keys", async ({
   await page.keyboard.press("Home");
   await expect(page.getByRole("tab", { name: "Platforms" })).toBeFocused();
   await expect(page).toHaveURL(/\/settings\/platforms$/);
+});
+
+test("AI models has its own address once a platform is connected", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await connected(page, { capabilities: allCapabilities });
+  await page.goto("/settings/ai");
+  const tab = page.getByRole("tab", { name: "AI models" });
+  await expect(tab).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tabpanel", { name: "AI models" })).toContainText(
+    "Connect a model once. Workflows and Weave AI use the connections you set up here.",
+  );
+  await expect(
+    page.getByRole("button", { name: "Weave AI settings" }),
+  ).toHaveCount(0);
+  await page.getByRole("tab", { name: "Platforms" }).focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(page.getByRole("tab", { name: "AI models" })).toBeFocused();
+  await expect(page).toHaveURL(/\/settings\/ai$/);
+});
+
+test("AI models is not offered while working locally", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await offline(page);
+  await page.goto("/settings/ai");
+  await expect(page).toHaveURL(/\/settings\/ai$/);
+  await expect(page.getByRole("tab", { name: "AI models" })).toHaveCount(0);
+  await expect(page.getByRole("tab", { name: "Platforms" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
 });
