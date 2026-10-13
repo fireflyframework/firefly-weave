@@ -427,6 +427,37 @@ test.describe("step details below 768 px", () => {
   });
 });
 
+for (const viewport of [
+  { width: 360, height: 740 },
+  { width: 600, height: 500 },
+])
+  test(`a short pane still fills the sheet to its bottom edge at ${viewport.width}x${viewport.height}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize(viewport);
+    const details = await openStepFixture(page);
+    await details.open("lookup");
+    await expect(details.dialog).toHaveAttribute("data-layout", "sheet");
+    const tabs = details.dialog.getByRole("tablist", {
+      name: "Step details panes",
+    });
+    const scroller = await box(details.dialog.locator(".sd-panes"));
+    for (const [name, pane] of [
+      ["Parameters", ".sd-main"],
+      ["Output", ".sd-output"],
+      ["Input", ".sd-input"],
+    ]) {
+      await tabs.getByRole("tab", { name }).click();
+      await expect(details.dialog.locator(pane)).toBeVisible();
+      const shown = await box(details.dialog.locator(pane));
+      // Reaches the bottom edge, or runs on past it when it scrolls.
+      expect(
+        shown.bottom,
+        `${name} pane reaches the sheet's bottom`,
+      ).toBeGreaterThanOrEqual(scroller.bottom - 0.5);
+    }
+  });
+
 test.describe("step details between 768 and 1099 px", () => {
   test.use({ viewport: { width: 900, height: 700 } });
   test("show Parameters beside one data pane with Input and Output tabs", async ({
