@@ -107,9 +107,10 @@ explains the shared operator/administrator handoff.
 
 **New conversation** clears the current exchange. Conversations remain in memory
 and clear when the workspace, identity, or sign-in session changes. They are not
-workflow history. Managers can open **Weave AI settings** to configure the enabled
-flag, pinned connection revision, and model profile separately from workflow AI
-profiles. Studio supplies the fixed reply schema from the canonical contract;
+workflow history. Managers configure Weave AI in the **Weave AI** card of
+**Settings › AI models**; **Set up Weave AI** in the panel opens it. The card sets
+the enabled flag, pinned connection revision, and model separately from workflow
+AI profiles. Studio supplies the fixed reply schema from the canonical contract;
 changing a workflow's AI profile does not configure Weave AI.
 
 ## Explain Operations records
@@ -209,25 +210,26 @@ separate from the administrator's editable environment Weave AI configuration.
 
 ### Save the settings in Studio
 
-1. Open **Settings → AI models → Weave AI settings**, or open **Weave AI settings** from
-   the assistant. These settings belong to the current environment.
-2. The **Model → Connection → Review** wizard keeps changes local until
-   **Save Weave AI settings**. Choose the provider, an explicit model, and maximum
-   response length. For Azure, supply the Azure deployment name. Expand
-   **Advanced model settings** to change generation controls, reasoning, call
-   limits, or time limits. Studio supplies the fixed reply schema and checks
-   incompatible settings before you continue. This local validation does not
-   contact the provider. Select **Continue to connection**.
-3. Choose **Provider connection**. The list displays the connection name and
-   revision and filters for the selected provider. Weave AI pins the exact revision,
-   so a later connection revision does not silently change the assistant.
-4. If needed, select **New AI connection** and follow the
-   [provider connection steps](ai-workers.md#configure-the-provider-connection).
-   Use **Refresh connections** to reload available choices.
-5. Select **Review settings**, check the model and pinned connection, then select
-   **Save Weave AI settings**. **Back** preserves your draft. Use a simple request
-   without attachments to confirm the complete path, as described
+1. Open **Settings › AI models** and find the **Weave AI** card, or select
+   **Set up Weave AI** in the Ask Weave AI panel. These settings belong to the
+   current environment. Configuring them needs the Weave AI manager role, and
+   choosing the connection also needs the tenant administrator role.
+2. Select **Turn on Weave AI**, choose the **Connection**, and choose the
+   **Model**; Studio suggests one of the platform's approved models for that
+   connection. Weave AI pins the connection's exact revision, so a later
+   revision does not silently change the assistant. When the connection has a
+   newer revision, the card says so and saving moves Weave AI to it; a newer
+   revision without a key can't be used, so choose another connection.
+   Connections without a key (such as a local Ollama endpoint) can't be used for
+   Weave AI yet and are listed as unavailable.
+3. Select **Save Weave AI settings**. Saving keeps the stored profile's
+   generation options, reasoning, call and time limits; a new configuration
+   starts from Weave AI's defaults. Studio supplies the fixed reply schema. Use a
+   simple request without attachments to confirm the complete path, as described
    [below](#confirm-setup-without-sharing-sensitive-source).
+
+To create the connection first, use the
+[provider connection steps](ai-workers.md#configure-the-provider-connection).
 
 A workflow AI profile never fills these fields automatically. Likewise, a saved
 Weave AI profile does not change a workflow's model or authorize its worker.

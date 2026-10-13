@@ -116,18 +116,21 @@ used, which is separate from changing the grant list. Follow
 for the supported file and environment providers. Saving a handle in Studio does
 not provision its secret or grant access to it.
 
-Studio's **New AI connection** uses the standard OpenAI or Anthropic endpoint
-automatically. **Advanced: custom endpoint** is available for an approved proxy
-or compatible service. Azure requires the resource endpoint and API version
-from its administrator. Review shows the exact saved endpoint; hostname case
-and the default HTTPS port are normalized, while the base path and trailing
-slash are preserved. The worker or Weave AI gateway must still allow that exact
-endpoint. Existing endpoint policies are not changed by saving a connection.
+AI connections are created and tested in Studio's **Settings › AI models**. The
+same AI connection side sheet opens from **Build › Connections › New AI
+connection** and from an AI task's connection step. Choose a provider and one of
+the platform's approved endpoints; a custom address must use `https://`, and plain
+`http://` works only for an address a platform operator approved. Cloud providers
+take a **Secret handle**, never the key itself, and the sheet shows the
+`weave platform secret set --handle HANDLE` command that stores the key. Azure
+also needs its **API version**. The worker or Weave AI gateway must still allow
+the saved endpoint; saving a connection does not change endpoint policy.
 
-**Saved · Not tested** means that the connection configuration passed validation.
-It does not prove provider access, model availability, or worker/gateway readiness.
-Workflow AI profiles and Weave AI settings remain separate and select their own model
-or Azure deployment using the approved connection.
+A saved connection has passed validation only. **Test connection** in the side
+sheet sends one request through the AI gateway to the model you choose and says
+whether it answered and can call tools; the model list shows the platform's
+approved models that the provider serves. Workflow AI profiles and Weave AI
+choose their own model or Azure deployment on the approved connection.
 
 **Hosting Weave in Azure does not select an AI provider.** The Azure operator
 still deploys the worker, supplies its configuration and token file, permits its
@@ -256,31 +259,26 @@ after an ambiguous network failure.
 
 ## Configure the provider connection
 
-In Studio, open **Settings → AI models → New AI connection**. The same action is
-available from **Connections** and the AI task inspector. You need
-`connection.manage` in the environment. If the provider Connector is not yet
-published, the form explains the prerequisite; an author cannot bypass it.
+In Studio, open **Settings › AI models** and choose **Connect** on a provider
+card. The same side sheet opens from **Build › Connections › New AI connection**
+and from the AI task's connection step. Creating a connection needs
+`connection.manage` in the environment; people with only `connection.bind` see
+AI connections read-only.
 
-Studio alpha11 guides this setup through three steps. Alpha10 presents the
-same fields in a single form.
-
-1. **Provider:** enter a **Connection name** that identifies the intended account
-   or purpose, choose **Provider**, and select **Continue**. The model or Azure
-   deployment name belongs in the workflow profile.
-2. **Access:** copy the exact operator-approved **Provider endpoint**. For Azure,
-   also enter the explicit **Azure API version**. Enter the **API key secret
-   handle** supplied by the operator, never the raw API key, then select
-   **Review connection**. The Azure endpoint hint has no trailing slash; copy
-   the approved endpoint exactly rather than inventing a different spelling.
-3. **Review:** check the name, provider, endpoint, API version when applicable,
-   and secret handle. **Back** preserves these details so you can correct them.
-   Select **Create AI connection** only when they are ready. Earlier steps do
-   not create a connection or send a model request.
-4. Record the created connection and revision. Studio restricts allowed
-   destinations to the endpoint's HTTPS origin, and the operator's worker policy
-   must also permit the endpoint. The platform checked configuration, not live
-   provider connectivity. Complete worker release and credential grants before
-   binding it to an executable workflow.
+1. **Provider** and **Endpoint:** pick the provider and one of the approved
+   endpoints the platform lists, or **Custom address…** for an approved proxy or
+   compatible service. For OpenAI and Azure OpenAI choose the **API style**; for
+   Azure also enter the **API version**.
+2. **Connection name:** a name that identifies the account or purpose.
+3. **Secret handle:** for cloud providers, the handle the operator maps to the
+   key, never the key itself. Local endpoints use no credential.
+4. Select **Save connection**. Studio restricts allowed destinations to the
+   endpoint's origin, and the operator's worker policy must also permit it.
+5. In **Test a model**, choose a model and select **Test connection**. The result
+   says whether the model answered and whether it can call tools; **Show details**
+   lists the error code when it did not. Complete the worker release and
+   credential grants (the **Readiness** checklist's **Publish** and **Authorize**)
+   before binding the connection to an executable workflow.
 
 The API also publishes the canonical provider Connector and the AI task Action for
 you: `ai_setup.publish` (`definition.publish` at project scope) publishes the

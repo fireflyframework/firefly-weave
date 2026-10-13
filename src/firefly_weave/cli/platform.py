@@ -23,7 +23,7 @@ import shlex
 import sys
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 import click
 
@@ -216,6 +216,10 @@ def _show_person(value: dict[str, Any]) -> None:
     click.echo(f"Username: {value['username']}")
     click.echo(f"Password: {value['password']}")
     click.echo(value["warning"] + " Copy it now; it cannot be shown again.")
+    if value.get("hint"):
+        click.echo(value["hint"])
+    if value.get("receipt_hint"):
+        click.echo(value["receipt_hint"])
     click.echo("Roles: " + ", ".join(f"{grant['role']} (demo {level(grant['scope'])})" for grant in value["grants"]))
     click.echo("Next, connect to this platform and sign in with that account:")
     click.echo("  " + value["next"][0])
@@ -223,10 +227,26 @@ def _show_person(value: dict[str, Any]) -> None:
     click.echo("  " + value["next"][1])
 
 
-@platform.command()
+def _usage(message: str, output: str) -> NoReturn:
+    # The CLI hides click's own usage messages because they may echo option values; this fixed text has none.
+    emit_result(error_result("WV-CLI-USAGE", message), output)
+    raise SystemExit(EXIT_USAGE)
+
+
+def _show_grants(value: dict[str, Any]) -> None:
+    def level(scope: dict[str, str]) -> str:
+        return "environment" if "environment_id" in scope else "project" if "project_id" in scope else "tenant"
+
+    click.echo(
+        f"Granted to {value['username']}: "
+        + ", ".join(f"{item['role']} (demo {level(item['scope'])})" for item in value["grants"])
+    )
+    click.echo("Sign in again in Studio or the CLI to use the new roles.")
+
+
+@platform.group(invoke_without_command=True)
 @click.option(
     "--username",
-    required=True,
     help="New sign-in name: 3 to 64 lowercase letters and digits, optionally joined by '.', '_', or '-'.",
 )
 @click.option(
@@ -239,8 +259,8 @@ def _show_person(value: dict[str, Any]) -> None:
     "One of: " + ", ".join(lifecycle.PERSON_ROLES) + ".",
 )
 @click.option("--output", type=click.Choice(["text", "json"]), default="text")
-@click.pass_obj
-def user(directory: Path, username: str, roles: tuple[str, ...], output: str) -> None:
+@click.pass_context
+def user(context: click.Context, username: str | None, roles: tuple[str, ...], output: str) -> None:
     """Create a person who can sign in to this local platform (development only).
 
     Creates an account in the owned Keycloak with a generated password, a
@@ -251,8 +271,45 @@ def user(directory: Path, username: str, roles: tuple[str, ...], output: str) ->
     Default roles are the smallest set to author, publish, activate, run,
     inspect runs, and work on human tasks: developer on the demo project, and
     deployer, operator, viewer, and task_participant on the demo environment.
+    Use `user grant` to add roles to an account later.
     """
-    _call(lambda: lifecycle.user(directory, username, roles), output, _show_person)
+    if context.invoked_subcommand is not None:
+        if username is not None or roles:
+            _usage(
+                "Put --username and --role after the subcommand: "
+                "weave platform user grant --username NAME --role ROLE.",
+                output,
+            )
+        return
+    if username is None:
+        _usage("Missing option '--username'. Use --help for supported arguments.", output)
+    directory: Path = context.obj
+    name: str = username
+    _call(lambda: lifecycle.user(directory, name, roles), output, _show_person)
+
+
+@user.command("grant")
+@click.option("--username", required=True, help="An account this platform created with `user` or `up`.")
+@click.option(
+    "--role",
+    "roles",
+    multiple=True,
+    required=True,
+    type=click.Choice(lifecycle.PERSON_ROLES),
+    metavar="ROLE",
+    help="Role to add in the demo workspace; repeat for several roles. One of: "
+    + ", ".join(lifecycle.PERSON_ROLES)
+    + ".",
+)
+@click.option("--output", type=click.Choice(["text", "json"]), default="text")
+@click.pass_obj
+def user_grant(directory: Path, username: str, roles: tuple[str, ...], output: str) -> None:
+    """Add roles in the demo workspace to an existing local account (development only).
+
+    Grants are added, never removed, and are scoped like the roles `user` gives.
+    The account must have been created by this platform's `user` or `up`.
+    """
+    _call(lambda: lifecycle.grant(directory, username, roles), output, _show_grants)
 
 
 @platform.group()
@@ -656,7 +713,8 @@ def ai_models_remove(directory: Path, provider: str, model: str, output: str) ->
     "roles",
     multiple=True,
     type=click.Choice(lifecycle.PERSON_ROLES),
-    help="Role for the initial account; repeat for several roles. Requires --username.",
+    help="Role for the initial account; repeat for several roles. Requires --username. Without --role the "
+    "account gets the local owner roles: " + ", ".join(lifecycle.LOCAL_OWNER_ROLES) + ".",
 )
 @click.option(
     "--allow-private-origin",

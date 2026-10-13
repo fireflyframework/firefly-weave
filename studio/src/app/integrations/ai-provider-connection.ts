@@ -24,84 +24,26 @@ export interface AiConnection {
   revision: number;
   connector: string;
   config: { provider: string; endpoint: string; apiVersion?: string };
+  /** The secret handle by slot; never a secret value. */
+  secretRef?: Record<string, string>;
 }
-export interface AiConnectionDraft {
-  name: string;
-  provider: string;
-  endpoint: string;
-  apiVersion: string;
-  handle: string;
+/** The secret handles of a connection revision, whichever spelling the platform used. */
+export function secretRefs(connection: AiConnection): Record<string, string> {
+  const value =
+    connection.secretRef ??
+    (connection as unknown as { secret_refs?: Record<string, string> })
+      .secret_refs;
+  return value && typeof value === "object" ? value : {};
 }
-export const aiProviders = [
-  { value: "openai-responses", label: "OpenAI Responses" },
-  { value: "openai-chat", label: "OpenAI Chat" },
-  { value: "azure-responses", label: "Azure OpenAI Responses" },
-  { value: "azure-chat", label: "Azure OpenAI Chat" },
-  { value: "anthropic", label: "Anthropic" },
-];
-export function aiProviderEndpoint(provider: string): string {
-  if (provider === "openai-chat" || provider === "openai-responses")
-    return "https://api.openai.com/v1";
-  return provider === "anthropic" ? "https://api.anthropic.com" : "";
-}
-export function aiConnectionRequest(
-  draft: AiConnectionDraft,
-  connector: string,
-) {
-  if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(draft.name.trim()))
-    throw Error(
-      "Enter a connection name using letters, numbers, dots, dashes or underscores.",
-    );
-  if (!aiProviders.some((p) => p.value === draft.provider))
-    throw Error("Choose a provider.");
-  let endpoint: URL;
-  const endpointValue =
-    draft.endpoint.trim() || aiProviderEndpoint(draft.provider);
-  try {
-    endpoint = new URL(endpointValue);
-  } catch {
-    throw Error("Enter the provider's trusted HTTPS endpoint.");
+/** The newest revision of each connection name, sorted by name. */
+export function latestByName(connections: AiConnection[]): AiConnection[] {
+  const latest = new Map<string, AiConnection>();
+  for (const connection of connections) {
+    const known = latest.get(connection.name);
+    if (!known || connection.revision > known.revision)
+      latest.set(connection.name, connection);
   }
-  if (
-    endpoint.protocol !== "https:" ||
-    endpoint.username ||
-    endpoint.password ||
-    endpoint.search ||
-    endpoint.hash
-  )
-    throw Error(
-      "Use an HTTPS endpoint without credentials, query parameters or fragments.",
-    );
-  if (draft.provider.startsWith("azure-") && !draft.apiVersion.trim())
-    throw Error(
-      "Azure requires an API version supplied by your platform operator.",
-    );
-  if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(draft.handle.trim()))
-    throw Error(
-      "Enter an operator-approved API key secret handle, never the key itself.",
-    );
-  if (!connector)
-    throw Error(
-      `${aiConnector} must be published in this project before creating this connection.`,
-    );
-  return {
-    name: draft.name.trim(),
-    connector_version_id: connector,
-    config: {
-      provider: draft.provider,
-      endpoint:
-        endpoint.origin +
-        (endpoint.pathname === "/" && !endpointValue.endsWith("/")
-          ? ""
-          : endpoint.pathname),
-      secretSlot: "apiKey",
-      ...(draft.provider.startsWith("azure-")
-        ? { apiVersion: draft.apiVersion.trim() }
-        : {}),
-    },
-    secretRef: { apiKey: draft.handle.trim() },
-    allowed_destinations: [endpoint.origin],
-  };
+  return [...latest.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 /** Bounded lists fail visibly rather than hiding an older pinned revision. */
 export async function aiSetupRows(

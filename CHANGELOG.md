@@ -20,6 +20,16 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+- Studio has one place to set up AI: **Settings › AI models**. It shows provider cards, your AI connections, a
+  readiness checklist with **Publish**, **Authorize** and **Test connection**, and the Weave AI card. The AI
+  connection side sheet is the only AI connection form; it also opens from Build › Connections, an AI task and
+  Home's **Connect a model**. It offers plain HTTP only for endpoints a platform operator approved, asks for a secret
+  handle (never a key), lists the approved models the provider serves, and tests a model through the AI gateway with
+  tool support. The old AI setup wizard and the Weave AI settings in the Ask Weave AI panel are gone.
+- Studio waits up to 140 seconds for an AI connection test, so a local model loading for the first time no longer
+  fails the test early; canceling the test in Studio stops it on the platform.
+- `weave platform up --username` grants the new account the local owner roles, and
+  `weave platform user grant --username NAME --role ROLE` adds roles to an account the local platform created.
 - Run state, history, tasks, deadlines, and incidents name each run of a step by
   its instance key, which equals the step ID outside loops, so existing workflows
   keep byte-identical transitions and history. Deadline scans, incident

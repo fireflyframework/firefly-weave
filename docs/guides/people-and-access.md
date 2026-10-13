@@ -405,6 +405,19 @@ command, `weave auth setup http://127.0.0.1:API_PORT`. The default roles are
 different set instead. An existing username is never reset. Never use this
 command with a shared or production identity provider.
 
+`weave platform up --username NAME` creates its first account with the local
+owner roles instead: `developer`, `deployer`, `operator`, `viewer`, `task_participant`, `tenant_admin`, `lumi_manager`, `execution_manager`, `worker_operator`, `deployment_reader`, `deployment_planner`, `deployment_approver` and `deployment_operator`. To add roles later to an account this platform
+created, use `user grant`; it adds grants, never removes them, and first checks
+that the sign-in still belongs to the recorded person:
+
+```sh
+# Development only: add roles to an account this platform created.
+weave platform user grant --username alice --role tenant_admin --role lumi_manager
+```
+
+Accounts created by earlier versions have no local record, so `user grant`
+refuses them; assign their roles in Studio's **Settings › People and access**.
+
 **To practise platform-administrator commands locally,** act as the local host
 application, which `weave platform setup` bootstrapped as platform
 administrator. `weave platform user` never offers `platform_admin`. From the

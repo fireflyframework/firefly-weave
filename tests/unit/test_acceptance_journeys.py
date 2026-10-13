@@ -129,12 +129,12 @@ def test_the_committed_map_is_valid():
     enablement = journeys.Enablement.load(ROOT / "tests/acceptance/journeys.toml")
     assert enablement.capabilities["acceptance-foundations"] is True
     landed = [name for name, value in enablement.capabilities.items() if value]
-    assert landed == ["text-operators", "instance-keys", "ai-gateway", "acceptance-foundations"]
+    assert landed == ["text-operators", "instance-keys", "ai-gateway", "ai-models-screen", "acceptance-foundations"]
     assert enablement.journey_steps("J0") == tuple(f"J0.{n}" for n in range(1, 15))
     assert enablement.profiles["pr"] == ("J0", "J1", "J2", "J3", "J5", "J8", "J9")
     assert enablement.criteria["J3"] == ("SC1", "SC3", "SC7")
     assert enablement.applies("J0.12", "ai") and not enablement.applies("J0.12", "pr")
-    assert enablement.missing("J0.3/owner-roles") == ("ai-models-screen|compose-operations",)
+    assert enablement.missing("J0.3/owner-roles") == ()
 
 
 def test_versions_toml_pins_match_the_files_that_use_them():

@@ -403,6 +403,8 @@ for (const viewport of [
       const inputs = designer.inspector.locator(
         '[data-field="spec/inputSchema"]',
       );
+      // evaluate() does not wait for the summary inside the field to render.
+      await expect(inputs.locator("button.sd-summary").first()).toBeVisible();
       const colors = await inputs.evaluate((element) => [
         getComputedStyle(element.querySelector("button.sd-summary")!).color,
         getComputedStyle(element).color,

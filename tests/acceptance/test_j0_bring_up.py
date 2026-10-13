@@ -29,7 +29,7 @@ import urllib.request
 import pytest
 
 from firefly_weave import __version__
-from firefly_weave.sdk.platform import PERSON_ROLES
+from firefly_weave.sdk.platform import LOCAL_OWNER_ROLES, PERSON_ROLES
 
 pytestmark = pytest.mark.acceptance
 
@@ -67,6 +67,10 @@ def ready(api_url: str, timeout: float = 60) -> bool:
     return False
 
 
+def _expect_roles(grants: list[dict[str, object]], roles: tuple[str, ...]) -> None:
+    assert sorted({str(grant["role"]) for grant in grants}) == sorted(roles)
+
+
 @pytest.mark.journey_step("J0.1")
 def test_j0_01_version(run):
     assert run.require(run.weave("--version")).stdout == f"Firefly Weave {__version__}\n"
@@ -101,6 +105,10 @@ def test_j0_03_up_with_the_fixture_origin(run):
             for purpose in ("event-delivery", "http-connector")
         ],
     }
+    run.check(
+        "J0.3/owner-roles",
+        lambda: _expect_roles(value["account"]["grants"], LOCAL_OWNER_ROLES),
+    )
 
 
 @pytest.mark.journey_step("J0.4")
