@@ -205,7 +205,9 @@ sidecar, committed in the same transaction as the fact:
 - Facts and issued commands name each run of a step by its
   [instance key](compiler.md#instance-keys), which is the step ID outside loops.
   Replay finds the step from the step ID part of a canonical key; any other
-  spelling makes the history inconsistent.
+  spelling makes the history inconsistent. An export's `node_paths` stays keyed
+  by node ID, so map an event's `node_id` to its path through the node ID part of
+  the key (`node_of`).
 - The expected transition is the SHA-256 of a canonical `classified-v1` safe
   projection of the kernel state, identified as `sha256-rfc8785-v1`; no
   duplicate snapshot is stored.

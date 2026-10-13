@@ -156,7 +156,24 @@ catalog:
 - Definite problems are still errors: `WV-COMP-UNAVAILABLE_REFERENCE` (a step
   reads a step that has not run yet in its scope), `WV-COMP-TYPE_MISMATCH`, and
   `WV-COMP-CONNECTION` for a step that names an undeclared connection slot.
+- A loop whose `items` read a pending output leaves `/item` unconstrained in the
+  same way.
 - Pending notes only use diagnostic capacity that real findings leave free.
+
+**Data suggestions.** For a field Studio is editing, the host answers
+`POST /studio/local/scope` with `{source, format, path}`, where `path` is the
+JSON Pointer of an expression in the definition. It returns
+`firefly_weave.compiler.scope.scope_at(document, path, *, catalog=None)`: `found`
+(false when the path is not inside an expression the compiler analyzes, or the
+document stops before flow analysis), `evaluated` (false when every path to it
+fails), `truncated`, and `entries`. Entries list the workflow input, then the
+current loop's item (`/item`, `source: item`) and position (`/index`, `source:
+index`), then enclosing loops by ID (`/loops/<id>/item`), then the visible step
+outputs in run order, each followed by its fields up to four levels deep and at
+most 200 entries in all. Each entry carries `ref`, `source`, `loop` or `stepId`
+and `stepKind`, `path`, `label`, `breadcrumb`, `schema`, `types`, `typeLabel`, and
+`optional`. Without a catalog, outputs of actions and decision tables stay
+unconstrained, as in offline validation.
 
 The result is always `partial=True`, `artifact=None`, and `ok=False`;
 `validation_ok` counts error-severity findings only. When Studio is connected and
@@ -213,9 +230,9 @@ Executables also define a sorted `features` list of the language features they
 need (`text.concat`, `text.join`, `flow.forEach`, `flow.callWorkflow`,
 `ai.agent`, `ai.memory`). It is omitted when empty, so existing digests do not
 change. A workflow that uses `concat` or `join` in any expression compiles to
-`weave/ir-v1alpha4` with `text.concat`, `text.join`, or both; v1alpha4 always
-has a non-empty list, and the validator recomputes the version and the list from
-the graph. The version is the highest level any construct needs, so a workflow
+`weave/ir-v1alpha4` with `text.concat`, `text.join`, or both, and a workflow with
+a `forEach` step lists `flow.forEach`; v1alpha4 always has a non-empty list, and
+the validator recomputes the version and the list from the graph. The version is the highest level any construct needs, so a workflow
 with a human task and `join` is v1alpha4, not v1alpha2. A platform imports and
 activates such an artifact only when its capabilities list every feature in
 `language_features`; otherwise it answers `ir_unsupported`. `ir.py` defines
@@ -315,6 +332,16 @@ flow as: start, decide, take one branch, join, end. The rules behind it:
   `fork` edges name the branches, `concurrency` carries the declared cap, and the
   join uses `mode: all`, collecting every named branch output into the step's
   output object.
+- **Loops.** A `forEach` node carries `items`, `concurrency`, `maxItems`, and
+  `collect` (defaults written out), its `target`, and its `join`. Its only edge is
+  an `each` edge with branch `body` to `target`: the first body step, or the
+  body's `branch-output` node when the body is empty. Body nodes have the scope
+  `[<loop id>, body]` after the loop's own scope. The body's `branch-output`
+  (`@branch:<loop id>:0`) runs `body.output` and always completes into the join
+  `@join:<loop id>`, which uses `mode: each` and continues with a `next` edge.
+  The graph stays acyclic: the runtime enters the body once per element. A
+  `loop_items` guard on `<step path>/items` (schema `{"type": "array"}`) is added
+  only when the compiler cannot prove that `items` is a list.
 - **Branch outputs.** Every branch has a `branch-output` node, even an empty one.
   Its output expression runs in the branch's scope; an empty branch enters it
   directly.
@@ -414,7 +441,7 @@ Each kind of input has its own policy, passed as a separate keyword:
 | `SchemaLimits` | Author schemas | See [schema profile limits](schema-profile.md#limits) |
 | `DEFAULT_CONTRACT_LIMITS` | Weave's generated outer contracts | Author limits with a larger work budget |
 | `ArtifactLimits` | The compiled artifact and its import | 33,554,432 bytes (32 MiB), 2,000,000 JSON value nodes, depth 128 |
-| `max_parallel_concurrency` | The largest `concurrency` a parallel step may declare | 1,000 |
+| `max_parallel_concurrency` | The largest `concurrency` a parallel or `forEach` step may declare | 1,000 |
 
 Limits are strict positive integers that source cannot raise. Artifact
 construction charges each fragment before adding it, then measures the whole
@@ -537,7 +564,17 @@ is not classified. Safe ordinary artifacts keep their canonical digests.
 | `WV-COMP-TYPE_MISMATCH` at `/spec/output` | An expression's type cannot satisfy the target schema | Change the expression or the schema; the authoring guide shows an example |
 | `WV-COMP-UNAVAILABLE_REFERENCE` | An expression reads a step that has not run yet in its scope, or a value private to another branch | Read the step only after it runs, or read the decision or parallel step's output |
 | `WV-COMP-UNKNOWN_ACTION` (or `_CONNECTOR`, `_TASK`, `_ADAPTER`) | The catalog does not contain that exact reference | Add the exact version to the catalog, or fix the reference |
-| `WV-COMP-UNSUPPORTED_FEATURE` | The workflow uses a construct whose language feature this compiler does not compile yet (`forEach` or `callWorkflow`); the message names the feature | Keep the document for a later version, or use the steps and operators this version compiles |
+| `WV-COMP-UNSUPPORTED_FEATURE` | The workflow uses a construct whose language feature this compiler does not compile yet (`callWorkflow`); the message names the feature | Keep the document for a later version, or use the steps and operators this version compiles |
+| `WV-COMP-LOOP_ITEMS` at `…/items` | A loop's `items` can never be a list | Point `items` at a list, such as an array field of the input or of a step's output |
+| `WV-COMP-UNKNOWN_COMPATIBILITY` at `…/items` | The compiler cannot prove that `items` is a list; the run checks it | Declare the field as an array where it comes from |
+| `WV-COMP-LOOP_SCOPE` at `…/ref` | `/item`, `/index`, or `/loops/<id>` is read outside a loop body, in the loop's own `items`, or names a loop that does not enclose the expression | Read loop data only inside the loop's body; use `/loops/<id>/item` for an enclosing loop |
+| `WV-COMP-LOOP_SIGNAL` | A loop body contains a **Wait for signal** step | Move the wait before or after the loop |
+| `WV-COMP-LOOP_BODY_INCOMPLETE` at `…/body` | Every path through the body ends in **Fail** | Let the body finish with a result for each element |
+| `WV-COMP-LOOP_DEPTH` | A loop is nested more than three deep | Flatten the inner loops |
+| `WV-COMP-LOOP_MAX_ITEMS` at `…/maxItems` | `maxItems` is above the platform's 10,000 | Lower `maxItems` |
+| `WV-COMP-LOOP_BUDGET` | All loops together, each multiplied by the `maxItems` of the loops around it, could need more than 100,000 iterations in one run | Apply the suggested edit, which lowers the inner loop's `maxItems`, or lower another loop's |
+| `WV-COMP-CONCURRENCY_LIMIT` at `…/concurrency` | A loop or parallel step runs more at a time than the platform allows (1,000) | Lower `concurrency` |
+| `WV-COMP-LOOP_FANOUT` (warning) | Nested loops together could start more than 1,000 tasks at once | Nothing to fix; the run spreads the work over several turns. Lower `concurrency` if the tasks must start together |
 | `WV-DECISION-OPERATOR` | A decision table rule uses `concat` or `join` | Build the text in a Transform step and pass it to the table as input |
 | `UnsupportedIR` on import, `WV-IR-UNSUPPORTED` on activation, a catalog read, or a run read | The artifact needs an IR version or language feature this platform does not list; `missing` names the missing features and is empty when the IR version itself is unknown. A run that needs it waits for an upgrade, and signals and task results for it answer the same way | Upgrade the platform, or use an artifact without that feature |
 | `WV-COMP-CATALOG_PENDING` notes in Studio | Studio works without the catalog and checks references later | Nothing; connect and **Validate** against the project catalog |
