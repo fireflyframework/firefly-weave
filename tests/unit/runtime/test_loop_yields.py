@@ -133,3 +133,55 @@ def test_every_event_stays_within_its_budget_and_every_wake_up_progresses(body, 
         result = wake(run, run.state.active[0])
     assert run.state.status == "succeeded" and run.state.output == list(range(count))
     assert run.state.loops["each"].yields == len(run.results) - 1
+
+
+def intents(result) -> int:
+    return sum(getattr(command, "kind", None) in {"task", "human_task", "deadline"} for command in result.commands)
+
+
+def test_a_wide_loop_of_nested_loops_starts_within_the_intent_budget(worker_runtime_fixture):
+    inner = each("inner", [send()], {"ref": "/steps/send/output"}, items={"ref": "/item"}, concurrency=2, maxItems=10)
+    lists = {"type": "array", "items": {"type": "array", "items": {"type": "integer"}}}
+    flow = compiled(
+        [each("outer", [inner], {"ref": "/steps/inner/output"}, concurrency=1000, maxItems=1000)],
+        {"ref": "/steps/outer/output"},
+        catalog=worker_runtime_fixture["catalog"],
+        input_schema=lists,
+    )
+    # One task per iteration plus the yield deadline a nested loop may emit.
+    assert prepare(flow).body_intents["outer"] == 2
+    run = Run(flow, [[1, 2] for _ in range(600)])
+    first = run.start()
+    assert (run.state.status, run.state.incident) == ("waiting", None)
+    assert intents(first) <= MAX_INTENTS
+    tasks = [c.node_id for c in first.commands if isinstance(c, TaskIntent)]
+    deadlines = [c.node_id for c in first.commands if isinstance(c, Deadline)]
+    assert tasks == [f"send[{i}][0]" for i in range(250)]
+    assert deadlines == ["outer~1", *(f"inner[{i}]~1" for i in range(250))]
+    # Later events, inner wake-ups, completions and the outer wake-up alike, stay within the budget too.
+    for key in ["inner[0]~1", "send[0][0]", "send[0][1]", "outer~1"]:
+        result = wake(run, key) if "~" in key else run.complete(key, int(key[-2]) + 1)
+        assert (run.state.status, intents(result) <= MAX_INTENTS) == ("waiting", True)
+    assert run.state.loops["outer"].next_index == 500
+
+
+def test_three_levels_of_wide_nested_loops_start_within_the_intent_budget(worker_runtime_fixture):
+    innermost = each(
+        "leaf", [send()], {"ref": "/steps/send/output"}, items={"ref": "/item"}, concurrency=2, maxItems=10
+    )
+    middle = each(
+        "middle", [innermost], {"ref": "/steps/leaf/output"}, items={"ref": "/item"}, concurrency=2, maxItems=10
+    )
+    grid = {"type": "array", "items": {"type": "array", "items": {"type": "array", "items": {"type": "integer"}}}}
+    flow = compiled(
+        [each("outer", [middle], {"ref": "/steps/middle/output"}, concurrency=1000, maxItems=800)],
+        {"ref": "/steps/outer/output"},
+        catalog=worker_runtime_fixture["catalog"],
+        input_schema=grid,
+    )
+    assert prepare(flow).body_intents == {"outer": 3, "middle": 2, "leaf": 1}
+    run = Run(flow, [[[1, 2], [3, 4]] for _ in range(400)])
+    first = run.start()
+    assert (run.state.status, run.state.incident) == ("waiting", None)
+    assert intents(first) <= MAX_INTENTS
+    assert sum(isinstance(c, TaskIntent) for c in first.commands) == MAX_INTENTS // 2 // 3

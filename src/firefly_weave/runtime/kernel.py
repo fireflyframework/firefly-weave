@@ -202,11 +202,13 @@ def prepare(artifact: CompiledArtifact) -> PreparedWorkflow:
             inner = [*loop.scope, loop.id, "body"]
             body = [node for node in ir.graph.nodes if node.scope[: len(inner)] == inner]
             sizes[loop.id] = len(body)
-            # A task, a deadline, or a human task and its expiry deadline.
+            # A task, a deadline, or a human task and its expiry deadline; and the yield deadline of each nested
+            # loop. A nested loop instance starts at most one iteration and one yield past the event's budget, and
+            # its enclosing iteration's reservation covers both.
             intents[loop.id] = sum(
                 2 if isinstance(node, HumanTaskNode) else 1
                 for node in body
-                if isinstance(node, (ActionNode, WaitNode, SignalNode, HumanTaskNode))
+                if isinstance(node, (ActionNode, WaitNode, SignalNode, HumanTaskNode, ForEachNode))
             )
             if any(isinstance(node, (SwitchNode, ParallelNode, ForEachNode)) for node in body):
                 nested.add(loop.id)
