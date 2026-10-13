@@ -199,3 +199,14 @@ def test_a_malformed_request_never_consumes_an_armed_fault(servers):
     assert raw_post(api, "/approvals", b"{}", "x")[0] == 400
     assert raw_post(api, "/approvals", b"{}")[0] == 503
     assert raw_post(api, "/approvals", b"{}")[0] == 201
+
+
+@pytest.mark.parametrize("length", [None, str(4 * acme.MAX_BODY + 1), "9" * acme.MAX_LENGTH_DIGITS])
+def test_an_oversized_body_never_consumes_an_armed_fault(servers, length):
+    api, control = servers
+    fault = json.dumps({"status": 503, "count": 1, "path": "/sink/alerts"}).encode()
+    assert raw_post(control, "/_control/faults", fault)[0] == 204
+    body = b"x" * (acme.MAX_BODY + 1) if length is None else b"{}"
+    assert raw_post(api, "/sink/alerts", body, length)[0] == 413
+    assert raw_post(api, "/sink/alerts", b"{}")[0] == 503
+    assert raw_post(api, "/sink/alerts", b"{}")[0] == 204

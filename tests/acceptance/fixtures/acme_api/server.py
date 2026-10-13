@@ -259,14 +259,14 @@ class ApiHandler(_Handler):
             body, refused = b"", error.message
         key = self.headers.get("X-Api-Key")
         key_sha256 = None if key is None else _digest(key.encode())
-        # A malformed request never consumes an armed fault.
-        injected = None if refused is not None else self.state.take_fault(path)
+        # A malformed or oversized request never consumes an armed fault.
+        injected = None if refused is not None or body is None else self.state.take_fault(path)
         if refused is not None:
             status, value = 400, {"error": refused}
-        elif injected is not None:
-            status, value = injected, {"error": "injected"}
         elif body is None:
             status, value = 413, {"error": "The request body is over 64 KiB."}
+        elif injected is not None:
+            status, value = injected, {"error": "injected"}
         else:
             status, value = self._route(path, body, key_sha256)
         self.state.record(
