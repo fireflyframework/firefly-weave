@@ -20,9 +20,13 @@ import {
   CANVAS_KIND,
   CANVAS_SCHEMA_ID,
   CANVAS_TOO_BIG,
+  MAX_NOTES,
   MAX_OWNED_ACTIONS,
   MAX_STEP_NOTE_TEXT,
   MAX_TRIGGERS,
+  NOTE_SIZES,
+  addNote,
+  addTrigger,
   canvasBytes,
   canvasFile,
   canvasFromStored,
@@ -32,16 +36,22 @@ import {
   pruneCanvas,
   pruneOwnedRecipes,
   readCanvas,
+  removeNote,
+  removeTrigger,
   renameInCanvas,
   renameOwnedRecipe,
   stepNoteLine,
   stepNotesOf,
+  syncCalled,
+  triggerInputs,
   triggerIntents,
+  updateNote,
   withOwnedRecipe,
   withStepNote,
   withTriggerIntents,
   type ActionRecipe,
   type CanvasSidecar,
+  type StickyNote,
   type TriggerIntent,
 } from "../src/app/editor/state/canvas-sidecar";
 import { freshWorkflow } from "../src/app/model";
@@ -496,5 +506,253 @@ describe("the setters refuse or clamp what a canvas file wouldn't hold", () => {
         canvas: { ...canvas, semanticDigest: digest },
       });
     }
+  });
+});
+
+/** A random source that returns these hex strings in order. */
+const ids =
+  (...values: string[]) =>
+  () =>
+    values.shift() ?? "ffffffff";
+const note = (id: string, stepId?: string): StickyNote => ({
+  id,
+  text: "",
+  color: "yellow",
+  x: 0,
+  y: 0,
+  width: 240,
+  height: 120,
+  ...(stepId ? { anchor: { stepId, dx: 0, dy: 168 } } : {}),
+});
+const workflowWith = (callable: boolean) => {
+  const workflow = freshWorkflow();
+  if (callable) workflow.spec["callable"] = {};
+  return workflow;
+};
+
+describe("sticky notes in the sidecar", () => {
+  it("adds a yellow 240 by 120 note, anchored when asked, with a fresh ID", () => {
+    const added = addNote(
+      emptyCanvas(),
+      { x: 10.4, y: 20.6 },
+      { stepId: "check", dx: 0.4, dy: 168 },
+      ids("0000000c"),
+    );
+    expect(added).toEqual({
+      id: "note-0000000c",
+      canvas: {
+        ...emptyCanvas(),
+        notes: [{ ...note("note-0000000c", "check"), x: 10, y: 21 }],
+      },
+    });
+    const again = addNote(
+      added.canvas,
+      { x: 0, y: 0 },
+      null,
+      ids("0000000c", "0000000d"),
+    );
+    expect(again.id).toBe("note-0000000d");
+    expect(NOTE_SIZES.small).toEqual({ width: 240, height: 120 });
+  });
+
+  it("keeps notes within their limits and says why it refuses", () => {
+    const full: CanvasSidecar = {
+      ...emptyCanvas(),
+      notes: Array.from({ length: MAX_NOTES }, (_, i) =>
+        note(`note-${i.toString(16).padStart(8, "0")}`),
+      ),
+    };
+    expect(() => addNote(full, { x: 0, y: 0 }, null)).toThrow(
+      "A canvas holds at most 200 notes.",
+    );
+    const one: CanvasSidecar = {
+      ...emptyCanvas(),
+      notes: [note("note-00000001")],
+    };
+    expect(
+      updateNote(one, "note-00000001", { width: 10, height: 5000 }).notes?.[0],
+    ).toMatchObject({ width: 160, height: 1200 });
+    expect(() =>
+      updateNote(one, "note-00000001", { text: "x".repeat(4001) }),
+    ).toThrow("A note holds at most 4000 characters.");
+    expect(() =>
+      updateNote(one, "note-00000001", { color: "orange" as never }),
+    ).toThrow("Use yellow, blue, green, pink, purple or gray for a note.");
+    expect(() => updateNote(one, "note-0000000f", { text: "a" })).toThrow(
+      "That note is already gone.",
+    );
+    expect(updateNote(one, "note-00000001", { text: "" })).toBe(one);
+    expect(removeNote(one, "note-00000001")).toEqual(emptyCanvas());
+    expect(removeNote(one, "note-0000000f")).toBe(one);
+  });
+
+  it("moves, re-anchors and frees a note", () => {
+    const one: CanvasSidecar = {
+      ...emptyCanvas(),
+      notes: [note("note-00000001", "check")],
+    };
+    const moved = updateNote(one, "note-00000001", {
+      x: 40.6,
+      y: 7,
+      anchor: { stepId: "check", dx: 40.6, dy: -161 },
+    });
+    expect(moved.notes?.[0]).toMatchObject({
+      x: 41,
+      y: 7,
+      anchor: { stepId: "check", dx: 41, dy: -161 },
+    });
+    expect(
+      updateNote(moved, "note-00000001", { anchor: null }).notes?.[0],
+    ).not.toHaveProperty("anchor");
+  });
+
+  it("refuses an edit that would take the canvas over 256 KB, and still lets it shrink", () => {
+    const filler = Array.from({ length: 64 }, (_, i) => ({
+      ...note(`note-${i.toString(16).padStart(8, "0")}`),
+      text: "x".repeat(4000),
+    }));
+    const added = addNote(
+      { ...emptyCanvas(), notes: filler },
+      { x: 0, y: 0 },
+      null,
+      ids("0000ffff"),
+    );
+    // Save to file adds the workflow's digest: setters leave 128 bytes for it.
+    const room = 262_144 - 128 - canvasBytes(added.canvas);
+    expect(room).toBeGreaterThan(0);
+    expect(room).toBeLessThan(4000);
+    expect(
+      updateNote(added.canvas, "note-0000ffff", { text: "y".repeat(room) })
+        .notes,
+    ).toHaveLength(65);
+    expect(() =>
+      updateNote(added.canvas, "note-0000ffff", { text: "y".repeat(room + 1) }),
+    ).toThrow(CANVAS_TOO_BIG);
+    expect(removeNote(added.canvas, "note-00000000").notes).toHaveLength(64);
+  });
+
+  it("reads back every note canvas these edits build", () => {
+    let canvas = addNote(
+      emptyCanvas(),
+      { x: 1, y: 2 },
+      null,
+      ids("0000000a"),
+    ).canvas;
+    canvas = updateNote(canvas, "note-0000000a", {
+      text: "## Reviewed\nwith **ops**",
+      color: "blue",
+      width: 480,
+      height: 320,
+    });
+    expect(parseCanvas(canvas)).toEqual({ ok: true, canvas });
+  });
+});
+
+describe("trigger choices in the sidecar", () => {
+  it("draws the input form for a workflow with steps and no choice yet", () => {
+    expect(triggerInputs(emptyCanvas(), true)).toEqual([
+      { id: "manual", kind: "manual" },
+    ]);
+    expect(triggerInputs(emptyCanvas(), false)).toEqual([]);
+    expect(
+      triggerInputs(
+        {
+          ...emptyCanvas(),
+          triggers: [{ id: "trigger-0a1b2c3d", kind: "email" }],
+        },
+        true,
+      ),
+    ).toEqual([{ id: "trigger-0a1b2c3d", kind: "email" }]);
+  });
+
+  it("adds a trigger, keeping the input form a workflow with steps already had", () => {
+    expect(
+      addTrigger(
+        emptyCanvas(),
+        freshWorkflow(),
+        "webhook",
+        true,
+        ids("0000000a", "0000000b"),
+      ),
+    ).toEqual({
+      id: "trigger-0000000b",
+      workflow: null,
+      canvas: {
+        ...emptyCanvas(),
+        triggers: [
+          { id: "trigger-0000000a", kind: "manual" },
+          { id: "trigger-0000000b", kind: "webhook" },
+        ],
+      },
+    });
+    expect(
+      addTrigger(
+        emptyCanvas(),
+        freshWorkflow(),
+        "manual",
+        false,
+        ids("0000000c"),
+      ),
+    ).toMatchObject({
+      id: "trigger-0000000c",
+      canvas: { triggers: [{ id: "trigger-0000000c", kind: "manual" }] },
+    });
+  });
+
+  it("allows one input form, one Called by a workflow and six triggers in all", () => {
+    expect(() =>
+      addTrigger(emptyCanvas(), freshWorkflow(), "manual", true),
+    ).toThrow("This workflow already starts from its input form.");
+    let canvas = emptyCanvas();
+    for (let i = 0; i < 6; i++)
+      canvas = addTrigger(canvas, freshWorkflow(), "webhook", false).canvas;
+    expect(() =>
+      addTrigger(canvas, freshWorkflow(), "schedule", false),
+    ).toThrow("A workflow can have at most 6 triggers.");
+    const called = addTrigger(
+      emptyCanvas(),
+      freshWorkflow(),
+      "called",
+      false,
+    ).canvas;
+    expect(() =>
+      addTrigger(called, workflowWith(true), "called", false),
+    ).toThrow("Other workflows can already call this one.");
+  });
+
+  it("makes the workflow callable with its Called by a workflow trigger, and back", () => {
+    const added = addTrigger(
+      emptyCanvas(),
+      workflowWith(false),
+      "called",
+      false,
+    );
+    expect(added.workflow?.spec["callable"]).toEqual({});
+    const removed = removeTrigger(added.canvas, added.workflow!, added.id);
+    expect(removed.canvas).toEqual(emptyCanvas());
+    expect(removed.workflow && "callable" in removed.workflow.spec).toBe(false);
+    expect(() =>
+      removeTrigger(emptyCanvas(), freshWorkflow(), "trigger-00000000"),
+    ).toThrow("That trigger is already gone.");
+  });
+
+  it("mirrors spec.callable in both directions", () => {
+    const synced = syncCalled(
+      emptyCanvas(),
+      workflowWith(true),
+      true,
+      ids("0000000a", "0000000b"),
+    );
+    expect(synced.triggers).toEqual([
+      { id: "trigger-0000000a", kind: "manual" },
+      { id: "trigger-0000000b", kind: "called" },
+    ]);
+    expect(syncCalled(synced, workflowWith(true), true)).toBe(synced);
+    expect(syncCalled(synced, workflowWith(false), true).triggers).toEqual([
+      { id: "trigger-0000000a", kind: "manual" },
+    ]);
+    expect(syncCalled(emptyCanvas(), workflowWith(false), true)).toEqual(
+      emptyCanvas(),
+    );
   });
 });
