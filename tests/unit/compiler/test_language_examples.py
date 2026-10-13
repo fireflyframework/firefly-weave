@@ -29,8 +29,8 @@ EXAMPLES = Path("examples/language")
 EXPECTED = {
     "notify-customer.workflow.yaml": [],
     "order-summary.workflow.yaml": [],
-    # Text operators compile; loops and workflow calls are still reported.
-    "notify-overdue.workflow.yaml": [("/spec/steps/0/kind", "flow.forEach")],
+    # Text operators and loops compile; workflow calls are still reported.
+    "notify-overdue.workflow.yaml": [],
     "order-intake.workflow.yaml": [
         ("/spec/steps/0/kind", "flow.callWorkflow"),
         ("/spec/steps/1/kind", "flow.callWorkflow"),

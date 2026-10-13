@@ -48,6 +48,14 @@ from firefly_weave.compiler.expressions import (
 )
 from firefly_weave.compiler.language_support import unsupported_uses
 from firefly_weave.compiler.llm import llm_action_valid, llm_input, llm_output_schema
+from firefly_weave.compiler.loops import (
+    LOOP_ROOTS,
+    LoopScope,
+    index_schema,
+    item_schema,
+    loops_schema,
+    output_schema,
+)
 from firefly_weave.compiler.parser import ParsedSource
 from firefly_weave.compiler.schema_profile import DEFAULT_CONTRACT_LIMITS, SchemaLimits
 from firefly_weave.compiler.schemas import validate_contract_payload, validate_payload, validate_schema
@@ -82,6 +90,11 @@ _MESSAGES = {
     "REFERENCE_PRESENCE": "Reference presence is unproved; runtime validation is required.",
     "UNAVAILABLE_REFERENCE": "Referenced step does not dominate this expression in its lexical scope.",
     "CATALOG_PENDING": "This reference is checked against the project catalog when the definition is compiled.",
+    "LOOP_ITEMS": "The items of a loop must be a list.",
+    "LOOP_SCOPE": (
+        "/item, /index and /loops are available only inside a forEach body, and /loops/ID must name an enclosing loop."
+    ),
+    "LOOP_BODY_INCOMPLETE": "The loop body never completes, so any non-empty list would stop the run.",
 }
 
 
@@ -215,6 +228,8 @@ class _Analyzer:
         self.llm_profiles: JsonObject = {}
         self.kind: Literal["Workflow", "Action", "Connector", "DecisionTable"] | None = None
         self.definition: FrozenDocument | None = None
+        # Loops enclosing the position being analyzed, outermost first.
+        self.loops: tuple[LoopScope, ...] = ()
 
     def location(self, path: str) -> SourceRange | None:
         while path not in self.source.locations and path:
@@ -292,15 +307,19 @@ class _Analyzer:
 
     def reads_pending(self, expression: JsonObject) -> bool:
         """Whether a value reads an output that only the absent catalog leaves unconstrained."""
-        if not self.pending_outputs:
+        pending_loops = {loop.id for loop in self.loops if loop.quiet}
+        if not self.pending_outputs and not pending_loops:
             return False
         stack = [expression]
         while stack:
             node = stack.pop()
             if "ref" in node:
                 segments = pointer_segments(cast(str, node["ref"]))
-                if not segments or (
-                    segments[0] == "steps" and (len(segments) == 1 or segments[1] in self.pending_outputs)
+                if (
+                    not segments
+                    or (segments[0] == "steps" and (len(segments) == 1 or segments[1] in self.pending_outputs))
+                    or (segments[0] == "item" and bool(self.loops) and self.loops[-1].quiet)
+                    or (segments[0] == "loops" and (len(segments) == 1 or segments[1] in pending_loops))
                 ):
                     return True
             stack.extend(child for child, _ in _children(node, ""))
@@ -510,6 +529,8 @@ class _Analyzer:
             if kind in {"action", "decisionTable", "transform"}:
                 key = "value" if kind == "transform" else "with"
                 self.count(cast(JsonObject, step[key]), step_path + "/" + key)
+            if kind == "forEach":
+                self.count(cast(JsonObject, step["items"]), step_path + "/items")
             for _, child, child_path in self.branch_values(step, step_path):
                 if "when" in child:
                     self.count(cast(JsonObject, child["when"]), child_path + "/when")
@@ -534,18 +555,22 @@ class _Analyzer:
                 (name, cast(JsonObject, branch), pointer_child(path + "/branches", name))
                 for name, branch in sorted(cast(JsonObject, step["branches"]).items())
             ]
+        if step["kind"] == "forEach":
+            return [("body", cast(JsonObject, step["body"]), path + "/body")]
         return []
 
     def infer(self, expression: JsonObject, visible: dict[str, JsonObject]) -> InferredType:
         requested: set[str] = set()
-        include_input = include_all = include_steps = False
+        include_input = include_all = include_steps = include_loops = False
         stack = [expression]
         while stack:
             node = stack.pop()
             if "ref" in node:
                 segments = pointer_segments(cast(str, node["ref"]))
                 if not segments:
-                    include_input = include_all = include_steps = True
+                    include_input = include_all = include_steps = include_loops = True
+                elif segments[0] in LOOP_ROOTS:
+                    include_loops = True
                 elif segments[0] == "input":
                     include_input = True
                 elif segments[0] == "steps":
@@ -562,6 +587,10 @@ class _Analyzer:
             context["steps"] = _object(
                 {key: _object({"output": schema}) for key, schema in visible.items() if include_all or key in requested}
             )
+        if include_loops and self.loops:
+            context["item"] = self.loops[-1].item
+            context["index"] = self.loops[-1].index
+            context["loops"] = loops_schema(self.loops)
         return infer_expression(expression, context, limits=self.limits, schema_limits=self.schema_limits)
 
     def expression(
@@ -580,6 +609,8 @@ class _Analyzer:
                         and not reference_available(segments[1], frozenset(visible))
                     ):
                         self.issue("UNAVAILABLE_REFERENCE", location + "/ref")
+                    if not self.in_loop_scope(segments):
+                        self.issue("LOOP_SCOPE", location + "/ref")
                 stack.extend(_children(node, location))
             self.operands(expression, path, visible)
             result = self.infer(expression, visible)
@@ -605,7 +636,7 @@ class _Analyzer:
             result = self.infer(expression, visible)
             segments = pointer_segments(cast(str, expression["ref"]))
             unavailable = len(segments) >= 2 and segments[0] == "steps" and segments[1] not in visible
-            if unavailable:
+            if unavailable or not self.in_loop_scope(segments):
                 return
             if not handled and len(segments) > 3 and segments[0] == "steps" and segments[2] == "output":
                 variants = [visible[segments[1]]]
@@ -684,6 +715,14 @@ class _Analyzer:
                     self.issue("TYPE_MISMATCH" if definite else "UNKNOWN_COMPATIBILITY", path, unknown=not definite)
                 if not definite:
                     self.guard(path, "operator_operands", {})
+
+    def in_loop_scope(self, segments: tuple[str, ...]) -> bool:
+        """Whether a reference to a loop root names a loop enclosing the current position."""
+        if not segments or segments[0] not in LOOP_ROOTS:
+            return True
+        if not self.loops:
+            return False
+        return segments[0] != "loops" or len(segments) == 1 or any(loop.id == segments[1] for loop in self.loops)
 
     def text_operand(
         self, operand: JsonObject, path: str, schema: JsonObject, accepted: JsonObject, rejected: tuple[JsonObject, ...]
@@ -816,6 +855,9 @@ class _Analyzer:
             elif kind == "signal":
                 output = cast(JsonObject, step["payloadSchema"])
                 self.guard(location, "signal_payload", output)
+            elif kind == "forEach":
+                output, body = self.loop(step, location, visible, scope)
+                branches.append(body)
             elif kind in {"switch", "parallel"}:
                 if kind == "parallel" and cast(int, step["concurrency"]) > self.concurrency:
                     self.issue("CONCURRENCY_LIMIT", location + "/concurrency")
@@ -877,6 +919,61 @@ class _Analyzer:
                 visible[identifier] = output
             reachable = reachable and completes
         return tuple(nodes), visible, reachable
+
+    def loop(
+        self, step: JsonObject, location: str, visible: dict[str, JsonObject], scope: tuple[str, ...]
+    ) -> tuple[JsonObject, AnalyzedBranch]:
+        """Check one forEach and its body; returns the loop's output schema and its analyzed body."""
+        identifier = cast(str, step["id"])
+        concurrency, max_items = cast(int, step["concurrency"]), cast(int, step["maxItems"])
+        items = cast(JsonObject, step["items"])
+        before = self.error_count
+        source = self.expression(items, location + "/items", visible)
+        if self.error_count == before:
+            self.loop_items(source, items, location + "/items")
+        # Items that are already wrong, or unknown until the catalog is present, leave /item unchecked.
+        quiet = self.error_count != before or self.reads_pending(items)
+        scope_entry = LoopScope(identifier, item_schema(source), index_schema(max_items), concurrency, max_items, quiet)
+        body = cast(JsonObject, step["body"])
+        expression = cast(JsonObject, body["output"])
+        self.loops += (scope_entry,)
+        try:
+            children, body_visible, completes = self.block(
+                cast(list[JsonObject], body["steps"]), location + "/body/steps", visible, scope + (identifier, "body")
+            )
+            if completes:
+                body_schema = self.expression(expression, location + "/body/output", body_visible)
+                if self.reads_pending(expression):
+                    self.pending_outputs.add(identifier)
+            else:
+                self.issue("LOOP_BODY_INCOMPLETE", location + "/body")
+                body_schema = {}
+        finally:
+            self.loops = self.loops[:-1]
+        self.guard(location + "/body/output", "branch_output", body_schema)
+        branch = AnalyzedBranch(
+            "body",
+            location + "/body",
+            children,
+            FrozenDocument.from_value(expression),
+            self.freeze_schema(body_schema),
+            completes,
+        )
+        return output_schema(body_schema, max_items, cast(str, step["collect"])), branch
+
+    def loop_items(self, schema: JsonObject, items: JsonObject, path: str) -> None:
+        """Items must be a list: provably not is LOOP_ITEMS; unproved warns and keeps a loop_items guard."""
+        try:
+            outcome = check_compatibility(schema, {"type": "array"}, self.bundle, limits=self.schema_limits)
+        except TypeCheckLimit:
+            self.issue("RESOURCE_LIMIT", path)
+            return
+        if outcome == "incompatible":
+            self.issue("LOOP_ITEMS", path)
+        elif outcome == "unknown":
+            if not self.reads_pending(items):
+                self.issue("UNKNOWN_COMPATIBILITY", path, unknown=True)
+            self.guard(path, "loop_items", {"type": "array"})
 
     def settle_pending(self) -> None:
         """Catalog-pending notes are the lowest priority: they only fill capacity that findings left.
