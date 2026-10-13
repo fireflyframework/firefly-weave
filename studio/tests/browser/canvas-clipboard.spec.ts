@@ -243,6 +243,8 @@ test.describe("copy and paste of steps", () => {
     await expect(canvas.tile("third")).toHaveCount(0);
     await canvas.tileBody("first").focus();
     await page.keyboard.press("ControlOrMeta+v");
+    // The paste reads the clipboard first: wait for it before reading Source.
+    await expect(toast(page, "Pasted third.")).toBeVisible();
     expect(await canvas.rootSteps()).toEqual(["first", "third", "second"]);
   });
 
