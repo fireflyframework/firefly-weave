@@ -33,8 +33,9 @@ SPDX-License-Identifier: Apache-2.0
   trigger and End open their own details, and the gear opens **Workflow
   settings**. The step picker lists **Call an API**, email and file steps under
   **Common actions**; each gets an action of its own, which **Publish…** and
-  **Simulate** publish first, after you confirm. With the new editor off, Studio
-  keeps the inspector.
+  **Simulate** publish first, after you confirm. A draft saved on a platform
+  keeps those actions' settings and step notes only while it is open, and
+  **Save draft** says so. With the new editor off, Studio keeps the inspector.
 - Leaving **Source** with text you typed but haven't applied now asks **Apply
   changes**, **Discard changes** or **Keep editing**, with the new editor on or
   off: switching tabs, opening a step, running a command, going to another page,

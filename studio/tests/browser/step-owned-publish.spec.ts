@@ -749,6 +749,56 @@ for (const size of [
     });
   });
 
+// A platform draft holds the workflow only: the requests of its Call an API,
+// email and file steps whose actions aren't published stay while it is open.
+test.describe("saving a draft on the platform", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test("Save draft says the unpublished actions' settings stay only while it's open", async ({
+    page,
+  }) => {
+    await withOwnedSteps(page);
+    let saved: { document: Definition } | null = null;
+    await page.route(`${project}/drafts/*`, (route) => {
+      saved = route.request().postDataJSON() as { document: Definition };
+      return route.fulfill({
+        json: { id: "draft", revision: 1, document: saved.document },
+      });
+    });
+    await command(page, "Save draft");
+    await expect.poll(() => saved).not.toBeNull();
+    await expect(page.locator(".toast-region")).toContainText(
+      "Draft saved. This draft keeps the settings of 2 actions of this workflow's Call an API, email or file steps only while it's open. Publish the workflow to keep them in the project.",
+    );
+  });
+
+  test("Save draft adds no note when every action is published", async ({
+    page,
+  }) => {
+    await withOwnedSteps(page);
+    await command(page, "Publish…");
+    await publishDialog(page)
+      .getByRole("button", { name: "Publish 2 actions and the workflow" })
+      .click();
+    await expect(publishDialog(page)).toHaveCount(0);
+    await workflowPublished(page);
+    await page.route(`${project}/drafts/*`, (route) =>
+      route.fulfill({
+        json: {
+          id: "draft",
+          revision: 1,
+          document: (route.request().postDataJSON() as { document: unknown })
+            .document,
+        },
+      }),
+    );
+    await command(page, "Save draft");
+    const toast = page.locator(".toast-region");
+    await expect(toast).toContainText("Draft saved.");
+    await expect(toast).not.toContainText("only while it's open");
+  });
+});
+
 // Publishing records into the last undo step. A workflow opened again has
 // none: the record then adds no undo step of its own, which would change
 // nothing a person sees.

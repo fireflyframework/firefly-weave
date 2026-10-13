@@ -6040,6 +6040,7 @@ export class App implements CanvasHost {
     this.busy = "save";
     this.saveState = "Saving";
     const source = this.model.source;
+    const model = this.model;
     try {
       const result = await this.safeMutation<{
         id: string;
@@ -6056,8 +6057,9 @@ export class App implements CanvasHost {
       this.saveState = source === this.model.source ? "Draft saved" : "Unsaved";
       this.draftSavedAt = new Date().toISOString();
       if (source === this.model.source) this.dirty = false;
-      this.notify("Draft saved.");
       this.error = "";
+      const note = await this.draftNote(model);
+      this.notify(note ? `Draft saved. ${note}` : "Draft saved.");
     } catch (e) {
       this.saveState = "Not saved";
       if (e instanceof ApiError && e.status === 409) {
@@ -6068,6 +6070,22 @@ export class App implements CanvasHost {
     } finally {
       this.cdr.markForCheck();
       this.busy = "";
+    }
+  }
+  /**
+   * A platform draft holds the workflow only: what Save draft adds when the
+   * workflow also has settings of actions that aren't published yet, or step
+   * notes. The note's code loads on demand; when it can't load, the draft is
+   * saved without the note.
+   */
+  private async draftNote(model: StructuredCanvasAdapter): Promise<string> {
+    try {
+      return (await import("./editor/ndv/owned/owned-commands")).draftNote(
+        model,
+      );
+    } catch (error) {
+      console.error("Studio couldn't load the note for Save draft", error);
+      return "";
     }
   }
   async publish() {

@@ -38,6 +38,7 @@ import {
   inputHash,
   markPublished,
   moveOwned,
+  ownedDraftNote,
   ownedExportNote,
   pendingOwned,
   publishKey,
@@ -255,6 +256,18 @@ describe("versions of a workflow's own actions", () => {
     expect(
       publishKey(`${"a".repeat(190)}@1.0.0`, "x").length,
     ).toBeLessThanOrEqual(200);
+  });
+  it("says what a platform draft keeps only while it is open", () => {
+    expect(ownedDraftNote(0, false)).toBe("");
+    expect(ownedDraftNote(1, false)).toBe(
+      "This draft keeps the settings of 1 action of this workflow's Call an API, email or file steps only while it's open. Publish the workflow to keep it in the project.",
+    );
+    expect(ownedDraftNote(2, true)).toBe(
+      "This draft keeps the settings of 2 actions of this workflow's Call an API, email or file steps only while it's open. Publish the workflow to keep them in the project. Its step notes also stay only while it's open.",
+    );
+    expect(ownedDraftNote(0, true)).toBe(
+      "This draft keeps its step notes only while it's open.",
+    );
   });
   it("says what Save to file leaves out", () => {
     expect(ownedExportNote(0)).toBe("");

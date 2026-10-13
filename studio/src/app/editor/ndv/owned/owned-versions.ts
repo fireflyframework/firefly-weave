@@ -234,3 +234,18 @@ export const ownedExportNote = (count: number): string =>
   count
     ? `These files don't keep the settings of ${count} ${count === 1 ? "action" : "actions"} of this workflow's Call an API, email or file steps yet. Publish the workflow to keep ${count === 1 ? "it" : "them"} in the project.`
     : "";
+
+/**
+ * What Save draft adds on a platform, whose draft holds the workflow only:
+ * the settings of actions that aren't published yet, and step notes, stay
+ * while the draft is open.
+ */
+export function ownedDraftNote(actions: number, notes: boolean): string {
+  const kept = actions
+    ? `This draft keeps the settings of ${actions} ${actions === 1 ? "action" : "actions"} of this workflow's Call an API, email or file steps only while it's open. Publish the workflow to keep ${actions === 1 ? "it" : "them"} in the project.`
+    : "";
+  if (!notes) return kept;
+  return kept
+    ? `${kept} Its step notes also stay only while it's open.`
+    : "This draft keeps its step notes only while it's open.";
+}

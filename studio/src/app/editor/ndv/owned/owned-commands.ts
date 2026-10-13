@@ -19,9 +19,11 @@ SPDX-License-Identifier: Apache-2.0
 // whose Call an API, email and file steps call actions the workflow owns:
 // published actions changed since (in Source, for example) take their next
 // version, the actions that aren't published yet go through step details'
-// publish dialog first, and Save to file says what its files leave out.
+// publish dialog first, and Save to file and Save draft say what they leave
+// out.
 // DOM-free and loaded lazily; the shell passes itself as the host.
 import type { StructuredCanvasAdapter } from "../../../model";
+import { stepNotesOf } from "../../state/canvas-sidecar";
 import type {
   OwnedPublishOutcome,
   OwnedPublishPurpose,
@@ -31,6 +33,7 @@ import type {
 import {
   driftedOwned,
   forkEdited,
+  ownedDraftNote,
   ownedExportNote,
   pendingOwned,
   publishRefusal,
@@ -76,6 +79,13 @@ export function publishOwned(
 /** What Save to file adds while some of the workflow's actions aren't published. */
 export const exportNote = (model: StructuredCanvasAdapter): string =>
   ownedExportNote(pendingOwned(model).length);
+
+/** What Save draft adds on a platform while the draft holds more than the workflow. */
+export const draftNote = (model: StructuredCanvasAdapter): string =>
+  ownedDraftNote(
+    pendingOwned(model).length,
+    Object.keys(stepNotesOf(model.canvas)).length > 0,
+  );
 
 /** Shows why the command stopped, in the banner. */
 function stop(host: OwnedCommandHost, reason: string): void {

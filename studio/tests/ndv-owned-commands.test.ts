@@ -22,6 +22,7 @@ import { loadKindRegistrations } from "../src/app/editor/ndv/kinds";
 import { COMMON_ACTIONS } from "../src/app/editor/ndv/owned/common-actions";
 import { insertOwnedStep } from "../src/app/editor/ndv/owned/insert-owned";
 import {
+  draftNote,
   exportNote,
   publishOwnedFirst,
   versionChangedOwned,
@@ -34,9 +35,11 @@ import {
 } from "../src/app/editor/ndv/owned/owned-store";
 import { markPublished } from "../src/app/editor/ndv/owned/owned-versions";
 import type { OwnedPublishOpen } from "../src/app/editor/ndv/step-details-service";
+import { withStepNote } from "../src/app/editor/state/canvas-sidecar";
 import { StructuredCanvasAdapter } from "../src/app/model";
 
 const API = "order-intake.call-api@1.0.0";
+const EMAIL = "order-intake.send-email@1.0.0";
 const action = (id: string) => COMMON_ACTIONS.find((item) => item.id === id)!;
 
 /** order-intake with Call an API (GET /orders) and Send email, as the shell sees it. */
@@ -106,6 +109,23 @@ describe("Publish…, Simulate and Save to file for a workflow's own actions", (
     );
     model.canvas = markPublished(model, API);
     expect(exportNote(model)).toContain("of 1 action of");
+  });
+  it("says what Save draft keeps only while the draft is open", () => {
+    const { model } = shell();
+    expect(draftNote(model)).toBe(
+      "This draft keeps the settings of 2 actions of this workflow's Call an API, email or file steps only while it's open. Publish the workflow to keep them in the project.",
+    );
+    model.canvas = withStepNote(model.canvas, "call-api", { text: "Ask Ana" });
+    expect(draftNote(model)).toMatch(
+      / Its step notes also stay only while it's open\.$/,
+    );
+    model.canvas = markPublished(model, API);
+    model.canvas = markPublished(model, EMAIL);
+    expect(draftNote(model)).toBe(
+      "This draft keeps its step notes only while it's open.",
+    );
+    model.canvas = withStepNote(model.canvas, "call-api", null);
+    expect(draftNote(model)).toBe("");
   });
   it("gives an action changed outside step details its next version, unless a simulation runs", () => {
     const unchanged = shell();
