@@ -224,6 +224,20 @@ describe("Publish…, Simulate and Save to file for a workflow's own actions", (
     );
     expect(denied.ownedPublish()).toBeNull();
   });
+  it("says to turn on the new editor, whose dialog publishes the actions, when it is off", async () => {
+    const off = shell({
+      editorNext: false,
+      stepDetails: { ownedPublish: signal(null), mounted: 0 },
+    });
+    expect(await publishOwnedFirst(off.host, "publish", off.check)).toEqual({
+      result: "stopped",
+      published: 0,
+    });
+    expect(off.host.error).toBe(
+      "Turn on Try the new editor in Settings › Preferences to publish the actions of this workflow's Call an API, email and file steps.",
+    );
+    expect(off.checks).toEqual([""]);
+  });
   it("says why when no designer can show the dialog, or one is open already", async () => {
     const hidden = shell();
     hidden.host = {

@@ -95,13 +95,16 @@ export class StepDetailsMount {
     host: StepDetailsHost;
     documents: OwnedDocuments;
   } | null = null;
+  /** The workflow on screen when the designer last changed. */
+  private workflow: { model: object; opened: number } | null = null;
 
   constructor() {
     this.details.mounted++;
     this.lifetime.onDestroy(() => {
       this.details.mounted--;
-      // A designer that goes away takes its dialog with it; the command stops.
+      // A designer that goes away takes its dialogs with it; the command stops.
       this.ownedClosed({ done: false, published: 0 });
+      this.closeAll();
     });
     void loadKindRegistrations().then(
       () => {
@@ -116,6 +119,15 @@ export class StepDetailsMount {
       host.tick();
       const ready = this.ready();
       untracked(() => {
+        // Step details belong to the workflow they opened on.
+        const workflow = { model: host.model, opened: host.model.opened };
+        if (
+          this.workflow &&
+          (this.workflow.model !== workflow.model ||
+            this.workflow.opened !== workflow.opened)
+        )
+          this.closeAll();
+        this.workflow = workflow;
         this.documentsFor(host).sync();
         const controller = this.made?.controller;
         // A step an Undo or Redo renamed keeps its entries under its name.
@@ -177,6 +189,11 @@ export class StepDetailsMount {
       };
     }
     return this.documents.documents;
+  }
+  /** Closes step details and workflow settings. */
+  private closeAll() {
+    this.details.close();
+    this.details.closeWorkflowSettings();
   }
   /** The publish dialog closed: the command waiting for it goes on, or stops. */
   ownedClosed(outcome: OwnedPublishOutcome) {

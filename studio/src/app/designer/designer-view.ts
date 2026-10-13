@@ -1249,7 +1249,9 @@ import type { App } from "../app";
         </div>
       }
     </section>
-    <weave-step-details-mount [host]="h" [canvas]="canvas()" />`,
+    @if (h.stepDetailsOn()) {
+      <weave-step-details-mount [host]="h" [canvas]="canvas()" />
+    }`,
 })
 export class DesignerView {
   /** The editor shell. */

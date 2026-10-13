@@ -15,6 +15,7 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
+import { readFileSync } from "node:fs";
 import { expect, test } from "@playwright/test";
 import {
   closeSheet,
@@ -23,7 +24,12 @@ import {
   offline,
   sourceText,
 } from "./support";
-import { openStepFixture, sizes } from "./step-details-po";
+import {
+  openStepFixture,
+  sizes,
+  stepFixture,
+  yamlFile,
+} from "./step-details-po";
 
 for (const size of sizes)
   test.describe(`step details at ${size.tag}`, () => {
@@ -223,6 +229,60 @@ test.describe("step details stay off without the new editor", () => {
     await expect(
       page.getByRole("dialog", { name: /^Step details: / }),
     ).toHaveCount(0);
+    // Nothing of step details is on the page, so none of it works in the background.
+    await expect(page.locator("weave-step-details-mount")).toHaveCount(0);
+  });
+});
+
+// Step details belong to the workflow they were opened on: leaving it
+// closes them, and another workflow with the same step IDs opens without them.
+test.describe("step details and another workflow", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+  const other = () =>
+    yamlFile(
+      "other.yaml",
+      readFileSync(stepFixture, "utf8").replaceAll(
+        "order-intake",
+        "other-workflow",
+      ),
+    );
+
+  test("Back with step details open, then another workflow, opens no step details", async ({
+    page,
+  }) => {
+    const details = await openStepFixture(page);
+    await details.open("lookup");
+    const designer = page.url();
+    await page.goBack();
+    await expect(page).not.toHaveURL(designer);
+    await page.getByLabel("Choose a workflow file").setInputFiles(other());
+    await expect(page.locator(".editor-bar")).toBeVisible();
+    await expect(details.node("lookup")).toBeVisible();
+    await expect(details.dialog).toHaveCount(0);
+    // Step details still open on request.
+    await details.open("lookup");
+    await expect(details.dialogFor("lookup")).toBeVisible();
+  });
+
+  test("with the new editor turned off in between, the classic designer opens without step details", async ({
+    page,
+  }) => {
+    const details = await openStepFixture(page);
+    await details.open("lookup");
+    await page.goBack();
+    const workflows = page.url();
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await page.getByRole("tab", { name: "Preferences" }).click();
+    await page.getByRole("switch", { name: "Try the new editor" }).uncheck();
+    // Back to the workflows within Studio, which keeps what it holds in memory.
+    await page.goBack();
+    await page.goBack();
+    await expect(page).toHaveURL(workflows);
+    await page.getByLabel("Choose a workflow file").setInputFiles(other());
+    await expect(page.locator(".editor-bar")).toBeVisible();
+    await expect(page.locator("[data-step]").first()).toBeVisible();
+    await expect(details.dialog).toHaveCount(0);
+    await expect(page.locator("weave-step-details-mount")).toHaveCount(0);
   });
 });
 
