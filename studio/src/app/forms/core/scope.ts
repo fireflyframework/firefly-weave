@@ -214,6 +214,30 @@ function resolveRef(schema: Schema, root: Schema): Schema {
   return current;
 }
 
+/**
+ * The schema of one key or array index below `schema`, or why there is none:
+ * `absent` only when an object schema closes its properties.
+ */
+export function schemaChild(
+  schema: Schema,
+  root: Schema,
+  segment: string,
+):
+  | { kind: "found"; schema: Schema }
+  | { kind: "absent" }
+  | { kind: "unknown" } {
+  const resolved = resolveRef(schema, root);
+  const items = resolved["items"];
+  if (/^(?:0|[1-9][0-9]*)$/.test(segment) && isObject(items))
+    return { kind: "found", schema: items };
+  const properties = objectProperties(resolved, root);
+  const property = properties?.get(segment);
+  if (property) return { kind: "found", schema: property.schema };
+  return properties !== null && resolved["additionalProperties"] === false
+    ? { kind: "absent" }
+    : { kind: "unknown" };
+}
+
 /** JSON types a schema admits; empty when unknown. */
 export function schemaTypes(schema: Schema, root: Schema = schema): string[] {
   const resolved = resolveRef(schema, root);
