@@ -113,8 +113,8 @@ const compiler: Record<string, Copy> = {
     hint: "Call a workflow that starts fewer workflows of its own.",
   },
   CALL_MODE: {
-    text: "If it fails applies only when the step waits for the called workflow's result.",
-    hint: "Remove If it fails, or choose Wait for its result.",
+    text: "This step can continue after the called run fails only when it waits for the called workflow's result.",
+    hint: "Set When it runs to Wait for its result, or clear If the called run fails.",
   },
   CATALOG_PENDING: {
     text: "This is checked against the project catalog when you validate while connected to a platform.",

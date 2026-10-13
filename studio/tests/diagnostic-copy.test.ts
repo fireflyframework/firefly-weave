@@ -85,6 +85,19 @@ describe("plain-language diagnostic copy", () => {
       expect(view.technical).toBe("Definition violates the contract.");
     }
   });
+  it("names the call settings by their Studio labels for CALL_MODE", () => {
+    const view = describeDiagnostic({
+      code: "WV-COMP-CALL_MODE",
+      severity: "error",
+      message: "onFailure applies only to mode wait.",
+    });
+    expect(view.text).toBe(
+      "This step can continue after the called run fails only when it waits for the called workflow's result.",
+    );
+    expect(view.hint).toBe(
+      "Set When it runs to Wait for its result, or clear If the called run fails.",
+    );
+  });
   it("explains the dominance error in the author's terms", () => {
     const view = describeDiagnostic({
       code: "WV-COMP-UNAVAILABLE_REFERENCE",
