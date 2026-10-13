@@ -123,3 +123,18 @@ def test_a_step_mock_and_a_static_breakpoint_apply_to_every_instance(worker_runt
     done = lifted.continue_until_breakpoint()
     assert done.status == "succeeded" and done.variables["output"] == 9
     assert done.events[-1].data == {"node_id": "work[2]", "output": 9}
+
+
+def test_re_setting_a_step_breakpoint_keeps_an_instance_paused(worker_runtime_fixture):
+    simulator = Simulator(worker_runtime_fixture["artifact"], mocks={"node:work": 9}, input=3, now=NOW)
+    simulator.next()
+    data = json.loads(simulator.serialize())
+    data["cursor"]["ready"] = ["@start[2]"]
+    lifted = Simulator.restore(json.dumps(data))
+    lifted.set_breakpoints({"work"})
+    assert lifted.continue_until_breakpoint().selected_node == "work[2]"
+    lifted.set_breakpoints({"work"})
+    kept = lifted.inspect()
+    assert kept.status == "paused" and kept.selected_node == "work[2]"
+    lifted.set_breakpoints(set())
+    assert lifted.inspect().status != "paused"

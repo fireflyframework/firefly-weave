@@ -27,7 +27,7 @@ from firefly_weave.compiler.canonical import canonical_bytes
 from firefly_weave.compiler.ir import ActionNode, HumanTaskNode, SignalNode, WaitNode
 from firefly_weave.contracts.definitions import ActionDefinition, load_definition
 from firefly_weave.contracts.diagnostics import Diagnostic
-from firefly_weave.contracts.instance_keys import node_of
+from firefly_weave.contracts.instance_keys import InvalidInstanceKey, node_of
 from firefly_weave.contracts.values import JsonObject, JsonValue
 from firefly_weave.operations.debug.models import (
     Boundary,
@@ -292,7 +292,10 @@ class Simulator:
 
     def human_decision(self, node_id: str, payload: JsonValue) -> DebugView:
         def receive() -> None:
-            step = node_of(node_id) if isinstance(node_id, str) and node_id else None
+            try:
+                step = node_of(node_id)
+            except InvalidInstanceKey:
+                raise DebugError("WV-DEBUG-HUMAN-TASK") from None
             node = next((n for n in self.ir.graph.nodes if isinstance(n, HumanTaskNode) and n.id == step), None)
             if node is None or node_id not in self.data.state.active or self.data.state.status in TERMINAL:
                 raise DebugError("WV-DEBUG-HUMAN-TASK")
