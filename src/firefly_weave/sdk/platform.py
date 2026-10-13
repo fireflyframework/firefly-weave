@@ -383,16 +383,22 @@ def _load(directory: Path, *, complete: bool = True) -> dict[str, Any]:
 
 
 @contextmanager
-def _exclusive(directory: Path, name: str, busy: str) -> Iterator[None]:
+def _exclusive(directory: Path, name: str, busy: str, *, wait: float = 0.0) -> Iterator[None]:
+    """Hold a private lock file; with ``wait``, retry for that many seconds before giving up."""
     import fcntl
 
     directory = _private_directory(directory)
     descriptor = os.open(directory / name, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     try:
-        try:
-            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            raise PlatformError(busy) from None
+        deadline = time.monotonic() + wait
+        while True:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise PlatformError(busy) from None
+                time.sleep(0.05)
         yield
     finally:
         os.close(descriptor)
@@ -1553,23 +1559,35 @@ def _person_grants(roles: tuple[str, ...], scope: dict[str, str]) -> list[dict[s
     ]
 
 
+_UNREADABLE_PEOPLE = "The private record of local accounts is not readable; it was not changed."
+# How long a user command waits for another one that is writing the record.
+_PEOPLE_LOCK_SECONDS = 10.0
+_NOT_RECORDED = (
+    "This account was not recorded for weave platform user grant; "
+    "assign more roles in Studio, Settings › People and access."
+)
+
+
 def _people(directory: Path) -> dict[str, Any]:
     path = directory / _PEOPLE
     if not path.exists():
         return {"format": _PEOPLE_FORMAT, "people": {}}
-    value = strict_json(read_file(path, 1048576, private=True))
+    try:
+        value = strict_json(read_file(path, 1048576, private=True))
+    except (DeploymentError, ValueError):
+        raise PlatformError(_UNREADABLE_PEOPLE) from None
     if (
         not isinstance(value, dict)
         or value.get("format") != _PEOPLE_FORMAT
         or not isinstance(value.get("people"), dict)
     ):
-        raise PlatformError("The private record of local accounts is not readable; it was not changed.")
+        raise PlatformError(_UNREADABLE_PEOPLE)
     return value
 
 
 def _remember_person(directory: Path, username: str, principal: str, subject: str) -> None:
     """Record which Weave person a local sign-in belongs to, so later role grants find it."""
-    with _exclusive(directory, ".people.lock", "Another platform user command is active."):
+    with _exclusive(directory, ".people.lock", "Another platform user command is active.", wait=_PEOPLE_LOCK_SECONDS):
         path = directory / _PEOPLE
         value = _people(directory)
         value["people"][username] = {"principal_id": principal, "subject": subject}
@@ -1814,12 +1832,18 @@ def user(
         raise PlatformError("Private identity configuration is incomplete; retain it for recovery.")
     _token(state)
     host_token = strict_json(read_file(directory / "host-token.json", 65536, private=True))["access_token"]
+    # Read the record before creating anything: once the account exists, its password must reach the caller.
+    _people(directory)
     password = secrets.token_urlsafe(24)
     # Imported on use: offline commands start without event-loop, TLS, or HTTP modules.
     import asyncio
 
     principal, subject = asyncio.run(_enroll(state, username, password, grants, host_token, admin_secret, transport))
-    _remember_person(directory, username, principal, subject)
+    try:
+        _remember_person(directory, username, principal, subject)
+        recorded = True
+    except Exception:  # noqa: BLE001 - the account exists; never lose its shown-once password
+        recorded = False
     return {
         "ok": True,
         "username": username,
@@ -1833,6 +1857,8 @@ def user(
         "grants": grants,
         "api_url": api,
         "next": ["weave auth setup " + api, "weave studio"],
+        "recorded": recorded,
+        **({} if recorded else {"hint": _NOT_RECORDED}),
     }
 
 

@@ -20,6 +20,7 @@ import functools
 import gzip
 import importlib.util
 import json
+import os
 from pathlib import Path
 from urllib.parse import parse_qs
 from uuid import UUID, uuid4
@@ -672,13 +673,31 @@ def test_cli_json_prints_one_object_with_the_password_once(demo_workspace, monke
         "password",
         "principal_id",
         "provider_id",
+        "recorded",
         "subject",
         "username",
         "warning",
     }
+    assert value["recorded"] is True
     assert result.output.count(value["password"]) == 1
     assert value["grants"][0] == {"role": "developer", "scope": {"tenant_id": TENANT, "project_id": PROJECT}}
     assert UUID(value["principal_id"]) and value["next"][0] == "weave auth setup " + API
+
+
+def test_cli_text_shows_the_password_and_where_to_assign_roles_when_the_record_is_busy(demo_workspace, monkeypatch):
+    import fcntl
+
+    directory, _, _ = demo_workspace
+    monkeypatch.setattr(platform, "_PEOPLE_LOCK_SECONDS", 0.1)
+    holder = os.open(directory / ".people.lock", os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(holder, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        result = _invoke(directory, monkeypatch, "--username", "grace")
+    finally:
+        os.close(holder)
+    assert result.exit_code == 0, result.output
+    assert "Password: " in result.output
+    assert "Settings › People and access" in result.output
 
 
 def test_cli_text_shows_password_once_with_warning_and_next_commands(demo_workspace, monkeypatch):
@@ -731,6 +750,56 @@ def test_user_records_the_account_for_later_grants(demo_workspace):
         "people": {"ada.lovelace": {"principal_id": PRINCIPAL, "subject": SUBJECT}},
     }
     assert value["password"] not in path.read_text()
+
+
+@pytest.mark.parametrize("damage", ["mode", "json", "shape"])
+def test_user_refuses_an_unreadable_people_record_before_creating_anything(demo_workspace, damage):
+    directory, _, _ = demo_workspace
+    path = directory / "people.json"
+    if damage == "mode":
+        path.write_text(json.dumps({"format": "weave/local-people-v1", "people": {}}))
+        path.chmod(0o644)
+    else:
+        path.write_text("{not json" if damage == "json" else json.dumps({"format": "other"}))
+        path.chmod(0o600)
+    identity = Identity()
+    with pytest.raises(platform.PlatformError, match="private record of local accounts is not readable"):
+        platform.user(directory, "ada.lovelace", transport=httpx.MockTransport(identity))
+    assert identity.requests == []
+
+
+def test_user_keeps_the_password_when_another_command_holds_the_record(demo_workspace, monkeypatch):
+    import fcntl
+
+    directory, _, _ = demo_workspace
+    monkeypatch.setattr(platform, "_PEOPLE_LOCK_SECONDS", 0.2)
+    holder = os.open(directory / ".people.lock", os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(holder, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        value = platform.user(directory, "ada.lovelace", transport=httpx.MockTransport(Identity()))
+    finally:
+        os.close(holder)
+    assert len(value["password"]) >= 32
+    assert value["recorded"] is False
+    assert "Settings › People and access" in value["hint"]
+    assert not (directory / "people.json").exists()
+
+
+def test_user_waits_for_a_record_another_command_is_writing(demo_workspace):
+    import fcntl
+    import threading
+
+    directory, _, _ = demo_workspace
+    holder = os.open(directory / ".people.lock", os.O_RDWR | os.O_CREAT, 0o600)
+    fcntl.flock(holder, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    release = threading.Timer(0.3, os.close, (holder,))
+    release.start()
+    try:
+        value = platform.user(directory, "ada.lovelace", transport=httpx.MockTransport(Identity()))
+    finally:
+        release.join()
+    assert value["recorded"] is True
+    assert "ada.lovelace" in json.loads((directory / "people.json").read_text())["people"]
 
 
 def _recorded(directory, username="ada.lovelace"):
