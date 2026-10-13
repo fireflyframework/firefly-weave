@@ -3831,16 +3831,19 @@ export class App implements CanvasHost {
       );
       return null;
     }
-    const opened = this.model.opened;
-    if (!(await this.ensureApplied()) || this.model.opened !== opened)
-      return null;
+    // The workflow it started in, by identity as well as by its openings:
+    // opening a file builds a new model whose count can match.
+    const model = this.model;
+    const opened = model.opened;
+    const moved = () => this.model !== model || model.opened !== opened;
+    if (!(await this.ensureApplied()) || moved()) return null;
     const [{ planPaste }, { withOwnedAction }, { reservedActionNames }] =
       await Promise.all([
         import("./editor/state/clipboard"),
         import("./editor/ndv/owned/owned-store"),
         import("./editor/ndv/owned/insert-owned"),
       ]);
-    if (this.model.opened !== opened) return null;
+    if (moved()) return null;
     const planned = planPaste(
       this.model.definition,
       content,
@@ -3894,7 +3897,7 @@ export class App implements CanvasHost {
         }))
       )
         return null;
-      if (this.model.opened !== opened) return null;
+      if (moved()) return null;
     }
     const definition = this.model.definition;
     this.perform(() =>
