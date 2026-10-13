@@ -233,6 +233,8 @@ class Simulator:
             result = d.cursor.result
             d.state = result.state
             d.cursor = None
+            # Measured context parts last one event, as in production, where every transition prepares its own.
+            self._prepared.contexts.parts.clear()
             for command in result.commands:
                 if isinstance(command, Deadline):
                     d.deadlines.append(command)

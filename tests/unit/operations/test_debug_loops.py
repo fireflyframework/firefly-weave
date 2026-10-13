@@ -74,3 +74,11 @@ def test_a_session_resumes_a_loop_after_it_yields():
         ("wait_elapsed", "each~1"),
     ]
     assert Simulator.restore(simulator.serialize()).inspect().status == "succeeded"
+
+
+def test_a_session_keeps_measured_context_parts_only_while_it_reduces_one_event():
+    body = [{"id": "pick", "kind": "transform", "value": {"ref": "/input/0"}}]
+    simulator = Simulator(looping(body, {"ref": "/steps/pick/output"}), mocks={}, input=list(range(30)), now=NOW)
+    assert simulator.continue_until_breakpoint().status == "succeeded"
+    # As in production, where each transition prepares its own cache, no part outlives the event that measured it.
+    assert simulator._prepared.contexts.parts == {}
