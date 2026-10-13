@@ -360,7 +360,7 @@ async def test_upgrade_duration_storage_and_exact_accounting(count):
     try:
         async with engine.connect() as connection:
             async with connection.begin():
-                await upgrade(connection, "0030_worker_presence")
+                await upgrade(connection, "0031_operations_key_collation")
                 await connection.execute(
                     text("UPDATE operation_policy SET limits=limits||cast(:limits AS jsonb)"),
                     {"limits": json.dumps({"runs_retained": 2 * count, "ordinary_bytes": 2**62})},

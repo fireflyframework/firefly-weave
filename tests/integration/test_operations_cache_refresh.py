@@ -922,7 +922,7 @@ async def test_a_policy_change_never_upgrades_a_decision_the_upgrade_withheld(
     owner = create_async_engine(owner_url, hide_parameters=True)
     logins = {}
     async with owner.begin() as connection:
-        await upgrade(connection, "0030_worker_presence")
+        await upgrade(connection, "0031_operations_key_collation")
         identifiers = await seed_prior_head(connection, count=20)
         await upgrade(connection, "0032_operations_facts")
         for role in ("weave_app", "weave_scheduler"):
