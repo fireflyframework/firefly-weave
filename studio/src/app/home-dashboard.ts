@@ -22,6 +22,7 @@ import { Component, input, output } from "@angular/core";
 import { Icon } from "./icon";
 import type { LocalDraftEntry } from "./local-drafts";
 import { absoluteTime, isoTime, relativeTime, shortId } from "./format";
+import { chooseImport } from "./import-files";
 import {
   runStatus,
   statusLabel,
@@ -78,6 +79,7 @@ const text = (value: unknown) => (typeof value === "string" ? value : "");
             class="file-picker"
             type="file"
             accept=".yaml,.yml,.json"
+            multiple
             aria-label="Choose a workflow file"
             (change)="choose($event)"
           />
@@ -365,6 +367,8 @@ export class HomeDashboard {
   signInToRead = input(false);
   createWorkflow = output<void>();
   importWorkflow = output<File>();
+  /** A workflow file chosen together with its canvas file. */
+  importWithCanvas = output<{ workflow: File; canvas: File }>();
   connect = output<void>();
   navigate = output<"workflows" | "tasks" | "runs">();
   openLocal = output<string>();
@@ -399,22 +403,16 @@ export class HomeDashboard {
   }
   private accept(files: FileList | null) {
     if (!files?.length) return;
-    if (files.length !== 1) {
-      this.importError = "Choose one workflow file at a time.";
-      return;
-    }
-    const file = files[0];
-    if (!/\.(yaml|yml|json)$/i.test(file.name)) {
-      this.importError = "Choose a .yaml, .yml or .json workflow file.";
-      return;
-    }
-    if (file.size > 1024 * 1024) {
-      this.importError =
-        "This file is larger than 1 MiB. Choose a smaller workflow file.";
+    const list = [...files];
+    const choice = chooseImport(list);
+    if ("error" in choice) {
+      this.importError = choice.error;
       return;
     }
     this.importError = "";
-    this.importWorkflow.emit(file);
+    const workflow = list[choice.workflow];
+    if (choice.canvas === null) this.importWorkflow.emit(workflow);
+    else this.importWithCanvas.emit({ workflow, canvas: list[choice.canvas] });
   }
   private kind(kind: "task" | "run"): StatusKind {
     return kind;

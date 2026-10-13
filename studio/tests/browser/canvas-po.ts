@@ -223,3 +223,51 @@ export async function openNewWorkflow(page: Page): Promise<CanvasPage> {
   await canvas.ready();
   return canvas;
 }
+
+/** A workflow kept on this computer, as Studio stores it. */
+export interface StoredDraft {
+  id: string;
+  source: string;
+  canvas?: unknown;
+  layout?: unknown;
+}
+/**
+ * Opens a workflow kept on this computer, with the new editor on. The draft
+ * is stored once, before Studio starts, so a reload finds Studio's own save.
+ */
+export async function openStoredWorkflow(
+  page: Page,
+  draft: StoredDraft,
+): Promise<CanvasPage> {
+  await useNewEditor(page);
+  await page.addInitScript((stored) => {
+    const key = `weave.localDraft.${stored.id}`;
+    if (localStorage.getItem(key)) return;
+    const savedAt = "2026-10-13T09:00:00.000Z";
+    const index = JSON.parse(
+      localStorage.getItem("weave.localDrafts.v1") ?? "[]",
+    );
+    localStorage.setItem(
+      "weave.localDrafts.v1",
+      JSON.stringify([
+        { id: stored.id, name: "stored", version: "1.0.0", savedAt },
+        ...index,
+      ]),
+    );
+    localStorage.setItem(
+      key,
+      JSON.stringify({
+        source: stored.source,
+        format: "yaml",
+        layout: stored.layout ?? null,
+        ...(stored.canvas === undefined ? {} : { canvas: stored.canvas }),
+        savedAt,
+      }),
+    );
+  }, draft);
+  await offline(page);
+  await page.goto(`/workflows/${draft.id}/designer`);
+  const canvas = new CanvasPage(page);
+  await canvas.ready();
+  return canvas;
+}

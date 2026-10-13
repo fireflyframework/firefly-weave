@@ -367,6 +367,9 @@ SPDX-License-Identifier: Apache-2.0
                 "
                 (createWorkflow)="newWorkflow()"
                 (importWorkflow)="importWorkflow($event)"
+                (importWithCanvas)="
+                  importWorkflow($event.workflow, $event.canvas)
+                "
                 (connect)="openWizard('server')"
                 (navigate)="navigate($event)"
                 (openLocal)="openLocalDraft($event)"

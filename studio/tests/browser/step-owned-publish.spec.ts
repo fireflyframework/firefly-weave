@@ -205,13 +205,20 @@ for (const size of sizes)
   test.describe(`publishing a workflow's own actions at ${size.tag}`, () => {
     test.use({ viewport: { width: size.width, height: size.height } });
 
-    test("Publish… publishes the step actions first, then the workflow, and Save to file says what it leaves out", async ({
+    test("Publish… publishes the step actions first, then the workflow, and Save to file keeps their settings in the canvas file", async ({
       page,
     }) => {
       const { platform } = await withOwnedSteps(page);
+      const saved: string[] = [];
+      page.on("download", (download) =>
+        saved.push(download.suggestedFilename()),
+      );
       await command(page, "Save to file");
-      await expect(page.locator(".toast-region")).toContainText(
-        "These files don't keep the settings of 2 actions of this workflow's Call an API, email or file steps yet. Publish the workflow to keep them in the project.",
+      await expect
+        .poll(() => [...saved].sort())
+        .toEqual(["order-intake.canvas.json", "order-intake.yaml"]);
+      await expect(page.locator(".toast-region")).not.toContainText(
+        "don't keep the settings",
       );
       await command(page, "Publish…");
       const dialog = publishDialog(page);

@@ -15,7 +15,11 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-import { canvasFromStored, ownedRecipes } from "./editor/state/canvas-sidecar";
+import {
+  canvasFile,
+  canvasFromStored,
+  ownedRecipes,
+} from "./editor/state/canvas-sidecar";
 import {
   stepDetailsEnabled,
   type StepDetailsHost,
@@ -6873,22 +6877,28 @@ export class App implements CanvasHost {
             : "application/yaml",
         content: this.model.source,
       },
-      {
-        name: `${filename}.layout.json`,
-        mime: "application/json",
-        content: JSON.stringify(
-          {
-            draftId: this.draftId,
-            draftRevision: this.draftRevision,
-            schemaVersion: 1,
-            semanticDigest: await this.semanticDigest(),
-            ...this.model.layout,
-            viewport: { ...this.pan, zoom: this.zoom },
+      this.editorNext
+        ? {
+            name: `${filename}.canvas.json`,
+            mime: "application/json",
+            content: canvasFile(this.model.canvas, await this.semanticDigest()),
+          }
+        : {
+            name: `${filename}.layout.json`,
+            mime: "application/json",
+            content: JSON.stringify(
+              {
+                draftId: this.draftId,
+                draftRevision: this.draftRevision,
+                schemaVersion: 1,
+                semanticDigest: await this.semanticDigest(),
+                ...this.model.layout,
+                viewport: { ...this.pan, zoom: this.zoom },
+              },
+              null,
+              2,
+            ),
           },
-          null,
-          2,
-        ),
-      },
     ];
     const model = this.model;
     const deliveries = files.map((file) =>
@@ -6898,9 +6908,12 @@ export class App implements CanvasHost {
     if (deliveries.includes("unconfirmed")) this.exportFallback = files;
     else this.message = exportNotice(files.map((f) => f.name));
     this.cdr.markForCheck();
-    // Steps whose actions aren't published lose their settings in these
-    // files. The note's code loads on demand, after the files are on their
-    // way: when it can't load, the files are delivered without the note.
+    // The canvas file keeps them; only the classic layout file leaves them out.
+    if (this.editorNext) return;
+    // With the classic editor, steps whose actions aren't published lose
+    // their settings in the layout file. The note's code loads on demand,
+    // after the files are on their way: when it can't load, the files are
+    // delivered without the note.
     try {
       const note = (
         await import("./editor/ndv/owned/owned-commands")
@@ -6947,7 +6960,7 @@ export class App implements CanvasHost {
     input.value = "";
     if (file) await this.importWorkflow(file);
   }
-  async importWorkflow(file: File) {
+  async importWorkflow(file: File, canvasFile: File | null = null) {
     if (this.view === "designer" && !this.leaveInspector()) return;
     this.flushLocalSave();
     if (file.size > 1024 * 1024) {
@@ -6956,8 +6969,10 @@ export class App implements CanvasHost {
     }
     const generation = ++this.importGeneration;
     let source: string;
+    let canvasText: string | null = null;
     try {
       source = await file.text();
+      if (canvasFile) canvasText = await canvasFile.text();
     } catch {
       if (generation === this.importGeneration) {
         this.error =
@@ -6978,6 +6993,7 @@ export class App implements CanvasHost {
       source,
       file.name.toLowerCase().endsWith(".json") ? "json" : "yaml",
     );
+    if (canvasText !== null) this.applyCanvasFile(canvasText);
     this.view = "designer";
     this.openTab();
     void this.router.navigateByUrl(`/workflows/${this.draftId}/designer`);
@@ -6985,6 +7001,36 @@ export class App implements CanvasHost {
     this.changed();
     this.dirty = false;
     this.scheduleFit();
+  }
+  /** The canvas file chosen with a workflow; a file Studio can't use is set aside with a reason. */
+  private applyCanvasFile(text: string) {
+    let value: unknown;
+    try {
+      value = JSON.parse(text);
+    } catch {
+      this.notify(
+        "The workflow opened without its canvas file: it isn't JSON.",
+      );
+      return;
+    }
+    const stored = canvasFromStored(
+      value,
+      this.model.definition,
+      this.model.stepIdSet(),
+    );
+    if (stored.problems.length) {
+      const [path, ...rest] = stored.problems[0].split(": ");
+      const detail = rest.join(": ");
+      this.notify(
+        `The workflow opened without its canvas file: ${path === "/" ? detail : `at ${path}, ${detail}`}`,
+      );
+      return;
+    }
+    this.model.canvas = stored.canvas;
+    if (stored.dropped)
+      this.notify(
+        "The canvas file mentions steps this workflow doesn't have. Their notes stay on the canvas without an anchor.",
+      );
   }
   pretty(value: unknown) {
     return JSON.stringify(value, null, 2);
