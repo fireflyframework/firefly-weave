@@ -114,6 +114,15 @@ SPDX-License-Identifier: Apache-2.0
   overscroll-behavior: contain;
   padding: 0 var(--space-2) var(--space-3);
 }
+/* As in the design: entries 2 px apart, and 8 px before the next group. */
+.add-step-list [role="group"] {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.add-step-list [role="group"] + [role="group"] {
+  margin-top: 8px;
+}
 .add-step-group {
   padding: var(--space-3) var(--space-2) var(--space-1);
   font: var(--type-caption);

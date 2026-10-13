@@ -90,6 +90,31 @@ for (const size of [
         }),
       );
     expect(rows.length).toBe(8);
+    // As in the design: entries 2 px apart, and 8 px before the next group.
+    const gaps = await panel.root.evaluate((element) => {
+      const tops = (selector: string) =>
+        [...element.querySelectorAll(selector)].map((item) =>
+          item.getBoundingClientRect(),
+        );
+      const [first] = [...element.querySelectorAll("[role=group]")];
+      const entries = [...first.querySelectorAll(".add-step-entry")].map(
+        (entry) => entry.getBoundingClientRect(),
+      );
+      const caption = first.querySelector(".add-step-group")!;
+      const [, next] = tops("[role=group]");
+      return {
+        afterCaption: Math.round(
+          entries[0].top - caption.getBoundingClientRect().bottom,
+        ),
+        between: entries
+          .slice(1)
+          .map((entry, i) => Math.round(entry.top - entries[i].bottom)),
+        beforeGroup: Math.round(next.top - entries[entries.length - 1].bottom),
+      };
+    });
+    expect(gaps.afterCaption).toBe(2);
+    expect(new Set(gaps.between)).toEqual(new Set([2]));
+    expect(gaps.beforeGroup).toBe(8);
     for (const row of rows) expect(row.height).toBe(row.expected);
     expect(rows.filter((row) => row.height === 56).length).toBeGreaterThan(5);
     expect(
