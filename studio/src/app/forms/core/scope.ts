@@ -238,6 +238,24 @@ export function schemaChild(
     : { kind: "unknown" };
 }
 
+/** True when the value at `segments` below `schema`, or a value around it, is marked secret. */
+export function secretAt(
+  schema: Schema,
+  root: Schema,
+  segments: readonly string[],
+): boolean {
+  let current = schema;
+  for (let i = 0; ; i++) {
+    const resolved = resolveRef(current, root);
+    for (const node of [current, resolved])
+      if (node["x-secret"] === true || node["writeOnly"] === true) return true;
+    if (i === segments.length) return false;
+    const child = schemaChild(resolved, root, segments[i]);
+    if (child.kind !== "found") return false;
+    current = child.schema;
+  }
+}
+
 /** JSON types a schema admits; empty when unknown. */
 export function schemaTypes(schema: Schema, root: Schema = schema): string[] {
   const resolved = resolveRef(schema, root);

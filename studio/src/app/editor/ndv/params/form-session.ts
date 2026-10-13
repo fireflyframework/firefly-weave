@@ -127,6 +127,7 @@ import {
   type HeldFact,
   type StepDetailsRequest,
 } from "../step-details-service";
+import { previewText } from "../../formula/preview";
 
 export type FormName = "parameters" | "settings";
 export interface SessionHooks {
@@ -1039,11 +1040,13 @@ export class FormSession {
       const preview = this.controller
         .ndvContext(this.target)
         .evaluate(value.expression, spec.path);
-      if (preview?.ok)
+      if (preview?.ok) {
+        const shown = previewText(preview.value ?? null);
         return {
           kind: "preview",
-          text: `= ${JSON.stringify(preview.value)}`.slice(0, 200),
+          text: `= ${shown.text.replace(/\s*\n\s*/g, " ")}${shown.truncated ? "…" : ""}`,
         };
+      }
     }
     if (reason) return { kind: "reason", text: reason };
     if (spec.type === "connection")

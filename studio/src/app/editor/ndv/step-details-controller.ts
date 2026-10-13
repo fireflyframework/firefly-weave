@@ -92,6 +92,7 @@ import {
   type PendingEntry,
   type PendingOwner,
 } from "./pending-entries";
+import type { PreviewData } from "../formula/preview";
 
 export type ControllerHost = Pick<
   StepDetailsHost,
@@ -191,6 +192,14 @@ export class StepDetailsController {
     this.event.set(
       safeSample(this.host.model.definition.spec["inputSchema"], value),
     );
+  }
+  /** What formula previews read: the trigger's test event; step outputs arrive with test data. */
+  previewData(): PreviewData {
+    return {
+      input: () => this.testEvent(),
+      output: () => undefined,
+      stamp: () => [this.host.model.revision, this.testEvent()],
+    };
   }
 
   readonly features = signal<readonly string[]>([]);
@@ -800,7 +809,10 @@ export class StepDetailsController {
           (d) => !fieldPath || beneath(d.path, pointer(fieldPath)),
         ),
       sample: {
-        context: () => null,
+        context: () => {
+          const input = this.testEvent();
+          return input === undefined ? null : { input, steps: {} };
+        },
         resolvedInput: () => none,
         output: () => none,
         setPin: async () => ({
