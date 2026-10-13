@@ -735,3 +735,73 @@ test("a dialog takes focus back when its focused control is disabled", async ({
   await page.keyboard.press("Escape");
   await expect(form).toHaveCount(0);
 });
+
+test("the desktop sheet keeps its footer in one row at the bottom edge", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await start(page);
+  const form = await newConnection(page, "Ollama");
+  await expect(
+    form.getByRole("button", { name: "Save connection" }),
+  ).toBeVisible();
+  const measure = () =>
+    page.evaluate(() => {
+      const panel = document.querySelector(".modal-panel.side")!;
+      const footer = panel.querySelector(".dialog-footer")!;
+      const buttons = [...footer.querySelectorAll("button")].map((button) =>
+        button.getBoundingClientRect(),
+      );
+      return {
+        panelBottom: panel.getBoundingClientRect().bottom,
+        footerBottom: footer.getBoundingClientRect().bottom,
+        tops: buttons.map((box) => Math.round(box.top)),
+        heights: buttons.map((box) => Math.round(box.height)),
+      };
+    });
+  for (const step of ["new", "saved"]) {
+    if (step === "saved")
+      await form.getByRole("button", { name: "Save connection" }).click();
+    if (step === "saved")
+      await expect(form.getByLabel("Model", { exact: true })).toHaveValue(
+        "qwen3:4b",
+      );
+    const box = await measure();
+    expect(box.tops).toHaveLength(2);
+    expect(new Set(box.tops).size, step).toBe(1);
+    expect(
+      box.heights.every((height) => height === 36),
+      step,
+    ).toBe(true);
+    expect(Math.abs(box.panelBottom - box.footerBottom), step).toBeLessThan(1);
+  }
+});
+
+for (const size of [
+  { width: 1440, height: 900, control: 36 },
+  { width: 600, height: 500, control: 44 },
+])
+  test(`the Model field lines up with Refresh models at ${size.width}x${size.height}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize(size);
+    await start(page, { connections: [ollamaConnection] });
+    await page.getByRole("button", { name: "Test ollama-local" }).click();
+    const form = sheet(page, "ollama-local");
+    await expect(form.getByLabel("Model", { exact: true })).toHaveValue(
+      "qwen3:4b",
+    );
+    const box = await page.evaluate(() => {
+      const panel = document.querySelector(".modal-panel.side")!;
+      const rect = (selector: string) =>
+        panel.querySelector(selector)!.getBoundingClientRect();
+      const field = rect(".model-row .choice-field");
+      const refresh = rect('[aria-label="Refresh models"]');
+      const name = rect("#ai-connection-name");
+      return { field, refresh, name };
+    });
+    expect(Math.round(box.field.height)).toBe(size.control);
+    expect(Math.round(box.refresh.height)).toBe(size.control);
+    expect(Math.abs(box.field.bottom - box.refresh.bottom)).toBeLessThan(0.5);
+    expect(Math.abs(box.field.left - box.name.left)).toBeLessThan(0.5);
+  });

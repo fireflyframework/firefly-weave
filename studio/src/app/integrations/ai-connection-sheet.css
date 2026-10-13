@@ -15,7 +15,16 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-.ai-sheet,
+/* A column, so the footer can rest on the sheet's bottom edge. */
+.ai-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+.ai-sheet > .dialog-footer {
+  margin-top: auto;
+}
 .sheet-fields,
 .sheet-section {
   display: grid;
@@ -117,5 +126,8 @@ SPDX-License-Identifier: Apache-2.0
   .choice-row,
   .field > input {
     min-height: var(--control-touch);
+  }
+  .model-row weave-select {
+    --select-height: var(--control-touch);
   }
 }

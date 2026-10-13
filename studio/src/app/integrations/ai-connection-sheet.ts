@@ -321,6 +321,7 @@ export interface AiTestRecord {
           } @else {
             <div class="model-row">
               <weave-select
+                data-control
                 label="Model"
                 [options]="modelChoices"
                 [value]="model"
