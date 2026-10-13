@@ -134,6 +134,40 @@ and must fail when a required dependency is absent. Inspect fixture
 prerequisites and use distinct resources/evidence paths; do not run against
 production or reset retained services to make tests pass.
 
+### Run the PostgreSQL integration suite
+
+The integration fixtures give every test its own database on the server named by
+`WEAVE_TEST_DATABASE_URL`:
+
+- A test that needs the current schema clones a template database,
+  `weave_b1_template_<hash>`. The first test of a run migrates it once; its name
+  is a hash of the migration files, so changing a migration builds a new template
+  and drops the old one. The template stays on the server between runs and holds
+  no test data.
+- A test about migrations themselves (the `empty_settings` and
+  `fresh_migration_settings` fixtures) starts from an empty database and runs the
+  real migrations.
+- When a test ends, the databases and login roles it created are dropped. Set
+  `WEAVE_TEST_KEEP_DATABASES=1` to keep them for inspection. Setting
+  `WEAVE_TEST_RESOURCE_MANIFEST` to a file path records each one in that file and
+  keeps them too.
+
+Run the suite on four parallel workers (pytest-xdist). Workers share the
+template, which an advisory lock lets only one of them build:
+
+```sh
+uv run --locked --all-extras pytest tests/integration -n 4 --dist loadfile
+```
+
+`--dist loadfile` keeps each test file on one worker, so a file's module fixture
+(the Kafka broker, for example) starts once. Without `-n` the suite runs serially.
+
+A server used only for these tests can skip durability. Start a throwaway
+PostgreSQL with `-c fsync=off -c synchronous_commit=off -c full_page_writes=off`
+after the image name of its `docker run` command; an unclean stop can corrupt its
+data, so never use these settings on a server whose data you keep, such as the
+Compose development stack.
+
 [Local runtime setup](docs/reference/local-runtime.md) explains provisioning.
 End-to-end fixtures exercise installed wheels, admitted images, identities and
 external-effect receivers; they are acceptance tooling rather than the introductory

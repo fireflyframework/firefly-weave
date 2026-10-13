@@ -27,12 +27,15 @@ pytestmark = pytest.mark.integration
 
 
 async def test_schedule_migration_requires_more_than_catalog_execute(empty_settings):
+    from conftest import retain_resource
+
     engine = create_async_engine(empty_settings.database_url.get_secret_value())
     role = "weave_c3_migration_" + uuid4().hex
     try:
         async with engine.begin() as connection:
             await upgrade(connection, "0010_incidents")
             await connection.execute(text(f"CREATE ROLE {role} NOLOGIN NOSUPERUSER NOBYPASSRLS"))
+            retain_resource("role", role)
             await connection.execute(text(f"GRANT USAGE,CREATE ON SCHEMA public TO {role}"))
             await connection.execute(text(f"GRANT SELECT,UPDATE ON weave_schema_version,alembic_version TO {role}"))
             await connection.execute(text(f"GRANT EXECUTE ON FUNCTION weave_tenant_ids() TO {role}"))

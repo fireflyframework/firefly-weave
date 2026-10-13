@@ -36,6 +36,8 @@ pytestmark = pytest.mark.integration
 
 @pytest.fixture
 async def external_database(release_backends):
+    from conftest import retain_resource
+
     value = os.environ.get("WEAVE_TEST_DATABASE_URL")
     if not value:
         pytest.fail("Real PostgreSQL required: set WEAVE_TEST_DATABASE_URL for colima-weave-tests", pytrace=False)
@@ -63,11 +65,13 @@ async def external_database(release_backends):
     roles = {kind: f"d1_{kind}_{suffix}" for kind in ("read", "write")}
     try:
         await admin.execute(f'CREATE DATABASE "{name}"')
+        retain_resource("database", name)
         for kind, role in roles.items():
             await admin.execute(
                 f"CREATE ROLE {role} LOGIN PASSWORD '{password}' NOSUPERUSER NOCREATEDB "
                 f"NOCREATEROLE NOINHERIT NOBYPASSRLS"
             )
+            retain_resource("role", role)
             if kind == "read":
                 await admin.execute(f"ALTER ROLE {role} SET default_transaction_read_only=on")
     finally:

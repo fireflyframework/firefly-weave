@@ -40,6 +40,8 @@ async def upgrade(connection, revision):
 
 
 async def test_forward_backfill_nonsuperuser_force_rls_and_rollback(empty_settings):
+    from conftest import retain_resource
+
     engine = create_async_engine(empty_settings.database_url.get_secret_value())
     role = "weave_c2_migration_" + uuid4().hex
     app = "weave_c2_app_" + uuid4().hex
@@ -49,6 +51,8 @@ async def test_forward_backfill_nonsuperuser_force_rls_and_rollback(empty_settin
             await upgrade(connection, "0009_triggers")
             await connection.execute(text(f"CREATE ROLE {role} NOLOGIN NOSUPERUSER NOBYPASSRLS"))
             await connection.execute(text(f"CREATE ROLE {app} NOLOGIN NOSUPERUSER NOBYPASSRLS IN ROLE weave_app"))
+            retain_resource("role", role)
+            retain_resource("role", app)
             await connection.execute(text(f"GRANT USAGE,CREATE ON SCHEMA public TO {role}"))
             await connection.execute(text(f"GRANT SELECT ON runs,principals TO {role}"))
             await connection.execute(text(f"GRANT REFERENCES ON runs,principals TO {role}"))
