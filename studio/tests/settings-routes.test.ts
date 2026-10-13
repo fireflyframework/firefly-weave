@@ -24,46 +24,53 @@ import {
   settingsTabs,
 } from "../src/app/settings/settings-routes";
 
+const everything = { people: true, ai: true };
+const nothing = { people: false, ai: false };
 describe("Settings addresses", () => {
   it("gives each tab its own address", () => {
     expect(SETTINGS_TABS.map((tab) => settingsPath(tab.id))).toEqual([
       "/settings/platforms",
       "/settings/people",
+      "/settings/ai",
       "/settings/preferences",
     ]);
   });
-
   it("opens the tab an address names", () => {
-    expect(settingsTab("/settings/preferences", false)).toBe("preferences");
-    expect(settingsTab("/settings/people", true)).toBe("people");
-    expect(settingsTab("/settings/platforms", true)).toBe("platforms");
+    expect(settingsTab("/settings/preferences", nothing)).toBe("preferences");
+    expect(settingsTab("/settings/people", everything)).toBe("people");
+    expect(settingsTab("/settings/ai", everything)).toBe("ai");
+    expect(settingsTab("/settings/platforms", everything)).toBe("platforms");
   });
-
   it("opens Platforms for /settings, an unknown tab or a tab the person can't see", () => {
-    expect(settingsTab("/settings", true)).toBe("platforms");
-    expect(settingsTab("/settings/ai", true)).toBe("platforms");
-    expect(settingsTab("/settings/people", false)).toBe("platforms");
+    expect(settingsTab("/settings", everything)).toBe("platforms");
+    expect(settingsTab("/settings/administration", everything)).toBe(
+      "platforms",
+    );
+    expect(settingsTab("/settings/people", nothing)).toBe("platforms");
+    expect(settingsTab("/settings/ai", nothing)).toBe("platforms");
   });
-
-  it("shows People and access only to people who can manage it", () => {
-    expect(settingsTabs(false).map((tab) => tab.label)).toEqual([
+  it("shows People and access to managers and AI models once a platform is connected", () => {
+    expect(settingsTabs(nothing).map((tab) => tab.label)).toEqual([
       "Platforms",
       "Preferences",
     ]);
-    expect(settingsTabs(true).map((tab) => tab.label)).toEqual([
+    expect(
+      settingsTabs({ people: false, ai: true }).map((tab) => tab.label),
+    ).toEqual(["Platforms", "AI models", "Preferences"]);
+    expect(settingsTabs(everything).map((tab) => tab.label)).toEqual([
       "Platforms",
       "People and access",
+      "AI models",
       "Preferences",
     ]);
   });
-
   it("routes /settings to Platforms and each tab to the shell", () => {
     const paths = routes.map((route) => route.path);
     expect(routes.find((route) => route.path === "settings")).toMatchObject({
       redirectTo: "settings/platforms",
       pathMatch: "full",
     });
-    for (const tab of ["platforms", "people", "preferences"])
+    for (const tab of ["platforms", "people", "ai", "preferences"])
       expect(paths).toContain(`settings/${tab}`);
     expect(paths.indexOf("settings/preferences")).toBeLessThan(
       paths.indexOf("**"),

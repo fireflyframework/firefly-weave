@@ -90,6 +90,11 @@ const text = (value: unknown) => (typeof value === "string" ? value : "");
           >
             <weave-icon name="upload" [size]="16" />Import workflow
           </button>
+          @if (connected() && canConnectModel()) {
+            <button type="button" (click)="connectModel.emit()">
+              <weave-icon name="model" [size]="16" />Connect a model
+            </button>
+          }
           @if (!connected()) {
             <button type="button" (click)="connect.emit()">
               <weave-icon name="cloud" [size]="16" />Connect to a platform
@@ -367,11 +372,14 @@ export class HomeDashboard {
   loading = input(false);
   /** The platform is saved but not signed in: previews can't be read yet. */
   signInToRead = input(false);
+  /** The person manages connections, so Home offers "Connect a model". */
+  canConnectModel = input(false);
   createWorkflow = output<void>();
   importWorkflow = output<File>();
   /** A workflow file chosen together with its canvas file. */
   importWithCanvas = output<{ workflow: File; canvas: File }>();
   connect = output<void>();
+  connectModel = output<void>();
   navigate = output<"workflows" | "tasks" | "runs">();
   openLocal = output<string>();
   continueEditing = output<void>();

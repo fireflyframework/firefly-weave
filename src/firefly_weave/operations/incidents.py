@@ -32,6 +32,7 @@ from firefly_weave.compiler.expressions import measure_value
 from firefly_weave.compiler.ir import ActionNode
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.definitions import ActionDefinition, load_definition
+from firefly_weave.contracts.instance_keys import node_of
 from firefly_weave.contracts.operations import IncidentResolution, IncidentView
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.persistence.uow import Transaction
@@ -134,7 +135,9 @@ class IncidentService:
                 raise CatalogError(409, "WV-RUNTIME-STATE", "Incident is no longer active")
             artifact = import_artifact(row["artifact"])
             ir = workflow(artifact)
-            node = next((n for n in ir.graph.nodes if n.id == incident["node_id"]), None)
+            # A run-wide incident has no step; a step incident names its instance key.
+            step = None if incident["node_id"] is None else node_of(incident["node_id"])
+            node = next((n for n in ir.graph.nodes if n.id == step), None)
             task = None
             if request.kind != "terminate":
                 if not isinstance(node, ActionNode) or incident["incident_key"] not in previous.state.incidents:
@@ -146,7 +149,7 @@ class IncidentService:
                 tasks = await repository.rows(
                     f"SELECT * FROM task_intents WHERE {SCOPE} AND run_id=:run AND node_id=:node FOR UPDATE",
                     run=previous.id,
-                    node=node.id,
+                    node=incident["node_id"],
                 )
                 if not tasks or tasks[0]["status"] not in {"failed", "incident"}:
                     raise CatalogError(409, "WV-RUNTIME-STATE", "No failed task matches this incident")

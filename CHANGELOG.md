@@ -20,6 +20,28 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+- Studio has one place to set up AI: **Settings › AI models**. It shows provider cards, your AI connections, a
+  readiness checklist with **Publish**, **Authorize** and **Test connection**, and the Weave AI card. The AI
+  connection side sheet is the only AI connection form; it also opens from Build › Connections, an AI task and
+  Home's **Connect a model**. It offers plain HTTP only for endpoints a platform operator approved, asks for a secret
+  handle (never a key), lists the approved models the provider serves, and tests a model through the AI gateway with
+  tool support. The old AI setup wizard and the Weave AI settings in the Ask Weave AI panel are gone.
+- Studio waits up to 140 seconds for an AI connection test, so a local model loading for the first time no longer
+  fails the test early; canceling the test in Studio stops it on the platform.
+- `weave platform up --username` grants the new account the local owner roles, and
+  `weave platform user grant --username NAME --role ROLE` adds roles to an account the local platform created.
+- Run state, history, tasks, deadlines, and incidents name each run of a step by
+  its instance key, which equals the step ID outside loops, so existing workflows
+  keep byte-identical transitions and history. Deadline scans, incident
+  resolution, replay, exported history, and debug sessions find the step behind
+  any instance key.
+- Human task views add `instance_key` and `iteration` for tasks created inside a
+  loop iteration; both are omitted for every other task.
+- The capacity check of one event's work runs at its end and after every 64
+  steps or 1 MiB of new step output, instead of after every step. Work over
+  capacity is still refused, but the refusal can happen at a later step of the
+  same event, and when a later step of that event fails, the run opens that
+  step's incident instead.
 - Keep typing in the selected form field when deferred row autofocus completes.
   Rapid row additions focus the newest item without overriding a later choice.
 - Update Studio's YAML parser to 2.8.3 so deeply nested documents produce a

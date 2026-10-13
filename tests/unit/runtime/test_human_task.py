@@ -18,6 +18,7 @@
 
 from datetime import timedelta
 
+import pytest
 from test_kernel import artifact, event
 
 from firefly_weave.runtime.kernel import transition
@@ -124,3 +125,42 @@ def test_simulator_requires_explicit_native_human_decision():
     done = simulator.continue_until_breakpoint()
     assert done.status == "succeeded"
     assert simulator.data.events[-1].type == "human_completed"
+
+
+def waiting_review_instance():
+    import json
+
+    from firefly_weave.operations.debug.simulator import Simulator
+
+    simulator = Simulator(
+        artifact([human()], {"ref": "/steps/review/output"}), mocks={}, input={}, now=event().timestamp
+    )
+    assert simulator.continue_until_breakpoint().active_nodes == ["review"]
+    data = json.loads(simulator.serialize())
+    data["state"]["active"] = ["review[2]"]
+    return Simulator.restore(json.dumps(data))
+
+
+def test_simulator_decides_a_human_task_instance():
+    from firefly_weave.operations.debug.models import DebugCommand
+
+    simulator = waiting_review_instance()
+    simulator.command(
+        DebugCommand(kind="human_decision", name="review[2]", payload={"decision": "approve", "data": {"note": "ok"}})
+    )
+    done = simulator.continue_until_breakpoint()
+    assert done.status == "succeeded"
+    completed = simulator.data.events[-1]
+    assert (completed.type, completed.data["node_id"]) == ("human_completed", "review[2]")
+
+
+@pytest.mark.parametrize("name", ["[2]", "#a", "~1", "review[02]", "review"])
+def test_simulator_rejects_a_malformed_or_inactive_human_task_key(name):
+    from firefly_weave.operations.debug.models import DebugCommand, DebugError
+
+    simulator = waiting_review_instance()
+    with pytest.raises(DebugError) as raised:
+        simulator.command(
+            DebugCommand(kind="human_decision", name=name, payload={"decision": "approve", "data": {"note": "ok"}})
+        )
+    assert raised.value.code == "WV-DEBUG-HUMAN-TASK"

@@ -237,9 +237,9 @@ read runs, and work on human tasks:
 | `viewer` | Demo environment | Read runs, deliveries, status, and the catalog |
 | `task_participant` | Demo environment | Read, claim, complete, and release assigned human tasks |
 
-**Choose the roles now: you cannot add them later with this command.** An
-existing username is never changed, and `--role` replaces the defaults, so list
-every role you want. The defaults miss two roles that later guides need:
+**`user` never changes an existing username**, and `--role` replaces the
+defaults. To add roles to an account this platform created, use `user grant`
+(below). The defaults miss two roles that later guides need:
 
 - **Integration connections** need `tenant_admin` (step 8 and
   [Call a REST API without code](../connectors/http-without-code.md)).
@@ -257,9 +257,25 @@ weave platform user --username YOUR_NAME --role tenant_admin --role developer \
 
 Expected: the same output, with `tenant_admin (demo tenant)` first in `Roles:`.
 `weave platform user --help` lists every role you can grant; `platform_admin` and
-`worker` are never offered. **Already created your person with fewer roles?**
-Create a second username with the full set, then sign in as it with
-`weave auth login --switch-account`.
+`worker` are never offered.
+
+**Already created your person with fewer roles?** Add the missing ones with
+`user grant`. Grants are added, never removed, and are scoped like the roles
+`user` gives; sign in again to use them:
+
+```sh
+# Development only: add roles to an account this platform created.
+weave platform user grant --username YOUR_NAME --role tenant_admin --role lumi_manager
+```
+
+`user grant` works for accounts that `weave platform user` or
+`weave platform up --username` created with this version or later, which keep a
+private record of the account. For an older account, assign roles in Studio's
+**Settings › People and access** instead.
+
+The account `weave platform up --username NAME` creates (see the
+[Docker development guide](docker-development.md)) gets the local owner roles
+instead of the defaults: `developer`, `deployer`, `operator`, `viewer`, `task_participant`, `tenant_admin`, `lumi_manager`, `execution_manager`, `worker_operator`, `deployment_reader`, `deployment_planner`, `deployment_approver` and `deployment_operator`.
 
 ## 6. Sign in from the CLI
 

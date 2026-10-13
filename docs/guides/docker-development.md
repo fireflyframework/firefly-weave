@@ -64,16 +64,15 @@ longer than later starts. The CLI prints the API address and sign-in instruction
 `platform status` also shows the interactive API docs address. Copy the generated password when it appears:
 it is shown once, and subsequent starts do not change it.
 
-A default development account can author and run workflows, inspect executions,
-and participate in human tasks. To also administer connections and reviewer groups,
-choose these roles when creating the account:
+Without `--role`, `up` gives this first account the local owner roles in the demo
+workspace: `developer`, `deployer`, `operator`, `viewer`, `task_participant`, `tenant_admin`, `lumi_manager`, `execution_manager`, `worker_operator`, `deployment_reader`, `deployment_planner`, `deployment_approver` and `deployment_operator`. That is enough to author, run and operate workflows,
+administer connections, and set up AI models and Weave AI in Studio. To manage
+reviewer groups, add `task_manager` later; `user grant` adds roles to an account
+this platform created and never removes any:
 
 ```sh
-# Development only: create an account that can follow the administration guides.
-# Use this INSTEAD of the first up command, with a new username.
-weave platform up --username localadmin --role tenant_admin --role developer \
-  --role deployer --role operator --role viewer --role task_participant \
-  --role task_manager
+# Development only: add a role to the account `up` created.
+weave platform user grant --username developer --role task_manager
 ```
 
 Your installation lives in `.local/platform`. Its containers and volumes have

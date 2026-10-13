@@ -25,20 +25,8 @@ import {
   inject,
 } from "@angular/core";
 import type { App } from "../app";
-import { ApiError } from "../api";
 import { parse } from "yaml";
-import { Select } from "../forms/ui/select";
-import { AiProviderConnectionForm } from "../integrations/ai-provider-connection-form";
-import {
-  aiConnections,
-  aiSetupRows,
-  type AiConnection,
-} from "../integrations/ai-provider-connection";
 import { Modal } from "../dialog";
-import { AiProfileEditor } from "../integrations/ai-profile-editor";
-import { AiSetupWizard } from "../integrations/ai-setup-wizard";
-import type { Schema } from "../task-schema";
-import { missingData } from "../forms/core/form-model";
 import { describeError } from "../errors";
 import { exportFile } from "../export-file";
 import {
@@ -58,13 +46,7 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   selector: "weave-lumi-panel",
   standalone: true,
   changeDetection: ChangeDetectionStrategy.Eager,
-  imports: [
-    Modal,
-    AiProfileEditor,
-    AiSetupWizard,
-    Select,
-    AiProviderConnectionForm,
-  ],
+  imports: [Modal],
   template: ` @if (host.lumiOpen) {
     <weave-modal
       heading="Ask Weave AI"
@@ -73,24 +55,16 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
       (dismiss)="host.lumiOpen = false"
     >
       <div class="lumi-panel">
-        <div class="lumi-tools" [hidden]="settings">
+        <div class="lumi-tools">
           @if (status?.configured) {
             <span class="hint">{{ status.provider }} · {{ status.model }}</span>
           }
-          <button
-            type="button"
-            (click)="clear()"
-            [disabled]="busy || configBusy"
-          >
+          <button type="button" (click)="clear()" [disabled]="busy">
             New conversation
           </button>
           @if (host.profile && host.can("lumi.manage")) {
-            <button
-              type="button"
-              [disabled]="configBusy"
-              (click)="openSettings()"
-            >
-              Weave AI settings
+            <button type="button" (click)="host.openAiModels()">
+              Set up Weave AI
             </button>
           }
         </div>
@@ -103,155 +77,16 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
           <p class="hint">
             Ask an administrator for access to Weave AI in this environment.
           </p>
-        } @else if (!settings && !status?.configured && !loading) {
+        } @else if (!status?.configured && !loading) {
           <p class="hint">
-            Weave AI is unavailable in this environment. An administrator
-            configures its model and connection; a platform operator enables the
-            Weave AI gateway. Saving model settings alone does not deploy the
-            gateway.
+            Weave AI is not set up in this environment. A Weave AI manager sets
+            it up in Settings › AI models.
           </p>
         }
         @if (loading) {
           <p role="status">Loading Weave AI…</p>
         }
-        @if (settings) {
-          <section class="lumi-settings">
-            <p class="hint">
-              Choose Weave AI's model and connection for this environment.
-              Workflow AI profiles have their own settings.
-            </p>
-            @if (!host.can("connection.manage")) {
-              <p role="status">
-                To select or save a provider connection, ask an administrator
-                for connection.manage in this environment as well as Weave AI
-                manager.
-              </p>
-            }
-            @if (configSchema) {
-              <weave-ai-setup-wizard
-                [(step)]="settingsStep"
-                [headings]="settingsHeadings"
-                progressLabel="Weave AI setup progress"
-                [canContinue]="
-                  settingsStep === 0 ? modelComplete : configComplete
-                "
-                [busy]="configBusy"
-                [navigationBlocked]="newConnection"
-                finishLabel="Save Weave AI settings"
-                (finish)="saveSettings()"
-              >
-                <fieldset ai-model [disabled]="configBusy">
-                  <weave-ai-profile-editor
-                    [schema]="configSchema"
-                    [initialData]="configInitial"
-                    [validateProfile]="validateAiProfile"
-                    (dataChange)="config = $event"
-                    (validityChange)="configValid = $event"
-                  />
-                </fieldset>
-                <section ai-connection class="settings-connection">
-                  <p class="hint">
-                    Choose Weave AI's provider connection. Credentials stay with
-                    the platform operator.
-                  </p>
-                  <weave-select
-                    label="Provider connection"
-                    [value]="configConnection"
-                    [options]="connectionOptions"
-                    [disabled]="configBusy || !host.can('connection.manage')"
-                    (choose)="configConnection = $event"
-                  />
-                  <p class="hint">
-                    Weave AI pins this exact revision. Choose a connection with
-                    the same provider as the profile; changing a workflow
-                    profile will not change these settings.
-                  </p>
-                  @if (configConnection && !selectedConnection) {
-                    <p class="field-error">
-                      Choose an available connection that matches this provider.
-                    </p>
-                  }
-                  @if (host.can("connection.manage")) {
-                    @if (!connectionOptions.length) {
-                      <p>
-                        No matching provider connections yet. Create one with an
-                        operator-approved secret handle, or change the provider.
-                      </p>
-                    }
-                    <div class="action-row">
-                      <button
-                        type="button"
-                        [disabled]="configBusy"
-                        (click)="newConnection = !newConnection"
-                      >
-                        New AI connection</button
-                      ><button
-                        type="button"
-                        [disabled]="configBusy"
-                        (click)="loadConnections()"
-                      >
-                        Refresh connections
-                      </button>
-                    </div>
-                    @if (newConnection) {
-                      <weave-ai-provider-connection-form
-                        [api]="host.api"
-                        [canManage]="host.can('connection.manage')"
-                        (created)="connectionCreated($event)"
-                        (finished)="newConnection = false"
-                      />
-                    }
-                  }
-                </section>
-                <section ai-review class="settings-connection">
-                  <dl class="settings-summary">
-                    @for (row of settingsSummary; track row.label) {
-                      <div>
-                        <dt>{{ row.label }}</dt>
-                        <dd>{{ row.value }}</dd>
-                      </div>
-                    }
-                  </dl>
-                  <p class="hint">
-                    Saving applies these settings to Weave AI in the current
-                    environment. It does not change workflow AI profiles or send
-                    a model request. The platform operator must enable the Weave
-                    AI gateway and authorize this connection before you can ask
-                    Weave AI.
-                  </p>
-                </section>
-                <div ai-error>
-                  @if (configError) {
-                    <p class="field-error" role="alert">{{ configError }}</p>
-                  }
-                </div>
-                <div ai-secondary class="action-row">
-                  <button
-                    type="button"
-                    [disabled]="configBusy"
-                    (click)="back()"
-                  >
-                    Back to conversation
-                  </button>
-                </div>
-              </weave-ai-setup-wizard>
-            } @else if (configBusy) {
-              <p role="status">Loading Weave AI settings…</p>
-            }
-            @if (!configSchema && configError) {
-              <p class="field-error" role="alert">{{ configError }}</p>
-            }
-            <div class="action-row">
-              <button
-                type="button"
-                [disabled]="configBusy"
-                (click)="openSettings()"
-              >
-                Reload settings
-              </button>
-            </div>
-          </section>
-        } @else if (review; as item) {
+        @if (review; as item) {
           <section class="lumi-review">
             <h3>{{ item.title }}</h3>
             <p class="hint">
@@ -442,35 +277,6 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
       [hidden] {
         display: none !important;
       }
-      .settings-connection {
-        display: grid;
-        gap: 12px;
-        min-width: 0;
-      }
-      .settings-summary {
-        margin: 0;
-        border-top: 1px solid var(--line);
-      }
-      .settings-summary div {
-        display: grid;
-        grid-template-columns: minmax(100px, 1fr) minmax(0, 2fr);
-        gap: 16px;
-        padding: 12px 0;
-        border-bottom: 1px solid var(--line);
-      }
-      .settings-summary dt {
-        color: var(--muted);
-      }
-      .settings-summary dd {
-        margin: 0;
-        overflow-wrap: anywhere;
-      }
-      @media (max-width: 480px) {
-        .settings-summary div {
-          grid-template-columns: 1fr;
-          gap: 4px;
-        }
-      }
       .lumi-conversation {
         display: grid;
         gap: 16px;
@@ -494,7 +300,6 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
         max-width: 100%;
         white-space: normal;
       }
-      .lumi-settings,
       .lumi-review,
       fieldset {
         display: grid;
@@ -533,8 +338,6 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 })
 export class LumiPanel implements DoCheck {
   @Input({ required: true }) host!: App;
-  readonly validateAiProfile = (profile: Record<string, unknown>) =>
-    this.host.api.validateLlmProfile({ ...profile, outputSchema: {} });
   private cdr = inject(ChangeDetectorRef);
   private element = inject<ElementRef<HTMLElement>>(ElementRef);
   private keepFocus() {
@@ -549,7 +352,6 @@ export class LumiPanel implements DoCheck {
   back() {
     this.keepFocus();
     this.review = null;
-    this.settings = false;
   }
   conversation = new LumiConversation();
   message = "";
@@ -562,58 +364,6 @@ export class LumiPanel implements DoCheck {
     null;
   review: ProposalReview | null = null;
   validating = false;
-  settings = false;
-  settingsStep = 0;
-  readonly settingsHeadings = [
-    "Choose Weave AI's model",
-    "Choose a provider connection",
-    "Review Weave AI settings",
-  ];
-  get settingsSummary() {
-    const profile = object(this.config["profile"]);
-    const connection = this.connections.find(
-      (c) => c.id === this.configConnection,
-    );
-    return [
-      {
-        label: "Assistant",
-        value: this.config["enabled"] ? "Enabled" : "Disabled",
-      },
-      { label: "Provider", value: profile["provider"] },
-      { label: "Model or deployment", value: profile["model"] },
-      {
-        label: "Connection",
-        value: connection
-          ? `${connection.name} · revision ${connection.revision}`
-          : "Unavailable",
-      },
-      {
-        label: "Endpoint",
-        value: connection?.config.endpoint ?? "Unavailable",
-      },
-      {
-        label: "Reasoning",
-        value: object(profile["reasoning"])["pattern"] ?? "none",
-      },
-      { label: "Maximum calls", value: profile["maxCalls"] },
-      { label: "Timeout", value: `${profile["timeoutSeconds"]} seconds` },
-      {
-        label: "Maximum output tokens",
-        value: object(profile["options"])["max_tokens"] ?? "Provider default",
-      },
-    ];
-  }
-  configBusy = false;
-  configError = "";
-  configSchema: Schema | null = null;
-  configInitial: Record<string, unknown> = {};
-  config: Record<string, unknown> = {};
-  configValid = true;
-  configRevision: number | null = null;
-  configConnection = "";
-  connections: AiConnection[] = [];
-  newConnection = false;
-  private replySchema: unknown;
   private wasOpen = false;
   ngDoCheck() {
     const key = JSON.stringify([
@@ -631,10 +381,6 @@ export class LumiPanel implements DoCheck {
     }
     if (this.host.lumiOpen && !this.wasOpen) void this.loadStatus();
     this.wasOpen = this.host.lumiOpen;
-    if (this.host.lumiOpen && this.host.lumiSettingsRequested) {
-      this.host.lumiSettingsRequested = false;
-      void this.openSettings();
-    }
   }
   private reset() {
     this.message = "";
@@ -643,23 +389,12 @@ export class LumiPanel implements DoCheck {
     this.review = null;
     this.status = null;
     this.busy = false;
-    this.settings = false;
-    this.configSchema = null;
-    this.config = {};
-    this.configInitial = {};
-    this.configRevision = null;
-    this.configConnection = "";
-    this.connections = [];
-    this.newConnection = false;
     this.error = "";
     this.loading = false;
-    this.configBusy = false;
     this.validating = false;
-    this.configError = "";
-    this.replySchema = undefined;
   }
   clear() {
-    if (this.busy || this.configBusy) return;
+    if (this.busy) return;
     this.conversation.clear();
     this.message = "";
     this.review = null;
@@ -880,180 +615,5 @@ export class LumiPanel implements DoCheck {
       item.format === "json" ? "application/json" : "application/yaml",
       item.source,
     );
-  }
-  get connectionOptions() {
-    const provider = object(this.config["profile"])["provider"];
-    return this.connections
-      .filter((c) => c.config.provider === provider)
-      .map((c) => ({
-        value: c.id,
-        label: `${c.name} · revision ${c.revision}`,
-        description: c.config.endpoint,
-      }));
-  }
-  get selectedConnection() {
-    return this.connectionOptions.some(
-      (option) => option.value === this.configConnection,
-    );
-  }
-  async loadConnections() {
-    if (!this.host.can("connection.manage")) return;
-    const generation = this.conversation.generation;
-    try {
-      const rows = await aiSetupRows(this.host.api, "connections", true);
-      if (generation === this.conversation.generation)
-        this.connections = aiConnections(rows);
-    } catch (error) {
-      if (generation === this.conversation.generation)
-        this.configError = describeError(error).message;
-    } finally {
-      this.cdr.markForCheck();
-    }
-  }
-  connectionCreated(connection: AiConnection) {
-    this.connections = [
-      ...this.connections.filter((c) => c.id !== connection.id),
-      connection,
-    ];
-    this.configConnection = connection.id;
-  }
-  get modelComplete() {
-    return (
-      !!this.configSchema &&
-      this.configValid &&
-      !missingData(this.configSchema, this.config).length
-    );
-  }
-  get configComplete() {
-    return (
-      this.host.can("connection.manage") &&
-      this.selectedConnection &&
-      this.modelComplete
-    );
-  }
-  async openSettings() {
-    if (this.configBusy || !this.host.profile || !this.host.can("lumi.manage"))
-      return;
-    this.keepFocus();
-    this.settings = true;
-    this.settingsStep = 0;
-    this.newConnection = false;
-    this.configSchema = null;
-    this.keepFocus();
-    this.configBusy = true;
-    this.configError = "";
-    const generation = this.conversation.generation;
-    try {
-      const schema = await this.host.api.request<Record<string, any>>(
-        "/studio/contracts/lumi-configuration",
-      );
-      const defs = object(schema["$defs"]);
-      const profile = object(defs["LumiProfile"]);
-      this.replySchema = object(object(profile["properties"])["outputSchema"])[
-        "const"
-      ];
-      if (!this.replySchema)
-        throw Error(
-          "The host did not provide the fixed Weave AI reply schema.",
-        );
-      const properties = { ...object(profile["properties"]) };
-      delete properties["outputSchema"];
-      const { connection_revision_id: _, ...configProperties } = object(
-        schema["properties"],
-      );
-      const editable = {
-        ...schema,
-        properties: configProperties,
-        required: (schema["required"] as string[]).filter(
-          (key) => key !== "connection_revision_id",
-        ),
-        $defs: {
-          ...defs,
-          LumiProfile: {
-            ...profile,
-            properties,
-            required: (profile["required"] as string[]).filter(
-              (key) => key !== "outputSchema",
-            ),
-          },
-        },
-      };
-      let configuration: Record<string, any> = {
-        enabled: true,
-        profile: {
-          options: { max_tokens: 2048 },
-          reasoning: { pattern: "none", maxSteps: 6 },
-          maxCalls: 8,
-          timeoutSeconds: 120,
-        },
-      };
-      try {
-        configuration = await this.host.api.request<Record<string, any>>(
-          `${this.host.api.environment}/lumi/configuration`,
-        );
-      } catch (error) {
-        if (!(error instanceof ApiError && error.status === 404)) throw error;
-      }
-      if (generation !== this.conversation.generation) return;
-      this.configRevision = configuration["revision"] ?? null;
-      const { revision, connection_revision_id, ...data } = configuration;
-      this.configConnection = connection_revision_id ?? "";
-      const cleanProfile = { ...object(data["profile"]) };
-      delete cleanProfile["outputSchema"];
-      this.configInitial = { ...data, profile: cleanProfile };
-      this.config = structuredClone(this.configInitial);
-      this.configSchema = editable as Schema;
-      await this.loadConnections();
-    } catch (error) {
-      if (generation === this.conversation.generation)
-        this.configError = describeError(error).message;
-    } finally {
-      if (generation === this.conversation.generation) {
-        this.configBusy = false;
-        this.cdr.markForCheck();
-      }
-    }
-  }
-  async saveSettings() {
-    if (
-      this.configBusy ||
-      this.settingsStep !== 2 ||
-      !this.configComplete ||
-      !this.host.can("lumi.manage")
-    )
-      return;
-    this.configBusy = true;
-    this.configError = "";
-    const generation = this.conversation.generation;
-    try {
-      const body = {
-        ...this.config,
-        connection_revision_id: this.configConnection,
-        profile: {
-          ...object(this.config["profile"]),
-          outputSchema: this.replySchema,
-        },
-      };
-      const result = await this.host.api.request<Record<string, any>>(
-        `${this.host.api.environment}/lumi/configuration`,
-        "PUT",
-        body,
-        this.configRevision === null
-          ? {}
-          : { "If-Match": `"${this.configRevision}"` },
-      );
-      if (generation !== this.conversation.generation) return;
-      this.configRevision = result["revision"];
-      this.settings = false;
-      await this.loadStatus();
-    } catch (error) {
-      if (generation === this.conversation.generation)
-        this.configError = describeError(error).message;
-    } finally {
-      if (generation === this.conversation.generation) {
-        this.configBusy = false;
-        this.cdr.markForCheck();
-      }
-    }
   }
 }

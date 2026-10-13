@@ -66,16 +66,22 @@ export class Autofocus implements AfterViewInit {
   selector: "weave-modal",
   standalone: true,
   imports: [Icon],
-  template: `<div class="modal-backdrop" (mousedown)="holdFocus($event)">
+  template: `<div
+    class="modal-backdrop"
+    [class.side]="placement() === 'side'"
+    (mousedown)="holdFocus($event)"
+  >
     <section
       class="modal-panel"
       [class.wide]="wide()"
+      [class.side]="placement() === 'side'"
       role="dialog"
       aria-modal="true"
       tabindex="-1"
       [attr.aria-labelledby]="titleId"
       [attr.aria-describedby]="describedBy() || null"
       (keydown)="keydown($event)"
+      (focusout)="keepFocus($event)"
     >
       <header class="modal-header">
         <h2 [id]="titleId">{{ heading() }}</h2>
@@ -97,6 +103,8 @@ export class Modal implements AfterViewInit, OnDestroy {
   describedBy = input("");
   closeLabel = input("Close dialog");
   wide = input(false);
+  /** "side": a full-height sheet at the right edge, full width on a phone. */
+  placement = input<"center" | "side">("center");
   dismiss = output<void>();
   titleId = `modal-title-${++sequence}`;
   private element = inject(ElementRef<HTMLElement>);
@@ -115,17 +123,50 @@ export class Modal implements AfterViewInit, OnDestroy {
     resize: ResizeObserver;
     mutation: MutationObserver;
   } | null = null;
+  /**
+   * Keys pressed while focus fell to the page (a focused control was removed)
+   * still reach the topmost dialog, so Tab and Escape keep working.
+   */
+  private readonly strayKeys = (event: KeyboardEvent) => {
+    if (!this.lostFocus() || (event.key !== "Tab" && event.key !== "Escape"))
+      return;
+    if (event.key === "Tab") {
+      event.preventDefault();
+      this.panel.focus({ preventScroll: true });
+    } else this.keydown(event);
+  };
+  /** Focus left for nowhere (body) while this is the topmost dialog. */
+  private lostFocus() {
+    const panel = this.panel;
+    const active = document.activeElement;
+    return (
+      !!panel?.isConnected &&
+      (!active || active === document.body) &&
+      [...document.querySelectorAll(".modal-panel")].at(-1) === panel
+    );
+  }
+  /** A focused control that is disabled or removed hands focus back to the dialog. */
+  keepFocus(event: FocusEvent) {
+    if (event.relatedTarget) return;
+    queueMicrotask(() => {
+      if (this.lostFocus()) this.panel.focus({ preventScroll: true });
+    });
+  }
   ngAfterViewInit() {
+    document.addEventListener("keydown", this.strayKeys);
     this.watchFooter();
     queueMicrotask(() => {
       const panel = this.panel;
       if (!panel || panel.contains(document.activeElement)) return;
+      // A control disabled through its fieldset (a form still loading)
+      // can't take focus; the panel holds it so Tab stays in the dialog.
       const preferred =
         panel.querySelector<HTMLElement>("[data-initial-focus]") ??
         [...panel.querySelectorAll<HTMLElement>(focusable)].find(
-          (e) => !e.closest(".modal-header"),
+          (e) => !e.closest(".modal-header") && !e.matches(":disabled"),
         );
-      (preferred ?? panel).focus();
+      preferred?.focus();
+      if (!panel.contains(document.activeElement)) panel.focus();
     });
   }
   /**
@@ -163,6 +204,7 @@ export class Modal implements AfterViewInit, OnDestroy {
     this.footerWatch = { resize, mutation };
   }
   ngOnDestroy() {
+    document.removeEventListener("keydown", this.strayKeys);
     this.footerWatch?.resize.disconnect();
     this.footerWatch?.mutation.disconnect();
     const opener = this.opener;

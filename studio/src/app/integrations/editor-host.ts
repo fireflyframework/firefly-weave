@@ -68,7 +68,6 @@ export interface EditorHost {
   apiBuilder: { context: UseContext; tab: BuilderTab; step: string } | null;
   lastUse: HttpActionUse | null;
   connectionDialog: {
-    kind?: "ai";
     fromBuilder: HttpActionUse["connection"] | null;
     /** Opened from a workflow: "Back to the workflow" returns there. */
     fromWorkflow?: boolean;

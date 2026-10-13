@@ -97,6 +97,21 @@ On macOS, Docker cannot use the Apple GPU, so `--ollama host` is much faster
 when Ollama runs on your Mac; `weave platform ai status` warns about CPU-only
 inference when Ollama runs in a container on macOS.
 
+## Set up models in Studio
+
+Open **Settings › AI models**. The **Readiness** checklist shows what the platform checked: the Agentic worker, the
+published AI actions, a worker online, an AI connection, its key and authorization, a model that answered a test in
+the last 24 hours, and Weave AI. Each item you can fix has its button: **Publish** publishes the built-in AI actions,
+**Authorize** lets the worker use your credentialed connections, and **Test connection** opens the connection to test.
+
+Choose **Connect** on the Ollama card (**Manage** after `weave platform ai enable`) to open the AI connection side
+sheet. Pick an approved endpoint; plain `http://` addresses work only when a platform operator approved them, and
+local endpoints use no credential. **Save connection**, choose a model (Studio suggests `qwen3:4b` when it is
+installed) and **Test connection**. A first test of a local model can take up to two minutes while the model loads;
+**Cancel** stops it.
+
+Weave AI can't use a connection without a key yet, so on a local platform every item but **Weave AI** turns ready.
+
 ## Choose a model
 
 | Use | Model | Download |

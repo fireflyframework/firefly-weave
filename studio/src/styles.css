@@ -1111,6 +1111,33 @@ dd {
 .modal-panel.wide {
   width: min(900px, 100%);
 }
+/* A side sheet: the same dialog docked at the right edge, full height. */
+.modal-backdrop.side {
+  justify-content: flex-end;
+  align-items: stretch;
+  padding: 0;
+}
+.modal-panel.side {
+  width: min(480px, 100%);
+  max-height: none;
+  height: 100%;
+  border-radius: 0;
+  border-left: 1px solid var(--border);
+}
+@media (max-width: 767px) {
+  .modal-panel.side {
+    width: 100%;
+    border-left: 0;
+  }
+}
+/* The sheet's content grows, so its footer rests on the bottom edge. */
+.modal-panel.side {
+  display: flex;
+  flex-direction: column;
+}
+.modal-panel.side > :not(.modal-header) {
+  flex: 1 0 auto;
+}
 .modal-panel:focus {
   outline: none;
 }
@@ -1216,6 +1243,14 @@ dd {
   }
   .modal-panel :is(.dialog-actions, .dialog-footer) > button {
     margin-inline: 0;
+  }
+}
+/* A side sheet's footer holds two answers at most: they share a row while
+   the sheet is wider than a phone. */
+@container dialog (min-width: 360px) {
+  .modal-panel.side :is(.dialog-actions, .dialog-footer) {
+    flex-direction: row;
+    align-items: center;
   }
 }
 /* Notices: warning by default; data-tone="success" | "danger" | "info" |

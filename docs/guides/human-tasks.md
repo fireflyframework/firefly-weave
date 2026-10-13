@@ -332,6 +332,11 @@ The list shows tasks you are eligible for; a task manager also sees the other
 tasks in their authorized workspace. The [business key](execution-management.md#1-choose-identifiers-with-different-jobs)
 groups runs for one case; it is not unique.
 
+A task's `node_id` is the step that created it. A task created inside a loop
+iteration also carries `instance_key`, the key of that run of the step (for
+example `review[3]`), and `iteration`, its loop indexes (`[3]`). Both fields are
+absent for every other task.
+
 **In Studio**, open **My tasks**: the task shows the status "Ready to claim".
 The status filter next to the search box, **All tasks** by default, also offers
 **Ready to claim**, **Claimed**, **Completed**, **Expired**, and **Canceled**.

@@ -41,7 +41,7 @@
 "editor-hardening" = false
 "language-contracts" = false
 "text-operators" = true
-"instance-keys" = false
+"instance-keys" = true
 "loop-compiler" = false
 "loop-runtime" = false
 "loop-simulation" = false
@@ -52,7 +52,7 @@
 "language-docs" = false
 "ai-gateway" = true
 "ai-setup" = false
-"ai-models-screen" = false
+"ai-models-screen" = true
 "ai-task" = false
 "weave-ai-ollama" = false
 "agents" = false

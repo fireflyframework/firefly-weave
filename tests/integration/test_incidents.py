@@ -808,3 +808,45 @@ async def test_reconciled_output_exact_payload_boundary_before_fingerprinting(
     else:
         state = (await client.get(f"{env_url}/runs/{failed_run.id}", headers=operation_headers)).json()["state"]
         assert state["status"] == "succeeded" and state["output"] == output
+
+
+@pytest.mark.parametrize("worker_runtime_fixture", ["safe"], indirect=True)
+async def test_a_failed_step_instance_is_retried_under_its_instance_key(
+    client, operation_headers, env_url, failed_run, task_service, transaction_factory, worker_ids, access_db
+):
+    # Move the failed step into iteration 2 of a loop, as a loop body would have stored it.
+    async with access_db[1].begin() as session:
+        await session.execute(
+            text(
+                """UPDATE runs SET state=jsonb_set(jsonb_set(state,'{active}','["work[2]"]'),'{incidents}',"""
+                """(SELECT jsonb_object_agg(replace(key,'work:','work[2]:'),jsonb_set(value,'{node_id}','"work[2]"'))"""
+                """ FROM jsonb_each(state->'incidents'))) WHERE id=:id"""
+            ),
+            {"id": failed_run.id},
+        )
+        await session.execute(
+            text(
+                """UPDATE task_intents SET node_id='work[2]',payload=jsonb_set(payload,'{node_id}','"work[2]"'),"""
+                """operation_key=operation_key||'[2]' WHERE node_id='work'"""
+            )
+        )
+        await session.execute(
+            text("UPDATE incidents SET node_id='work[2]',incident_key=replace(incident_key,'work:','work[2]:')")
+        )
+        await session.execute(text("UPDATE step_instances SET node_id='work[2]' WHERE node_id='work'"))
+    incident = await incident_for(client, operation_headers, env_url, failed_run)
+    assert incident["incident_key"].startswith("work[2]:")
+    response = await client.post(
+        f"{env_url}/incidents/{incident['id']}/resolve",
+        headers={**operation_headers, "If-Match": str(incident["revision"])},
+        json={"kind": "retry_safe", "reason": "retry read", "receipt_id": str(uuid4())},
+    )
+    assert response.status_code == 200, response.text
+    async with transaction_factory() as tx:
+        lease = (await task_service.claim(tx, worker_ids[0], 1))[0]
+        assert lease.proof.generation == 2 and lease.operation_key == f"{failed_run.id}:work[2]"
+        await task_service.complete(tx, lease.proof, uuid4(), 19)
+    async with access_db[1]() as session:
+        state = await session.scalar(text("SELECT state FROM runs WHERE id=:id"), {"id": failed_run.id})
+        step = await session.scalar(text("SELECT status FROM step_instances WHERE node_id='work[2]'"))
+    assert (state["status"], state["output"], step) == ("succeeded", 19, "completed")
