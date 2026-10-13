@@ -20,6 +20,8 @@ import {
   canvasFromStored,
   ownedRecipes,
 } from "./editor/state/canvas-sidecar";
+import { DraftCanvases, type KeptWhere } from "./editor/state/draft-canvas";
+import type { AccountScope } from "./editor/state/browser-store";
 import {
   stepDetailsEnabled,
   type StepDetailsHost,
@@ -1646,9 +1648,93 @@ export class App implements CanvasHost {
   // --- local drafts -----------------------------------------------------
   /** Autosave: local work is kept on this computer 800 ms after a change. */
   private keepLocally() {
-    if (this.profile) return;
+    if (this.profile) {
+      this.keepDraftCanvas();
+      return;
+    }
     if (this.localTimer) clearTimeout(this.localTimer);
     this.localTimer = setTimeout(() => this.flushLocalSave(true), 800);
+  }
+  // --- a platform draft's canvas on this computer -------------------------
+  private readonly draftCanvases = new DraftCanvases();
+  /** Where the open platform draft's canvas is kept; "memory" until it is written. */
+  draftCanvasKept: KeptWhere = "memory";
+  private draftCanvasTimer: ReturnType<typeof setTimeout> | null = null;
+  private draftCanvasWrite: (() => Promise<KeptWhere>) | null = null;
+  /** A platform draft waits for the signed-in account before its canvas comes back. */
+  private draftCanvasPending: { draftId: string; opened: number } | null = null;
+  /** The account a platform draft's canvas belongs to; null when it can't be told. */
+  private accountScope(): AccountScope | null {
+    const profile = this.profile;
+    if (!profile?.tenantId || !profile.projectId) return null;
+    return {
+      profileName: profile.name,
+      subject: this.identity?.principal_id ?? null,
+      tenantId: profile.tenantId,
+      projectId: profile.projectId,
+    };
+  }
+  /** The draft a waiting write belongs to. */
+  private draftCanvasFor = "";
+  /**
+   * Connected: the canvas is kept on this computer 800 ms after a change,
+   * for the platform it was made on. Another draft's waiting write goes first.
+   */
+  private keepDraftCanvas() {
+    if (this.draftCanvasWrite && this.draftCanvasFor !== this.draftId)
+      void this.flushDraftCanvas();
+    if (this.draftCanvasTimer) clearTimeout(this.draftCanvasTimer);
+    const profile = this.profile;
+    const draftId = this.draftId;
+    const canvas = this.model.canvas;
+    this.draftCanvasFor = draftId;
+    this.draftCanvasWrite = async () => {
+      // The account is read when writing: it may arrive after the change.
+      const scope = this.profile === profile ? this.accountScope() : null;
+      return (this.draftCanvasKept = scope
+        ? await this.draftCanvases.write(scope, draftId, canvas)
+        : "memory");
+    };
+    this.draftCanvasTimer = setTimeout(() => void this.flushDraftCanvas(), 800);
+  }
+  /** Writes a waiting canvas now; says where the canvas is kept. */
+  private async flushDraftCanvas(): Promise<KeptWhere> {
+    if (this.draftCanvasTimer) clearTimeout(this.draftCanvasTimer);
+    this.draftCanvasTimer = null;
+    const write = this.draftCanvasWrite;
+    this.draftCanvasWrite = null;
+    return write ? write() : this.draftCanvasKept;
+  }
+  /** Brings back a platform draft's canvas kept for this account, once the account is known. */
+  private async restoreDraftCanvas() {
+    const pending = this.draftCanvasPending;
+    const scope = this.accountScope();
+    if (!pending || !scope?.subject) return;
+    this.draftCanvasPending = null;
+    const model = this.model;
+    const revision = model.revision;
+    const stored = await this.draftCanvases.read(scope, pending.draftId);
+    if (
+      stored === null ||
+      this.model !== model ||
+      model.opened !== pending.opened ||
+      model.revision !== revision ||
+      this.draftId !== pending.draftId
+    )
+      return;
+    const read = canvasFromStored(stored, model.definition, model.stepIdSet());
+    this.draftCanvasKept = "computer";
+    if (read.problems.length) {
+      this.notify(
+        "Studio couldn't read the notes and settings kept for this draft on this computer, so it opened without them.",
+        undefined,
+        "danger",
+      );
+      return;
+    }
+    model.amend(() => (model.canvas = read.canvas));
+    this.tick.update((n) => n + 1);
+    this.cdr.markForCheck();
   }
   /** Saves the open workflow now when an autosave is waiting. */
   flushLocalSave(due = false) {
@@ -1746,6 +1832,7 @@ export class App implements CanvasHost {
     if (!this.paired) return;
     this.flushInspector();
     this.flushLocalSave();
+    void this.flushDraftCanvas();
     if (!this.unsavedWork) return;
     event.preventDefault();
     event.returnValue = "";
@@ -1835,6 +1922,8 @@ export class App implements CanvasHost {
     document: Workflow,
   ) {
     this.flushLocalSave();
+    // The draft open until now keeps its last change.
+    void this.flushDraftCanvas();
     this.model.replace(document);
     this.resetValidation();
     this.changed();
@@ -1845,6 +1934,16 @@ export class App implements CanvasHost {
     this.draftRevision = Number(detail["revision"]);
     this.published = null;
     this.saveState = "Draft saved";
+    // Opening is no change to keep (changed() above scheduled one): the kept canvas comes back instead.
+    if (this.draftCanvasTimer) clearTimeout(this.draftCanvasTimer);
+    this.draftCanvasTimer = null;
+    this.draftCanvasWrite = null;
+    this.draftCanvasKept = "memory";
+    this.draftCanvasPending = {
+      draftId: this.draftId,
+      opened: this.model.opened,
+    };
+    void this.restoreDraftCanvas();
     this.openTab();
     void this.router.navigateByUrl(`/workflows/${this.draftId}/designer`);
     this.scheduleFit();
@@ -6074,7 +6173,7 @@ export class App implements CanvasHost {
       this.draftSavedAt = new Date().toISOString();
       if (source === this.model.source) this.dirty = false;
       this.error = "";
-      const note = await this.draftNote(model);
+      const note = await this.draftNote(model, await this.flushDraftCanvas());
       this.notify(note ? `Draft saved. ${note}` : "Draft saved.");
     } catch (e) {
       this.saveState = "Not saved";
@@ -6094,10 +6193,14 @@ export class App implements CanvasHost {
    * notes. The note's code loads on demand; when it can't load, the draft is
    * saved without the note.
    */
-  private async draftNote(model: StructuredCanvasAdapter): Promise<string> {
+  private async draftNote(
+    model: StructuredCanvasAdapter,
+    where: KeptWhere,
+  ): Promise<string> {
     try {
       return (await import("./editor/ndv/owned/owned-commands")).draftNote(
         model,
+        where,
       );
     } catch (error) {
       console.error("Studio couldn't load the note for Save draft", error);
@@ -7043,6 +7146,8 @@ export class App implements CanvasHost {
         "/studio/api/api/v1/identity",
       );
       this.catalogAfterIdentity();
+      // A platform draft opened before the account was known gets its canvas now.
+      void this.restoreDraftCanvas();
     } catch (error) {
       const plain = describeError(error);
       if (
@@ -7620,6 +7725,7 @@ export class App implements CanvasHost {
       this.platformNotice = null;
       this.reportSignOut(result, name);
       this.notify(`Signed out of ${name}.`);
+      void this.draftCanvases.forgetPlatform(name);
       await this.refresh();
     } catch (e) {
       this.platformFail(e, name);
@@ -7647,6 +7753,7 @@ export class App implements CanvasHost {
       const result = await this.connection.remove(name, true);
       this.applyConnection(result, active, name);
       this.notify(`Removed ${name}.`);
+      void this.draftCanvases.forgetPlatform(name);
       if (active) await this.refresh();
     } catch (e) {
       this.platformFail(e, name);

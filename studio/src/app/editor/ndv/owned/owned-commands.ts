@@ -23,7 +23,7 @@ SPDX-License-Identifier: Apache-2.0
 // out.
 // DOM-free and loaded lazily; the shell passes itself as the host.
 import type { StructuredCanvasAdapter } from "../../../model";
-import { stepNotesOf } from "../../state/canvas-sidecar";
+import type { KeptWhere } from "../../state/draft-canvas";
 import type {
   OwnedPublishOutcome,
   OwnedPublishPurpose,
@@ -31,6 +31,7 @@ import type {
   StepDetailsService,
 } from "../step-details-service";
 import {
+  canvasExtras,
   driftedOwned,
   forkEdited,
   ownedDraftNote,
@@ -87,11 +88,11 @@ export const exportNote = (model: StructuredCanvasAdapter): string =>
   ownedExportNote(pendingOwned(model).length);
 
 /** What Save draft adds on a platform while the draft holds more than the workflow. */
-export const draftNote = (model: StructuredCanvasAdapter): string =>
-  ownedDraftNote(
-    pendingOwned(model).length,
-    Object.keys(stepNotesOf(model.canvas)).length > 0,
-  );
+export const draftNote = (
+  model: StructuredCanvasAdapter,
+  where: KeptWhere = "memory",
+): string =>
+  ownedDraftNote(pendingOwned(model).length, canvasExtras(model.canvas), where);
 
 /** Shows why the command stopped, in the banner. */
 function stop(host: OwnedCommandHost, reason: string): void {

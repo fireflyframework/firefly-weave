@@ -23,7 +23,8 @@ SPDX-License-Identifier: Apache-2.0
 // version never changes.
 import { nextPatchVersion } from "../../../integrations/http-action-model";
 import type { StructuredCanvasAdapter, Workflow } from "../../../model";
-import type { CanvasSidecar } from "../../state/canvas-sidecar";
+import { stepNotesOf, type CanvasSidecar } from "../../state/canvas-sidecar";
+import type { KeptWhere } from "../../state/draft-canvas";
 import { allSteps } from "../params/slots";
 import {
   currentVersion,
@@ -235,17 +236,34 @@ export const ownedExportNote = (count: number): string =>
     ? `These files don't keep the settings of ${count} ${count === 1 ? "action" : "actions"} of this workflow's Call an API, email or file steps yet. Publish the workflow to keep ${count === 1 ? "it" : "them"} in the project.`
     : "";
 
+/** What a canvas holds besides the workflow, for a sentence: "notes and trigger choices". */
+export function canvasExtras(canvas: CanvasSidecar): string {
+  const sticky = (canvas.notes?.length ?? 0) > 0;
+  const stepNotes = Object.keys(stepNotesOf(canvas)).length > 0;
+  const triggers = (canvas.triggers?.length ?? 0) > 0;
+  return [
+    ...(sticky ? ["notes"] : stepNotes ? ["step notes"] : []),
+    ...(triggers ? ["trigger choices"] : []),
+  ].join(" and ");
+}
+
 /**
  * What Save draft adds on a platform, whose draft holds the workflow only:
- * the settings of actions that aren't published yet, and step notes, stay
- * while the draft is open.
+ * the settings of actions that aren't published yet, and the canvas's
+ * notes and trigger choices, stay on this computer or while it is open.
  */
-export function ownedDraftNote(actions: number, notes: boolean): string {
+export function ownedDraftNote(
+  actions: number,
+  extras: string,
+  where: KeptWhere = "memory",
+): string {
+  const stay =
+    where === "computer" ? "on this computer only" : "only while it's open";
   const kept = actions
-    ? `This draft keeps the settings of ${actions} ${actions === 1 ? "action" : "actions"} of this workflow's Call an API, email or file steps only while it's open. Publish the workflow to keep ${actions === 1 ? "it" : "them"} in the project.`
+    ? `This draft keeps the settings of ${actions} ${actions === 1 ? "action" : "actions"} of this workflow's Call an API, email or file steps ${stay}. Publish the workflow to keep ${actions === 1 ? "it" : "them"} in the project.`
     : "";
-  if (!notes) return kept;
+  if (!extras) return kept;
   return kept
-    ? `${kept} Its step notes also stay only while it's open.`
-    : "This draft keeps its step notes only while it's open.";
+    ? `${kept} Its ${extras} also stay ${stay}.`
+    : `This draft keeps its ${extras} ${stay}.`;
 }
