@@ -60,6 +60,15 @@ import {
   yamlFile,
 } from "./step-details-po";
 import { showParameters } from "./step-geometry";
+import {
+  AI_CAPABILITIES,
+  mockAiPlatform,
+  ollamaConnection,
+  openaiConnection,
+  openAiModels,
+  readiness,
+  sheet,
+} from "./ai-models-po";
 import { CanvasPage, openWorkflow, useNewEditor } from "./canvas-po";
 import {
   debugSession,
@@ -1459,6 +1468,9 @@ const scenes: Record<string, Scene> = {
       .getByLabel("Message to Weave AI")
       .fill("Help me add a review step.");
     await panel.getByLabel("Include current source", { exact: true }).check();
+    await expect(
+      panel.getByRole("button", { name: "Set up Weave AI", exact: true }),
+    ).toBeVisible();
     await shot("lumi-context", { end: ".modal-panel" });
     await panel
       .getByRole("button", { name: "Send message", exact: true })
@@ -1469,11 +1481,6 @@ const scenes: Record<string, Scene> = {
       .getByRole("button", { name: "Review workflow draft", exact: true })
       .click();
     await shot("lumi-review", { end: ".modal-panel" });
-    await panel
-      .getByRole("button", { name: "Weave AI settings", exact: true })
-      .click();
-    await expect(panel.getByLabel("Model", { exact: true })).toBeVisible();
-    await shot("lumi-settings", { end: ".modal-panel" });
   },
   // ------------------------------------------------------- step details
   async "step-details-api"({ page, shot, size }) {
@@ -2038,6 +2045,134 @@ ${paths}
     await shot("33-settings-assign-role", { end: ".page-content" });
   },
 
+  async "settings-ai"({ page, shot }) {
+    await connected(page, { capabilities: AI_CAPABILITIES });
+    await mockAiPlatform(page, {
+      connections: [ollamaConnection, openaiConnection],
+    });
+    await openAiModels(page);
+    await expect(page.locator(".readiness-row")).toHaveCount(8);
+    await expect(page.locator("weave-ai-card")).toContainText(
+      "Save Weave AI settings",
+    );
+    await shot("35-settings-ai-ready", { end: ".page-content" });
+  },
+
+  async "settings-ai-read-only"({ page, shot }) {
+    await connected(page, {
+      capabilities: [
+        "catalog.read",
+        "status.read",
+        "connection.bind",
+        "lumi.use",
+      ],
+    });
+    await mockAiPlatform(page, {
+      connections: [ollamaConnection],
+      readiness: readiness({
+        key_available: { status: "unknown", detail: "requires_tenant_admin" },
+        connection_authorized: {
+          status: "unknown",
+          detail: "requires_tenant_admin",
+        },
+        model_responds: { status: "unknown", detail: "requires_tenant_admin" },
+      }),
+    });
+    await openAiModels(page);
+    await expect(
+      page.getByRole("button", { name: "View ollama-local" }),
+    ).toBeVisible();
+    await shot("35-settings-ai-read-only", { end: ".page-content" });
+  },
+
+  async "settings-ai-setup"({ page, shot }) {
+    await connected(page, { capabilities: AI_CAPABILITIES });
+    await mockAiPlatform(page, {
+      connections: [openaiConnection],
+      readiness: readiness({
+        worker_installed: {
+          status: "action",
+          detail: "worker_missing",
+          fix: {
+            kind: "command",
+            label: "Ask an operator to enable AI",
+            command: "weave platform ai enable --ollama auto",
+          },
+        },
+        actions_published: {
+          status: "action",
+          detail: "actions_missing",
+          fix: {
+            kind: "operation",
+            label: "Publish",
+            operation: "ai_setup.publish",
+          },
+        },
+        worker_online: {
+          status: "action",
+          detail: "worker_offline",
+          fix: {
+            kind: "navigate",
+            label: "Open workers",
+            route: "operate/workers",
+          },
+        },
+        key_available: { status: "done", detail: "key_grant_available" },
+        connection_authorized: {
+          status: "action",
+          detail: "authorization_missing",
+          fix: {
+            kind: "operation",
+            label: "Authorize",
+            operation: "ai_setup.grant",
+          },
+        },
+        model_responds: {
+          status: "action",
+          detail: "test_required",
+          fix: {
+            kind: "operation",
+            label: "Test connection",
+            operation: "ai_connections.test",
+          },
+        },
+      }),
+    });
+    await openAiModels(page);
+    await expect(
+      page.getByRole("button", { name: "Publish", exact: true }),
+    ).toBeVisible();
+    await shot("36-settings-ai-setup", { end: ".page-content" });
+  },
+
+  async "ai-connection-sheet"({ page, shot }) {
+    await connected(page, { capabilities: AI_CAPABILITIES });
+    const platform = await mockAiPlatform(page);
+    await openAiModels(page);
+    await page.getByRole("button", { name: "Connect Ollama" }).click();
+    const form = sheet(page);
+    await expect(
+      form.getByRole("button", { name: "Save connection" }),
+    ).toBeEnabled();
+    await shot("37-ai-connection-sheet", { end: ".modal-panel" });
+    await form.getByRole("button", { name: "Save connection" }).click();
+    await form.getByRole("button", { name: "Test connection" }).click();
+    await expect(form.locator(".test-status")).toContainText("can call tools");
+    await shot("37-ai-connection-tested", { end: ".modal-panel" });
+    platform.testAnswer = {
+      ok: false,
+      code: "LLM_UNREACHABLE",
+      latency_ms: 12,
+      model: "qwen3:4b",
+      tool_calling: "unknown",
+    };
+    await form.getByRole("button", { name: "Test connection" }).click();
+    await expect(form.locator(".test-status")).toContainText(
+      "could not reach the model endpoint",
+    );
+    await form.getByText("Show details").click();
+    await shot("37-ai-connection-failed", { end: ".modal-panel" });
+  },
   async "designer-lanes"({ page, shot }) {
     await offline(page);
     await page
