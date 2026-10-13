@@ -37,6 +37,7 @@ LABELS = {
     "switch": "Choose a branch",
     "parallel": "Run branches",
     "forEach": "Loop over items",
+    "callWorkflow": "Call a workflow",
     "branch-output": "Collect branch result",
     "join": "Continue after branches",
     "fail": "Stop with a failure",

@@ -31,6 +31,7 @@ from firefly_weave.compiler.expressions import ExpressionFailure, evaluate, meas
 from firefly_weave.compiler.ir import (
     ActionNode,
     BranchOutputNode,
+    CallWorkflowNode,
     DecisionTableNode,
     EndNode,
     FailNode,
@@ -600,6 +601,10 @@ def _advance_owned(
                     update={"output": {"code": node.code, "message": node.message}}
                 )
                 return checkpoint(result.model_copy(update={"state": current_state}))
+            elif isinstance(node, CallWorkflowNode):
+                # This runtime does not start child runs: import refuses workflows that call others, and a call
+                # that still arrives here stops behind an incident instead of being skipped.
+                raise KernelError("WV-RUNTIME-ARTIFACT")
             elif isinstance(node, (SwitchNode, ParallelNode)):
                 if current in current_state.joins:
                     raise KernelError("WV-RUNTIME-ACTIVATION")

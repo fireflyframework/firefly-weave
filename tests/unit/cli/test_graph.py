@@ -271,3 +271,28 @@ def test_graph_draws_a_compiled_loop_without_running_it(tmp_path):
         assert "Loop over items" in content
     text = CliRunner().invoke(cli, ["workflow", "graph", str(path)]).output
     assert "[label] Loop over items\n  +-- each: body --> [@branch:label:0]" in text
+
+
+def test_graph_draws_a_compiled_call_without_running_it(tmp_path):
+    from firefly_weave.compiler.catalog import CatalogSnapshot
+    from firefly_weave.compiler.parser import parse_source
+    from firefly_weave.contracts.definitions import load_definition
+
+    examples = Path("examples/language")
+    callee = load_definition(
+        parse_source((examples / "notify-customer.workflow.yaml").read_text(), format="yaml").value
+    )
+    result = compile_source(
+        (examples / "order-intake.workflow.yaml").read_text(),
+        format="yaml",
+        catalog=CatalogSnapshot.from_definitions([callee]),
+    )
+    assert result.ok and result.artifact is not None
+    path = tmp_path / "compiled.json"
+    path.write_bytes(result.artifact.to_bytes())
+    for format in ("text", "mermaid", "svg"):
+        drawn = CliRunner().invoke(cli, ["workflow", "graph", str(path), "--format", format, "--output", "json"])
+        assert drawn.exit_code == 0, drawn.output
+        assert "Call a workflow" in json.loads(drawn.output)["content"]
+    text = CliRunner().invoke(cli, ["workflow", "graph", str(path)]).output
+    assert "[notify] Call a workflow\n" in text and "[audit] Call a workflow\n" in text

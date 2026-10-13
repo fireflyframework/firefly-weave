@@ -276,6 +276,7 @@ class WorkerService(WorkerAdmissionPort):
             "end",
             "transform",
             "action",
+            "callWorkflow",
             "signal",
             "humanTask",
             "wait",
