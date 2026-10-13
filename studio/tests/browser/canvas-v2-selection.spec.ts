@@ -116,6 +116,26 @@ test.describe("selecting steps", () => {
     ]);
   });
 
+  test("on a wide window the selection toolbar shows Copy, Duplicate and Delete, and no More", async ({
+    page,
+  }) => {
+    const canvas = await openWorkflow(page);
+    await canvas.tileBody("prepare-request").click();
+    await canvas.tileBody("approval").click({ modifiers: ["Shift"] });
+    const bar = canvas.root.getByRole("toolbar", { name: "Selected steps" });
+    await expect(bar).toContainText("2 steps");
+    for (const name of ["Copy", "Duplicate", "Delete"])
+      await expect(
+        bar.getByRole("button", { name, exact: true }),
+      ).toBeVisible();
+    await expect(
+      bar.getByRole("button", {
+        name: "More commands for the selected steps",
+        exact: true,
+      }),
+    ).toBeHidden();
+  });
+
   test("a box drawn with Shift adds just the steps it touches, and pressing a step's name changes nothing", async ({
     page,
   }) => {
