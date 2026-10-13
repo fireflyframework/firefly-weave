@@ -1947,13 +1947,24 @@ export class App implements CanvasHost {
         // Not on the platform either: explained below.
       }
     await this.navigate("workflows");
-    this.notify(
-      "That workflow isn't available. It may have been deleted, or it belongs to another workspace.",
-      undefined,
-      "danger",
-    );
+    if (this.openedFromFiles.has(id))
+      this.notify(
+        "That workflow was opened from a file and not changed, so Studio didn't keep a copy. Choose Import workflow to open the file again.",
+      );
+    else
+      this.notify(
+        "That workflow isn't available. It may have been deleted, or it belongs to another workspace.",
+        undefined,
+        "danger",
+      );
     return false;
   }
+  /**
+   * Workflows opened from a file in this window. One left unchanged isn't
+   * kept on this computer, so Back to it explains that instead of saying
+   * it may have been deleted.
+   */
+  private readonly openedFromFiles = new Set<string>();
   /**
    * A published version opens under an identity of its own, set before its
    * workflow replaces the one open: the draft open until now keeps its last
@@ -7502,6 +7513,7 @@ export class App implements CanvasHost {
     this.restoredView = false;
     this.model = new StructuredCanvasAdapter();
     this.draftId = crypto.randomUUID();
+    this.openedFromFiles.add(this.draftId);
     this.draftRevision = undefined;
     this.published = null;
     this.activation = null;
