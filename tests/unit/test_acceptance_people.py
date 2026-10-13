@@ -105,3 +105,90 @@ def test_the_scope_and_api_origin_come_from_the_platform_state():
         people.api_origin({"mode": "docker", "ports": {"container_api": 18081, "api": 1}}) == "http://127.0.0.1:18081"
     )
     assert people.api_origin({"ports": {"api": 18000}}) == "http://127.0.0.1:18000"
+
+
+class SignedInRun:
+    """The run surface person_client reads; the platform itself is never reached."""
+
+    def __init__(self, private):
+        self.private = private
+
+    def person(self, name):
+        return {"username": name, "password": PASSWORD}
+
+    def platform_state(self):
+        return {"ports": {"api": 18000, "keycloak": 18080}}
+
+    def demo_scope(self):
+        return {"tenant_id": str(uuid4()), "project_id": str(uuid4()), "environment_id": str(uuid4())}
+
+
+class SeededStore:
+    """A credential store holding one record for any binding, as a run's private file store would."""
+
+    def __init__(self, state):
+        from firefly_weave.sdk.credentials import CredentialRecord
+
+        self.record = None if state is None else CredentialRecord(binding="seeded", state=state)
+
+    def load(self, binding):
+        return self.record
+
+    def save(self, binding, record):
+        self.record = record
+
+
+@pytest.fixture
+def signed_in(tmp_path, monkeypatch):
+    """person_client with the identity provider and the API stubbed; yields (run, sign-ins seen, seed)."""
+    from firefly_weave.sdk.credentials import CredentialRecord
+
+    sign_ins = []
+    stores = {"builder": SeededStore(None)}
+
+    async def login(session, *, flow, browser):
+        sign_ins.append((flow, session.store.load(session.config.binding)))
+        session.store.save(
+            session.config.binding,
+            CredentialRecord(binding=session.config.binding, state="active", access_token="t", expires_at=9e9),
+        )
+        return {}
+
+    class Client:
+        def __init__(self, api, session, scope):
+            self.session = session
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc_info):
+            return None
+
+    def seed(state):
+        stores["builder"] = SeededStore(state)
+
+    monkeypatch.setattr(people.OAuthSession, "login", login)
+    monkeypatch.setattr(people, "WeaveClient", Client)
+    monkeypatch.setattr(people, "session_store", lambda private, name: stores[name])
+    return SignedInRun(tmp_path / "private"), sign_ins, seed
+
+
+@pytest.mark.parametrize("stored", [None, "logged_out", "refreshing", "authenticating", "active"])
+async def test_every_client_signs_the_person_in_again_whatever_the_stored_record_says(signed_in, stored):
+    # A failed sign-in leaves logged_out, a failed refresh leaves the token-free refreshing fence and an idle
+    # identity-provider session can expire an active record: each run.client(...) starts from a fresh sign-in.
+    run, sign_ins, seed = signed_in
+    if stored is not None:
+        seed(stored)
+    async with people.person_client(run, "builder") as client:
+        assert client.session.store.load(client.session.config.binding).state == "active"
+    assert [flow for flow, _ in sign_ins] == ["pkce"]
+    assert (sign_ins[0][1] is None) == (stored is None)
+
+
+async def test_two_clients_for_one_person_sign_in_twice(signed_in):
+    run, sign_ins, _ = signed_in
+    for _ in range(2):
+        async with people.person_client(run, "builder"):
+            pass
+    assert len(sign_ins) == 2

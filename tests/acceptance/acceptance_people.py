@@ -130,7 +130,13 @@ def api_origin(state: Mapping[str, Any]) -> str:
 
 @asynccontextmanager
 async def person_client(run: Any, name: str) -> AsyncIterator[WeaveClient]:
-    """A WeaveClient signed in as ``name`` on the demo environment (local)."""
+    """A WeaveClient signed in as ``name`` on the demo environment (local), through a fresh sign-in.
+
+    Every call signs in again, whatever the private store holds: a failed sign-in leaves a
+    logged_out record, a failed refresh leaves a token-free refreshing fence, and the identity
+    provider's idle timeout can end a session a journey kept from an earlier one. A fresh
+    sign-in costs one form post and keeps journeys independent.
+    """
     person = run.person(name)
     state = run.platform_state()
     api = api_origin(state)
@@ -146,12 +152,11 @@ async def person_client(run: Any, name: str) -> AsyncIterator[WeaveClient]:
     )
     store = session_store(run.private, name)
     session = OAuthSession(config, store)
-    if store.load(config.binding) is None:
 
-        async def browser(url: str) -> None:
-            await follow_sign_in(url, issuer_origin, person["username"], person["password"])
+    async def browser(url: str) -> None:
+        await follow_sign_in(url, issuer_origin, person["username"], person["password"])
 
-        await session.login(flow="pkce", browser=browser)
+    await session.login(flow="pkce", browser=browser)
     async with WeaveClient(api, session, scope_of(run.demo_scope())) as client:
         yield client
 
