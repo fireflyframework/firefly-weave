@@ -92,5 +92,10 @@ def test_executable_node_kinds_are_every_ir_node_kind_whose_feature_is_advertise
         for model in get_args(get_args(ir.IRNode.__value__)[0])
         for kind in get_args(model.model_fields["kind"].annotation)
     }
-    assert ir.executable_node_kinds() == kinds
-    assert ir.executable_node_kinds(()) == kinds - {"forEach"}
+    unadvertised = {
+        kind
+        for kind, feature in language_features.KIND_FEATURES.items()
+        if feature not in language_features.ADVERTISED_FEATURES
+    }
+    assert ir.executable_node_kinds() == kinds - unadvertised
+    assert ir.executable_node_kinds(()) == kinds - set(language_features.KIND_FEATURES)
