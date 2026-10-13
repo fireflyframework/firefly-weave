@@ -20,8 +20,10 @@ import hashlib
 import http.client
 import importlib.util
 import json
+import socket
 import sys
 import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -53,6 +55,7 @@ def servers():
         host="127.0.0.1", api_port=0, control_port=0, key_sha256=hashlib.sha256(KEY.encode()).hexdigest()
     )
     for server in (api, control):
+        server.RequestHandlerClass.timeout = 0.5  # a stalled client gives up its connection quickly
         threading.Thread(target=server.serve_forever, daemon=True).start()
     yield f"http://127.0.0.1:{api.server_address[1]}", f"http://127.0.0.1:{control.server_address[1]}"
     for server in (api, control):
@@ -210,3 +213,43 @@ def test_an_oversized_body_never_consumes_an_armed_fault(servers, length):
     assert raw_post(api, "/sink/alerts", body, length)[0] == 413
     assert raw_post(api, "/sink/alerts", b"{}")[0] == 503
     assert raw_post(api, "/sink/alerts", b"{}")[0] == 204
+
+
+def raw_exchange(base, request, *, half_close=False):
+    """Send raw request bytes and read one response; returns (status, JSON body, seconds waited)."""
+    url = urllib.parse.urlsplit(base)
+    started = time.monotonic()
+    with socket.create_connection((url.hostname, url.port), timeout=5) as connection:
+        connection.sendall(request)
+        if half_close:
+            connection.shutdown(socket.SHUT_WR)
+        response = http.client.HTTPResponse(connection)
+        response.begin()
+        body = response.read()
+    return response.status, json.loads(body) if body else None, time.monotonic() - started
+
+
+def journal(control):
+    entries = json.loads(urllib.request.urlopen(control + "/_control/journal", timeout=5).read())["entries"]
+    return [(entry["method"], entry["path"], entry["status"]) for entry in entries]
+
+
+def test_two_content_length_headers_are_refused_and_journaled(servers):
+    api, control = servers
+    request = b"POST /approvals HTTP/1.1\r\nHost: acme\r\nContent-Length: 100\r\nContent-Length: 2\r\n\r\n{}"
+    status, body, waited = raw_exchange(api, request)
+    assert (status, body) == (400, {"error": "Send one Content-Length."})
+    assert waited < 0.4
+    assert journal(control) == [("POST", "/approvals", 400)]
+    assert raw_exchange(control, request.replace(b"/approvals", b"/_control/reset"))[:2] == (400, body)
+
+
+@pytest.mark.parametrize("half_close", [False, True], ids=["stalled", "closed"])
+def test_a_body_shorter_than_its_content_length_is_refused_and_journaled(servers, half_close):
+    api, control = servers
+    request = b"POST /approvals HTTP/1.1\r\nHost: acme\r\nContent-Length: 10\r\n\r\n{}"
+    status, body, _ = raw_exchange(api, request, half_close=half_close)
+    assert (status, body) == (400, {"error": "The request body is shorter than its Content-Length."})
+    assert journal(control) == [("POST", "/approvals", 400)]
+    # Nothing was received: the next approval gets the first receipt.
+    assert call(api + "/approvals", "POST", {"customerId": "C-1001", "lines": []})[1]["id"] == "A-1"

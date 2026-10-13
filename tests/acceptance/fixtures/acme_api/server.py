@@ -29,6 +29,7 @@ import json
 import os
 import re
 import threading
+from contextlib import suppress
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -196,6 +197,8 @@ class _Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     server_version = "AcmeFixture/1"
     sys_version = ""
+    # Socket timeout in seconds: a client that stalls mid-request loses its connection.
+    timeout = 10.0
     state: State
 
     def log_message(self, format: str, *args: Any) -> None:
@@ -205,20 +208,35 @@ class _Handler(BaseHTTPRequestHandler):
     def _read_body(self) -> bytes | None:
         """The request body, or None when it is over 64 KiB (drained when at most 256 KiB).
 
-        Raises _BadRequest for a Content-Length that is not a short run of ASCII digits.
+        Raises _BadRequest for more than one Content-Length, one that is not a short run of
+        ASCII digits, or a body that ends (or stalls past the socket timeout) before it.
         """
-        length = self.headers.get("Content-Length", "0")
+        lengths = self.headers.get_all("Content-Length") or ["0"]
+        if len(lengths) > 1:
+            self.close_connection = True
+            raise _BadRequest("Send one Content-Length.")
+        length = lengths[0]
         if not (length.isascii() and length.isdigit() and len(length) <= MAX_LENGTH_DIGITS):
             self.close_connection = True
             raise _BadRequest("Send a decimal Content-Length.")
         size = int(length)
         if size > MAX_BODY:
+            drained = b""
             if size <= 4 * MAX_BODY:
-                self.rfile.read(size)
-            else:
+                with suppress(OSError):
+                    drained = self.rfile.read(size)
+            if len(drained) != size:
                 self.close_connection = True
             return None
-        return self.rfile.read(size)
+        try:
+            body = self.rfile.read(size)
+        except OSError:
+            # A stalled client: whatever arrived is not the whole body.
+            body = b""
+        if len(body) != size:
+            self.close_connection = True
+            raise _BadRequest("The request body is shorter than its Content-Length.")
+        return body
 
     def _send(self, status: int, value: Any = None) -> None:
         data = b"" if value is None else json.dumps(value, separators=(",", ":"), sort_keys=True).encode()
