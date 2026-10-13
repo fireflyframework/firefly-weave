@@ -1568,6 +1568,12 @@ _NOT_RECORDED = (
 )
 
 
+_RECEIPT_NOT_SAVED = (
+    "The account was created, but up-user.json still marks it as attempted. "
+    "Sign in with it; run up without --username from now on."
+)
+
+
 def _people(directory: Path) -> dict[str, Any]:
     path = directory / _PEOPLE
     if not path.exists():
@@ -2018,9 +2024,14 @@ def up(
                     )
                 result["account"] = {"username": username, "existing": True, "roles": saved_roles}
             else:
+                # An unreadable record of people fails before the attempt is marked, so a retry stays possible.
+                _people(directory)
                 _write(path, {"stage": "attempted", "username": username, "roles": list(selected)})
                 account = user(directory, username, selected)
-                _write(path, {"stage": "ready", "username": username, "roles": list(selected)}, replace=True)
+                try:
+                    _write(path, {"stage": "ready", "username": username, "roles": list(selected)}, replace=True)
+                except Exception:  # noqa: BLE001 - the account exists; never lose its shown-once password
+                    account = {**account, "receipt_saved": False, "receipt_hint": _RECEIPT_NOT_SAVED}
                 result["account"] = account
         return result
 

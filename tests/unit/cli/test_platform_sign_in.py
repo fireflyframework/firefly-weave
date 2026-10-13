@@ -939,3 +939,22 @@ def test_cli_user_without_a_username_or_subcommand_is_a_usage_error(demo_workspa
     result = CliRunner().invoke(cli, ["platform", "--directory", str(directory), "user"])
     assert result.exit_code == 2
     assert "--username" in result.output
+
+
+def test_cli_text_says_when_the_initial_account_receipt_was_not_completed(capsys):
+    from firefly_weave.cli import platform as cli_platform
+
+    cli_platform._show_person(
+        {
+            "username": "owner",
+            "password": "shown-once",
+            "warning": "Development only.",
+            "grants": [],
+            "next": ["weave auth setup http://localhost:1", "weave studio"],
+            "receipt_saved": False,
+            "receipt_hint": platform._RECEIPT_NOT_SAVED,
+        }
+    )
+    output = capsys.readouterr().out
+    assert output.count("shown-once") == 1
+    assert platform._RECEIPT_NOT_SAVED in output

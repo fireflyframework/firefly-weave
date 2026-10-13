@@ -218,6 +218,8 @@ def _show_person(value: dict[str, Any]) -> None:
     click.echo(value["warning"] + " Copy it now; it cannot be shown again.")
     if value.get("hint"):
         click.echo(value["hint"])
+    if value.get("receipt_hint"):
+        click.echo(value["receipt_hint"])
     click.echo("Roles: " + ", ".join(f"{grant['role']} (demo {level(grant['scope'])})" for grant in value["grants"]))
     click.echo("Next, connect to this platform and sign in with that account:")
     click.echo("  " + value["next"][0])

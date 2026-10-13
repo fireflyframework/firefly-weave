@@ -257,6 +257,38 @@ def test_uncertain_account_creation_blocks_replay(owned, monkeypatch):
         platform.up(directory, Path("."), None, username="developer")
 
 
+def test_up_refuses_an_unreadable_people_record_before_marking_an_account_attempt(owned, monkeypatch):
+    directory, state = owned
+    (directory / "people.json").write_text("{not json")
+    (directory / "people.json").chmod(0o600)
+    monkeypatch.setattr(platform, "start", lambda *a: None)
+    monkeypatch.setattr(platform, "demo", lambda *a: {"receipt": {"status": "succeeded"}})
+    monkeypatch.setattr(platform, "user", lambda *a: pytest.fail("created an account"))
+    with pytest.raises(platform.PlatformError, match="not readable"):
+        platform.up(directory, Path("."), None, username="developer")
+    assert not (directory / "up-user.json").exists()
+
+
+def test_up_returns_the_new_password_when_its_receipt_cannot_be_completed(owned, monkeypatch):
+    directory, state = owned
+    monkeypatch.setattr(platform, "start", lambda *a: None)
+    monkeypatch.setattr(platform, "demo", lambda *a: {"receipt": {"status": "succeeded"}})
+    monkeypatch.setattr(platform, "user", lambda *a: {"username": "developer", "password": "once"})
+    write = platform._write
+
+    def failing_write(path, value, **kwargs):
+        if value.get("stage") == "ready":
+            raise OSError("No space left on device")
+        return write(path, value, **kwargs)
+
+    monkeypatch.setattr(platform, "_write", failing_write)
+    result = platform.up(directory, Path("."), None, username="developer")
+    assert result["account"]["password"] == "once"
+    assert result["account"]["receipt_saved"] is False
+    assert "up-user.json" in result["account"]["receipt_hint"]
+    assert "once" not in (directory / "up-user.json").read_text()
+
+
 def test_container_configuration_mounts_only_selected_values_and_literal_environment(owned, monkeypatch):
     from firefly_weave.sdk import platform_docker
 
