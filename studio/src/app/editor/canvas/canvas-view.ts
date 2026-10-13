@@ -65,12 +65,19 @@ import {
   canvasCommand,
   canvasSheet,
   keyPlatform,
+  noteCommand,
 } from "../state/canvas-commands";
 import { minimapPinned, setMinimapPinned } from "../state/canvas-preferences";
 import {
+  NOTE_SIZES,
+  addNote,
+  removeNote,
   stepNoteLine,
   triggerInputs,
+  updateNote,
   type CanvasSidecar,
+  type NotePatch,
+  type StickyNote,
   type TriggerIntent,
 } from "../state/canvas-sidecar";
 import { CHOICE_NOT_KEPT } from "../state/editor-flag";
@@ -103,6 +110,7 @@ import {
   pathLabelScale,
   tilePaintMargin,
   type Insertion,
+  type LtrBounds,
   type LtrLayout,
   type LtrTile,
   type Point,
@@ -120,6 +128,8 @@ import {
 import { SelectionToolbar } from "./selection-toolbar";
 import { SubNodeRow, chipIcon, type SubNodeView } from "./sub-node-row";
 import { TRIGGER_LABELS, triggerNoteKey, triggerTile } from "./trigger-tiles";
+import { noteTitle } from "./note-markdown";
+import { NotesLayer, type NoteEdit, type NoteView } from "./notes-layer";
 import { ownedActionsOf } from "../ndv/owned/owned-store";
 import {
   CLIPBOARD_WEB_FORMAT,
@@ -187,6 +197,7 @@ interface ToolbarView {
     SubNodeRow,
     CanvasTools,
     SelectionToolbar,
+    NotesLayer,
   ],
   // A drag on empty canvas draws a selection box; Space, Ctrl or Command
   // with a drag, or the middle button, pans; the canvas handles the wheel.
@@ -233,6 +244,10 @@ export class CanvasView implements OnInit, DoCheck {
   private readonly pasteGaps = new Map<string, readonly Unreadable[]>();
   /** Bumped when pasteGaps changes, so the tiles draw again. */
   private pasteGapsVersion = 0;
+  /** The note whose text is edited, and the note "Move…" places, or "". */
+  editingNote = "";
+  placingNote = "";
+  private cachedNotes: NoteView[] | null = null;
   /** The step dragged to a new place, or "". */
   draggingStep = "";
   /** The click that ends a drag does nothing else. */
@@ -309,7 +324,7 @@ export class CanvasView implements OnInit, DoCheck {
     !event.metaKey &&
     isOnFlowBackground(event) &&
     !(event.target as Element | null)?.closest?.(
-      ".f-minimap, [data-handle], .tile-toolbar",
+      ".f-minimap, [data-handle], .tile-toolbar, .sticky-note",
     );
 
   ngOnInit() {
@@ -331,6 +346,17 @@ export class CanvasView implements OnInit, DoCheck {
     if (this.bandFor && !h.isPickerOpenAt(this.bandFor)) {
       this.band = null;
       this.bandFor = null;
+    }
+    const notes = this.noteViews();
+    if (notes !== this.cachedNotes) {
+      this.cachedNotes = notes;
+      h.model.cacheNotePositions(
+        new Map(
+          notes
+            .filter((note) => note.anchor)
+            .map((note) => [note.id, { x: note.x, y: note.y }]),
+        ),
+      );
     }
     if (this.fitted !== h.model.opened && !this.fitPending) {
       this.fitPending = true;
@@ -761,6 +787,29 @@ export class CanvasView implements OnInit, DoCheck {
       this.suppressClick = false;
       return;
     }
+    if (this.placingNote) {
+      const target = event.target as Element;
+      if (
+        target.closest(
+          "[data-action], .sticky-note, .tile-node, .canvas-v2-tools, [role='menu']",
+        )
+      )
+        return;
+      const id = this.placingNote;
+      this.placingNote = "";
+      const note = this.noteViews().find((item) => item.id === id);
+      const point = this.toWorld(event.clientX, event.clientY);
+      if (note)
+        this.noteEdit({
+          kind: "box",
+          id,
+          x: point.x,
+          y: point.y,
+          width: note.width,
+          height: note.height,
+        });
+      return;
+    }
     const control = (event.target as Element).closest<HTMLElement>(
       "[data-action]",
     );
@@ -775,7 +824,7 @@ export class CanvasView implements OnInit, DoCheck {
       if (
         still &&
         !(event.target as Element).closest(
-          "button, a, [role=menu], [data-handle], [data-tile], .canvas-v2-tools, .selection-toolbar, .tile-toolbar, f-minimap",
+          "button, a, [role=menu], [data-handle], [data-tile], .canvas-v2-tools, .selection-toolbar, .tile-toolbar, .sticky-note, f-minimap",
         )
       )
         this.clearSelection();
@@ -1371,12 +1420,37 @@ export class CanvasView implements OnInit, DoCheck {
     const root = this.root().nativeElement;
     if (!root.clientWidth || !root.clientHeight) return false;
     this.setView(
-      openView(this.layout().bounds, {
+      openView(this.fitBounds(), {
         width: root.clientWidth,
         height: root.clientHeight,
       }),
     );
     return true;
+  }
+  /** What Fit view shows: the steps and every note. */
+  private fitBounds(): LtrBounds {
+    const bounds = this.layout().bounds;
+    const notes = this.noteViews();
+    if (!notes.length) return bounds;
+    const steps = this.layout().tiles.length > 0;
+    return {
+      minX: Math.min(
+        ...(steps ? [bounds.minX] : []),
+        ...notes.map((note) => note.x),
+      ),
+      minY: Math.min(
+        ...(steps ? [bounds.minY] : []),
+        ...notes.map((note) => note.y),
+      ),
+      maxX: Math.max(
+        ...(steps ? [bounds.maxX] : []),
+        ...notes.map((note) => note.x + note.width),
+      ),
+      maxY: Math.max(
+        ...(steps ? [bounds.maxY] : []),
+        ...notes.map((note) => note.y + note.height),
+      ),
+    };
   }
   /** Opens a workflow the canvas hasn't shown yet with Fit view. */
   fitIfNew() {
@@ -1577,6 +1651,19 @@ export class CanvasView implements OnInit, DoCheck {
    * toolbar or a menu, keys act on that control.
    */
   key(event: KeyboardEvent) {
+    const into = event.target as HTMLElement;
+    const noteId =
+      into.closest?.("[data-note]")?.getAttribute("data-note") ?? "";
+    // A note's text box keeps its keys, its own undo and the paste included.
+    if (noteId && into.matches("textarea")) return;
+    if (noteId && !into.closest("[role=menu], .sticky-note-toolbar")) {
+      const command = noteCommand(event, this.platform);
+      if (command && this.runNote(command, noteId, event.shiftKey)) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+    }
     this.trackSpace(event);
     const target = event.target as HTMLElement;
     // A control that handled the key, or an open menu, owns it.
@@ -1690,6 +1777,9 @@ export class CanvasView implements OnInit, DoCheck {
       case "paste":
         // The browser's paste event brings the clipboard's text: pasteEvent.
         return false;
+      case "addStickyNote":
+        this.addNote();
+        return true;
       case "save":
         h.saveShortcut();
         return true;
@@ -1811,6 +1901,11 @@ export class CanvasView implements OnInit, DoCheck {
    * dialog or an open menu takes Escape first.
    */
   private escape(target: HTMLElement): boolean {
+    if (this.placingNote) {
+      this.placingNote = "";
+      this.cdr.markForCheck();
+      return true;
+    }
     if (this.endGesture() || this.hideToolbars(target)) return true;
     if (!this.selection.ids.length) return false;
     const focus = this.selection.focus;
@@ -1834,6 +1929,170 @@ export class CanvasView implements OnInit, DoCheck {
     h.cancelMove();
     return true;
   }
+  // ------------------------------------------------------------- notes
+
+  private readonly notesMemo = memo(
+    (layout: LtrLayout, notes: StickyNote[] | undefined): NoteView[] =>
+      (notes ?? []).map((note) => {
+        const tile = note.anchor
+          ? layout.tiles.find((item) => item.id === note.anchor!.stepId)
+          : undefined;
+        return {
+          id: note.id,
+          text: note.text,
+          color: note.color,
+          x: tile ? tile.x + note.anchor!.dx : note.x,
+          y: tile ? tile.y + note.anchor!.dy : note.y,
+          width: note.width,
+          height: note.height,
+          anchor: tile?.id ?? "",
+          title: noteTitle(note.text),
+        };
+      }),
+  );
+  noteViews(): NoteView[] {
+    return this.notesMemo(this.layout(), this.host().model.canvas.notes);
+  }
+  /** Shift+S and the tools' note: under the selected step (anchored), else at the view's center. */
+  addNote() {
+    const h = this.host();
+    const reason = this.lockedReason();
+    if (reason)
+      return h.notify(
+        h.model.readonly ? "Fix the source before adding notes." : reason,
+      );
+    const focus = this.selection.focus ?? h.model.selected;
+    const tile = this.layout().tiles.find(
+      (item) => item.id === focus && item.step,
+    );
+    const below = LTR.tile + LTR.labelGap + LTR.labelHeight + 16;
+    const box = this.root().nativeElement.getBoundingClientRect();
+    const center = this.toWorld(
+      box.left + box.width / 2,
+      box.top + box.height / 2,
+    );
+    let added: { canvas: CanvasSidecar; id: string };
+    try {
+      added = addNote(
+        h.model.canvas,
+        tile
+          ? { x: tile.x, y: tile.y + below }
+          : {
+              x: center.x - NOTE_SIZES.small.width / 2,
+              y: center.y - NOTE_SIZES.small.height / 2,
+            },
+        tile ? { stepId: tile.id, dx: 0, dy: below } : null,
+      );
+    } catch (error) {
+      return h.notify(error instanceof Error ? error.message : String(error));
+    }
+    if (!h.changeCanvas(added.canvas)) return;
+    this.editingNote = added.id;
+    this.cdr.markForCheck();
+  }
+  noteEdit(edit: NoteEdit) {
+    const h = this.host();
+    if (edit.kind === "place") {
+      this.placingNote = edit.id;
+      this.cdr.markForCheck();
+      return;
+    }
+    if (edit.kind === "remove") {
+      if (!h.changeCanvas(removeNote(h.model.canvas, edit.id))) return;
+      const revision = h.model.revision;
+      h.notify("Deleted the note.", {
+        label: "Undo",
+        run: () =>
+          h.model.revision === revision
+            ? h.undo()
+            : h.notify("The workflow changed since. Use Undo in the toolbar."),
+      });
+      return;
+    }
+    const patch: NotePatch =
+      edit.kind === "text"
+        ? { text: edit.text }
+        : edit.kind === "color"
+          ? { color: edit.color }
+          : this.boxPatch(edit);
+    let next: CanvasSidecar;
+    try {
+      next = updateNote(h.model.canvas, edit.id, patch);
+    } catch (error) {
+      return h.notify(error instanceof Error ? error.message : String(error));
+    }
+    if (next !== h.model.canvas) h.changeCanvas(next);
+  }
+  /** A moved anchored note keeps following its step from its new offset. */
+  private boxPatch(edit: {
+    id: string;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  }): NotePatch {
+    const note = this.host().model.canvas.notes?.find(
+      (item) => item.id === edit.id,
+    );
+    const tile = note?.anchor
+      ? this.layout().tiles.find((item) => item.id === note.anchor!.stepId)
+      : undefined;
+    return {
+      x: edit.x,
+      y: edit.y,
+      width: edit.width,
+      height: edit.height,
+      ...(note?.anchor && tile
+        ? {
+            anchor: {
+              ...note.anchor,
+              dx: edit.x - tile.x,
+              dy: edit.y - tile.y,
+            },
+          }
+        : {}),
+    };
+  }
+  /** A focused note's keys: Enter edits, Delete deletes, arrows move it (Shift: farther). */
+  private runNote(command: KeymapCommand, id: string, far: boolean): boolean {
+    const note = this.noteViews().find((item) => item.id === id);
+    if (!note || this.locked()) return false;
+    const by = far ? 32 : 8;
+    const shift = (dx: number, dy: number) =>
+      this.noteEdit({
+        kind: "box",
+        id,
+        x: note.x + dx,
+        y: note.y + dy,
+        width: note.width,
+        height: note.height,
+      });
+    switch (command) {
+      case "editNote":
+        this.editingNote = id;
+        this.cdr.markForCheck();
+        return true;
+      case "deleteNote":
+        this.noteEdit({ kind: "remove", id });
+        this.root().nativeElement.focus();
+        return true;
+      case "nudgeNoteLeft":
+        shift(-by, 0);
+        return true;
+      case "nudgeNoteRight":
+        shift(by, 0);
+        return true;
+      case "nudgeNoteUp":
+        shift(0, -by);
+        return true;
+      case "nudgeNoteDown":
+        shift(0, by);
+        return true;
+      default:
+        return false;
+    }
+  }
+
   // ------------------------------------------------------ copy and paste
 
   copyBlocked(): string | null {

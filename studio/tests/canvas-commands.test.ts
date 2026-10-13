@@ -20,6 +20,7 @@ import {
   canvasCommand,
   canvasSheet,
   keyPlatform,
+  noteCommand,
 } from "../src/app/editor/state/canvas-commands";
 import {
   EDITOR_NAV_KEY,
@@ -74,11 +75,24 @@ describe("canvas keys", () => {
     ).toBeNull();
   });
 
+  it("move, edit and delete a focused note with the note's own keys", () => {
+    expect(noteCommand(press("ArrowLeft"), "other")).toBe("nudgeNoteLeft");
+    expect(noteCommand(press("ArrowUp", { shiftKey: true }), "other")).toBe(
+      "nudgeNoteUp",
+    );
+    expect(noteCommand(press("Enter"), "other")).toBe("editNote");
+    expect(noteCommand(press("Backspace"), "other")).toBe("deleteNote");
+    expect(noteCommand(press("n"), "other")).toBeNull();
+    expect(canvasCommand(press("S", { shiftKey: true }), on)).toBe(
+      "addStickyNote",
+    );
+    expect(canvasCommand(press("ArrowLeft"), on)).toBe("previousStep");
+  });
+
   it("leave rows for features the canvas doesn't have yet to those features", () => {
     for (const key of [
       press("p"),
       press("Enter", { ctrlKey: true }),
-      press("S", { shiftKey: true }),
       press("F9"),
       press("l"),
       press("r"),
@@ -115,10 +129,31 @@ describe("canvas keys", () => {
     expect(sheet.map((section) => section.title)).toEqual([
       "Everywhere",
       "Canvas",
+      "Sticky notes",
       "Add a step panel",
       "Differences from n8n",
     ]);
-    expect(sheet[2].entries.map((entry) => entry.label)).toEqual([
+    expect(sheet[2].entries).toEqual([
+      { keys: ["Enter"], label: "Edit the note" },
+      { keys: ["Delete", "Backspace"], label: "Delete the note" },
+      {
+        keys: ["←", "Shift+←"],
+        label: "Move the note left; with Shift, farther",
+      },
+      {
+        keys: ["→", "Shift+→"],
+        label: "Move the note right; with Shift, farther",
+      },
+      {
+        keys: ["↑", "Shift+↑"],
+        label: "Move the note up; with Shift, farther",
+      },
+      {
+        keys: ["↓", "Shift+↓"],
+        label: "Move the note down; with Shift, farther",
+      },
+    ]);
+    expect(sheet[3].entries.map((entry) => entry.label)).toEqual([
       "Insert the entry",
       "Go back",
       "Open the category or app",
@@ -140,12 +175,12 @@ describe("canvas keys", () => {
       "Copy",
       "Cut",
       "Paste",
+      "Add a sticky note",
     ])
       expect(canvas).toContain(label);
     for (const label of [
       "Pin output or unpin",
       "Tidy layout",
-      "Add a sticky note",
       "Execute workflow",
       "Toggle a breakpoint",
     ])

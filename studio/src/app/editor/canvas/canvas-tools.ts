@@ -16,8 +16,8 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 // The canvas tools at the bottom left: zoom out, the zoom level (which
-// resets to 100%), zoom in, Show minimap, Fit view and the keyboard
-// shortcuts; below 768 px, where the minimap is hidden, one menu. Each hint
+// resets to 100%), zoom in, Show minimap, Fit view, Add a sticky note and
+// the keyboard shortcuts; below 768 px, where the minimap is hidden, one menu. Each hint
 // names the key that does the same on the canvas.
 import {
   ChangeDetectionStrategy,
@@ -85,6 +85,15 @@ import { RowMenu, type RowMenuItem } from "../../row-menu";
       <button
         type="button"
         class="icon-button"
+        aria-label="Add a sticky note"
+        title="Add a sticky note (Shift+S)"
+        (click)="note.emit()"
+      >
+        <weave-icon name="stickyNote" [size]="16" />
+      </button>
+      <button
+        type="button"
+        class="icon-button"
         aria-label="Keyboard shortcuts"
         title="Keyboard shortcuts (?)"
         aria-haspopup="dialog"
@@ -107,6 +116,8 @@ export class CanvasTools {
   zoomOut = output<void>();
   reset = output<void>();
   fit = output<void>();
+  /** Adds a sticky note (Shift+S). */
+  note = output<void>();
   /** "Show minimap" keeps the minimap open. */
   minimap = input(false);
   toggleMinimap = output<void>();
@@ -117,6 +128,7 @@ export class CanvasTools {
     { label: "Zoom out", run: () => this.zoomOut.emit() },
     { label: "Reset zoom to 100%", run: () => this.reset.emit() },
     { label: "Fit view", run: () => this.fit.emit() },
+    { label: "Add a sticky note", run: () => this.note.emit() },
     { label: "Keyboard shortcuts", run: () => this.shortcuts.emit() },
   ];
 }

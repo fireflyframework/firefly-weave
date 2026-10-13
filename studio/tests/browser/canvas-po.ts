@@ -134,7 +134,7 @@ export class CanvasPage {
         const area = root.getBoundingClientRect();
         const blockers = [
           ...root.querySelectorAll<Element>(
-            ".tile-body, .handle, .insert-plus, .lane-slot, .join-bar, .tile-label, .branch-label, .canvas-v2-tools, .canvas-v2-tools-menu, .selection-toolbar, .tile-toolbar, .empty-start, f-minimap",
+            ".tile-body, .handle, .insert-plus, .lane-slot, .join-bar, .tile-label, .branch-label, .canvas-v2-tools, .canvas-v2-tools-menu, .selection-toolbar, .tile-toolbar, .empty-start, .sticky-note, f-minimap",
           ),
         ]
           .map((element) => element.getBoundingClientRect())

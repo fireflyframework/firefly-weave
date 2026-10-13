@@ -136,8 +136,11 @@ test.describe("the canvas file", () => {
       "order-intake.canvas.json",
       "order-intake.yaml",
     ]);
+    // The anchored note is saved where the canvas draws it, under its step,
+    // so it keeps that place if its step is deleted later.
     expect(JSON.parse(files["order-intake.canvas.json"])).toEqual({
       ...canvas,
+      notes: [{ ...canvas.notes[0], x: 344, y: 264 }],
       semanticDigest: digest,
     });
     await expect(toast(page, "don't keep the settings")).toHaveCount(0);

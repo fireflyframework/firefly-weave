@@ -24,6 +24,7 @@ SPDX-License-Identifier: Apache-2.0
   [class.lod-minimal]="lod === 'minimal'"
   [class.revealing]="revealing()"
   [class.locked]="locked()"
+  [class.placing-note]="!!placingNote"
   [class.minimap-shown]="minimapOn || panning"
   role="group"
   aria-roledescription="workflow canvas"
@@ -70,6 +71,14 @@ SPDX-License-Identifier: Apache-2.0
         (fCanvasChange)="canvasMoved($event)"
       >
         <div fNodes>
+          <weave-notes-layer
+            [notes]="noteViews()"
+            [zoom]="view.zoom"
+            [locked]="fixed"
+            [editing]="editingNote"
+            (edit)="noteEdit($event)"
+            (editingChange)="editingNote = $event"
+          />
           <weave-edge-layer
             [edges]="edges()"
             [width]="l.bounds.maxX + 96"
@@ -342,7 +351,13 @@ SPDX-License-Identifier: Apache-2.0
       [minimap]="minimapOn"
       (toggleMinimap)="toggleMinimap()"
       (shortcuts)="sheetOpen = true"
+      (note)="addNote()"
     />
+    @if (placingNote) {
+      <p class="canvas-v2-placing" role="status">
+        Click where the note should go, or press Escape.
+      </p>
+    }
     @if (selectedCount() > 1) {
       <weave-selection-toolbar
         [count]="selectedCount()"

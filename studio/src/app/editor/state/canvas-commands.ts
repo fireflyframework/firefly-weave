@@ -16,9 +16,9 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 // What the canvas does with a key press: the rows of the shortcut table the
-// canvas offers today, read for the platform Studio runs on. Rows for
-// features still to come (pins, the clipboard, notes, test runs) stay in
-// the table and do nothing here yet.
+// canvas offers today, read for the platform Studio runs on, and a focused
+// sticky note's own keys. Rows for features still to come (pins, test runs)
+// stay in the table and do nothing here yet.
 import {
   commandFor,
   eventCombo,
@@ -42,6 +42,7 @@ export const CANVAS_COMMANDS: ReadonlySet<KeymapCommand> =
     "copy",
     "cut",
     "paste",
+    "addStickyNote",
     "selectAll",
     "duplicate",
     "deleteSelection",
@@ -107,10 +108,34 @@ export const PANEL_COMMANDS: ReadonlySet<KeymapCommand> =
     "panelBack",
   ]);
 
+/** A focused sticky note's keys (not while its text is edited). */
+export const NOTE_COMMANDS: ReadonlySet<KeymapCommand> = new Set<KeymapCommand>(
+  [
+    "editNote",
+    "deleteNote",
+    "nudgeNoteLeft",
+    "nudgeNoteRight",
+    "nudgeNoteUp",
+    "nudgeNoteDown",
+  ],
+);
+
+export function noteCommand(
+  event: KeyEventLike,
+  platform: KeyPlatform,
+): KeymapCommand | null {
+  const command = commandFor(eventCombo(event, platform), "note", { platform });
+  return command && NOTE_COMMANDS.has(command) ? command : null;
+}
+
 /** The "?" sheet for the canvas: what works everywhere, on the canvas and in Add a step. */
 export function canvasSheet(platform: KeyPlatform): SheetSection[] {
   return shortcutSheet(platform, {
-    surfaces: ["any", "canvas", "addStep"],
-    available: new Set([...CANVAS_COMMANDS, ...PANEL_COMMANDS]),
+    surfaces: ["any", "canvas", "note", "addStep"],
+    available: new Set([
+      ...CANVAS_COMMANDS,
+      ...NOTE_COMMANDS,
+      ...PANEL_COMMANDS,
+    ]),
   });
 }
