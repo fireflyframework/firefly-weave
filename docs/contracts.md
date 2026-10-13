@@ -220,10 +220,9 @@ each need a language feature: `flow.forEach`, `flow.callWorkflow`, `text.concat`
 and `text.join`. This version compiles and runs `concat` and `join`, and compiles
 `forEach`: the compiler checks a loop's scope, types, and limits and lowers it,
 but this platform does not run loops yet, so it refuses to publish, import, or
-activate a workflow that uses one (`WV-IR-UNSUPPORTED`). The shape of
-`callWorkflow` is final, so `load_definition` accepts it, but this version of the
-compiler reports `WV-COMP-UNSUPPORTED_FEATURE` at each use instead of compiling
-it. A platform runs a construct only when its
+activate a workflow that uses one (`WV-IR-UNSUPPORTED`). It also compiles
+`callWorkflow` (see **Workflow calls** below) and refuses to publish a workflow
+that calls another until it runs calls. A platform runs a construct only when its
 [language manifest](#language-manifest) lists the feature. Step IDs can never
 contain `[`, `#`, or `~`, which keeps
 [instance keys](reference/compiler.md#instance-keys) unambiguous.
@@ -245,6 +244,32 @@ multiplied by the `maxItems` of the loops around it, may need at most 100,000
 iterations; the compiler suggests a lower `maxItems` for the inner loop when they
 need more. The [compiler reference](reference/compiler.md#troubleshooting) lists
 the diagnostics.
+
+**Workflow calls.** A `callWorkflow` step names an exact published workflow
+version in `uses`, and that version must allow the call with `spec.callable`:
+`{}` allows any workflow in the project, and `allowedCallers` limits it to the
+named workflows. `with` is checked against the called version's `inputSchema`,
+and `businessKey`, when set, must be text of 1 to 200 characters. The step's
+output depends on how it runs:
+
+| `mode` and `onFailure` | Output |
+| --- | --- |
+| `wait`, without `onFailure` or with `stop` | The called version's output, checked against its `outputSchema` |
+| `wait` with `continue` | `{status, runId, output, error}`: `status` (`succeeded`, `failed`, `cancelled`, or `timed_out`) and `runId` are always present; read `output` and `error` with `coalesce`, since either may be missing |
+| `detach` | `null`; the step starts the call and continues |
+
+A call cannot lead back to the calling version, and the longest chain of calls
+a workflow starts may be at most 8 deep (`max_call_depth`). The compiler locks
+the called version as a `Workflow` dependency of the caller and reads only its
+input and output schemas: the called workflow's own steps, actions, and
+connections stay with its own activation. When you activate a workflow that
+calls others, `workflow_activation_ids` pins one activation of each called
+version in the same environment, by reference (for example
+`{"notify-customer@1.0.0": "ACTIVATION_UUID"}`). Activation refuses a missing or
+extra pin, a pin to another workflow or version, a retired activation or version,
+a version that does not allow this workflow, and a chain of calls deeper than 8
+with `422 WV-READINESS-CALL`; the activation records each pin in
+`workflow_call_pins` and the longest chain in `call_depth`.
 
 **Human tasks** need an environment assignment binding at activation, and
 completing one requires the current claim and task permission. A workflow with a
@@ -383,6 +408,7 @@ The operator's `Limits()` defaults bound compilation:
 | `max_loop_items` | 10,000 | The largest `maxItems` a loop may declare |
 | `max_loop_depth` | 3 | Loops nested inside one another |
 | `max_run_iterations` | 100,000 | Iterations all loops of one workflow may need, each loop multiplied by the `maxItems` of the loops around it |
+| `max_call_depth` | 8 | The longest chain of workflow calls one workflow may start |
 
 Definitions cannot change these budgets. Building a model alone does not apply
 them; the compiler does.
@@ -458,7 +484,9 @@ backend is absent. The `integration` and `e2e` pytest markers are registered.
 | A field is rejected although it looks right | Field names are camelCase and case-sensitive; snake_case keys are rejected | Use the published name, such as `timeoutSeconds` |
 | `null` is rejected for an optional field | Optional fields may be omitted but not set to null | Remove the field |
 | A step's `retry` or `timeoutSeconds` is rejected | Retry and per-attempt timeout belong to the action definition | Move them to the action; use `spec.timeoutSeconds` for a workflow-wide timeout |
-| `WV-COMP-UNSUPPORTED_FEATURE` | The document uses `callWorkflow`, which this version of the compiler does not compile yet | Keep the document for a later version, or replace the construct with the steps the compiler supports |
+| `WV-COMP-UNSUPPORTED_FEATURE` | The document uses a construct whose language feature this compiler does not compile; the message names the feature | Upgrade the CLI or SDK that compiles it, or replace the construct with steps this compiler supports |
+| `WV-IR-UNSUPPORTED` when publishing a workflow with `callWorkflow` | The compiler accepts the call, but this platform does not run workflow calls yet, so it refuses to publish it; `result.missing_features` is `["flow.callWorkflow"]` | Keep the workflow as a draft until the platform lists `flow.callWorkflow` in its language manifest; the called workflow itself publishes normally |
+| `WV-READINESS-CALL` on activation | A called workflow version has no pinned activation, a pin names something the workflow does not call, or the pinned activation is retired, runs another version, or does not allow this workflow | Pin one live activation of each called version in `workflow_activation_ids` |
 | `WV-IR-UNSUPPORTED` when publishing a workflow with `forEach` | The compiler accepts the loop, but this platform does not run loops yet, so it refuses to publish it; `result.missing_features` is `["flow.forEach"]` | Keep the workflow as a draft until the platform lists `flow.forEach` in its language manifest |
 | `WV-DECISION-OPERATOR` | A decision table rule uses `concat` or `join` | Build the text in a Transform step before the table and pass it in as input |
 | `WV-IR-UNSUPPORTED` on activation, a catalog read, or a run read | The platform does not list an IR version or a language feature the workflow uses; `result.missing_features` names the missing features and is empty when the IR version itself is unknown. A catalog list shows such a version as an unavailable item with `reason: ir_unsupported` and the same `missing_features`. A run that uses such a feature waits for an upgrade; signals and task results for it answer the same way, and run lists show it as unavailable | Upgrade the platform, or activate a version that does not use the feature |

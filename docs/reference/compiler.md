@@ -230,8 +230,9 @@ Executables also define a sorted `features` list of the language features they
 need (`text.concat`, `text.join`, `flow.forEach`, `flow.callWorkflow`,
 `ai.agent`, `ai.memory`). It is omitted when empty, so existing digests do not
 change. A workflow that uses `concat` or `join` in any expression compiles to
-`weave/ir-v1alpha4` with `text.concat`, `text.join`, or both, and a workflow with
-a `forEach` step lists `flow.forEach`; v1alpha4 always has a non-empty list, and
+`weave/ir-v1alpha4` with `text.concat`, `text.join`, or both, a workflow with
+a `forEach` step lists `flow.forEach`, and a workflow with a `callWorkflow` step
+lists `flow.callWorkflow`; v1alpha4 always has a non-empty list, and
 the validator recomputes the version and the list from the graph. The version is the highest level any construct needs, so a workflow
 with a human task and `join` is v1alpha4, not v1alpha2. A platform imports and
 activates such an artifact only when its capabilities list every feature in
@@ -252,6 +253,14 @@ locks:
   code.
 - Schema guards and signal nodes reference interned schemas instead of copying
   them into every step.
+- A `callWorkflow` node refers to its called workflow's digest, locked as a
+  `Workflow` dependency whose document is that version's definition. The caller
+  uses only its `inputSchema`, `outputSchema`, and the named schemas they
+  reference: import never rechecks the called workflow's steps, and its actions
+  and connections are not dependencies of the caller. The node carries `with`,
+  `mode` (`wait` or `detach`), and, when set, `onFailure` and `businessKey`; the
+  guards `call_input` (at `…/with`) and `call_output` (at the step) hold the
+  called version's schemas, and a called version must allow the caller by name.
 
 Action and connector executables keep their strict manifest spec and
 dependencies; they have no workflow graph.
@@ -564,7 +573,13 @@ is not classified. Safe ordinary artifacts keep their canonical digests.
 | `WV-COMP-TYPE_MISMATCH` at `/spec/output` | An expression's type cannot satisfy the target schema | Change the expression or the schema; the authoring guide shows an example |
 | `WV-COMP-UNAVAILABLE_REFERENCE` | An expression reads a step that has not run yet in its scope, or a value private to another branch | Read the step only after it runs, or read the decision or parallel step's output |
 | `WV-COMP-UNKNOWN_ACTION` (or `_CONNECTOR`, `_TASK`, `_ADAPTER`) | The catalog does not contain that exact reference | Add the exact version to the catalog, or fix the reference |
-| `WV-COMP-UNSUPPORTED_FEATURE` | The workflow uses a construct whose language feature this compiler does not compile yet (`callWorkflow`); the message names the feature | Keep the document for a later version, or use the steps and operators this version compiles |
+| `WV-COMP-UNSUPPORTED_FEATURE` | The workflow uses a construct whose language feature this compiler does not compile; the message names the feature | Upgrade the CLI or SDK that compiles it, or use the steps and operators this version compiles |
+| `WV-COMP-UNKNOWN_WORKFLOW` at `…/uses` | The catalog does not contain the exact workflow version a call names | Publish that version first, or fix the reference |
+| `WV-COMP-CALL_NOT_CALLABLE` at `…/uses` | The called version has no `spec.callable`, or its `allowedCallers` does not name this workflow | Publish a new version of the called workflow whose `callable` allows this workflow |
+| `WV-COMP-CALL_RECURSION` at `…/uses` | Following the calls of the called version leads back to this exact version | Call a workflow that does not lead back to this one |
+| `WV-COMP-CALL_DEPTH` at `…/uses` | The chain of calls this call starts is deeper than 8 (`max_call_depth`), or never ends | Call a workflow that starts fewer calls of its own |
+| `WV-COMP-CALL_MODE` at `…/onFailure` | `onFailure` is set on a call with `mode: detach` | Remove `onFailure`, or set `mode: wait` |
+| `WV-COMP-REFERENCE_PRESENCE` reading `/steps/<call>/output/output` | A call with `onFailure: continue` has a child output only when the child succeeded | Read it with `coalesce`, or branch on `/steps/<call>/output/status` first |
 | `WV-COMP-LOOP_ITEMS` at `…/items` | A loop's `items` can never be a list | Point `items` at a list, such as an array field of the input or of a step's output |
 | `WV-COMP-UNKNOWN_COMPATIBILITY` at `…/items` | The compiler cannot prove that `items` is a list; the run checks it | Declare the field as an array where it comes from |
 | `WV-COMP-LOOP_SCOPE` at `…/ref` | `/item`, `/index`, or `/loops/<id>` is read outside a loop body, in the loop's own `items`, or names a loop that does not enclose the expression | Read loop data only inside the loop's body; use `/loops/<id>/item` for an enclosing loop |

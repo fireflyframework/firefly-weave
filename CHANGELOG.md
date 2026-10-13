@@ -20,6 +20,23 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+- The compiler checks and compiles **Call a workflow** (`callWorkflow`) against
+  the exact published version it calls: that version must opt in with
+  `spec.callable` (any workflow, or only `allowedCallers`), `with` is checked
+  against its input schema, a `businessKey` must be text of 1 to 200 characters,
+  and the step returns the called workflow's output, a `{status, runId, output,
+  error}` envelope with `onFailure: continue`, or `null` with `mode: detach`. New
+  diagnostics `WV-COMP-UNKNOWN_WORKFLOW`, `CALL_NOT_CALLABLE`, `CALL_RECURSION`,
+  `CALL_DEPTH` (more than 8 calls deep, the new compiler limit
+  `max_call_depth`), and `CALL_MODE` point at the field to fix. The called
+  version is locked as an interface dependency: the caller holds only its input
+  and output schemas. Activation takes `workflow_activation_ids`, one live
+  activation of each called version in the same environment, and refuses wrong
+  or missing pins with `422 WV-READINESS-CALL`. This platform does not start child
+  runs yet, so it refuses to publish, import, or activate a workflow that calls
+  another with `WV-IR-UNSUPPORTED`; workflows without calls compile to the same
+  bytes as before. `weave workflow explain` and `weave workflow graph` show calls,
+  and the SDK's `WorkflowBuilder.with_callable()` writes `spec.callable`.
 - The compiler checks and compiles **Loop over items** (`forEach`): `/item`,
   `/index`, and `/loops/<id>/…` inside a loop body, a typed list of results after
   it, `WV-COMP-LOOP_*` diagnostics for wrong items, scope, nesting, limits, and

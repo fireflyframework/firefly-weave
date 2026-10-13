@@ -97,6 +97,10 @@ class WorkflowBuilder:
         """Set a positive timeout; omission is the constructor's default."""
         return self._with_spec(timeoutSeconds=seconds)
 
+    def with_callable(self, allowed_callers: list[ResourceName] | None = None) -> Self:
+        """Let other workflows call this version: any workflow in the project, or only ``allowed_callers``."""
+        return self._with_spec(callable={} if allowed_callers is None else {"allowedCallers": list(allowed_callers)})
+
     def to_definition(self) -> WorkflowDefinition:
         """Return a validated, detached canonical model."""
         return _snapshot(self._definition)
