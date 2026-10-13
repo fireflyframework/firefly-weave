@@ -311,9 +311,24 @@ export async function newWorkflow(page: Page) {
   const canvas = page.getByRole("button", { name: "Show canvas" });
   if (await canvas.isVisible()) await canvas.click();
 }
-// Inserts a palette step, opening the palette popover on narrow layouts. The
-// popover is a modal sheet there: the insert closes it before anything else.
+// Inserts a step by its label: with the new editor, from the toolbar's Add a
+// step; otherwise from the palette, opening its popover on narrow layouts.
+// The popover is a modal sheet there: the insert closes it before anything else.
 export async function insertStep(page: Page, label: string) {
+  const addStep = page
+    .getByRole("toolbar", { name: "Workflow commands" })
+    .getByRole("button", { name: "Add a step", exact: true });
+  if (await addStep.isVisible()) {
+    await addStep.click();
+    const panel = page.locator(".add-step-panel");
+    await panel.getByRole("combobox").fill(label);
+    await panel
+      .getByRole("option", { name: label, exact: true })
+      .first()
+      .click();
+    await expect(panel).toHaveCount(0);
+    return;
+  }
   await expect(page.locator(".palette-step").first()).toBeAttached();
   const step = page
     .locator(".palette")

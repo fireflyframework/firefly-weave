@@ -89,13 +89,16 @@ export async function fitCanvas(page: Page) {
 }
 
 /**
- * Chooses a common action (Call an API, Send email…) in the step picker of a
- * "+": the one at the start of the workflow unless another is named.
+ * Chooses a step (Call an API, Send email…) in Add a step, opened from a "+":
+ * the one at the start of the workflow unless another is named. Several file
+ * servers offer the file steps: `app` names the one to use (SFTP, Google
+ * Drive…); without it, the first found.
  */
 export async function addCommonStep(
   page: Page,
   label: string,
   plus: string | RegExp = START_PLUS,
+  app?: string,
 ) {
   await fitCanvas(page);
   await page
@@ -106,10 +109,18 @@ export async function addCommonStep(
     .filter({ visible: true })
     .first()
     .click();
-  await page
-    .getByRole("group", { name: "Common actions" })
-    .getByRole("option", { name: new RegExp(`^${label}\\b`) })
-    .filter({ visible: true })
+  const panel = page.locator(".add-step-panel");
+  await panel.getByRole("combobox").fill(label);
+  const option = panel.getByRole("option", { name: label, exact: true });
+  await (
+    app
+      ? option.filter({
+          has: page.locator(".entry-description", {
+            hasText: new RegExp(`^${app} · `),
+          }),
+        })
+      : option
+  )
     .first()
     .click();
 }

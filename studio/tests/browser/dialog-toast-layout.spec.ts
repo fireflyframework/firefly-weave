@@ -28,6 +28,7 @@ import {
   addCommonStep,
   openStepFixture,
   settingsGear,
+  stepFixture,
 } from "./step-details-po";
 import {
   box,
@@ -38,7 +39,7 @@ import {
   showParameters,
   type Box,
 } from "./step-geometry";
-import { command, connected } from "./support";
+import { command, connected, offline } from "./support";
 import { hasPython, stopLocalAuthoring } from "./local-authoring";
 import { publishDialog, withOwnedSteps } from "./owned-actions";
 import { openActivation, platform } from "./activation-po";
@@ -765,7 +766,11 @@ test.describe("Save to file", () => {
   test("downloads the workflow even when code it loads on demand can't load", async ({
     page,
   }) => {
-    await openStepFixture(page);
+    // Only the classic editor words that note: the new editor's canvas file
+    // keeps the steps' action settings.
+    await offline(page);
+    await page.getByLabel("Choose a workflow file").setInputFiles(stepFixture);
+    await expect(page.locator(".editor-bar")).toBeVisible();
     // The code that words the note about unpublished actions fails to
     // load, as after Studio was updated on the server.
     let failed = () => undefined as void;

@@ -16,6 +16,7 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 import { expect, test } from "@playwright/test";
+import { addStepSearch } from "./add-step-po";
 import { openNewWorkflow, openWorkflow } from "./canvas-po";
 import { sourceText, tokenColor } from "./support";
 
@@ -67,9 +68,7 @@ for (const gesture of [
     await expect(
       page.getByRole("complementary", { name: "Inspector" }),
     ).toBeHidden();
-    await expect(
-      page.getByRole("combobox", { name: "Search steps and actions" }),
-    ).toHaveCount(0);
+    await expect(addStepSearch(page)).toHaveCount(0);
     expect(await sourceText(page)).toBe(source);
     expect(await canvas.rootSteps()).toEqual([
       "prepare-request",
@@ -80,7 +79,7 @@ for (const gesture of [
   });
 }
 
-test("a slipped click inside a + opens its picker without a refusal", async ({
+test("a slipped click inside a + opens Add a step without a refusal", async ({
   page,
 }) => {
   const canvas = await openNewWorkflow(page);
@@ -96,9 +95,7 @@ test("a slipped click inside a + opens its picker without a refusal", async ({
     steps: 3,
   });
   await page.mouse.up();
-  await expect(
-    page.getByRole("combobox", { name: "Search steps and actions" }),
-  ).toBeFocused();
+  await expect(addStepSearch(page)).toBeFocused();
   await expect(
     page.locator(".toast").filter({ hasText: "Steps run in order" }),
   ).toHaveCount(0);
@@ -261,25 +258,26 @@ test("selection Duplicate uses neutral toolbar text", async ({ page }) => {
   ).toHaveCSS("color", await tokenColor(page, "--text"));
 });
 
-test("selecting steps keeps the exported viewport and workflow source unchanged", async ({
+test("selecting steps keeps the exported canvas file and workflow source unchanged", async ({
   page,
 }) => {
   const canvas = await openWorkflow(page);
   await canvas.closeInspector();
   const source = await sourceText(page);
   await canvas.ready();
-  const viewport = async () => {
+  // The canvas file Save to file writes, whole.
+  const exported = async () => {
     const download = page.waitForEvent("download", (file) =>
-      file.suggestedFilename().endsWith(".layout.json"),
+      file.suggestedFilename().endsWith(".canvas.json"),
     );
     await canvas.root.focus();
     await page.keyboard.press("ControlOrMeta+s");
     const stream = await (await download).createReadStream();
     const parts: Buffer[] = [];
     for await (const part of stream!) parts.push(part);
-    return JSON.parse(Buffer.concat(parts).toString()).viewport;
+    return JSON.parse(Buffer.concat(parts).toString());
   };
-  const before = await viewport();
+  const before = await exported();
   for (const id of ["record-result", "approval", "prepare-request"]) {
     await canvas.tileBody(id).focus();
     await page.keyboard.press("Enter");
@@ -288,7 +286,7 @@ test("selecting steps keeps the exported viewport and workflow source unchanged"
     ).toBeVisible();
     await canvas.closeInspector();
   }
-  expect(await viewport()).toEqual(before);
+  expect(await exported()).toEqual(before);
   expect(await sourceText(page)).toBe(source);
   await expect(
     page

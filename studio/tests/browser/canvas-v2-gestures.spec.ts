@@ -18,6 +18,7 @@ SPDX-License-Identifier: Apache-2.0
 // Gestures on the left-to-right canvas: dragging from a handle, moving a
 // step by drag or "Move to…", the hover toolbar and palette drops.
 import { expect, test } from "@playwright/test";
+import { AddStepPanel, addStepSearch } from "./add-step-po";
 import { readFileSync } from "node:fs";
 import {
   openNewWorkflow,
@@ -116,9 +117,7 @@ for (const size of [
       await canvas.addFirstStep("Transform");
       await canvas.closeInspector();
       await canvas.dragFromHandle("transform-1>out");
-      await expect(
-        page.getByRole("combobox", { name: "Search steps and actions" }),
-      ).toBeFocused();
+      await expect(addStepSearch(page)).toBeFocused();
       await canvas.pick("Decision");
       await expect(canvas.tile("decision-1")).toBeVisible();
       await expect(canvas.branchLabel("decision-1/case 1")).toHaveText(
@@ -190,9 +189,7 @@ test.describe("canvas gestures", () => {
     await expect(page.locator(".toast")).toContainText(
       "Steps run in order. Use + to insert.",
     );
-    await expect(
-      page.getByRole("combobox", { name: "Search steps and actions" }),
-    ).toHaveCount(0);
+    await expect(addStepSearch(page)).toHaveCount(0);
   });
 
   test("dragging a step onto a highlighted + moves it there", async ({
@@ -243,15 +240,23 @@ test.describe("canvas gestures", () => {
     ]);
   });
 
-  test("a palette step dropped on a + is inserted there", async ({ page }) => {
+  test("a step dragged from Add a step onto a + is inserted there", async ({
+    page,
+  }) => {
     const canvas = await openNewWorkflow(page);
     await canvas.addFirstStep("Transform");
     await canvas.closeInspector();
     await page
-      .locator(".palette-step")
-      .filter({ hasText: /^\s*Wait for time/ })
+      .getByRole("toolbar", { name: "Workflow commands" })
+      .getByRole("button", { name: "Add a step", exact: true })
+      .click();
+    const panel = new AddStepPanel(page);
+    await panel.search.fill("Wait for time");
+    await panel
+      .option("Wait for time")
       .dragTo(canvas.insertTarget("Insert a step before transform-1"));
     expect(await canvas.rootSteps()).toEqual(["wait-1", "transform-1"]);
+    await expect(panel.root).toHaveCount(0);
   });
 
   test("hovering a step shows Delete and More, and Delete offers Undo", async ({
