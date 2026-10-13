@@ -23,8 +23,10 @@ from pathlib import Path
 from uuid import UUID
 
 import pytest
+from starlette.datastructures import QueryParams
 
 from firefly_weave.access.roles import ROLE_CAPABILITIES
+from firefly_weave.api.transport import parse_query
 from firefly_weave.contracts.surface import OPERATIONS
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -80,8 +82,14 @@ def test_matrix_requests_fit_the_operation_contracts(row):
     else:
         # JSON mode, as the wire sends it: strict models take UUIDs as strings only there.
         operation.request.model_validate_json(json.dumps(matrix.materialize(dict(row.body or {}))))
-    for value in matrix.materialize(dict(row.query)).values():
+    query = matrix.materialize(dict(row.query))
+    for value in query.values():
         assert isinstance(value, str | int)
+    if operation.query is None:
+        assert query == {}, row.operation
+    elif query:
+        # Decoded as the controller decodes it, so a misspelled or mistyped name fails here, not as a 422 live.
+        parse_query(QueryParams({name: str(value) for name, value in query.items()}), operation.query)
 
 
 def test_materialize_names_a_new_uuid_for_each_random_value():
