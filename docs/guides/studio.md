@@ -751,8 +751,9 @@ choice in this browser, and you can turn it off at any time. **Outline** and
 
 - **Trigger and End.** A workflow starts at its **Trigger** tile, which reads
   **Manual form · 3 fields** underneath (just **Manual form** when the workflow
-  has no input fields). Select it to edit the inputs. It ends at **End**; select
-  End to edit the workflow result. A new workflow has neither yet: it shows
+  has no input fields). Double-click it, or focus it and press Enter, to edit
+  the inputs in its step details. It ends at **End**; open End the same way to
+  edit the workflow result. A new workflow has neither yet: it shows
   **Add first step**, with **Start from a template** under it, until you add a
   step.
 - **Steps by role.** Each step's shape and icon say what it does: a circle
@@ -879,12 +880,13 @@ toolbar also reverses a rename or a deletion.
 Step details are part of the new editor, which is off by default. Turn on **Try
 the new editor** in **Settings → Preferences**, then double-click a step on the
 canvas, or focus it and press Enter or Space, to open its details over the
-canvas. **Open** in a step's **More** menu, a step's problem badge, the location
-of a row in **Diagnostics** and Enter on a row of **Outline** open them too; a
-problem opens them on the field it concerns. Every step you add opens its
-details, on its first required field that is still empty. The **Trigger** opens
-its own details, and so does **End**, for the workflow result. With the new
-editor off, Studio keeps the inspector described above.
+canvas. A single click only selects the step. **Open** in a step's **More**
+menu, a step's problem badge, the location of a row in **Diagnostics** and Enter
+on a row of **Outline** open them too; a problem opens them on the field it
+concerns. Every step you add opens its details, on its first required field that
+is still empty. The **Trigger** opens its own details, and so does **End**, for
+the workflow result. With the new editor off, Studio keeps the inspector
+described above.
 
 Step details cover Studio below its header, and the rest of Studio waits until
 they close: nothing behind them takes clicks, keys or a screen reader's focus.

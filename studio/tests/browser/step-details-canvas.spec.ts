@@ -18,6 +18,7 @@ SPDX-License-Identifier: Apache-2.0
 import { expect, test } from "@playwright/test";
 import { CanvasPage } from "./canvas-po";
 import { openStepFixture, sizes } from "./step-details-po";
+import { box, expectAligned } from "./step-geometry";
 
 for (const size of sizes)
   test.describe(`canvas details at ${size.tag}`, () => {
@@ -76,6 +77,83 @@ for (const size of sizes)
         await expect(details.dialogFor(target.title)).toBeVisible();
       });
     }
+    test("the trigger and End open on a double-click, never on one click", async ({
+      page,
+    }) => {
+      const details = await openStepFixture(page);
+      const canvas = new CanvasPage(page);
+      await canvas.ready();
+      await canvas.closeInspector();
+      for (const target of [
+        { id: "$trigger:manual", title: "Manual form trigger" },
+        { id: "$end", title: "End" },
+      ]) {
+        const tile = canvas.tileBody(target.id);
+        await tile.click();
+        await expect(details.dialog).toHaveCount(0);
+        // The second click of a double-click opens it.
+        await tile.dblclick();
+        await expect(details.dialogFor(target.title)).toBeVisible();
+        await details.close();
+        await expect(tile).toBeFocused();
+      }
+    });
+    test("More in a selected step's toolbar opens and renames it", async ({
+      page,
+    }) => {
+      const details = await openStepFixture(page);
+      const canvas = new CanvasPage(page);
+      await canvas.ready();
+      await canvas.closeInspector();
+      await canvas.tileBody("lookup").click();
+      await expect(details.dialog).toHaveCount(0);
+      const more = page.getByRole("button", {
+        name: "More commands for lookup",
+      });
+      await more.click();
+      await page.getByRole("menuitem", { name: "Open", exact: true }).click();
+      await expect(details.dialogFor("lookup")).toBeVisible();
+      await details.close();
+      await expect(canvas.tileBody("lookup")).toBeFocused();
+      await canvas.tileBody("lookup").click();
+      await more.click();
+      await page.getByRole("menuitem", { name: /^Rename/ }).click();
+      const name = details
+        .dialogFor("lookup")
+        .getByRole("textbox", { name: "Step name" });
+      await expect(name).toBeFocused();
+      await expect(name).toHaveValue("lookup");
+    });
+    test("a note shown on the canvas sits under the tile's subtitle", async ({
+      page,
+    }) => {
+      const details = await openStepFixture(page);
+      const canvas = new CanvasPage(page);
+      await details.open("lookup");
+      await details.tab("Settings").click();
+      await details
+        .field("notes")
+        .getByRole("textbox", { name: "Notes" })
+        .fill("Check the ledger first");
+      await details
+        .field("notes")
+        .getByRole("switch", { name: "Show on canvas" })
+        .click();
+      await details.close();
+      const label = canvas.tile("lookup").locator(".tile-label");
+      const note = label.locator(".tile-note");
+      await expect(note).toHaveText("Check the ledger first");
+      const subtitle = await box(label.locator("span:not(.tile-note)"));
+      const line = await box(note);
+      const body = await box(canvas.tileBody("lookup"));
+      expect(line.y).toBeGreaterThanOrEqual(subtitle.bottom - 0.5);
+      expect(line.y - subtitle.bottom).toBeLessThanOrEqual(1);
+      expectAligned(
+        [line, subtitle, body].map((shown) => shown.x + shown.width / 2),
+        "note, subtitle and tile centers",
+      );
+      expectAligned([line.height, subtitle.height], "one caption line");
+    });
     test("Open and Rename in the tile menu open the dialog with the right focus", async ({
       page,
     }) => {
