@@ -99,6 +99,11 @@ def test_a_call_that_leads_back_to_the_calling_version_is_recursion():
     assert codes(check_call_target("a@1.0.0", "b@1.0.0", indirect)) == [("CALL_RECURSION", "semantic")]
 
 
+def test_a_called_workflow_that_calls_back_a_caller_not_yet_published_is_recursion():
+    callee_only = catalog(workflow("b@1.0.0", call("a", "a@1.0.0"), callable_field={}))
+    assert codes(check_call_target("a@1.0.0", "b@1.0.0", callee_only)) == [("CALL_RECURSION", "semantic")]
+
+
 def test_calling_an_older_version_of_the_same_workflow_is_not_recursion():
     older = catalog(workflow("report@1.0.0", callable_field={}))
     assert codes(check_call_target("report@2.0.0", "report@1.0.0", older)) == []

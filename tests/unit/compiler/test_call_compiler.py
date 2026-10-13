@@ -23,7 +23,8 @@ from pathlib import Path
 import pytest
 
 from firefly_weave.compiler.api import compile_source, import_artifact, validate_authoring
-from firefly_weave.compiler.catalog import CatalogSnapshot
+from firefly_weave.compiler.canonical import canonical_digest
+from firefly_weave.compiler.catalog import CatalogResource, CatalogSnapshot, FrozenDocument
 from firefly_weave.compiler.ir import IR_VERSION, IR_VERSION_EXTENSIONS, WorkflowIR
 from firefly_weave.compiler.parser import parse_source
 from firefly_weave.contracts.definitions import load_definition
@@ -285,6 +286,31 @@ def test_a_secret_input_of_the_called_workflow_never_takes_a_literal():
     result = compiled(caller(call()), secret)
     assert not result.ok and result.artifact is None
     assert [d.code for d in result.diagnostics] == ["WV-SCHEMA-SECRET_VALUE"]
+
+
+def forged_with_secret_callee_input(artifact):
+    """The artifact with its called workflow's ``message`` input marked secret, every digest recomputed."""
+    value = json.loads(artifact.to_bytes())
+    executable = value["executable"]
+    (dependency,) = executable["dependencies"]
+    message = dependency["document"]["spec"]["inputSchema"]["properties"]["message"]
+    message["x-secret"] = True
+    document = FrozenDocument.from_value(dependency["document"])
+    digest = CatalogResource("Workflow", dependency["reference"], document).digest
+    for node in executable["graph"]["nodes"]:
+        if node.get("dependency") == dependency["digest"]:
+            node["dependency"] = digest
+    dependency["digest"] = digest
+    value["digest"] = canonical_digest(executable)
+    return value
+
+
+def test_import_refuses_a_forged_caller_that_binds_a_literal_to_a_secret_input_of_the_called_workflow():
+    artifact = compiled(caller(call()), callee()).artifact
+    imported = import_artifact(artifact.to_bytes(), features=["flow.callWorkflow"])
+    assert imported.digest == artifact.digest
+    with pytest.raises(ValueError, match="classified or unclassifiable"):
+        import_artifact(forged_with_secret_callee_input(artifact), features=["flow.callWorkflow"])
 
 
 def test_an_imported_caller_never_needs_what_the_called_workflow_uses_inside(worker_runtime_fixture):

@@ -40,7 +40,7 @@ EXECUTABLE = json.loads(Path("tests/fixtures/canonical/empty-workflow.executable
 CONCAT = {"op": {"name": "concat", "args": [{"literal": "order "}, {"ref": "/input/id"}]}}
 
 
-def callee(callable_field=None, *, steps=None, input_schema=None):
+def callee(callable_field=None, *, steps=None, input_schema=None, connections=None):
     """notify-customer@1.0.0; ``callable_field`` is its ``spec.callable`` (omitted when None)."""
     spec = {
         "inputSchema": input_schema or {"type": "object"},
@@ -48,6 +48,8 @@ def callee(callable_field=None, *, steps=None, input_schema=None):
         "steps": steps or [],
         "output": {"ref": "/input"},
     }
+    if connections is not None:
+        spec["connections"] = connections
     if callable_field is not None:
         spec["callable"] = callable_field
     document = {
@@ -189,6 +191,13 @@ def test_a_called_workflow_is_an_interface_whose_steps_this_executable_never_nee
     named = callee({}, input_schema={"$ref": "customer#/$defs/request"})
     with pytest.raises(ValidationError, match="Unresolved executable dependency"):
         WorkflowIR.model_validate(executable(named))
+
+
+def test_the_called_workflow_connections_stay_with_its_own_activation():
+    connected = callee({}, connections={"crm": {"connector": "crm-connector@1.0.0"}})
+    validated = WorkflowIR.model_validate(executable(connected))
+    assert [dependency.kind for dependency in validated.dependencies] == ["Workflow"]
+    assert validated.connections == {}
 
 
 def test_call_guards_have_their_own_purposes():
