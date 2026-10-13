@@ -61,6 +61,7 @@ import {
   originOf,
   presetsFor,
   refusal,
+  secretSetCommand,
   sheetProblems,
   testView,
   type ProviderCard,
@@ -483,7 +484,7 @@ export class AiConnectionSheet implements OnInit, OnDestroy {
     return keyless(this.draft, this.endpoints);
   }
   get secretCommand() {
-    return `weave platform secret set --handle ${this.draft.handle.trim() || "HANDLE"}`;
+    return secretSetCommand(this.draft.handle);
   }
   get changed() {
     return draftKey(this.draft) !== this.opened;

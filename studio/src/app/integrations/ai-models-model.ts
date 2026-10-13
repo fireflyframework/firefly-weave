@@ -48,6 +48,11 @@ export const GATEWAY_MISSING =
 export const RATE_LIMITED =
   "Too many AI connection tests. Wait a minute, then test again.";
 const NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
+/** The platform's secret handle rule; a pasted key never matches it. */
+const HANDLE = /^[a-z0-9][a-z0-9_.-]{0,63}$/;
+/** The command that stores a key under a handle; a pasted key is never echoed. */
+export const secretSetCommand = (handle: string): string =>
+  `weave platform secret set --handle ${HANDLE.test(handle.trim()) ? handle.trim() : "HANDLE"}`;
 
 export type ProviderCard = "ollama" | "openai" | "anthropic" | "azure";
 export interface CardInfo {
@@ -319,7 +324,7 @@ export function connectionRequest(
       "handle",
       "no-credential is reserved for approved local endpoints without a key.",
     );
-  if (!noKey && !NAME.test(handle))
+  if (!noKey && !HANDLE.test(handle))
     throw new FieldError(
       "handle",
       "Enter the secret handle your operator approved, never the key itself.",
@@ -500,7 +505,12 @@ export function testView(state: TestState, connection: string): TestView {
         details: [
           ["Code", state.code],
           ["Endpoint", state.origin],
-          ["HTTP status", `${Math.floor(state.status / 100)}xx`],
+          [
+            "HTTP status",
+            state.status
+              ? `${Math.floor(state.status / 100)}xx`
+              : "No response",
+          ],
         ],
       };
     case "done": {

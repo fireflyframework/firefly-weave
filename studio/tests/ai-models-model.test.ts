@@ -36,6 +36,7 @@ import {
   draftFor,
   fixAction,
   keyless,
+  secretSetCommand,
   modelOptions,
   presetsFor,
   readinessRows,
@@ -127,6 +128,26 @@ describe("provider presets and connection requests", () => {
       allowed_destinations: ["http://ollama:11434"],
     });
   });
+  it("shows the operator command only for a handle, never for a pasted key", () => {
+    expect(secretSetCommand("team-openai")).toBe(
+      "weave platform secret set --handle team-openai",
+    );
+    const key = `sk-proj-${"Ab3dE".repeat(19)}x`;
+    expect(secretSetCommand(key)).toBe(
+      "weave platform secret set --handle HANDLE",
+    );
+    expect(secretSetCommand("")).toBe(
+      "weave platform secret set --handle HANDLE",
+    );
+  });
+  it("asks for a handle on a custom address even when it equals a keyless preset", () => {
+    const draft = {
+      ...draftFor("ollama", endpoints),
+      custom: true,
+      endpoint: "http://ollama:11434/v1",
+    };
+    expect(keyless(draft, endpoints)).toBe(false);
+  });
   it.each([
     "http://10.0.0.5:11434/v1",
     "http://localhost:11434/v1",
@@ -148,7 +169,25 @@ describe("provider presets and connection requests", () => {
     expect(
       connectionRequest(draft, "connector", endpoints, "loaded").secretRef,
     ).toEqual({ apiKey: "openai-api-key" });
-    for (const handle of ["no-credential", "sk live key", ""]) {
+    expect(
+      connectionRequest(
+        { ...draft, handle: "a".repeat(64) },
+        "connector",
+        endpoints,
+        "loaded",
+      ).secretRef,
+    ).toEqual({ apiKey: "a".repeat(64) });
+    // The platform's handle rule: 1 to 64 lowercase letters, digits, ".", "_"
+    // or "-". Real keys (mixed case, long) never leave the browser.
+    for (const handle of [
+      "no-credential",
+      "sk live key",
+      "",
+      `sk-proj-${"Ab3dE".repeat(19)}x`,
+      `sk-ant-api03-${"Zq9".repeat(30)}`,
+      "OpenAI-Key",
+      "a".repeat(65),
+    ]) {
       const error = (() => {
         try {
           connectionRequest(
@@ -356,6 +395,30 @@ describe("test states", () => {
       testView({ kind: "running", model: "qwen3:4b" }, "ollama-local").text,
     ).toBe("Calling qwen3:4b on ollama-local…");
     expect(testView({ kind: "idle" }, "x").text).toBe("Not tested");
+  });
+  it("names the gateway's test budget when a model does not answer in time", () => {
+    const timeout = testView(
+      {
+        kind: "done",
+        origin,
+        result: {
+          ok: false,
+          code: "LLM_TIMEOUT",
+          latency_ms: null,
+          model: "qwen3:4b",
+          tool_calling: "unknown",
+        },
+      },
+      "ollama-local",
+    );
+    expect(timeout.text).toContain("120 seconds");
+  });
+  it("says there was no response when the request never reached the platform", () => {
+    const offline = refusal(new TypeError("Failed to fetch"), origin);
+    expect(testView(offline, "x").details).toContainEqual([
+      "HTTP status",
+      "No response",
+    ]);
   });
   it("explains a missing gateway and the test limit without response bodies", () => {
     const missing = refusal(
