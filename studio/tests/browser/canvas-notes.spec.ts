@@ -359,6 +359,43 @@ for (const size of [
       await expect(new AddStepPanel(page).root).toHaveCount(0);
       await expect(canvas.root.locator(".sticky-note")).toHaveCount(1);
     });
+
+    test("while a note's text is edited, its commands never cover the text", async ({
+      page,
+    }) => {
+      const canvas = await openStoredWorkflow(page, {
+        id: `notes-editing-${size.width}`,
+        source,
+        canvas: canvasWith([note("note-0000000a", "Check the totals")]),
+      });
+      const totals = canvas.root.getByRole("group", {
+        name: "Note: Check the totals",
+      });
+      const commands = totals.getByRole("toolbar", {
+        name: "Commands for note Check the totals",
+      });
+      await totals.hover();
+      await expect(commands).toBeVisible();
+      await totals.dblclick();
+      const text = canvas.root.getByRole("textbox", { name: "Note text" });
+      await expect(text).toBeFocused();
+      await expect(commands).toBeHidden();
+      // Every corner of the text box is the text box itself, under the pointer too.
+      const covered = await text.evaluate((element) => {
+        const r = element.getBoundingClientRect();
+        return [
+          [r.left + 2, r.top + 2],
+          [r.right - 2, r.top + 2],
+          [r.left + 2, r.bottom - 2],
+          [r.right - 2, r.bottom - 2],
+          [r.left + r.width / 2, r.top + r.height / 2],
+        ].filter(([x, y]) => document.elementFromPoint(x, y) !== element);
+      });
+      expect(covered).toEqual([]);
+      await page.keyboard.press("Escape");
+      await expect(totals).toBeFocused();
+      await expect(commands).toBeVisible();
+    });
   });
 
 for (const size of [

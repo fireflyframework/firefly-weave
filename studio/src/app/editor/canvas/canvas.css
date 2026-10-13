@@ -949,8 +949,12 @@ weave-canvas-view,
   height: calc(var(--note-button) * 0.6);
 }
 /* An open menu keeps its toolbar: the menu sits in the top layer, so the
-   pointer leaves the note on its way there. */
-.canvas-v2 .sticky-note:is(:hover, :focus-within) .sticky-note-toolbar,
+   pointer leaves the note on its way there. While its text is edited, the
+   commands stay hidden so they never cover what is typed; Escape brings
+   them back. */
+.canvas-v2
+  .sticky-note:not(.editing):is(:hover, :focus-within)
+  .sticky-note-toolbar,
 .canvas-v2 .sticky-note-toolbar:has([aria-expanded="true"]) {
   display: flex;
 }
