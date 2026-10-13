@@ -231,16 +231,13 @@ POSITIONS = [
 ]
 
 
-def test_text_features_compile_and_nothing_is_advertised_that_the_compiler_cannot_compile():
-    assert set(COMPILED_FEATURES) == {"text.concat", "text.join"}
+def test_text_and_loops_compile_and_nothing_is_advertised_that_the_compiler_cannot_compile():
+    assert set(COMPILED_FEATURES) == {"flow.forEach", "text.concat", "text.join"}
     assert set(ADVERTISED_FEATURES) <= COMPILED_FEATURES
 
 
-def test_with_text_compiled_only_loops_and_calls_are_reported():
-    assert _uses(EVERYTHING) == [
-        ("/spec/steps/0/body/steps/1/kind", "flow.callWorkflow"),
-        ("/spec/steps/0/kind", "flow.forEach"),
-    ]
+def test_with_text_and_loops_compiled_only_calls_are_reported():
+    assert _uses(EVERYTHING) == [("/spec/steps/0/body/steps/1/kind", "flow.callWorkflow")]
 
 
 def test_scan_finds_every_kind_and_operator_at_its_field(nothing_compiled):

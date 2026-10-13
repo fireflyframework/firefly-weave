@@ -120,7 +120,39 @@ const compiler: Record<string, Copy> = {
     text: "Branches are nested deeper than the platform allows.",
   },
   CONCURRENCY_LIMIT: {
-    text: "The parallel limit is higher than the platform allows.",
+    text: "More steps would run at the same time than the platform allows.",
+  },
+  LOOP_ITEMS: {
+    text: "A loop needs a list to go through.",
+    hint: "Choose a list, such as the rows an earlier step returns.",
+  },
+  LOOP_SCOPE: {
+    text: "This uses a loop's current item outside that loop.",
+    hint: "Use the current item only in the loop's own steps, or choose a loop that contains this step.",
+  },
+  LOOP_SIGNAL: {
+    text: "A loop can't wait for a signal.",
+    hint: "Move the wait before or after the loop.",
+  },
+  LOOP_BODY_INCOMPLETE: {
+    text: "The steps inside this loop never finish, so the run would stop at the first item.",
+    hint: "Finish the loop's steps with a result for each item.",
+  },
+  LOOP_DEPTH: {
+    text: "Loops are nested deeper than the platform allows.",
+    hint: "Put fewer loops inside one another.",
+  },
+  LOOP_MAX_ITEMS: {
+    text: "This loop accepts more items than the platform allows.",
+    hint: "Lower the number of items in Up to.",
+  },
+  LOOP_BUDGET: {
+    text: "These loops together could go through more items than one run allows.",
+    hint: "Lower Up to on an inner loop.",
+  },
+  LOOP_FANOUT: {
+    text: "These nested loops could start more than 1,000 tasks at once, so the work is spread over time.",
+    hint: "Lower At a time on one of the loops if the tasks must start together.",
   },
   RESOURCE_LIMIT: {
     text: "This part of the definition is too large or complex to check.",

@@ -14,7 +14,7 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-"""The frozen scope_at signature and result shape; the analysis itself arrives in a later release."""
+"""The frozen scope_at signature and result shape."""
 
 import inspect
 
@@ -97,6 +97,6 @@ def test_malformed_entries_are_rejected(entry):
         ScopeEntry.model_validate(entry)
 
 
-def test_analysis_is_not_available_before_the_loop_compiler():
-    with pytest.raises(NotImplementedError):
-        scope_at({}, "/spec/output", catalog=CatalogSnapshot.empty())
+def test_a_document_the_compiler_cannot_analyze_has_no_scope():
+    result = scope_at({}, "/spec/output", catalog=CatalogSnapshot.empty())
+    assert (result.found, result.entries) == (False, [])

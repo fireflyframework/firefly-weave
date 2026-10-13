@@ -34,6 +34,7 @@ from firefly_weave.compiler.ir import (
     DecisionTableNode,
     EndNode,
     FailNode,
+    ForEachNode,
     HumanTaskNode,
     IRNode,
     JoinNode,
@@ -676,6 +677,10 @@ def _advance_owned(
                 result.commands.append(ControlCommand(kind="join", node_id=current))
                 current_state.joins[owner] = join.model_copy(update={"status": "joined"})
                 queue.append(successor(current))
+            elif isinstance(node, ForEachNode):
+                # This runtime does not run loops: import refuses their artifacts, and a loop that still
+                # arrives here stops behind an incident instead of being skipped.
+                raise KernelError("WV-RUNTIME-ARTIFACT")
             elif isinstance(node, (ActionNode, SignalNode, WaitNode, HumanTaskNode)):
                 if current in current_state.active:
                     raise KernelError("WV-RUNTIME-ACTIVATION")

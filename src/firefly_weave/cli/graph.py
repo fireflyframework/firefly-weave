@@ -25,6 +25,7 @@ from firefly_weave.cli import EXIT_USAGE, LocalError, emit_result, error_result,
 from firefly_weave.compiler.api import import_artifact
 from firefly_weave.compiler.canonical import canonical_bytes
 from firefly_weave.compiler.lowering import DEFAULT_ARTIFACT_LIMITS
+from firefly_weave.contracts.language_features import LANGUAGE_FEATURES
 from firefly_weave.sdk.visualization import render_graph
 
 
@@ -45,7 +46,8 @@ def graph(
     try:
         data = read_bounded(artifact, DEFAULT_ARTIFACT_LIMITS.max_bytes)
         try:
-            compiled = import_artifact(data)
+            # Drawing runs nothing, so it accepts every language feature, including ones this platform cannot run.
+            compiled = import_artifact(data, features=LANGUAGE_FEATURES)
             content = render_graph(compiled, format)
         except (ValueError, TypeError, RecursionError):
             raise LocalError(

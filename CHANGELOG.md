@@ -20,6 +20,22 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+- The compiler checks and compiles **Loop over items** (`forEach`): `/item`,
+  `/index`, and `/loops/<id>/…` inside a loop body, a typed list of results after
+  it, `WV-COMP-LOOP_*` diagnostics for wrong items, scope, nesting, limits, and
+  signals in a body (with a suggested `maxItems` for a loop budget that is too
+  high), and an IR `forEach` node with an `each` edge and an `each` join that
+  requires the `flow.forEach` feature. This platform does not run loops yet, so
+  it refuses to publish, import, or activate such a workflow with
+  `WV-IR-UNSUPPORTED`; workflows without loops compile to the same bytes as
+  before. The compiler limits add `max_loop_items`, `max_loop_depth`, and
+  `max_run_iterations`. Studio's local host answers `POST /studio/local/scope`
+  with the data a field may use, including the current loop item and position.
+- Starting a run no longer slows down as executions accumulate. The usage accounting that runs on every run start
+  and every change to quota-counted records read every reservation in the database, one per run ever started, and
+  now finds its reservation and allocation entries by primary key. Usage figures and limits are unchanged. New
+  migration `0031_operations_key_collation` replaces the two internal accounting functions in place and changes no
+  table, data or role; migrate the server explicitly before restarting it.
 - Studio has one place to set up AI: **Settings › AI models**. It shows provider cards, your AI connections, a
   readiness checklist with **Publish**, **Authorize** and **Test connection**, and the Weave AI card. The AI
   connection side sheet is the only AI connection form; it also opens from Build › Connections, an AI task and

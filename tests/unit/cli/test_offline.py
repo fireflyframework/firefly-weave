@@ -320,3 +320,40 @@ def test_admin_migrate_help_does_not_load_server():
     )
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
+
+
+def test_explain_prints_a_loop_with_its_settings_and_its_each_edge(tmp_path):
+    loop = {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {"name": "label-items", "version": "1.0.0"},
+        "spec": {
+            "inputSchema": {"type": "array", "items": {"type": "string"}},
+            "outputSchema": {"type": "array"},
+            "steps": [
+                {
+                    "id": "label",
+                    "kind": "forEach",
+                    "items": {"ref": "/input"},
+                    "concurrency": 2,
+                    "body": {"steps": [], "output": {"ref": "/item"}},
+                }
+            ],
+            "output": {"ref": "/steps/label/output"},
+        },
+    }
+    source = tmp_path / "label-items.workflow.json"
+    source.write_text(json.dumps(loop))
+    lock = tmp_path / "empty.lock.json"
+    lock.write_text('{"definitions":[],"tasks":[],"adapters":[],"schemas":{}}')
+    result = invoke("workflow", "explain", source, "--catalog", lock)
+    assert result.exit_code == 0, result.output
+    for expected in (
+        "label (forEach)",
+        " concurrency=2 maxItems=1000 collect=all",
+        "    reads /input\n",
+        "    reads /item\n",
+        "label -> @branch:label:0 (each branch=body)",
+        "@branch:label:0 -> @join:label (join branch=body)",
+    ):
+        assert expected in result.output
