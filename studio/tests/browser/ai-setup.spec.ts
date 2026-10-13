@@ -555,6 +555,38 @@ test("the operator command is copied and the workers link opens Operate", async 
   await expect(page).toHaveURL(/\/operate\/workers$/);
 });
 
+test("the Weave AI and providers links name their card and move focus to it", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 520 });
+  await start(page, {
+    connections: [],
+    readiness: readiness({
+      connection: {
+        status: "action",
+        detail: "connection_missing",
+        fix: {
+          kind: "navigate",
+          label: "Open AI settings",
+          route: "settings/ai",
+        },
+      },
+    }),
+  });
+  const checklist = page.locator(".ai-readiness");
+  await expect(checklist).not.toContainText("Open AI settings");
+  await checklist.getByRole("button", { name: "Go to Weave AI" }).click();
+  const weaveAi = page.locator("#weave-ai-title");
+  await expect(weaveAi).toBeFocused();
+  await expect(weaveAi).toBeInViewport();
+  await page.evaluate(() => scrollTo(0, 0));
+  await checklist.getByRole("button", { name: "Go to providers" }).click();
+  const providers = page.locator("#ai-providers-title");
+  await expect(providers).toBeFocused();
+  await expect(providers).toBeInViewport();
+  await expect(page).toHaveURL(/\/settings\/ai$/);
+});
+
 test("saves Weave AI on a cloud connection with a suggested model, keeping its limits", async ({
   page,
 }) => {

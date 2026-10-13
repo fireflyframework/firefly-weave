@@ -380,7 +380,7 @@ export class AiModelsPage implements DoCheck, OnDestroy {
   get actions() {
     const host = this.host();
     return this.rows.map((row) =>
-      fixAction(row.fix, (capability) => host.can(capability)),
+      fixAction(row.fix, (capability) => host.can(capability), row.id),
     );
   }
   count(card: ProviderCard) {

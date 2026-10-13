@@ -674,10 +674,15 @@ const NEEDS: Readonly<Record<string, string>> = {
   "ai_connections.test": "connection.manage",
   "lumi.configuration.write": "lumi.manage",
 };
-/** What a person can do about an item; null when the fix is not theirs to run. */
+/**
+ * What a person can do about an item; null when the fix is not theirs to run.
+ * The checklist sits on Settings › AI models, so a link to that page is named
+ * by the card it moves to instead of the page already open.
+ */
 export function fixAction(
   fix: ReadinessFix | undefined,
   can: (capability: string) => boolean,
+  id?: ReadinessId,
 ): FixAction | null {
   if (!fix) return null;
   if (fix.kind === "operation")
@@ -686,7 +691,16 @@ export function fixAction(
       : null;
   if (fix.kind === "command" && fix.command)
     return { kind: "copy", label: fix.label, command: fix.command };
-  if (fix.kind === "navigate") return { kind: "link", label: fix.label };
+  if (fix.kind === "navigate")
+    return {
+      kind: "link",
+      label:
+        fix.route !== "settings/ai"
+          ? fix.label
+          : id === "weave_ai"
+            ? "Go to Weave AI"
+            : "Go to providers",
+    };
   // "Requires {role}" repeats the row's detail, which names the role in words.
   return fix.label.startsWith("Requires ")
     ? null

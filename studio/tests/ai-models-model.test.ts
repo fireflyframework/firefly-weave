@@ -554,6 +554,28 @@ describe("readiness", () => {
       ),
     ).toBe(true);
   });
+  it("names the card an AI settings link goes to on the page itself", () => {
+    const settings = {
+      kind: "navigate",
+      label: "Open AI settings",
+      route: "settings/ai",
+    } as const;
+    expect(fixAction(settings, () => true, "weave_ai")).toEqual({
+      kind: "link",
+      label: "Go to Weave AI",
+    });
+    expect(fixAction(settings, () => true, "connection")).toEqual({
+      kind: "link",
+      label: "Go to providers",
+    });
+    expect(
+      fixAction(
+        { kind: "navigate", label: "Open workers", route: "operate/workers" },
+        () => true,
+        "worker_online",
+      ),
+    ).toEqual({ kind: "link", label: "Open workers" });
+  });
   it("offers an operation only to people who may run it", () => {
     const publish = {
       kind: "operation",
