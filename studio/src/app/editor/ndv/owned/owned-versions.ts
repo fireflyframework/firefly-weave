@@ -34,6 +34,7 @@ import {
   nameOfUses,
   versionOfUses,
   type OwnedRecipe,
+  type Publication,
 } from "./owned-actions";
 import {
   ownedActionsOf,
@@ -186,25 +187,66 @@ export function forkEdited(
 }
 
 /**
- * The canvas recording that `uses` is published. An API action without a
- * description of its own keeps the one it was published with, so renaming
- * its step changes nothing that was published.
+ * What publishing `uses` records, computed once from the workflow the
+ * document was built from: the version, the fingerprint of its input and,
+ * for an API action without a description of its own, the description it
+ * was published with (so renaming its step changes nothing published).
+ * Null when the workflow doesn't own `uses`.
  */
-export function markPublished(model: OwnedModel, uses: string): CanvasSidecar {
+export interface PublicationRecord extends Publication {
+  description?: string;
+}
+export function publicationOf(
+  model: OwnedModel,
+  uses: string,
+): PublicationRecord | null {
   const recipe = ownedActionsOf(model.canvas)[uses];
-  if (!recipe) return model.canvas;
+  if (!recipe) return null;
   const description =
     recipe.kind === "http" && !recipe.description
       ? httpSource(model.definition, uses, recipe).recipe.description
       : undefined;
   const kept: OwnedRecipe = description ? { ...recipe, description } : recipe;
-  return withOwnedAction(model.canvas, uses, {
+  return {
+    version: versionOfUses(uses),
+    input: inputHash(ownedInput(model.definition, uses, kept)),
+    ...(description ? { description } : {}),
+  };
+}
+
+/**
+ * The canvas with a publication recorded on the recipe for `uses`, as it was
+ * computed when the document was sent; the same canvas back when the
+ * workflow doesn't own `uses` or already holds this record. Undo and Redo
+ * states get the same value, so a state whose input differs reads as changed.
+ */
+export function withPublication(
+  canvas: CanvasSidecar,
+  uses: string,
+  record: PublicationRecord,
+): CanvasSidecar {
+  const recipe = ownedActionsOf(canvas)[uses];
+  if (!recipe) return canvas;
+  const kept: OwnedRecipe =
+    record.description && recipe.kind === "http" && !recipe.description
+      ? { ...recipe, description: record.description }
+      : recipe;
+  if (
+    kept === recipe &&
+    recipe.published?.version === record.version &&
+    recipe.published.input === record.input
+  )
+    return canvas;
+  return withOwnedAction(canvas, uses, {
     ...kept,
-    published: {
-      version: versionOfUses(uses),
-      input: inputHash(ownedInput(model.definition, uses, kept)),
-    },
+    published: { version: record.version, input: record.input },
   });
+}
+
+/** The canvas recording that `uses` is published, from the workflow open now. */
+export function markPublished(model: OwnedModel, uses: string): CanvasSidecar {
+  const record = publicationOf(model, uses);
+  return record ? withPublication(model.canvas, uses, record) : model.canvas;
 }
 
 /** One action's publish key: the same document always sends the same key. */
