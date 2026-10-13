@@ -663,6 +663,93 @@ test("saving Weave AI on a configured connection keeps its limits and sends its 
   });
 });
 
+const GPT = {
+  name: "gpt-5-mini",
+  approved: true,
+  available: true,
+  tools: "yes",
+  context_tokens: 128000,
+};
+const pinnedOpenAi = {
+  enabled: true,
+  connection_revision_id: OPENAI_REVISION,
+  profile: {
+    provider: "openai-responses",
+    model: "gpt-5-mini",
+    outputSchema: { type: "object" },
+  },
+  revision: 7,
+};
+
+test("after its connection gets a new revision, Weave AI says so and saves on the new one", async ({
+  page,
+}) => {
+  const platform = await start(page, {
+    connections: [ollamaConnection, openaiConnection],
+    models: [GPT],
+    lumi: pinnedOpenAi,
+  });
+  const card = page.locator("weave-ai-card");
+  await expect(card.getByLabel("Model", { exact: true })).toHaveValue(
+    "gpt-5-mini",
+  );
+  // Edit the connection Weave AI uses: saving adds revision 2, and the card
+  // reads Weave AI's settings again.
+  let reads = 0;
+  page.on("request", (request) => {
+    if (
+      request.method() === "GET" &&
+      request.url().endsWith("/lumi/configuration")
+    )
+      reads++;
+  });
+  await page.getByRole("button", { name: "Test openai" }).click();
+  const form = sheet(page, "openai");
+  await form.getByLabel("Secret handle").fill("openai-team-key");
+  await form.getByRole("button", { name: "Save as a new revision" }).click();
+  await expect(form.getByRole("status").last()).toContainText("revision 2");
+  await page.keyboard.press("Escape");
+  await expect(form).toHaveCount(0);
+  await expect.poll(() => reads).toBeGreaterThan(0);
+
+  await expect(card).toContainText(
+    "Weave AI uses revision 1 of openai; saving moves it to revision 2.",
+  );
+  await expect(card.getByLabel("Connection", { exact: true })).toHaveValue(
+    "openai · revision 2",
+  );
+  await card.getByRole("switch", { name: "Turn on Weave AI" }).uncheck();
+  await card.getByRole("button", { name: "Save Weave AI settings" }).click();
+  await expect.poll(() => platform.lumiWrites.length).toBe(1);
+  const second = platform.connections.find(
+    (c) => c["name"] === "openai" && c["revision"] === 2,
+  )!;
+  expect(platform.lumiWrites[0].ifMatch).toBe('"7"');
+  expect(platform.lumiWrites[0].body).toMatchObject({
+    enabled: false,
+    connection_revision_id: second["id"],
+    profile: { model: "gpt-5-mini" },
+  });
+});
+
+test("when Weave AI's connection can't be found, the card asks for one before saving", async ({
+  page,
+}) => {
+  const platform = await start(page, {
+    connections: [ollamaConnection],
+    models: [GPT],
+    lumi: pinnedOpenAi,
+  });
+  const card = page.locator("weave-ai-card");
+  await expect(card).toContainText(
+    "Weave AI's connection is no longer available. Choose a connection, then save.",
+  );
+  await expect(
+    card.getByRole("button", { name: "Save Weave AI settings" }),
+  ).toBeDisabled();
+  expect(platform.lumiWrites).toEqual([]);
+});
+
 /** The accessible name of the focused element, when it sits in the AI connection sheet. */
 const focusInSheet = (page: Page) =>
   page.evaluate(() => {

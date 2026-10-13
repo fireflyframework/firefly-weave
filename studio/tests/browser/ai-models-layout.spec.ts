@@ -260,8 +260,35 @@ for (const size of sizes)
           "a connection action",
         );
       }
+      // Weave AI's dropdowns are exactly as high as the buttons beside them;
+      // side by side they share a top, stacked they share a left edge.
+      const card = page.locator("weave-ai-card");
+      // The bordered field, not the text box inside it.
+      const dropdowns = await boxes(card.locator("weave-select .choice-field"));
+      expect(dropdowns).toHaveLength(2);
+      expectAligned(
+        [d.control, ...dropdowns.map((dropdown) => dropdown.height)],
+        "Weave AI dropdown heights",
+        0.5,
+      );
+      if (Math.abs(dropdowns[0].y - dropdowns[1].y) <= 1)
+        expectAligned(
+          dropdowns.map((dropdown) => dropdown.y),
+          "Weave AI dropdown tops",
+        );
+      else
+        expectAligned(
+          dropdowns.map((dropdown) => dropdown.x),
+          "Weave AI dropdown left edges",
+        );
+      // A dropdown's chevron sits inside its 44 px field, which opens the
+      // same list: the field is the target, measured above.
       if (d.touch)
-        await minimumHeight(root.locator("button"), 44, "a touch target");
+        await minimumHeight(
+          root.locator("button:not(.choice-field button)"),
+          44,
+          "a touch target",
+        );
     });
 
     test("the side sheet fills its edge and lines up its fields and footer", async ({

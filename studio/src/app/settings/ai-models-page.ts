@@ -251,6 +251,7 @@ const fromBindable = (item: BindableConnection): AiConnection => ({
         "
         [canUse]="host().can('lumi.use')"
         [connections]="connections"
+        [generation]="host().aiSetupGeneration"
         (saved)="recheck()"
       />
     </div>

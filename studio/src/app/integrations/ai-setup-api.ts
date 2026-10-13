@@ -200,6 +200,15 @@ export class AiSetupApi {
       aiConnections(await aiSetupRows(this.api, "connections", true)),
     );
   }
+  /** One connection revision by its ID, or null when the platform has no such revision. */
+  async connection(revision: string): Promise<AiConnection | null> {
+    const found = await this.api.request<Partial<AiConnection>>(
+      `${this.environment}/connections/${encodeURIComponent(revision)}`,
+    );
+    return found?.id === revision && typeof found.name === "string"
+      ? (found as AiConnection)
+      : null;
+  }
   /** AI connections this person may choose (needs connection.bind). */
   async bindable(): Promise<BindableConnection[]> {
     const items: BindableConnection[] = [];

@@ -101,22 +101,27 @@ import {
         >
         <div class="weave-ai-fields">
           <weave-select
+            data-control
             label="Connection"
             placeholder="Choose an AI connection"
             [options]="choices"
-            [value]="draft.connection"
+            [value]="chosen?.id ?? ''"
             [disabled]="busy"
             (choose)="chooseConnection($event)"
           />
           <weave-select
+            data-control
             label="Model"
             placeholder="Choose a model"
             [options]="modelChoices"
             [value]="draft.model"
-            [disabled]="busy || !draft.connection"
+            [disabled]="busy || !chosen"
             (choose)="draft.model = $event"
           />
         </div>
+        @if (connectionNote; as note) {
+          <p class="notice" data-tone="info" role="note">{{ note }}</p>
+        }
         @if (!usable.length) {
           <p class="notice" data-tone="info" role="note">
             Weave AI needs an AI connection with a secret handle. Connections
@@ -130,7 +135,7 @@ import {
           <button
             type="submit"
             class="primary"
-            [disabled]="busy || !draft.connection || !draft.model"
+            [disabled]="busy || !chosen || !draft.model"
           >
             {{ busy ? "Saving…" : "Save Weave AI settings" }}
           </button>
@@ -172,6 +177,12 @@ import {
       display: flex;
       justify-content: flex-end;
     }
+    /* The dropdowns match the buttons: 36 px, or 44 px for touch. */
+    @media (max-width: 767px), (pointer: coarse) {
+      .weave-ai-fields weave-select {
+        --select-height: var(--control-touch);
+      }
+    }
   `,
 })
 export class WeaveAiCard implements DoCheck, OnDestroy {
@@ -183,6 +194,8 @@ export class WeaveAiCard implements DoCheck, OnDestroy {
   /** lumi.use */
   canUse = input(false);
   connections = input<AiConnection[]>([]);
+  /** The shell's AI setup generation: the card reloads when it changes. */
+  generation = input(0);
   saved = output<void>();
   private readonly cdr = inject(ChangeDetectorRef);
   private setup!: AiSetupApi;
@@ -196,6 +209,39 @@ export class WeaveAiCard implements DoCheck, OnDestroy {
   current: LumiConfiguration | null = null;
   models: AiModels | null = null;
   draft: WeaveAiDraft = { enabled: true, connection: "", model: "" };
+  /** The saved connection revision, read when the list may not hold it. */
+  pinned: AiConnection | null = null;
+  /** The saved connection revision could not be read. */
+  pinnedMissing = false;
+
+  /**
+   * The connection Save uses: the chosen one, or for a saved revision that
+   * is no longer the newest, the newest revision of that connection.
+   */
+  get chosen(): AiConnection | null {
+    const id = this.draft.connection;
+    if (!id) return null;
+    const listed = this.connections().find((item) => item.id === id);
+    if (listed) return listed;
+    const pinned = this.pinned;
+    if (!pinned || pinned.id !== id) return null;
+    return (
+      this.connections().find(
+        (item) => item.name === pinned.name && item.id !== pinned.id,
+      ) ?? null
+    );
+  }
+  /** Why the saved connection is not the one shown, when it isn't. */
+  get connectionNote(): string {
+    const id = this.draft.connection;
+    if (!id || this.connections().some((item) => item.id === id)) return "";
+    const chosen = this.chosen;
+    if (chosen && this.pinned)
+      return `Weave AI uses revision ${this.pinned.revision} of ${this.pinned.name}; saving moves it to revision ${chosen.revision}.`;
+    if (this.pinnedMissing || (this.pinned && this.connections().length))
+      return "Weave AI's connection is no longer available. Choose a connection, then save.";
+    return "";
+  }
 
   get choices() {
     return weaveAiChoices(this.connections());
@@ -215,7 +261,7 @@ export class WeaveAiCard implements DoCheck, OnDestroy {
   private loadedFor = "";
   private loads = 0;
   ngDoCheck() {
-    const key = `${this.canUse()}:${this.manager()}:${this.canChoose()}`;
+    const key = `${this.generation()}:${this.canUse()}:${this.manager()}:${this.canChoose()}`;
     if (key === this.loadedFor) return;
     this.loadedFor = key;
     void this.load();
@@ -232,8 +278,14 @@ export class WeaveAiCard implements DoCheck, OnDestroy {
           this.setup.lumiConfiguration(),
           this.setup.lumiReplySchema(),
         ]);
+        const pinnedId = current?.connection_revision_id ?? "";
+        const pinned = pinnedId
+          ? await this.setup.connection(pinnedId).catch(() => null)
+          : null;
         if (!this.alive || load !== this.loads) return;
         this.current = current;
+        this.pinned = pinned;
+        this.pinnedMissing = !!pinnedId && !pinned;
         this.replySchema = reply;
         this.draft = {
           enabled: current?.enabled ?? true,
@@ -276,10 +328,12 @@ export class WeaveAiCard implements DoCheck, OnDestroy {
     }
   }
   async save() {
-    const connection = this.connections().find(
-      (item) => item.id === this.draft.connection,
-    );
-    if (this.busy || !connection) return;
+    if (this.busy) return;
+    const connection = this.chosen;
+    if (!connection) {
+      this.error = "Choose a connection for Weave AI.";
+      return;
+    }
     this.error = "";
     let body: Record<string, unknown>;
     try {

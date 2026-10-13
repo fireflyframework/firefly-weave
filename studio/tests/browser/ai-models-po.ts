@@ -259,18 +259,24 @@ export async function mockAiPlatform(
     });
     const scripted = state.createAnswers.shift();
     if (scripted) return json(r, scripted.body, scripted.status);
+    // Saving a name again adds its next revision; earlier ones stay readable.
+    const earlier = state.connections.filter((c) => c["name"] === body["name"]);
+    const revision =
+      Math.max(0, ...earlier.map((c) => Number(c["revision"]))) + 1;
+    const first =
+      body["name"] === "ollama-local" ? OLLAMA_REVISION : OPENAI_REVISION;
     const created = {
       ...body,
-      id: body["name"] === "ollama-local" ? OLLAMA_REVISION : OPENAI_REVISION,
-      revision: 1,
+      id:
+        revision === 1
+          ? first
+          : `${first.slice(0, -2)}${String(revision).padStart(2, "0")}`,
+      revision,
       connector: "weave-agentic-provider@1.0.0",
       connector_digest: "digest",
       adapter: "agentic",
     };
-    state.connections = [
-      ...state.connections.filter((c) => c["name"] !== body["name"]),
-      created,
-    ];
+    state.connections = [...state.connections, created];
     return json(r, created, 201);
   });
   await page.route(`${ENV}/connections/*`, (r) => {
