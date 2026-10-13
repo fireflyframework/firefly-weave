@@ -152,3 +152,121 @@ def test_deadline_order_reads_the_step_of_an_instance_key():
     assert deadline_order("pause[2]", due, {"pause"}) == (2, due, "pause[2]")
     assert deadline_order("approval[2]", due, {"pause"}) == (1, due, "approval[2]")
     assert deadline_order("@run", due, {"pause"}) == (0, due, "@run")
+
+
+def compiled(catalog, steps, output):
+    from firefly_weave.compiler.api import compile_source
+
+    document = {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {"name": "nested", "version": "1.0.0"},
+        "spec": {"inputSchema": {}, "outputSchema": {}, "steps": steps, "output": output},
+    }
+    result = compile_source(json.dumps(document), format="json", catalog=catalog)
+    assert result.ok, result.to_bytes()
+    return result.artifact
+
+
+def echo(identifier: str) -> dict:
+    return {"id": identifier, "kind": "action", "uses": "echo-action@2.0.0", "with": {"ref": "/input"}}
+
+
+def nested_switch(catalog):
+    """A switch inside a parallel branch; its predicate and its case output read the branch's step ``seed``."""
+    pick = {
+        "id": "pick",
+        "kind": "switch",
+        "cases": [
+            {
+                "when": {"op": {"name": "eq", "args": [{"ref": "/steps/seed/output"}, {"literal": 1}]}},
+                "steps": [],
+                "output": {"ref": "/steps/seed/output"},
+            }
+        ],
+        "default": {"steps": [], "output": {"literal": 0}},
+    }
+    outer = {
+        "id": "outer",
+        "kind": "parallel",
+        "concurrency": 2,
+        "branches": {
+            "a": {"steps": [echo("seed"), pick], "output": {"ref": "/steps/pick/output"}},
+            "b": {"steps": [echo("other")], "output": {"ref": "/steps/other/output"}},
+        },
+    }
+    return compiled(catalog, [outer], {"ref": "/steps/outer/output"})
+
+
+def test_a_switch_nested_in_an_iteration_reads_and_opens_frames_of_that_iteration(worker_runtime_fixture):
+    flow = nested_switch(worker_runtime_fixture["catalog"])
+    started = transition(RunState(input=1), event(), flow).state
+    assert started.active == ["seed", "other"]
+    second, third = lifted(started, "[2]"), lifted(started, "[3]")
+    both = {
+        **second,
+        "active": second["active"] + third["active"],
+        "branches": {**second["branches"], **third["branches"]},
+        "joins": {**second["joins"], **third["joins"]},
+    }
+    state = completed(RunState.model_validate_json(json.dumps(both)), "seed[2]", 1, flow)
+    state = completed(state, "seed[3]", 5, flow)
+    inner = {key: branch for key, branch in state.branches.items() if branch.owner == "pick"}
+    # Iteration 2 took the case (seed is 1 there), iteration 3 the default (seed is 5 there).
+    assert {key: branch.name for key, branch in inner.items()} == {
+        "pick/case:0[2]": "case:0",
+        "pick/default[3]": "default",
+    }
+    assert inner["pick/case:0[2]"].parent == "outer/a[2]" and inner["pick/default[3]"].parent == "outer/a[3]"
+    assert inner["pick/case:0[2]"].visible == {"seed": {"output": 1}}
+    assert inner["pick/default[3]"].visible == {"seed": {"output": 5}}
+    assert state.branches["outer/a[2]"].output == 1 and state.branches["outer/a[3]"].output == 0
+    assert state.joins["pick[2]"].owner == "pick[2]" and state.joins["pick[3]"].owner == "pick[3]"
+
+
+@pytest.mark.parametrize(("iteration", "refused"), [("[3]", False), ("[2]", True)])
+def test_a_block_activates_once_per_iteration(worker_runtime_fixture, iteration, refused):
+    # Branches with literal outputs finish inside one event, so only the join check can refuse a repeat.
+    fork = {
+        "id": "fork",
+        "kind": "parallel",
+        "concurrency": 2,
+        "branches": {n: {"steps": [], "output": {"literal": n}} for n in ("a", "b")},
+    }
+    flow = compiled(worker_runtime_fixture["catalog"], [echo("first"), fork], {"ref": "/steps/fork/output"})
+    waiting = transition(RunState(input=1), event(), flow).state
+    joined = completed(waiting, "first", 7, flow)
+    assert joined.status == "succeeded" and joined.joins["fork"].status == "joined"
+    # Iteration 2 has already run its parallel; the step before it is delivered again in one iteration.
+    data = waiting.model_dump(mode="json")
+    data.update({key: lifted(joined, "[2]")[key] for key in ("branches", "joins")}, active=["first" + iteration])
+    result = transition(
+        RunState.model_validate_json(json.dumps(data)),
+        event("task_completed", waiting.accepted_sequence + 1, {"node_id": "first" + iteration, "output": 8}),
+        flow,
+    )
+    if refused:
+        assert result.state.status == "suspended" and result.state.incident == "WV-RUNTIME-ACTIVATION"
+        assert not result.steps and set(result.state.joins) == {"fork[2]"}
+    else:
+        assert result.state.status == "succeeded" and result.state.output == {"a": "a", "b": "b"}
+        assert set(result.state.joins) == {"fork[2]", "fork[3]"}
+        assert result.state.branches["fork/a[3]"].status == "completed"
+
+
+def test_a_loop_yield_key_has_no_successor_of_its_own():
+    from test_kernel import artifact
+
+    flow = artifact([{"id": "pause", "kind": "wait", "durationSeconds": 5}], {"literal": 1})
+    waiting = transition(RunState(), event(), flow).state
+    assert waiting.active == ["pause"]
+    due = waiting.waits["pause"]
+    data = waiting.model_dump(mode="json")
+    data["active"] = ["pause~1"]
+    data["waits"] = {"pause~1": data["waits"]["pause"]}
+    elapsed = event("wait_elapsed", 2, {"node_id": "pause~1", "deadline": due.isoformat()})
+    result = transition(
+        RunState.model_validate_json(json.dumps(data)), elapsed.model_copy(update={"timestamp": due}), flow
+    )
+    assert result.state.status == "suspended" and result.state.incident == "WV-RUNTIME-EVENT"
+    assert not result.steps and result.state.active == ["pause~1"] and "pause~1" in result.state.waits
