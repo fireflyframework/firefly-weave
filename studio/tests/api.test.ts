@@ -17,6 +17,10 @@ SPDX-License-Identifier: Apache-2.0
 */
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { StudioApi, ApiError } from "../src/app/api";
+import {
+  AiSetupApi,
+  BRIDGE_TIMEOUT_MS,
+} from "../src/app/integrations/ai-setup-api";
 afterEach(() => vi.unstubAllGlobals());
 describe("same-origin credential boundary", () => {
   it("rejects arbitrary destinations before any fetch", async () => {
@@ -307,13 +311,102 @@ describe("cancellable requests", () => {
         100,
         new AbortController().signal,
       );
-      const outcome = expect(pending).rejects.toMatchObject({
-        name: "TimeoutError",
-      });
+      let outcome: unknown = "pending";
+      pending.then(
+        () => (outcome = "resolved"),
+        (error: unknown) => (outcome = error),
+      );
       await vi.advanceTimersByTimeAsync(150);
-      await outcome;
+      // Checked once, so a deadline that never fires fails here instead of hanging the run.
+      expect(outcome).toMatchObject({ name: "TimeoutError" });
     } finally {
       vi.useRealTimers();
     }
+  });
+  it("leaves no deadline timer or listener behind after an answer", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => new Response(JSON.stringify({ ok: true }))),
+      );
+      const controller = new AbortController();
+      const removed = vi.spyOn(controller.signal, "removeEventListener");
+      await expect(
+        new StudioApi().request(
+          "/studio/api/x",
+          "GET",
+          undefined,
+          {},
+          150000,
+          controller.signal,
+        ),
+      ).resolves.toEqual({ ok: true });
+      expect(vi.getTimerCount()).toBe(0);
+      expect(removed).toHaveBeenCalledWith("abort", expect.any(Function));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it("stops at once when canceled during a capacity pause, and sends nothing more", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetch = vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({ code: "WV-OPERATION-CAPACITY", message: "Busy" }),
+            { status: 429, headers: { "Retry-After": "5" } },
+          ),
+      );
+      vi.stubGlobal("fetch", fetch);
+      const controller = new AbortController();
+      const pending = new StudioApi().request(
+        "/studio/api/x",
+        "GET",
+        undefined,
+        {},
+        150000,
+        controller.signal,
+      );
+      let outcome: unknown = "pending";
+      pending.then(
+        () => (outcome = "resolved"),
+        (error: unknown) => (outcome = error),
+      );
+      await vi.advanceTimersByTimeAsync(100);
+      expect(fetch).toHaveBeenCalledTimes(1);
+      controller.abort(
+        new DOMException("The test was canceled.", "AbortError"),
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      expect(outcome).toMatchObject({ name: "AbortError" });
+      await vi.advanceTimersByTimeAsync(10000);
+      expect(fetch).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("AI setup calls", () => {
+  it("waits for publishing only as long as the Studio host does", async () => {
+    const api = new StudioApi();
+    api.session.profile = {
+      name: "Test",
+      baseUrl: "https://weave.example",
+      tenantId: "t",
+      projectId: "p",
+      environmentId: "dev",
+    };
+    const request = vi.spyOn(api, "request").mockResolvedValue({});
+    await new AiSetupApi(api).publish();
+    expect(request).toHaveBeenCalledWith(
+      "/studio/api/api/v1/tenants/t/projects/p/environments/dev/ai/setup/publish",
+      "POST",
+      undefined,
+      {},
+      BRIDGE_TIMEOUT_MS,
+    );
+    expect(BRIDGE_TIMEOUT_MS).toBe(35_000);
   });
 });
