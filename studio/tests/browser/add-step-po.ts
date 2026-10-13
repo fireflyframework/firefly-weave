@@ -58,13 +58,17 @@ export class AddStepPanel {
       (text) => text.trim(),
     );
   }
-  /** The label of the option the search field's aria-activedescendant names. */
+  /**
+   * The label of the option the search field's aria-activedescendant names.
+   * The attribute and the option are read in one step: typing redraws the
+   * list, so an ID read on its own can name an option that is already gone.
+   */
   async activeLabel(): Promise<string> {
-    const id = await this.search.getAttribute("aria-activedescendant");
-    if (!id) return "";
-    return (
-      (await this.page.locator(`[id="${id}"] .entry-label`).textContent()) ?? ""
-    );
+    return this.search.evaluate((search) => {
+      const id = search.getAttribute("aria-activedescendant");
+      const option = id ? document.getElementById(id) : null;
+      return option?.querySelector(".entry-label")?.textContent ?? "";
+    });
   }
   /** Finds an entry by its exact label through the search, and chooses it. */
   async choose(label: string) {
