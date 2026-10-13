@@ -142,8 +142,20 @@ def journey_results(enablement: Any, profile: str, records: Iterable[Mapping[str
     return results
 
 
-def storage_entries(folder: Path) -> int:
-    """Entries in the browser-storage dumps Studio journeys wrote: localStorage, sessionStorage and IndexedDB."""
+class MissingStorage(Exception):
+    """Studio journeys ran for a person but left no browser-storage dump to scan."""
+
+
+def storage_entries(folder: Path, *, expected: Iterable[str]) -> int:
+    """Entries in the browser-storage dumps Studio journeys wrote: localStorage, sessionStorage and IndexedDB.
+
+    ``expected`` names one dump, ``<journey>-<viewport>-<person>``, for every person a Studio journey ran as.
+    A missing dump, or a missing folder, raises MissingStorage naming each one: an uncaptured person must
+    never read as a person with empty storage.
+    """
+    missing = sorted(name for name in set(expected) if not (folder / f"{name}.json").is_file())
+    if missing:
+        raise MissingStorage("No browser storage was captured for " + ", ".join(missing))
     total = 0
     for path in sorted(folder.glob("*.json")) if folder.is_dir() else []:
         dump = json.loads(path.read_text(encoding="utf-8"))

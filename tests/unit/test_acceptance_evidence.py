@@ -276,5 +276,17 @@ def test_scan_counts_browser_storage_entries(tmp_path):
     (tmp_path / "J8-1440x900-builder.json").write_text(
         json.dumps({"local": {}, "session": {}, "indexed_db": []}), encoding="utf-8"
     )
-    assert evidence.storage_entries(tmp_path) == 4
-    assert evidence.storage_entries(tmp_path / "missing") == 0
+    expected = ["J1-1440x900-builder", "J8-1440x900-builder"]
+    assert evidence.storage_entries(tmp_path, expected=expected) == 4
+    # Nothing ran in Studio, so nothing was captured: zero is the honest count.
+    assert evidence.storage_entries(tmp_path / "missing", expected=[]) == 0
+
+
+def test_a_missing_storage_dump_fails_the_count_for_each_person(tmp_path):
+    empty = json.dumps({"local": {}, "session": {}, "indexed_db": []})
+    (tmp_path / "J1-1440x900-builder.json").write_text(empty, encoding="utf-8")
+    expected = ["J1-1440x900-builder", "J1-1440x900-viewer", "J1-390x844-builder"]
+    with pytest.raises(evidence.MissingStorage, match="J1-1440x900-viewer, J1-390x844-builder$"):
+        evidence.storage_entries(tmp_path, expected=expected)
+    with pytest.raises(evidence.MissingStorage, match="J1-1440x900-builder"):
+        evidence.storage_entries(tmp_path / "missing", expected=["J1-1440x900-builder"])
