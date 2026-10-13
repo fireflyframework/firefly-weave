@@ -865,7 +865,7 @@ describe("unapplied template text", () => {
     expect(again.component.view()).toBe("template");
     expect(again.component.templateText()).toBe("Dear {{ input.name");
     expect(again.component.templateError()).toBe(
-      "Close the braces: {{ input.field }}.",
+      "The formula ends too early. Close the placeholder with `}}`.",
     );
     expect(session.issues()[0]).toMatchObject({
       status: "Not applied",

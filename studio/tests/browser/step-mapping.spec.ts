@@ -555,12 +555,15 @@ for (const size of sizes) {
       await details.close();
       expect(await sourceText(page)).toContain("ref: /input/customerId");
     });
-    for (const ref of [
-      "/steps/check.output/output/amount",
-      "/input/with.dot",
-      "/input/with~1slash",
+    for (const [ref, path] of [
+      [
+        "/steps/check.output/output/amount",
+        'steps["check.output"].output.amount',
+      ],
+      ["/input/with.dot", 'input["with.dot"]'],
+      ["/input/with~1slash", 'input["with/slash"]'],
     ]) {
-      test(`a template preserves ${ref} in its formula presentation`, async ({
+      test(`a template shows ${ref} as ${path} and leaves it as it is`, async ({
         page,
       }) => {
         await withLanguageFeatures(page);
@@ -570,16 +573,44 @@ for (const size of sizes) {
         const details = await openStepFixture(page, mappedWorkflow(expression));
         const before = await sourceText(page);
         await details.openWithKeyboard("summarize");
-        await expect(
-          details.field("prompt").locator(".param-formula"),
-        ).toHaveText(JSON.stringify(expression));
-        await expect(details.field("prompt").getByRole("textbox")).toHaveCount(
-          0,
-        );
+        const text = details
+          .field("prompt")
+          .getByRole("textbox", { name: "Prompt" });
+        await expect(text).toHaveValue(`Value: {{ ${path} }}`);
+        await text.focus();
+        await text.blur();
         await details.close();
         expect(await sourceText(page)).toBe(before);
       });
     }
+    test("a template whose placeholder is any other formula stays as it is", async ({
+      page,
+    }) => {
+      await withLanguageFeatures(page);
+      const expression = {
+        op: {
+          name: "concat",
+          args: [
+            { literal: "Value: " },
+            {
+              op: {
+                name: "coalesce",
+                args: [{ ref: "/input/email" }, { literal: "none" }],
+              },
+            },
+          ],
+        },
+      };
+      const details = await openStepFixture(page, mappedWorkflow(expression));
+      const before = await sourceText(page);
+      await details.openWithKeyboard("summarize");
+      await expect(
+        details.field("prompt").locator(".param-formula"),
+      ).toHaveText(JSON.stringify(expression));
+      await expect(details.field("prompt").getByRole("textbox")).toHaveCount(0);
+      await details.close();
+      expect(await sourceText(page)).toBe(before);
+    });
     test("replacing a mapping gives focus back to the field and one Undo restores it", async ({
       page,
     }) => {
@@ -944,7 +975,15 @@ for (const size of [
       const expression = {
         op: {
           name: "concat",
-          args: [{ literal: "Preserve " }, { ref: "/input/a~1b" }],
+          args: [
+            { literal: "Preserve " },
+            {
+              op: {
+                name: "coalesce",
+                args: [{ ref: "/input/a~1b" }, { literal: "none" }],
+              },
+            },
+          ],
         },
       };
       const details = await openStepFixture(page, mappedWorkflow(expression));
@@ -965,7 +1004,7 @@ for (const size of [
         .click();
       await expect(row).toBeFocused();
       await expect(details.dialog.locator("[aria-live=polite]")).toHaveText(
-        /cannot be edited as text/,
+        /cannot be extended here/,
       );
       await details.close();
       expect(

@@ -765,11 +765,11 @@ test.describe("template text that doesn't apply yet", () => {
         await page.keyboard.type("Dear {{ input.customerId", { delay: 5 });
         await expect(lineOf(prompt)).toContainText("Not applied");
         await expect(lineOf(prompt)).toContainText(
-          "Close the braces: {{ input.field }}.",
+          "The formula ends too early. Close the placeholder with `}}`.",
         );
         await expect(text).toHaveAttribute("aria-invalid", "true");
         expect(await issueEntries(page, details)).toContain(
-          "Prompt Not applied Close the braces: {{ input.field }}.",
+          "Prompt Not applied The formula ends too early. Close the placeholder with `}}`.",
         );
         // Closing keeps it; the workflow keeps the last text that applied.
         await details.close();
