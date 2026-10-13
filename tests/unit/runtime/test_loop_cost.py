@@ -28,6 +28,7 @@ from firefly_weave.runtime.capacity import (
     SHARED_VALUE_ELEMENTS,
     GrowingContainers,
     RuntimeCapacityError,
+    _walk,
     growing_containers,
     logical_size,
 )
@@ -187,3 +188,111 @@ def test_released_and_joined_loops_leave_no_registered_containers_behind(monkeyp
         id(result.commands),
         id(result.state.input),
     }
+
+
+# Containers at or above the registration threshold, of small elements so generating them stays cheap.
+small_values = st.recursive(
+    st.none() | st.integers(-1000, 1000) | st.text(max_size=4),
+    lambda children: st.lists(children, max_size=3) | st.dictionaries(st.text(max_size=2), children, max_size=3),
+    max_leaves=6,
+)
+wide_values = st.lists(
+    small_values, min_size=SHARED_VALUE_ELEMENTS, max_size=SHARED_VALUE_ELEMENTS + 4
+) | st.dictionaries(
+    st.text(max_size=4), small_values, min_size=SHARED_VALUE_ELEMENTS, max_size=SHARED_VALUE_ELEMENTS + 4
+)
+depths = st.integers(0, 8) | st.integers(100, 132)
+
+
+def nest(value: object, depth: int) -> object:
+    for _ in range(depth):
+        value = [value]
+    return value
+
+
+def walked(value: object, ceiling: int, known: GrowingContainers | None) -> tuple[int, int, int] | str:
+    """``(bytes, nodes, deepest level)`` of one visit, or the refusal."""
+    try:
+        return _walk(value, ceiling, known, {}, 0, 0, 0)
+    except RuntimeCapacityError as error:
+        return str(error)
+
+
+def deepened(container: list | dict, chain: int) -> list | dict:
+    """The container with one more element nested ``chain`` levels deep, so its own depth is controlled."""
+    if isinstance(container, list):
+        return [*container, nest(1, chain)]
+    return {**container, "\u0000deep": nest(1, chain)}
+
+
+@settings(max_examples=300, deadline=None)
+@given(wide_values, depths, st.lists(depths, min_size=2, max_size=4), st.integers(10, 10**6))
+def test_a_shared_container_revisited_at_any_depth_measures_exactly_like_a_full_visit(wide, chain, levels, ceiling):
+    shared = deepened(wide, chain)
+    graph = {"fetch": {"output": [nest(shared, level) for level in levels]}}
+    expected = walked(graph, ceiling, None)
+    growing = GrowingContainers()
+    assert walked(graph, ceiling, growing) == expected
+    # The second visit reads every registered container from its entry and still matches the full visit.
+    assert walked(graph, ceiling, growing) == expected
+
+
+@settings(max_examples=150, deadline=None)
+@given(
+    st.lists(st.lists(small_values | wide_values, max_size=5), min_size=2, max_size=4),
+    wide_values,
+    st.data(),
+    st.integers(10, 10**6),
+)
+def test_a_list_and_a_dict_grown_several_times_measure_exactly_like_a_full_visit(batches, shared, data, ceiling):
+    outputs: dict[str, object] = {}
+    result = Transition(state=RunState(input={"shared": shared}), steps=[])
+    growing = GrowingContainers()
+    growing.add(result.steps)
+    growing.add(outputs)
+    graph = {"outputs": outputs, "result": result}
+    added = 0
+    for batch in batches:
+        for value in batch:
+            if data.draw(st.booleans()):
+                value = nest(shared, data.draw(depths))
+            result.steps.append(StepChange(node_id=f"s{added}", status="completed", output=value))
+            outputs[str(added)] = value
+            added += 1
+        expected = walked(graph, ceiling, None)
+        assert walked(graph, ceiling, growing) == expected
+        if isinstance(expected, str):
+            break
+
+
+@settings(max_examples=100, deadline=None)
+@given(st.lists(small_values, min_size=SHARED_VALUE_ELEMENTS, max_size=SHARED_VALUE_ELEMENTS + 4), st.text(min_size=1))
+def test_a_wide_model_field_changed_in_place_is_measured_again(outputs, extra):
+    state = RunState(steps={f"s{index}": {"output": value} for index, value in enumerate(outputs)})
+    growing = GrowingContainers()
+    assert walked(state, 10**7, growing) == walked(state, 10**7, None)
+    # Model fields change in place without changing length: the next visit must see the new value.
+    state.steps["s0"] = {"output": [outputs[0], extra]}
+    assert growing.entry(state.steps) is None
+    assert walked(state, 10**7, growing) == walked(state, 10**7, None)
+
+
+def test_a_wide_list_deep_enough_to_pass_once_is_refused_when_revisited_deeper():
+    # 20 elements, one of them nested 121 levels deep: it fits at level 2 and does not fit 6 levels further down.
+    shared = [nest(0, 121), *range(19)]
+    graph = [shared, nest(shared, 6)]
+    assert walked(graph, 10**6, None) == "WV-RUNTIME-LIMIT"
+    growing = GrowingContainers()
+    assert walked(graph, 10**6, growing) == "WV-RUNTIME-LIMIT"
+    assert growing.entry(shared) is not None
+    assert isinstance(walked([shared], 10**6, growing), tuple)
+
+
+@pytest.mark.parametrize("further", [4, 5, 6, 7])
+def test_depth_through_a_registered_container_matches_a_full_visit_either_side_of_the_limit(further):
+    shared = [nest(0, 120), *range(SHARED_VALUE_ELEMENTS)]
+    graph = [shared, nest(shared, further)]
+    expected = walked(graph, 10**6, None)
+    assert walked(graph, 10**6, GrowingContainers()) == expected
+    # Further 4 and 5 fit, 6 and 7 pass level 128.
+    assert isinstance(expected, tuple) == (further < 6)
