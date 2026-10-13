@@ -406,7 +406,7 @@ export class ParamField {
       items.push({
         label: "Use data…",
         disabled: locked,
-        run: () => this.setMode("mapped"),
+        run: () => this.setMode("mapped", true),
       });
     if (this.mode() === "mapped")
       items.push({
@@ -526,7 +526,7 @@ export class ParamField {
           return;
         }
         const control = this.element.nativeElement.querySelector<HTMLElement>(
-          ".param-control :is(input, textarea, select, button, [tabindex='0'])",
+          ".param-control :is(input, textarea, select, button, [tabindex='0'], [contenteditable='true'])",
         );
         control?.focus();
         if (
@@ -540,7 +540,7 @@ export class ParamField {
   }
 
   // ------------------------------------------------------------ modes
-  setMode(mode: "fixed" | "mapped") {
+  setMode(mode: "fixed" | "mapped", pick = false) {
     if (this.resource()?.hasDraft()) {
       this.session().announce(
         "Finish or clear the unapplied value before mapping data.",
@@ -558,6 +558,11 @@ export class ParamField {
         this.readOnly()
       )
         return;
+      if (mode === "mapped" && !pick) {
+        // Typing comes first, as in n8n: the editor takes focus; Use data… opens the picker.
+        setTimeout(() => this.formula()?.focusEditor("end"));
+        return;
+      }
       this.focusControl(session, spec, mode === "mapped");
     });
   }

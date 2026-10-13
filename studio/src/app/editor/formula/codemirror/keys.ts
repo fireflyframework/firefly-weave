@@ -74,18 +74,20 @@ export const singleLine: Extension = EditorState.transactionFilter.of(
 );
 
 export function formulaKeys(config: KeyConfig): Extension {
+  const lineBreak = (view: EditorView): boolean => {
+    if (config.multiline) view.dispatch(view.state.replaceSelection("\n"));
+    return true;
+  };
   return [
     keymap.of([
       { key: "Mod-z", run: () => (config.undo(), true) },
       { key: "Mod-Shift-z", run: () => (config.redo(), true) },
       { key: "Mod-y", run: () => (config.redo(), true) },
       {
+        // Shift+Enter too: left to the browser it would break the line.
         key: "Enter",
-        run: (view) => {
-          if (config.multiline)
-            view.dispatch(view.state.replaceSelection("\n"));
-          return true;
-        },
+        run: lineBreak,
+        shift: lineBreak,
       },
       { key: "Backspace", run: (view) => removePill(view, -1) },
       { key: "Delete", run: (view) => removePill(view, 1) },

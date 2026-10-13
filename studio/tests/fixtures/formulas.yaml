@@ -32,6 +32,15 @@ spec:
     - id: check
       kind: transform
       value: {object: {large: {literal: false}, customer: {ref: /input/customerId}}}
+    - id: flag
+      kind: transform
+      value: {op: {name: gt, args: [{ref: /input/amount}, {literal: 1000}]}}
+    - id: opaque
+      kind: transform
+      value: {ref: /input/amount, literal: hidden}
+    - id: note
+      kind: transform
+      value: {literal: Ready}
     - id: review
       kind: humanTask
       assignment: reviewers

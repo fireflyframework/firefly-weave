@@ -19,7 +19,13 @@ SPDX-License-Identifier: Apache-2.0
 // field, or in editable text (contenteditable in any form), as on the canvas.
 import "@angular/compiler";
 import { afterAll, describe, expect, it, vi } from "vitest";
-vi.hoisted(() => vi.stubGlobal("document", { addEventListener: vi.fn() }));
+vi.hoisted(() =>
+  vi.stubGlobal("document", {
+    addEventListener: vi.fn(),
+    // The formula editor reads this when step details load.
+    documentElement: { style: {} },
+  }),
+);
 import { App } from "../src/app/app";
 afterAll(() => vi.unstubAllGlobals());
 

@@ -56,6 +56,7 @@ import type {
   PendingKind,
   PendingOwner,
 } from "../pending-entries";
+import { isMappedText } from "../pending-entries";
 import { retryProblem, retryShown } from "../settings/settings-rules";
 import {
   formState,
@@ -130,7 +131,8 @@ import {
   type StepDetailsRequest,
 } from "../step-details-service";
 import { previewText } from "../../formula/preview";
-import type { CheckScope } from "../../formula/check";
+import { checkFormula, type CheckScope } from "../../formula/check";
+import type { EditorRequest } from "../../formula/codemirror/formula-editor";
 import type { CompletionScope } from "../../formula/complete";
 import type { ParseOptions } from "../../formula/grammar";
 import {
@@ -170,6 +172,8 @@ const WHOLE_PATH =
 export class FormSession {
   /** Fields switched to Mapped that hold no mapping yet (the data picker is open). */
   private drafts = new Map<string, Path>();
+  /** Where a field's editor puts the caret when it next appears (`{{` typed in a Fixed field). */
+  private editorRequests = new Map<string, Omit<EditorRequest, "seq">>();
 
   private readonly model;
   private readonly opened;
@@ -401,7 +405,7 @@ export class FormSession {
         ? this.wholeMapping(spec)
         : this.read(spec).mode === "mapped") ||
       this.drafts.has(this.key(spec)) ||
-      this.held(spec)?.kind === "template";
+      isMappedText(this.held(spec)?.kind);
     return mapped ? "mapped" : spec.mapping === "both" ? "fixed" : null;
   }
 
@@ -422,7 +426,7 @@ export class FormSession {
     if (current.mode !== "mapped") {
       // Back to the fixed value: template text that didn't apply goes; a
       // number or JSON typed in the Fixed box shows again.
-      if (this.heldEntry(spec)?.kind === "template") this.release(spec);
+      if (isMappedText(this.heldEntry(spec)?.kind)) this.release(spec);
       this.drafts.delete(this.key(spec));
       return this.host.refreshView();
     }
@@ -1076,6 +1080,24 @@ export class FormSession {
       loopEntries: this.loopEntries(spec),
     };
   }
+  requestEditor(spec: ParamSpec, request: Omit<EditorRequest, "seq">): void {
+    this.editorRequests.set(this.key(spec), request);
+  }
+  takeEditorRequest(spec: ParamSpec): Omit<EditorRequest, "seq"> | null {
+    const key = this.key(spec);
+    const request = this.editorRequests.get(key) ?? null;
+    this.editorRequests.delete(key);
+    return request;
+  }
+  /** The first warning the formula at this field gets from the schemas around it. */
+  formulaWarning(spec: ParamSpec): string | null {
+    const value = this.read(spec);
+    if (value.mode !== "mapped") return null;
+    return (
+      checkFormula(value.expression, this.checkScope(spec))[0]?.message ?? null
+    );
+  }
+
   /** The schema a field's value must fit, when the step's contract says. */
   expected(spec: ParamSpec): Schema | null {
     const subject = this.subject();
@@ -1151,6 +1173,8 @@ export class FormSession {
     );
     if (issue)
       return this.withFix({ kind: issue.severity, text: issue.message }, issue);
+    const warning = this.formulaWarning(spec);
+    if (warning) return { kind: "warning", text: warning };
     const value = this.read(spec);
     if (value.mode === "mapped") {
       const preview = this.controller

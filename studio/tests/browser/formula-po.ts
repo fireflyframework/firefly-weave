@@ -29,7 +29,9 @@ export async function setTestInput(
   details: StepDetailsPage,
   values: Record<string, string>,
 ) {
-  await details.trigger().dblclick();
+  // By keyboard: on a small window the canvas may have panned it out of view.
+  await details.trigger().focus();
+  await page.keyboard.press("Enter");
   const dialog = details.dialogFor("Manual form trigger");
   await expect(dialog).toBeVisible();
   if ((page.viewportSize()?.width ?? 1440) < 768)
@@ -38,14 +40,39 @@ export async function setTestInput(
       .getByRole("tab", { name: "Test event" })
       .click();
   await dialog.getByRole("button", { name: "Generate sample" }).click();
+  const box = (label: string) =>
+    dialog.locator(".sd-input").getByLabel(label, { exact: true });
+  // The sample replaces the form: wait for it before typing over it.
+  await expect(box(Object.keys(values)[0])).not.toHaveValue("");
   for (const [label, value] of Object.entries(values))
-    await dialog
-      .locator(".sd-input")
-      .getByLabel(label, { exact: true })
-      .fill(value);
+    await box(label).fill(value);
+  for (const [label, value] of Object.entries(values))
+    await expect(box(label)).toHaveValue(value);
   await details.close();
 }
 
 /** The one line under a field: its message, its "= value", or its hint. */
 export const fieldLine = (details: StepDetailsPage, id: string): Locator =>
   details.field(id).locator(".param-line").first();
+
+/** A field's formula editor: its host carries the text in `data-text`. */
+export const formulaBox = (field: Locator): Locator =>
+  field.locator("weave-formula-editor");
+/** The formula editor's textbox. */
+export const formulaText = (field: Locator): Locator =>
+  field.locator("weave-formula-editor .cm-content");
+/** The open completion list. */
+export const suggestions = (page: Page): Locator =>
+  page.getByRole("listbox", { name: "Suggestions" });
+/**
+ * Replaces a formula's text: clears it, then inserts the new text in one
+ * input event, as a paste does. (Chrome reports a replacement as only the
+ * part that differs, so "input." over "input.amount" would arrive as a
+ * deletion.)
+ */
+export async function replaceFormula(page: Page, field: Locator, text: string) {
+  await formulaText(field).click();
+  await page.keyboard.press("ControlOrMeta+a");
+  await page.keyboard.press("Backspace");
+  if (text) await page.keyboard.insertText(text);
+}

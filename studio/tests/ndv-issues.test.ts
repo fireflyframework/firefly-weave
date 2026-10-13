@@ -56,7 +56,13 @@ import {
 import { StructuredCanvasAdapter } from "../src/app/model";
 import { lookupAction } from "./browser/support";
 
-vi.hoisted(() => vi.stubGlobal("document", { addEventListener: vi.fn() }));
+vi.hoisted(() =>
+  vi.stubGlobal("document", {
+    addEventListener: vi.fn(),
+    // The formula editor reads this when step details load.
+    documentElement: { style: {} },
+  }),
+);
 afterAll(() => vi.unstubAllGlobals());
 beforeAll(() => loadKindRegistrations());
 
@@ -848,8 +854,7 @@ describe("unapplied template text", () => {
     };
     return { model, host, controller, open, field };
   }
-  const type = (field: FormulaField, value: string) =>
-    field.typed({ target: { value } } as unknown as Event);
+  const type = (field: FormulaField, value: string) => field.typed(value);
   it("keeps the text across close and reopen, Not applied, with the last valid value saved", async () => {
     const t = await templateHarness();
     const before = JSON.stringify(t.model.definition);
@@ -862,8 +867,9 @@ describe("unapplied template text", () => {
     const session = t.open();
     const again = t.field(session);
     expect(session.mode(again.spec)).toBe("mapped");
-    expect(again.component.view()).toBe("template");
-    expect(again.component.templateText()).toBe("Dear {{ input.name");
+    expect(again.component.view()).toBe("editor");
+    expect(again.component.templateMode()).toBe(true);
+    expect(again.component.shownText()).toBe("Dear {{ input.name");
     expect(again.component.templateError()).toBe(
       "The formula ends too early. Close the placeholder with `}}`.",
     );
@@ -883,23 +889,21 @@ describe("unapplied template text", () => {
     first.component.beginEdit();
     type(first.component, "Dear {{ input.name");
     const escape = {
-      key: "Escape",
-      preventDefault: vi.fn(),
-      stopPropagation: vi.fn(),
-    } as unknown as KeyboardEvent;
-    first.component.key(escape);
-    expect(escape.preventDefault).toHaveBeenCalled();
-    expect(first.component.templateText()).toBe("Hello {{ input.name }}");
+      event: { key: "Escape" } as KeyboardEvent,
+      handled: false,
+    };
+    first.component.escape(escape);
+    expect(escape.handled).toBe(true);
+    expect(first.component.shownText()).toBe("Hello {{ input.name }}");
     first.component.leave();
     expect(t.open().held(first.spec)).toBeNull();
     // Nothing held, Escape is left to step details.
     const again = {
-      key: "Escape",
-      preventDefault: vi.fn(),
-      stopPropagation: vi.fn(),
-    } as unknown as KeyboardEvent;
-    first.component.key(again);
-    expect(again.preventDefault).not.toHaveBeenCalled();
+      event: { key: "Escape" } as KeyboardEvent,
+      handled: false,
+    };
+    first.component.escape(again);
+    expect(again.handled).toBe(false);
   });
   it("lets go of held template text when a Mapped draft goes back to Fixed", async () => {
     const t = await templateHarness();

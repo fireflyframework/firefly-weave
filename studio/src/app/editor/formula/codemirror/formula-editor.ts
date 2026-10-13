@@ -170,7 +170,8 @@ export class FormulaEditor {
       ...(this.required() ? { "aria-required": "true" } : {}),
       ...(this.invalid() ? { "aria-invalid": "true" } : {}),
       ...(this.readOnly() ? { "aria-readonly": "true" } : {}),
-      ...(this.multiline() ? { "aria-multiline": "true" } : {}),
+      // CodeMirror says multiline by default; a one-line field isn't.
+      "aria-multiline": this.multiline() ? "true" : "false",
       spellcheck: "false",
       autocapitalize: "off",
       autocorrect: "off",

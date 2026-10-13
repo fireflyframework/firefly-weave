@@ -44,7 +44,13 @@ import { openRequest } from "../src/app/editor/ndv/step-details-service";
 import type { StepDetailsHost } from "../src/app/editor/ndv/step-details-host";
 import { StructuredCanvasAdapter } from "../src/app/model";
 
-vi.hoisted(() => vi.stubGlobal("document", { addEventListener: vi.fn() }));
+vi.hoisted(() =>
+  vi.stubGlobal("document", {
+    addEventListener: vi.fn(),
+    // The formula editor reads this when step details load.
+    documentElement: { style: {} },
+  }),
+);
 afterAll(() => vi.unstubAllGlobals());
 
 beforeAll(() => loadKindRegistrations());
@@ -287,7 +293,8 @@ describe("deferred literal template edits", () => {
       field.session = signal(f.session) as never;
       field.spec = signal(f.spec) as never;
       field.beginEdit();
-      field.typed({ target: { value: "Plain text" } } as unknown as Event);
+      // A literal in a formula (or template text) waits for blur.
+      field.typed('"Plain text"');
       if (change === "close") f.close();
       if (change === "reopen") f.model.clearHistory();
       if (change === "edit")
@@ -322,16 +329,15 @@ describe("active mapped field ownership", () => {
     field.spec = spec as never;
     return { ...f, field, sessionInput: session, specInput: spec, injector };
   }
-  const type = (field: FormulaField, value: string) =>
-    field.typed({ target: { value } } as unknown as Event);
+  const type = (field: FormulaField, value: string) => field.typed(value);
   it("reconciles focused Undo and Redo and accepts continued typing", async () => {
     const f = await fieldFixture();
     f.field.beginEdit();
     type(f.field, "First {{ input.email }}");
     f.model.undo();
-    expect(f.field.templateText()).toBe("Hello {{ input.name }}");
+    expect(f.field.shownText()).toBe("Hello {{ input.name }}");
     f.model.redo();
-    expect(f.field.templateText()).toBe("First {{ input.email }}");
+    expect(f.field.shownText()).toBe("First {{ input.email }}");
     f.model.undo();
     type(f.field, "Next {{ input.customerId }}");
     expect(f.session.read(f.spec)).toMatchObject({
@@ -344,6 +350,10 @@ describe("active mapped field ownership", () => {
   it("discards another session's invalid template and picker buffers", async () => {
     const a = await fieldFixture();
     const b = setup(template("Other "));
+    b.host.api = {
+      request: async () => ({ features: ["text.concat"] }),
+    } as never;
+    await b.controller.loadFeatures();
     a.field.beginEdit();
     type(a.field, "Invalid {{ input.name");
     a.field.leave();
@@ -354,7 +364,7 @@ describe("active mapped field ownership", () => {
     const before = b.session.read(b.spec);
     a.field.commitTyped();
     expect(b.session.read(b.spec)).toEqual(before);
-    expect(a.field.templateText()).toBe("Other {{ input.name }}");
+    expect(a.field.shownText()).toBe("Other {{ input.name }}");
     expect(a.field.templateError()).toBe("");
     expect(a.field.picking()).toBe(false);
     expect(a.field.typedRef).toBe("");
@@ -364,9 +374,9 @@ describe("active mapped field ownership", () => {
     const f = await fieldFixture();
     const expression = { ref: "/input/name", literal: "hidden" };
     f.session.write(f.spec, { mode: "mapped", expression });
-    expect(f.field.currentRef()).toBe("");
-    expect(f.field.view()).toBe("formula");
-    expect(f.field.formulaText()).toBe(JSON.stringify(expression));
+    expect(f.field.loneRef()).toBe("");
+    expect(f.field.view()).toBe("opaque");
+    expect(f.field.jsonText()).toBe(JSON.stringify(expression));
     f.injector.destroy();
   });
   it("resets invalid local state when the current descriptor changes", async () => {
@@ -380,7 +390,7 @@ describe("active mapped field ownership", () => {
     const before = f.session.read(f.spec);
     f.field.commitTyped();
     expect(f.session.read(f.spec)).toEqual(before);
-    expect(f.field.templateText()).toBe("Hello {{ input.name }}");
+    expect(f.field.shownText()).toBe("Hello {{ input.name }}");
     expect(f.field.templateError()).toBe("");
     expect(f.field.picking()).toBe(false);
     expect(f.field.typedRef).toBe("");
