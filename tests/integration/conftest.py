@@ -25,6 +25,7 @@ WEAVE_TEST_RESOURCE_MANIFEST asks to keep them.
 import hashlib
 import os
 import runpy
+import time
 import warnings
 from pathlib import Path
 from uuid import uuid4
@@ -49,9 +50,19 @@ def validate_release_receipt(release_backends):
 
 # Databases and roles created by the running test, dropped at teardown by drop_owned_resources.
 _OWNED: list[tuple[str, str]] = []
-# Name of the migrated template database once this process has found or built it.
+# Name of the migrated template database once this process has found or built it, and when it last marked it used.
 _TEMPLATE: list[str] = []
+_TOUCHED: list[float] = []
 TEMPLATE_LOCK = 7260912902
+# Ruling: a build drops another checkout's template only when no session is connected to it and its last
+# recorded use is older than 6 hours — a running process marks its template used when it starts and again at
+# most every 10 minutes while it clones, and the longest serial integration run is about 35 minutes, so a
+# template in use by another checkout is never dropped — cost if wrong: a process idle for over 6 hours while
+# another checkout builds a different schema sees its next clone fail as an unavailable backend (a rerun
+# rebuilds it), and templates from successive migration edits stay on the server for up to 6 hours.
+TEMPLATE_STALE_AFTER = 6 * 60 * 60
+TEMPLATE_TOUCH_EVERY = 10 * 60
+TEMPLATE_USED = "weave-template-used-at="
 
 
 class TemplateBuildError(Exception):
@@ -102,7 +113,13 @@ def control_url():
 
 
 def template_name() -> str:
-    """Name the migrated template after everything that shapes its schema, so a changed migration rebuilds it."""
+    """Name the migrated template after everything that shapes its schema, so any change to it builds a new one.
+
+    The hash covers the migration files, the schema version, the default operations policy the migrations record,
+    the module that defines ``migrate()`` and ``check_schema()``, and the installed Alembic version.
+    """
+    import alembic
+
     import firefly_weave.persistence.migrations as module
     from firefly_weave.contracts.operational_policy import OperationsPolicy
 
@@ -111,13 +128,46 @@ def template_name() -> str:
     digest = hashlib.sha256(module.SCHEMA_VERSION.encode())
     for path in sorted(source.rglob("*.py")):
         digest.update(path.relative_to(source).as_posix().encode() + b"\0" + path.read_bytes() + b"\0")
-    digest.update(OperationsPolicy().model_dump_json().encode())
+    digest.update(OperationsPolicy().model_dump_json().encode() + b"\0")
+    digest.update(Path(module.__file__).read_bytes() + b"\0")
+    digest.update(alembic.__version__.encode())
     return "weave_b1_template_" + digest.hexdigest()[:16]
+
+
+async def mark_template_used(connection, name: str) -> None:
+    """Record, in the template's comment, the server time a process last used it."""
+    now = int(await connection.scalar(text("SELECT floor(extract(epoch FROM now()))")))
+    await connection.execute(text(f"COMMENT ON DATABASE \"{name}\" IS '{TEMPLATE_USED}{now}'"))
+    _TOUCHED[:] = [time.monotonic()]
+
+
+async def drop_stale_templates(connection, keep: str) -> None:
+    """Drop other templates nobody is connected to and nobody has used recently; see TEMPLATE_STALE_AFTER."""
+    stale = await connection.scalars(
+        text(
+            "SELECT d.datname FROM pg_database d WHERE d.datname LIKE 'weave\\_b1\\_template\\_%' AND d.datname<>:keep"
+            " AND NOT EXISTS (SELECT 1 FROM pg_stat_activity a WHERE a.datname=d.datname)"
+            " AND coalesce(substring(shobj_description(d.oid,'pg_database') FROM :pattern)::bigint, 0)"
+            " < extract(epoch FROM now()) - :age"
+        ),
+        {"keep": keep, "pattern": f"^{TEMPLATE_USED}([0-9]+)$", "age": TEMPLATE_STALE_AFTER},
+    )
+    for old in stale.all():
+        await connection.execute(text(f'ALTER DATABASE "{old}" IS_TEMPLATE false'))
+        await connection.execute(text(f'DROP DATABASE IF EXISTS "{old}" WITH (FORCE)'))
+
+
+@pytest.fixture
+def template_sweep():
+    """The stale-template sweep a template build runs, with the comment prefix that records a template's last use."""
+    return drop_stale_templates, TEMPLATE_USED, TEMPLATE_STALE_AFTER
 
 
 async def migrated_template(connection, url) -> str:
     """Find or build the migrated template once; the advisory lock makes parallel workers build it only once."""
     if _TEMPLATE:
+        if time.monotonic() - _TOUCHED[0] > TEMPLATE_TOUCH_EVERY:
+            await mark_template_used(connection, _TEMPLATE[0])
         return _TEMPLATE[0]
     from firefly_weave.persistence.migrations import migrate
     from firefly_weave.settings import Settings
@@ -131,15 +181,7 @@ async def migrated_template(connection, url) -> str:
         if not ready:
             # A template is marked only after a complete migration; anything else is a failed build.
             await connection.execute(text(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)'))
-            stale = await connection.scalars(
-                text(
-                    "SELECT datname FROM pg_database WHERE datname LIKE 'weave\\_b1\\_template\\_%' AND datname<>:name"
-                ),
-                {"name": name},
-            )
-            for old in stale.all():
-                await connection.execute(text(f'ALTER DATABASE "{old}" IS_TEMPLATE false'))
-                await connection.execute(text(f'DROP DATABASE IF EXISTS "{old}" WITH (FORCE)'))
+            await drop_stale_templates(connection, name)
             await connection.execute(text(f'CREATE DATABASE "{name}"'))
             settings = Settings(
                 scheduler_enabled=False, database_url=url.set(database=name).render_as_string(hide_password=False)
@@ -150,6 +192,7 @@ async def migrated_template(connection, url) -> str:
                 raise TemplateBuildError("Migrating the template database failed") from error
             # Clones need a template nobody is connected to.
             await connection.execute(text(f'ALTER DATABASE "{name}" IS_TEMPLATE true ALLOW_CONNECTIONS false'))
+        await mark_template_used(connection, name)
     finally:
         await connection.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": TEMPLATE_LOCK})
     _TEMPLATE.append(name)
