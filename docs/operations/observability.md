@@ -233,6 +233,43 @@ payloads to spans to diagnose a credentialed connection. Generic PyFly request
 logging, global tracing filters, and generic server metrics stay disabled in
 Weave's packaged configuration so they cannot bypass the attribute policy.
 
+## Operational reads at scale
+
+Studio's Overview, Runs, Incidents and Workers pages read the platform summary
+and the operational lists, not run payloads. The server targets these p95
+latencies for a single read, measured on PostgreSQL:
+
+| Operation | Page | Target |
+| --- | --- | --- |
+| `run_summaries.list`, with any single filter | 50 runs | 120 ms |
+| `runs.steps`, without outputs | 200 steps | 120 ms |
+| `operations_summary.read` | one environment | 200 ms |
+| `workers.list` | 100 workers | 100 ms |
+| `incidents.list` | 50 incidents | 100 ms |
+
+`tests/benchmarks/test_operations_reads.py` checks them against one environment
+holding 1,000,000 runs, 50,000 incidents, 500 workers, 10,000 ready tasks and
+1,000 stored deployment observations of about 250 KB. That is far more than a
+project retains under the default operation policy, which the benchmark raises
+for its own database only. On an Apple silicon development machine with
+PostgreSQL 17 in a 4-CPU, 8 GiB virtual machine and default PostgreSQL memory
+settings, the p95 of each read was below 60 ms (the summary was the slowest, at
+about 52 ms). These are measurements of that environment, not a guarantee for
+yours: rehearse with your own data and hardware before relying on them.
+
+`tests/integration/test_operations_query_plans.py` checks the plans behind
+these reads on 200,000 runs: every chronological page walks a scoped index
+without sorting the environment, and no listing statement reads run payloads,
+events or step outputs. Studio's real-platform suite checks that Overview shows
+live figures within one second of opening it and that every scheduled refresh of
+Overview, Runs, Workers and Incidents transfers less than 50,000 bytes.
+
+Background loop health in the summary counts a loop as `degraded` after 3
+failed cycles in a row or 3 among its last 20 (see the
+[API reference](../reference/api.md)). A failure that returns less often than
+that, for example once every 10 cycles, leaves the loop `ok`; its
+`recent_failures` still shows it.
+
 ## Next steps
 
 - Look up the other server settings in [configuration](configuration.md).

@@ -625,6 +625,12 @@ with `WV-UNAVAILABLE`.
   with `WV-FILTER`; the message names the rule that failed.
 - Send times as RFC 3339 with an offset. Use `Z`, or encode `+` as `%2B` in the
   query string.
+- A run summary's `handled_errors` counts the failed steps whose error a step
+  setting handled so the run went on, and `has_handled_errors` filters on it; a
+  step fact's `handled` says how (`continue` or `errorOutput`). Workflows cannot
+  handle step errors yet, so this server leaves `handled_errors` out (zero) and
+  never sets `handled`; the fields are reserved so clients need no change when
+  they can.
 
 Step timelines do not read payloads unless `include=output` is requested. Only
 the displayed outputs are fetched, after checking the bounded run artifact and

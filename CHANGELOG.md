@@ -192,6 +192,10 @@ SPDX-License-Identifier: Apache-2.0
   the CLI command that admits a release and never admits one itself. On a narrow
   screen both pages fold their filters behind **Filters (n)**, and every filter
   checkbox is a 36 px target with a mouse and 44 px on touch.
+  A retirement whose answer arrives after its dialog closed, or after the
+  workspace or person changed, says what happened in a notice; a bulk action
+  stops sending when the person changes, and the host prefix is cleared for the
+  next person.
 
 - Run state, history, tasks, deadlines, and incidents name each run of a step by
   its instance key, which equals the step ID outside loops, so existing workflows
