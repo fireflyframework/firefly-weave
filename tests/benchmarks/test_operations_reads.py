@@ -402,7 +402,7 @@ async def test_upgrade_duration_storage_and_exact_accounting(count):
             await connection.commit()
             started = time.perf_counter()
             async with connection.begin():
-                await upgrade(connection, "0031_operations_facts")
+                await upgrade(connection, "0032_operations_facts")
             elapsed = time.perf_counter() - started
             async with connection.begin():
                 await connection.execute(text("ANALYZE"))

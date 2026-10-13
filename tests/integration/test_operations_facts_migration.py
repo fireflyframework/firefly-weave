@@ -67,7 +67,7 @@ async def test_forward_backfill_preserves_source_columns_and_counts_usage(empty_
                     )
                 )
             ).all()
-            await upgrade(connection, "0031_operations_facts")
+            await upgrade(connection, "0032_operations_facts")
             after = (
                 await connection.execute(
                     text(
@@ -82,8 +82,8 @@ async def test_forward_backfill_preserves_source_columns_and_counts_usage(empty_
                 assert (
                     await connection.execute(text(f"SELECT to_jsonb(r)::text FROM {table} r ORDER BY id"))
                 ).scalars().all() == snapshots[table]
-            assert await connection.scalar(text("SELECT version FROM weave_schema_version")) == "0031_operations_facts"
-            assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == "0031_operations_facts"
+            assert await connection.scalar(text("SELECT version FROM weave_schema_version")) == "0032_operations_facts"
+            assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == "0032_operations_facts"
             assert await connection.scalar(text("SELECT count(*) FROM run_facts")) == 20
             await assert_usage(connection, ids)
     finally:
@@ -97,7 +97,7 @@ async def retained(empty_settings):
         async with engine.begin() as connection:
             await upgrade(connection, "0030_worker_presence")
             ids = await seed_prior_head(connection, count=20)
-            await upgrade(connection, "0031_operations_facts")
+            await upgrade(connection, "0032_operations_facts")
         yield engine, ids
     finally:
         await engine.dispose()
@@ -129,7 +129,7 @@ async def test_legacy_inventory_crosses_ten_thousand_boundary_without_relaxing_a
                     )
             assert caught.value.orig.sqlstate == "WQ001"
             before = await connection.scalar(text("SELECT value FROM operation_usage WHERE metric='control_reserved'"))
-            await upgrade(connection, "0031_operations_facts")
+            await upgrade(connection, "0032_operations_facts")
             assert await connection.scalar(text("SELECT count(*) FROM run_facts")) == 10001
             assert await connection.scalar(text("SELECT count(*) FROM run_facts WHERE run_id=:last_run"), ids) == 1
             assert (
@@ -195,7 +195,7 @@ async def test_migration_restores_all_scope_settings(empty_settings):
                     text("SELECT set_config(:name,:value,true)"),
                     {"name": "weave." + name + "_id", "value": str(ids[name])},
                 )
-            await upgrade(connection, "0031_operations_facts")
+            await upgrade(connection, "0032_operations_facts")
             for name in ("tenant", "project", "environment"):
                 assert await connection.scalar(
                     text("SELECT current_setting(:name)"), {"name": "weave." + name + "_id"}
@@ -483,7 +483,7 @@ async def test_ingress_origin_uses_start_receipts_and_preserves_precedence(empty
             ids = await seed_prior_head(connection, count=20)
             await seed_ingress_receipts(connection, ids)
             await assert_usage(connection, ids)
-            await upgrade(connection, "0031_operations_facts")
+            await upgrade(connection, "0032_operations_facts")
             origins = dict((await connection.execute(text("SELECT run_id,origin FROM run_facts"))).all())
             for index, origin in (
                 (9, "webhook"),
@@ -513,7 +513,7 @@ async def test_new_history_contract_requires_reconciled_backfill(empty_settings,
             await upgrade(connection, "0030_worker_presence")
             await connection.execute(text(change))
             with pytest.raises(RuntimeError, match="Reconcile call and handled-failure history"):
-                await upgrade(connection, "0031_operations_facts")
+                await upgrade(connection, "0032_operations_facts")
             assert await connection.scalar(text("SELECT to_regclass('run_facts')")) is None
             assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == "0030_worker_presence"
     finally:
@@ -546,7 +546,7 @@ async def test_control_function_patch_aborts_on_unknown_or_duplicate_anchor(
             await connection.exec_driver_sql(changed)
         with pytest.raises(RuntimeError, match="Unexpected definition"):
             async with engine.begin() as connection:
-                await upgrade(connection, "0031_operations_facts")
+                await upgrade(connection, "0032_operations_facts")
         async with engine.connect() as connection:
             assert await connection.scalar(text("SELECT to_regclass('run_facts')")) is None
             assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == "0030_worker_presence"
@@ -605,7 +605,7 @@ async def test_backfill_node_map_rejects_non_author_keys(key):
     import runpy
     from types import SimpleNamespace
 
-    migration = runpy.run_path("migrations/versions/0031_operations_facts.py")
+    migration = runpy.run_path("migrations/versions/0032_operations_facts.py")
     artifact = SimpleNamespace(executable={"graph": {"nodes": [{"id": key, "kind": "action"}]}})
     with pytest.raises(ValueError):
         migration["node_kinds"](artifact)
@@ -631,7 +631,7 @@ async def test_missing_and_mismatched_incident_history_stays_estimated(empty_set
                 ),
                 {**ids, "id": identifier(103)},
             )
-            await upgrade(connection, "0031_operations_facts")
+            await upgrade(connection, "0032_operations_facts")
             first = (
                 (await connection.execute(text("SELECT * FROM incident_facts WHERE incident_id=:incident"), ids))
                 .mappings()
@@ -674,7 +674,7 @@ async def test_malformed_event_in_otherwise_valid_history_is_unavailable(empty_s
                 ),
                 {**ids, "event": identifier(300001), "at": AT + timedelta(seconds=1)},
             )
-            await upgrade(connection, "0031_operations_facts")
+            await upgrade(connection, "0032_operations_facts")
             assert (
                 await connection.scalar(text("SELECT classification_state FROM run_facts WHERE run_id=:first_run"), ids)
                 == "unavailable"
@@ -709,7 +709,7 @@ async def test_oversized_source_and_event_are_not_admitted_by_backfill(empty_set
                     fetched.append(parameters[-1])
 
             event.listen(engine.sync_engine, "before_cursor_execute", observe)
-            await upgrade(connection, "0031_operations_facts")
+            await upgrade(connection, "0032_operations_facts")
             event.remove(engine.sync_engine, "before_cursor_execute", observe)
             assert identifier(1018) not in fetched and identifier(1019) in fetched
             rows = (
@@ -737,7 +737,7 @@ async def test_migration_requires_catalog_only_execute_authority(empty_settings)
             await connection.execute(text(f"GRANT SELECT,UPDATE ON weave_schema_version,alembic_version TO {role}"))
             await connection.execute(text(f"SET LOCAL ROLE {role}"))
             with pytest.raises(RuntimeError, match="explicit EXECUTE"):
-                await upgrade(connection, "0031_operations_facts")
+                await upgrade(connection, "0032_operations_facts")
             assert not await connection.scalar(text("SELECT pg_has_role(current_user,'weave_catalog_reader','MEMBER')"))
             assert await connection.scalar(text("SELECT to_regclass('run_facts')")) is None
     finally:
@@ -805,7 +805,7 @@ async def test_legacy_worker_registration_and_step_task_times_remain_unknown(emp
             await upgrade(connection, "0030_worker_presence")
             ids = await seed_prior_head(connection, count=20)
             await seed_worker_source(connection, ids)
-            await upgrade(connection, "0031_operations_facts")
+            await upgrade(connection, "0032_operations_facts")
             row = (
                 await connection.execute(text("SELECT worker_id,registered_at,identity,drained_at FROM worker_facts"))
             ).one()
@@ -870,7 +870,7 @@ async def test_failed_upgrade_restores_scope_and_keeps_prior_schema(empty_settin
                 )
             await connection.execute(text("ALTER TABLE runs ADD COLUMN fixture_schema_drift text"))
             with pytest.raises(DBAPIError) as caught:
-                await upgrade(connection, "0031_operations_facts")
+                await upgrade(connection, "0032_operations_facts")
             assert caught.value.orig.sqlstate == "WQ003"
             assert await connection.scalar(text("SELECT to_regclass('run_facts')")) is None
             assert await connection.scalar(text("SELECT version_num FROM alembic_version")) == "0030_worker_presence"
@@ -895,7 +895,7 @@ async def test_malformed_legacy_status_has_no_invented_lifecycle(empty_settings,
             ids = await seed_prior_head(connection, count=20)
             await connection.execute(text(f"UPDATE runs SET state={mutation} WHERE id=:first_run"), ids)
             before = await connection.scalar(text("SELECT state FROM runs WHERE id=:first_run"), ids)
-            await upgrade(connection, "0031_operations_facts")
+            await upgrade(connection, "0032_operations_facts")
             row = (
                 await connection.execute(
                     text(
@@ -1006,7 +1006,7 @@ async def test_latest_event_lifecycle_must_match_retained_source(
                 ).status
                 == source_status
             )
-            await upgrade(connection, "0031_operations_facts")
+            await upgrade(connection, "0032_operations_facts")
             fact = (
                 (await connection.execute(text("SELECT * FROM run_facts WHERE run_id=:run"), {"run": run}))
                 .mappings()

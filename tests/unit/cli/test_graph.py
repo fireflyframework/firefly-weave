@@ -237,3 +237,37 @@ def test_svg_uses_the_light_diagram_palette_on_an_opaque_paper_ground():
         assert (box.get("fill"), box.get("stroke")) == (expected.get(kind, "#FFFFFF"), "#62645B"), kind
         assert (disc.get("fill"), numeral.get("fill")) == ("#272820", "#FFFFFF")
     assert not {color for color in LEGACY_GRAPH_COLORS if color.lower() in svg.lower()}
+
+
+def test_graph_draws_a_compiled_loop_without_running_it(tmp_path):
+    from firefly_weave.compiler.catalog import CatalogSnapshot
+
+    document = {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {"name": "label-items", "version": "1.0.0"},
+        "spec": {
+            "inputSchema": {"type": "array"},
+            "outputSchema": {},
+            "steps": [
+                {
+                    "id": "label",
+                    "kind": "forEach",
+                    "items": {"ref": "/input"},
+                    "body": {"steps": [], "output": {"ref": "/item"}},
+                }
+            ],
+            "output": {"ref": "/steps/label/output"},
+        },
+    }
+    result = compile_source(document, format="object", catalog=CatalogSnapshot.empty())
+    assert result.ok and result.artifact is not None
+    path = tmp_path / "compiled.json"
+    path.write_bytes(result.artifact.to_bytes())
+    for format in ("text", "mermaid", "svg"):
+        drawn = CliRunner().invoke(cli, ["workflow", "graph", str(path), "--format", format, "--output", "json"])
+        assert drawn.exit_code == 0, drawn.output
+        content = json.loads(drawn.output)["content"]
+        assert "Loop over items" in content
+    text = CliRunner().invoke(cli, ["workflow", "graph", str(path)]).output
+    assert "[label] Loop over items\n  +-- each: body --> [@branch:label:0]" in text

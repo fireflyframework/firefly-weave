@@ -20,6 +20,7 @@ import functools
 import gzip
 import importlib.util
 import json
+import os
 from pathlib import Path
 from urllib.parse import parse_qs
 from uuid import UUID, uuid4
@@ -672,13 +673,31 @@ def test_cli_json_prints_one_object_with_the_password_once(demo_workspace, monke
         "password",
         "principal_id",
         "provider_id",
+        "recorded",
         "subject",
         "username",
         "warning",
     }
+    assert value["recorded"] is True
     assert result.output.count(value["password"]) == 1
     assert value["grants"][0] == {"role": "developer", "scope": {"tenant_id": TENANT, "project_id": PROJECT}}
     assert UUID(value["principal_id"]) and value["next"][0] == "weave auth setup " + API
+
+
+def test_cli_text_shows_the_password_and_where_to_assign_roles_when_the_record_is_busy(demo_workspace, monkeypatch):
+    import fcntl
+
+    directory, _, _ = demo_workspace
+    monkeypatch.setattr(platform, "_PEOPLE_LOCK_SECONDS", 0.1)
+    holder = os.open(directory / ".people.lock", os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(holder, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        result = _invoke(directory, monkeypatch, "--username", "grace")
+    finally:
+        os.close(holder)
+    assert result.exit_code == 0, result.output
+    assert "Password: " in result.output
+    assert "Settings › People and access" in result.output
 
 
 def test_cli_text_shows_password_once_with_warning_and_next_commands(demo_workspace, monkeypatch):
@@ -710,3 +729,232 @@ def test_cli_help_documents_development_only_default_roles():
     assert "development only" in text.lower()
     for role in ("developer", "deployer", "operator", "viewer", "task_participant"):
         assert role in text
+
+
+def test_local_owner_roles_cover_every_setup_screen_and_stay_person_roles():
+    assert set(platform.LOCAL_OWNER_ROLES) <= set(platform.PERSON_ROLES)
+    assert set(platform.DEFAULT_PERSON_ROLES) < set(platform.LOCAL_OWNER_ROLES)
+    for role in ("tenant_admin", "lumi_manager", "execution_manager", "worker_operator", "deployment_operator"):
+        assert role in platform.LOCAL_OWNER_ROLES
+    assert not set(platform.LOCAL_OWNER_ROLES) & {"platform_admin", "worker", "deployment_runner"}
+
+
+def test_user_records_the_account_for_later_grants(demo_workspace):
+    directory, _, _ = demo_workspace
+    value = platform.user(directory, "ada.lovelace", transport=httpx.MockTransport(Identity()))
+    path = directory / "people.json"
+    assert path.stat().st_mode & 0o777 == 0o600
+    record = json.loads(path.read_text())
+    assert record == {
+        "format": "weave/local-people-v1",
+        "people": {"ada.lovelace": {"principal_id": PRINCIPAL, "subject": SUBJECT}},
+    }
+    assert value["password"] not in path.read_text()
+
+
+@pytest.mark.parametrize("damage", ["mode", "json", "shape"])
+def test_user_refuses_an_unreadable_people_record_before_creating_anything(demo_workspace, damage):
+    directory, _, _ = demo_workspace
+    path = directory / "people.json"
+    if damage == "mode":
+        path.write_text(json.dumps({"format": "weave/local-people-v1", "people": {}}))
+        path.chmod(0o644)
+    else:
+        path.write_text("{not json" if damage == "json" else json.dumps({"format": "other"}))
+        path.chmod(0o600)
+    identity = Identity()
+    with pytest.raises(platform.PlatformError, match="private record of local accounts is not readable"):
+        platform.user(directory, "ada.lovelace", transport=httpx.MockTransport(identity))
+    assert identity.requests == []
+
+
+def test_user_keeps_the_password_when_another_command_holds_the_record(demo_workspace, monkeypatch):
+    import fcntl
+
+    directory, _, _ = demo_workspace
+    monkeypatch.setattr(platform, "_PEOPLE_LOCK_SECONDS", 0.2)
+    holder = os.open(directory / ".people.lock", os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(holder, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        value = platform.user(directory, "ada.lovelace", transport=httpx.MockTransport(Identity()))
+    finally:
+        os.close(holder)
+    assert len(value["password"]) >= 32
+    assert value["recorded"] is False
+    assert "Settings › People and access" in value["hint"]
+    assert not (directory / "people.json").exists()
+
+
+def test_user_waits_for_a_record_another_command_is_writing(demo_workspace):
+    import fcntl
+    import threading
+
+    directory, _, _ = demo_workspace
+    holder = os.open(directory / ".people.lock", os.O_RDWR | os.O_CREAT, 0o600)
+    fcntl.flock(holder, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    release = threading.Timer(0.3, os.close, (holder,))
+    release.start()
+    try:
+        value = platform.user(directory, "ada.lovelace", transport=httpx.MockTransport(Identity()))
+    finally:
+        release.join()
+    assert value["recorded"] is True
+    assert "ada.lovelace" in json.loads((directory / "people.json").read_text())["people"]
+
+
+def _recorded(directory, username="ada.lovelace"):
+    platform._write(
+        directory / "people.json",
+        {"format": "weave/local-people-v1", "people": {username: {"principal_id": PRINCIPAL, "subject": SUBJECT}}},
+    )
+
+
+def test_grant_adds_roles_to_a_recorded_account_after_proving_its_sign_in(demo_workspace):
+    directory, _, _ = demo_workspace
+    _recorded(directory)
+    identity = Identity()
+    identity.users["ada.lovelace"] = SUBJECT
+    value = platform.grant(
+        directory, "ada.lovelace", ("tenant_admin", "lumi_manager"), transport=httpx.MockTransport(identity)
+    )
+    assert identity.paths() == [
+        ("POST", "/realms/master/protocol/openid-connect/token"),
+        ("GET", "/admin/realms/weave/users"),
+        ("POST", f"/api/v1/admin/principals/{PRINCIPAL}/identity-links"),
+        *[("POST", f"/api/v1/tenants/{TENANT}/members")] * 2,
+    ]
+    link = json.loads(identity.requests[2].content)
+    assert link == {"provider_id": "local-keycloak", "issuer": KEYCLOAK + "/realms/weave", "subject": SUBJECT}
+    grants = [json.loads(request.content) for request in identity.requests[3:]]
+    assert [(g["role"], g["project_id"], g["environment_id"]) for g in grants] == [
+        ("tenant_admin", None, None),
+        ("lumi_manager", PROJECT, ENVIRONMENT),
+    ]
+    assert value == {
+        "ok": True,
+        "username": "ada.lovelace",
+        "principal_id": PRINCIPAL,
+        "grants": [
+            {"role": "tenant_admin", "scope": {"tenant_id": TENANT}},
+            {
+                "role": "lumi_manager",
+                "scope": {"tenant_id": TENANT, "project_id": PROJECT, "environment_id": ENVIRONMENT},
+            },
+        ],
+        "development_only": True,
+    }
+
+
+def test_grant_refuses_an_unrecorded_account_before_any_request(demo_workspace):
+    directory, _, _ = demo_workspace
+
+    def refuse(request):
+        raise AssertionError("no request may be sent")
+
+    with pytest.raises(platform.PlatformError, match="no record of grace"):
+        platform.grant(directory, "grace", ("viewer",), transport=httpx.MockTransport(refuse))
+
+
+def test_grant_refuses_a_replaced_sign_in_account(demo_workspace):
+    directory, _, _ = demo_workspace
+    _recorded(directory)
+    identity = Identity()
+    identity.users["ada.lovelace"] = "66666666-6666-4666-8666-666666666666"
+    with pytest.raises(platform.PlatformError, match="not the one this platform recorded"):
+        platform.grant(directory, "ada.lovelace", ("viewer",), transport=httpx.MockTransport(identity))
+    assert ("POST", f"/api/v1/tenants/{TENANT}/members") not in identity.paths()
+
+
+def test_grant_refuses_when_the_sign_in_belongs_to_another_principal(demo_workspace):
+    directory, _, _ = demo_workspace
+    _recorded(directory)
+    identity = Identity(link_status=409)
+    identity.users["ada.lovelace"] = SUBJECT
+    with pytest.raises(platform.PlatformError, match="refused the role grant"):
+        platform.grant(directory, "ada.lovelace", ("viewer",), transport=httpx.MockTransport(identity))
+    assert ("POST", f"/api/v1/tenants/{TENANT}/members") not in identity.paths()
+
+
+@pytest.mark.parametrize(
+    ("roles", "message"),
+    [((), "at least one role"), (("platform_admin",), "Choose each role"), (("viewer", "viewer"), "Choose each role")],
+)
+def test_grant_checks_roles_before_any_request(demo_workspace, roles, message):
+    directory, _, _ = demo_workspace
+    _recorded(directory)
+    with pytest.raises(platform.PlatformError, match=message):
+        platform.grant(
+            directory, "ada.lovelace", roles, transport=httpx.MockTransport(lambda request: pytest.fail("sent"))
+        )
+
+
+def test_cli_user_grant_prints_the_grants(demo_workspace, monkeypatch):
+    directory, _, _ = demo_workspace
+    _recorded(directory)
+    identity = Identity()
+    identity.users["ada.lovelace"] = SUBJECT
+    monkeypatch.setattr(platform, "grant", functools.partial(platform.grant, transport=httpx.MockTransport(identity)))
+    result = CliRunner().invoke(
+        cli,
+        [
+            "platform",
+            "--directory",
+            str(directory),
+            "user",
+            "grant",
+            "--username",
+            "ada.lovelace",
+            "--role",
+            "tenant_admin",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "Granted to ada.lovelace: tenant_admin (demo tenant)" in result.output
+
+
+def test_cli_user_options_belong_after_the_grant_subcommand(demo_workspace):
+    directory, _, _ = demo_workspace
+    result = CliRunner().invoke(
+        cli,
+        [
+            "platform",
+            "--directory",
+            str(directory),
+            "user",
+            "--username",
+            "ada",
+            "grant",
+            "--username",
+            "ada",
+            "--role",
+            "viewer",
+        ],
+    )
+    assert result.exit_code == 2
+    assert "after the subcommand" in result.output
+
+
+def test_cli_user_without_a_username_or_subcommand_is_a_usage_error(demo_workspace):
+    directory, _, _ = demo_workspace
+    result = CliRunner().invoke(cli, ["platform", "--directory", str(directory), "user"])
+    assert result.exit_code == 2
+    assert "--username" in result.output
+
+
+def test_cli_text_says_when_the_initial_account_receipt_was_not_completed(capsys):
+    from firefly_weave.cli import platform as cli_platform
+
+    cli_platform._show_person(
+        {
+            "username": "owner",
+            "password": "shown-once",
+            "warning": "Development only.",
+            "grants": [],
+            "next": ["weave auth setup http://localhost:1", "weave studio"],
+            "receipt_saved": False,
+            "receipt_hint": platform._RECEIPT_NOT_SAVED,
+        }
+    )
+    output = capsys.readouterr().out
+    assert output.count("shown-once") == 1
+    assert platform._RECEIPT_NOT_SAVED in output

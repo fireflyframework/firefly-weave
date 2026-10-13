@@ -32,8 +32,8 @@ from firefly_weave.contracts.runtime import StartRunRequest
 from firefly_weave.runtime.admission import POLICY, admission
 from firefly_weave.runtime.models import RunState
 
-revision = "0031_operations_facts"
-down_revision = "0030_worker_presence"
+revision = "0032_operations_facts"
+down_revision = "0031_operations_key_collation"
 
 SCOPE_COLUMNS = "tenant_id uuid NOT NULL,project_id uuid NOT NULL,environment_id uuid NOT NULL"
 SCOPE_KEY = "tenant_id,project_id,environment_id"
@@ -620,7 +620,7 @@ def upgrade() -> None:
                     DO UPDATE SET value=operation_usage.value+excluded.value""")
                 secure(table, key)
             scoped_work(connection, refresh=True)
-            op.execute("UPDATE weave_schema_version SET version='0031_operations_facts'")
+            op.execute("UPDATE weave_schema_version SET version='0032_operations_facts'")
     finally:
         for name, value in previous.items():
             connection.execute(

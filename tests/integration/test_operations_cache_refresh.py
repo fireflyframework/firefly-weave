@@ -924,7 +924,7 @@ async def test_a_policy_change_never_upgrades_a_decision_the_upgrade_withheld(
     async with owner.begin() as connection:
         await upgrade(connection, "0030_worker_presence")
         identifiers = await seed_prior_head(connection, count=20)
-        await upgrade(connection, "0031_operations_facts")
+        await upgrade(connection, "0032_operations_facts")
         for role in ("weave_app", "weave_scheduler"):
             name, password = f"{role}_{uuid4().hex}", secrets.token_urlsafe(32)
             await connection.execute(text(f"CREATE ROLE {name} LOGIN PASSWORD '{password}' IN ROLE {role}"))

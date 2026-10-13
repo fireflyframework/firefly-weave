@@ -715,7 +715,7 @@ async def test_listing_cache_cannot_veto_admitted_completion(
                 params,
             )
             frozen = runpy.run_path(
-                str(Path(__file__).resolve().parents[2] / "migrations/versions/0031_operations_facts.py")
+                str(Path(__file__).resolve().parents[2] / "migrations/versions/0032_operations_facts.py")
             )
             await owner.run_sync(lambda session: frozen["backfill_scope"](session.connection(), params))
         else:

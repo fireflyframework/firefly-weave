@@ -35,7 +35,7 @@ from firefly_weave.compiler.api import CompileResult, compile_source, import_art
 from firefly_weave.compiler.catalog import CatalogLock, CatalogSnapshot, FrozenDocument
 from firefly_weave.compiler.decision_tables import DecisionFailure, evaluate_decision_table
 from firefly_weave.compiler.expressions import ExpressionFailure, measure_value
-from firefly_weave.compiler.ir import DecisionTableIR, UnsupportedIR
+from firefly_weave.compiler.ir import DecisionTableIR, UnsupportedIR, require_supported_ir
 from firefly_weave.compiler.parser import parse_source
 from firefly_weave.connections.registry import ConnectorRegistry
 from firefly_weave.contracts.access import Scope
@@ -331,6 +331,11 @@ class DefinitionService:
                 raise CatalogError(
                     422, "WV-COMPILE", "Definition compilation failed", result=json.loads(result.to_bytes())
                 )
+            # A version this platform could not read back or run is never stored.
+            try:
+                require_supported_ir(result.artifact.executable)
+            except UnsupportedIR as error:
+                raise ir_unsupported(error.missing) from None
             model = load_definition(parse_source(source, format=format).value)
             if model.kind != kind:
                 raise CatalogError(422, "WV-KIND", "Definition kind does not match collection")

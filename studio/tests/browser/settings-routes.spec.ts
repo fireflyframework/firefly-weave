@@ -16,7 +16,7 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 import { expect, test } from "@playwright/test";
-import { offline } from "./support";
+import { allCapabilities, connected, offline } from "./support";
 
 test("Settings tabs have their own addresses, and Preferences turns on the new editor", async ({
   page,
@@ -67,3 +67,68 @@ test("/settings opens Platforms, and the tabs follow the arrow keys", async ({
   await expect(page.getByRole("tab", { name: "Platforms" })).toBeFocused();
   await expect(page).toHaveURL(/\/settings\/platforms$/);
 });
+
+test("AI models has its own address once a platform is connected", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await connected(page, { capabilities: allCapabilities });
+  await page.goto("/settings/ai");
+  const tab = page.getByRole("tab", { name: "AI models" });
+  await expect(tab).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tabpanel", { name: "AI models" })).toContainText(
+    "Connect a model once. Workflows and Weave AI use the connections you set up here.",
+  );
+  await expect(
+    page.getByRole("button", { name: "Weave AI settings" }),
+  ).toHaveCount(0);
+  await page.getByRole("tab", { name: "Platforms" }).focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(page.getByRole("tab", { name: "AI models" })).toBeFocused();
+  await expect(page).toHaveURL(/\/settings\/ai$/);
+});
+
+test("AI models is not offered while working locally", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await offline(page);
+  await page.goto("/settings/ai");
+  await expect(page).toHaveURL(/\/settings\/ai$/);
+  await expect(page.getByRole("tab", { name: "AI models" })).toHaveCount(0);
+  await expect(page.getByRole("tab", { name: "Platforms" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+});
+
+for (const size of [
+  { width: 360, height: 740 },
+  { width: 600, height: 500 },
+])
+  test(`all four Settings tabs fit the strip at ${size.width}x${size.height}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize(size);
+    await connected(page, {
+      capabilities: [...allCapabilities, "grant.admin"],
+    });
+    await page.goto("/settings/ai");
+    const tabs = page.getByRole("tab");
+    await expect(tabs).toHaveCount(4);
+    const strip = await page.getByRole("tablist").boundingBox();
+    expect(
+      await page.evaluate(
+        () =>
+          document.documentElement.scrollWidth <= innerWidth &&
+          document.querySelector(".page-content")!.scrollWidth <=
+            document.querySelector(".page-content")!.clientWidth,
+      ),
+    ).toBe(true);
+    for (const tab of await tabs.all()) {
+      const box = (await tab.boundingBox())!;
+      expect(box.x).toBeGreaterThanOrEqual(strip!.x - 0.5);
+      expect(box.x + box.width).toBeLessThanOrEqual(
+        strip!.x + strip!.width + 0.5,
+      );
+      expect(box.height).toBeGreaterThanOrEqual(43.5);
+    }
+  });

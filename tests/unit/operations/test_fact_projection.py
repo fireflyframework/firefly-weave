@@ -76,7 +76,7 @@ def test_classification_matches_migration_with_raw_status_normalization(worker_r
 
     project = getattr(facts, "listing_metadata", None)
     assert callable(project), "Listing classification projection is missing"
-    frozen = runpy.run_path(str(Path(__file__).resolve().parents[3] / "migrations/versions/0031_operations_facts.py"))[
+    frozen = runpy.run_path(str(Path(__file__).resolve().parents[3] / "migrations/versions/0032_operations_facts.py"))[
         "classification"
     ]
     artifact = json.loads(worker_runtime_fixture["artifact"].to_bytes())

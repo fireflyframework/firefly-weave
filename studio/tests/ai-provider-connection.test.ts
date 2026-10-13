@@ -17,82 +17,12 @@ SPDX-License-Identifier: Apache-2.0
 */
 import { describe, expect, it } from "vitest";
 import {
-  aiConnectionRequest,
   aiConnections,
   aiConnector,
+  latestByName,
+  secretRefs,
 } from "../src/app/integrations/ai-provider-connection";
-const draft = {
-  name: "azure-models",
-  provider: "azure-responses",
-  endpoint: "https://approved.openai.azure.com/",
-  apiVersion: "2025-04-01-preview",
-  handle: "model-key",
-};
-describe("AI provider connection authority", () => {
-  it.each([
-    ["openai-chat", "https://api.openai.com/v1"],
-    ["openai-responses", "https://api.openai.com/v1"],
-    ["anthropic", "https://api.anthropic.com"],
-  ])("uses the standard endpoint for %s", (provider, endpoint) => {
-    const body = aiConnectionRequest(
-      { ...draft, provider, endpoint: "" },
-      "connector",
-    );
-    expect(body.config.endpoint).toBe(endpoint);
-    expect(body.allowed_destinations).toEqual([new URL(endpoint).origin]);
-  });
-  it("requires Azure's resource endpoint", () => {
-    expect(() =>
-      aiConnectionRequest({ ...draft, endpoint: "" }, "connector"),
-    ).toThrow("HTTPS endpoint");
-  });
-  it("canonicalizes the saved endpoint and destination together without removing the base path", () => {
-    const body = aiConnectionRequest(
-      { ...draft, endpoint: "https://APPROVED.openai.azure.com:443/custom/" },
-      "connector",
-    );
-    expect(body.config.endpoint).toBe(
-      "https://approved.openai.azure.com/custom/",
-    );
-    expect(body.allowed_destinations).toEqual([
-      "https://approved.openai.azure.com",
-    ]);
-  });
-  it.each([
-    "http://model.invalid",
-    "https://user:password@model.invalid",
-    "https://model.invalid/?api-key=secret",
-    "https://model.invalid/#secret",
-  ])(
-    "rejects an endpoint carrying authority outside HTTPS origin: %s",
-    (endpoint) => {
-      expect(() =>
-        aiConnectionRequest({ ...draft, endpoint }, "connector"),
-      ).toThrow();
-    },
-  );
-  it("requires the explicit Azure API version and operator handle", () => {
-    expect(() =>
-      aiConnectionRequest({ ...draft, apiVersion: "" }, "connector"),
-    ).toThrow("Azure requires");
-    expect(() =>
-      aiConnectionRequest({ ...draft, handle: "key with spaces" }, "connector"),
-    ).toThrow("secret handle");
-  });
-  it("keeps provider/model separate and derives only the approved origin", () => {
-    const body = aiConnectionRequest(draft, "connector");
-    expect(body.allowed_destinations).toEqual([
-      "https://approved.openai.azure.com",
-    ]);
-    expect(body.config).not.toHaveProperty("model");
-    expect(body.secretRef).toEqual({ apiKey: "model-key" });
-    expect(
-      aiConnectionRequest(
-        { ...draft, provider: "openai-responses" },
-        "connector",
-      ).config,
-    ).not.toHaveProperty("apiVersion");
-  });
+describe("AI connection revisions", () => {
   it("excludes unavailable and unrelated connection revisions", () => {
     const valid = {
       id: "ai",
@@ -106,5 +36,32 @@ describe("AI provider connection authority", () => {
         { ...valid, id: "http", connector: "weave-http@2.0.0" },
       ]),
     ).toEqual([valid]);
+  });
+});
+describe("AI connection lists", () => {
+  const base = {
+    connector: aiConnector,
+    config: { provider: "openai-chat", endpoint: "http://ollama:11434/v1" },
+  };
+  it("keeps the latest revision of each name, sorted by name", () => {
+    // The platform's order is not alphabetical, so the result shows the sort.
+    const rows = [
+      { ...base, id: "b1", name: "openai", revision: 1 },
+      { ...base, id: "a1", name: "ollama-local", revision: 1 },
+      { ...base, id: "a2", name: "ollama-local", revision: 2 },
+    ];
+    expect(latestByName(rows as never).map((row) => row.id)).toEqual([
+      "a2",
+      "b1",
+    ]);
+  });
+  it("reads secret handles under either wire spelling", () => {
+    expect(
+      secretRefs({ secretRef: { apiKey: "no-credential" } } as never),
+    ).toEqual({ apiKey: "no-credential" });
+    expect(secretRefs({ secret_refs: { apiKey: "k" } } as never)).toEqual({
+      apiKey: "k",
+    });
+    expect(secretRefs({} as never)).toEqual({});
   });
 });

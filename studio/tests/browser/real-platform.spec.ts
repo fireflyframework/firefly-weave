@@ -43,6 +43,8 @@ SPDX-License-Identifier: Apache-2.0
 //                           quick-integration test needs it.
 //   WEAVE_E2E_ACME_CONTROL  The fixture's loopback control URL; when set, the
 //                           test also reads the fixture's request journal.
+//   WEAVE_E2E_AI_MODEL      The model weave platform ai enable approved on this
+//                           platform (qwen3:4b). Test 13 needs it.
 //
 // Build the app first (`npm run build`): the host serves
 // studio/dist/studio/browser. Every test starts its own host with a fresh
@@ -722,5 +724,64 @@ test("12: Refresh finds a run started after Runs opened", async ({ page }) => {
   await shot(page, "12-refreshed");
   expect(s.errors).toEqual([]);
   await removePlatform(page, name, "12");
+  expectNoCredentialsLeft();
+});
+
+test("13: the AI models screen reaches ready on a local model", async ({
+  page,
+}) => {
+  test.setTimeout(480_000);
+  const model = process.env["WEAVE_E2E_AI_MODEL"]?.trim() ?? "";
+  test.skip(
+    !model,
+    "Set WEAVE_E2E_AI_MODEL after weave platform ai enable on this platform.",
+  );
+  const { person } = setup();
+  const s = await session(page);
+  const name = uniqueName("e2e-ai-models");
+  await pair(page, s.host!, "13-pairing");
+  await connectAndSignIn(page, name, person);
+  await openSidebar(page, "Settings");
+  await page.getByRole("tab", { name: "AI models" }).click();
+  await expect(page).toHaveURL(/\/settings\/ai$/);
+  const rows = page.locator(".readiness-row");
+  await expect(rows).toHaveCount(8, { timeout: 30_000 });
+  await shot(page, "13-ai-models");
+
+  // Test the local model from Studio; a cold model may take up to two minutes.
+  await page.getByRole("button", { name: "Test ollama-local" }).click();
+  const form = page.getByRole("dialog", { name: "ollama-local" });
+  await expect(form.getByLabel("Model", { exact: true })).toHaveValue(model, {
+    timeout: 30_000,
+  });
+  await form.getByRole("button", { name: "Test connection" }).click();
+  await expect(form.locator(".test-status")).toContainText(
+    `Connected. ${model} answered`,
+    { timeout: 170_000 },
+  );
+  await shot(page, "13-ai-connection-tested");
+  await form.getByRole("button", { name: "Close AI connection" }).click();
+
+  // With only `weave platform ai enable` run, every item but Weave AI is ready.
+  await page.getByRole("button", { name: "Recheck" }).click();
+  await expect(rows.nth(6)).toHaveAttribute("data-status", "done", {
+    timeout: 30_000,
+  });
+  const statuses = await rows.evaluateAll((items) =>
+    items.map((item) => [
+      item.querySelector(".readiness-label")?.textContent ?? "",
+      item.getAttribute("data-status") ?? "",
+    ]),
+  );
+  expect(
+    statuses
+      .filter(([label]) => label !== "Weave AI")
+      .every(([, status]) => status === "done" || status === "not_needed"),
+    JSON.stringify(statuses),
+  ).toBe(true);
+  await expect(rows.nth(7)).toHaveAttribute("data-status", "action");
+  await shot(page, "13-ai-models-ready");
+  expect(s.errors).toEqual([]);
+  await removePlatform(page, name);
   expectNoCredentialsLeft();
 });

@@ -42,7 +42,7 @@
 "language-contracts" = false
 "text-operators" = true
 "instance-keys" = true
-"loop-compiler" = false
+"loop-compiler" = true
 "loop-runtime" = false
 "loop-simulation" = false
 "workflow-call-compiler" = false
@@ -52,7 +52,7 @@
 "language-docs" = false
 "ai-gateway" = true
 "ai-setup" = false
-"ai-models-screen" = false
+"ai-models-screen" = true
 "ai-task" = false
 "weave-ai-ollama" = false
 "agents" = false

@@ -151,6 +151,11 @@ import { DesignerView } from "./designer/designer-view";
 // Integration and template UI loads lazily (@defer): only types are imported
 // from these modules besides the component classes listed in `imports`.
 import { IntegrationDialogs } from "./integrations/integration-dialogs";
+import {
+  AiConnectionSheet,
+  type AiSheetRequest,
+  type AiTestRecord,
+} from "./integrations/ai-connection-sheet";
 import { TemplateGallery } from "./templates/template-gallery";
 import { sheetWhen } from "./modal-sheet";
 import { ToastHost, ToastService, type ToastAction } from "./toast";
@@ -360,6 +365,7 @@ const sideEffects: Record<string, string> = {
     StepPicker,
     StartRunDialog,
     IntegrationDialogs,
+    AiConnectionSheet,
     TemplateGallery,
     ToastHost,
     DesignerView,
@@ -416,7 +422,6 @@ export class App implements CanvasHost {
       ? (this.operationsView()?.lumiAttachments ?? [])
       : [];
   }
-  lumiSettingsRequested = false;
   platformMenuOpen = false;
   platformBusy = "";
   // Fences platform checks and status reads against later platform changes.
@@ -1095,7 +1100,6 @@ export class App implements CanvasHost {
   } | null = null;
   /** The open "New API connection" dialog and its prefill. */
   connectionDialog: {
-    kind?: "ai";
     fromBuilder: HttpActionUse["connection"] | null;
     fromWorkflow?: boolean;
   } | null = null;
@@ -4778,10 +4782,35 @@ export class App implements CanvasHost {
     };
     this.cdr.markForCheck();
   }
-  /** Opens "Connect to an API", prefilled from the builder's hand-off for this slot. */
-  openAiConnectionDialog() {
-    this.connectionDialog = { kind: "ai", fromBuilder: null };
+  /** The AI connection side sheet, open over any view. */
+  aiSheet: AiSheetRequest | null = null;
+  /** Grows whenever an AI connection or its test changes; AI screens reload on it. */
+  aiSetupGeneration = 0;
+  /** Test results of this Studio session, by connection revision; never stored. */
+  readonly aiTests = new Map<string, AiTestRecord>();
+  /** Opens the AI connection side sheet. */
+  openAiConnectionDialog(request: AiSheetRequest = {}) {
+    this.aiSheet = request;
+    this.cdr.markForCheck();
   }
+  aiConnectionSaved() {
+    this.aiSetupGeneration++;
+    if (this.view === "connections") void this.refresh();
+  }
+  aiConnectionTested(record: AiTestRecord) {
+    this.aiTests.set(record.revision, record);
+    this.aiSetupGeneration++;
+  }
+  /** Settings › AI models, from Weave AI, Home or a connection. */
+  async openAiModels() {
+    this.lumiOpen = false;
+    await this.navigate("settings");
+    // "Keep editing" (or a step that can't be left yet) stays in the designer,
+    // at its own address.
+    if (this.view !== "settings") return;
+    await this.router.navigateByUrl("/settings/ai", { replaceUrl: true });
+  }
+  /** Opens "Connect to an API", prefilled from the builder's hand-off for this slot. */
   openConnectionDialog(slot = "") {
     const use = this.lastUse;
     this.connectionDialog = {
@@ -7041,6 +7070,9 @@ export class App implements CanvasHost {
   }
   /** Forgets everything read from the platform; the open workflow is kept. */
   private clearPlatformState() {
+    this.aiSheet = null;
+    this.aiTests.clear();
+    this.aiSetupGeneration++;
     this.stepDataGeneration++;
     this.importGeneration++;
     this.listSequence++;

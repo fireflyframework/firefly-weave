@@ -257,7 +257,8 @@ slot without changing the model, select that slot directly in the inspector.
    not contact the model or verify credentials.
 2. **Connection:** choose the **AI connection slot**, or select **Add AI connection
    slot** to include a new slot when you apply. An authorized administrator can
-   also open **New AI connection** to create an environment connection using an
+   also select **New AI connection**, which opens the AI connection side sheet
+   over the editor, to create an environment connection using an
    operator-provisioned secret handle. Activation binds the slot to that
    environment connection; this wizard does not activate the workflow.
 3. **Review:** check the profile, provider, model, slot, and list of affected AI
@@ -275,7 +276,8 @@ read. See [Share context between AI steps](shared-ai-context.md) for a complete
 example and the limits across branches, waits, and retries.
 
 Provider credentials belong to an authorized connection, not the prompt or
-profile. Workflow AI profiles are separate from Studio's Weave AI settings.
+profile. Workflow AI profiles are separate from Weave AI's settings in
+**Settings › AI models**.
 The [AI worker guide](ai-workers.md) covers deployment, supported providers,
 credential binding and execution limits. A configured inspector alone does not
 install the action or start a worker.

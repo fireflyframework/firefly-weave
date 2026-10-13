@@ -18,6 +18,8 @@
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from firefly_weave.contracts.language_features import MAX_LOOP_DEPTH, MAX_LOOP_ITEMS, MAX_RUN_ITERATIONS
+
 
 class Limits(BaseModel):
     """Operator budgets; these are never accepted inside definition documents."""
@@ -30,3 +32,7 @@ class Limits(BaseModel):
     max_document_nodes: int = Field(default=100_000, gt=0)
     max_payload_bytes: int = Field(default=1_048_576, gt=0)
     max_diagnostics: int = Field(default=100, gt=0)
+    # Loop budgets: elements per loop, loops nested in one another, and loop iterations one run may need.
+    max_loop_items: int = Field(default=MAX_LOOP_ITEMS, gt=0)
+    max_loop_depth: int = Field(default=MAX_LOOP_DEPTH, gt=0)
+    max_run_iterations: int = Field(default=MAX_RUN_ITERATIONS, gt=0)

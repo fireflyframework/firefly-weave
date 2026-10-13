@@ -359,6 +359,7 @@ SPDX-License-Identifier: Apache-2.0
                 [principal]="identity?.principal_id ?? ''"
                 [loading]="loading"
                 [signInToRead]="signInToRead"
+                [canConnectModel]="can('connection.manage')"
                 [workspaceName]="
                   profile
                     ? profile.name +
@@ -368,6 +369,7 @@ SPDX-License-Identifier: Apache-2.0
                 (createWorkflow)="newWorkflow()"
                 (importWorkflow)="importWorkflow($event)"
                 (connect)="openWizard('server')"
+                (connectModel)="openAiModels()"
                 (navigate)="navigate($event)"
                 (openLocal)="openLocalDraft($event)"
                 (continueEditing)="continueEditing()"
@@ -633,6 +635,18 @@ SPDX-License-Identifier: Apache-2.0
       }
       @defer (when lumiOpen) {
         <weave-lumi-panel [host]="this" />
+      }
+      @if (aiSheet && profile) {
+        @defer (on immediate) {
+          <weave-ai-connection-sheet
+            [api]="api"
+            [canManage]="can('connection.manage')"
+            [request]="aiSheet"
+            (connectionSaved)="aiConnectionSaved()"
+            (tested)="aiConnectionTested($event)"
+            (closed)="aiSheet = null"
+          />
+        }
       }
       <weave-dialog-host />
     </div>

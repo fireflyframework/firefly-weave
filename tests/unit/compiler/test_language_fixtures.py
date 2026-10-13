@@ -24,6 +24,7 @@ from pathlib import Path
 import pytest
 import rfc8785
 
+from firefly_weave.compiler.scope import scope_at
 from firefly_weave.contracts.instance_keys import (
     INSTANCE_KEY_PATTERN,
     InstanceKey,
@@ -47,6 +48,7 @@ def test_committed_fixtures_are_what_the_generator_writes_today():
     assert sorted(rendered) == [
         "instance-keys.json",
         "manifest.json",
+        "scope.json",
         "template-segments.json",
         "text-conversion.json",
     ]
@@ -83,6 +85,11 @@ def test_text_conversion_cases_follow_ecmascript_number_formatting(case):
     if isinstance(value, bool):
         expected = "true" if value else "false"
     assert case["text"] == expected
+
+
+@pytest.mark.parametrize("case", fixture("scope.json")["cases"], ids=lambda case: case["name"])
+def test_scope_cases_are_what_scope_at_returns(case):
+    assert scope_at(case["document"], case["path"]).model_dump(mode="json", by_alias=True) == case["result"]
 
 
 def test_manifest_snapshot_is_the_served_manifest():

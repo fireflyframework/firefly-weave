@@ -45,7 +45,7 @@ the desktop app never migrates a platform.
 | alpha13 | `0030_worker_presence` | No new schema migration. Workers retry explicit capacity rejections while they read task context or credentials, and an Agentic preparation timeout before provider execution counts as not started. Upgrade the Agentic and Files workers to 0.1.5 together with the server. |
 | alpha14 | `0030_worker_presence` | No new schema migration. Adds the detached Docker development platform (`weave platform up`); existing foreground installations keep working and are never converted. The Agentic and Files workers 0.1.6 pin this server version. |
 | alpha15 | `0030_worker_presence` | No new schema migration and no role change. Upgrade CLIs and SDKs together with the server, review native executor `capacity` and the legacy private-network settings before restarting, and finish runs that use text templates before any rollback to alpha14; see [what changes in alpha15](#what-changes-in-alpha15). The Agentic and Files workers 0.1.7 pin this server version. |
-| Unreleased | `0031_operations_facts` | Adds [scoped operational fact storage](#operational-fact-storage), a bounded historical backfill, and reserved capacity for terminal fact updates. Upgrade CLIs and SDKs together with the server, and upgrade the server before its deployment runners; see [incident list compatibility](#incident-list-compatibility), [worker identity compatibility](#worker-identity-compatibility) and [worker fleet compatibility](#worker-fleet-compatibility). |
+| Unreleased | `0032_operations_facts` | Two new migrations. `0031_operations_key_collation` only replaces two internal accounting functions: no table, data, or role changes. `0032_operations_facts` adds [scoped operational fact storage](#operational-fact-storage), a bounded historical backfill, and reserved capacity for terminal fact updates. Explicitly migrate the server before restarting it. Upgrade CLIs and SDKs together with the server, and upgrade the server before its deployment runners; see [incident list compatibility](#incident-list-compatibility), [worker identity compatibility](#worker-identity-compatibility) and [worker fleet compatibility](#worker-fleet-compatibility). `weave platform up --username` grants the local owner roles (developer, deployer, operator, viewer, task_participant, tenant_admin, lumi_manager, execution_manager, worker_operator, deployment_reader, deployment_planner, deployment_approver, deployment_operator); existing accounts keep their roles until `weave platform user grant` adds more. `weave platform user` is now a command group; `weave platform user --username` works as before. |
 
 ![Schema, compatibility and execution acceptance gates](../diagrams/operations-upgrade.svg)
 
@@ -363,7 +363,7 @@ desktop app with the server before relying on the pages that use them.
 
 ## Operational fact storage
 
-The `0031_operations_facts` migration adds five scoped operational projections
+The `0032_operations_facts` migration adds five scoped operational projections
 and the operations loop's bounded traversal cursors: one for tenants, one per
 tenant for environments, and one per environment for re-checking stored listing
 decisions. The scheduler login reaches tenants through the new execute-only
@@ -376,8 +376,14 @@ UUID order, at most 10,000 IDs per batch. Its history work is proportional to th
 number of runs and events. Classification fetches one bounded run at a time;
 event timestamps are aggregated per batch. Allow temporary disk space for all
 five projections, their indexes, and transaction/WAL overhead. Rehearse against a
-restored copy to measure the maintenance window: measured 10,000-, 200,000- and
-1,000,000-run deployment durations are not yet available.
+restored copy to measure the maintenance window. On a development machine
+(PostgreSQL 17 in a 4-CPU, 8 GiB virtual machine with default memory settings,
+before `0031_operations_key_collation`), the migration took about 2 minutes for
+10,000 retained runs and about 70 minutes for 200,000, and the database grew by
+about 1.6 KB per retained run (16 MB and 272 MB). Its duration grows faster than
+the number of runs, so allow well over five hours for 1,000,000 runs; that size
+was not measured. The usage counters equaled an independent recomputation
+afterwards in both measurements.
 
 Historical run times come from accepted events. Missing, malformed or oversized
 evidence remains unavailable, and malformed lifecycle values remain unknown
@@ -631,8 +637,8 @@ changes before you reopen traffic:
 
 ## What changes after alpha15
 
-These changes are not yet in a release. They add no schema migration (the head
-stays `0030_worker_presence`), no role, and no change to definition schemas or
+These changes are not yet in a release. They add two schema migrations (the head
+becomes `0032_operations_facts`), no role, and no change to definition schemas or
 the stored digests of the built-in AI Connector, Action and task. Check them
 before you reopen traffic on a server that includes them:
 
@@ -683,6 +689,13 @@ before you reopen traffic on a server that includes them:
   A caller whose grant was revoked gets 403 (or 401) instead of the stored 201
   answer. Scripts that retry activations with a token whose grant was removed
   must get the grant back first.
+- **Starting a run no longer slows down as executions accumulate.** Migration
+  `0031_operations_key_collation` fixes the usage accounting that runs on
+  every run start and every change to quota-counted records: it now finds its
+  reservation and allocation entries by primary key instead of reading every
+  reservation in the database, which grew with each run ever started. Usage
+  figures and limits are unchanged. Apply the migration before you restart the
+  server; a server that includes it refuses to start on the previous schema.
 - **AI test times use the database clock.** A recorded AI connection test is
   dated with the database's clock, the same clock readiness uses to measure its
   age. Tests recorded by an earlier server keep their API-host timestamps.

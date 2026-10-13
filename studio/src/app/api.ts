@@ -88,6 +88,33 @@ const replayable = (status: number, code: string, retryAfter: string | null) =>
   (status === 503 &&
     code === "WV-COMPATIBILITY" &&
     !(Number(retryAfter) > longestPause));
+/**
+ * A signal that aborts when `signal` does, or after `timeout` milliseconds.
+ * `dispose` drops the timer and the listener once the request has its answer.
+ */
+function cancellable(
+  signal: AbortSignal,
+  timeout: number,
+): { signal: AbortSignal; dispose: () => void } {
+  const controller = new AbortController();
+  const follow = () => controller.abort(signal.reason);
+  const timer = setTimeout(
+    () =>
+      controller.abort(
+        new DOMException("The request took too long.", "TimeoutError"),
+      ),
+    timeout,
+  );
+  const dispose = () => {
+    clearTimeout(timer);
+    signal.removeEventListener("abort", follow);
+  };
+  controller.signal.addEventListener("abort", dispose, { once: true });
+  if (signal.aborted) follow();
+  else signal.addEventListener("abort", follow, { once: true });
+  return { signal: controller.signal, dispose };
+}
+
 export class StudioApi {
   session: Session = {
     paired: false,
@@ -100,9 +127,26 @@ export class StudioApi {
   /** Pauses before replaying a request the host or platform turned away for capacity. */
   wait = (milliseconds: number) =>
     new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
+  /** A pause that a cancel ends at once, so a canceled request is never sent again. */
+  private async pause(milliseconds: number, signal?: AbortSignal) {
+    if (!signal) return this.wait(milliseconds);
+    signal.throwIfAborted();
+    let stop = () => {};
+    const canceled = new Promise<never>((_resolve, reject) => {
+      stop = () => reject(signal.reason);
+      signal.addEventListener("abort", stop, { once: true });
+    });
+    try {
+      await Promise.race([this.wait(milliseconds), canceled]);
+    } finally {
+      signal.removeEventListener("abort", stop);
+    }
+  }
   /**
    * Calls the paired local host. `timeout` (milliseconds) bounds the wait;
    * platform checks that reach a remote server or identity provider pass more.
+   * `signal` lets the caller cancel (a model test); a canceled request is never
+   * sent again.
    */
   async request<T>(
     path: string,
@@ -110,6 +154,7 @@ export class StudioApi {
     body?: unknown,
     headers: Record<string, string> = {},
     timeout = 15000,
+    signal?: AbortSignal,
   ): Promise<T> {
     if (!path.startsWith("/studio/") || path.startsWith("//"))
       throw Error("Studio requests must use the same-origin host boundary.");
@@ -121,16 +166,24 @@ export class StudioApi {
     // request, so a read, or a change that carries an idempotency key, can be sent again.
     const safe = method === "GET" || "Idempotency-Key" in h;
     for (let attempt = 1; ; attempt++) {
-      const response = await fetch(path, {
-        method,
-        credentials: "same-origin",
-        headers: h,
-        body: body === undefined ? undefined : JSON.stringify(body),
-        signal: AbortSignal.timeout(timeout),
-      });
-      const value: unknown = await response
-        .json()
-        .catch(() => ({ message: `HTTP ${response.status}` }));
+      const scoped = signal ? cancellable(signal, timeout) : null;
+      let response: Response;
+      let value: unknown;
+      try {
+        response = await fetch(path, {
+          method,
+          credentials: "same-origin",
+          headers: h,
+          body: body === undefined ? undefined : JSON.stringify(body),
+          signal: scoped?.signal ?? AbortSignal.timeout(timeout),
+        });
+        const answer = response;
+        value = await answer
+          .json()
+          .catch(() => ({ message: `HTTP ${answer.status}` }));
+      } finally {
+        scoped?.dispose();
+      }
       if (response.ok) return value as T;
       const error = new ApiError(response.status, value);
       if (
@@ -142,7 +195,10 @@ export class StudioApi {
           response.headers.get("Retry-After"),
         )
       ) {
-        await this.wait(retryDelay(response.headers.get("Retry-After")));
+        await this.pause(
+          retryDelay(response.headers.get("Retry-After")),
+          signal,
+        );
         continue;
       }
       if (

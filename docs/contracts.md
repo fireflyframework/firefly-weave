@@ -217,10 +217,13 @@ other workflows are part of the language; compensation is not.
 
 **New language constructs.** `forEach`, `callWorkflow`, `concat`, and `join`
 each need a language feature: `flow.forEach`, `flow.callWorkflow`, `text.concat`,
-and `text.join`. This version compiles and runs `concat` and `join`. The shape of
-`forEach` and `callWorkflow` is final, so `load_definition` accepts them, but this
-version of the compiler reports `WV-COMP-UNSUPPORTED_FEATURE` at each use instead
-of compiling it. A platform runs a construct only when its
+and `text.join`. This version compiles and runs `concat` and `join`, and compiles
+`forEach`: the compiler checks a loop's scope, types, and limits and lowers it,
+but this platform does not run loops yet, so it refuses to publish, import, or
+activate a workflow that uses one (`WV-IR-UNSUPPORTED`). The shape of
+`callWorkflow` is final, so `load_definition` accepts it, but this version of the
+compiler reports `WV-COMP-UNSUPPORTED_FEATURE` at each use instead of compiling
+it. A platform runs a construct only when its
 [language manifest](#language-manifest) lists the feature. Step IDs can never
 contain `[`, `#`, or `~`, which keeps
 [instance keys](reference/compiler.md#instance-keys) unambiguous.
@@ -228,6 +231,20 @@ contain `[`, `#`, or `~`, which keeps
 Branches may contain zero steps, but each must declare its `output`. The compiler,
 not the shape check, enforces unique step IDs, unique signal names, branch scope,
 output compatibility, and concurrency budgets.
+
+**Loop scope.** Inside a `forEach` body, `/item` is the current element and
+`/index` its position from 0; an enclosing loop's are `/loops/<loop id>/item` and
+`/loops/<loop id>/index`. A body step sees what is visible at the loop plus the
+earlier steps of the same iteration, and `body.output` also sees the last body
+step. After the loop only `/steps/<loop id>/output` is visible: a list with one
+result per element, in element order, holding at most `maxItems` results (with
+`collect: nonNull`, results that are `null` are left out). `items` sees what is
+visible at the loop, never the loop's own item. Loops nest at most three deep, a
+body cannot wait for a signal, and all loops of a workflow together, each
+multiplied by the `maxItems` of the loops around it, may need at most 100,000
+iterations; the compiler suggests a lower `maxItems` for the inner loop when they
+need more. The [compiler reference](reference/compiler.md#troubleshooting) lists
+the diagnostics.
 
 **Human tasks** need an environment assignment binding at activation, and
 completing one requires the current claim and task permission. A workflow with a
@@ -363,6 +380,9 @@ The operator's `Limits()` defaults bound compilation:
 | `max_document_nodes` | 100,000 | Parsed values, including the root, containers, and scalars (mapping keys excluded) |
 | `max_expression_nodes` | 10,000 | Expression nodes, counted by the compiler stage that owns expressions |
 | `max_diagnostics` | 100 | Diagnostics returned per result |
+| `max_loop_items` | 10,000 | The largest `maxItems` a loop may declare |
+| `max_loop_depth` | 3 | Loops nested inside one another |
+| `max_run_iterations` | 100,000 | Iterations all loops of one workflow may need, each loop multiplied by the `maxItems` of the loops around it |
 
 Definitions cannot change these budgets. Building a model alone does not apply
 them; the compiler does.
@@ -438,7 +458,8 @@ backend is absent. The `integration` and `e2e` pytest markers are registered.
 | A field is rejected although it looks right | Field names are camelCase and case-sensitive; snake_case keys are rejected | Use the published name, such as `timeoutSeconds` |
 | `null` is rejected for an optional field | Optional fields may be omitted but not set to null | Remove the field |
 | A step's `retry` or `timeoutSeconds` is rejected | Retry and per-attempt timeout belong to the action definition | Move them to the action; use `spec.timeoutSeconds` for a workflow-wide timeout |
-| `WV-COMP-UNSUPPORTED_FEATURE` | The document uses `forEach` or `callWorkflow`, which this version of the compiler does not compile yet | Keep the document for a later version, or replace the construct with the steps the compiler supports |
+| `WV-COMP-UNSUPPORTED_FEATURE` | The document uses `callWorkflow`, which this version of the compiler does not compile yet | Keep the document for a later version, or replace the construct with the steps the compiler supports |
+| `WV-IR-UNSUPPORTED` when publishing a workflow with `forEach` | The compiler accepts the loop, but this platform does not run loops yet, so it refuses to publish it; `result.missing_features` is `["flow.forEach"]` | Keep the workflow as a draft until the platform lists `flow.forEach` in its language manifest |
 | `WV-DECISION-OPERATOR` | A decision table rule uses `concat` or `join` | Build the text in a Transform step before the table and pass it in as input |
 | `WV-IR-UNSUPPORTED` on activation, a catalog read, or a run read | The platform does not list an IR version or a language feature the workflow uses; `result.missing_features` names the missing features and is empty when the IR version itself is unknown. A catalog list shows such a version as an unavailable item with `reason: ir_unsupported` and the same `missing_features`. A run that uses such a feature waits for an upgrade; signals and task results for it answer the same way, and run lists show it as unavailable | Upgrade the platform, or activate a version that does not use the feature |
 | `onFailure` is rejected on a call step | `onFailure` applies only when the call waits for its result | Remove `onFailure`, or set `mode: wait` |

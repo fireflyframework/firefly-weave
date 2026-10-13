@@ -30,6 +30,7 @@ import { FilePicker } from "../forms/ui/file-picker";
 import { filesIn } from "../forms/core/file-reference";
 import type { Schema } from "../task-schema";
 import { ConnectionDetail } from "../integrations/connection-detail";
+import { aiConnector } from "../integrations/ai-provider-connection";
 import { NewMenu } from "../templates/new-menu";
 import { localKeepLabel, type LocalDraftEntry } from "../local-drafts";
 import { isDesktopShell } from "../export-file";
@@ -509,6 +510,19 @@ const icons: Record<ShownView, string> = {
                       version.
                     </p>
                   } @else {
+                    @if (record["connector"] === aiConnector) {
+                      <p class="notice" data-tone="info">
+                        AI connections are set up and tested in Settings › AI
+                        models.
+                        <button
+                          type="button"
+                          class="tertiary"
+                          (click)="h.openAiModels()"
+                        >
+                          Manage in Settings › AI models
+                        </button>
+                      </p>
+                    }
                     <weave-connection-detail
                       [api]="h.api"
                       [connection]="record"
@@ -811,6 +825,7 @@ export class RecordsView {
   /** The editor shell, which owns every list and command. */
   host = input.required<App>();
   readonly sheetWhen = sheetWhen;
+  readonly aiConnector = aiConnector;
   readonly taskStatuses: [string, string][] = [
     ["ready", "Ready to claim"],
     ["claimed", "Claimed"],

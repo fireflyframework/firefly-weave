@@ -55,6 +55,14 @@ const compilerCodes = [
   "INPUT_CONTRACT",
   "OUTPUT_CONTRACT",
   "ROUTING_CONTRACT",
+  "LOOP_ITEMS",
+  "LOOP_SCOPE",
+  "LOOP_SIGNAL",
+  "LOOP_BODY_INCOMPLETE",
+  "LOOP_DEPTH",
+  "LOOP_MAX_ITEMS",
+  "LOOP_BUDGET",
+  "LOOP_FANOUT",
 ].map((code) => `WV-COMP-${code}`);
 
 describe("plain-language diagnostic copy", () => {

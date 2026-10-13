@@ -359,13 +359,14 @@ initial steps in one `up` command.
 | Command | Effect |
 | --- | --- |
 | `doctor [--source REPO] [--context NAME]` | Check the source version, uv, and local Docker without changing anything |
-| `up [--source REPO] [--context NAME] [--subnet CIDR] [--username NAME] [--role ROLE ...]` | New in alpha14: prepare once and leave the API running in Docker; create the demo workspace and optionally a sign-in account; repeating preserves data and the account |
+| `up [--source REPO] [--context NAME] [--subnet CIDR] [--username NAME] [--role ROLE ...]` | New in alpha14: prepare once and leave the API running in Docker; create the demo workspace and optionally a sign-in account, which gets the local owner roles unless `--role` names others; repeating preserves data and the account |
 | `logs [--lines COUNT]` | Read the owned Docker API logs; default 100 lines, maximum 1,000 |
 | `setup [--source REPO] [--context NAME] [--subnet CIDR]` | Build and install an isolated server, start its own dependencies, and set up identity; `--subnet` sets an unused private (RFC 1918) IPv4 Docker subnet when the default pools are exhausted |
 | `start` | Resume the saved mode: detached API for a Docker installation, foreground API for a host installation |
 | `status` | Show the saved stage, API and identity readiness, URLs, whether a first run is saved, and the sign-in command |
 | `demo` | Create one authorized demo run; repeating it reuses the saved receipt |
 | `user --username NAME [--role ROLE ...]` | New in 0.1.0a7: create a development sign-in account, a linked person, and roles in the demo workspace |
+| `user grant --username NAME --role ROLE [--role ROLE ...]` | Add roles in the demo workspace to an account this platform's `user` or `up` created; grants are added, never removed |
 | `integrations enable` | New in 0.1.0a7: publish the installed `weave-http@2.0.0` Connector, register this runtime as its local release, and grant a dedicated native principal |
 | `integrations disable` | New in 0.1.0a7: stop running connector actions locally after the next restart; works without a running API |
 | `integrations grant --connection REVISION_ID --access ACCESS` | New in 0.1.0a7: let the local release use one connection's secret handles; `ACCESS` is `read` or `write`, repeat `--access` for both |
