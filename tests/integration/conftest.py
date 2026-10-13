@@ -14,10 +14,19 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-"""Explicitly guarded, real PostgreSQL fixtures. Databases are retained, never dropped."""
+"""Explicitly guarded, real PostgreSQL fixtures.
 
+Each test gets its own database. Tests that need the current schema clone it from a template database migrated
+once per schema; tests that exercise migrations start from an empty database and run them for real. Databases
+and login roles a test creates are dropped when it ends, unless WEAVE_TEST_KEEP_DATABASES=1 or
+WEAVE_TEST_RESOURCE_MANIFEST asks to keep them.
+"""
+
+import hashlib
 import os
 import runpy
+import time
+import warnings
 from pathlib import Path
 from uuid import uuid4
 
@@ -39,7 +48,34 @@ def validate_release_receipt(release_backends):
         release_backends["keycloak_endpoint"]()
 
 
+# Databases and roles created by the running test, dropped at teardown by drop_owned_resources.
+_OWNED: list[tuple[str, str]] = []
+# Name of the migrated template database once this process has found or built it, and when it last marked it used.
+_TEMPLATE: list[str] = []
+_TOUCHED: list[float] = []
+TEMPLATE_LOCK = 7260912902
+# Ruling: a build drops another checkout's template only when no session is connected to it and its last
+# recorded use is older than 6 hours — a running process marks its template used when it starts and again at
+# most every 10 minutes while it clones, and the longest serial integration run is about 35 minutes, so a
+# template in use by another checkout is never dropped — cost if wrong: a process idle for over 6 hours while
+# another checkout builds a different schema sees its next clone fail as an unavailable backend (a rerun
+# rebuilds it), and templates from successive migration edits stay on the server for up to 6 hours.
+TEMPLATE_STALE_AFTER = 6 * 60 * 60
+TEMPLATE_TOUCH_EVERY = 10 * 60
+TEMPLATE_USED = "weave-template-used-at="
+
+
+class TemplateBuildError(Exception):
+    """Migrating the template database failed; reported as itself, not as an unavailable backend."""
+
+
+def keep_resources() -> bool:
+    return os.environ.get("WEAVE_TEST_KEEP_DATABASES") == "1" or bool(os.environ.get("WEAVE_TEST_RESOURCE_MANIFEST"))
+
+
 def retain_resource(kind: str, name: str) -> None:
+    """Record a database or role the test created; it is dropped at teardown unless resources are kept."""
+    _OWNED.append((kind, name))
     path = os.environ.get("WEAVE_TEST_RESOURCE_MANIFEST")
     if path:
         import json
@@ -48,6 +84,188 @@ def retain_resource(kind: str, name: str) -> None:
 
         with Path(path).open("a") as handle:
             handle.write(json.dumps({"kind": kind, "name": name, "observed_at": datetime.now(UTC).isoformat()}) + "\n")
+
+
+@pytest.fixture
+def retain():
+    """Record a database or role the test created itself, so it is dropped at teardown like the fixtures' own.
+
+    Tests take this fixture rather than importing ``retain_resource``: ``from conftest import`` resolves to
+    whichever conftest pytest imported last, which is not this one when ``pytest`` or ``pytest tests`` runs.
+    """
+    return retain_resource
+
+
+def control_url():
+    value = os.environ.get("WEAVE_TEST_DATABASE_URL")
+    if not value:
+        pytest.fail("Real PostgreSQL required: set WEAVE_TEST_DATABASE_URL using the task-owned Compose backend")
+    url = make_url(value)
+    if (
+        url.drivername != "postgresql+asyncpg"
+        or url.host not in {"127.0.0.1", "localhost"}
+        or url.username != "weave_b1_owner"
+        or url.database != "weave_b1_control"
+        or url.port in {None, 5432, 5434}
+    ):
+        pytest.fail("Refusing unguarded database: use the dedicated Weave integration backend")
+    return url
+
+
+def template_name() -> str:
+    """Name the migrated template after everything that shapes its schema, so any change to it builds a new one.
+
+    The hash covers the migration files, the schema version, the default operations policy the migrations record,
+    the module that defines ``migrate()`` and ``check_schema()``, and the installed Alembic version.
+    """
+    import alembic
+
+    import firefly_weave.persistence.migrations as module
+    from firefly_weave.contracts.operational_policy import OperationsPolicy
+
+    source = Path(module.__file__).resolve().parents[3] / "migrations"
+    source = source if source.is_dir() else Path(module.__file__).with_name("alembic")
+    digest = hashlib.sha256(module.SCHEMA_VERSION.encode())
+    for path in sorted(source.rglob("*.py")):
+        digest.update(path.relative_to(source).as_posix().encode() + b"\0" + path.read_bytes() + b"\0")
+    digest.update(OperationsPolicy().model_dump_json().encode() + b"\0")
+    digest.update(Path(module.__file__).read_bytes() + b"\0")
+    digest.update(alembic.__version__.encode())
+    return "weave_b1_template_" + digest.hexdigest()[:16]
+
+
+async def mark_template_used(connection, name: str) -> None:
+    """Record, in the template's comment, the server time a process last used it."""
+    now = int(await connection.scalar(text("SELECT floor(extract(epoch FROM now()))")))
+    await connection.execute(text(f"COMMENT ON DATABASE \"{name}\" IS '{TEMPLATE_USED}{now}'"))
+    _TOUCHED[:] = [time.monotonic()]
+
+
+async def drop_stale_templates(connection, keep: str) -> None:
+    """Drop other templates nobody is connected to and nobody has used recently; see TEMPLATE_STALE_AFTER."""
+    stale = await connection.scalars(
+        text(
+            "SELECT d.datname FROM pg_database d WHERE d.datname LIKE 'weave\\_b1\\_template\\_%' AND d.datname<>:keep"
+            " AND NOT EXISTS (SELECT 1 FROM pg_stat_activity a WHERE a.datname=d.datname)"
+            " AND coalesce(substring(shobj_description(d.oid,'pg_database') FROM :pattern)::bigint, 0)"
+            " < extract(epoch FROM now()) - :age"
+        ),
+        {"keep": keep, "pattern": f"^{TEMPLATE_USED}([0-9]+)$", "age": TEMPLATE_STALE_AFTER},
+    )
+    for old in stale.all():
+        await connection.execute(text(f'ALTER DATABASE "{old}" IS_TEMPLATE false'))
+        await connection.execute(text(f'DROP DATABASE IF EXISTS "{old}" WITH (FORCE)'))
+
+
+@pytest.fixture
+def template_sweep():
+    """The stale-template sweep a template build runs, with the comment prefix that records a template's last use."""
+    return drop_stale_templates, TEMPLATE_USED, TEMPLATE_STALE_AFTER
+
+
+async def migrated_template(connection, url) -> str:
+    """Find or build the migrated template once; the advisory lock makes parallel workers build it only once."""
+    if _TEMPLATE:
+        if time.monotonic() - _TOUCHED[0] > TEMPLATE_TOUCH_EVERY:
+            await mark_template_used(connection, _TEMPLATE[0])
+        return _TEMPLATE[0]
+    from firefly_weave.persistence.migrations import migrate
+    from firefly_weave.settings import Settings
+
+    name = template_name()
+    await connection.execute(text("SELECT pg_advisory_lock(:key)"), {"key": TEMPLATE_LOCK})
+    try:
+        ready = await connection.scalar(
+            text("SELECT datistemplate FROM pg_database WHERE datname=:name"), {"name": name}
+        )
+        if not ready:
+            # A template is marked only after a complete migration; anything else is a failed build.
+            await connection.execute(text(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)'))
+            await drop_stale_templates(connection, name)
+            await connection.execute(text(f'CREATE DATABASE "{name}"'))
+            settings = Settings(
+                scheduler_enabled=False, database_url=url.set(database=name).render_as_string(hide_password=False)
+            )
+            try:
+                await migrate(settings)
+            except Exception as error:
+                raise TemplateBuildError("Migrating the template database failed") from error
+            # Clones need a template nobody is connected to.
+            await connection.execute(text(f'ALTER DATABASE "{name}" IS_TEMPLATE true ALLOW_CONNECTIONS false'))
+        await mark_template_used(connection, name)
+    finally:
+        await connection.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": TEMPLATE_LOCK})
+    _TEMPLATE.append(name)
+    return name
+
+
+async def create_database(*, migrated: bool):
+    from firefly_weave.settings import Settings
+
+    url = control_url()
+    admin = create_async_engine(url, isolation_level="AUTOCOMMIT")
+    name = f"weave_b1_test_{uuid4().hex}"
+    try:
+        async with admin.connect() as connection:
+            marker = await connection.scalar(text("SELECT identity FROM weave_test_backend_guard"))
+            if marker != "firefly-weave-b1-local-integration":
+                pytest.fail("Refusing database without the task-owned backend marker")
+            template = f' TEMPLATE "{await migrated_template(connection, url)}"' if migrated else ""
+            await connection.execute(text(f'CREATE DATABASE "{name}"{template}'))
+            retain_resource("database", name)
+    except TemplateBuildError:
+        raise
+    except Exception:
+        pytest.fail("Real task-owned PostgreSQL is unavailable or its backend marker is missing", pytrace=False)
+    finally:
+        await admin.dispose()
+    return Settings(scheduler_enabled=False, database_url=url.set(database=name).render_as_string(hide_password=False))
+
+
+async def drop_resources(connection, owned: list[tuple[str, str]]) -> list[str]:
+    """Drop the databases, then the roles; a failed drop is reported, never a reason to skip the rest.
+
+    Databases go first so their roles no longer hold privileges in them. Returns one line per failed drop.
+    """
+    failures = []
+    for kind in ("database", "role"):
+        for item, name in owned:
+            if item != kind:
+                continue
+            try:
+                await connection.execute(
+                    text(f'DROP {kind.upper()} IF EXISTS "{name}"' + " WITH (FORCE)" * (kind == "database"))
+                )
+            except Exception as error:
+                failures.append(f"{kind} {name}: {type(error).__name__}")
+    return failures
+
+
+@pytest.fixture
+def resource_dropper():
+    """The teardown drop step, for tests of the cleanup itself."""
+    return drop_resources
+
+
+@pytest.fixture(autouse=True)
+async def drop_owned_resources():
+    """Drop what the test created and warn about anything left; a leak is reported, never turned into a failure."""
+    start = len(_OWNED)
+    yield
+    owned = _OWNED[start:]
+    del _OWNED[start:]
+    if not owned or keep_resources():
+        return
+    admin = create_async_engine(control_url(), isolation_level="AUTOCOMMIT")
+    try:
+        async with admin.connect() as connection:
+            failures = await drop_resources(connection, owned)
+    except Exception as error:
+        failures = [f"{kind} {name}: {type(error).__name__}" for kind, name in owned]
+    finally:
+        await admin.dispose()
+    if failures:
+        warnings.warn("Test resources were not dropped: " + "; ".join(failures), stacklevel=1)
 
 
 @pytest.fixture
@@ -98,42 +316,23 @@ def services():
 
 @pytest.fixture
 async def empty_settings():
-    value = os.environ.get("WEAVE_TEST_DATABASE_URL")
-    if not value:
-        pytest.fail("Real PostgreSQL required: set WEAVE_TEST_DATABASE_URL using the task-owned Compose backend")
-    url = make_url(value)
-    if (
-        url.drivername != "postgresql+asyncpg"
-        or url.host not in {"127.0.0.1", "localhost"}
-        or url.username != "weave_b1_owner"
-        or url.database != "weave_b1_control"
-        or url.port in {None, 5432, 5434}
-    ):
-        pytest.fail("Refusing unguarded database: use the dedicated Weave integration backend")
-    admin = create_async_engine(url, isolation_level="AUTOCOMMIT")
-    name = f"weave_b1_test_{uuid4().hex}"
-    try:
-        async with admin.connect() as connection:
-            marker = await connection.scalar(text("SELECT identity FROM weave_test_backend_guard"))
-            if marker != "firefly-weave-b1-local-integration":
-                pytest.fail("Refusing database without the task-owned backend marker")
-            await connection.execute(text(f'CREATE DATABASE "{name}"'))
-            retain_resource("database", name)
-    except Exception:
-        pytest.fail("Real task-owned PostgreSQL is unavailable or its backend marker is missing", pytrace=False)
-    finally:
-        await admin.dispose()
-    from firefly_weave.settings import Settings
-
-    return Settings(scheduler_enabled=False, database_url=url.set(database=name).render_as_string(hide_password=False))
+    """An empty database, for tests that run migrations themselves."""
+    return await create_database(migrated=False)
 
 
 @pytest.fixture
-async def migration_settings(empty_settings):
+async def fresh_migration_settings(empty_settings):
+    """An empty database migrated by this test, for tests about migrate() itself."""
     from firefly_weave.persistence.migrations import migrate
 
     await migrate(empty_settings)
     return empty_settings
+
+
+@pytest.fixture
+async def migration_settings():
+    """A database at the current schema, cloned from the migrated template, with owner credentials."""
+    return await create_database(migrated=True)
 
 
 @pytest.fixture

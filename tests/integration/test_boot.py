@@ -268,13 +268,13 @@ async def test_readiness_real_connection_failure_is_redacted(settings, migration
         await admin.dispose()
 
 
-async def test_explicit_migration_is_idempotent(migration_settings):
+async def test_explicit_migration_is_idempotent(fresh_migration_settings):
     from sqlalchemy.ext.asyncio import create_async_engine
 
     from firefly_weave.persistence.migrations import migrate
 
-    await migrate(migration_settings)
-    engine = create_async_engine(migration_settings.database_url.get_secret_value())
+    await migrate(fresh_migration_settings)
+    engine = create_async_engine(fresh_migration_settings.database_url.get_secret_value())
     try:
         async with engine.connect() as connection:
             assert await connection.scalar(text("SELECT count(*) FROM weave_schema_version")) == 1
