@@ -16,7 +16,7 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 import { EditorState } from "@codemirror/state";
-import type { DecorationSet } from "@codemirror/view";
+import { EditorView, type DecorationSet } from "@codemirror/view";
 import { describe, expect, it } from "vitest";
 import {
   decorationConfig,
@@ -24,7 +24,12 @@ import {
   refreshDecorations,
   type PillLook,
 } from "../src/app/editor/formula/codemirror/decorations";
+import {
+  completionOpen,
+  formulaCompletion,
+} from "../src/app/editor/formula/codemirror/completion";
 import { singleLine } from "../src/app/editor/formula/codemirror/keys";
+import type { CompletionList } from "../src/app/editor/formula/complete";
 
 const look = (pointer: string): PillLook => ({
   parts: pointer.split("/").slice(1),
@@ -122,5 +127,62 @@ describe("the formula editor's state", () => {
       "6-16:PillWidget",
       "17-19:cm-formula-brace",
     ]);
+  });
+});
+
+describe("the suggestions' state", () => {
+  const source = (text: string, caret: number): CompletionList | null =>
+    /input\.?$/.test(text.slice(0, caret)) || /^in$/.test(text.slice(0, caret))
+      ? {
+          from: 0,
+          to: caret,
+          options: [{ label: "input", kind: "root", apply: "input" }],
+        }
+      : null;
+  const start = () =>
+    EditorState.create({
+      extensions: [
+        formulaCompletion({
+          source: () => source,
+          listId: () => "amount-suggestions",
+        }),
+      ],
+    });
+  const type = (state: EditorState, text: string) =>
+    state.update({
+      changes: { from: state.doc.length, insert: text },
+      selection: { anchor: state.doc.length + text.length },
+      userEvent: "input.type",
+    }).state;
+  const attributes = (state: EditorState) =>
+    Object.assign(
+      {},
+      ...state
+        .facet(EditorView.contentAttributes)
+        .map((source) => (typeof source === "function" ? {} : source)),
+    ) as Record<string, string>;
+
+  it("opens while a name is typed, names the list, and closes when nothing matches", () => {
+    const closed = start();
+    expect(completionOpen(closed)).toBe(false);
+    expect(attributes(closed)).toEqual({ "aria-autocomplete": "list" });
+    const open = type(type(closed, "i"), "n");
+    expect(completionOpen(open)).toBe(true);
+    expect(attributes(open)).toEqual({
+      "aria-autocomplete": "list",
+      "aria-controls": "amount-suggestions",
+      "aria-activedescendant": "amount-suggestions-0",
+    });
+    expect(completionOpen(type(open, " "))).toBe(false);
+  });
+
+  it("stays closed for text that isn't typed, such as a paste", () => {
+    const state = start();
+    const pasted = state.update({
+      changes: { from: 0, insert: "input." },
+      selection: { anchor: 6 },
+      userEvent: "input.paste",
+    }).state;
+    expect(completionOpen(pasted)).toBe(false);
   });
 });

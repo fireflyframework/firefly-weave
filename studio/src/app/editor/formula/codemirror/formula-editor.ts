@@ -50,6 +50,8 @@ import {
   refreshDecorations,
   type PillLook,
 } from "./decorations";
+import type { CompletionList } from "../complete";
+import { formulaCompletion, startCompletion } from "./completion";
 import { formulaKeys, singleLine } from "./keys";
 
 export interface EditorRequest {
@@ -95,6 +97,10 @@ export class FormulaEditor {
   request = input<EditorRequest | null>(null);
   /** Take dropped Input fields itself (in a dialog); in the form the field does. */
   dropRefs = input(false);
+  /** What autocomplete offers at a caret; null turns it off. */
+  completions = input<
+    ((text: string, caret: number) => CompletionList | null) | null
+  >(null);
 
   readonly textChange = output<string>();
   readonly focused = output<void>();
@@ -112,9 +118,13 @@ export class FormulaEditor {
   private readonly element = inject<ElementRef<HTMLElement>>(ElementRef);
   private readonly attributes = new Compartment();
   private readonly editing = new Compartment();
-  /** Extensions that later features add (the completion list). */
-  protected extras(): Extension[] {
-    return [];
+  private extras(): Extension[] {
+    return [
+      formulaCompletion({
+        source: () => this.completions(),
+        listId: () => `${this.controlId()}-suggestions`,
+      }),
+    ];
   }
 
   constructor() {
@@ -277,8 +287,9 @@ export class FormulaEditor {
     if (request.complete) this.openCompletion();
   }
 
-  /** Opens the completion list; the completion list replaces it. */
-  protected openCompletion(): void {}
+  private openCompletion(): void {
+    if (this.view) startCompletion(this.view);
+  }
 
   /** The text position under a point of the screen. */
   posAt(x: number, y: number): number {

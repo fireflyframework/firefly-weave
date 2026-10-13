@@ -2080,3 +2080,46 @@ weave-param-field.is-conditions > .param > .param-line {
   overflow: hidden;
   white-space: nowrap;
 }
+
+/* The completion list: rows like the data panes (32 px on desktop, 44 px on
+   touch), the type on the right in the muted ink. */
+.cm-tooltip:has(> .cm-formula-completions) {
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-3);
+}
+.cm-formula-completions {
+  max-height: min(320px, 50vh);
+  min-width: 240px;
+  max-width: min(420px, calc(100vw - 32px));
+  margin: 0;
+  padding: var(--space-1) 0;
+  overflow-y: auto;
+  list-style: none;
+  font: var(--type-body);
+}
+.cm-formula-completions [role="option"] {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--sd-row, 32px);
+  padding: 0 var(--space-3);
+  cursor: pointer;
+}
+.cm-formula-completions [aria-selected="true"] {
+  background: var(--selected);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.cm-formula-option-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font: var(--type-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cm-formula-option-detail {
+  color: var(--muted);
+  font: var(--type-small);
+}
