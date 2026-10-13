@@ -92,10 +92,20 @@ export function canvasCommand(
   return command;
 }
 
-/** The "?" sheet for the canvas: what works everywhere and on the canvas. */
+/** The Add a step panel's keys. */
+export const PANEL_COMMANDS: ReadonlySet<KeymapCommand> =
+  new Set<KeymapCommand>([
+    "panelUp",
+    "panelDown",
+    "panelInsert",
+    "panelOpen",
+    "panelBack",
+  ]);
+
+/** The "?" sheet for the canvas: what works everywhere, on the canvas and in Add a step. */
 export function canvasSheet(platform: KeyPlatform): SheetSection[] {
   return shortcutSheet(platform, {
-    surfaces: ["any", "canvas"],
-    available: CANVAS_COMMANDS,
+    surfaces: ["any", "canvas", "addStep"],
+    available: new Set([...CANVAS_COMMANDS, ...PANEL_COMMANDS]),
   });
 }

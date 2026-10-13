@@ -21,6 +21,7 @@ import { expect, type Locator, type Page } from "@playwright/test";
 import { resolve } from "node:path";
 import { parse } from "yaml";
 import { newWorkflow, offline, sourceText } from "./support";
+import { AddStepPanel } from "./add-step-po";
 
 export const vendorPayment = resolve(
   "tests/fixtures/vendor-payment-approval.yaml",
@@ -77,21 +78,12 @@ export class CanvasPage {
     await expect(this.root).toHaveAttribute("data-ready", "");
   }
   /**
-   * Chooses an entry in today's step picker by its exact label ("Decision",
+   * Chooses an entry of the Add a step panel by its exact label ("Decision",
    * not "Decision table"). The new step's details open on insert; this waits
    * for them, so the next action meets them (`closeInspector` hides them).
    */
   async pick(label: string) {
-    await this.page
-      .getByRole("option")
-      .filter({
-        has: this.page
-          .locator(".step-picker-label")
-          .getByText(label, { exact: true }),
-      })
-      .filter({ visible: true })
-      .first()
-      .click();
+    await new AddStepPanel(this.page).choose(label);
     await expect(
       this.page.getByRole("dialog", { name: /^Step details: / }),
     ).toBeVisible();

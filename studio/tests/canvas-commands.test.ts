@@ -108,7 +108,15 @@ describe("canvas keys", () => {
     expect(sheet.map((section) => section.title)).toEqual([
       "Everywhere",
       "Canvas",
+      "Add a step panel",
       "Differences from n8n",
+    ]);
+    expect(sheet[2].entries.map((entry) => entry.label)).toEqual([
+      "Insert the entry",
+      "Go back",
+      "Open the category or app",
+      "Previous entry",
+      "Next entry",
     ]);
     expect(sheet[0].entries.map((entry) => entry.label)).toEqual([
       "Undo",

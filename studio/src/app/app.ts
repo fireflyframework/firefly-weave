@@ -24,6 +24,15 @@ import {
   type CanvasSidecar,
 } from "./editor/state/canvas-sidecar";
 import { TRIGGER_LABELS } from "./editor/canvas/trigger-tiles";
+import type { AddStepRequest } from "./editor/add-step/add-step-host";
+import { EarlyKeys, type EarlyKey } from "./editor/add-step/early-keys";
+import type { PanelEntry } from "./editor/add-step/entries";
+import type {
+  InsertHost,
+  InsertOutcome,
+  InsertRequest,
+} from "./editor/add-step/insert";
+import type { TriggerKind } from "./editor/canvas/layout-ltr";
 import { DraftCanvases, type KeptWhere } from "./editor/state/draft-canvas";
 import { readImport } from "./import-files";
 import type { AccountScope } from "./editor/state/browser-store";
@@ -3572,28 +3581,135 @@ export class App implements CanvasHost {
     this.cdr.markForCheck();
     this.focusField(section);
   }
+  /** The new editor's Add a step panel and where it inserts; null while closed. */
+  addStep: AddStepRequest | null = null;
+  /** Keys pressed while Add a step opens; its search replays them. */
+  private readonly earlyKeys = new EarlyKeys("weave-add-step-panel");
+  /**
+   * A "+", a dropped edge, Add first step, N or /: the Add a step panel in
+   * the new editor (triggers first on an empty workflow), the step picker
+   * in the classic one.
+   */
   openPicker(
     insert: { owner: string; index: number },
     label: string,
     anchor: HTMLElement | AnchorRect,
   ) {
     if (this.editingLocked || this.model.readonly) return;
-    this.picker = {
-      target: { ...insert, point: { x: 0, y: 0 }, label },
-      anchor,
-    };
     if (this.profile) void this.loadActionCatalog();
+    if (this.editorNext) {
+      const empty =
+        !this.model.definition.spec.steps.length &&
+        !this.model.canvas.triggers?.length;
+      this.picker = null;
+      this.earlyKeys.start();
+      this.addStep = {
+        insert,
+        label,
+        anchor,
+        start: empty ? "triggers" : "next",
+        opened: this.model.opened,
+      };
+    } else
+      this.picker = {
+        target: { ...insert, point: { x: 0, y: 0 }, label },
+        anchor,
+      };
     this.cdr.markForCheck();
   }
   isPickerOpenAt(insert: { owner: string; index: number }) {
-    return (
-      this.picker?.target.owner === insert.owner &&
-      this.picker.target.index === insert.index
-    );
+    const open = this.addStep?.insert ?? this.picker?.target;
+    return !!open && open.owner === insert.owner && open.index === insert.index;
   }
   closePicker() {
     this.picker = null;
+    this.addStep = null;
+    this.earlyKeys.stop();
     this.cdr.markForCheck();
+  }
+  takeEarlyKeys(): readonly EarlyKey[] {
+    return this.earlyKeys.take();
+  }
+  /** The toolbar's Add a step: after the selected step, or at the end; a second press closes it. */
+  openAddStepFromToolbar(event: Event) {
+    if (this.addStep) return this.closePicker();
+    const node = this.selected;
+    this.openPicker(
+      node
+        ? { owner: node.owner, index: node.index + 1 }
+        : { owner: "root", index: this.model.definition.spec.steps.length },
+      node ? `Add a step after ${node.step.id}` : "Add a step at the end",
+      event.currentTarget as HTMLElement,
+    );
+  }
+  /** What Add a step chose, inserted at its place as one undo step, then opened. */
+  async insertFromPanel(
+    entry: PanelEntry,
+    request: InsertRequest,
+  ): Promise<InsertOutcome> {
+    const { insertEntry } = await import("./editor/add-step/insert");
+    const current = this.insertOwner();
+    const host: InsertHost = {
+      model: this.model,
+      editingLocked: this.editingLocked,
+      ensureApplied: () => this.ensureApplied(),
+      edit: (change) => {
+        this.perform(change);
+        this.cdr.markForCheck();
+        return this.error;
+      },
+      notify: (text) => this.notify(text),
+      openInserted: (id) => {
+        this.revealSelected();
+        this.openInserted(id, current);
+      },
+      openTrigger: (id, kind) => this.openChosenTrigger(id, kind, current),
+      insertCommon: (common, at, connector) =>
+        this.insertCommon(common, at, current, connector),
+      insertPublished: async (uses, id, at) => {
+        const bridge = await import("./integrations/editor-bridge");
+        if (!current()) return "";
+        return bridge.insertCatalogAction(
+          this,
+          { uses, ...(id ? { id } : {}) },
+          { ...at, point: { x: 0, y: 0 }, label: "" },
+          true,
+        );
+      },
+      openTemplates: () => {
+        this.showTemplates = true;
+        this.cdr.markForCheck();
+      },
+      openNewApiAction: () => void this.openApiBuilder("workflow"),
+      loadActionCatalog: (append, force) =>
+        this.loadActionCatalog(append, force),
+    };
+    return insertEntry(host, entry, request);
+  }
+  /** A trigger chosen in Add a step: the input form opens its details; another one's tile takes focus. */
+  private openChosenTrigger(
+    id: string,
+    kind: TriggerKind,
+    current: () => boolean,
+  ) {
+    if (!current()) return;
+    if (kind === "manual") {
+      void this.openStepDetails("$trigger");
+      return;
+    }
+    this.notify(
+      `Added the ${TRIGGER_LABELS[kind]} trigger. Set it up when you activate the workflow.`,
+    );
+    this.cdr.markForCheck();
+    afterNextRender(
+      () =>
+        document
+          .querySelector<HTMLElement>(
+            `[data-tile="${CSS.escape(`$trigger:${id}`)}"] .tile-body`,
+          )
+          ?.focus(),
+      { injector: this.injector },
+    );
   }
   moveStep(id: string, insert: { owner: string; index: number }) {
     this.connectingNode = "";
@@ -8707,7 +8823,7 @@ export class App implements CanvasHost {
     if (
       this.stepDetails.ownedPublish() ||
       (event.target as HTMLElement).closest?.(
-        "weave-step-details, weave-workflow-settings-dialog",
+        "weave-step-details, weave-workflow-settings-dialog, weave-add-step-panel",
       )
     )
       return;

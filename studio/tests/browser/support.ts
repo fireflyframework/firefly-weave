@@ -302,7 +302,11 @@ export async function newWorkflow(page: Page) {
   // The designer loads with its first use: wait until it is on screen,
   // its lists rendered too.
   await expect(page.locator(".editor-bar")).toBeVisible();
-  await expect(page.locator(".palette-step").first()).toBeAttached();
+  // The classic designer draws its palette; the new editor its canvas (or,
+  // on a phone, the outline first).
+  await expect(
+    page.locator(".palette-step, .canvas-v2, .outline").first(),
+  ).toBeAttached();
   // Below 600 px a workflow opens on its outline; these specs use the canvas.
   const canvas = page.getByRole("button", { name: "Show canvas" });
   if (await canvas.isVisible()) await canvas.click();

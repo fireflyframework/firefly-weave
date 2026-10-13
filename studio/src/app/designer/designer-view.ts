@@ -42,6 +42,7 @@ import { PathInspector } from "./path-inspector";
 import { DiagnosticsList } from "./diagnostics-list";
 import { SimulationPanel } from "./simulation/simulation-panel";
 import { CanvasView } from "../editor/canvas/canvas-view";
+import { AddStepPanel } from "../editor/add-step/add-step-panel";
 import type { App } from "../app";
 
 @Component({
@@ -66,6 +67,7 @@ import type { App } from "../app";
     DiagnosticsList,
     SimulationPanel,
     CanvasView,
+    AddStepPanel,
   ],
   // No box of its own: the bar, the grid and the strip lay out in the
   // shell's main column.
@@ -148,18 +150,34 @@ import type { App } from "../app";
       </div>
       <div class="editor-toolbar" role="toolbar" aria-label="Workflow commands">
         <div class="toolbar-group" role="group" aria-label="Edit workflow">
-          <button
-            type="button"
-            class="insert-popover-button"
-            aria-label="Insert step"
-            [attr.aria-expanded]="h.showPalette"
-            [attr.aria-disabled]="h.editingLocked || null"
-            (click)="!h.editingLocked && (h.showPalette = !h.showPalette)"
-          >
-            <weave-icon name="plus" /><span class="insert-label"
-              >Insert step</span
+          @if (h.editorNext) {
+            <button
+              type="button"
+              class="insert-popover-button add-step-button"
+              aria-label="Add a step"
+              aria-haspopup="dialog"
+              [attr.aria-expanded]="!!h.addStep"
+              [attr.aria-disabled]="h.editingLocked || h.model.readonly || null"
+              (click)="h.openAddStepFromToolbar($event)"
             >
-          </button>
+              <weave-icon name="plus" /><span class="insert-label"
+                >Add a step</span
+              >
+            </button>
+          } @else {
+            <button
+              type="button"
+              class="insert-popover-button"
+              aria-label="Insert step"
+              [attr.aria-expanded]="h.showPalette"
+              [attr.aria-disabled]="h.editingLocked || null"
+              (click)="!h.editingLocked && (h.showPalette = !h.showPalette)"
+            >
+              <weave-icon name="plus" /><span class="insert-label"
+                >Insert step</span
+              >
+            </button>
+          }
           <button
             type="button"
             class="icon-button wide-only"
@@ -297,103 +315,106 @@ import type { App } from "../app";
       "
       [class.source-mode]="h.tab === 'Source'"
       [class.simulating]="!!h.simulationSession"
+      [class.no-palette]="h.editorNext"
       [style.--palette-w.px]="h.paletteWidth"
       [style.--inspector-w.px]="h.inspectorWidth"
     >
-      <!-- A section, not an aside: as a modal sheet it takes role="dialog". -->
-      <section
-        class="palette"
-        role="complementary"
-        aria-labelledby="palette-title"
-        [class.popover-visible]="h.showPalette"
-        [attr.inert]="h.editingLocked || null"
-        [weaveModalSheet]="h.showPalette"
-        [sheetWhen]="h.sheetWhen.palette"
-        sheetInitialFocus=".palette .search-field input"
-        (sheetDismiss)="h.showPalette = false"
-      >
-        <button
-          class="pane-resizer"
-          role="separator"
-          aria-label="Resize step palette"
-          aria-orientation="vertical"
-          [attr.aria-valuenow]="h.paletteWidth"
-          aria-valuemin="176"
-          aria-valuemax="256"
-          (pointerdown)="h.paneResize($event, 'palette')"
-          (pointermove)="h.paneMove($event)"
-          (pointerup)="h.resizing = null"
-          (keydown)="h.paneKey($event, 'palette')"
-        ></button>
-        <header class="palette-header">
-          <div class="palette-heading-row">
-            <h2 id="palette-title">Steps</h2>
-            <details
-              #paletteHelp
-              class="palette-help"
-              (keydown.escape)="closeHelp(paletteHelp, $event)"
-            >
-              <summary aria-label="How to add steps" title="How to add steps">
-                i
-              </summary>
-              <p class="pane-help">
-                Click to add after the selected step, or drag onto a + on the
-                canvas.
-              </p>
-            </details>
-          </div>
-          <label class="search-field"
-            ><weave-icon name="search" /><input
-              aria-label="Search steps"
-              placeholder="Search steps"
-              [value]="h.paletteQuery"
-              (input)="h.paletteQuery = h.value($event)"
-          /></label>
-        </header>
-        @for (group of h.palette; track group.label) {
-          <div
-            class="palette-group"
-            role="group"
-            [attr.aria-labelledby]="
-              'palette-group-' + group.label.toLowerCase()
-            "
-          >
-            <h3
-              class="palette-heading"
-              [id]="'palette-group-' + group.label.toLowerCase()"
-            >
-              {{ group.label }}
-            </h3>
-            @for (kind of group.kinds; track kind) {
-              <button
-                class="palette-step"
-                [draggable]="!h.model.readonly"
-                [attr.title]="h.description(kind)"
-                [attr.aria-description]="h.description(kind)"
-                (dragstart)="h.dragPalette($event, kind)"
-                (dragend)="h.dragPreview = null"
-                (click)="h.insert(kind)"
-                [disabled]="h.model.readonly"
+      @if (!h.editorNext) {
+        <!-- A section, not an aside: as a modal sheet it takes role="dialog". -->
+        <section
+          class="palette"
+          role="complementary"
+          aria-labelledby="palette-title"
+          [class.popover-visible]="h.showPalette"
+          [attr.inert]="h.editingLocked || null"
+          [weaveModalSheet]="h.showPalette"
+          [sheetWhen]="h.sheetWhen.palette"
+          sheetInitialFocus=".palette .search-field input"
+          (sheetDismiss)="h.showPalette = false"
+        >
+          <button
+            class="pane-resizer"
+            role="separator"
+            aria-label="Resize step palette"
+            aria-orientation="vertical"
+            [attr.aria-valuenow]="h.paletteWidth"
+            aria-valuemin="176"
+            aria-valuemax="256"
+            (pointerdown)="h.paneResize($event, 'palette')"
+            (pointermove)="h.paneMove($event)"
+            (pointerup)="h.resizing = null"
+            (keydown)="h.paneKey($event, 'palette')"
+          ></button>
+          <header class="palette-header">
+            <div class="palette-heading-row">
+              <h2 id="palette-title">Steps</h2>
+              <details
+                #paletteHelp
+                class="palette-help"
+                (keydown.escape)="closeHelp(paletteHelp, $event)"
               >
-                <span class="step-icon"><weave-icon [name]="kind" /></span
-                ><span class="palette-label">{{ h.label(kind) }}</span
-                ><span class="drag-grip" aria-hidden="true"
-                  ><weave-icon name="menu" [size]="16"
-                /></span>
-              </button>
-            }
-            @if (group.label === "Actions") {
-              @defer (on immediate) {
-                <weave-palette-integrations
-                  [host]="h"
-                  (connect)="h.showPalette = false; h.menuChoice('connect')"
-                  [query]="h.paletteQuery"
-                />
+                <summary aria-label="How to add steps" title="How to add steps">
+                  i
+                </summary>
+                <p class="pane-help">
+                  Click to add after the selected step, or drag onto a + on the
+                  canvas.
+                </p>
+              </details>
+            </div>
+            <label class="search-field"
+              ><weave-icon name="search" /><input
+                aria-label="Search steps"
+                placeholder="Search steps"
+                [value]="h.paletteQuery"
+                (input)="h.paletteQuery = h.value($event)"
+            /></label>
+          </header>
+          @for (group of h.palette; track group.label) {
+            <div
+              class="palette-group"
+              role="group"
+              [attr.aria-labelledby]="
+                'palette-group-' + group.label.toLowerCase()
+              "
+            >
+              <h3
+                class="palette-heading"
+                [id]="'palette-group-' + group.label.toLowerCase()"
+              >
+                {{ group.label }}
+              </h3>
+              @for (kind of group.kinds; track kind) {
+                <button
+                  class="palette-step"
+                  [draggable]="!h.model.readonly"
+                  [attr.title]="h.description(kind)"
+                  [attr.aria-description]="h.description(kind)"
+                  (dragstart)="h.dragPalette($event, kind)"
+                  (dragend)="h.dragPreview = null"
+                  (click)="h.insert(kind)"
+                  [disabled]="h.model.readonly"
+                >
+                  <span class="step-icon"><weave-icon [name]="kind" /></span
+                  ><span class="palette-label">{{ h.label(kind) }}</span
+                  ><span class="drag-grip" aria-hidden="true"
+                    ><weave-icon name="menu" [size]="16"
+                  /></span>
+                </button>
               }
-            }
-          </div>
-        }
-      </section>
+              @if (group.label === "Actions") {
+                @defer (on immediate) {
+                  <weave-palette-integrations
+                    [host]="h"
+                    (connect)="h.showPalette = false; h.menuChoice('connect')"
+                    [query]="h.paletteQuery"
+                  />
+                }
+              }
+            </div>
+          }
+        </section>
+      }
       <section
         class="canvas-panel"
         id="editor-view"
@@ -1174,6 +1195,11 @@ import type { App } from "../app";
             (nodesChange)="h.simulationNodes($event)"
             (close)="h.closeSimulation()"
           />
+        }
+      }
+      @if (h.editorNext && h.addStep && h.tab !== "Source") {
+        @defer (on immediate) {
+          <weave-add-step-panel [host]="h" />
         }
       }
     </div>

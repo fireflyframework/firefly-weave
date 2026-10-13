@@ -59,6 +59,7 @@ import { Icon } from "../../icon";
 import { RowMenu, type RowMenuItem } from "../../row-menu";
 import type { Workflow } from "../../model";
 import { loadKindRegistrations } from "../ndv/kinds";
+import { memo } from "../memo";
 import { ndvRegistry, type KindContext } from "../ndv/registry";
 import {
   canvasCommand,
@@ -135,20 +136,6 @@ const NO_BORDERS: TileBorders = {
   error: false,
 };
 
-/** Recomputes only when an input changed, compared by identity. */
-function memo<A extends unknown[], T>(
-  compute: (...inputs: A) => T,
-): (...inputs: A) => T {
-  let last: A | null = null;
-  let value!: T;
-  return (...inputs: A) => {
-    if (!last || inputs.some((item, i) => item !== last![i])) {
-      last = inputs;
-      value = compute(...inputs);
-    }
-    return value;
-  };
-}
 /**
  * The hover toolbar: two 28-unit buttons, a 2-unit gap, padding and border.
  * Paths are 224 units apart, so under a step's three-line label block the
@@ -228,6 +215,8 @@ export class CanvasView implements OnInit, DoCheck {
   } | null = null;
   /** The edge drawn from a handle while it is dragged, in canvas units. */
   band: { key: string; from: Point; to: Point } | null = null;
+  /** The insertion a dropped edge opened Add a step for: its edge stays drawn meanwhile. */
+  private bandFor: Insertion | null = null;
   /** The step dragged to a new place, or "". */
   draggingStep = "";
   /** The click that ends a drag does nothing else. */
@@ -323,6 +312,10 @@ export class CanvasView implements OnInit, DoCheck {
   ngDoCheck() {
     if (!this.ready) return;
     const h = this.host();
+    if (this.bandFor && !h.isPickerOpenAt(this.bandFor)) {
+      this.band = null;
+      this.bandFor = null;
+    }
     if (this.fitted !== h.model.opened && !this.fitPending) {
       this.fitPending = true;
       afterNextRender(
@@ -1175,6 +1168,7 @@ export class CanvasView implements OnInit, DoCheck {
     setTimeout(() => (this.suppressClick = false));
     const h = this.host();
     if (press.kind === "handle") {
+      const band = this.band;
       this.band = null;
       const control = press.target as HTMLElement;
       const hit = control.getBoundingClientRect();
@@ -1201,13 +1195,19 @@ export class CanvasView implements OnInit, DoCheck {
         const point = this.toWorld(event.clientX, event.clientY);
         if (dropOutcome(point, this.layout(), this.view.zoom) === "refused")
           h.notify(DROP_REFUSED);
-        else
+        else {
           h.openPicker(port.insert, port.name, {
             left: event.clientX,
             top: event.clientY,
             width: 0,
             height: 0,
           });
+          // The edge stays drawn to where it was dropped while Add a step is open there.
+          if (band && h.isPickerOpenAt(port.insert)) {
+            this.band = band;
+            this.bandFor = port.insert;
+          }
+        }
       }
     } else {
       this.draggingStep = "";
