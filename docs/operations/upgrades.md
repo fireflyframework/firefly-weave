@@ -312,6 +312,9 @@ default:
   **Show revoked workers** shows none, and rows reorder as workers check in.
   Upgrade Studio and the desktop app with the server. Until then, the Python
   SDK's `list_workers(query=WorkerListQuery(state="all"))` lists every worker.
+  The upgraded Studio asks the platform for current workers and turns on
+  `state=all` with **Show retired workers**; against an older server its filters
+  are ignored and it lists every worker.
 
 Worker reads and lists add optional `placement` and `drained_at`, and drain and
 resume answers add `drained_at`. **Upgrade CLIs and SDKs with the server.**

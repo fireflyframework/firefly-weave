@@ -64,6 +64,7 @@ async function workers(page: Page, capabilities: string[]) {
       presence: "unknown",
       last_seen_at: null,
       presence_expires_at: null,
+      registered_at: at(-120),
       task_types: ["email-send@1.0.0", "crm-lookup@1.0.0"],
       active_leases: 9,
     }),
@@ -76,9 +77,10 @@ async function workers(page: Page, capabilities: string[]) {
     const query = new URL(r.request().url()).searchParams;
     queries.push(query);
     // As the server does: without state=all only current workers, not revoked
-    // and seen (or registered) in the last hour.
-    const listed =
-      query.get("state") === "all" ? items : items.filter(isCurrent);
+    // and seen (or registered) in the last hour; then every filter.
+    const listed = (
+      query.get("state") === "all" ? items : items.filter(isCurrent)
+    ).filter((item) => serverMatches(item, query));
     return r.fulfill({ json: { items: listed, next_cursor: null } });
   });
   for (const item of items)
@@ -96,42 +98,82 @@ const isCurrent = (item: Record<string, unknown>) => {
     Date.parse(contact) > Date.now() - 3600_000
   );
 };
+/** The platform's own filters, as `workers.list` applies them. */
+function serverMatches(
+  item: Record<string, unknown>,
+  query: URLSearchParams,
+): boolean {
+  const presence = query.get("presence");
+  if (presence && item.presence !== presence) return false;
+  const draining = query.get("draining");
+  if (draining !== null && String(item.draining) !== draining) return false;
+  const release = query.get("release_id");
+  if (release && item.release_id !== release) return false;
+  const type = query.get("task_type");
+  if (type && !(item.task_types as string[]).includes(type)) return false;
+  const target = query.get("target_id");
+  const placement = item.placement as { target_id?: string } | undefined;
+  if (target && placement?.target_id !== target) return false;
+  const host = query.get("host_prefix");
+  const identity = item.identity as { host?: string } | undefined;
+  if (host && !identity?.host?.startsWith(host)) return false;
+  return true;
+}
+/** Narrow screens fold the filters behind "Filters (n)": open them. */
+async function openFilters(page: Page) {
+  await page.locator(".operate-filters").waitFor({ state: "attached" });
+  const toggle = page.locator(".filters-toggle");
+  if (await toggle.isVisible()) await toggle.click();
+}
 const rows = (page: Page) =>
   page.getByRole("table", { name: "Workers" }).locator(".resource-row");
 
-test("filtered workers can reach matching rows on a later page", async ({
+test("a filter asks the platform for its first page, so a match beyond the loaded pages shows", async ({
   page,
 }) => {
   await workers(page, ["status.read"]);
   const queries: URLSearchParams[] = [];
+  // Unfiltered, the offline worker sits on the third page of 50.
   await page.route(`${environment}/workers?*`, (r) => {
     const query = new URL(r.request().url()).searchParams;
     queries.push(query);
+    if (query.get("presence") === "stale")
+      return r.fulfill({
+        json: {
+          items: [worker(stale, { presence: "stale" })],
+          next_cursor: null,
+        },
+      });
+    const page = Number(query.get("cursor") ?? "0");
     return r.fulfill({
-      json: query.has("cursor")
-        ? { items: [worker(stale, { presence: "stale" })], next_cursor: null }
-        : {
-            items: Array.from({ length: 50 }, (_, i) =>
-              worker("18888888-8888-4888-8888-" + String(i).padStart(12, "0")),
-            ),
-            next_cursor: "next",
-          },
+      json: {
+        items:
+          page === 2
+            ? [worker(stale, { presence: "stale" })]
+            : Array.from({ length: 50 }, (_, i) =>
+                worker(
+                  "18888888-8888-4888-8888-" +
+                    String(page * 50 + i).padStart(12, "0"),
+                ),
+              ),
+        next_cursor: page < 2 ? String(page + 1) : null,
+      },
     });
   });
-  await page.goto("/operate/workers?presence=offline");
-  const more = page.getByRole("button", { name: "Load more workers" });
-  await expect(more).toBeVisible();
-  await expect(
-    page.getByRole("heading", { name: /loaded workers/ }),
-  ).toBeVisible();
-  await more.click();
+  await page.goto("/operate/workers");
+  await expect(rows(page)).toHaveCount(50);
+  await expect(page.getByText("50 workers loaded")).toBeVisible();
+  const before = queries.length;
+  await page.getByLabel("Status").selectOption("offline");
   await expect(rows(page)).toHaveCount(1);
   await expect(rows(page)).toContainText("Offline");
-  // Load more continues the same query, so its cursor stays valid.
-  expect(queries.some((query) => query.has("cursor"))).toBe(true);
-  for (const query of queries) {
-    expect(query.get("state")).toBe("all");
-    expect(query.get("order")).toBe("registered_desc");
+  const filtered = queries.slice(before);
+  expect(filtered.length).toBeGreaterThan(0);
+  for (const query of filtered) {
+    expect(query.get("presence")).toBe("stale");
+    expect(query.get("state")).toBe("current");
+    expect(query.get("order")).toBe("last_seen_desc");
+    expect(query.has("cursor")).toBe(false);
   }
 });
 
@@ -243,7 +285,7 @@ test("workers stop at the page limit and explain remaining records", async ({
     page.getByRole("button", { name: "Load more workers" }),
   ).toHaveCount(0);
   await expect(
-    page.getByText("More workers may exist.", { exact: false }),
+    page.getByText("Showing the first 500 workers.", { exact: false }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
   await expect.poll(() => reads).toBe(20);
@@ -304,33 +346,42 @@ for (const viewport of [
       await expect(rows(page).nth(1)).toContainText("Offline");
       await expect(rows(page).nth(2)).toContainText("Not seen yet");
       await expect(rows(page).nth(2).locator(".meter")).toHaveClass(/over/);
+      await openFilters(page);
       await expect(page.getByText("3 workers", { exact: true })).toBeVisible();
-      await page.getByLabel("Show revoked workers").check();
-      await expect(rows(page)).toHaveCount(4);
-      await expect(rows(page).nth(3)).toContainText("Revoked");
-      // The page reads every worker in a stable order and filters them itself.
+      // The platform lists current workers, last contact first.
       expect(mocked.queries().length).toBeGreaterThan(0);
       for (const query of mocked.queries()) {
-        expect(query.get("state")).toBe("all");
-        expect(query.get("order")).toBe("registered_desc");
+        expect(query.get("state")).toBe("current");
+        expect(query.get("order")).toBe("last_seen_desc");
       }
+      await page.getByLabel("Show retired workers").check();
+      await expect(rows(page)).toHaveCount(4);
+      await expect(rows(page).nth(3)).toContainText("Revoked");
+      expect(mocked.queries().at(-1)!.get("state")).toBe("all");
+      await expect(page).toHaveURL(/\/operate\/workers\?revoked=true$/);
     });
 
     test("filters narrow the list and stay in the address", async ({
       page,
     }) => {
-      await workers(page, ["status.read"]);
+      const mocked = await workers(page, ["status.read"]);
       await page.goto("/operate/workers?presence=offline");
+      await openFilters(page);
       await expect(page.getByLabel("Status")).toHaveValue("offline");
       await expect(rows(page)).toHaveCount(1);
-      await expect(page.getByText("1 of 3 workers")).toBeVisible();
+      await expect(page.getByText("1 worker", { exact: true })).toBeVisible();
+      expect(mocked.queries().at(-1)!.get("presence")).toBe("stale");
       await page.getByLabel("Status").selectOption("");
       await page.getByLabel("Task type").selectOption("email-send@1.0.0");
       await expect(page).toHaveURL(
         /\/operate\/workers\?task_type=email-send(@|%40)1\.0\.0$/,
       );
       await expect(rows(page)).toHaveCount(1);
-      await page.getByLabel("Draining only").check();
+      expect(mocked.queries().at(-1)!.get("task_type")).toBe(
+        "email-send@1.0.0",
+      );
+      await page.getByLabel("Draining", { exact: true }).selectOption("true");
+      await expect(page).toHaveURL(/draining=true/);
       await expect(
         page.getByRole("heading", { name: "No workers match these filters" }),
       ).toBeVisible();
@@ -865,7 +916,7 @@ for (const viewport of [
       fail = false;
       await problem.getByRole("button", { name: "Try again" }).click();
       await expect(
-        page.getByRole("heading", { name: "No workers yet" }),
+        page.getByRole("heading", { name: "No current workers" }),
       ).toBeVisible();
     });
   });
@@ -887,8 +938,9 @@ for (const size of [
       await workers(page, ["status.read"]);
       await page.goto("/operate/workers");
       await expect(rows(page).first()).toBeVisible();
+      await openFilters(page);
       const labels = page.locator(".operate-filters .checkbox-field");
-      expect(await labels.count()).toBeGreaterThan(0);
+      await expect(labels.first()).toBeVisible();
       const figures = await labels.evaluateAll((nodes) =>
         nodes.map((node) => {
           const label = node.getBoundingClientRect();
@@ -914,3 +966,385 @@ for (const size of [
       }
     });
   });
+
+test.describe("platform filters, where workers run, and retiring", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+  const target = "55555555-5555-4555-8555-555555555555";
+  const release = "33333333-3333-4333-8333-333333333333";
+  /** Targets and releases offered as filter choices. */
+  async function choices(page: Page) {
+    await page.route(`${environment}/deployment-targets?*`, (r) =>
+      r.fulfill({
+        json: { items: [{ id: target, name: "eu-west" }], next_cursor: null },
+      }),
+    );
+    await page.route(`${environment}/worker-releases?*`, (r) =>
+      r.fulfill({
+        json: {
+          items: [
+            {
+              id: release,
+              image_digest: "sha256:" + "ab".repeat(32),
+              capabilities: [{ taskType: "crm-lookup", taskVersion: "1.0.0" }],
+            },
+          ],
+          next_cursor: null,
+        },
+      }),
+    );
+  }
+
+  test("every filter goes to the platform; the host prefix never enters the address", async ({
+    page,
+  }) => {
+    const mocked = await workers(page, [
+      "status.read",
+      "deployment.read",
+      "catalog.read",
+    ]);
+    await choices(page);
+    await page.goto("/operate/workers");
+    await expect(rows(page)).toHaveCount(3);
+    await page.getByLabel("Status").selectOption("online");
+    await page.getByLabel("Draining", { exact: true }).selectOption("false");
+    await page.getByLabel("Release").selectOption(release);
+    await page.getByLabel("Task type").selectOption("crm-lookup@1.0.0");
+    await page.getByLabel("Target").selectOption(target);
+    await page.getByLabel("Order").selectOption("registered_desc");
+    await page.getByLabel("Host starts with").fill("worker-");
+    await expect
+      .poll(() => mocked.queries().at(-1)?.get("host_prefix"))
+      .toBe("worker-");
+    const query = mocked.queries().at(-1)!;
+    expect(Object.fromEntries(query)).toEqual({
+      limit: "50",
+      state: "current",
+      order: "registered_desc",
+      presence: "recent",
+      draining: "false",
+      release_id: release,
+      task_type: "crm-lookup@1.0.0",
+      target_id: target,
+      host_prefix: "worker-",
+    });
+    // Another filter after the host prefix writes the address again: still
+    // without the prefix, which the next read keeps sending.
+    await page.getByLabel("Status").selectOption("offline");
+    await expect(page).toHaveURL(/presence=offline/);
+    await expect
+      .poll(() => mocked.queries().at(-1)?.get("presence"))
+      .toBe("stale");
+    expect(mocked.queries().at(-1)!.get("host_prefix")).toBe("worker-");
+    expect(page.url()).not.toContain("worker-");
+    await page.getByLabel("Status").selectOption("online");
+    expect(Object.fromEntries(new URL(page.url()).searchParams)).toEqual({
+      presence: "online",
+      draining: "false",
+      release,
+      task_type: "crm-lookup@1.0.0",
+      target,
+      order: "registered_desc",
+    });
+    await page
+      .getByRole("search", { name: "Filter workers" })
+      .getByRole("button", { name: /^Clear filters/ })
+      .click();
+    await expect(page).toHaveURL(/\/operate\/workers$/);
+    await expect(page.getByLabel("Host starts with")).toHaveValue("");
+    expect(mocked.queries().at(-1)!.has("host_prefix")).toBe(false);
+  });
+
+  test("an answer for the filters before never replaces the list for the new ones", async ({
+    page,
+  }) => {
+    await workers(page, ["status.read"]);
+    let hold = false;
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    let reached: () => void = () => undefined;
+    const out = new Promise<void>((resolve) => (reached = resolve));
+    await page.route(`${environment}/workers?*`, async (r) => {
+      const query = new URL(r.request().url()).searchParams;
+      if (query.get("presence") === "stale")
+        return r.fulfill({
+          json: {
+            items: [worker(stale, { presence: "stale" })],
+            next_cursor: null,
+          },
+        });
+      if (hold) {
+        hold = false;
+        reached();
+        await held;
+      }
+      await r
+        .fulfill({
+          json: { items: [worker(online), worker(fresh)], next_cursor: null },
+        })
+        .catch(() => undefined);
+    });
+    await page.goto("/operate/workers");
+    await expect(rows(page)).toHaveCount(2);
+    // A refresh for no filters is out when the person picks Offline.
+    hold = true;
+    await page.getByRole("button", { name: "Refresh", exact: true }).click();
+    await out;
+    await page.getByLabel("Status").selectOption("offline");
+    release();
+    await expect(rows(page)).toHaveCount(1);
+    await page.waitForTimeout(500);
+    await expect(rows(page)).toHaveCount(1);
+    await expect(rows(page)).toContainText("Offline");
+  });
+
+  test("a worker shows where it runs, as text, and Unknown for what nobody reported", async ({
+    page,
+  }) => {
+    const { items } = await workers(page, ["status.read"]);
+    items[0] = {
+      ...items[0],
+      registered_at: at(-7200),
+      identity: {
+        host: "worker-7f9c",
+        runtime: "container",
+        sdk_version: "0.1.0a15",
+        language_version: "3.12.4",
+        os: "Linux",
+        arch: "x86_64",
+        platform_hint: "kubernetes",
+        namespace: "weave",
+        node: "node-a",
+        labels: { team: "billing" },
+      },
+      placement: {
+        target_id: target,
+        target_name: "eu-west",
+        deployment_id: "66666666-6666-4666-8666-666666666666",
+        component: "workers",
+      },
+    } as never;
+    await page.goto("/operate/workers");
+    const first = rows(page).first();
+    await expect(first).toContainText("worker-7f9c");
+    await expect(first).toContainText("eu-west › workers");
+    await expect(first).toContainText("SDK 0.1.0a15 · Runtime 3.12.4");
+    await expect(rows(page).nth(1)).toContainText("No host reported");
+    await expect(rows(page).nth(1)).toContainText("Unknown");
+    await page.getByRole("button", { name: "Worker 11111111" }).click();
+    const detail = page.locator("weave-worker-detail");
+    await expect(detail).toContainText("A container on Kubernetes");
+    await expect(detail).toContainText("Linux · x86_64");
+    await expect(detail).toContainText("Namespace weave, node node-a");
+    await expect(detail).toContainText("team=billing");
+    await expect(detail.locator("a")).toHaveCount(0);
+    await page.getByRole("button", { name: "Worker 12222222" }).click();
+    await expect(detail.locator("dt:text-is('Registered') + dd")).toHaveText(
+      "Unknown",
+    );
+    await expect(detail).toContainText(
+      "Nothing: this worker doesn't say where it runs.",
+    );
+  });
+
+  test("Retire offline workers previews 24 hours, says what matches, and retires each batch with its own key", async ({
+    page,
+  }) => {
+    await workers(page, ["status.read", "release.retire"]);
+    const sent: { body: Record<string, unknown>; key: string }[] = [];
+    let matched = 250;
+    await page.route(`${environment}/workers/retire-stale`, (r) => {
+      const body = r.request().postDataJSON();
+      sent.push({ body, key: r.request().headers()["idempotency-key"] });
+      const ids = Array.from(
+        { length: body.dry_run ? 0 : Math.min(100, matched) },
+        (_, i) => "1aaaaaaa-0000-4000-8000-" + String(i).padStart(12, "0"),
+      );
+      const answer = { matched, revoked: ids.length, worker_ids: ids };
+      if (!body.dry_run) matched -= ids.length;
+      return r.fulfill({ json: answer });
+    });
+    await page.goto("/operate/workers");
+    await page.getByRole("button", { name: "Retire offline workers…" }).click();
+    const dialog = page.getByRole("dialog", { name: "Retire offline workers" });
+    await expect(dialog.getByRole("status")).toHaveText(
+      "250 workers match. One retirement revokes 100, oldest first; retire again for the rest.",
+    );
+    expect(sent[0].body).toEqual({ older_than_seconds: 86400, dry_run: true });
+    await dialog.getByRole("button", { name: "Retire 100 workers" }).click();
+    await expect(dialog.getByRole("status")).toHaveText(
+      "Revoked 100 workers. 150 workers still match.",
+    );
+    await expect(
+      dialog.getByRole("list", { name: "Revoked workers" }).locator("li"),
+    ).toHaveCount(100);
+    expect(sent[1].body).toEqual({ older_than_seconds: 86400, dry_run: false });
+    await dialog.getByRole("button", { name: "Retire the next 100" }).click();
+    await expect(dialog.getByRole("status")).toHaveText(
+      "Revoked 100 workers. 50 workers still match.",
+    );
+    const keys = sent.map((item) => item.key);
+    expect(new Set(keys).size).toBe(keys.length);
+    for (const key of keys) expect(key).toMatch(/^[0-9a-f-]{36}$/);
+    // Nothing matches for 30 days: there is nothing to confirm.
+    matched = 0;
+    await dialog.getByLabel("Offline for at least").selectOption("2592000");
+    await expect(dialog.getByRole("status")).toContainText("No worker matches");
+    await expect(dialog.getByRole("button", { name: /^Retire/ })).toHaveCount(
+      0,
+    );
+    expect(sent.at(-1)!.body).toEqual({
+      older_than_seconds: 2592000,
+      dry_run: true,
+    });
+  });
+
+  test("a lost retirement answer sends the same key again; a refusal says why", async ({
+    page,
+  }) => {
+    await workers(page, ["status.read", "release.retire"]);
+    const keys: string[] = [];
+    let attempt = 0;
+    await page.route(`${environment}/workers/retire-stale`, (r) => {
+      const body = r.request().postDataJSON();
+      if (body.dry_run)
+        return r.fulfill({
+          json: { matched: 3, revoked: 0, worker_ids: [] },
+        });
+      keys.push(r.request().headers()["idempotency-key"]);
+      attempt++;
+      return attempt === 1
+        ? r.fulfill({
+            status: 503,
+            json: { code: "WV-UNAVAILABLE", message: "Unavailable" },
+          })
+        : attempt === 2
+          ? r.fulfill({
+              status: 403,
+              json: { code: "WV-FORBIDDEN", message: "Not allowed" },
+            })
+          : r.fulfill({ json: { matched: 3, revoked: 3, worker_ids: [] } });
+    });
+    await page.goto("/operate/workers");
+    await page.getByRole("button", { name: "Retire offline workers…" }).click();
+    const dialog = page.getByRole("dialog", { name: "Retire offline workers" });
+    await dialog.getByRole("button", { name: "Retire 3 workers" }).click();
+    await expect(dialog.getByRole("alert")).toContainText(
+      "Studio didn't get an answer",
+    );
+    await dialog.getByRole("button", { name: "Send again" }).click();
+    await expect(dialog.getByRole("alert")).toContainText("Not allowed");
+    expect(keys[1]).toBe(keys[0]);
+    await dialog.getByRole("button", { name: "Retire 3 workers" }).click();
+    await expect(dialog.getByRole("status")).toHaveText("Revoked 3 workers.");
+    expect(keys[2]).not.toBe(keys[0]);
+  });
+
+  test("without release.retire, Retire and Revoke don't show", async ({
+    page,
+  }) => {
+    await workers(page, ["status.read", "worker.drain"]);
+    await page.goto("/operate/workers");
+    await expect(rows(page)).toHaveCount(3);
+    await expect(
+      page.getByRole("button", { name: "Retire offline workers…" }),
+    ).toHaveCount(0);
+    await rows(page).first().getByRole("checkbox").check();
+    const bar = page.getByRole("region", { name: "Selected workers" });
+    await expect(bar.getByRole("button", { name: "Drain" })).toBeVisible();
+    await expect(bar.getByRole("button", { name: "Revoke" })).toHaveCount(0);
+    await page.getByRole("button", { name: "Worker 11111111" }).click();
+    await expect(
+      page
+        .locator("weave-worker-detail")
+        .getByRole("button", { name: "Revoke" }),
+    ).toHaveCount(0);
+  });
+
+  test("selected workers drain, resume and are revoked one by one, each with its revision and answer", async ({
+    page,
+  }) => {
+    const { items } = await workers(page, [
+      "status.read",
+      "worker.drain",
+      "release.retire",
+    ]);
+    items[1] = { ...items[1], draining: true, revision: 9 };
+    const sent: { path: string; body: unknown; key?: string }[] = [];
+    await page.route(`${environment}/workers/*/*`, (r) => {
+      const path = new URL(r.request().url()).pathname;
+      sent.push({
+        path: path.split("/").slice(-2).join("/"),
+        body: r.request().postDataJSON(),
+        key: r.request().headers()["idempotency-key"],
+      });
+      if (path.endsWith(`${fresh}/drain`))
+        return r.fulfill({
+          status: 409,
+          json: { code: "WV-WORKER-REVISION", message: "Changed" },
+        });
+      return r.fulfill({ json: { revoked: true } });
+    });
+    await page.goto("/operate/workers");
+    await expect(rows(page)).toHaveCount(3);
+    await page.getByLabel("Select every worker on this list, up to 50").check();
+    const bar = page.getByRole("region", { name: "Selected workers" });
+    await expect(bar).toContainText("3 selected");
+    await bar.getByRole("button", { name: "Drain" }).click();
+    await page
+      .getByRole("dialog", { name: "Drain 3 workers?" })
+      .getByRole("button", { name: "Drain" })
+      .click();
+    const results = page.getByRole("region", { name: "Drain workers" });
+    await expect(results.locator(".bulk-result")).toHaveCount(3);
+    await expect(results.locator(".bulk-result").nth(0)).toContainText(
+      "Draining.",
+    );
+    await expect(results.locator(".bulk-result").nth(1)).toContainText(
+      "Not sent: it is already draining.",
+    );
+    await expect(results.locator(".bulk-result").nth(2)).toContainText(
+      "it changed since the list was read",
+    );
+    expect(sent).toEqual([
+      {
+        path: `${online}/drain`,
+        body: { expected_revision: 2 },
+        key: expect.stringMatching(/^[0-9a-f-]{36}$/),
+      },
+      {
+        path: `${fresh}/drain`,
+        body: { expected_revision: 2 },
+        key: expect.stringMatching(/^[0-9a-f-]{36}$/),
+      },
+    ]);
+    expect(sent[0].key).not.toBe(sent[1].key);
+    sent.length = 0;
+    await rows(page).nth(1).getByRole("checkbox").check();
+    await bar.getByRole("button", { name: "Resume" }).click();
+    await page
+      .getByRole("dialog", { name: "Resume this worker?" })
+      .getByRole("button", { name: "Resume" })
+      .click();
+    await expect(
+      page.getByRole("region", { name: "Resume workers" }),
+    ).toContainText("Takes new tasks again.");
+    expect(sent).toEqual([
+      {
+        path: `${stale}/resume`,
+        body: { expected_revision: 9 },
+        key: expect.stringMatching(/^[0-9a-f-]{36}$/),
+      },
+    ]);
+    sent.length = 0;
+    await rows(page).first().getByRole("checkbox").check();
+    await bar.getByRole("button", { name: "Revoke" }).click();
+    await page
+      .getByRole("dialog", { name: "Revoke this worker?" })
+      .getByRole("button", { name: "Revoke worker" })
+      .click();
+    await expect(
+      page.getByRole("region", { name: "Revoke workers" }),
+    ).toContainText("Revoked.");
+    expect(sent.map((item) => item.path)).toEqual([`${online}/revoke`]);
+  });
+});

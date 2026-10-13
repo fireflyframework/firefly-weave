@@ -19,13 +19,16 @@ import { describe, expect, it } from "vitest";
 import {
   checkResolution,
   defaultIncidentFilters,
-  filterIncidents,
-  incidentCodes,
+  incidentFilterCount,
   incidentFiltersFromQuery,
   incidentFiltersToQuery,
+  incidentFromQuery,
+  incidentQuery,
+  incidentSuggestions,
   incidentStatusLabel,
   incidentTone,
   lastEvents,
+  openedText,
   resolutionLabel,
   type IncidentRecord,
   type IncidentView,
@@ -135,40 +138,110 @@ describe("Resolve incident checks", () => {
 });
 
 describe("incident filters", () => {
-  const incidents: IncidentRecord[] = [
-    incident({ id: "a" }),
-    incident({ id: "b", status: "resolved", code: "WV-TASK-FAILED" }),
-    incident({ id: "c", status: "closed" }),
-    { id: "d", unavailable: true },
-  ];
-  const ids = (filters = defaultIncidentFilters) =>
-    filterIncidents(incidents, filters).map((item) => item.id);
-
-  it("shows active incidents by default and every status on request", () => {
-    expect(ids()).toEqual(["a"]);
-    expect(ids({ status: "all", code: "" })).toEqual(["a", "b", "c", "d"]);
-    expect(ids({ status: "resolved", code: "" })).toEqual(["b"]);
-    expect(ids({ status: "all", code: "WV-TASK-FAILED" })).toEqual(["b"]);
-    expect(incidentCodes(incidents)).toEqual([
-      "WV-TASK-AMBIGUOUS",
-      "WV-TASK-FAILED",
-    ]);
+  it("sends active incident and test filters to the first server page", () => {
+    const query = new URLSearchParams(
+      incidentQuery({ ...defaultIncidentFilters, includeTest: true }, null),
+    );
+    expect(query.getAll("status")).toEqual(["active"]);
+    expect(query.get("include_test")).toBe("true");
+    expect(query.has("cursor")).toBe(false);
   });
 
-  it("round-trips through the address, leaving the default out", () => {
+  it("maps every filter to the platform's names and continues with a cursor", () => {
+    const query = new URLSearchParams(
+      incidentQuery(
+        {
+          status: "all",
+          code: "WV-TASK-FAILED",
+          workflow: "invoice-approval",
+          nodeId: "charge",
+          openedAfter: "2026-10-01T00:00:00.000Z",
+          openedBefore: "2026-10-08T00:00:00.000Z",
+          includeTest: false,
+          order: "opened_asc",
+        },
+        "next-page",
+      ),
+    );
+    expect(Object.fromEntries(query)).toEqual({
+      limit: "50",
+      order: "opened_asc",
+      include_test: "false",
+      code: "WV-TASK-FAILED",
+      workflow: "invoice-approval",
+      node_id: "charge",
+      opened_after: "2026-10-01T00:00:00.000Z",
+      opened_before: "2026-10-08T00:00:00.000Z",
+      cursor: "next-page",
+    });
+    expect(query.has("status")).toBe(false);
+    expect(
+      new URLSearchParams(incidentQuery(defaultIncidentFilters, null)).get(
+        "order",
+      ),
+    ).toBe("opened_desc");
+  });
+
+  it("counts the filters that differ from active, newest first", () => {
+    expect(incidentFilterCount(defaultIncidentFilters)).toBe(0);
+    expect(
+      incidentFilterCount({
+        ...defaultIncidentFilters,
+        status: "all",
+        workflow: "w",
+        includeTest: true,
+        order: "opened_asc",
+      }),
+    ).toBe(3);
+  });
+
+  it("round-trips through the address, leaving the defaults out", () => {
     expect(incidentFiltersToQuery(defaultIncidentFilters)).toBe("");
-    const query = incidentFiltersToQuery({
-      status: "all",
+    const filters = {
+      status: "all" as const,
       code: "WV-TASK-FAILED",
-    });
-    expect(query).toBe("?status=all&code=WV-TASK-FAILED");
-    expect(incidentFiltersFromQuery(query)).toEqual({
-      status: "all",
-      code: "WV-TASK-FAILED",
-    });
-    expect(incidentFiltersFromQuery("?status=open")).toEqual(
+      workflow: "invoice-approval",
+      nodeId: "charge",
+      openedAfter: "2026-10-01T00:00:00.000Z",
+      openedBefore: "2026-10-08T00:00:00.000Z",
+      includeTest: true,
+      order: "id" as const,
+    };
+    const query = incidentFiltersToQuery(filters, "");
+    expect(incidentFiltersFromQuery(query)).toEqual(filters);
+    expect(incidentFiltersFromQuery("?status=open&order=newest")).toEqual(
       defaultIncidentFilters,
     );
+    expect(
+      incidentFiltersFromQuery("?opened_after=yesterday").openedAfter,
+    ).toBe("");
+  });
+
+  it("keeps an open incident in the address, and only a valid ID", () => {
+    const id = "91111111-1111-4111-8111-111111111111";
+    const query = incidentFiltersToQuery(defaultIncidentFilters, id);
+    expect(query).toBe(`?incident=${id}`);
+    expect(incidentFromQuery(query)).toBe(id);
+    expect(incidentFromQuery("?incident=../runs")).toBe("");
+    expect(incidentFiltersFromQuery(query)).toEqual(defaultIncidentFilters);
+  });
+
+  it("suggests the codes, workflows and steps the loaded incidents carry", () => {
+    const incidents: IncidentRecord[] = [
+      incident({ id: "a", workflow: { name: "w2", version: "1.0.0" } }),
+      incident({
+        id: "b",
+        code: "WV-TASK-FAILED",
+        node_id: "ship",
+        workflow: { name: "w1", version: "1.0.0" },
+      }),
+      { id: "d", unavailable: true },
+    ];
+    expect(incidentSuggestions(incidents)).toEqual({
+      codes: ["WV-TASK-AMBIGUOUS", "WV-TASK-FAILED"],
+      workflows: ["w1", "w2"],
+      steps: ["charge", "ship"],
+    });
   });
 
   it("keeps the last 20 engine events, types only", () => {
@@ -181,5 +254,42 @@ describe("incident filters", () => {
     expect(lines).toHaveLength(20);
     expect(lines[0]).toEqual({ sequence: 6, type: "task_failed" });
     expect(JSON.stringify(lines)).not.toContain("never shown");
+  });
+});
+
+describe("opening times", () => {
+  const relative = (value: string) => `at ${value}`;
+  it("accepts an incident without the estimate flag as exact", () => {
+    // An earlier platform leaves the flag out entirely.
+    const earlier: IncidentView = incident({
+      opened_at: "2026-10-07T10:00:00Z",
+    });
+    expect("opened_at_estimated" in earlier).toBe(false);
+    expect(earlier.opened_at_estimated ?? false).toBe(false);
+    expect(openedText(earlier, relative)).toBe("at 2026-10-07T10:00:00Z");
+  });
+  it("marks an estimate, says Unknown without a time, and never invents one", () => {
+    expect(
+      openedText(
+        incident({
+          opened_at: "2026-10-07T10:00:00Z",
+          opened_at_estimated: true,
+        }),
+        relative,
+      ),
+    ).toBe("at 2026-10-07T10:00:00Z (estimated)");
+    expect(
+      openedText(
+        incident({
+          opened_at: "2026-10-07T10:00:00Z",
+          opened_at_estimated: false,
+        }),
+        relative,
+      ),
+    ).toBe("at 2026-10-07T10:00:00Z");
+    expect(openedText(incident(), relative)).toBe("Unknown");
+    expect(
+      openedText(incident({ opened_at: "2026-10-07T10:00:00Z" }), () => ""),
+    ).toBe("Unknown");
   });
 });

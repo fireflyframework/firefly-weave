@@ -262,12 +262,28 @@ instead.
 ## 4. Observe one task through completion
 
 Start a workflow that calls the published Action. Inspect its run history and
-worker status through the API. In Studio, **Operate › Workers** lists every
-worker in the selected environment that is not revoked, newest registered
-first, including workers offline for a long time, with their status
-(**Online**, **Offline** or **Not seen yet**, and **Draining**), their load
-against their task slots, and their last contact. **Show revoked workers** adds
-the **Revoked** ones. Open a worker to **Drain** or **Resume** it. Use the
+worker status through the API. In Studio, **Operate › Workers** has two tabs.
+**Fleet** lists the current workers in the selected environment (not revoked,
+and seen, or registered, in the last hour), last contact first, with their
+status (**Online**, **Offline** or **Not seen yet**, and **Draining**), the
+host they report, where they run (a target and component, **In API process**,
+**Unmanaged**, or **Unknown** when a worker reports nothing), their release,
+SDK and runtime versions, their load against their task slots, their last
+contact and when they registered. The platform applies the filters (status,
+draining, release, task type, target, **Host starts with** and **Order**), so
+a match beyond the first page still shows; the address keeps every filter
+except the host prefix, which stays on the page. **Show retired workers** adds
+revoked and long-offline workers. Select up to 50 workers to **Drain**,
+**Resume** or **Revoke** them one after another, each with its own answer, or
+open a worker to see what it reports, where the platform places it, and to
+**Drain**, **Resume** or **Revoke** it. **Retire offline workers…** first shows
+how many workers offline for 24 hours (or 7 or 30 days) hold no work, then
+revokes them 100 at a time, oldest first. **Releases** lists the admitted
+releases; open one to see its workers by state, the activations that pin it
+and the deployments on targets you may read. Studio never admits a release: it
+shows the `weave workers releases create --request release.json` command.
+**Roll out to a target…** stays unavailable until change requests come to
+Studio. Use the
 [API playground](api-playground.md) to
 authenticate and select your environment, then the [full API reference](../reference/api-explorer.md)
 for worker registration and run/history reads. A worker token is for execution;

@@ -3127,6 +3127,24 @@ spec:
         observed_at: seen(0),
         active_leases: 3,
         available_capacity: 1,
+        registered_at: seen(-86_400),
+        identity: {
+          host: "billing-workers-7f9c4d8b6-x2p4q",
+          runtime: "container",
+          sdk_version: "0.1.0a15",
+          language_version: "3.12.4",
+          os: "Linux",
+          arch: "x86_64",
+          platform_hint: "kubernetes",
+          namespace: "weave",
+          node: "node-a",
+        },
+        placement: {
+          target_id: "55555555-5555-4555-8555-555555555555",
+          target_name: "eu-west",
+          deployment_id: "66666666-6666-4666-8666-666666666666",
+          component: "billing-workers",
+        },
       },
       {
         id: "7c9e6679-7425-40de-944b-e07fc1f90ae8",
@@ -3157,6 +3175,69 @@ spec:
     await page.locator(".resource-row").first().click();
     await expect(page.locator(".record-detail")).toContainText("crm-lookup");
     await shot("87-workers-detail");
+  },
+
+  // Workers › Releases: the admitted releases, the CLI command that admits
+  // one, and a release's workers and the deployments that run it.
+  async "workers-releases"({ page, shot }) {
+    await connected(page, {
+      capabilities: [...allCapabilities, "status.read", "catalog.read"],
+    });
+    const release = (id: string, digit: string, types: string[]) => ({
+      id,
+      image_digest: "sha256:" + digit.repeat(64),
+      capabilities: types.map((type) => {
+        const [taskType, taskVersion] = type.split("@");
+        return { taskType, taskVersion };
+      }),
+      credential_capabilities: [],
+    });
+    const releases = [
+      release("11111111-1111-4111-8111-111111111111", "3f", [
+        "crm-lookup@1.0.0",
+        "weave-connector-http-read@2.0.0",
+      ]),
+      release("11111111-1111-4111-8111-111111111112", "9c", [
+        "email-send@1.0.0",
+      ]),
+    ];
+    await page.route(`${environment}/worker-releases?*`, (r) =>
+      r.fulfill({ json: { items: releases, next_cursor: null } }),
+    );
+    await page.route(`${environment}/worker-releases/${releases[0].id}`, (r) =>
+      r.fulfill({ json: releases[0] }),
+    );
+    await page.route(`${environment}/worker-releases/*/usage?*`, (r) =>
+      r.fulfill({
+        json: {
+          workers: { online: 3, offline: 1, draining: 1, revoked: 2 },
+          deployments: ["eu-west", "us-east"].map((target, i) => ({
+            target_id: `55555555-5555-4555-8555-55555555555${i}`,
+            target_name: target,
+            deployment_id: `66666666-6666-4666-8666-66666666666${i}`,
+            deployment_name: "billing",
+            component: "billing-workers",
+            replicas: 2,
+          })),
+          activations: 4,
+        },
+      }),
+    );
+    await open(page, "Workers");
+    await page.getByRole("tab", { name: "Releases" }).click();
+    await expect(
+      page.getByRole("table", { name: "Releases" }).locator(".resource-row"),
+    ).toHaveCount(2);
+    await shot("107-workers-releases");
+    await page
+      .getByRole("table", { name: "Releases" })
+      .locator(".row-open")
+      .first()
+      .click();
+    await expect(page.locator("weave-release-detail")).toContainText("Used by");
+    await shot("108-workers-release-detail", {
+      end: ".record-detail, .page-content",
+    });
   },
 
   // The editor's navigation: nothing chosen (full at 1440 px and wider, the
@@ -3205,6 +3286,11 @@ spec:
       status: "active",
       revision: 2,
       external_effects_may_continue: false,
+      instance_key: `${step}#${generation}`,
+      opened_at: new Date(Date.now() - 3_600_000).toISOString(),
+      ...(step === "notify-warehouse" ? { opened_at_estimated: true } : {}),
+      workflow: { name: "order-fulfillment", version: "2.4.0" },
+      run_status: "blocked",
     }));
     await page.route(`${environment}/incidents?*`, (r) =>
       r.fulfill({ json: { items: incidents, next_cursor: null } }),

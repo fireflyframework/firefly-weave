@@ -23,8 +23,10 @@ import {
   legacyRedirects,
   navEntryVisible,
   operateRoutes,
+  releasesPath,
   viewFromPath,
   viewPath,
+  workersRoute,
 } from "../src/app/operate/operate-routes";
 
 const id = "11111111-1111-4111-8111-111111111111";
@@ -108,6 +110,8 @@ describe("Operate routes", () => {
       "operate/workers",
       "operate/clusters",
       "operate/runs/:id",
+      "operate/workers/releases",
+      "operate/workers/releases/:id",
       "operate/workers/:id",
       "operate/clusters/targets/:id",
       "operate/clusters/deployments/:id",
@@ -117,6 +121,41 @@ describe("Operate routes", () => {
     expect(operateRoutes.every((route) => route.children?.length === 0)).toBe(
       true,
     );
+  });
+
+  it("reads the Workers fleet or its releases, never a release as a worker", () => {
+    expect(workersRoute("/operate/workers")).toEqual({
+      tab: "fleet",
+      release: "",
+    });
+    expect(workersRoute(`/operate/workers/${id}`)).toEqual({
+      tab: "fleet",
+      release: "",
+    });
+    expect(workersRoute("/operate/workers/releases")).toEqual({
+      tab: "releases",
+      release: "",
+    });
+    expect(
+      workersRoute(`/operate/workers/releases/${id.toUpperCase()}`),
+    ).toEqual({
+      tab: "releases",
+      release: id,
+    });
+    expect(workersRoute("/operate/workers/releases/not-an-id")).toEqual({
+      tab: "releases",
+      release: "",
+    });
+    expect(viewFromPath(`/operate/workers/releases/${id}`)).toEqual({
+      view: "workers",
+      id: "",
+    });
+    expect(viewFromPath("/operate/workers/releases")).toEqual({
+      view: "workers",
+      id: "",
+    });
+    expect(releasesPath()).toBe("/operate/workers/releases");
+    expect(releasesPath(id)).toBe(`/operate/workers/releases/${id}`);
   });
 
   it("reads a Clusters record screen or tab, new and old", () => {

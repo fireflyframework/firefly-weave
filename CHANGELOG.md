@@ -106,9 +106,9 @@ SPDX-License-Identifier: Apache-2.0
   `registered_desc`, unknown times last. Cursors issued before the upgrade are
   refused, unknown query parameters are rejected, and an out-of-range `limit`
   answers `WV-VALIDATION` instead of `WV-PAGE`. Pages stay limited to 8 MiB.
-- Studio's Workers page asks for every worker (`state=all`), newest registered
-  first, so it keeps listing revoked and long-offline workers and its rows no
-  longer move between refreshes. Earlier Studio hosts and desktop apps get the
+- Studio's Workers page asks the platform for current workers, last contact
+  first, and for every worker with **Show retired workers**. Earlier Studio
+  hosts and desktop apps get the
   reduced default list from an upgraded server, because the Studio bridge
   forwards answers unchanged: their Workers page lists only current workers, and
   **Show revoked workers** shows none. Upgrade Studio and the desktop app with
@@ -173,6 +173,25 @@ SPDX-License-Identifier: Apache-2.0
   reads the list again at once, and a run started there shows first while
   the list puts new runs first (with Oldest first it waits for its place).
   The line under the title names the order in use.
+- Operate › Incidents filters on the platform by status, code, workflow,
+  step, opening range and test runs, with a choice of order, so a match
+  beyond the loaded pages shows. The address keeps the filters and the open
+  incident (`?incident=ID`), which opens from `incidents.read` even when no
+  loaded page lists it. The drawer shows the workflow, the full step instance,
+  the run's status and when the incident opened, marked estimated when the
+  upgrade inferred it and Unknown when it isn't known; Refresh incident reads
+  the incident itself.
+- Operate › Workers has Fleet and Releases tabs. Fleet filters on the platform
+  by status, draining, release, task type, target and host prefix (kept on the
+  page, never in the address) with a choice of order, shows each worker's
+  host, placement, versions and registration time, drains, resumes or revokes
+  up to 50 selected workers one by one, and **Retire offline workers…**
+  previews and then revokes offline workers that hold no work, 100 at a time.
+  Releases lists the admitted releases and, for one, its workers by state, the
+  activations that pin it and the deployments on targets you may read; it shows
+  the CLI command that admits a release and never admits one itself. On a narrow
+  screen both pages fold their filters behind **Filters (n)**, and every filter
+  checkbox is a 36 px target with a mouse and 44 px on touch.
 
 - Keep typing in the selected form field when deferred row autofocus completes.
   Rapid row additions focus the newest item without overriding a later choice.

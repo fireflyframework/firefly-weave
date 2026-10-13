@@ -15,8 +15,10 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-// One worker: where its contact and load stand, and Drain or Resume. The
-// server checks worker.drain and the revision on every command.
+// One worker: where its contact and load stand, what it reports about where
+// it runs and where the platform places it, and Drain, Resume or Revoke. The
+// server checks worker.drain (with the revision) or release.retire on every
+// command. Reported values are shown as text, never as links.
 import {
   ChangeDetectionStrategy,
   ChangeDetectorRef,
@@ -39,6 +41,9 @@ import {
   workerBadges,
   workerLoad,
   workerPresence,
+  workerVersion,
+  workerWhere,
+  type WorkerIdentity,
   type WorkerStatus,
 } from "./workers-model";
 
@@ -99,6 +104,32 @@ import {
       </dd>
       <dt>Task types</dt>
       <dd>{{ w.task_types.join(", ") || "None" }}</dd>
+      <dt>Registered</dt>
+      <dd>
+        @if (w.registered_at) {
+          <time
+            [attr.datetime]="iso(w.registered_at)"
+            [attr.title]="absolute(w.registered_at)"
+            >{{ relative(w.registered_at) }}</time
+          >
+        } @else {
+          Unknown
+        }
+      </dd>
+      @if (w.draining) {
+        <dt>Draining since</dt>
+        <dd>
+          @if (w.drained_at) {
+            <time
+              [attr.datetime]="iso(w.drained_at)"
+              [attr.title]="absolute(w.drained_at)"
+              >{{ relative(w.drained_at) }}</time
+            >
+          } @else {
+            Unknown
+          }
+        </dd>
+      }
       <dt>Observed</dt>
       <dd>
         <time [attr.datetime]="iso(w.observed_at)">{{
@@ -106,6 +137,62 @@ import {
         }}</time>
       </dd>
     </dl>
+    <h3>Where it runs</h3>
+    <dl class="facts">
+      <dt>Placement</dt>
+      <dd>
+        @if (w.placement; as placed) {
+          {{ placed.target_name }} › {{ placed.component }}
+        } @else {
+          {{ where(w) }}
+        }
+      </dd>
+      @if (w.identity; as identity) {
+        <dt>Host</dt>
+        <dd>
+          @if (identity.host) {
+            <code class="mono-id">{{ identity.host }}</code>
+          } @else {
+            Not reported
+          }
+        </dd>
+        <dt>Runs as</dt>
+        <dd>{{ runtimeText(identity.runtime, identity.platform_hint) }}</dd>
+        @if (version(w)) {
+          <dt>Version</dt>
+          <dd>{{ version(w) }}</dd>
+        }
+        @if (identity.os || identity.arch) {
+          <dt>System</dt>
+          <dd>{{ systemText(identity.os, identity.arch) }}</dd>
+        }
+        @if (identity.namespace || identity.node) {
+          <dt>Kubernetes</dt>
+          <dd>
+            {{ kubernetesText(identity.namespace, identity.node) }}
+          </dd>
+        }
+        @if (labelsOf(identity.labels).length) {
+          <dt>Labels</dt>
+          <dd>
+            <ul class="worker-labels" role="list">
+              @for (label of labelsOf(identity.labels); track label[0]) {
+                <li>
+                  <code>{{ label[0] }}={{ label[1] }}</code>
+                </li>
+              }
+            </ul>
+          </dd>
+        }
+      } @else {
+        <dt>Reported</dt>
+        <dd>Nothing: this worker doesn't say where it runs.</dd>
+      }
+    </dl>
+    <p class="hint">
+      What a worker reports is shown as it reports it; it never decides what the
+      worker may do.
+    </p>
     <p class="hint">
       Draining stops new tasks. Running tasks finish or expire; draining doesn't
       stop the container or cancel them.
@@ -121,15 +208,27 @@ import {
         }
       </div>
     }
-    @if (canControl(w)) {
+    @if (canControl(w) || canRevoke(w)) {
       <div class="action-row">
-        @if (w.draining) {
-          <button type="button" [disabled]="busy" (click)="control('resume')">
-            <weave-icon name="play" [size]="16" />Resume
-          </button>
-        } @else {
-          <button type="button" [disabled]="busy" (click)="control('drain')">
-            <weave-icon name="drain" [size]="16" />Drain
+        @if (canControl(w)) {
+          @if (w.draining) {
+            <button type="button" [disabled]="busy" (click)="control('resume')">
+              <weave-icon name="play" [size]="16" />Resume
+            </button>
+          } @else {
+            <button type="button" [disabled]="busy" (click)="control('drain')">
+              <weave-icon name="drain" [size]="16" />Drain
+            </button>
+          }
+        }
+        @if (canRevoke(w)) {
+          <button
+            type="button"
+            class="danger"
+            [disabled]="busy"
+            (click)="revoke()"
+          >
+            <weave-icon name="revoke" [size]="16" />Revoke
           </button>
         }
       </div>
@@ -147,6 +246,16 @@ import {
         </dd>
         <dt>Revision</dt>
         <dd>{{ w.revision }}</dd>
+        @if (w.placement; as placed) {
+          <dt>Target ID</dt>
+          <dd>
+            <code class="mono-id">{{ placed.target_id }}</code>
+          </dd>
+          <dt>Deployment ID</dt>
+          <dd>
+            <code class="mono-id">{{ placed.deployment_id }}</code>
+          </dd>
+        }
       </dl>
     </details>`,
 })
@@ -156,6 +265,8 @@ export class WorkerDetail implements OnChanges, OnDestroy {
   /** The worker after a command, read again from the platform. */
   changed = output<WorkerStatus>();
   refresh = output<void>();
+  /** The worker was revoked: the list reads it again. */
+  revoked = output<void>();
   closed = output<void>();
   problem: PlainError | null = null;
   private cdr = inject(ChangeDetectorRef);
@@ -165,6 +276,8 @@ export class WorkerDetail implements OnChanges, OnDestroy {
   readonly relative = timeRelative;
   readonly badges = workerBadges;
   readonly tone = toneAttribute;
+  readonly where = workerWhere;
+  readonly version = workerVersion;
   /** The workers whose command is on its way; one worker's never blocks another's. */
   private running = new Set<string>();
   private alive = true;
@@ -205,6 +318,86 @@ export class WorkerDetail implements OnChanges, OnDestroy {
       Number.isInteger(worker.revision) &&
       host.can("worker.drain", worker.id)
     );
+  }
+  canRevoke(worker: WorkerStatus) {
+    const host = this.host();
+    return (
+      !host.signInEnded &&
+      !worker.revoked &&
+      host.can("release.retire", worker.id)
+    );
+  }
+  runtimeText(
+    runtime: WorkerIdentity["runtime"],
+    hint: WorkerIdentity["platform_hint"],
+  ) {
+    const kind = {
+      embedded: "Inside the API",
+      container: "A container",
+      process: "A process",
+    }[runtime];
+    return hint === "kubernetes"
+      ? `${kind} on Kubernetes`
+      : hint === "docker"
+        ? `${kind} on Docker`
+        : kind;
+  }
+  systemText(os?: string, arch?: string) {
+    return [os, arch].filter(Boolean).join(" · ");
+  }
+  kubernetesText(namespace?: string, node?: string) {
+    return [
+      namespace ? `Namespace ${namespace}` : "",
+      node ? `node ${node}` : "",
+    ]
+      .filter(Boolean)
+      .join(", ");
+  }
+  labelsOf(labels?: Record<string, string>) {
+    return Object.entries(labels ?? {}).sort(([a], [b]) => a.localeCompare(b));
+  }
+  /** Revoke: asks first; the list reads the worker again after. */
+  async revoke() {
+    const host = this.host();
+    const worker = this.worker();
+    if (this.running.has(worker.id) || !this.canRevoke(worker)) return;
+    const scope = this.environment();
+    const identity = JSON.stringify(host.identity);
+    const confirmed = await host.dialogs.confirm({
+      title: "Revoke this worker?",
+      message:
+        "It can't claim tasks again. Tasks it is running finish or expire.",
+      confirmLabel: "Revoke worker",
+      cancelLabel: "Keep",
+      danger: true,
+    });
+    if (!confirmed || !this.current(worker, scope, identity)) return;
+    this.running.add(worker.id);
+    this.problem = null;
+    this.cdr.markForCheck();
+    const named = `Worker ${shortId(worker.id)}`;
+    try {
+      const path = `${scope}/workers/${encodeURIComponent(worker.id)}`;
+      await host.api.request(`${path}/revoke`, "POST");
+      const read = await host.api.request<WorkerStatus>(path);
+      if (this.current(worker, scope, identity)) this.changed.emit(read);
+      this.revoked.emit();
+      host.notify(`${named} is revoked.`);
+    } catch (error) {
+      const plain = describeError(error);
+      if (this.current(worker, scope, identity))
+        this.problem =
+          plain.status === 403
+            ? {
+                ...plain,
+                message: `You need release.retire for this worker. ${plain.message}`,
+              }
+            : plain;
+      else host.notify(`${named} was not revoked. ${plain.message}`);
+    } finally {
+      this.running.delete(worker.id);
+      if (this.alive) this.cdr.markForCheck();
+    }
   }
   /** The environment commands go to; empty when there is none. */
   private environment() {

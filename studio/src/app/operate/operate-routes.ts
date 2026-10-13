@@ -96,6 +96,33 @@ export function viewFromPath(pathname: string): ViewRoute | null {
   return parts.length === 1 ? { view: parts[0], id: "" } : null;
 }
 
+/** A Workers address: the fleet (and a worker), or releases (and a release). */
+export interface WorkersRoute {
+  tab: "fleet" | "releases";
+  /** The release a "/operate/workers/releases/ID" address opens, or "". */
+  release: string;
+}
+
+/** Reads "/operate/workers/releases/ID", "/operate/workers/releases" or the fleet. */
+export function workersRoute(pathname: string): WorkersRoute {
+  const parts = pathname.split("/").filter(Boolean);
+  if (
+    parts[0] !== "operate" ||
+    parts[1] !== "workers" ||
+    parts[2] !== "releases"
+  )
+    return { tab: "fleet", release: "" };
+  const id = parts.length === 4 && uuid.test(parts[3]) ? parts[3] : "";
+  return { tab: "releases", release: id.toLowerCase() };
+}
+
+/** "/operate/workers/releases", or one release's "/operate/workers/releases/ID". */
+export function releasesPath(id = ""): string {
+  return id
+    ? `/operate/workers/releases/${encodeURIComponent(id)}`
+    : "/operate/workers/releases";
+}
+
 /** A Clusters address: one record's screen, or the tab list. */
 export interface ClustersRoute {
   collection: ClusterCollection | null;
@@ -149,6 +176,9 @@ export function navEntryVisible(
 export const operateRoutes: Routes = [
   ...operatePages.map((page) => ({ path: `operate/${page}`, children: [] })),
   { path: "operate/runs/:id", children: [] },
+  // Before the worker detail, so "releases" is never read as a worker ID.
+  { path: "operate/workers/releases", children: [] },
+  { path: "operate/workers/releases/:id", children: [] },
   { path: "operate/workers/:id", children: [] },
   ...clusterCollections.map((collection) => ({
     path: `operate/clusters/${collection}/:id`,
