@@ -107,6 +107,26 @@ PERSON_ROLES = (
     "email_manager",
     "execution_manager",
 )
+# The account `up --username` creates gets every role a local owner needs to set up the demo
+# workspace from Studio: AI connections, Weave AI, executions, workers and deployments. Other
+# accounts keep the defaults above; `user grant` adds roles to any account this platform created.
+LOCAL_OWNER_ROLES = (
+    "developer",
+    "deployer",
+    "operator",
+    "viewer",
+    "task_participant",
+    "tenant_admin",
+    "lumi_manager",
+    "execution_manager",
+    "worker_operator",
+    "deployment_reader",
+    "deployment_planner",
+    "deployment_approver",
+    "deployment_operator",
+)
+_PEOPLE = "people.json"
+_PEOPLE_FORMAT = "weave/local-people-v1"
 
 
 class PlatformError(ValueError):
@@ -1514,8 +1534,8 @@ def _check_username(username: str) -> None:
         )
 
 
-def _person_roles(roles: Sequence[str]) -> tuple[str, ...]:
-    selected = tuple(roles) or DEFAULT_PERSON_ROLES
+def _person_roles(roles: Sequence[str], default: Sequence[str] = DEFAULT_PERSON_ROLES) -> tuple[str, ...]:
+    selected = tuple(roles) or tuple(default)
     if len(set(selected)) != len(selected) or any(role not in PERSON_ROLES for role in selected):
         raise PlatformError("Choose each role at most once from: " + ", ".join(PERSON_ROLES) + ".")
     return selected
@@ -1531,6 +1551,29 @@ def _person_grants(roles: tuple[str, ...], scope: dict[str, str]) -> list[dict[s
         }
         for role in roles
     ]
+
+
+def _people(directory: Path) -> dict[str, Any]:
+    path = directory / _PEOPLE
+    if not path.exists():
+        return {"format": _PEOPLE_FORMAT, "people": {}}
+    value = strict_json(read_file(path, 1048576, private=True))
+    if (
+        not isinstance(value, dict)
+        or value.get("format") != _PEOPLE_FORMAT
+        or not isinstance(value.get("people"), dict)
+    ):
+        raise PlatformError("The private record of local accounts is not readable; it was not changed.")
+    return value
+
+
+def _remember_person(directory: Path, username: str, principal: str, subject: str) -> None:
+    """Record which Weave person a local sign-in belongs to, so later role grants find it."""
+    with _exclusive(directory, ".people.lock", "Another platform user command is active."):
+        path = directory / _PEOPLE
+        value = _people(directory)
+        value["people"][username] = {"principal_id": principal, "subject": subject}
+        _write(path, value, replace=path.exists())
 
 
 def _exists(username: str) -> str:
@@ -1776,6 +1819,7 @@ def user(
     import asyncio
 
     principal, subject = asyncio.run(_enroll(state, username, password, grants, host_token, admin_secret, transport))
+    _remember_person(directory, username, principal, subject)
     return {
         "ok": True,
         "username": username,
@@ -1789,6 +1833,109 @@ def user(
         "grants": grants,
         "api_url": api,
         "next": ["weave auth setup " + api, "weave studio"],
+    }
+
+
+async def _grant_roles(
+    state: dict[str, Any],
+    username: str,
+    person: dict[str, Any],
+    grants: list[dict[str, Any]],
+    host_token: str,
+    admin_secret: str,
+    transport: httpx.AsyncBaseTransport | None,
+) -> None:
+    import httpx
+
+    from firefly_weave.contracts.access import Scope
+    from firefly_weave.contracts.members import MemberGrantRequest, PrincipalIdentityRequest
+    from firefly_weave.sdk.client import WeaveClient
+    from firefly_weave.sdk.errors import WeaveError
+    from firefly_weave.sdk.members import MembersClient
+
+    keycloak = f"http://localhost:{state['ports']['keycloak']}"
+    users = keycloak + "/admin/realms/weave/users"
+    tenant = Scope(tenant_id=UUID(grants[0]["scope"]["tenant_id"]))
+    async with (
+        httpx.AsyncClient(timeout=10, trust_env=False, follow_redirects=False, transport=transport) as identity,
+        WeaveClient(_summary(state)["api_url"], lambda: host_token, tenant, timeout=15, transport=transport) as client,
+    ):
+        admin = await _keycloak_admin(identity, keycloak, admin_secret)
+        if await _keycloak_user(identity, users, admin, username) != person.get("subject"):
+            raise PlatformError(
+                f"The local sign-in account {username} is not the one this platform recorded; no role was granted."
+            )
+        members = MembersClient(client)
+        principal = UUID(str(person["principal_id"]))
+        try:
+            # Linking the recorded sign-in again changes nothing, and is refused if it belongs to another person.
+            await members.link_identity(
+                principal,
+                PrincipalIdentityRequest(
+                    provider_id=_PROVIDER_ID, issuer=keycloak + "/realms/weave", subject=str(person["subject"])
+                ),
+            )
+            for item in grants:
+                scope = {
+                    key: UUID(item["scope"][key]) for key in ("project_id", "environment_id") if key in item["scope"]
+                }
+                await members.grant(
+                    MemberGrantRequest.model_validate({"principal_id": principal, "role": item["role"], **scope})
+                )
+        except WeaveError as error:
+            raise PlatformError(
+                f"The local API refused the role grant ({error.code}). Roles granted before the refusal stay in place."
+            ) from None
+
+
+def grant(
+    directory: Path,
+    username: str,
+    roles: Sequence[str],
+    *,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> dict[str, Any]:
+    """Grant more roles in the demo workspace to a person that `user` or `up` created (development only)."""
+    _check_username(username)
+    if not roles:
+        raise PlatformError("Choose at least one role with --role.")
+    selected = _person_roles(roles)
+    if not (directory / "platform.json").exists():
+        raise PlatformError("No local platform exists here yet. Create it first: " + _command(directory, "setup"))
+    state = _load(directory)
+    if not (directory / "first-run.json").exists():
+        raise PlatformError("Create the demo workspace first: " + _command(directory, "demo"))
+    person = _people(directory)["people"].get(username)
+    if not isinstance(person, dict):
+        raise PlatformError(
+            f"This platform has no record of {username}. Accounts created before this version are not recorded: "
+            "assign roles in Studio under Settings › People and access, or create a new account with "
+            + _command(directory, "user --username NAME")
+        )
+    grants = _person_grants(selected, _demo_receipt(directory)["scope"])
+    try:
+        import httpx  # noqa: F401
+    except ModuleNotFoundError:
+        raise PlatformError("Granting roles requires the client extra: install firefly-weave[client].") from None
+    _check_engine(state)
+    _verify_runtime(state)
+    api = _summary(state)["api_url"]
+    if not _probe(api + "/health/ready"):
+        raise PlatformError("Start the API in another terminal (" + _command(directory, "start") + "), then retry.")
+    admin_secret = _env_file(directory / "identity.env").get("WEAVE_KC_ADMIN_SECRET")
+    if not admin_secret:
+        raise PlatformError("Private identity configuration is incomplete; retain it for recovery.")
+    _token(state)
+    host_token = strict_json(read_file(directory / "host-token.json", 65536, private=True))["access_token"]
+    import asyncio
+
+    asyncio.run(_grant_roles(state, username, person, grants, host_token, admin_secret, transport))
+    return {
+        "ok": True,
+        "username": username,
+        "principal_id": str(person["principal_id"]),
+        "grants": grants,
+        "development_only": True,
     }
 
 
@@ -1808,7 +1955,7 @@ def up(
 
     if roles and username is None:
         raise PlatformError("Account roles require --username.")
-    selected = _person_roles(roles)
+    selected = _person_roles(roles, LOCAL_OWNER_ROLES)
     if username is not None:
         _check_username(username)
     origins = platform_origins.requested(private_origins)

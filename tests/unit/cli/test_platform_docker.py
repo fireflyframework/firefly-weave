@@ -221,6 +221,32 @@ def test_new_up_sets_mode_before_setup_and_creates_account_only_once(tmp_path, m
     assert calls == ["setup", "start", "user", "start"]
 
 
+def test_up_gives_its_new_account_the_local_owner_roles(tmp_path, monkeypatch):
+    directory = tmp_path / "owner"
+    state = {
+        "mode": "docker",
+        "context": "owned",
+        "directory": str(directory),
+        "stage": "ready",
+        "id": "d" * 24,
+        "ports": {"container_api": 55201},
+    }
+    seen = []
+
+    def setup(*args, **kwargs):
+        directory.mkdir(mode=0o700)
+
+    monkeypatch.setattr(platform, "setup", setup)
+    monkeypatch.setattr(platform, "_load", lambda p: state)
+    monkeypatch.setattr(platform, "start", lambda *a: None)
+    monkeypatch.setattr(platform, "demo", lambda *a: {"receipt": {"status": "succeeded"}})
+    monkeypatch.setattr(platform, "user", lambda d, u, roles: seen.append(tuple(roles)) or {"username": u})
+    platform.up(directory, tmp_path, "owned", username="owner")
+    assert seen == [platform.LOCAL_OWNER_ROLES]
+    receipt = json.loads((directory / "up-user.json").read_text())
+    assert receipt["roles"] == list(platform.LOCAL_OWNER_ROLES)
+
+
 def test_uncertain_account_creation_blocks_replay(owned, monkeypatch):
     directory, state = owned
     platform._write(directory / "up-user.json", {"stage": "attempted", "username": "developer"})
