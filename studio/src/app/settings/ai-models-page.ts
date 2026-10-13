@@ -20,12 +20,14 @@ SPDX-License-Identifier: Apache-2.0
 // asks it to open and reloads when an AI connection changes.
 import { ChangeDetectionStrategy, Component, input } from "@angular/core";
 import type { Profile, StudioApi } from "../api";
+import type { AiSheetRequest } from "../integrations/ai-connection-sheet";
 
 /** What the page reads from the shell. */
 export interface AiModelsHost {
   readonly api: StudioApi;
   readonly profile: Profile | null;
   can(capability: string, resource?: string): boolean;
+  openAiConnectionDialog(request?: AiSheetRequest): void;
 }
 
 @Component({
@@ -33,9 +35,23 @@ export interface AiModelsHost {
   standalone: true,
   changeDetection: ChangeDetectionStrategy.Eager,
   template: `<p class="ai-intro">
-    Connect a model once. Workflows and Weave AI use the connections you set up
-    here.
-  </p>`,
+      Connect a model once. Workflows and Weave AI use the connections you set
+      up here.
+    </p>
+    <div class="action-row">
+      <button
+        type="button"
+        (click)="host().openAiConnectionDialog({ card: 'ollama' })"
+      >
+        Connect Ollama
+      </button>
+      <button
+        type="button"
+        (click)="host().openAiConnectionDialog({ card: 'openai' })"
+      >
+        Connect OpenAI
+      </button>
+    </div>`,
 })
 export class AiModelsPage {
   host = input.required<AiModelsHost>();

@@ -66,10 +66,15 @@ export class Autofocus implements AfterViewInit {
   selector: "weave-modal",
   standalone: true,
   imports: [Icon],
-  template: `<div class="modal-backdrop" (mousedown)="holdFocus($event)">
+  template: `<div
+    class="modal-backdrop"
+    [class.side]="placement() === 'side'"
+    (mousedown)="holdFocus($event)"
+  >
     <section
       class="modal-panel"
       [class.wide]="wide()"
+      [class.side]="placement() === 'side'"
       role="dialog"
       aria-modal="true"
       tabindex="-1"
@@ -97,6 +102,8 @@ export class Modal implements AfterViewInit, OnDestroy {
   describedBy = input("");
   closeLabel = input("Close dialog");
   wide = input(false);
+  /** "side": a full-height sheet at the right edge, full width on a phone. */
+  placement = input<"center" | "side">("center");
   dismiss = output<void>();
   titleId = `modal-title-${++sequence}`;
   private element = inject(ElementRef<HTMLElement>);

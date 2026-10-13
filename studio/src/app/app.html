@@ -622,6 +622,18 @@ SPDX-License-Identifier: Apache-2.0
       @defer (when lumiOpen) {
         <weave-lumi-panel [host]="this" />
       }
+      @if (aiSheet && profile) {
+        @defer (on immediate) {
+          <weave-ai-connection-sheet
+            [api]="api"
+            [canManage]="can('connection.manage')"
+            [request]="aiSheet"
+            (connectionSaved)="aiConnectionSaved()"
+            (tested)="aiConnectionTested($event)"
+            (closed)="aiSheet = null"
+          />
+        }
+      }
       <weave-dialog-host />
     </div>
   </div>
