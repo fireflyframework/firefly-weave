@@ -27,7 +27,7 @@ from pydantic import Field
 
 from firefly_weave.compiler.api import CompiledArtifact
 from firefly_weave.compiler.decision_tables import DecisionFailure, evaluate_decision_table
-from firefly_weave.compiler.expressions import DEFAULT_LIMITS, ExpressionFailure, evaluate, measure_value
+from firefly_weave.compiler.expressions import DEFAULT_LIMITS, ExpressionFailure, evaluate, measure_value, value_shape
 from firefly_weave.compiler.ir import (
     ActionNode,
     BranchOutputNode,
@@ -50,6 +50,7 @@ from firefly_weave.compiler.ir import (
 from firefly_weave.compiler.schemas import validate_payload
 from firefly_weave.contracts.definitions import ActionDefinition, ContractModel, WorkerImplementation, load_definition
 from firefly_weave.contracts.instance_keys import node_of, split_instance
+from firefly_weave.contracts.limits import Limits
 from firefly_weave.contracts.values import JsonObject, JsonValue
 from firefly_weave.runtime.capacity import (
     ADMISSION_OUTPUT_BYTES,
@@ -60,9 +61,11 @@ from firefly_weave.runtime.capacity import (
     STATE_BYTES,
     TERMINAL_STATE_BYTES,
     TRANSITION_BYTES,
+    GrowingContainers,
     RuntimeCapacityError,
     admit_transition,
     capacity_failures,
+    growing_containers,
     logical_size,
 )
 from firefly_weave.runtime.control import (
@@ -126,6 +129,54 @@ def workflow(artifact: CompiledArtifact) -> WorkflowIR:
     return ir
 
 
+class ContextShapes:
+    """Shapes of context parts that repeat across a loop's iterations (the input, values visible at the loop).
+
+    Each part is measured once per transition instead of once per evaluation, which keeps loop work linear in the
+    number of elements. Entries keep their part alive, so an identity is never reused while it is cached.
+    """
+
+    def __init__(self, limits: Limits = DEFAULT_LIMITS) -> None:
+        self.limits = limits
+        self.parts: dict[int, tuple[object, tuple[int, int]]] = {}
+
+    def shape(self, value: object) -> tuple[int, int]:
+        cached = self.parts.get(id(value))
+        if cached is not None and cached[0] is value:
+            return cached[1]
+        shape = value_shape(value, limits=self.limits)
+        if len(self.parts) >= 4096:
+            self.parts.clear()
+        self.parts[id(value)] = (value, shape)
+        return shape
+
+    def check(self, context: JsonObject) -> None:
+        """Apply the node and depth budgets of measuring the whole context, from the shapes of its parts."""
+        limits = self.limits
+        total = 1
+
+        def add(value: object, depth: int) -> None:
+            nonlocal total
+            nodes, height = self.shape(value)
+            if height and depth + height > limits.max_depth:
+                raise ExpressionFailure("RESOURCE_LIMIT")
+            total += nodes
+
+        for name, value in context.items():
+            if name in {"steps", "loops"}:
+                total += 1
+                for child in cast(JsonObject, value).values():
+                    if name == "steps":
+                        add(child, 2)
+                    else:
+                        total += 2
+                        add(cast(JsonObject, child)["item"], 3)
+            else:
+                add(value, 1)
+        if total > limits.max_document_nodes:
+            raise ExpressionFailure("RESOURCE_LIMIT")
+
+
 @dataclass(frozen=True)
 class PreparedWorkflow:
     """Read-only reduction context, rebuilt from the artifact after cursor restore."""
@@ -138,6 +189,7 @@ class PreparedWorkflow:
     body_sizes: Mapping[str, int]
     body_intents: Mapping[str, int]
     nested_blocks: frozenset[str]
+    contexts: ContextShapes
 
 
 def prepare(artifact: CompiledArtifact) -> PreparedWorkflow:
@@ -165,6 +217,7 @@ def prepare(artifact: CompiledArtifact) -> PreparedWorkflow:
         body_sizes=MappingProxyType(sizes),
         body_intents=MappingProxyType(intents),
         nested_blocks=frozenset(nested),
+        contexts=ContextShapes(),
     )
 
 
@@ -265,21 +318,33 @@ def transition(state: RunState, event: RuntimeEvent, artifact: CompiledArtifact 
     cursor = begin(state, event, artifact)
     reductions = unadmitted = output_bytes = measured = 0
     prepared = prepare(artifact) if artifact is not None and not state.unavailable else None
-    while not cursor.done:
-        reductions += 1
-        if reductions > MAX_REDUCTIONS:
-            raise RuntimeCapacityError()
-        cursor = _advance_owned(cursor, prepared, operational=True)
-        # Admission walks the whole transition, so it is amortized: at the final checkpoint, and earlier once
-        # enough reductions or new step output have accumulated. Only where a capacity error surfaces can move.
-        unadmitted += 1
-        changes = cursor.result.steps
-        for change in changes[measured:]:
-            output_bytes += logical_size(change.output, TRANSITION_BYTES)
-        measured = len(changes)
-        if cursor.done or unadmitted >= ADMISSION_REDUCTIONS or output_bytes >= ADMISSION_OUTPUT_BYTES:
-            admit_transition(cursor.result)
-            unadmitted = output_bytes = 0
+    # The event's steps and commands, and each loop's elements and outputs, only grow while it is reduced.
+    growing = GrowingContainers()
+    for container in (cursor.result.steps, cursor.result.commands, cursor.result.state.input):
+        if isinstance(container, (list, dict)):
+            growing.add(container)
+    for loop in cursor.result.state.loops.values():
+        growing.add(loop.items)
+        growing.add(loop.outputs)
+    tracking = growing_containers.set(growing)
+    try:
+        while not cursor.done:
+            reductions += 1
+            if reductions > MAX_REDUCTIONS:
+                raise RuntimeCapacityError()
+            cursor = _advance_owned(cursor, prepared, operational=True)
+            # Admission walks the whole transition, so it is amortized: at the final checkpoint, and earlier once
+            # enough reductions or new step output have accumulated. Only where a capacity error surfaces can move.
+            unadmitted += 1
+            changes = cursor.result.steps
+            for change in changes[measured:]:
+                output_bytes += logical_size(change.output, TRANSITION_BYTES)
+            measured = len(changes)
+            if cursor.done or unadmitted >= ADMISSION_REDUCTIONS or output_bytes >= ADMISSION_OUTPUT_BYTES:
+                admit_transition(cursor.result)
+                unadmitted = output_bytes = 0
+    finally:
+        growing_containers.reset(tracking)
     return cursor.result
 
 
@@ -396,6 +461,8 @@ def _advance_owned(
                 innermost = {"item": loop.items[index], "index": index}
                 scopes[owner] = innermost
             context.update(innermost, loops=scopes)
+            prepared.contexts.check(context)
+            return evaluate(expression, context, measured=True)
         return evaluate(expression, context)
 
     def guard(path: str, purpose: str, value: JsonValue) -> None:
@@ -484,7 +551,11 @@ def _advance_owned(
                 del current_state.branches[name]
         for name in [name for name in current_state.joins if inside(node_of(name), loop_suffix(name))]:
             del current_state.joins[name]
+        growing = growing_containers.get()
         for name in [name for name in current_state.loops if inside(node_of(name), loop_suffix(name))]:
+            if growing is not None:
+                growing.discard(current_state.loops[name].items)
+                growing.discard(current_state.loops[name].outputs)
             del current_state.loops[name]
 
     def terminate(status: str, code: str | None = None) -> None:
@@ -847,6 +918,9 @@ def _advance_owned(
                 current_state.loops[owner] = loop.model_copy(
                     update={"status": "joined", "items": [], "outputs": {}, "visible": {}}
                 )
+                if (growing := growing_containers.get()) is not None:
+                    growing.discard(loop.items)
+                    growing.discard(loop.outputs)
                 queue.append(successor(current))
             elif isinstance(node, JoinNode):
                 owner = node.owner + suffix
@@ -878,6 +952,9 @@ def _advance_owned(
                     visible=deepcopy(bindings(current_state, node, current)),
                 )
                 current_state.loops[current] = loop
+                if (growing := growing_containers.get()) is not None:
+                    growing.add(loop.items)
+                    growing.add(loop.outputs)
                 if items:
                     start_iterations(current)
                 else:
