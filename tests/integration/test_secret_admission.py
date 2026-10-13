@@ -912,3 +912,32 @@ async def test_prior_provenance_cannot_bypass_current_artifact_policy_or_starve_
         for row in (await session.execute(text("SELECT state,request,activation FROM runs"))).all():
             assert canary not in json.dumps(list(row))
     await assert_absent(access_db[1], canary, canonical_digest(canary), retained={"runs": retained_runs})
+
+
+@pytest.mark.parametrize("worker_runtime_fixture", ["signal"], indirect=True)
+async def test_legacy_signal_deadline_of_a_step_instance_still_times_out(
+    task_service, transaction_factory, queued_task, worker_ids, access_db, services
+):
+    from firefly_weave.runtime.deadlines import DeadlineService
+
+    async with access_db[1].begin() as session:
+        await session.execute(text("UPDATE runs SET state=state-'admission_policy'"))
+    async with transaction_factory() as tx:
+        assert await task_service.claim(tx, worker_ids[0], 1) == []
+    async with access_db[1].begin() as session:
+        assert await session.scalar(text("SELECT terminal_signals_verified FROM run_policy_blocks"))
+        await session.execute(
+            text(
+                "UPDATE run_deadlines SET node_id='approval[2]',deadline=clock_timestamp()-interval '1 second' "
+                "WHERE node_id='approval'"
+            )
+        )
+    service = services(access_db[0]).resolve(DeadlineService)
+    async with transaction_factory() as tx:
+        assert await service.tick(tx, 1) == 1
+    async with transaction_factory() as tx:
+        assert await service.tick(tx, 1) == 0
+    async with access_db[1]() as session:
+        assert await session.scalar(text("SELECT state->>'status' FROM runs")) == "timed_out"
+        event = (await session.execute(text("SELECT data FROM run_events WHERE type='timed_out'"))).scalar_one()
+    assert event["node_id"] == "approval[2]" and event["code"] == "WV-LEGACY-UNAVAILABLE"
