@@ -62,6 +62,22 @@ def test_a_context_checked_from_its_parts_fails_exactly_when_measuring_it_whole_
     assert outcome(lambda: shapes.check(context)) == whole
 
 
+@settings(max_examples=300, deadline=None)
+@given(
+    st.integers(1, 4),
+    st.dictionaries(st.from_regex(r"[a-z]{1,4}", fullmatch=True), json_values, max_size=3),
+    st.dictionaries(st.from_regex(r"[a-z]{1,4}", fullmatch=True), json_values, max_size=2),
+    json_values,
+)
+def test_shallow_depth_budgets_apply_to_the_steps_and_loops_containers_too(depth, steps, loops, item):
+    # The steps and loops objects sit at depth 1 and each loop scope at depth 2, even when they hold nothing deeper.
+    limits = Limits(max_document_nodes=200, max_depth=depth)
+    scopes = {name: {"item": value, "index": 0} for name, value in loops.items()}
+    context = {"input": None, "steps": steps, "item": item, "index": 0, "loops": scopes}
+    whole = outcome(lambda: measure_value(context, limits=limits, context=True))
+    assert outcome(lambda: ContextShapes(limits).check(context)) == whole
+
+
 def test_shared_context_parts_are_measured_once_and_kept_alive_while_cached():
     shapes, shared = ContextShapes(), list(range(1000))
     for index in range(3):

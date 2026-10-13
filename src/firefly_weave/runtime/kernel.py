@@ -164,6 +164,9 @@ class ContextShapes:
 
         for name, value in context.items():
             if name in {"steps", "loops"}:
+                # The steps and loops objects nest to depth 2 and each loop scope to depth 3, even when empty.
+                if limits.max_depth < 2 or (name == "loops" and value and limits.max_depth < 3):
+                    raise ExpressionFailure("RESOURCE_LIMIT")
                 total += 1
                 for child in cast(JsonObject, value).values():
                     if name == "steps":
