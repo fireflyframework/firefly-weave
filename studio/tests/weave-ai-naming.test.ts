@@ -55,9 +55,10 @@ describe("Weave AI naming", () => {
     expect(panel).toContain('heading="Ask Weave AI"');
     expect(panel).toContain('closeLabel="Close Weave AI"');
     expect(panel).toContain('aria-label="Message to Weave AI"');
-    const settings = read("app/settings/settings-page.ts");
-    expect(settings).toContain("<h2>AI models</h2>");
-    expect(settings).not.toContain("AI setup");
+    expect(read("app/settings/settings-routes.ts")).toContain(
+      '{ id: "ai", label: "AI models" }',
+    );
+    expect(read("app/settings/settings-page.ts")).not.toContain("AI setup");
   });
 
   it("keeps the lumi identifiers the API, roles and storage use", () => {
