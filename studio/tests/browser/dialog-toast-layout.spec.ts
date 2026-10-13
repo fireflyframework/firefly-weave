@@ -184,6 +184,61 @@ async function activationWithAddedPins(page: Page): Promise<Locator> {
   return dialog;
 }
 
+/**
+ * Focuses every control of a dialog in turn, each from the top of its
+ * scroll, and names those that end up under its title or its footer, or
+ * whose center is covered by something else. Answers in the footer only
+ * need to be reachable.
+ */
+async function controlsUnderFooter(dialog: Locator): Promise<string[]> {
+  return dialog.evaluate(async (panel) => {
+    const frame = () =>
+      new Promise((done) =>
+        requestAnimationFrame(() => requestAnimationFrame(done)),
+      );
+    const footer = [
+      ...panel.querySelectorAll<HTMLElement>(".dialog-actions, .dialog-footer"),
+    ].at(-1)!;
+    const header = panel.querySelector<HTMLElement>(".modal-header")!;
+    const controls = [
+      ...panel.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), [href], input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])',
+      ),
+    ].filter(
+      (control) => !header.contains(control) && control.getClientRects().length,
+    );
+    const problems: string[] = [];
+    for (const control of controls) {
+      panel.scrollTo({ top: 0 });
+      await frame();
+      control.focus();
+      await frame();
+      const name =
+        control.getAttribute("aria-label") ||
+        control.labels?.[0]?.textContent?.trim() ||
+        control.textContent?.trim() ||
+        control.tagName;
+      const r = control.getBoundingClientRect();
+      const top = document.elementFromPoint(
+        r.x + r.width / 2,
+        r.y + r.height / 2,
+      );
+      if (!top || !control.contains(top))
+        problems.push(`${name}: covered by ${top?.className || "nothing"}`);
+      if (footer.contains(control)) continue;
+      const under = footer.getBoundingClientRect().top;
+      const below = header.getBoundingClientRect().bottom;
+      if (r.bottom > under + 0.5)
+        problems.push(
+          `${name}: bottom ${r.bottom} under the footer at ${under}`,
+        );
+      if (r.top < below - 0.5)
+        problems.push(`${name}: top ${r.top} under the title at ${below}`);
+    }
+    return problems;
+  });
+}
+
 /** Waits until the toast has slid in and no longer moves. */
 async function settled(toast: Locator) {
   await expect
@@ -426,6 +481,56 @@ for (const size of sizes)
       await expect(
         dialog.getByLabel("Worker task type", { exact: true }),
       ).toBeFocused();
+    });
+
+    test("on a phone, every control in a dialog scrolls clear of its stacked footer", async ({
+      page,
+    }) => {
+      test.skip(
+        !["360x640", "640x360"].includes(size.tag),
+        "measured on a phone, upright and on its side",
+      );
+      const dialog = await activationWithAddedPins(page);
+      expect(await controlsUnderFooter(dialog), "activation").toEqual([]);
+      // Again with a row of each kind added by hand.
+      for (const [name, field] of [
+        ["Add worker release", "Worker task type"],
+        ["Add assignment binding", "Assignment name"],
+      ]) {
+        await dialog.getByRole("button", { name }).click();
+        await expect(dialog.getByLabel(field, { exact: true })).toBeFocused();
+      }
+      expect(
+        await controlsUnderFooter(dialog),
+        "activation with added rows",
+      ).toEqual([]);
+      await openStepFixture(page);
+      const question = await askAboutSource(page);
+      expect(await controlsUnderFooter(question), "Source question").toEqual(
+        [],
+      );
+    });
+
+    test("the activation dialog's Add buttons sit on one row or stack full width", async ({
+      page,
+    }) => {
+      const dialog = await activationWithAddedPins(page);
+      const adds = await boxes(
+        dialog.getByRole("button", { name: /^Add (worker|assignment)/ }),
+      );
+      expect(adds).toHaveLength(2);
+      if (Math.abs(adds[0].middle - adds[1].middle) < 1) return;
+      // Stacked: each as wide as the content, 8 px apart, in reading order.
+      const content = await box(dialog.locator("weave-activation-pins"));
+      expectAligned(
+        [content.x, ...adds.map((add) => add.x)],
+        "stacked left edge",
+      );
+      expectAligned(
+        [content.right, ...adds.map((add) => add.right)],
+        "stacked right edge",
+      );
+      expectAligned([adds[1].y - adds[0].bottom, 8], "stacked gap");
     });
 
     test("a toast's dismiss button is a full target, and the toast keeps its height", async ({

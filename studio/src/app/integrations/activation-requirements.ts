@@ -622,6 +622,14 @@ async function lookup<T>(read: () => Promise<T>): Promise<Lookup<T>> {
       gap: var(--space-2);
       margin-top: var(--space-6);
     }
+    /* In a narrow dialog they stack full width, like its answers, rather
+       than wrap into rows of different widths. */
+    @container dialog (max-width: 424px) {
+      .pin-actions {
+        flex-direction: column;
+        align-items: stretch;
+      }
+    }
   `,
   template: `@if (loading()) {
       <p class="dialog-status" role="status">

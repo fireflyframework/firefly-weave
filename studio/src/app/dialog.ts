@@ -110,7 +110,13 @@ export class Modal implements AfterViewInit, OnDestroy {
       ".modal-panel",
     ) as HTMLElement;
   }
+  /** Watches the footer's height while the dialog is open. */
+  private footerWatch: {
+    resize: ResizeObserver;
+    mutation: MutationObserver;
+  } | null = null;
   ngAfterViewInit() {
+    this.watchFooter();
     queueMicrotask(() => {
       const panel = this.panel;
       if (!panel || panel.contains(document.activeElement)) return;
@@ -122,7 +128,43 @@ export class Modal implements AfterViewInit, OnDestroy {
       (preferred ?? panel).focus();
     });
   }
+  /**
+   * Focus scrolls a control clear of the footer, whose answers stack on a
+   * phone: the panel's bottom scroll padding follows the footer's height.
+   */
+  private watchFooter() {
+    const panel = this.panel;
+    if (!panel || typeof ResizeObserver === "undefined") return;
+    let watched: HTMLElement | null = null;
+    const measure = () => {
+      const height = watched?.isConnected ? watched.offsetHeight : 0;
+      if (height)
+        panel.style.setProperty("--dialog-footer-height", `${height}px`);
+      else panel.style.removeProperty("--dialog-footer-height");
+    };
+    const resize = new ResizeObserver(measure);
+    const find = () => {
+      const footer =
+        [
+          ...panel.querySelectorAll<HTMLElement>(
+            ":is(.dialog-actions, .dialog-footer)",
+          ),
+        ].at(-1) ?? null;
+      if (footer !== watched) {
+        if (watched) resize.unobserve(watched);
+        watched = footer;
+        if (footer) resize.observe(footer);
+      }
+      measure();
+    };
+    const mutation = new MutationObserver(find);
+    mutation.observe(panel, { childList: true, subtree: true });
+    find();
+    this.footerWatch = { resize, mutation };
+  }
   ngOnDestroy() {
+    this.footerWatch?.resize.disconnect();
+    this.footerWatch?.mutation.disconnect();
     const opener = this.opener;
     if (opener?.isConnected)
       queueMicrotask(() => {

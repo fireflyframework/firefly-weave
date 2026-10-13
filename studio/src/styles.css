@@ -1130,8 +1130,10 @@ dd {
   border-top: 1px solid var(--line);
   background: var(--surface);
 }
+/* Focus scrolls a control clear of the footer, with 12 px to spare. The
+   dialog measures its footer, which grows as its answers stack. */
 .modal-panel:has(:is(.dialog-actions, .dialog-footer)) {
-  scroll-padding-bottom: 80px;
+  scroll-padding-bottom: calc(var(--dialog-footer-height, 68px) + 12px);
 }
 /* Activation: one row per connection slot. */
 .slot-row {
