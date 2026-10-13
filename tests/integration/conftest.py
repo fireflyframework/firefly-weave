@@ -179,9 +179,34 @@ async def create_database(*, migrated: bool):
     return Settings(scheduler_enabled=False, database_url=url.set(database=name).render_as_string(hide_password=False))
 
 
+async def drop_resources(connection, owned: list[tuple[str, str]]) -> list[str]:
+    """Drop the databases, then the roles; a failed drop is reported, never a reason to skip the rest.
+
+    Databases go first so their roles no longer hold privileges in them. Returns one line per failed drop.
+    """
+    failures = []
+    for kind in ("database", "role"):
+        for item, name in owned:
+            if item != kind:
+                continue
+            try:
+                await connection.execute(
+                    text(f'DROP {kind.upper()} IF EXISTS "{name}"' + " WITH (FORCE)" * (kind == "database"))
+                )
+            except Exception as error:
+                failures.append(f"{kind} {name}: {type(error).__name__}")
+    return failures
+
+
+@pytest.fixture
+def resource_dropper():
+    """The teardown drop step, for tests of the cleanup itself."""
+    return drop_resources
+
+
 @pytest.fixture(autouse=True)
 async def drop_owned_resources():
-    """Drop what the test created: its databases first, so its roles hold no privileges, then the roles."""
+    """Drop what the test created and warn about anything left; a leak is reported, never turned into a failure."""
     start = len(_OWNED)
     yield
     owned = _OWNED[start:]
@@ -191,16 +216,13 @@ async def drop_owned_resources():
     admin = create_async_engine(control_url(), isolation_level="AUTOCOMMIT")
     try:
         async with admin.connect() as connection:
-            for kind in ("database", "role"):
-                for item, name in owned:
-                    if item == kind:
-                        await connection.execute(
-                            text(f'DROP {kind.upper()} IF EXISTS "{name}"' + " WITH (FORCE)" * (kind == "database"))
-                        )
+            failures = await drop_resources(connection, owned)
     except Exception as error:
-        warnings.warn(f"Test resources were not dropped: {type(error).__name__}", stacklevel=1)
+        failures = [f"{kind} {name}: {type(error).__name__}" for kind, name in owned]
     finally:
         await admin.dispose()
+    if failures:
+        warnings.warn("Test resources were not dropped: " + "; ".join(failures), stacklevel=1)
 
 
 @pytest.fixture
