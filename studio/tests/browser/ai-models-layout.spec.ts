@@ -161,6 +161,10 @@ for (const size of sizes)
       // Cards in one row share their top, height and button line.
       const cards = await boxes(page.locator(".provider-card"));
       const buttons = await boxes(page.locator(".provider-card > button"));
+      // Four cards fill their rows evenly: 4, 2 + 2 or one per row, never 3 + 1.
+      const perRow = byRow(cards).map((row) => row.length);
+      expect([[4], [2, 2], [1, 1, 1, 1]]).toContainEqual(perRow);
+      if (size.width >= 1440) expect(perRow).toEqual([4]);
       for (const row of byRow(cards)) {
         expectAligned(
           row.map((card) => card.height),

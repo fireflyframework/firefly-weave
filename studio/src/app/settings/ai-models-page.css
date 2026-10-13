@@ -63,13 +63,28 @@ SPDX-License-Identifier: Apache-2.0
   margin: 0;
   font: var(--type-title-sm);
 }
+/* The four provider cards fill their rows evenly: four across, two by two,
+   or one per row, by the width the panel gives them (cards of 160 px or more). */
+.ai-providers {
+  container-type: inline-size;
+}
 .provider-cards {
   list-style: none;
   margin: 0;
   padding: 0;
   display: grid;
   gap: var(--space-3);
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  grid-template-columns: minmax(0, 1fr);
+}
+@container (min-width: 332px) {
+  .provider-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@container (min-width: 676px) {
+  .provider-cards {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
 }
 .provider-card {
   display: grid;
