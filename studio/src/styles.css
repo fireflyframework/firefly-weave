@@ -1672,6 +1672,18 @@ dd {
   align-items: center;
   gap: 8px;
 }
+/* An Operate list count is centered on the filter controls beside it (one
+   copy here: every Operate page's own styles would repeat it). */
+.operate-filters .operate-count {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--control-md);
+}
+@media (max-width: 767px), (pointer: coarse) {
+  .operate-filters .operate-count {
+    min-height: var(--control-touch);
+  }
+}
 .checkbox-field input {
   width: 16px;
 }

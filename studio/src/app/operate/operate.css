@@ -159,17 +159,6 @@ SPDX-License-Identifier: Apache-2.0
   font-weight: 400;
   color: var(--muted);
 }
-/* On the filter line, the count is centered on the controls beside it. */
-.operate-filters .operate-count {
-  display: inline-flex;
-  align-items: center;
-  min-height: var(--control-md);
-}
-@media (max-width: 767px), (pointer: coarse) {
-  .operate-filters .operate-count {
-    min-height: var(--control-touch);
-  }
-}
 
 /* Meters (load, free slots): the value is always written beside the bar. */
 .meter {
