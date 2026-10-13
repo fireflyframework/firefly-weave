@@ -932,6 +932,9 @@ test.describe("another person on the same environment", () => {
         })
         .catch(() => undefined);
     });
+    // The first identity read may have finished before the route above: read
+    // it again so the Operate entries follow the granted capabilities.
+    await page.reload();
     await page.getByRole("button", { name: "Overview", exact: true }).click();
     const details = page.getByRole("button", {
       name: "API details",
