@@ -14,12 +14,15 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-"""Acceptance people sign in through the identity provider's own pages into a private file store (no network)."""
+"""Acceptance people sign in through the identity provider's own pages into a private file store (loopback only)."""
 
+import http.server
 import importlib.util
 import stat
 import sys
+import threading
 from pathlib import Path
+from urllib.parse import urlencode
 from uuid import uuid4
 
 import httpx
@@ -86,6 +89,102 @@ async def test_sign_in_errors_never_carry_the_password():
     with pytest.raises(people.SignInFailed, match="redirect bound") as raised:
         await people.follow_sign_in(AUTHORIZE, ISSUER, "builder", PASSWORD, transport=httpx.MockTransport(answer))
     assert PASSWORD not in str(raised.value) and PASSWORD not in repr(raised.value)
+
+
+@pytest.mark.parametrize(
+    "action",
+    [
+        "http://evil.example/login",
+        "//evil.example/login",
+        "http://localhost:18080.evil.example/login",
+        "http://localhost:18080@evil.example/login",
+        "https://localhost:18080/login",
+        "javascript:alert(1)",
+    ],
+)
+async def test_the_sign_in_never_posts_the_form_outside_the_identity_provider(action):
+    seen = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        seen.append(request.method)
+        return httpx.Response(200, text=FORM.replace(ACTION, action))
+
+    with pytest.raises(people.SignInFailed, match="posts outside the platform's Keycloak") as raised:
+        await people.follow_sign_in(AUTHORIZE, ISSUER, "builder", PASSWORD, transport=httpx.MockTransport(answer))
+    assert seen == ["GET"]
+    assert PASSWORD not in str(raised.value)
+
+
+async def test_the_sign_in_fails_when_the_loopback_callback_refuses_the_code():
+    def answer(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and str(request.url) == AUTHORIZE:
+            return httpx.Response(200, text=FORM)
+        if request.method == "POST":
+            return httpx.Response(302, headers={"location": CALLBACK})
+        return httpx.Response(400)
+
+    with pytest.raises(people.SignInFailed, match="loopback callback answered HTTP 400") as raised:
+        await people.follow_sign_in(AUTHORIZE, ISSUER, "builder", PASSWORD, transport=httpx.MockTransport(answer))
+    assert PASSWORD not in str(raised.value)
+
+
+def serve(handler):
+    """A loopback HTTP server answering with ``handler(method, path)``; yields its origin and the requests seen."""
+    seen = []
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def log_message(self, format, *args):
+            return
+
+        def _answer(self):
+            length = int(self.headers.get("Content-Length") or 0)
+            if length:
+                self.rfile.read(length)
+            seen.append((self.command, self.path))
+            status, headers, body = handler(self.command, self.path)
+            self.send_response(status)
+            for name, value in {**headers, "Content-Length": str(len(body))}.items():
+                self.send_header(name, value)
+            self.end_headers()
+            self.wfile.write(body)
+
+        do_GET = do_POST = _answer
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server, f"http://127.0.0.1:{server.server_address[1]}", seen
+
+
+async def test_the_sign_in_ignores_proxy_settings_from_the_environment(monkeypatch):
+    # The password form goes straight to the local identity provider, never through an environment proxy.
+    proxy, proxy_origin, proxied = serve(lambda method, path: (502, {}, b"proxy"))
+
+    def identity_provider(method, path):
+        if method == "GET" and path.startswith("/realms/weave/protocol/openid-connect/auth"):
+            form = FORM.replace(ACTION, origin + "/realms/weave/login-actions/authenticate?session_code=c")
+            return 200, {"Content-Type": "text/html"}, form.encode()
+        if method == "POST":
+            return 302, {"Location": origin + "/callback?code=abc&state=s"}, b""
+        return 200, {}, b"Login complete. Close this window."
+
+    provider, origin, seen = serve(identity_provider)
+    try:
+        for name in ("NO_PROXY", "no_proxy"):
+            monkeypatch.delenv(name, raising=False)
+        for name in ("HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"):
+            monkeypatch.setenv(name, proxy_origin)
+        authorize = (
+            origin
+            + "/realms/weave/protocol/openid-connect/auth?"
+            + urlencode({"client_id": "weave-cli", "state": "s", "redirect_uri": origin + "/callback"})
+        )
+        await people.follow_sign_in(authorize, origin, "builder", PASSWORD)
+    finally:
+        for server in (proxy, provider):
+            server.shutdown()
+            server.server_close()
+    assert proxied == []
+    assert [method for method, _ in seen] == ["GET", "POST", "GET"]
 
 
 def test_sessions_live_in_the_private_file_store(tmp_path):
