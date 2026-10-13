@@ -149,6 +149,43 @@ describe("a platform draft's canvas on this computer", () => {
     expect(await kept.read(scope, id(100))).toBeNull();
   });
 
+  it("counts an account's canvases across its workspaces", async () => {
+    const backend = memory();
+    let clock = 0;
+    const kept = new DraftCanvases(backend, () => ++clock);
+    const id = (n: number) =>
+      `6a1f8c52-1d2e-4f3a-9b8c-${String(n).padStart(12, "0")}`;
+    const other = {
+      ...scope,
+      projectId: "7c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f",
+    };
+    for (let n = 0; n < 30; n++) await kept.write(scope, id(n), noted);
+    for (let n = 30; n < 60; n++) await kept.write(other, id(n), noted);
+    expect(backend.values.size).toBe(50);
+    // The oldest ten went, from the first workspace.
+    expect(await kept.read(scope, id(9))).toBeNull();
+    expect(await kept.read(scope, id(10))).toEqual(noted);
+    expect(await kept.read(other, id(30))).toEqual(noted);
+  });
+
+  it("reads no other kept canvas when it saves an edit", async () => {
+    const backend = memory();
+    const kept = new DraftCanvases(backend);
+    const id = (n: number) =>
+      `6a1f8c52-1d2e-4f3a-9b8c-${String(n).padStart(12, "0")}`;
+    for (let n = 0; n < 20; n++) await kept.write(scope, id(n), noted);
+    let reads = 0;
+    const get = backend.get;
+    backend.get = async (key) => (reads++, get(key));
+    // Typing in a note grows its canvas edit after edit.
+    for (let n = 1; n <= 5; n++)
+      await kept.write(scope, id(3), {
+        ...noted,
+        stepNotes: { check: { text: "Ask Ana".repeat(n) } },
+      });
+    expect(reads).toBe(0);
+  });
+
   it("forgets every kept canvas of a platform when it signs out or is removed", async () => {
     const backend = memory();
     const kept = new DraftCanvases(backend);

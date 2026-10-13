@@ -25,6 +25,7 @@ import type { Insertion } from "../canvas/layout-ltr";
 import type { EarlyKey } from "./early-keys";
 import type { PanelEntry } from "./entries";
 import type { InsertOutcome, InsertRequest } from "./insert";
+import type { PlaceMark } from "./place";
 
 export interface AddStepRequest {
   /** Where a step goes. */
@@ -37,6 +38,8 @@ export interface AddStepRequest {
   start: "triggers" | "next";
   /** StructuredCanvasAdapter.opened when it opened: another workflow closes it. */
   opened: number;
+  /** The steps on either side of the place when it opened: a change closes it. */
+  mark: PlaceMark | null;
 }
 export interface AddStepHost {
   readonly addStep: AddStepRequest | null;

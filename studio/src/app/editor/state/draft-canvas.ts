@@ -47,12 +47,30 @@ export async function draftCanvasKey(
   }
 }
 
-/** How many canvases an account keeps on this computer, and their total size in characters. */
+/**
+ * How many canvases an account keeps on this computer, across its
+ * workspaces, and their total size in characters.
+ */
 export const KEPT_CANVASES = 50;
 export const KEPT_CHARACTERS = 2 * 1024 * 1024;
 const KEPT_AT = /^\{"keptAt":(\d+),/;
+/** After the account's prefix (profile and subject): tenant, project, then the canvas name. */
+const CANVAS_NAME = /^[^:]+:[^:]+:canvas\./;
+/** The account part of a key: its profile and subject. */
+const accountOf = (key: string) => key.split(":", 2).join(":") + ":";
+
+interface Kept {
+  at: number;
+  size: number;
+}
 
 export class DraftCanvases {
+  /**
+   * Each account's kept canvases by key, read from storage once, then kept
+   * up to date by this object's own writes, so an edit reads no other canvas.
+   */
+  private readonly index = new Map<string, Map<string, Kept>>();
+
   constructor(
     private readonly backend: StoreBackend = browserBackend(),
     private readonly now: () => number = Date.now,
@@ -78,7 +96,7 @@ export class DraftCanvases {
    * Keeps the canvas (an empty one removes the key); "memory" when it can't,
    * and then the older canvas goes too, so it never comes back in its place.
    * Each account keeps its KEPT_CANVASES most recently changed canvases,
-   * within KEPT_CHARACTERS: older ones go first.
+   * within KEPT_CHARACTERS, counted across its workspaces: older ones go first.
    */
   async write(
     scope: AccountScope,
@@ -87,41 +105,52 @@ export class DraftCanvases {
   ): Promise<KeptWhere> {
     const key = await draftCanvasKey(scope, draftId);
     if (!key) return "memory";
+    const kept = await this.kept(accountOf(key));
     if (canvasBytes(canvas) === canvasBytes(emptyCanvas())) {
       await this.backend.remove(key);
+      kept.delete(key);
       return "computer";
     }
-    const value = JSON.stringify({ keptAt: this.now(), canvas });
-    const before = (await this.backend.get(key))?.length ?? -1;
+    const at = this.now();
+    const value = JSON.stringify({ keptAt: at, canvas });
     if (!(await this.backend.set(key, value))) {
       await this.backend.remove(key);
+      kept.delete(key);
       return "memory";
     }
-    // Only a new or larger canvas can take the account over what it keeps.
-    if (value.length > before)
-      await this.ageOut(
-        key.slice(0, key.length - `canvas.${draftId}`.length),
-        key,
-      );
+    kept.set(key, { at, size: value.length });
+    await this.ageOut(kept, key);
     return "computer";
   }
 
-  /** Removes the account's oldest canvases beyond the count and size it keeps. */
-  private async ageOut(prefix: string, written: string) {
-    const kept: { key: string; at: number; size: number }[] = [];
-    for (const key of await this.backend.keys(`${prefix}canvas.`)) {
+  /** The account's kept canvases: read from storage on first use. */
+  private async kept(account: string): Promise<Map<string, Kept>> {
+    let kept = this.index.get(account);
+    if (kept) return kept;
+    kept = new Map();
+    for (const key of await this.backend.keys(account)) {
+      if (!CANVAS_NAME.test(key.slice(account.length))) continue;
       const raw = await this.backend.get(key);
       if (raw === null) continue;
       const at = KEPT_AT.exec(raw.slice(0, 40));
-      kept.push({ key, at: at ? Number(at[1]) : 0, size: raw.length });
+      kept.set(key, { at: at ? Number(at[1]) : 0, size: raw.length });
     }
-    kept.sort((a, b) => a.at - b.at);
-    let total = kept.reduce((sum, item) => sum + item.size, 0);
-    let count = kept.length;
-    for (const item of kept) {
+    this.index.set(account, kept);
+    return kept;
+  }
+
+  /** Removes the account's oldest canvases beyond the count and size it keeps. */
+  private async ageOut(kept: Map<string, Kept>, written: string) {
+    let total = 0;
+    for (const item of kept.values()) total += item.size;
+    let count = kept.size;
+    if (count <= KEPT_CANVASES && total <= KEPT_CHARACTERS) return;
+    const oldest = [...kept].sort(([, a], [, b]) => a.at - b.at);
+    for (const [key, item] of oldest) {
       if (count <= KEPT_CANVASES && total <= KEPT_CHARACTERS) break;
-      if (item.key === written) continue;
-      if (await this.backend.remove(item.key)) {
+      if (key === written) continue;
+      if (await this.backend.remove(key)) {
+        kept.delete(key);
         count--;
         total -= item.size;
       }
@@ -130,6 +159,7 @@ export class DraftCanvases {
 
   /** Deletes every key of a saved platform; returns how many went. */
   forgetPlatform(profileName: string): Promise<number> {
+    this.index.clear();
     return purgeProfile(this.backend, profileName);
   }
 }

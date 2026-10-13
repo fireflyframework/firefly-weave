@@ -20,7 +20,9 @@ import { buildCatalog } from "../src/app/editor/add-step/entries";
 import {
   GONE,
   insertEntry,
+  placeMark,
   type InsertHost,
+  type InsertRequest,
 } from "../src/app/editor/add-step/insert";
 import type {
   Insertion,
@@ -54,7 +56,11 @@ function fakeHost(model = new StructuredCanvasAdapter()): FakeHost {
     openInserted: (id: string) => void calls.push(`open ${id}`),
     openTrigger: (id: string, kind: TriggerKind) =>
       void calls.push(`trigger ${kind} ${id}`),
-    insertCommon: async (common: string, at: Insertion, connector?: string) => {
+    insertCommon: async (
+      common: string,
+      at: Insertion,
+      connector: string | undefined,
+    ) => {
       calls.push(
         `common ${common} ${connector ?? "-"} ${at.owner}/${at.index}`,
       );
@@ -87,6 +93,12 @@ const catalog = buildCatalog(
   }),
 );
 const pick = (id: string) => entryById(catalog, id);
+/** A request for a place as it is now, as the panel records it when it opens. */
+const fresh = (
+  host: FakeHost,
+  at: Insertion,
+  opened = host.model.opened,
+): InsertRequest => ({ at, opened, mark: placeMark(host.model, at) });
 const ids = (model: StructuredCanvasAdapter) =>
   model.definition.spec.steps.map((step) => step.id);
 
@@ -95,10 +107,11 @@ describe("choosing an entry", () => {
     const host = fakeHost();
     host.model.insert("transform");
     host.model.insert("transform");
-    const outcome = await insertEntry(host, pick("kind:switch"), {
-      at: { owner: "root", index: 1 },
-      opened: host.model.opened,
-    });
+    const outcome = await insertEntry(
+      host,
+      pick("kind:switch"),
+      fresh(host, { owner: "root", index: 1 }),
+    );
     expect(outcome).toBe("done");
     expect(ids(host.model)).toEqual([
       "transform-1",
@@ -114,10 +127,22 @@ describe("choosing an entry", () => {
     const host = fakeHost();
     const at = { owner: "root", index: 0 };
     const opened = host.model.opened;
-    await insertEntry(host, pick("preset:text-template"), { at, opened });
-    await insertEntry(host, pick("preset:free-text"), { at, opened });
-    await insertEntry(host, pick("preset:approve-reject"), { at, opened });
-    await insertEntry(host, pick("preset:text-template"), { at, opened });
+    await insertEntry(
+      host,
+      pick("preset:text-template"),
+      fresh(host, at, opened),
+    );
+    await insertEntry(host, pick("preset:free-text"), fresh(host, at, opened));
+    await insertEntry(
+      host,
+      pick("preset:approve-reject"),
+      fresh(host, at, opened),
+    );
+    await insertEntry(
+      host,
+      pick("preset:text-template"),
+      fresh(host, at, opened),
+    );
     const [second, approval, ask, text] = host.model.definition.spec.steps;
     expect(text).toMatchObject({
       id: "text-template",
@@ -139,10 +164,7 @@ describe("choosing an entry", () => {
 
   it("adds a trigger as one undo step and hands it to the shell", async () => {
     const host = fakeHost();
-    const request = {
-      at: { owner: "root", index: 0 },
-      opened: host.model.opened,
-    };
+    const request = fresh(host, { owner: "root", index: 0 });
     expect(await insertEntry(host, pick("trigger:webhook"), request)).toBe(
       "done",
     );
@@ -162,10 +184,11 @@ describe("choosing an entry", () => {
 
   it("makes the workflow callable with Called by a workflow, in one undo step", async () => {
     const host = fakeHost();
-    await insertEntry(host, pick("trigger:called"), {
-      at: { owner: "root", index: 0 },
-      opened: host.model.opened,
-    });
+    await insertEntry(
+      host,
+      pick("trigger:called"),
+      fresh(host, { owner: "root", index: 0 }),
+    );
     expect(host.model.definition.spec["callable"]).toEqual({});
     host.model.undo();
     expect(host.model.definition.spec["callable"]).toBeUndefined();
@@ -175,10 +198,7 @@ describe("choosing an entry", () => {
   it("hands common steps and published actions to the shell with their place, then opens them", async () => {
     const host = fakeHost();
     host.model.insert("transform");
-    const request = {
-      at: { owner: "root", index: 1 },
-      opened: host.model.opened,
-    };
+    const request = fresh(host, { owner: "root", index: 1 });
     await insertEntry(host, pick("common:weave-http:call-api"), request);
     await insertEntry(host, pick("common:weave-sftp:write-file"), request);
     await insertEntry(host, pick("action:sql.lookup@1.1.0"), request);
@@ -197,10 +217,7 @@ describe("choosing an entry", () => {
 
   it("runs the panel's commands; loading more keeps the panel open", async () => {
     const host = fakeHost();
-    const request = {
-      at: { owner: "root", index: 0 },
-      opened: host.model.opened,
-    };
+    const request = fresh(host, { owner: "root", index: 0 });
     expect(await insertEntry(host, pick("command:templates"), request)).toBe(
       "done",
     );
@@ -223,25 +240,25 @@ describe("choosing an entry", () => {
   it("refuses when the place is gone or the workflow changed, and says so", async () => {
     const host = fakeHost();
     const decision = host.model.insert("switch");
-    const inside = { owner: `${decision.id}/case 1`, index: 0 };
+    const inside = fresh(host, { owner: `${decision.id}/case 1`, index: 0 });
     const opened = host.model.opened;
     host.model.removeSteps([decision.id]);
-    expect(
-      await insertEntry(host, pick("kind:wait"), { at: inside, opened }),
-    ).toBe("gone");
+    expect(await insertEntry(host, pick("kind:wait"), inside)).toBe("gone");
     expect(host.calls).toEqual([`notify ${GONE}`]);
     expect(
-      await insertEntry(host, pick("kind:wait"), {
-        at: { owner: "root", index: 0 },
-        opened: opened + 1,
-      }),
+      await insertEntry(
+        host,
+        pick("kind:wait"),
+        fresh(host, { owner: "root", index: 0 }, opened + 1),
+      ),
     ).toBe("gone");
     host.editingLocked = true;
     expect(
-      await insertEntry(host, pick("kind:wait"), {
-        at: { owner: "root", index: 0 },
-        opened,
-      }),
+      await insertEntry(
+        host,
+        pick("kind:wait"),
+        fresh(host, { owner: "root", index: 0 }, opened),
+      ),
     ).toBe("refused");
     expect(host.calls.at(-1)).toBe(
       "notify Editing is paused while the simulation runs.",
@@ -249,14 +266,82 @@ describe("choosing an entry", () => {
     expect(ids(host.model)).toEqual([]);
   });
 
+  it("refuses when Undo, Redo or another edit moves the place, though its index is still inside the sequence", async () => {
+    const host = fakeHost();
+    for (const _ of [1, 2, 3, 4]) host.model.insert("transform");
+    host.model.insert("wait", "root", 1);
+    // After transform-2: wait-1 sits before it.
+    const after = fresh(host, { owner: "root", index: 3 });
+    expect(after.mark).toEqual({ before: "transform-2", after: "transform-3" });
+    host.model.undo();
+    expect(await insertEntry(host, pick("kind:wait"), after)).toBe("gone");
+    host.model.redo();
+    const redone = fresh(host, { owner: "root", index: 1 });
+    host.model.undo();
+    expect(await insertEntry(host, pick("kind:wait"), redone)).toBe("gone");
+    const end = fresh(host, { owner: "root", index: 4 });
+    host.model.insert("transform", "root", 0);
+    expect(await insertEntry(host, pick("kind:wait"), end)).toBe("gone");
+    expect(host.calls).toEqual([
+      `notify ${GONE}`,
+      `notify ${GONE}`,
+      `notify ${GONE}`,
+    ]);
+    expect(ids(host.model)).toEqual([
+      "transform-5",
+      "transform-1",
+      "transform-2",
+      "transform-3",
+      "transform-4",
+    ]);
+  });
+
+  it("refuses when the workflow changes while unapplied edits are settled", async () => {
+    const host = fakeHost();
+    host.model.insert("transform");
+    host.model.insert("transform");
+    const request = fresh(host, { owner: "root", index: 1 });
+    host.ensureApplied = async () => {
+      host.model.removeSteps(["transform-1"]);
+      return true;
+    };
+    expect(await insertEntry(host, pick("kind:wait"), request)).toBe("gone");
+    expect(host.calls).toEqual([`notify ${GONE}`]);
+    expect(ids(host.model)).toEqual(["transform-2"]);
+  });
+
+  it("refuses a common step or published action whose place moves while it waits", async () => {
+    for (const id of [
+      "common:weave-http:call-api",
+      "action:sql.lookup@1.1.0",
+    ]) {
+      const host = fakeHost();
+      host.model.insert("transform");
+      host.model.insert("transform");
+      const request = fresh(host, { owner: "root", index: 1 });
+      const asked: boolean[] = [];
+      const wait = async (still: () => boolean) => {
+        host.model.removeSteps(["transform-1"]);
+        asked.push(still());
+        return still() ? "x" : "";
+      };
+      host.insertCommon = (_common, _at, _connector, still) => wait(still);
+      host.insertPublished = (_uses, _id, _at, still) => wait(still);
+      expect(await insertEntry(host, pick(id), request), id).toBe("gone");
+      expect(asked, id).toEqual([false]);
+      expect(host.calls, id).toEqual([`notify ${GONE}`]);
+    }
+  });
+
   it("refuses a disabled entry and changes nothing", async () => {
     const host = fakeHost();
     const off = buildCatalog(catalogInput());
     expect(
-      await insertEntry(host, entryById(off, "kind:forEach"), {
-        at: { owner: "root", index: 0 },
-        opened: host.model.opened,
-      }),
+      await insertEntry(
+        host,
+        entryById(off, "kind:forEach"),
+        fresh(host, { owner: "root", index: 0 }),
+      ),
     ).toBe("refused");
     expect(ids(host.model)).toEqual([]);
   });

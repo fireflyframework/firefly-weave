@@ -26,6 +26,7 @@ import {
 import { TRIGGER_LABELS } from "./editor/canvas/trigger-tiles";
 import type { AddStepRequest } from "./editor/add-step/add-step-host";
 import { EarlyKeys, type EarlyKey } from "./editor/add-step/early-keys";
+import { placeMark } from "./editor/add-step/place";
 import type { PanelEntry } from "./editor/add-step/entries";
 import type {
   InsertHost,
@@ -3633,6 +3634,7 @@ export class App implements CanvasHost {
         anchor,
         start: empty ? "triggers" : "next",
         opened: this.model.opened,
+        mark: placeMark(this.model, insert),
       };
     } else
       this.picker = {
@@ -3688,16 +3690,18 @@ export class App implements CanvasHost {
         this.openInserted(id, current);
       },
       openTrigger: (id, kind) => this.openChosenTrigger(id, kind, current),
-      insertCommon: (common, at, connector) =>
-        this.insertCommon(common, at, current, connector),
-      insertPublished: async (uses, id, at) => {
+      insertCommon: (common, at, connector, still) =>
+        this.insertCommon(common, at, () => current() && still(), connector),
+      insertPublished: async (uses, id, at, still) => {
         const bridge = await import("./integrations/editor-bridge");
-        if (!current()) return "";
+        const here = () => current() && still();
+        if (!here()) return "";
         return bridge.insertCatalogAction(
           this,
           { uses, ...(id ? { id } : {}) },
           { ...at, point: { x: 0, y: 0 }, label: "" },
           true,
+          here,
         );
       },
       openTemplates: () => {

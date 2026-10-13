@@ -129,13 +129,18 @@ export class AddStepPanel implements OnInit, DoCheck {
       this.state = startState(request.start);
       this.focusSearch();
     }
+    // Another workflow, a simulation or a source error: the place is gone
+    // too, and the panel says so. Its own insert changes the place while
+    // busy; a change made while it waits is refused by the insert itself.
     if (
       h.model.opened !== request.opened ||
       h.editingLocked ||
       h.model.readonly
-    )
+    ) {
+      h.notify(GONE);
       return this.close(false);
-    if (!this.busy && !placeExists(h.model, request.insert)) {
+    }
+    if (!this.busy && !placeExists(h.model, request.insert, request.mark)) {
       h.notify(GONE);
       this.close(true);
     }
@@ -336,6 +341,7 @@ export class AddStepPanel implements OnInit, DoCheck {
       const outcome = await h.insertFromPanel(entry, {
         at: request.insert,
         opened: request.opened,
+        mark: request.mark,
       });
       if (outcome === "done") this.close(false);
       else if (outcome === "gone") this.close(true);

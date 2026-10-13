@@ -172,15 +172,17 @@ SPDX-License-Identifier: Apache-2.0
   color: var(--text);
   overflow-wrap: anywhere;
 }
+/* Wraps to two lines, as n8n's node creator does: a cut sentence can't be
+   read on touch, where a title never shows. */
 .entry-description {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
   font: var(--type-small);
   color: var(--muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.add-step-entry[aria-disabled="true"] .entry-description {
-  white-space: normal;
+  overflow-wrap: anywhere;
 }
 .entry-meta {
   flex: none;
@@ -210,6 +212,13 @@ SPDX-License-Identifier: Apache-2.0
   .add-step-panel {
     --as-control: var(--control-touch);
     --as-target: var(--control-touch);
+  }
+}
+/* Key hints are for a keyboard: none on touch. */
+@media (pointer: coarse) {
+  .add-step-kbd,
+  .entry-enter {
+    display: none;
   }
 }
 @media (max-width: 767px) {

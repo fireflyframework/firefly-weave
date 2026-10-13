@@ -18,9 +18,9 @@ SPDX-License-Identifier: Apache-2.0
 // The Add a step panel: every "+", a dragged edge, Add first step, N and /
 // open it; it starts with triggers on an empty workflow, searches by the
 // words people use, and is driven entirely by the keyboard.
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { AddStepPanel } from "./add-step-po";
-import { openNewWorkflow, openWorkflow } from "./canvas-po";
+import { CanvasPage, openNewWorkflow, openWorkflow } from "./canvas-po";
 import { expectHitTarget } from "./support";
 
 const triggers = [
@@ -161,9 +161,15 @@ for (const size of [
 
     test("typing in the search never acts on the canvas", async ({ page }) => {
       const canvas = await openWorkflow(page);
+      const panel = new AddStepPanel(page);
+      // An edit to undo: Ctrl/Cmd+Z in the search must never reach it.
+      await canvas.tileBody("record-result").focus();
+      await page.keyboard.press("n");
+      await panel.choose("Wait for time");
+      await canvas.closeInspector();
+      const steps = [...vendorSteps, "wait-1"];
       await canvas.tileBody("approval").focus();
       await page.keyboard.press("/");
-      const panel = new AddStepPanel(page);
       await expect(panel.search).toBeFocused();
       await page.keyboard.type("n/");
       await page.keyboard.press("Backspace");
@@ -171,10 +177,19 @@ for (const size of [
       await page.keyboard.press("Shift+S");
       await page.keyboard.press("ControlOrMeta+a");
       await expect(panel.search).toHaveValue("nS");
+      await page.keyboard.press("ControlOrMeta+c");
+      await page.keyboard.press("ControlOrMeta+x");
+      await page.keyboard.press("ControlOrMeta+v");
+      await page.keyboard.press("ControlOrMeta+z");
+      await page.keyboard.press("ControlOrMeta+Shift+z");
+      await page.keyboard.press("ControlOrMeta+z");
+      await expect(panel.search).toBeFocused();
+      await expect(panel.root).toHaveCount(1);
       await expect(canvas.tile("approval")).toHaveCount(1);
+      await expect(canvas.tile("wait-1")).toHaveCount(1);
       await page.keyboard.press("Escape");
       await expect(panel.root).toHaveCount(0);
-      expect(await canvas.rootSteps()).toEqual(vendorSteps);
+      expect(await canvas.rootSteps()).toEqual(steps);
     });
 
     test("the panel closes when its place disappears", async ({ page }) => {
@@ -299,3 +314,176 @@ test("the panel is 384 px wide on the right at 1440x900, and a full sheet below 
     height: 500,
   });
 });
+
+test.describe("Add a step when the workflow changes under it", () => {
+  test.beforeEach(async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+  });
+  const changed = "That place in the workflow changed. Choose + again.";
+
+  /** N on a step, then focus on the panel's Close button. */
+  async function openAfter(page: Page, canvas: CanvasPage, id: string) {
+    await canvas.tileBody(id).focus();
+    await page.keyboard.press("n");
+    const panel = new AddStepPanel(page);
+    await expect(panel.title).toHaveText("What happens next?");
+    await expect(
+      page.getByRole("dialog", { name: "What happens next?" }),
+    ).toHaveAccessibleDescription(`Add a step after ${id}`);
+    await page.keyboard.press("Shift+Tab");
+    await expect(
+      panel.root.getByRole("button", { name: "Close", exact: true }),
+    ).toBeFocused();
+    return panel;
+  }
+
+  test("Undo from the panel that moves its place closes it and inserts nothing", async ({
+    page,
+  }) => {
+    const canvas = await openWorkflow(page);
+    await canvas.tileBody("prepare-request").focus();
+    await page.keyboard.press("n");
+    await new AddStepPanel(page).choose("Wait for time");
+    await canvas.closeInspector();
+    // After approval, with wait-1 before it: Undo removes wait-1, and the
+    // place's index would then point after route.
+    const panel = await openAfter(page, canvas, "approval");
+    await page.keyboard.press("ControlOrMeta+z");
+    await expect(panel.root).toHaveCount(0);
+    await expect(
+      page.locator(".toast").filter({ hasText: changed }),
+    ).toBeVisible();
+    expect(await canvas.rootSteps()).toEqual(vendorSteps);
+  });
+
+  test("Redo from the panel that moves its place closes it and inserts nothing", async ({
+    page,
+  }) => {
+    const canvas = await openWorkflow(page);
+    await canvas.tileBody("prepare-request").focus();
+    await page.keyboard.press("n");
+    await new AddStepPanel(page).choose("Wait for time");
+    await canvas.closeInspector();
+    await canvas.tileBody("approval").focus();
+    await page.keyboard.press("ControlOrMeta+z");
+    await expect(canvas.tile("wait-1")).toHaveCount(0);
+    const panel = await openAfter(page, canvas, "approval");
+    await page.keyboard.press("ControlOrMeta+Shift+z");
+    await expect(panel.root).toHaveCount(0);
+    await expect(
+      page.locator(".toast").filter({ hasText: changed }),
+    ).toBeVisible();
+    expect(await canvas.rootSteps()).toEqual([
+      "prepare-request",
+      "wait-1",
+      ...vendorSteps.slice(1),
+    ]);
+  });
+
+  test("a Source edit that moves its place closes it when the canvas comes back", async ({
+    page,
+  }) => {
+    const canvas = await openWorkflow(page);
+    const panel = await openAfter(page, canvas, "approval");
+    // To Source by keyboard: a press outside would close the panel first.
+    const sourceTab = page.getByRole("tab", { name: "Source", exact: true });
+    await sourceTab.focus();
+    await page.keyboard.press("Enter");
+    const source = page.getByRole("textbox", { name: "Workflow source" });
+    await source.fill(
+      (await source.inputValue()).replace(
+        "- id: route\n",
+        "- id: choose-path\n",
+      ),
+    );
+    await page
+      .getByRole("button", { name: "Apply changes", exact: true })
+      .click();
+    await page.getByRole("tab", { name: "Designer", exact: true }).click();
+    await canvas.ready();
+    await expect(panel.root).toHaveCount(0);
+    await expect(
+      page.locator(".toast").filter({ hasText: changed }),
+    ).toBeVisible();
+    expect(await canvas.rootSteps()).toEqual([
+      "prepare-request",
+      "approval",
+      "choose-path",
+      "record-result",
+    ]);
+  });
+});
+
+test.describe("Add a step lets go of the keys held while it opens", () => {
+  test.beforeEach(async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+  });
+
+  test("pressed twice from the toolbar, it closes and holds no key afterwards", async ({
+    page,
+  }) => {
+    const canvas = await openWorkflow(page);
+    const button = page
+      .getByRole("toolbar", { name: "Workflow commands" })
+      .getByRole("button", { name: "Add a step", exact: true });
+    await button.click();
+    await button.click();
+    await expect(page.locator(".add-step-panel")).toHaveCount(0);
+    await canvas.tileBody("approval").focus();
+    await page.keyboard.press("ArrowRight");
+    await expect(canvas.tileBody("route")).toBeFocused();
+  });
+});
+
+for (const size of [
+  { tag: "1440x900", width: 1440, height: 900, touch: false },
+  { tag: "1024x768 touch", width: 1024, height: 768, touch: true },
+  { tag: "360x740", width: 360, height: 740, touch: false },
+  { tag: "360x740 touch", width: 360, height: 740, touch: true },
+])
+  test.describe(`Add a step's rows at ${size.tag}`, () => {
+    test.use({
+      viewport: { width: size.width, height: size.height },
+      hasTouch: size.touch,
+    });
+
+    test("descriptions wrap to two lines at most, never cut, and key hints show only with a keyboard and a fine pointer", async ({
+      page,
+    }) => {
+      const canvas = await openWorkflow(page);
+      await canvas.tileBody("approval").focus();
+      await page.keyboard.press("n");
+      const panel = new AddStepPanel(page);
+      await expect(panel.search).toBeFocused();
+      await panel.option("Action in an app").click();
+      await expect(panel.title).toHaveText("Action in an app");
+      const descriptions = await panel.list
+        .locator(".entry-description")
+        .evaluateAll((elements) =>
+          elements.map((element) => {
+            const style = getComputedStyle(element);
+            return {
+              text: element.textContent,
+              cut:
+                element.scrollWidth > element.clientWidth + 1 ||
+                element.scrollHeight > element.clientHeight + 1,
+              lines: Math.round(
+                element.clientHeight / parseFloat(style.lineHeight),
+              ),
+            };
+          }),
+        );
+      expect(descriptions.length).toBeGreaterThan(2);
+      for (const item of descriptions) {
+        expect(item.cut, item.text ?? "").toBe(false);
+        expect(item.lines, item.text ?? "").toBeLessThanOrEqual(2);
+      }
+      const coarse = await page.evaluate(
+        () => matchMedia("(pointer: coarse)").matches,
+      );
+      expect(coarse).toBe(size.touch);
+      for (const hint of [".add-step-kbd", ".entry-enter"])
+        if (size.touch) await expect(panel.root.locator(hint)).toBeHidden();
+        else await expect(panel.root.locator(hint).first()).toBeVisible();
+    });
+  });

@@ -42,6 +42,7 @@ import { PathInspector } from "./path-inspector";
 import { DiagnosticsList } from "./diagnostics-list";
 import { SimulationPanel } from "./simulation/simulation-panel";
 import { CanvasView } from "../editor/canvas/canvas-view";
+import { AddStepFailed } from "../editor/add-step/add-step-failed";
 import { AddStepPanel } from "../editor/add-step/add-step-panel";
 import type { App } from "../app";
 
@@ -67,6 +68,7 @@ import type { App } from "../app";
     DiagnosticsList,
     SimulationPanel,
     CanvasView,
+    AddStepFailed,
     AddStepPanel,
   ],
   // No box of its own: the bar, the grid and the strip lay out in the
@@ -1200,6 +1202,8 @@ import type { App } from "../app";
       @if (h.editorNext && h.addStep && h.tab !== "Source") {
         @defer (on immediate) {
           <weave-add-step-panel [host]="h" />
+        } @error {
+          <weave-add-step-failed [host]="h" />
         }
       }
     </div>

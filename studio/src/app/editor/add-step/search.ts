@@ -17,7 +17,8 @@ SPDX-License-Identifier: Apache-2.0
 */
 // Searching the Add a step panel. Every word must match an entry's name,
 // everyday words or description: names count most, then the words people
-// use ("http" finds Call an API first), then descriptions. Results group as
+// use ("http" finds Call an API first), then descriptions, from the start
+// of their words. Results group as
 // Triggers, Steps and Actions; with nothing in the open view, results
 // elsewhere come next, then "Make a custom API call".
 import type { EntrySection, PanelEntry, PanelSection } from "./entries";
@@ -45,8 +46,23 @@ function wordScore(word: string, entry: PanelEntry): number | null {
   if (label.includes(word)) return 3;
   if (words(entry.keywords).some((keyword) => keyword.startsWith(word)))
     return 4;
-  if (entry.keywords.toLowerCase().includes(word)) return 5;
-  if (entry.description.toLowerCase().includes(word)) return 6;
+  if (
+    entry.keywords
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .some((part) => part.startsWith(word))
+  )
+    return 5;
+  // Everyday words and descriptions match from the start of their words (or
+  // of their parts, "lookup" in "sql.lookup"): a short word ("if") never
+  // matches inside another ("notify").
+  const description = entry.description.toLowerCase();
+  if (
+    [...words(description), ...description.split(/[^a-z0-9]+/)].some((part) =>
+      part.startsWith(word),
+    )
+  )
+    return 6;
   return null;
 }
 

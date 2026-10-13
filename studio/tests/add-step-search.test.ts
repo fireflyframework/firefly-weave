@@ -117,4 +117,20 @@ describe("searching Add a step", () => {
     ]);
     expect(elsewhere.sections[0].entries[0].label).toBe("Email");
   });
+
+  it("matches a description's words from their start, never inside a word", () => {
+    const send = catalog.searchable.find(
+      (entry) => entry.label === "Send email",
+    )!;
+    const inside = send.description
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .find(
+        (word) => word.length > 4 && !send.label.toLowerCase().includes(word),
+      )!;
+    // The middle of one of its words finds nothing, its start does.
+    expect(matchScore(inside.slice(2, 5), send)).toBeNull();
+    expect(matchScore(inside.slice(0, 3), send)).not.toBeNull();
+    expect(labels("if")).not.toContain("Send email");
+  });
 });

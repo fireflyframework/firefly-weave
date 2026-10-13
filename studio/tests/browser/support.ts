@@ -321,6 +321,8 @@ export async function insertStep(page: Page, label: string) {
   if (await addStep.isVisible()) {
     await addStep.click();
     const panel = page.locator(".add-step-panel");
+    // The panel focuses its search once it is drawn and bound.
+    await expect(panel.getByRole("combobox")).toBeFocused();
     await panel.getByRole("combobox").fill(label);
     await panel
       .getByRole("option", { name: label, exact: true })

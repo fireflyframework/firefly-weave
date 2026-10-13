@@ -110,6 +110,8 @@ export async function addCommonStep(
     .first()
     .click();
   const panel = page.locator(".add-step-panel");
+  // The panel focuses its search once it is drawn and bound.
+  await expect(panel.getByRole("combobox")).toBeFocused();
   await panel.getByRole("combobox").fill(label);
   const option = panel.getByRole("option", { name: label, exact: true });
   await (

@@ -25,6 +25,9 @@ import type { Insertion, TriggerKind } from "../canvas/layout-ltr";
 import { uniqueIdentifier } from "../ndv/params/identifiers";
 import { addTrigger, type TriggerChange } from "../state/canvas-sidecar";
 import type { PanelEntry, Preset } from "./entries";
+import { placeExists, type PlaceMark } from "./place";
+
+export { placeExists, placeMark, type PlaceMark } from "./place";
 
 /** What inserting needs from the editor; the shell (App) implements it. */
 export interface InsertHost {
@@ -39,17 +42,22 @@ export interface InsertHost {
   openInserted(id: string): void;
   /** After a trigger was chosen: its details (the input form), or its tile. */
   openTrigger(id: string, kind: TriggerKind): void;
-  /** Call an API, email and file steps; returns the new step's ID, or "" when nothing was inserted. */
+  /**
+   * Call an API, email and file steps; returns the new step's ID, or "" when
+   * nothing was inserted. Inserts only while `still()` holds.
+   */
   insertCommon(
     common: string,
     at: Insertion,
-    connector?: string,
+    connector: string | undefined,
+    still: () => boolean,
   ): Promise<string>;
-  /** A published action with its connection slot; the new step's ID, or "". */
+  /** A published action with its connection slot, while `still()` holds; the new step's ID, or "". */
   insertPublished(
     uses: string,
     id: string | undefined,
     at: Insertion,
+    still: () => boolean,
   ): Promise<string>;
   openTemplates(): void;
   openNewApiAction(): void;
@@ -59,6 +67,8 @@ export interface InsertRequest {
   at: Insertion;
   /** StructuredCanvasAdapter.opened when the panel opened. */
   opened: number;
+  /** The steps on either side of the place when the panel opened (placeMark). */
+  mark: PlaceMark | null;
 }
 export type InsertOutcome = "done" | "kept-open" | "refused" | "gone";
 
@@ -90,15 +100,6 @@ export const PRESET_IDS: Readonly<Partial<Record<Preset, string>>> = {
   "free-text": "ask-person",
   "custom-form": "form",
 };
-
-/** The sequence still exists and the index is inside it. */
-export function placeExists(
-  model: StructuredCanvasAdapter,
-  at: Insertion,
-): boolean {
-  const list = model.owners().get(at.owner);
-  return !!list && at.index >= 0 && at.index <= list.length;
-}
 
 export async function insertEntry(
   host: InsertHost,
@@ -133,7 +134,8 @@ export async function insertEntry(
     return "refused";
   }
   const moved = () =>
-    model.opened !== request.opened || !placeExists(model, request.at);
+    model.opened !== request.opened ||
+    !placeExists(model, request.at, request.mark);
   if (moved()) {
     host.notify(GONE);
     return "gone";
@@ -167,11 +169,23 @@ export async function insertEntry(
     return "gone";
   }
   if (insert.kind === "action" || insert.kind === "common") {
+    // These wait for code or an action's contract: the host inserts only
+    // while the place is still there.
+    const still = () => !moved();
     const id =
       insert.kind === "action"
-        ? await host.insertPublished(insert.uses, insert.id, request.at)
-        : await host.insertCommon(insert.common, request.at, insert.connector);
-    if (!id) return "refused";
+        ? await host.insertPublished(insert.uses, insert.id, request.at, still)
+        : await host.insertCommon(
+            insert.common,
+            request.at,
+            insert.connector,
+            still,
+          );
+    if (!id) {
+      if (!moved()) return "refused";
+      host.notify(GONE);
+      return "gone";
+    }
     host.openInserted(id);
     return "done";
   }

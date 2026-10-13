@@ -68,7 +68,9 @@ export class AddStepPanel {
   }
   /** Finds an entry by its exact label through the search, and chooses it. */
   async choose(label: string) {
-    await expect(this.root).toBeVisible();
+    // The panel focuses its search once it is drawn with its inputs; a fill
+    // before that would land in a field that isn't bound yet.
+    await expect(this.search).toBeFocused();
     await this.search.fill(label);
     await this.option(label).first().click();
     await expect(this.root).toHaveCount(0);
