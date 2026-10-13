@@ -140,10 +140,14 @@ The integration fixtures give every test its own database on the server named by
 `WEAVE_TEST_DATABASE_URL`:
 
 - A test that needs the current schema clones a template database,
-  `weave_b1_template_<hash>`. The first test of a run migrates it once; its name
-  is a hash of the migration files, so changing a migration builds a new template
-  and drops the old one. The template stays on the server between runs and holds
-  no test data.
+  `weave_b1_template_<hash>`. The first test of a run finds that template, or
+  builds it by running the migrations when it is missing. Its name is a hash of
+  the migration files, the code that runs them and the Alembic version, so
+  changing a migration builds a new template. The template stays on the server
+  between runs and holds no test data.
+- A build drops other templates only when nobody is connected to them and no
+  run has used them for 6 hours, so checkouts with different migrations can
+  share one server.
 - A test about migrations themselves (the `empty_settings` and
   `fresh_migration_settings` fixtures) starts from an empty database and runs the
   real migrations.
@@ -162,11 +166,11 @@ uv run --locked --all-extras pytest tests/integration -n 4 --dist loadfile
 `--dist loadfile` keeps each test file on one worker, so a file's module fixture
 (the Kafka broker, for example) starts once. Without `-n` the suite runs serially.
 
-A server used only for these tests can skip durability. Start a throwaway
-PostgreSQL with `-c fsync=off -c synchronous_commit=off -c full_page_writes=off`
-after the image name of its `docker run` command; an unclean stop can corrupt its
-data, so never use these settings on a server whose data you keep, such as the
-Compose development stack.
+Turning off durability on the test server is optional: with cloned and dropped
+databases it made no measurable difference. If you try it, pass
+`-c fsync=off -c synchronous_commit=off -c full_page_writes=off` only to a
+throwaway server; an unclean stop can corrupt its data, so never to a server
+whose data you keep, such as the Compose development stack.
 
 [Local runtime setup](docs/reference/local-runtime.md) explains provisioning.
 End-to-end fixtures exercise installed wheels, admitted images, identities and
