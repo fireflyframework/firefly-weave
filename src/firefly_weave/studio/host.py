@@ -94,6 +94,15 @@ class ValidationRequest(BaseModel):
     strict: bool = False
 
 
+class ScopeRequest(BaseModel):
+    """A local definition and the RFC 6901 path of one expression in it."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    source: str = Field(max_length=1024 * 1024)
+    format: Literal["yaml", "json"]
+    path: str = Field(max_length=4096, pattern=r"^(?:/(?:[^~/]|~[01])*)*$")
+
+
 class OpenAPIInventoryRequest(BaseModel):
     """Pasted or uploaded OpenAPI text; there is deliberately no URL field (no fetch from Studio's host)."""
 
@@ -433,6 +442,31 @@ class StudioController:
             lambda: json.loads(validate_authoring(body.source, format=body.format, filename=body.filename).to_bytes()),
             slow="Checking this definition took too long; simplify it and try again",
         )
+
+    @post_mapping("/studio/local/scope")
+    async def scope(self, request: Request) -> Response:
+        try:
+            body = ScopeRequest.model_validate_json(await request.body())
+        except ValidationError:
+            return problem(
+                422, "WV-STUDIO-REQUEST", "Provide a bounded source string, YAML or JSON, and a JSON Pointer"
+            )
+
+        def work() -> Any:
+            from firefly_weave.compiler.parser import ParseFailure, parse_source
+            from firefly_weave.compiler.scope import ScopeResult, scope_at
+
+            try:
+                document = parse_source(body.source, format=body.format).value
+            except ParseFailure:
+                document = None
+            if not isinstance(document, dict):
+                return ScopeResult(found=False, evaluated=False, truncated=False, entries=[]).model_dump(
+                    mode="json", by_alias=True
+                )
+            return scope_at(document, body.path).model_dump(mode="json", by_alias=True)
+
+        return await local_work(work, slow="Finding the data for this field took too long; simplify the workflow")
 
     @post_mapping("/studio/local/openapi/inventory")
     async def openapi_inventory(self, request: Request) -> Response:

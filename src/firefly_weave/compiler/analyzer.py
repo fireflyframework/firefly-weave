@@ -147,6 +147,19 @@ class AnalyzedStep:
 
 
 @dataclass(frozen=True)
+class ScopeCapture:
+    """What an expression at one definition path may read, captured during analysis."""
+
+    input_schema: JsonObject
+    # Steps whose outputs are visible, in execution order: step ID to (kind, output schema).
+    steps: tuple[tuple[str, str, JsonObject], ...]
+    # Enclosing loops, outermost first.
+    loops: tuple[LoopScope, ...]
+    # False when every path to the position fails, so the compiler never evaluates it.
+    evaluated: bool
+
+
+@dataclass(frozen=True)
 class AnalysisResult:
     kind: Literal["Workflow", "Action", "Connector", "DecisionTable"] | None
     definition: FrozenDocument | None
@@ -209,8 +222,13 @@ class _Analyzer:
         action_validators: Mapping[str, ActionConfigValidator] | None = None,
         *,
         catalog_absent: bool = False,
+        capture: str | None = None,
     ) -> None:
         self.source, self.catalog, self.strict = source, catalog, strict
+        # A definition path whose scope analysis records in ``captured``.
+        self.capture = capture
+        self.captured: ScopeCapture | None = None
+        self.kinds: dict[str, str] = {}
         self.action_validators = dict(action_validators or {})
         # Offline authoring: every catalog reference is pending rather than unknown.
         self.catalog_absent = catalog_absent
@@ -605,9 +623,22 @@ class _Analyzer:
             context["loops"] = loops_schema(self.loops)
         return infer_expression(expression, context, limits=self.limits, schema_limits=self.schema_limits)
 
+    def observe(self, path: str, visible: dict[str, JsonObject], evaluated: bool = True) -> None:
+        """Record the scope at the expression ``path`` when it holds the captured position."""
+        if self.capture is None or self.captured is not None:
+            return
+        if self.capture == path or self.capture.startswith(path + "/"):
+            self.captured = ScopeCapture(
+                self.input_schema,
+                tuple((key, self.kinds[key], schema) for key, schema in visible.items()),
+                self.loops,
+                evaluated,
+            )
+
     def expression(
         self, expression: JsonObject, path: str, visible: dict[str, JsonObject], target: JsonObject | None = None
     ) -> JsonObject:
+        self.observe(path, visible)
         try:
             # Dominance is a syntactic requirement, including lazy operands.
             stack = [(expression, path)]
@@ -887,9 +918,11 @@ class _Analyzer:
                         scope + (identifier, name),
                     )
                     expression = cast(JsonObject, branch["output"])
-                    branch_schema = (
-                        self.expression(expression, branch_path + "/output", branch_visible) if branch_completes else {}
-                    )
+                    if branch_completes:
+                        branch_schema = self.expression(expression, branch_path + "/output", branch_visible)
+                    else:
+                        self.observe(branch_path + "/output", branch_visible, evaluated=False)
+                        branch_schema = {}
                     self.guard(branch_path + "/output", "branch_output", branch_schema)
                     if branch_completes and self.reads_pending(expression):
                         self.pending_outputs.add(identifier)
@@ -929,6 +962,7 @@ class _Analyzer:
                     reachable,
                 )
             )
+            self.kinds[identifier] = kind
             if reachable and completes:
                 visible[identifier] = output
             reachable = reachable and completes
@@ -979,6 +1013,7 @@ class _Analyzer:
                     self.pending_outputs.add(identifier)
             else:
                 self.issue("LOOP_BODY_INCOMPLETE", location + "/body")
+                self.observe(location + "/body/output", body_visible, evaluated=False)
                 body_schema = {}
         finally:
             self.loops = self.loops[:-1]
@@ -1163,6 +1198,8 @@ class _Analyzer:
             self.expression(
                 cast(JsonObject, spec["output"]), "/spec/output", visible, cast(JsonObject, spec["outputSchema"])
             )
+        else:
+            self.observe("/spec/output", visible, evaluated=False)
         self.guard("/spec/output", "workflow_output", cast(JsonObject, spec["outputSchema"]))
         return self.finish(model.kind, definition, graph)
 
@@ -1220,6 +1257,30 @@ def analyze_authoring(
     except (ExpressionFailure, RecursionError) as failure:
         analyzer.issue("RESOURCE_LIMIT", failure.path if isinstance(failure, ExpressionFailure) else "")
         return analyzer.finish(analyzer.kind, analyzer.definition)
+
+
+def analyze_scope(source: ParsedSource, path: str, catalog: CatalogSnapshot | None = None) -> ScopeCapture | None:
+    """The scope of the expression at ``path``, or ``None`` when analysis never reaches an expression there.
+
+    Without a catalog, references resolve as in offline authoring and their outputs stay unconstrained.
+    """
+    analyzer = _Analyzer(
+        source,
+        catalog or CatalogSnapshot.empty(),
+        False,
+        _DEFAULT_LIMITS,
+        _DEFAULT_SCHEMA_LIMITS,
+        DEFAULT_CONTRACT_LIMITS,
+        1000,
+        catalog_absent=catalog is None,
+        capture=path,
+    )
+    try:
+        analyzer.run()
+    except (ExpressionFailure, RecursionError):
+        # A budget failure later in the document keeps the scope already captured.
+        return analyzer.captured
+    return analyzer.captured
 
 
 def analyze_partial(

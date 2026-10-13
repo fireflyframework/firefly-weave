@@ -343,3 +343,38 @@ def test_brand_files_are_served_from_the_studio_origin_and_license_texts_are_not
         # Only the allowlisted suffixes are served: license texts and a web manifest in the bundle are not.
         assert browser.get("/licenses/NOTICE.txt").status_code == 404
         assert browser.get("/site.webmanifest").status_code == 404
+
+
+def test_local_scope_suggests_loop_data_for_a_paired_browser(tmp_path):
+    source = """
+apiVersion: weave/v1alpha1
+kind: Workflow
+metadata: {name: notify, version: 1.0.0}
+spec:
+  inputSchema: {type: array, items: {type: string}}
+  outputSchema: {}
+  steps:
+    - id: notify
+      kind: forEach
+      items: {ref: /input}
+      body: {steps: [], output: {ref: /item}}
+  output: {ref: /steps/notify/output}
+"""
+    payload = {"source": source, "format": "yaml", "path": "/spec/steps/0/body/output"}
+    with client(tmp_path) as browser:
+        assert browser.post("/studio/local/scope", json=payload, headers={"Origin": ORIGIN}).status_code == 401
+        headers = pair(browser)
+        response = browser.post("/studio/local/scope", json=payload, headers=headers)
+        assert response.status_code == 200
+        value = response.json()
+        assert value["found"] is True and value["evaluated"] is True
+        assert [(item["ref"], item.get("loop")) for item in value["entries"]] == [
+            ("/input", None),
+            ("/item", "notify"),
+            ("/index", "notify"),
+        ]
+        assert value["entries"][1]["typeLabel"] == "Text"
+        missing = browser.post("/studio/local/scope", json={**payload, "source": "- a list"}, headers=headers)
+        assert missing.status_code == 200 and missing.json()["found"] is False
+        for bad in ({**payload, "path": "spec"}, {**payload, "format": "xml"}, {**payload, "extra": 1}):
+            assert browser.post("/studio/local/scope", json=bad, headers=headers).status_code == 422
