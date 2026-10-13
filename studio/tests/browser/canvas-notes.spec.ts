@@ -185,6 +185,41 @@ test.describe("sticky notes at 1440x900", () => {
     expect(covered).toEqual({ count: 4, problems: [] });
   });
 
+  test("a second Shift+S with nothing selected never stacks on the first note", async ({
+    page,
+  }) => {
+    const canvas = await openStoredWorkflow(page, {
+      id: "notes-twice",
+      source,
+    });
+    const text = canvas.root.getByRole("textbox", { name: "Note text" });
+    for (const words of ["First thought", "Second thought"]) {
+      await canvas.root.focus();
+      await page.keyboard.press("Shift+S");
+      await expect(text).toBeFocused();
+      await text.fill(words);
+      await page.keyboard.press("Escape");
+    }
+    const first = (await canvas.root
+      .getByRole("group", { name: "Note: First thought" })
+      .boundingBox())!;
+    const second = (await canvas.root
+      .getByRole("group", { name: "Note: Second thought" })
+      .boundingBox())!;
+    const overlap =
+      Math.max(
+        0,
+        Math.min(first.x + first.width, second.x + second.width) -
+          Math.max(first.x, second.x),
+      ) *
+      Math.max(
+        0,
+        Math.min(first.y + first.height, second.y + second.height) -
+          Math.max(first.y, second.y),
+      );
+    expect(overlap).toBe(0);
+  });
+
   test("Move… puts a note where you click, and the size menu resizes it", async ({
     page,
   }) => {

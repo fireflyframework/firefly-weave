@@ -1969,8 +1969,9 @@ export class CanvasView implements OnInit, DoCheck {
   /**
    * Shift+S and the tools' note: under the selected step (anchored), else at
    * the view's center; then the nearest free spot. A step's note keeps clear
-   * of every step, name, path label, "+" and other note at this zoom; Tidy
-   * layout moves a free note off any step it covers.
+   * of every step, name, path label, "+" and other note at this zoom; a free
+   * note keeps clear of other notes (Tidy layout moves it off any step it
+   * covers), so a second Shift+S never stacks on the first.
    */
   addNote() {
     const h = this.host();
@@ -2000,7 +2001,9 @@ export class CanvasView implements OnInit, DoCheck {
             }),
         ...NOTE_SIZES.small,
       },
-      tile ? [...noteObstacles(this.layout(), this.view.zoom), ...notes] : [],
+      tile
+        ? [...noteObstacles(this.layout(), this.view.zoom), ...notes]
+        : notes,
     );
     let added: { canvas: CanvasSidecar; id: string };
     try {
