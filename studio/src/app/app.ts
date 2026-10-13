@@ -6853,6 +6853,7 @@ export class App implements CanvasHost {
     id: string,
     target: Pick<Target, "owner" | "index">,
     current = this.insertOwner(),
+    connector?: string,
   ): Promise<string> {
     if (this.editingLocked) return "";
     const [{ COMMON_ACTIONS }, { insertOwnedStep, reservedActionNames }] =
@@ -6874,6 +6875,7 @@ export class App implements CanvasHost {
           this.actionVersions,
           this.model.canvas,
         ),
+        connector,
       );
     });
     if (this.error || !inserted) return "";
