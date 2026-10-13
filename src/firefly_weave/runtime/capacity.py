@@ -31,6 +31,10 @@ TRANSITION_BYTES = 64 * 1024 * 1024
 TERMINAL_STATE_BYTES = 128 * 1024 * 1024
 MAX_REDUCTIONS = 10_000
 MAX_INTENTS = 1_000
+# One event's transition is admitted at its final checkpoint, and earlier once this many reductions or this many
+# bytes of new step output have accumulated since the last admission.
+ADMISSION_REDUCTIONS = 64
+ADMISSION_OUTPUT_BYTES = 1024 * 1024
 capacity_failures: ContextVar[list[bool] | None] = ContextVar("weave_capacity_failures", default=None)
 
 

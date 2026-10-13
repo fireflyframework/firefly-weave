@@ -51,9 +51,12 @@ from firefly_weave.contracts.definitions import ActionDefinition, ContractModel,
 from firefly_weave.contracts.instance_keys import node_of
 from firefly_weave.contracts.values import JsonObject, JsonValue
 from firefly_weave.runtime.capacity import (
+    ADMISSION_OUTPUT_BYTES,
+    ADMISSION_REDUCTIONS,
     MAX_REDUCTIONS,
     STATE_BYTES,
     TERMINAL_STATE_BYTES,
+    TRANSITION_BYTES,
     RuntimeCapacityError,
     admit_transition,
     capacity_failures,
@@ -216,13 +219,23 @@ def transition(state: RunState, event: RuntimeEvent, artifact: CompiledArtifact 
             capacity_failures.reset(token)
     logical_size(state, STATE_BYTES)
     cursor = begin(state, event, artifact)
-    reductions = 0
+    reductions = unadmitted = output_bytes = measured = 0
     prepared = prepare(artifact) if artifact is not None and not state.unavailable else None
     while not cursor.done:
         reductions += 1
         if reductions > MAX_REDUCTIONS:
             raise RuntimeCapacityError()
         cursor = _advance_owned(cursor, prepared, operational=True)
+        # Admission walks the whole transition, so it is amortized: at the final checkpoint, and earlier once
+        # enough reductions or new step output have accumulated. Only where a capacity error surfaces can move.
+        unadmitted += 1
+        changes = cursor.result.steps
+        for change in changes[measured:]:
+            output_bytes += logical_size(change.output, TRANSITION_BYTES)
+        measured = len(changes)
+        if cursor.done or unadmitted >= ADMISSION_REDUCTIONS or output_bytes >= ADMISSION_OUTPUT_BYTES:
+            admit_transition(cursor.result)
+            unadmitted = output_bytes = 0
     return cursor.result
 
 
@@ -292,8 +305,6 @@ def _advance_owned(
     current = cursor.current or str(event.data.get("node_id", ir.graph.entry))
 
     def checkpoint(value: Transition, *, done: bool = True) -> KernelCursor:
-        if operational:
-            admit_transition(value)
         return cursor.model_copy(
             update={
                 "origin": state,
