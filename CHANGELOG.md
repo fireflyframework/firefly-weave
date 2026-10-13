@@ -170,7 +170,9 @@ SPDX-License-Identifier: Apache-2.0
   time, groups loop iterations, links to called runs, shows a step's output
   on request and follows a running run every 2 seconds. Starting, canceling,
   retrying, archiving or restoring a run, or deleting its data, from the page
-  reads the list again at once, and a run started there shows first.
+  reads the list again at once, and a run started there shows first while
+  the list puts new runs first (with Oldest first it waits for its place).
+  The line under the title names the order in use.
 
 - Keep typing in the selected form field when deferred row autofocus completes.
   Rapid row additions focus the newest item without overriding a later choice.

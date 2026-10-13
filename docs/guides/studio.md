@@ -1277,8 +1277,9 @@ A section you may not read says which permission it needs, such as "You need
 platform could not compute in time says "This section could not be loaded."
 with **Try again**, while the rest of the page stays usable.
 
-**Follow and manage runs in Runs.** The list shows the newest runs first:
-each run's status (a run that succeeded after handling errors reads "Succeeded
+**Follow and manage runs in Runs.** The list shows the newest runs first
+(choose another **Order** under **More filters**; the line under the title
+says which order is in use): each run's status (a run that succeeded after handling errors reads "Succeeded
 with errors"), its workflow and version, how it started (**Retry of** and
 **Called by** open the run it came from), when it started, how long it ran
 (counting up while it runs), its active incidents, its business key and its
@@ -1303,8 +1304,10 @@ value, as the run's detail does.
   never shift under you; while more than the first page is open, or runs are
   selected, the list waits for **Refresh**. Starting, canceling, retrying,
   archiving or restoring a run, or deleting its data, from this page reads the
-  first page again at once. A run you just started shows first, as "Just
-  started", until the list includes it.
+  first page again at once. While the list shows new runs first (**Newest
+  first** or **Recently updated**), a run you just started shows first, as
+  "Just started", until the list includes it; with **Oldest first** it
+  appears in its place once a page reaches it.
 - **Act on several runs.** Select runs, up to 50, and choose **Cancel runs**
   (one reason for all) or **Retry runs** (each on its own version with its own
   input). Studio sends them one at a time and reports the result for each run.
@@ -1322,7 +1325,10 @@ value, as the run's detail does.
   and **Technical details** holds the run ID, the correlation key, the
   artifact, and the run data. While the run is still going, Studio reads it and
   its steps every 2 seconds; **Refresh** at the bottom of the detail reads it at
-  once.
+  once. Each of those reads takes every page of steps on screen again: after
+  **Load more steps**, which stops at 10 pages (2,000 step instances) and says
+  so, a running run costs up to 10 step requests every 2 seconds, one after
+  another, and a slow platform slows the reads down instead of overlapping them.
 - **Cancel run**, **Retry run**, **Send signal** and **Export history** work as
   [Manage runs and business cases](execution-management.md#3-understand-why-a-run-is-waiting)
   describes. **Pause run** and **Resume run** need their own permissions, ask

@@ -15,7 +15,8 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-// Operate › Runs: run summaries (run_summaries.list), newest first, with the
+// Operate › Runs: run summaries (run_summaries.list), newest first unless the
+// person picks another order, with the
 // filters a person shares in the address and the private ones (business and
 // correlation keys) kept in the page. Each refresh reads the first page again
 // with the time window resolved to now; Load more continues that same chain
@@ -172,8 +173,8 @@ interface BulkResult {
       <div>
         <h1>Runs</h1>
         <p class="subtitle">
-          Every run in this environment, newest first. Open one to follow its
-          steps.
+          Every run in this environment, {{ orderText() }}. Open one to follow
+          its steps.
         </p>
       </div>
       @if (ready && readable && !forbidden) {
@@ -1030,7 +1031,8 @@ export class RunsPage implements DoCheck, OnInit, OnDestroy {
   /** What the shell may do with this list: read it again, or show a run just started. */
   private readonly list = {
     refresh: () => this.poller.refresh(),
-    started: (run: Record<string, unknown>) => this.started(run),
+    started: (run: Record<string, unknown>, scope: string) =>
+      this.started(run, scope),
   };
   ngOnInit() {
     this.host.runsList = this.list;
@@ -1179,10 +1181,17 @@ export class RunsPage implements DoCheck, OnInit, OnDestroy {
     this.selection = new Set();
     void this.poller.refresh();
   }
-  /** A run started from this page shows first until the list includes it. */
-  private started(run: Record<string, unknown>) {
+  /**
+   * A run started from this page shows first until the list includes it,
+   * when the list puts new runs first. `scope` is where it was started: a run
+   * started for another environment or person never shows here. Oldest first
+   * lists it in its place, at the end, once a page reaches it.
+   */
+  private started(run: Record<string, unknown>, scope: string) {
     const id = run["id"];
     if (typeof id !== "string" || !id) return;
+    if (scope !== scopeKeyOf(this.host) || this.filters.order === "started_asc")
+      return;
     const state = isRecord(run["state"]) ? run["state"] : {};
     const status = typeof state["status"] === "string" ? state["status"] : "";
     this.startedRuns = [
@@ -1199,6 +1208,14 @@ export class RunsPage implements DoCheck, OnInit, OnDestroy {
   }
   startedTone(run: StartedRun) {
     return toneAttribute(statusTone("run", run.status));
+  }
+  /** How the list is ordered, as the subtitle says it. */
+  orderText() {
+    return this.filters.order === "started_asc"
+      ? "oldest first"
+      : this.filters.order === "updated_desc"
+        ? "most recently updated first"
+        : "newest first";
   }
   setAutoRefresh(on: boolean) {
     this.autoRefresh = on;

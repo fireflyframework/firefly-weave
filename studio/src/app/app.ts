@@ -171,6 +171,7 @@ import {
   viewFromPath,
   viewPath,
 } from "./operate/operate-routes";
+import { scopeKeyOf } from "./operate/operate-list";
 import { RecordsView } from "./operations/records-view";
 import { SettingsPage } from "./settings/settings-page";
 import { LumiPanel } from "./lumi/lumi-panel";
@@ -749,7 +750,7 @@ export class App implements CanvasHost {
    */
   runsList: {
     refresh(): Promise<void>;
-    started(run: Record<string, unknown>): void;
+    started(run: Record<string, unknown>, scope: string): void;
   } | null = null;
   /** The run whose read was refused (403); it stays until another opens. */
   runRefused = "";
@@ -6039,6 +6040,8 @@ export class App implements CanvasHost {
   /** Starts the run; failures stay in the dialog, success opens the new run. */
   async confirmStartRun(body: StartRunRequest) {
     this.runStartError = null;
+    // The environment and person the run starts for: the list shows it only there.
+    const scope = scopeKeyOf(this);
     try {
       const run = await this.safeMutation<Record<string, unknown>>(
         `${this.api.environment}/runs`,
@@ -6054,7 +6057,7 @@ export class App implements CanvasHost {
       });
       if (this.view === "runs") {
         // The list may not include a run this new yet; it shows it first.
-        this.runsList?.started(run);
+        this.runsList?.started(run, scope);
         await this.refreshRuns();
       }
     } catch (e) {

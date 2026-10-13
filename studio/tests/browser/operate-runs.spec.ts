@@ -77,6 +77,24 @@ function started(
 }
 const uuid = (n: number) =>
   `aaaaaaaa-0000-4000-8000-${String(n).padStart(12, "0")}`;
+/** The fixture with the running run's agent at `count` step instances. */
+function manySteps(count: number): RunViewsFixture {
+  const fixture = data();
+  const turns = fixture.steps[fixtureIds.running].items;
+  for (let i = turns.length; i < count; i++) {
+    const at = new Date(
+      Date.parse("2026-10-07T11:31:00Z") + i * 1000,
+    ).toISOString();
+    turns.push({
+      ...turns[1],
+      instance_key: `support#${i}`,
+      scheduled_at: at,
+      started_at: at,
+      ended_at: at,
+    });
+  }
+  return fixture;
+}
 
 interface Platform {
   /** Stops the page clock a moment from now; only the test moves it after. */
@@ -1117,6 +1135,220 @@ test.describe("chains and refresh", () => {
     ).toHaveCount(0);
   });
 
+  test("a 2 s step read that lands after Load more steps never takes the added steps back", async ({
+    page,
+  }) => {
+    const runs = await platform(page, operator, manySteps(260));
+    // The next first-page step read waits until the test lets it answer.
+    let holding = false;
+    let reached: () => void = () => undefined;
+    const out = new Promise<void>((resolve) => (reached = resolve));
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    await page.route(`**/runs/${fixtureIds.running}/steps**`, async (route) => {
+      const url = new URL(route.request().url());
+      runs.steps.push(url);
+      if (holding && !url.searchParams.has("cursor")) {
+        holding = false;
+        reached();
+        await gate;
+      }
+      const answer = answerRunViews(url.toString(), runs.fixture)!;
+      await route
+        .fulfill({ status: answer.status, json: answer.body })
+        .catch(() => undefined);
+      runs.stepsAnswered++;
+    });
+    await openRuns(page);
+    await names(page).first().click();
+    const detail = page.locator(".record-detail");
+    const stepRows = detail.locator(".step-row");
+    await expect(stepRows).toHaveCount(200);
+    // A 2 s read of the first page is out when the person loads more.
+    holding = true;
+    await out;
+    await detail.getByRole("button", { name: "Load more steps" }).click();
+    await expect(stepRows).toHaveCount(260);
+    // The older read answers now, with one page: the screen keeps both.
+    await runs.pause();
+    const answered = runs.stepsAnswered;
+    release();
+    await expect.poll(() => runs.stepsAnswered).toBe(answered + 1);
+    await page.clock.runFor(500);
+    await expect(stepRows).toHaveCount(260);
+    await expect(
+      detail.getByRole("button", { name: "Load more steps" }),
+    ).toHaveCount(0);
+  });
+
+  test("a step that a later page repeats shows once", async ({ page }) => {
+    const runs = await platform(page, operator, manySteps(260));
+    // The platform's second page repeats the last step of the first, as a
+    // page read while a step moved between them can.
+    let firstPage: unknown[] = [];
+    let repeated = false;
+    await page.route(`**/runs/${fixtureIds.running}/steps**`, async (route) => {
+      const url = new URL(route.request().url());
+      runs.steps.push(url);
+      const answer = answerRunViews(url.toString(), runs.fixture)!;
+      const body = answer.body as { items: unknown[] };
+      if (!url.searchParams.has("cursor")) firstPage = body.items;
+      else if (!repeated) {
+        repeated = true;
+        body.items = [firstPage.at(-1), ...body.items];
+      }
+      await route.fulfill({ status: answer.status, json: body });
+      runs.stepsAnswered++;
+    });
+    await openRuns(page);
+    await names(page).first().click();
+    const detail = page.locator(".record-detail");
+    const stepRows = detail.locator(".step-row");
+    await expect(stepRows).toHaveCount(200);
+    // Only Load more reads from here on until the test moves time.
+    await runs.pause();
+    const answered = runs.stepsAnswered;
+    await detail.getByRole("button", { name: "Load more steps" }).click();
+    await expect.poll(() => runs.stepsAnswered).toBe(answered + 1);
+    expect(repeated).toBe(true);
+    // Draw that answer, in well under the 2 s before the next read.
+    for (let i = 0; i < 20 && (await stepRows.count()) === 200; i++)
+      await page.clock.runFor(16);
+    expect(await stepRows.count()).toBe(260);
+  });
+
+  test("a changed run's late lifecycle and history never replace newer ones", async ({
+    page,
+  }) => {
+    const runs = await platform(page);
+    let status = "running";
+    await page.route(
+      `${environment}/runs/${fixtureIds.running}`,
+      async (route) => {
+        runs.details.push("view");
+        await route.fulfill({
+          json: {
+            id: fixtureIds.running,
+            business_key: null,
+            correlation_key: null,
+            artifact_digest: "sha256:" + "0".repeat(64),
+            activation: { id: "act-1", name: "invoice-approval", revision: 1 },
+            state: { status, active: [], input: {} },
+          },
+        });
+      },
+    );
+    // History answers as many events as reads so far; the first read after
+    // the open waits until the test lets it answer.
+    let histories = 0;
+    let holdNext = false;
+    let reached: () => void = () => undefined;
+    const out = new Promise<void>((resolve) => (reached = resolve));
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    await page.route(
+      `${environment}/runs/${fixtureIds.running}/history?*`,
+      async (route) => {
+        const count = ++histories;
+        runs.details.push("history");
+        if (holdNext) {
+          holdNext = false;
+          reached();
+          await gate;
+        }
+        await route
+          .fulfill({
+            json: {
+              events: Array.from({ length: count }, (_, i) => ({
+                sequence: i + 1,
+                type: "run.step_started",
+                data: { node_id: `step-${i + 1}` },
+              })),
+              next_cursor: null,
+            },
+          })
+          .catch(() => undefined);
+      },
+    );
+    await openRuns(page);
+    await names(page).first().click();
+    const detail = page.locator(".record-detail");
+    const events = detail.locator(".run-timeline .timeline > li");
+    await expect(events).toHaveCount(1);
+    // The run changes: its history read (the second) is held.
+    holdNext = true;
+    status = "waiting";
+    await out;
+    // It changes again: this newer history (the third) answers at once.
+    status = "running";
+    await expect.poll(() => histories, { timeout: 10_000 }).toBe(3);
+    await expect(events).toHaveCount(3);
+    // The older answer lands last: the newer history stays.
+    await runs.pause();
+    release();
+    await page.clock.runFor(500);
+    await expect(events).toHaveCount(3);
+  });
+
+  test("the detail's Refresh reads the run again without exporting its version again", async ({
+    page,
+  }) => {
+    const runs = await platform(page);
+    const versionId =
+      runViewsFixture.runs[0].summary.workflow.definition_version_id;
+    await page.route(`${environment}/runs/${fixtureIds.failed}`, (route) => {
+      runs.details.push("view");
+      return route.fulfill({
+        json: {
+          id: fixtureIds.failed,
+          business_key: "INV-1041",
+          correlation_key: null,
+          artifact_digest: "sha256:" + "0".repeat(64),
+          activation: {
+            id: "act-1",
+            name: "invoice-approval",
+            revision: 1,
+            request: { version_id: versionId },
+          },
+          state: { status: "failed", active: [], input: {} },
+        },
+      });
+    });
+    const exports: string[] = [];
+    await page.route(`**/workflows/${versionId}/export`, (route) => {
+      exports.push(route.request().url());
+      return route.fulfill({
+        json: {
+          document: {
+            apiVersion: "weave/v1alpha1",
+            kind: "Workflow",
+            metadata: { name: "invoice-approval", version: "1.3.0" },
+            spec: { steps: [], output: { literal: {} } },
+          },
+        },
+      });
+    });
+    await openRuns(page);
+    const failed = rows(page).filter({
+      has: page.locator(`.cell-run code[title="${fixtureIds.failed}"]`),
+    });
+    await failed.locator(".row-open").click();
+    const detail = page.locator(".record-detail");
+    await expect.poll(() => exports.length).toBe(1);
+    await expect.poll(() => runs.details.join(" ")).toContain("history");
+    const views = () => runs.details.filter((read) => read === "view").length;
+    const before = views();
+    await detail
+      .locator(".detail-refresh")
+      .getByRole("button", { name: "Refresh" })
+      .click();
+    await expect.poll(views).toBe(before + 1);
+    await expect
+      .poll(() => runs.details.filter((read) => read === "history").length)
+      .toBe(2);
+    expect(exports).toHaveLength(1);
+  });
+
   test("bulk Cancel and Retry take the selected runs one by one and report each", async ({
     page,
   }) => {
@@ -1523,6 +1755,121 @@ test.describe("commands on the page", () => {
     await expect(rows(page)).toHaveCount(8);
     await expect(page.locator(".run-row.started")).toHaveCount(0);
   });
+
+  test("retrying the open run reads the list again at once", async ({
+    page,
+  }) => {
+    const runs = await platform(page);
+    await openRuns(page);
+    await expect(rows(page)).toHaveCount(6);
+    const failed = rows(page).filter({
+      has: page.locator(`.cell-run code[title="${fixtureIds.failed}"]`),
+    });
+    await failed.locator(".row-open").click();
+    const detail = page.locator(".record-detail");
+    await detail
+      .getByRole("button", { name: "Retry run", exact: true })
+      .click();
+    const dialog = page.getByRole("dialog", { name: "Retry this run" });
+    await expect(
+      dialog.getByRole("button", { name: "Retry run" }),
+    ).toBeEnabled();
+    // Only the command moves the list: no clock passes from here on.
+    await runs.pause();
+    const before = runs.requestedSummaries.length;
+    await dialog.getByRole("button", { name: "Retry run" }).click();
+    await expect.poll(() => runs.posts.length).toBe(1);
+    await expect.poll(() => runs.requestedSummaries.length).toBe(before + 1);
+    expect(last(runs).has("cursor")).toBe(false);
+  });
+
+  /** Start run answers runs the list never includes: `uuid(961)`, `uuid(962)`… */
+  async function unlisted(page: Page) {
+    let started = 0;
+    await page.route(`${environment}/runs`, (route) =>
+      route.fulfill({
+        status: 201,
+        json: { id: uuid(960 + ++started), state: { status: "queued" } },
+      }),
+    );
+  }
+  /** Starts a run from the page and waits until the dialog has closed. */
+  async function startRun(page: Page) {
+    await page.getByRole("button", { name: "Start run", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Start a run" });
+    await selectChoice(
+      dialog.getByLabel("Version to run", { exact: true }),
+      "act-1",
+    );
+    await dialog.getByRole("button", { name: "Start run" }).click();
+    await expect(dialog).toHaveCount(0);
+  }
+  const startedRows = (page: Page) => page.locator(".run-row.started");
+
+  test("a just-started run leaves the list when the filters change", async ({
+    page,
+  }) => {
+    const runs = await platform(page, [...operator, "run.start"]);
+    await startable(page);
+    await unlisted(page);
+    await openRuns(page);
+    await expect(rows(page)).toHaveCount(6);
+    await startRun(page);
+    await expect(startedRows(page)).toHaveCount(1);
+    const before = runs.requestedSummaries.length;
+    await page.getByLabel("Include test runs").check();
+    await expect
+      .poll(() => runs.requestedSummaries.at(-1)?.get("include_test"))
+      .toBe("true");
+    expect(runs.requestedSummaries.length).toBeGreaterThan(before);
+    await expect(rows(page).first()).not.toContainText("Just started.");
+    await expect(startedRows(page)).toHaveCount(0);
+  });
+
+  test("the list shows at most 10 just-started runs, the latest first", async ({
+    page,
+  }) => {
+    await platform(page, [...operator, "run.start"]);
+    await startable(page);
+    await unlisted(page);
+    await openRuns(page);
+    await expect(rows(page)).toHaveCount(6);
+    for (let i = 1; i <= 11; i++) {
+      await startRun(page);
+      await expect(startedRows(page).first()).toContainText(
+        uuid(960 + i).slice(0, 8),
+      );
+    }
+    await expect(startedRows(page)).toHaveCount(10);
+    await expect(startedRows(page).last()).toContainText(uuid(962).slice(0, 8));
+    await expect(rows(page)).toHaveCount(16);
+  });
+
+  test("with Oldest first a run started here waits for its place in the list", async ({
+    page,
+  }) => {
+    await platform(page, [...operator, "run.start"]);
+    await startable(page);
+    await unlisted(page);
+    await openRuns(page);
+    await expect(rows(page)).toHaveCount(6);
+    const subtitle = page.locator("weave-runs-page .subtitle");
+    await expect(subtitle).toContainText("newest first");
+    await page.getByRole("button", { name: "More filters" }).click();
+    await page.getByLabel("Order").selectOption("started_asc");
+    await expect(subtitle).toContainText("oldest first");
+    await expect(subtitle).not.toContainText("newest first");
+    const oldest = await rows(page).first().textContent();
+    await startRun(page);
+    await expect(
+      page.getByText(`Started run ${uuid(961).slice(0, 8)}.`),
+    ).toBeVisible();
+    await expect(rows(page)).toHaveCount(6);
+    await expect(startedRows(page)).toHaveCount(0);
+    expect(await rows(page).first().textContent()).toBe(oldest);
+    await page.getByLabel("Order").selectOption("updated_desc");
+    await expect(subtitle).toContainText("most recently updated first");
+  });
 });
 
 test.describe("another person on the same environment", () => {
@@ -1624,6 +1971,170 @@ test.describe("another person on the same environment", () => {
       expect(request.query.has("business_key")).toBe(false);
       expect(request.query.has("cursor")).toBe(false);
     }
+  });
+});
+
+test.describe("a run started for one person", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+  const versionId = "44444444-4444-4444-8444-444444444444";
+
+  /**
+   * Jane is signed in while the platform's status can't be read; Try again
+   * then finds John signed in on the same environment, in place. Start run
+   * answers once `answer` is called, with a run no list includes.
+   */
+  async function janeThenJohn(page: Page) {
+    await page.clock.install({ time: new Date(NOW) });
+    let person = "jane";
+    let reachable = false;
+    await platformHost(page, {
+      platforms: [acmePlatform()],
+      active: "Acme",
+      test: (host) =>
+        reachable
+          ? {
+              json: {
+                session: host.session(),
+                identity: {
+                  ...host.identity(),
+                  principal_id: `principal-${person}`,
+                },
+                workspaces: host.current?.workspaces ?? [],
+                truncated: false,
+                workspace_revoked: false,
+              },
+            }
+          : {
+              status: 503,
+              json: { code: "WV-STUDIO-UPSTREAM", message: "Unreachable" },
+            },
+    });
+    await page.route("**/run-summaries?**", (route) =>
+      route.fulfill({
+        json: {
+          items: [
+            started(
+              uuid(person === "jane" ? 600 : 700),
+              "2026-10-07T11:59:00Z",
+              {
+                business_key: person === "jane" ? "JANE-1" : "JOHN-1",
+              },
+            ),
+          ],
+          next_cursor: null,
+        },
+      }),
+    );
+    await page.route("**/environments/*/activations?*", (route) =>
+      route.fulfill({
+        json: {
+          items: [
+            {
+              id: "act-1",
+              name: "invoice-approval",
+              revision: 1,
+              request: { version_id: versionId },
+            },
+          ],
+          next_cursor: null,
+        },
+      }),
+    );
+    await page.route(`**/workflows/${versionId}/export`, (route) =>
+      route.fulfill({
+        json: {
+          document: {
+            apiVersion: "weave/v1alpha1",
+            kind: "Workflow",
+            metadata: { name: "invoice-approval", version: "1.3.0" },
+            spec: {
+              inputSchema: { type: "object", properties: {} },
+              outputSchema: { type: "object" },
+              steps: [],
+              output: { literal: {} },
+            },
+          },
+        },
+      }),
+    );
+    let answer: () => void = () => undefined;
+    let held = Promise.resolve();
+    const control = {
+      hold() {
+        held = new Promise<void>((resolve) => (answer = resolve));
+      },
+      answer: () => answer(),
+      posted: 0,
+      async john() {
+        person = "john";
+        reachable = true;
+        await page
+          .locator(".platform-banner")
+          .getByRole("button", { name: "Try again" })
+          .click();
+        await expect(page.locator(".platform-banner")).toHaveCount(0);
+        await expect(rows(page).first()).toContainText("JOHN-1");
+      },
+    };
+    await page.route("**/environments/*/runs", async (route) => {
+      if (route.request().method() !== "POST") return route.fallback();
+      control.posted++;
+      await held;
+      await route
+        .fulfill({
+          status: 201,
+          json: { id: uuid(980), state: { status: "queued" } },
+        })
+        .catch(() => undefined);
+    });
+    await page.getByRole("button", { name: "Runs", exact: true }).click();
+    await expect(rows(page).first()).toContainText("JANE-1");
+    return control;
+  }
+  async function openStart(page: Page) {
+    await page.getByRole("button", { name: "Start run", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Start a run" });
+    await selectChoice(
+      dialog.getByLabel("Version to run", { exact: true }),
+      "act-1",
+    );
+    await dialog.getByRole("button", { name: "Start run" }).click();
+    return dialog;
+  }
+
+  test("leaves the list when the next person signs in on the same environment", async ({
+    page,
+  }) => {
+    const platform = await janeThenJohn(page);
+    const dialog = await openStart(page);
+    await expect(dialog).toHaveCount(0);
+    await expect(page.locator(".run-row.started")).toContainText(
+      uuid(980).slice(0, 8),
+    );
+    await platform.john();
+    await expect(page.locator(".run-row.started")).toHaveCount(0);
+    await expect(rows(page)).toHaveCount(1);
+  });
+
+  test("never shows on the next person's list when it answers after they signed in", async ({
+    page,
+  }) => {
+    const platform = await janeThenJohn(page);
+    platform.hold();
+    const dialog = await openStart(page);
+    await expect.poll(() => platform.posted).toBe(1);
+    // Jane closes the dialog while the start is out; John signs in.
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+    await expect(dialog).toHaveCount(0);
+    await platform.john();
+    platform.answer();
+    await expect(
+      page.getByText(`Started run ${uuid(980).slice(0, 8)}.`),
+    ).toBeVisible();
+    await page.clock.runFor(500);
+    await expect(page.locator(".run-row.started")).toHaveCount(0);
+    await expect(rows(page)).toHaveCount(1);
+    await expect(rows(page).first()).toContainText("JOHN-1");
   });
 });
 
