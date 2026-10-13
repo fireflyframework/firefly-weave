@@ -44,6 +44,7 @@ from firefly_weave.contracts.human_tasks import (
     TaskGroup,
     TaskGroupRequest,
 )
+from firefly_weave.contracts.instance_keys import instance_view
 from firefly_weave.contracts.values import JsonObject
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.persistence.idempotency import Idempotency, lock
@@ -56,9 +57,11 @@ from firefly_weave.runtime.waits import TERMINAL, settle
 
 
 def task_view(row: dict[str, Any]) -> HumanTask:
-    return HumanTask.model_validate_json(
-        json.dumps({key: row[key] for key in HumanTask.model_fields if key in row}, default=str)
-    )
+    """The API view of a stored task: its static step ID, plus its instance key and iteration inside loops."""
+    values = {key: row[key] for key in HumanTask.model_fields if key in row}
+    identity = instance_view(row["node_id"])
+    values.update(node_id=identity.node_id, instance_key=identity.instance_key, iteration=identity.iteration)
+    return HumanTask.model_validate_json(json.dumps(values, default=str))
 
 
 async def human(tx: Transaction, identifier: UUID) -> Principal:

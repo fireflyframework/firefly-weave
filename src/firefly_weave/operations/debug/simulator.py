@@ -27,6 +27,7 @@ from firefly_weave.compiler.canonical import canonical_bytes
 from firefly_weave.compiler.ir import ActionNode, HumanTaskNode, SignalNode, WaitNode
 from firefly_weave.contracts.definitions import ActionDefinition, load_definition
 from firefly_weave.contracts.diagnostics import Diagnostic
+from firefly_weave.contracts.instance_keys import InvalidInstanceKey, node_of
 from firefly_weave.contracts.values import JsonObject, JsonValue
 from firefly_weave.operations.debug.models import (
     Boundary,
@@ -169,7 +170,7 @@ class Simulator:
 
         def change() -> None:
             self.data.breakpoints = sorted(node_ids)
-            if self.data.paused not in node_ids:
+            if self.data.paused is not None and node_of(self.data.paused) not in node_ids:
                 self.data.paused = None
 
         self._mutate(change)
@@ -187,7 +188,7 @@ class Simulator:
             self.data.paused = None
             for _ in range(self.limits.continue_boundaries):
                 selected = self._selected()
-                if selected in self.data.breakpoints and selected != skip:
+                if selected is not None and node_of(selected) in self.data.breakpoints and selected != skip:
                     self.data.paused = selected
                     return
                 skip = None
@@ -212,8 +213,8 @@ class Simulator:
         if cursor.admitted:
             if d.node_count >= self.limits.node_reductions:
                 raise DebugError("WV-DEBUG-LIMIT")
-            node = self._prepared.nodes[cursor.ready[0]]
-            boundary = Boundary(kind="node", node_id=node.id, node_kind=node.kind)
+            node = self._prepared.nodes[node_of(cursor.ready[0])]
+            boundary = Boundary(kind="node", node_id=cursor.ready[0], node_kind=node.kind)
             d.node_count += 1
         else:
             boundary = Boundary(kind="event", event_type=cursor.event.type)
@@ -228,7 +229,10 @@ class Simulator:
                 if isinstance(command, Deadline):
                     d.deadlines.append(command)
                 elif isinstance(command, TaskIntent):
+                    # A step mock applies to every instance of the step.
                     key = "node:" + command.node_id
+                    if key not in d.mocks:
+                        key = "node:" + node_of(command.node_id)
                     if key not in d.mocks:
                         key = "action:" + command.action_reference
                     if key not in d.mocks:
@@ -261,7 +265,7 @@ class Simulator:
                 continue
             d.deadlines.remove(deadline)
             return self._event(
-                "wait_elapsed" if deadline.node_id in durations else "timed_out",
+                "wait_elapsed" if node_of(deadline.node_id) in durations else "timed_out",
                 {"node_id": deadline.node_id, "deadline": deadline.deadline.isoformat()},
             )
         for node in self.ir.graph.nodes:
@@ -288,7 +292,11 @@ class Simulator:
 
     def human_decision(self, node_id: str, payload: JsonValue) -> DebugView:
         def receive() -> None:
-            node = next((n for n in self.ir.graph.nodes if isinstance(n, HumanTaskNode) and n.id == node_id), None)
+            try:
+                step = node_of(node_id)
+            except InvalidInstanceKey:
+                raise DebugError("WV-DEBUG-HUMAN-TASK") from None
+            node = next((n for n in self.ir.graph.nodes if isinstance(n, HumanTaskNode) and n.id == step), None)
             if node is None or node_id not in self.data.state.active or self.data.state.status in TERMINAL:
                 raise DebugError("WV-DEBUG-HUMAN-TASK")
             validate(

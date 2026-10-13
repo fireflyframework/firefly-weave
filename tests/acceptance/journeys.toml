@@ -41,7 +41,7 @@
 "editor-hardening" = false
 "language-contracts" = false
 "text-operators" = true
-"instance-keys" = false
+"instance-keys" = true
 "loop-compiler" = false
 "loop-runtime" = false
 "loop-simulation" = false

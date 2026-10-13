@@ -14,26 +14,42 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-"""Pure lexical frames and deterministic direct-branch capacity accounting."""
+"""Pure lexical frames keyed by instance keys, and deterministic direct-branch capacity accounting."""
 
 from firefly_weave.compiler.ir import Node
+from firefly_weave.contracts.instance_keys import node_of, split_instance
 from firefly_weave.contracts.values import JsonObject, JsonValue
 from firefly_weave.runtime.models import BranchState, JoinState, RunState
 
 
-def branch_key(owner: str, name: str) -> str:
+def loop_suffix(key: str) -> str:
+    """The loop iterations of an instance key as key text, outer loop first; "" outside loops."""
+    if node_of(key) == key:
+        return ""
+    return "".join(f"[{index}]" for index in split_instance(key).indexes)
+
+
+def branch_key(owner: str, name: str, suffix: str = "") -> str:
+    """A frame key: the owner step ID, its block name and the loop suffix of the steps inside it."""
     # IR author IDs and branch names are resource names; separators cannot collide.
-    return f"{owner}/{name}"
+    return f"{owner}/{name}{suffix}"
 
 
-def frame(state: RunState, node: Node) -> BranchState | None:
+def frame_key(node: Node, key: str) -> str | None:
+    """The frame that holds the instance ``key`` of ``node``; None at the top level."""
     if not node.scope:
         return None
-    return state.branches[branch_key(*node.scope[-2:])]
+    owner, name = node.scope[-2:]
+    return branch_key(owner, name, loop_suffix(key))
 
 
-def bindings(state: RunState, node: Node) -> JsonObject:
-    branch = frame(state, node)
+def frame(state: RunState, node: Node, key: str) -> BranchState | None:
+    name = frame_key(node, key)
+    return None if name is None else state.branches[name]
+
+
+def bindings(state: RunState, node: Node, key: str) -> JsonObject:
+    branch = frame(state, node, key)
     return state.steps if branch is None else {**branch.visible, **branch.steps}
 
 
@@ -44,7 +60,8 @@ def joined_output(state: RunState, join: JoinState) -> JsonValue:
     return {branch.name: branch.output for branch in sorted(branches, key=lambda branch: branch.name)}
 
 
-def available(state: RunState, join: JoinState) -> list[BranchState]:
+def available(state: RunState, join: JoinState) -> list[str]:
+    """Keys of the pending branches of ``join`` that may start now, in declaration order."""
     running = sum(state.branches[key].status == "running" for key in join.branches)
-    pending = [state.branches[key] for key in join.branches if state.branches[key].status == "pending"]
+    pending = [key for key in join.branches if state.branches[key].status == "pending"]
     return pending[: max(0, join.concurrency - running)]
