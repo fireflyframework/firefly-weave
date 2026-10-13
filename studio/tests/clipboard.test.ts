@@ -258,6 +258,24 @@ describe("planning a paste", () => {
     );
   });
 
+  it("shows an unreadable reference's step cut and without format controls", () => {
+    const target = `\u202E${"z".repeat(5000)}`;
+    const message = unreadableMessage([
+      {
+        stepId: "notify",
+        ref: `/steps/${target}/output`,
+        path: ["value"],
+        fieldPath: "/value",
+        target,
+        reason: "missing",
+      },
+    ]);
+    expect(message).toBe(
+      `1 reference can't be read here (${"z".repeat(59)}… isn't in this workflow).`,
+    );
+    expect(message).not.toMatch(/\u202E/);
+  });
+
   it("brings slots and AI profiles, renaming a slot whose name another connector holds", () => {
     const content = read(
       copySteps(model().definition, ["check-customer", "summarize"]).yaml,

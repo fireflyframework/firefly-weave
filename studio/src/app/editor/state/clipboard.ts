@@ -887,7 +887,7 @@ export function unreadableMessage(list: readonly Unreadable[]): string {
   const first = list[0];
   const why =
     first.reason === "missing"
-      ? `${first.target} isn't in this workflow`
-      : `${first.target} runs later or on another path`;
+      ? `${shown(first.target)} isn't in this workflow`
+      : `${shown(first.target)} runs later or on another path`;
   return `${list.length === 1 ? "1 reference" : `${list.length} references`} can't be read here (${why}).`;
 }
