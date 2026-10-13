@@ -46,7 +46,11 @@ SCOPE = "tenant_id=:tenant AND project_id=:project AND environment_id=:environme
 
 
 def loop_activity(result: Transition) -> tuple[int, int, int]:
-    """Loop iterations a transition collected, loop iterations it cancelled, and loop yields it registered."""
+    """Loop iterations a transition collected, loop iterations it cancelled, and loop yields it registered.
+
+    Every iteration running when the run ends counts as cancelled, the one holding a failing step included: the
+    failure itself is the run's outcome.
+    """
     collected = cancelled = yields = 0
     ended = False
     for command in result.commands:
@@ -58,6 +62,15 @@ def loop_activity(result: Transition) -> tuple[int, int, int]:
     if ended:
         cancelled = sum(b.index is not None and b.status == "cancelled" for b in result.state.branches.values())
     return collected, cancelled, yields
+
+
+# Iteration frames a stored run state is still running; read before terminal control replaces that state.
+STOPPED_ITERATIONS = (
+    "SELECT count(*) FROM runs, jsonb_each(CASE WHEN jsonb_typeof(state->'branches')='object' "
+    "THEN state->'branches' ELSE '{}'::jsonb END) AS frame "
+    f"WHERE {SCOPE} AND id=:run AND jsonb_typeof(frame.value->'index')='number' "
+    "AND frame.value->>'status' IN ('pending','running')"
+)
 
 
 class RuntimeRepository:
@@ -177,6 +190,8 @@ class RuntimeRepository:
         from firefly_weave.files.authority import require_run_files
 
         await require_run_files(self.tx, view.id, result.model_dump(mode="json"))
+        # Terminal control of an unavailable run never reads its stored state, so its iterations are counted here.
+        stopped = await self.stopped_iterations(view.id) if isinstance(view, TerminalControl) else 0
         await self.execute(
             "INSERT INTO run_events VALUES(:tenant,:project,:environment,:run,:id,:sequence,:type,"
             "cast(:data AS jsonb),:created,:hash,cast(:transition AS jsonb),cast(:response AS jsonb))",
@@ -313,7 +328,7 @@ class RuntimeRepository:
         collected, cancelled, yields = loop_activity(result)
         for kind, status, amount in (
             ("loop_iteration", "ok", collected),
-            ("loop_iteration", "failed", cancelled),
+            ("loop_iteration", "cancelled", cancelled + stopped),
             ("loop_yield", "ok", yields),
         ):
             if amount:
@@ -413,6 +428,11 @@ class RuntimeRepository:
             {**self.params, "run": run_id},
         )
         return min(task_deadline, deadline) if deadline else task_deadline
+
+    async def stopped_iterations(self, run_id: UUID) -> int:
+        """Loop iterations the stored state of a run is running, without loading that state."""
+        result = await self.tx.session.execute(text(STOPPED_ITERATIONS), {**self.params, "run": run_id})
+        return int(result.scalar() or 0)
 
     async def rows(self, sql: str, **values: Any) -> list[dict[str, Any]]:
         result = await self.tx.session.execute(text(sql), {**self.params, **values})

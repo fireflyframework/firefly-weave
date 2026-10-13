@@ -172,9 +172,13 @@ seconds.
 | Gauges | `weave.inventory`, `weave.inventory_freshness` |
 
 **Loops.** `weave.loop_iterations` counts finished loop iterations with
-`operation: loop`: `status: ok` for each result a loop collected, `status:
-failed` for each iteration a failed, canceled, or timed-out run ended.
-`weave.loop_yields` counts the times a loop paused to continue in a later event.
+`operation: loop`: `status: ok` for each result a loop collected, and `status:
+cancelled` for each iteration still running when its run ended, however it
+ended: failed (the iteration holding the failing step included), canceled, or
+timed out, through ordinary terminal control or the reduced terminal control of
+an unavailable or oversized run. The failure itself is counted once, as the
+run's outcome. `weave.loop_yields` counts the times a loop paused to continue
+in a later event.
 
 **Only three attributes.** Metrics carry `operation`, `status`, and
 `error_code`. Operations come from the public operation manifest plus a few fixed

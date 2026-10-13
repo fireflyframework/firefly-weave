@@ -107,6 +107,7 @@ async def persist_terminal(
             wait=UUID(str(event.data["wait_id"])),
             now=event.timestamp,
         )
+    stopped = await repository.stopped_iterations(row["id"])
     # Existing JSON values stay in SQL; only their terminal control fields change.
     inserted = await repository.rows(
         "WITH updated AS (UPDATE runs SET state=state || jsonb_build_object("
@@ -142,6 +143,8 @@ async def persist_terminal(
     )
     if len(inserted) != 1:
         raise CatalogError(409, "WV-RUNTIME-SEQUENCE", "Terminal sequence changed")
+    if stopped:
+        repository.tx.record("loop_iteration", "loop", "cancelled", amount=stopped)
     from firefly_weave.human_tasks.persistence import close_tasks
 
     await close_tasks(repository, row["id"], event.type, event.data.get("node_id", "@run"))

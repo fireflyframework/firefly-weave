@@ -436,3 +436,43 @@ async def test_loop_counters_are_recorded_after_the_transition_commits(worker_se
     }
     assert points["weave.loop_iterations"] == 2000 and points["weave.loop_yields"] == 1
     meters.shutdown()
+
+
+@pytest.mark.parametrize("path", ["unavailable", "oversized"])
+async def test_reduced_terminal_control_counts_the_iterations_a_cancelled_loop_was_running(
+    path, worker_setup, access_db, monkeypatch
+):
+    from opentelemetry.sdk.metrics import MeterProvider
+    from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+    from opentelemetry.sdk.trace import TracerProvider
+
+    import firefly_weave.runtime.repository as repository
+    from firefly_weave.access.audit import AuditContext
+    from firefly_weave.contracts import language_features
+    from firefly_weave.operations.telemetry import TelemetryService, WeaveMetricsRecorder
+    from firefly_weave.persistence.uow import UnitOfWork
+
+    run = await start(worker_setup, [1, 2, 3, 4])
+    assert len((await state_of(access_db, run.id))["loops"]["each"]["running"]) == 3
+    if path == "unavailable":
+        # A platform rolled back below loops cancels the run without reading its stored state.
+        monkeypatch.setattr(language_features, "ADVERTISED_FEATURES", ())
+    else:
+        monkeypatch.setattr(repository, "RUN_FETCH_BYTES", 1)
+    reader = InMemoryMetricReader()
+    meters = MeterProvider(metric_readers=[reader], shutdown_on_exit=False)
+    telemetry = TelemetryService(WeaveMetricsRecorder(meters), TracerProvider(shutdown_on_exit=False))
+    _, runtime, _, actor, scope, _, _ = worker_setup
+    async with UnitOfWork(access_db[0], telemetry).open(scope) as tx:
+        await runtime.cancel(tx, run.id, "stop the loop", actor=actor, scope=scope, context=AuditContext())
+    assert (await state_of(access_db, run.id))["status"] == "cancelled"
+    points = {
+        (metric.name, point.attributes["status"]): point.value
+        for resource in reader.get_metrics_data().resource_metrics
+        for scope_metrics in resource.scope_metrics
+        for metric in scope_metrics.metrics
+        if metric.name == "weave.loop_iterations"
+        for point in metric.data.data_points
+    }
+    assert points == {("weave.loop_iterations", "cancelled"): 3}
+    meters.shutdown()

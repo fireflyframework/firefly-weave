@@ -34,8 +34,9 @@ SPDX-License-Identifier: Apache-2.0
   `operations.runtime.loop_units_per_turn`. The platform now lists
   `flow.forEach` and `forEach` in its language manifest and capabilities, so it
   publishes, imports, and activates workflows with loops. Debug sessions run
-  loops with the same reducer. New counters `weave.loop_iterations` and
-  `weave.loop_yields`. Upgrade the CLI and SDK together with the server: older
+  loops with the same reducer. New counters `weave.loop_iterations` (`status:
+  ok` for each collected result, `cancelled` for each iteration still running
+  when its run ends) and `weave.loop_yields`. Upgrade the CLI and SDK together with the server: older
   clients do not know the human task `instance_key` and `iteration` fields or
   the new capability fields.
 - Evaluating an expression inside a loop body and admitting a long event no
