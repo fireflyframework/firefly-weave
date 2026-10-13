@@ -26,9 +26,12 @@ import {
   AI_CAPABILITIES,
   CONNECTOR_ID,
   OLLAMA_REVISION,
+  OPENAI_REVISION,
   mockAiPlatform,
   ollamaConnection,
   openAiModels,
+  openaiConnection,
+  readiness,
   sheet,
   type AiPlatform,
 } from "./ai-models-po";
@@ -363,4 +366,182 @@ test("Home offers Connect a model to people who manage connections", async ({
   await page.getByRole("button", { name: "Home", exact: true }).click();
   await page.getByRole("button", { name: "Connect a model" }).click();
   await expect(page).toHaveURL(/\/settings\/ai$/);
+});
+
+for (const size of [
+  { width: 1440, height: 900 },
+  { width: 600, height: 500 },
+])
+  test.describe(`AI models page at ${size.width}x${size.height}`, () => {
+    test.use({ viewport: size });
+
+    test("shows providers, connections and the checklist", async ({ page }) => {
+      await start(page, { connections: [ollamaConnection, openaiConnection] });
+      const cards = page.locator(".provider-card");
+      await expect(cards).toHaveCount(4);
+      await expect(cards.nth(0)).toContainText("Ollama");
+      await expect(cards.nth(0)).toContainText("Connected · 1");
+      await expect(cards.nth(2)).toContainText("Not set up");
+      await expect(
+        page.getByRole("button", { name: "Manage Ollama" }),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("button", { name: "Connect Anthropic" }),
+      ).toBeVisible();
+      const row = page
+        .locator(".connection-row")
+        .filter({ hasText: "ollama-local" });
+      await expect(row).toContainText("http://ollama:11434/v1");
+      await expect(row).toContainText("Development only");
+      await expect(row).toContainText("Not tested in this session");
+      const items = page.locator(".readiness-row");
+      await expect(items).toHaveCount(8);
+      await expect(items.nth(4)).toContainText("Key available · Not needed");
+      await expect(items.nth(7)).toContainText("Weave AI · Not set up");
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= innerWidth,
+        ),
+      ).toBe(true);
+      if (size.width < 1024) {
+        const readinessBox = await page.locator(".ai-readiness").boundingBox();
+        const providersBox = await page.locator(".ai-providers").boundingBox();
+        expect(readinessBox!.y + readinessBox!.height).toBeLessThanOrEqual(
+          providersBox!.y,
+        );
+      }
+    });
+
+    test("Publish and Authorize run once and the checklist rechecks", async ({
+      page,
+    }) => {
+      const platform = await start(page, {
+        connections: [ollamaConnection, openaiConnection],
+        readiness: readiness({
+          actions_published: {
+            status: "action",
+            detail: "actions_missing",
+            fix: {
+              kind: "operation",
+              label: "Publish",
+              operation: "ai_setup.publish",
+            },
+          },
+          key_available: { status: "done", detail: "key_grant_available" },
+          connection_authorized: {
+            status: "action",
+            detail: "authorization_missing",
+            fix: {
+              kind: "operation",
+              label: "Authorize",
+              operation: "ai_setup.grant",
+            },
+          },
+        }),
+      });
+      const publish = page.getByRole("button", {
+        name: "Publish",
+        exact: true,
+      });
+      await publish.dblclick();
+      await expect(page.locator(".readiness-row").nth(1)).toContainText(
+        "AI actions published · Published",
+      );
+      expect(platform.publishes).toBe(1);
+      await page
+        .getByRole("button", { name: "Authorize", exact: true })
+        .click();
+      await expect(page.locator(".readiness-row").nth(5)).toContainText(
+        "Connection authorized · Authorized",
+      );
+      expect(platform.grants).toEqual([
+        { connection_revision_id: OPENAI_REVISION },
+      ]);
+    });
+  });
+
+test("a viewer sees the checklist without setup controls", async ({ page }) => {
+  await start(page, {
+    capabilities: ["catalog.read", "status.read"],
+    connections: [ollamaConnection],
+    readiness: readiness({
+      connection: {
+        status: "unknown",
+        detail: "requires_deployer",
+        fix: { kind: "ask", label: "Requires deployer" },
+      },
+      key_available: {
+        status: "unknown",
+        detail: "requires_tenant_admin",
+        fix: { kind: "ask", label: "Requires tenant_admin" },
+      },
+      connection_authorized: {
+        status: "unknown",
+        detail: "requires_tenant_admin",
+        fix: { kind: "ask", label: "Requires tenant_admin" },
+      },
+      model_responds: {
+        status: "unknown",
+        detail: "requires_tenant_admin",
+        fix: { kind: "ask", label: "Requires tenant_admin" },
+      },
+      weave_ai: {
+        status: "unknown",
+        detail: "requires_lumi_user",
+        fix: { kind: "ask", label: "Requires lumi_user" },
+      },
+    }),
+  });
+  await expect(page.locator(".readiness-row").nth(4)).toContainText(
+    "Key available · Requires Tenant administrator",
+  );
+  await expect(page.locator(".readiness-row").nth(7)).toContainText(
+    "Weave AI · Requires Weave AI user",
+  );
+  expect(await page.locator(".ai-readiness").textContent()).not.toContain(
+    "tenant_admin",
+  );
+  await expect(page.getByRole("button", { name: /^Connect / })).toHaveCount(0);
+  await expect(page.locator(".ai-providers")).toContainText(
+    "Seeing AI connections requires the Deployer role.",
+  );
+});
+
+test("the operator command is copied and the workers link opens Operate", async ({
+  page,
+  context,
+}) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await start(page, {
+    readiness: readiness({
+      worker_installed: {
+        status: "action",
+        detail: "worker_missing",
+        fix: {
+          kind: "command",
+          label: "Ask an operator to enable AI",
+          command: "weave platform ai enable --ollama auto",
+        },
+      },
+      worker_online: {
+        status: "action",
+        detail: "worker_offline",
+        fix: {
+          kind: "navigate",
+          label: "Open workers",
+          route: "operate/workers",
+        },
+      },
+    }),
+  });
+  await page
+    .getByRole("button", {
+      name: "Copy weave platform ai enable --ollama auto",
+    })
+    .click();
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+    "weave platform ai enable --ollama auto",
+  );
+  await page.getByRole("button", { name: "Open workers" }).click();
+  await expect(page).toHaveURL(/\/operate\/workers$/);
 });

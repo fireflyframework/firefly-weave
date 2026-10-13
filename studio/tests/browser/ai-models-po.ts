@@ -227,13 +227,13 @@ export async function mockAiPlatform(
   });
   await page.route(`${ENV}/ai/setup/publish`, (r) => {
     state.publishes++;
-    state.readiness = readiness({
-      actions_published: {
-        status: "done",
-        detail: "actions_published",
-        fix: undefined,
-      },
-    });
+    state.readiness = {
+      items: state.readiness.items.map((item) =>
+        item.id === "actions_published"
+          ? { id: item.id, status: "done", detail: "actions_published" }
+          : item,
+      ),
+    };
     return json(r, { connector: {}, actions: [{}] });
   });
   await page.route(`${ENV}/ai/setup/grant`, (r) => {
