@@ -199,16 +199,16 @@ describe("tile words", () => {
 
   it("describe the Manual form trigger by the workflow's input fields", () => {
     const workflow = freshWorkflow();
-    expect(triggerSubtitle(workflow)).toBe("Manual form");
+    expect(triggerSubtitle(workflow)).toBe("No fields");
     workflow.spec["inputSchema"] = {
       type: "object",
       properties: { amount: { type: "number" } },
     };
-    expect(triggerSubtitle(workflow)).toBe("Manual form · 1 field");
+    expect(triggerSubtitle(workflow)).toBe("1 field");
     workflow.spec["inputSchema"] = {
       type: "object",
       properties: { a: {}, b: {}, c: {} },
     };
-    expect(triggerSubtitle(workflow)).toBe("Manual form · 3 fields");
+    expect(triggerSubtitle(workflow)).toBe("3 fields");
   });
 });

@@ -219,6 +219,51 @@ test("a link to a workflow that isn't here explains and opens Workflows", async 
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("Workflows");
 });
 
+test("Back into a file opened and left unchanged says it wasn't kept, not that it is gone", async ({
+  page,
+}) => {
+  await offline(page);
+  const file = (name: string) => ({
+    name: `${name}.yaml`,
+    mimeType: "application/yaml",
+    buffer: Buffer.from(
+      [
+        "apiVersion: weave/v1alpha1",
+        "kind: Workflow",
+        `metadata: {name: ${name}, version: 1.0.0}`,
+        "spec:",
+        "  inputSchema: {type: object}",
+        "  outputSchema: {type: object}",
+        "  steps: [{id: check, kind: transform, value: {literal: {}}}]",
+        "  output: {literal: {}}",
+      ].join("\n"),
+    ),
+  });
+  const title = (name: string) =>
+    page.getByRole("heading", { name, exact: true, level: 1 });
+  await page
+    .getByLabel("Choose a workflow file")
+    .setInputFiles(file("first-file"));
+  await expect(title("first-file")).toBeVisible();
+  await page.getByRole("button", { name: "Home", exact: true }).click();
+  await page
+    .getByLabel("Choose a workflow file")
+    .setInputFiles(file("second-file"));
+  await expect(title("second-file")).toBeVisible();
+  // Two entries back: past Home, into the first file's designer.
+  await page.evaluate(() => history.go(-2));
+  const toast = page.locator(".toast").filter({
+    hasText:
+      "That workflow was opened from a file and not changed, so Studio didn't keep a copy. Choose Import workflow to open the file again.",
+  });
+  await expect(toast).toBeVisible();
+  await expect(toast).not.toHaveAttribute("data-tone", "danger");
+  await expect(
+    page.locator(".toast").filter({ hasText: "isn't available" }),
+  ).toHaveCount(0);
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Workflows");
+});
+
 test("the back button returns to the open workflow", async ({ page }) => {
   await offline(page);
   await newWorkflow(page);

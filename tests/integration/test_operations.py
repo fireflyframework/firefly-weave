@@ -729,11 +729,10 @@ async def test_inventory_checks_its_own_role_and_endpoint_with_scheduler_disable
         await service.close()
 
 
-async def test_inventory_rejects_column_only_privilege_on_new_owned_login(access_db, scheduler_url):
+async def test_inventory_rejects_column_only_privilege_on_new_owned_login(access_db, scheduler_url, retain):
     import secrets
     from types import SimpleNamespace
 
-    from conftest import retain_resource
     from sqlalchemy import make_url
 
     from firefly_weave.connections.registry import ConnectorRegistry
@@ -743,7 +742,7 @@ async def test_inventory_rejects_column_only_privilege_on_new_owned_login(access
     username, password = "weave_d4_column_" + uuid4().hex, secrets.token_urlsafe(32)
     async with access_db[1].begin() as owner:
         await owner.execute(text(f"CREATE ROLE {username} LOGIN PASSWORD '{password}' IN ROLE weave_scheduler"))
-        retain_resource("role", username)
+        retain("role", username)
         await owner.execute(text(f"GRANT SELECT(state) ON runs TO {username}"))
         assert not await owner.scalar(text("SELECT has_table_privilege(:role,'runs','SELECT')"), {"role": username})
         assert await owner.scalar(text("SELECT has_any_column_privilege(:role,'runs','SELECT')"), {"role": username})

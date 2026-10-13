@@ -92,6 +92,7 @@ dev = [
   "types-jsonschema>=4.26.0",
   "hatchling>=1.28.0",
   "types-regex>=2026.9.10.20260911",
+  "pytest-xdist>=3.8.0,<4",
 ]
 docs = [
     "mkdocs==1.6.1",

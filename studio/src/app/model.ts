@@ -21,6 +21,7 @@ import {
   emptyCanvas,
   pruneCanvas,
   renameInCanvas,
+  syncCalled,
   type CanvasSidecar,
 } from "./editor/state/canvas-sidecar";
 export type Kind =
@@ -288,6 +289,51 @@ export function ownerLabel(owner: string, steps?: ReadonlyMap<string, Step>) {
 }
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === "object" && !Array.isArray(value);
+/** Every sequence of a workflow by owner: "root", then "<group>/<lane>" for each path and branch. */
+export function sequencesOf(definition: Workflow): Map<string, Step[]> {
+  const map = new Map<string, Step[]>([["root", definition.spec.steps]]);
+  const visit = (steps: Step[]) =>
+    steps.forEach((step) =>
+      branches(step).forEach(([name, branch]) => {
+        map.set(`${step.id}/${name}`, branch.steps);
+        visit(branch.steps);
+      }),
+    );
+  visit(definition.spec.steps);
+  return map;
+}
+/** The first `<prefix>-<n>` (n from 1) that no taken ID uses. */
+export function nextFreeId(prefix: string, taken: ReadonlySet<string>): string {
+  let i = 1;
+  while (taken.has(`${prefix}-${i}`)) i++;
+  return `${prefix}-${i}`;
+}
+/**
+ * A copy of a step or expression whose `ref`s to renamed steps follow them;
+ * `literal` content is data, never a reference, and stays as written.
+ */
+export function rewriteStepRefs(
+  value: unknown,
+  renamed: ReadonlyMap<string, string>,
+  key = "",
+): unknown {
+  if (key === "literal") return structuredClone(value);
+  if (Array.isArray(value))
+    return value.map((item) => rewriteStepRefs(item, renamed));
+  if (isRecord(value))
+    return Object.fromEntries(
+      Object.entries(value).map(([k, v]) => [
+        k,
+        rewriteStepRefs(v, renamed, k),
+      ]),
+    );
+  if (key === "ref" && typeof value === "string") {
+    const match = /^\/steps\/([^/]+)(.*)$/.exec(value);
+    if (match && renamed.has(match[1]))
+      return `/steps/${renamed.get(match[1])}${match[2]}`;
+  }
+  return value;
+}
 /** Collects `ref` values of an expression; `literal` content is data, never a reference. */
 function expressionRefs(
   expression: unknown,
@@ -457,16 +503,45 @@ export class StructuredCanvasAdapter {
    * a person sees. When an edit fails, the workflow is left as it was.
    */
   amend<T>(edits: () => T): T {
-    if (this.past.length) return this.continueEdit(this.revision, edits);
-    const before = this.snapshot();
+    let result: T;
+    if (this.past.length) result = this.continueEdit(this.revision, edits);
+    else {
+      const before = this.snapshot();
+      const batching = this.batching;
+      this.batching = true;
+      try {
+        result = edits();
+      } catch (error) {
+        this.restore(before);
+        throw error;
+      } finally {
+        this.batching = batching;
+      }
+    }
+    this.amendRedo(edits);
+    return result;
+  }
+  /**
+   * What Studio learned holds in every state Redo brings back too; a state
+   * the record doesn't apply to (it throws there) stays as it was.
+   */
+  private amendRedo(edits: () => unknown) {
+    if (!this.future.length) return;
+    const now = this.snapshot();
     const batching = this.batching;
     this.batching = true;
     try {
-      return edits();
-    } catch (error) {
-      this.restore(before);
-      throw error;
+      this.future = this.future.map((state) => {
+        this.restore(state);
+        try {
+          edits();
+          return this.snapshot();
+        } catch {
+          return state;
+        }
+      });
     } finally {
+      this.restore(now);
       this.batching = batching;
     }
   }
@@ -531,7 +606,12 @@ export class StructuredCanvasAdapter {
       this.assertStructure(value);
       this.definition = value;
       this.readonly = false;
-      this.canvas = pruneCanvas(this.canvas, this.stepIdSet());
+      const present = this.stepIdSet();
+      this.canvas = syncCalled(
+        pruneCanvas(this.canvas, present),
+        value,
+        present.size > 0,
+      );
     } catch (e) {
       this.error = e instanceof Error ? e.message : "Invalid source";
       this.readonly = true;
@@ -585,16 +665,7 @@ export class StructuredCanvasAdapter {
     } else this.sync();
   }
   owners(): Map<string, Step[]> {
-    const map = new Map<string, Step[]>([["root", this.definition.spec.steps]]);
-    const visit = (ss: Step[]) =>
-      ss.forEach((s) =>
-        branches(s).forEach(([name, b]) => {
-          map.set(`${s.id}/${name}`, b.steps);
-          visit(b.steps);
-        }),
-      );
-    visit(this.definition.spec.steps);
-    return map;
+    return sequencesOf(this.definition);
   }
   /** Every step ID in the workflow, nested ones and steps not placed yet included. */
   stepIdSet(): Set<string> {
@@ -609,6 +680,34 @@ export class StructuredCanvasAdapter {
     this.checkpoint();
     this.canvas = next;
   }
+  /**
+   * Remembers where anchored notes are drawn now, so a note keeps its last
+   * place when its step goes. Not an edit: no undo step, nothing to save.
+   */
+  cacheNotePositions(points: ReadonlyMap<string, Point>) {
+    for (const note of this.canvas.notes ?? []) {
+      const point = note.anchor ? points.get(note.id) : undefined;
+      if (!point) continue;
+      note.x = Math.round(point.x);
+      note.y = Math.round(point.y);
+    }
+  } /**
+   * Tidy layout: clears legacy positions and applies the tidied canvas as
+   * one undo step. False when there was nothing to do.
+   */
+  tidy(next: CanvasSidecar | null): boolean {
+    const positions = Object.keys(this.layout.positions).length > 0;
+    if (!positions && !next) return false;
+    if (this.readonly) throw Error("Fix source before editing the graph.");
+    this.checkpoint();
+    if (positions) {
+      this.layout.positions = {};
+      this.layout.revision++;
+    }
+    if (next) this.canvas = next;
+    return true;
+  }
+
   private computeLayout() {
     return computeLaneLayout(this.definition, this.layout.positions);
   }
@@ -691,16 +790,32 @@ export class StructuredCanvasAdapter {
     this.syncSteps();
     return s;
   }
+  /** Inserts steps (a paste) at one place as one undo step; the first one is selected. */
+  insertSteps(owner: string, index: number, steps: readonly Step[]) {
+    if (this.readonly) throw Error("Fix source before editing the graph.");
+    const list = this.owners().get(owner);
+    if (!list || index < 0 || index > list.length)
+      throw Error("Target branch no longer exists.");
+    const draft = structuredClone(this.definition);
+    sequencesOf(draft)
+      .get(owner)!
+      .splice(index, 0, ...structuredClone(steps));
+    this.assertStructure(draft);
+    this.checkpoint();
+    this.definition = draft;
+    if (steps[0]) this.selected = steps[0].id;
+    this.syncSteps();
+  }
   /** The first unused ID of the form `<prefix>-<n>`. */
   private freeId(prefix: string, taken: ReadonlySet<string> = new Set()) {
-    const used = new Set([
-      ...this.nodes().map((n) => n.step.id),
-      ...this.unplaced.map((s) => s.id),
-      ...taken,
-    ]);
-    let i = 1;
-    while (used.has(`${prefix}-${i}`)) i++;
-    return `${prefix}-${i}`;
+    return nextFreeId(
+      prefix,
+      new Set([
+        ...this.nodes().map((n) => n.step.id),
+        ...this.unplaced.map((s) => s.id),
+        ...taken,
+      ]),
+    );
   }
   /**
    * Inserts a copy of a step right after it, as one undo step. The copy and
@@ -736,25 +851,12 @@ export class StructuredCanvasAdapter {
         taken.add(next);
         renamed.set(old, next);
       }
-    const rewrite = (value: unknown, key = ""): unknown => {
-      if (Array.isArray(value)) return value.map((item) => rewrite(item));
-      if (isRecord(value))
-        return Object.fromEntries(
-          Object.entries(value).map(([k, v]) => [k, rewrite(v, k)]),
-        );
-      if (key === "ref" && typeof value === "string") {
-        const match = /^\/steps\/([^/]+)(.*)$/.exec(value);
-        if (match && renamed.has(match[1]))
-          return `/steps/${renamed.get(match[1])}${match[2]}`;
-      }
-      return value;
-    };
     const renameSteps = (step: Step) => {
       step.id = renamed.get(step.id) ?? step.id;
       branches(step).forEach(([, b]) => b.steps.forEach(renameSteps));
     };
     const copies = run.map((node) => {
-      const copy = rewrite(structuredClone(node.step)) as Step;
+      const copy = rewriteStepRefs(structuredClone(node.step), renamed) as Step;
       renameSteps(copy);
       return copy;
     });
@@ -922,6 +1024,38 @@ export class StructuredCanvasAdapter {
     }
     this.forget(removed);
     this.syncSteps();
+  }
+  /**
+   * Why deleting these steps (each with everything inside it) would be
+   * refused, with the sentence Delete shows; null when it wouldn't. Changes
+   * nothing, so Cut can ask before it writes the clipboard.
+   */
+  removalBlocked(ids: readonly string[]): string | null {
+    if (this.readonly) return "Fix source before editing the graph.";
+    const all = this.nodes();
+    const nodes = ids
+      .map((id) => all.find((n) => n.step.id === id))
+      .filter((n): n is Node => !!n);
+    if (!nodes.length) return null;
+    const removed = new Set<string>();
+    for (const node of nodes)
+      for (const id of this.subtree(node.step)) removed.add(id);
+    const one = ids.length === 1;
+    const group = one && removed.size > 1;
+    try {
+      this.refuseIfRead(
+        removed,
+        one
+          ? group
+            ? "Steps in this group are"
+            : "This step is"
+          : "These steps are",
+        one ? (group ? "the group" : "it") : "them",
+      );
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+    return null;
   }
   /**
    * Throws when a step (or the workflow output) outside `removed` still reads

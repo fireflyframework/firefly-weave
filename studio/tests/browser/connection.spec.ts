@@ -1291,6 +1291,27 @@ test.describe("startup and saved platforms", () => {
     await page.getByRole("button", { name: "Cancel sign-in" }).click();
     await page.getByRole("button", { name: "Settings", exact: true }).click();
 
+    // Canvases kept for platform drafts on this computer, one per platform.
+    const keptCanvas = (profile: string) =>
+      page.evaluate(async (name) => {
+        const digest = await crypto.subtle.digest(
+          "SHA-256",
+          new TextEncoder().encode(name),
+        );
+        const hex = [...new Uint8Array(digest)]
+          .map((byte) => byte.toString(16).padStart(2, "0"))
+          .join("");
+        return `p${hex.slice(0, 16)}:0123456789abcdef:0b9b5a59-6c63-4f3e-9d58-6a3c8f0e2b11:5f0c2d4e-7a1b-4c3d-8e9f-0a1b2c3d4e5f:canvas.6a1f8c52-1d2e-4f3a-9b8c-7d6e5f4a3b2c`;
+      }, profile);
+    const acmeCanvas = await keptCanvas("Acme");
+    const globexCanvas = await keptCanvas("Globex");
+    await page.evaluate(
+      (keys) => keys.forEach((key) => localStorage.setItem(key, "{}")),
+      [acmeCanvas, globexCanvas],
+    );
+    const stored = (key: string) =>
+      page.evaluate((name) => localStorage.getItem(name) !== null, key);
+
     // Sign out asks first.
     await page.getByRole("button", { name: "Sign out of Acme" }).click();
     const dialog = page.getByRole("dialog");
@@ -1303,6 +1324,9 @@ test.describe("startup and saved platforms", () => {
     expect(host.requests("/studio/connection/logout")[0].body).toEqual({
       revoke: true,
     });
+    // Signing out forgets what this computer kept for Acme's drafts, and only that.
+    await expect.poll(() => stored(acmeCanvas)).toBe(false);
+    expect(await stored(globexCanvas)).toBe(true);
     await expect(
       page.getByRole("button", { name: "Sign in to Acme" }),
     ).toBeVisible();

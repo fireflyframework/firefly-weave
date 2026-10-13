@@ -170,7 +170,10 @@ export function compareActionVersions(a: string, b: string): number {
   return 0;
 }
 
-function latestActions(items: readonly ActionPickerItem[]): ActionPickerItem[] {
+/** The newest version of each action name, stable versions before prereleases. */
+export function latestActions(
+  items: readonly ActionPickerItem[],
+): ActionPickerItem[] {
   const latest = new Map<string, ActionPickerItem>();
   for (const item of items) {
     const current = latest.get(item.name);

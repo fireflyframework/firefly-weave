@@ -282,6 +282,26 @@ describe("inserting a published action", () => {
     expect(await pending).toBe("");
     expect(h.model.definition.spec.steps).toEqual([]);
   });
+  it("drops an insert whose place in the workflow moves while its details load", async () => {
+    let release = () => {};
+    const held = new Promise<void>((done) => (release = done));
+    const { host: h, requests } = host(workflow(), false, held);
+    let here = true;
+    const pending = insertCatalogAction(
+      h,
+      { uses: "sql.lookup@1.0.0", id: "a1" },
+      { owner: "root", index: 0 },
+      false,
+      () => here,
+    );
+    while (!requests.length) await Promise.resolve();
+    // The place Add a step stood for is gone by the time the details arrive.
+    here = false;
+    release();
+    expect(await pending).toBe("");
+    expect(h.model.definition.spec.steps).toEqual([]);
+    expect(h.model.canUndo).toBe(false);
+  });
   it("reads only a well-formed connection requirement", () => {
     expect(requirementOf(sqlAction)).toEqual({
       connector: "weave-postgresql@1.0.0",

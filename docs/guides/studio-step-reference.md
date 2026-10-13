@@ -428,11 +428,11 @@ uses the workflow's slot for its kind of connection when there is exactly one;
 otherwise choose a slot, or **New slot**, in **Connection**.
 
 **Where Studio keeps these actions.** Studio keeps the actions of Call an API,
-email and file steps, and step notes, with the workflow you are editing: in this
-browser while you work locally, and until you close the workflow while you are
-connected. A draft saved on the platform with **Save draft** holds the workflow
-only, so Studio says when it has actions that aren't published yet, or step
-notes, that stay only while it is open. **Publish…** publishes these actions before the workflow. Studio
+email and file steps, and step notes, with the workflow you are editing, in
+this browser: for a draft on a platform, under your account there. A draft
+saved on the platform with **Save draft** holds the workflow only, so Studio
+says when it has actions that aren't published yet, or step notes, that it
+keeps "on this computer only". **Publish…** publishes these actions before the workflow. Studio
 lists the ones that aren't published yet, with the steps that use them, checks
 them against the platform and asks once, for example **Publish 2 actions and
 the workflow**. It then publishes each action, and the workflow last.

@@ -367,7 +367,11 @@ SPDX-License-Identifier: Apache-2.0
                     : 'Local authoring'
                 "
                 (createWorkflow)="newWorkflow()"
+                [pairsCanvas]="editorNext"
                 (importWorkflow)="importWorkflow($event)"
+                (importWithCanvas)="
+                  importWorkflow($event.workflow, $event.canvas)
+                "
                 (connect)="openWizard('server')"
                 (connectModel)="openAiModels()"
                 (navigate)="navigate($event)"

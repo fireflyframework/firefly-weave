@@ -26,6 +26,7 @@ import {
   type Page,
   type Route,
 } from "@playwright/test";
+import { addStepSearch } from "./add-step-po";
 import { CanvasPage, useNewEditor } from "./canvas-po";
 import { DesignerPage } from "./designer-po";
 import {
@@ -193,17 +194,18 @@ test("while a simulation runs the canvas offers no + and moves nothing, but stil
     "  output: { literal: {} }",
     "    - id: fan\n      kind: parallel\n      branches:\n        empty: {steps: [], output: {literal: {}}}\n  output: { literal: {} }",
   );
-  const viewport = async (canvas: CanvasPage) => {
+  // The canvas file Save to file writes, whole.
+  const exported = async () => {
     const download = page.waitForEvent("download", (file) =>
-      file.suggestedFilename().endsWith(".layout.json"),
+      file.suggestedFilename().endsWith(".canvas.json"),
     );
     await command(page, "Save to file");
     const stream = await (await download).createReadStream();
     const parts: Buffer[] = [];
     for await (const part of stream!) parts.push(part);
-    return JSON.parse(Buffer.concat(parts).toString()).viewport;
+    return JSON.parse(Buffer.concat(parts).toString());
   };
-  let exportedViewportBefore: unknown;
+  let exportedBefore: unknown;
   let sourceBefore = "";
   const unsaved = page
     .locator(".editor-identity .status-chip")
@@ -216,7 +218,7 @@ test("while a simulation runs the canvas offers no + and moves nothing, but stil
     async (canvas) => {
       sourceBefore = await sourceText(page);
       await canvas.ready();
-      exportedViewportBefore = await viewport(canvas);
+      exportedBefore = await exported();
       unsavedBefore = await unsaved.count();
     },
   );
@@ -243,9 +245,7 @@ test("while a simulation runs the canvas offers no + and moves nothing, but stil
   const slot = canvas.root.locator(".lane-slot");
   await expect(slot).toHaveAttribute("aria-disabled", "true");
   await press(page, slot);
-  await expect(
-    page.getByRole("combobox", { name: "Search steps and actions" }),
-  ).toHaveCount(0);
+  await expect(addStepSearch(page)).toHaveCount(0);
   const handle = (await canvas.handle("approval>out").boundingBox())!;
   const spot = await canvas.emptySpot();
   await page.mouse.move(
@@ -278,7 +278,7 @@ test("while a simulation runs the canvas offers no + and moves nothing, but stil
   await expect
     .poll(async () => (await canvas.tileBody("action-1").boundingBox())!.y)
     .not.toBe(before);
-  expect(await viewport(canvas)).toEqual(exportedViewportBefore);
+  expect(await exported()).toEqual(exportedBefore);
   expect(await sourceText(page)).toBe(sourceBefore);
   await expect(unsaved).toHaveCount(unsavedBefore);
 });
