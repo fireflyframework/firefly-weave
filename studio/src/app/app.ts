@@ -4793,6 +4793,9 @@ export class App implements CanvasHost {
   async openAiModels() {
     this.lumiOpen = false;
     await this.navigate("settings");
+    // "Keep editing" (or a step that can't be left yet) stays in the designer,
+    // at its own address.
+    if (this.view !== "settings") return;
     await this.router.navigateByUrl("/settings/ai", { replaceUrl: true });
   }
   /** Opens "Connect to an API", prefilled from the builder's hand-off for this slot. */

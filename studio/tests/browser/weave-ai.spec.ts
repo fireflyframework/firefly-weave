@@ -197,6 +197,44 @@ test("Set up Weave AI opens Settings › AI models", async ({ page }) => {
   await expect(page).toHaveURL(/\/settings\/ai$/);
 });
 
+test("Set up Weave AI with unsaved edits keeps the designer and its address when the person keeps editing", async ({
+  page,
+}) => {
+  await connected(page, {
+    capabilities: [...allCapabilities, "lumi.use", "lumi.manage"],
+  });
+  await page.route("**/lumi/status", (r) =>
+    r.fulfill({ json: { configured: false } }),
+  );
+  await newWorkflow(page);
+  await page
+    .locator(".palette")
+    .getByRole("button", { name: "AI task", exact: true })
+    .click();
+  await page.keyboard.press("Escape");
+  const designer = page.url();
+  expect(designer).toMatch(/\/designer$/);
+  await page.getByRole("button", { name: "Ask Weave AI", exact: true }).click();
+  await page
+    .getByRole("dialog", { name: "Ask Weave AI", exact: true })
+    .getByRole("button", { name: "Set up Weave AI", exact: true })
+    .click();
+  await page
+    .getByRole("dialog", { name: /^Leave/ })
+    .getByRole("button", { name: "Keep editing" })
+    .click();
+  await expect(page.locator(".palette")).toBeVisible();
+  await expect(page.getByRole("tab", { name: "AI models" })).toHaveCount(0);
+  await expect(page).toHaveURL(designer);
+  // The designer's address is still in history: Back leaves it, and
+  // Forward returns to it, not to Settings.
+  await page.goBack();
+  await expect(page).not.toHaveURL(designer);
+  await expect(page).not.toHaveURL(/\/settings/);
+  await page.goForward();
+  await expect(page).toHaveURL(designer);
+});
+
 test("non-workflow proposals are validated before saving a reviewed file", async ({
   page,
 }) => {
