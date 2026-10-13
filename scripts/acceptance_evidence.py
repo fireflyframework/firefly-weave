@@ -104,37 +104,51 @@ def _journey_status(steps: Sequence[Mapping[str, Any]]) -> str:
 
 
 def journey_results(enablement: Any, profile: str, records: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    """One entry per journey of the profile: recorded steps, skipped steps with their missing capabilities,
-    and enabled steps without a record as not_run (a harness gap fails the journey, and with it the run)."""
-    by_step = {record["id"]: record for record in records}
+    """One entry per journey and viewport of the profile: recorded steps, skipped steps with their missing
+    capabilities, and enabled steps without a record as not_run (a harness gap fails the journey, and with it
+    the run). A Studio record names its viewport; a record without one counts for every viewport."""
+    by_step: dict[tuple[str, str | None], Mapping[str, Any]] = {}
+    for item in records:
+        viewport = item.get("viewport")
+        by_step[(str(item["id"]), None if viewport is None else str(viewport))] = item
     results = []
     for journey in enablement.profiles[profile]:
-        steps: list[dict[str, Any]] = []
-        for step_id in enablement.journey_steps(journey):
-            if not enablement.applies(step_id, profile):
-                continue
-            number = int(step_id.split(".")[1])
-            record = by_step.get(step_id)
-            missing = enablement.missing(step_id)
-            if record is not None:
-                keys = ("status", "seconds", "missing", "skipped_checks", "error", "screenshot")
-                steps.append({"n": number, **{key: record[key] for key in keys if key in record}})
-            elif missing:
-                steps.append({"n": number, "status": "skipped", "missing": list(missing)})
-            else:
-                steps.append({"n": number, "status": "not_run"})
-        results.append(
-            {
-                "id": journey,
-                "criteria": list(enablement.criteria[journey]),
-                "viewport": "cli" if journey == "J0" else "1440x900",
-                "status": _journey_status(steps),
-                "attempts": 1,
-                "seconds": round(sum(step.get("seconds", 0.0) for step in steps), 1),
-                "steps": steps,
-            }
-        )
+        for viewport in enablement.viewports(profile, journey):
+            steps: list[dict[str, Any]] = []
+            for step_id in enablement.journey_steps(journey):
+                if not enablement.applies(step_id, profile):
+                    continue
+                number = int(step_id.split(".")[1])
+                record = by_step.get((step_id, viewport)) or by_step.get((step_id, None))
+                missing = enablement.missing(step_id)
+                if record is not None:
+                    keys = ("status", "seconds", "missing", "skipped_checks", "error", "screenshot")
+                    steps.append({"n": number, **{key: record[key] for key in keys if key in record}})
+                elif missing:
+                    steps.append({"n": number, "status": "skipped", "missing": list(missing)})
+                else:
+                    steps.append({"n": number, "status": "not_run"})
+            results.append(
+                {
+                    "id": journey,
+                    "criteria": list(enablement.criteria[journey]),
+                    "viewport": viewport,
+                    "status": _journey_status(steps),
+                    "attempts": 1,
+                    "seconds": round(sum(step.get("seconds", 0.0) for step in steps), 1),
+                    "steps": steps,
+                }
+            )
     return results
+
+
+def storage_entries(folder: Path) -> int:
+    """Entries in the browser-storage dumps Studio journeys wrote: localStorage, sessionStorage and IndexedDB."""
+    total = 0
+    for path in sorted(folder.glob("*.json")) if folder.is_dir() else []:
+        dump = json.loads(path.read_text(encoding="utf-8"))
+        total += len(dump["local"]) + len(dump["session"]) + len(dump["indexed_db"])
+    return total
 
 
 def artifacts(evidence: Path) -> list[dict[str, str]]:

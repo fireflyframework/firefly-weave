@@ -32,6 +32,15 @@ from typing import Any
 
 PROFILES = ("pr", "ai", "cluster", "k3d", "nightly", "release", "docs-shots")
 JOURNEYS = tuple(f"J{number}" for number in range(16))
+# Where a journey's steps are recorded. Studio journeys run at 1440x900, and J1, J3 and J7 also at
+# 600x500 in every profile; nightly and release runs record every Studio journey at both sizes.
+CLI_JOURNEYS = frozenset({"J0", "J13", "J15"})
+DESKTOP_JOURNEYS = frozenset({"J11"})
+COMPACT_IN_EVERY_PROFILE = frozenset({"J1", "J3", "J7"})
+FULL_SIZE = "1440x900"
+COMPACT = "600x500"
+# Steps a later stage records; every other step is recorded by up (J0) or run.
+STEP_STAGES = {"J9.4": "scan"}
 # The product capabilities a journey step can wait for, one entry each in [capabilities].
 CAPABILITIES = (
     # Brand
@@ -209,6 +218,27 @@ class Enablement:
     def journey_steps(self, journey: str) -> tuple[str, ...]:
         found = [key for key in self.steps if (match := STEP.fullmatch(key)) and match[1] == journey]
         return tuple(sorted(found, key=lambda key: int(key.split(".")[1])))
+
+    def viewports(self, profile: str, journey: str) -> tuple[str, ...]:
+        return journey_viewports(profile, journey)
+
+
+def journey_viewports(profile: str, journey: str) -> tuple[str, ...]:
+    if journey in CLI_JOURNEYS:
+        return ("cli",)
+    if journey in DESKTOP_JOURNEYS:
+        return ("desktop",)
+    if profile in {"nightly", "release"} or journey in COMPACT_IN_EVERY_PROFILE:
+        return (FULL_SIZE, COMPACT)
+    return (FULL_SIZE,)
+
+
+def step_stage(step_id: str) -> str:
+    """The orchestrator stage whose tests record a step or check."""
+    step = Enablement.parent(step_id) or step_id
+    if step in STEP_STAGES:
+        return STEP_STAGES[step]
+    return "up" if step.startswith("J0.") else "run"
 
 
 def load_versions(path: Path) -> dict[str, Any]:

@@ -102,7 +102,17 @@ def test_journey_results_report_passes_partials_skips_and_gaps():
             },
         ],
     )
-    assert [journey["id"] for journey in results] == ["J0", "J1", "J2", "J3", "J5", "J8", "J9"]
+    assert [(journey["id"], journey["viewport"]) for journey in results] == [
+        ("J0", "cli"),
+        ("J1", "1440x900"),
+        ("J1", "600x500"),
+        ("J2", "1440x900"),
+        ("J3", "1440x900"),
+        ("J3", "600x500"),
+        ("J5", "1440x900"),
+        ("J8", "1440x900"),
+        ("J9", "1440x900"),
+    ]
     first = results[0]
     assert (first["criteria"], first["viewport"], first["status"]) == (["SC7"], "cli", "failed")
     steps = {step["n"]: step for step in first["steps"]}
@@ -111,15 +121,6 @@ def test_journey_results_report_passes_partials_skips_and_gaps():
     assert steps[2] == {"n": 2, "status": "not_run"}
     assert steps[5] == {"n": 5, "status": "skipped", "missing": ["real-platform-journeys"]}
     assert 12 not in steps and 13 not in steps
-    assert results[1] == {
-        "id": "J1",
-        "criteria": ["SC1", "SC7"],
-        "viewport": "1440x900",
-        "status": "skipped",
-        "attempts": 1,
-        "seconds": 0.0,
-        "steps": [],
-    }
 
 
 def applicable_records(profile, journey):
@@ -202,3 +203,78 @@ def test_step_records_are_read_line_by_line(tmp_path):
     assert evidence.read_steps(path) == []
     path.write_text('{"id": "J0.1", "status": "passed"}\n\n{"id": "J0.2", "status": "failed"}\n')
     assert [record["id"] for record in evidence.read_steps(path)] == ["J0.1", "J0.2"]
+
+
+def synthetic(steps: str) -> object:
+    """A map with three journeys in every profile, J0 and J1/J8 steps, and only acceptance-foundations landed."""
+    capabilities = "\n".join(
+        f'"{name}" = {"true" if name == "acceptance-foundations" else "false"}' for name in journeys.CAPABILITIES
+    )
+    profiles = "\n".join(f'{profile} = ["J0", "J1", "J8"]' for profile in journeys.PROFILES)
+    criteria = "\n".join(f'{journey} = ["SC7"]' for journey in journeys.JOURNEYS)
+    text = f"[capabilities]\n{capabilities}\n[profiles]\n{profiles}\n[criteria]\n{criteria}\n[steps]\n{steps}\n"
+    return journeys.Enablement.parse(text)
+
+
+STUDIO_MAP = synthetic(
+    '"J0.1" = ["acceptance-foundations"]\n"J1.1" = ["acceptance-foundations"]\n'
+    '"J1.2" = ["loops"]\n"J8.1" = ["acceptance-foundations"]'
+)
+
+
+def test_each_required_viewport_needs_its_own_studio_record():
+    records = [
+        {"id": "J0.1", "status": "passed", "seconds": 1.0},
+        {"id": "J1.1", "status": "passed", "seconds": 2.0, "viewport": "1440x900"},
+        {"id": "J8.1", "status": "passed", "seconds": 3.0, "viewport": "1440x900"},
+    ]
+    results = evidence.journey_results(STUDIO_MAP, "pr", records)
+    assert [(result["id"], result["viewport"], result["status"]) for result in results] == [
+        ("J0", "cli", "passed"),
+        ("J1", "1440x900", "partial"),
+        ("J1", "600x500", "failed"),
+        ("J8", "1440x900", "passed"),
+    ]
+    assert results[2]["steps"] == [{"n": 1, "status": "not_run"}, {"n": 2, "status": "skipped", "missing": ["loops"]}]
+
+
+def test_records_without_a_viewport_count_for_every_viewport():
+    results = evidence.journey_results(STUDIO_MAP, "pr", [{"id": "J1.1", "status": "passed", "seconds": 1.0}])
+    assert [result["steps"][0] for result in results if result["id"] == "J1"] == [
+        {"n": 1, "status": "passed", "seconds": 1.0}
+    ] * 2
+
+
+def test_viewports_follow_the_profile_rules():
+    sizes = journeys.journey_viewports
+    assert sizes("pr", "J0") == sizes("nightly", "J13") == sizes("release", "J15") == ("cli",)
+    assert sizes("pr", "J11") == ("desktop",)
+    assert sizes("pr", "J2") == sizes("cluster", "J6") == ("1440x900",)
+    assert sizes("pr", "J1") == sizes("ai", "J7") == ("1440x900", "600x500")
+    assert sizes("nightly", "J2") == sizes("release", "J9") == ("1440x900", "600x500")
+    assert STUDIO_MAP.viewports("pr", "J3") == ("1440x900", "600x500")
+
+
+def test_steps_are_judged_by_the_stage_that_records_them():
+    stage = journeys.step_stage
+    assert (stage("J0.3"), stage("J0.3/owner-roles"), stage("J1.1"), stage("J9.4"), stage("J9.3")) == (
+        "up",
+        "up",
+        "run",
+        "scan",
+        "run",
+    )
+
+
+def test_scan_counts_browser_storage_entries(tmp_path):
+    first = {
+        "local": {"a": "1", "b": "2"},
+        "session": {"c": "3"},
+        "indexed_db": [{"database": "d", "store": "s", "key": "1", "value": "{}"}],
+    }
+    (tmp_path / "J1-1440x900-builder.json").write_text(json.dumps(first), encoding="utf-8")
+    (tmp_path / "J8-1440x900-builder.json").write_text(
+        json.dumps({"local": {}, "session": {}, "indexed_db": []}), encoding="utf-8"
+    )
+    assert evidence.storage_entries(tmp_path) == 4
+    assert evidence.storage_entries(tmp_path / "missing") == 0
