@@ -43,7 +43,7 @@
 "text-operators" = true
 "instance-keys" = true
 "loop-compiler" = true
-"loop-runtime" = false
+"loop-runtime" = true
 "loop-simulation" = false
 "workflow-call-compiler" = false
 "workflow-call-runtime" = false
