@@ -21,7 +21,8 @@ SPDX-License-Identifier: Apache-2.0
 // what each does, and a viewport. Steps are never placed by hand, so it
 // holds no positions: a version 1 layout keeps its viewport and drops them.
 // Pure: the model holds one; local drafts and canvas files store it.
-import type { Workflow } from "../../model";
+import type { Point, Workflow } from "../../model";
+import type { TriggerInput } from "../canvas/layout-ltr";
 import { CANVAS_MAX_BYTES } from "./test-data";
 
 export const CANVAS_SCHEMA_ID =
@@ -306,6 +307,7 @@ function readTriggers(value: unknown, problem: Problem): TriggerIntent[] {
   if (value.length > MAX_TRIGGERS)
     problem("/triggers", `keep at most ${MAX_TRIGGERS} triggers.`);
   const seen = new Set<string>();
+  const once = new Set<TriggerKind>();
   const triggers: TriggerIntent[] = [];
   value.forEach((item: unknown, index) => {
     const at = `/triggers/${index}`;
@@ -325,6 +327,12 @@ function readTriggers(value: unknown, problem: Problem): TriggerIntent[] {
         "use manual, webhook, schedule, broker, email, provider or called.",
       );
       fine = false;
+    } else if (item["kind"] === "manual" || item["kind"] === "called") {
+      // One input form, and one Called by a workflow (spec.callable).
+      if (once.has(item["kind"])) {
+        problem(`${at}/kind`, `use one ${item["kind"]} trigger at most.`);
+        fine = false;
+      } else once.add(item["kind"]);
     }
     if (fine) triggers.push(structuredClone(item) as TriggerIntent);
   });
@@ -557,15 +565,14 @@ export function canvasFromStored(
   workflow: Workflow,
   present: ReadonlySet<string>,
 ): StoredCanvas {
-  // The workflow is in the signature for trigger choices that follow the definition (Called by a workflow).
-  void workflow;
   const read = readCanvas(stored);
   const base = read.ok ? read.canvas : emptyCanvas();
-  const canvas = pruneCanvas(base, present);
+  const pruned = pruneCanvas(base, present);
   return {
-    canvas,
+    // Called by a workflow follows spec.callable, the source of truth.
+    canvas: syncCalled(pruned, workflow, present.size > 0),
     problems: read.ok ? [] : read.problems,
-    dropped: canvas !== base,
+    dropped: pruned !== base,
   };
 }
 
@@ -727,6 +734,9 @@ export function withTriggerIntents(
 ): CanvasSidecar {
   const kept = triggers.slice(0, MAX_TRIGGERS);
   const seen = new Set<string>();
+  for (const kind of ["manual", "called"] as const)
+    if (kept.filter((intent) => intent.kind === kind).length > 1)
+      throw Error("Keep one manual trigger and one called trigger at most.");
   for (const intent of kept) {
     if (typeof intent.id !== "string" || !TRIGGER_ID.test(intent.id))
       throw Error(
@@ -745,4 +755,225 @@ export function withTriggerIntents(
     next.triggers = kept.map((intent) => structuredClone(intent));
   else delete next.triggers;
   return fitted(canvas, next);
+}
+
+// ------------------------------------------------------------ new IDs
+/** 8 lowercase hexadecimal digits from the platform's random source. */
+export function randomHex(): string {
+  const bytes = new Uint8Array(4);
+  crypto.getRandomValues(bytes);
+  return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+const HEX = /^[0-9a-f]{8}$/;
+/** "<prefix>-" and 8 hexadecimal digits no ID in `taken` has. */
+function freshId(
+  prefix: "note" | "trigger",
+  taken: ReadonlySet<string>,
+  random: () => string,
+): string {
+  for (let attempt = 0; attempt < 64; attempt++) {
+    const hex = random();
+    const id = `${prefix}-${hex}`;
+    if (HEX.test(hex) && !taken.has(id)) return id;
+  }
+  throw Error("Studio couldn't choose a new ID. Try again.");
+}
+
+// ------------------------------------------------------- sticky notes
+/** The sizes the note menu offers; a new note is small. */
+export const NOTE_SIZES = {
+  small: { width: 240, height: 120 },
+  medium: { width: 320, height: 200 },
+  large: { width: 480, height: 320 },
+} as const;
+export type NotePatch = Partial<
+  Pick<StickyNote, "text" | "color" | "x" | "y" | "width" | "height">
+> & {
+  /** The step it follows from now on; null frees it. */
+  anchor?: NoteAnchor | null;
+};
+const clamp = (value: number, range: { min: number; max: number }) =>
+  Math.min(range.max, Math.max(range.min, value));
+const roundedAnchor = (anchor: NoteAnchor): NoteAnchor => ({
+  stepId: anchor.stepId,
+  dx: Math.round(anchor.dx),
+  dy: Math.round(anchor.dy),
+});
+
+/** A new small yellow note at `at`, following `anchor`'s step when given. */
+export function addNote(
+  canvas: CanvasSidecar,
+  at: Point,
+  anchor: NoteAnchor | null,
+  random: () => string = randomHex,
+): { canvas: CanvasSidecar; id: string } {
+  const notes = canvas.notes ?? [];
+  if (notes.length >= MAX_NOTES)
+    throw Error(`A canvas holds at most ${MAX_NOTES} notes.`);
+  const id = freshId("note", new Set(notes.map((item) => item.id)), random);
+  const note: StickyNote = {
+    id,
+    text: "",
+    color: "yellow",
+    x: Math.round(at.x),
+    y: Math.round(at.y),
+    ...NOTE_SIZES.small,
+    ...(anchor ? { anchor: roundedAnchor(anchor) } : {}),
+  };
+  return { id, canvas: fitted(canvas, { ...canvas, notes: [...notes, note] }) };
+}
+
+/** The canvas with one note changed; sizes are kept within their ranges. */
+export function updateNote(
+  canvas: CanvasSidecar,
+  id: string,
+  patch: NotePatch,
+): CanvasSidecar {
+  const notes = canvas.notes ?? [];
+  const index = notes.findIndex((item) => item.id === id);
+  if (index < 0) throw Error("That note is already gone.");
+  if (patch.text !== undefined && characters(patch.text) > MAX_NOTE_TEXT)
+    throw Error(`A note holds at most ${MAX_NOTE_TEXT} characters.`);
+  if (patch.color !== undefined && !NOTE_COLORS.includes(patch.color))
+    throw Error("Use yellow, blue, green, pink, purple or gray for a note.");
+  const before = notes[index];
+  const next: StickyNote = { ...before };
+  if (patch.text !== undefined) next.text = patch.text;
+  if (patch.color !== undefined) next.color = patch.color;
+  if (isNumber(patch.x)) next.x = Math.round(patch.x);
+  if (isNumber(patch.y)) next.y = Math.round(patch.y);
+  if (isNumber(patch.width))
+    next.width = clamp(Math.round(patch.width), NOTE_WIDTH);
+  if (isNumber(patch.height))
+    next.height = clamp(Math.round(patch.height), NOTE_HEIGHT);
+  if (patch.anchor === null) delete next.anchor;
+  else if (patch.anchor) next.anchor = roundedAnchor(patch.anchor);
+  if (same(before, next)) return canvas;
+  const list = [...notes];
+  list[index] = next;
+  return fitted(canvas, { ...canvas, notes: list });
+}
+
+export function removeNote(canvas: CanvasSidecar, id: string): CanvasSidecar {
+  const notes = canvas.notes ?? [];
+  if (!notes.some((item) => item.id === id)) return canvas;
+  const kept = notes.filter((item) => item.id !== id);
+  const next = { ...canvas };
+  if (kept.length) next.notes = kept;
+  else delete next.notes;
+  return next;
+}
+
+// ------------------------------------------------- triggers on the canvas
+/**
+ * The trigger tiles the canvas draws: the choices made, or, for a workflow
+ * with steps and no choice yet, the input form every workflow has.
+ */
+export function triggerInputs(
+  canvas: CanvasSidecar,
+  hasSteps: boolean,
+): TriggerInput[] {
+  const list = triggerIntents(canvas);
+  if (list.length)
+    return list.map((intent) => ({ id: intent.id, kind: intent.kind }));
+  return hasSteps ? [{ id: "manual", kind: "manual" }] : [];
+}
+export interface TriggerChange {
+  canvas: CanvasSidecar;
+  /** The new trigger's ID. */
+  id: string;
+  /** The definition when the choice changes it (Called by a workflow), else null. */
+  workflow: Workflow | null;
+}
+
+/** The choices a new trigger joins: a workflow with steps keeps its input form. */
+function choicesBefore(
+  canvas: CanvasSidecar,
+  hasSteps: boolean,
+  random: () => string,
+): TriggerIntent[] {
+  const list = triggerIntents(canvas);
+  if (list.length || !hasSteps) return [...list];
+  return [{ id: freshId("trigger", new Set(), random), kind: "manual" }];
+}
+
+export function addTrigger(
+  canvas: CanvasSidecar,
+  workflow: Workflow,
+  kind: TriggerKind,
+  hasSteps: boolean,
+  random: () => string = randomHex,
+): TriggerChange {
+  const list = triggerIntents(canvas);
+  const has = (wanted: TriggerKind) =>
+    list.some((intent) => intent.kind === wanted);
+  if (kind === "manual" && (has("manual") || (!list.length && hasSteps)))
+    throw Error("This workflow already starts from its input form.");
+  if (kind === "called" && has("called"))
+    throw Error("Other workflows can already call this one.");
+  const base = choicesBefore(canvas, hasSteps, random);
+  if (base.length >= MAX_TRIGGERS)
+    throw Error(`A workflow can have at most ${MAX_TRIGGERS} triggers.`);
+  const id = freshId(
+    "trigger",
+    new Set(base.map((intent) => intent.id)),
+    random,
+  );
+  const next = withTriggerIntents(canvas, [...base, { id, kind }]);
+  let changed: Workflow | null = null;
+  if (kind === "called" && !isRecord(workflow.spec["callable"])) {
+    changed = structuredClone(workflow);
+    changed.spec["callable"] = {};
+  }
+  return { canvas: next, id, workflow: changed };
+}
+
+export function removeTrigger(
+  canvas: CanvasSidecar,
+  workflow: Workflow,
+  id: string,
+): { canvas: CanvasSidecar; workflow: Workflow | null } {
+  const list = triggerIntents(canvas);
+  const intent = list.find((item) => item.id === id);
+  if (!intent) throw Error("That trigger is already gone.");
+  const next = withTriggerIntents(
+    canvas,
+    list.filter((item) => item.id !== id),
+  );
+  if (intent.kind !== "called" || !("callable" in workflow.spec))
+    return { canvas: next, workflow: null };
+  const changed = structuredClone(workflow);
+  delete changed.spec["callable"];
+  return { canvas: next, workflow: changed };
+}
+
+/** A workflow with `spec.callable` shows Called by a workflow, and only then. */
+export function syncCalled(
+  canvas: CanvasSidecar,
+  workflow: Workflow,
+  hasSteps: boolean,
+  random: () => string = randomHex,
+): CanvasSidecar {
+  const list = triggerIntents(canvas);
+  const callable = isRecord(workflow.spec["callable"]);
+  const shown = list.some((intent) => intent.kind === "called");
+  if (callable === shown) return canvas;
+  try {
+    if (!callable)
+      return withTriggerIntents(
+        canvas,
+        list.filter((intent) => intent.kind !== "called"),
+      );
+    const base = choicesBefore(canvas, hasSteps, random);
+    if (base.length >= MAX_TRIGGERS) return canvas;
+    const id = freshId(
+      "trigger",
+      new Set(base.map((intent) => intent.id)),
+      random,
+    );
+    return withTriggerIntents(canvas, [...base, { id, kind: "called" }]);
+  } catch {
+    // A canvas at its size cap keeps what it has; the definition stays the source of truth.
+    return canvas;
+  }
 }

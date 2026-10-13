@@ -19,6 +19,7 @@ SPDX-License-Identifier: Apache-2.0
 // commands, zoom keys, Escape, one Tab stop with each step's "+" inside
 // it, and the "?" sheet.
 import { expect, test, type Page } from "@playwright/test";
+import { addStepSearch } from "./add-step-po";
 import { openNewWorkflow, openWorkflow } from "./canvas-po";
 
 /** Presses Tab up to `limit` times; the names reached inside the steps' layer, until focus leaves it. */
@@ -156,7 +157,7 @@ test.describe("the canvas keyboard map", () => {
       .toBe(true);
   });
 
-  test("N and / open the step picker after the focused step; Ctrl or Command+D duplicates and Delete deletes with Undo", async ({
+  test("N and / open Add a step after the focused step; Ctrl or Command+D duplicates and Delete deletes with Undo", async ({
     page,
   }) => {
     const canvas = await openNewWorkflow(page);
@@ -164,13 +165,14 @@ test.describe("the canvas keyboard map", () => {
     await canvas.closeInspector();
     await canvas.tileBody("transform-1").focus();
     await page.keyboard.press("n");
-    const search = page.getByRole("combobox", {
-      name: "Search steps and actions",
-    });
+    const search = addStepSearch(page);
     await expect(search).toBeFocused();
+    await expect(page.locator(".add-step-title")).toHaveText(
+      "What happens next?",
+    );
     await expect(
-      page.getByText("Add a step after transform-1").first(),
-    ).toBeVisible();
+      page.getByRole("dialog", { name: "What happens next?" }),
+    ).toHaveAccessibleDescription("Add a step after transform-1");
     await page.keyboard.press("Escape");
     await expect(search).toHaveCount(0);
     await canvas.tileBody("transform-1").focus();
@@ -226,9 +228,7 @@ test.describe("the canvas keyboard map", () => {
     const canvas = await openWorkflow(page);
     await canvas.tileBody("approval").click();
     await canvas.closeInspector();
-    const search = page.getByRole("combobox", {
-      name: "Search steps and actions",
-    });
+    const search = addStepSearch(page);
     const stillSelected = () =>
       expect(canvas.tileBody("approval")).toHaveAttribute(
         "aria-pressed",
@@ -350,9 +350,7 @@ test.describe("the canvas keyboard map", () => {
     ]);
     await plus.focus();
     await page.keyboard.press("Enter");
-    await expect(
-      page.getByRole("combobox", { name: "Search steps and actions" }),
-    ).toBeFocused();
+    await expect(addStepSearch(page)).toBeFocused();
   });
 
   test("keeps keyboard focus rings at least two screen pixels while zoom changes", async ({

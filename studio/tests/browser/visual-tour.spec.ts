@@ -69,7 +69,13 @@ import {
   readiness,
   sheet,
 } from "./ai-models-po";
-import { CanvasPage, openWorkflow, useNewEditor } from "./canvas-po";
+import {
+  CanvasPage,
+  openStoredWorkflow,
+  openWorkflow,
+  useNewEditor,
+} from "./canvas-po";
+import { AddStepPanel } from "./add-step-po";
 import {
   debugSession,
   later,
@@ -121,7 +127,7 @@ const versionId = "11111111-1111-4111-8111-111111111111";
 
 /** Floating surfaces that cover the page on purpose while they are open. */
 const overlays =
-  '[aria-modal="true"], .modal-backdrop, [role="dialog"], [role="menu"], [role="listbox"], .platform-menu, .inspector, .record-detail, .palette.popover-visible, .sim-panel, .toast, .canvas-v2 f-minimap, .canvas-v2 .selection-toolbar, .canvas-v2 .tile-toolbar';
+  '[aria-modal="true"], .modal-backdrop, [role="dialog"], [role="menu"], [role="listbox"], .platform-menu, .inspector, .record-detail, .palette.popover-visible, .sim-panel, .toast, .canvas-v2 f-minimap, .canvas-v2 .selection-toolbar, .canvas-v2 .tile-toolbar, .add-step-panel';
 
 test.describe.configure({ mode: "parallel" });
 test.afterAll(() => stopLocalAuthoring());
@@ -1411,6 +1417,86 @@ async function apiAuthoring(page: Page) {
   await offline(page);
 }
 
+/** An empty workflow and two steps, kept on this computer, for the Add a step and notes scenes. */
+const tourEmpty = `apiVersion: weave/v1alpha1
+kind: Workflow
+metadata: {name: tour-empty, version: 1.0.0}
+spec:
+  inputSchema: {type: object}
+  outputSchema: {type: object}
+  steps: []
+  output: {literal: {}}
+`;
+const tourSteps = `apiVersion: weave/v1alpha1
+kind: Workflow
+metadata: {name: tour-steps, version: 1.0.0}
+spec:
+  inputSchema: {type: object}
+  outputSchema: {type: object}
+  steps:
+    - {id: check, kind: transform, value: {literal: {}}}
+    - {id: record, kind: transform, value: {literal: {}}}
+  output: {literal: {}}
+`;
+const tourNote = (
+  n: number,
+  color: string,
+  text: string,
+  at: { x: number; y: number },
+  anchor?: { stepId: string; dx: number; dy: number },
+) => ({
+  id: `note-0000000${n}`,
+  text,
+  color,
+  ...at,
+  width: 240,
+  height: 120,
+  ...(anchor ? { anchor } : {}),
+});
+/** Six notes, one per color, clear of the steps; the first follows check. */
+const tourNotes = {
+  schemaVersion: 2,
+  kind: "weave.studio/canvas",
+  notes: [
+    tourNote(
+      1,
+      "yellow",
+      "## Reviewed with **ops**\nCheck the totals before record runs.",
+      { x: 344, y: 264 },
+      {
+        stepId: "check",
+        dx: 0,
+        dy: 168,
+      },
+    ),
+    tourNote(
+      2,
+      "blue",
+      "Ask finance about [the limits](https://weave.example/limits).",
+      { x: 96, y: 420 },
+    ),
+    tourNote(3, "green", "- First item\n- Second item with `code`", {
+      x: 352,
+      y: 420,
+    }),
+    tourNote(4, "pink", "_Waiting_ on the vendor", { x: 608, y: 420 }),
+    tourNote(5, "purple", "```\nretry: 3\n```", { x: 96, y: 570 }),
+    tourNote(6, "gray", `https://weave.example/${"a".repeat(80)}`, {
+      x: 352,
+      y: 570,
+    }),
+  ],
+};
+/** Opens two stored steps and Add a step after the last one. */
+async function tourPanel(page: Page, id: string) {
+  await useNewEditor(page);
+  const canvas = await openStoredWorkflow(page, { id, source: tourSteps });
+  await canvas.insertTarget("Add a step after record").click();
+  const panel = new AddStepPanel(page);
+  await expect(panel.title).toHaveText("What happens next?");
+  return panel;
+}
+
 type Scene = (tour: Tour) => Promise<void>;
 const scenes: Record<string, Scene> = {
   async lumi({ page, shot }) {
@@ -1702,6 +1788,88 @@ ${paths}
     await canvas.tileBody("lookup").dblclick();
     await expect(details.dialogFor("lookup")).toBeVisible();
     await shot("103-canvas-step-details", { tabs: 2 });
+  },
+  // Add a step on an empty workflow: the triggers first, the search focused.
+  async "add-step-triggers"({ page, shot }) {
+    await useNewEditor(page);
+    const canvas = await openStoredWorkflow(page, {
+      id: "tour-empty",
+      source: tourEmpty,
+    });
+    await canvas.insertTarget("Add first step").click();
+    const panel = new AddStepPanel(page);
+    await expect(panel.title).toHaveText("What triggers this workflow?");
+    await expect(panel.search).toBeFocused();
+    await shot("130-add-step-triggers", { tabs: 0 });
+  },
+  async "add-step-next"({ page, shot }) {
+    const panel = await tourPanel(page, "tour-next");
+    await expect(panel.option("Add another trigger")).toBeVisible();
+    await shot("131-add-step-next", { tabs: 0 });
+  },
+  async "add-step-search"({ page, shot }) {
+    const panel = await tourPanel(page, "tour-search");
+    await panel.search.fill("mail");
+    await expect(panel.option("Send email")).toBeVisible();
+    await shot("132-add-step-search", { tabs: 0 });
+    await panel.search.fill("zzzz");
+    await expect(panel.list).toContainText("Make a custom API call");
+    await shot("133-add-step-no-match", { tabs: 0 });
+  },
+  async "add-step-app"({ page, shot }) {
+    const panel = await tourPanel(page, "tour-app");
+    await panel.option("Action in an app").click();
+    await panel.option("Email").click();
+    await expect
+      .poll(() => panel.headings())
+      .toEqual(["Actions (2)", "Triggers (1)"]);
+    await shot("134-add-step-app", { tabs: 0 });
+  },
+  async "canvas-notes"({ page, shot }) {
+    await useNewEditor(page);
+    const canvas = await openStoredWorkflow(page, {
+      id: "tour-notes",
+      source: tourSteps,
+      canvas: tourNotes,
+    });
+    await expect(canvas.root.locator(".sticky-note")).toHaveCount(6);
+    await shot("135-canvas-notes", { tabs: 0 });
+    await canvas.root
+      .getByRole("group", { name: "Note: Reviewed with ops" })
+      .dblclick();
+    await expect(
+      canvas.root.getByRole("textbox", { name: "Note text" }),
+    ).toBeFocused();
+    await shot("136-canvas-note-editing", { tabs: 0 });
+  },
+  async "canvas-triggers-copy"({ page, size, shot }) {
+    await useNewEditor(page);
+    const canvas = await openStoredWorkflow(page, {
+      id: "tour-triggers",
+      source: tourSteps,
+      canvas: {
+        schemaVersion: 2,
+        kind: "weave.studio/canvas",
+        triggers: [
+          { id: "trigger-0000000a", kind: "webhook" },
+          { id: "trigger-0000000b", kind: "schedule" },
+        ],
+      },
+    });
+    await canvas.tileBody("check").click();
+    await canvas.tileBody("record").click({ modifiers: ["Shift"] });
+    // Below 480 px, Copy and Duplicate are under the toolbar's More.
+    await expect(
+      canvas.root
+        .getByRole("toolbar", { name: "Selected steps" })
+        .getByRole("button", {
+          name:
+            size.width < 480 ? "More commands for the selected steps" : "Copy",
+          exact: true,
+        }),
+    ).toBeVisible();
+    await expect(canvas.root.locator("[data-trigger]")).toHaveCount(2);
+    await shot("137-canvas-triggers-copy", { tabs: 0 });
   },
   async pairing({ page, shot }) {
     await page.route("**/studio/session", (r) =>

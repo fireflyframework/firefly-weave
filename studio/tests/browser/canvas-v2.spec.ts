@@ -16,6 +16,7 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 import { expect, test, type Locator } from "@playwright/test";
+import { addStepSearch } from "./add-step-po";
 import { readFileSync } from "node:fs";
 import { DesignerPage } from "./designer-po";
 import {
@@ -255,7 +256,7 @@ test.describe("the left-to-right canvas", () => {
     expect(trigger.x).toBeGreaterThan(area.x + 48);
     expect(trigger.x).toBeLessThan(area.x + 96);
     await expect(canvas.tileBody("$trigger:manual")).toHaveAccessibleName(
-      "Trigger, Manual form · 4 fields",
+      "Manual form trigger, 4 fields",
     );
     await expect(canvas.tileBody("approval")).toHaveAccessibleName(
       "approval, Human task, finance-approvers · approve/reject, step 2 of 4 in Main sequence",
@@ -346,7 +347,7 @@ test.describe("the left-to-right canvas", () => {
     await expect(path).toHaveAttribute("title", "Approve");
   });
 
-  test("starts an empty workflow with Add first step and adds steps through today's step picker", async ({
+  test("starts an empty workflow with Add first step and adds steps through Add a step", async ({
     page,
   }) => {
     const canvas = await openNewWorkflow(page);
@@ -362,9 +363,7 @@ test.describe("the left-to-right canvas", () => {
       }),
     ).toBeVisible();
     await first.click();
-    await expect(
-      page.getByRole("combobox", { name: "Search steps and actions" }),
-    ).toBeFocused();
+    await expect(addStepSearch(page)).toBeFocused();
     await canvas.pick("Transform");
     await canvas.closeInspector();
     await expect(canvas.tile("transform-1")).toBeVisible();

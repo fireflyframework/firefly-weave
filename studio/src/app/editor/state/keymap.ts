@@ -26,6 +26,7 @@ export type KeyPlatform = "mac" | "other";
 /** Where focus is, from the most specific: a Fixed field or the formula editor sit inside step details. */
 export type KeymapSurface =
   | "canvas"
+  | "note"
   | "outline"
   | "stepDetails"
   | "fixedField"
@@ -74,6 +75,12 @@ export type KeymapCommand =
   | "nextStepDetails"
   | "switchToMapped"
   | "escape"
+  | "editNote"
+  | "deleteNote"
+  | "nudgeNoteLeft"
+  | "nudgeNoteRight"
+  | "nudgeNoteUp"
+  | "nudgeNoteDown"
   | "showShortcuts"
   | "panelUp"
   | "panelDown"
@@ -136,6 +143,7 @@ export const KEYMAP: readonly KeymapRow[] = [
       canvas: "openStepDetails",
       outline: "openStepDetails",
       addStep: "panelInsert",
+      note: "editNote",
       decisionGrid: "editCell",
       stepDetails: "mapTo",
     },
@@ -207,12 +215,17 @@ export const KEYMAP: readonly KeymapRow[] = [
       canvas: "deleteSelection",
       outline: "deleteSelection",
       decisionGrid: "clearCell",
+      note: "deleteNote",
     },
   },
   {
     id: "delete-backspace",
     keys: ["Backspace"],
-    commands: { canvas: "deleteSelection", outline: "deleteSelection" },
+    commands: {
+      canvas: "deleteSelection",
+      outline: "deleteSelection",
+      note: "deleteNote",
+    },
   },
   {
     id: "undo",
@@ -238,6 +251,7 @@ export const KEYMAP: readonly KeymapRow[] = [
     keys: ["ArrowLeft"],
     commands: {
       canvas: "previousStep",
+      note: "nudgeNoteLeft",
       addStep: "panelBack",
       decisionGrid: "cellLeft",
     },
@@ -247,6 +261,7 @@ export const KEYMAP: readonly KeymapRow[] = [
     keys: ["ArrowRight"],
     commands: {
       canvas: "nextStep",
+      note: "nudgeNoteRight",
       addStep: "panelOpen",
       decisionGrid: "cellRight",
     },
@@ -256,6 +271,7 @@ export const KEYMAP: readonly KeymapRow[] = [
     keys: ["ArrowUp"],
     commands: {
       canvas: "laneAbove",
+      note: "nudgeNoteUp",
       addStep: "panelUp",
       decisionGrid: "cellUp",
     },
@@ -265,6 +281,7 @@ export const KEYMAP: readonly KeymapRow[] = [
     keys: ["ArrowDown"],
     commands: {
       canvas: "laneBelow",
+      note: "nudgeNoteDown",
       addStep: "panelDown",
       decisionGrid: "cellDown",
     },
@@ -272,12 +289,22 @@ export const KEYMAP: readonly KeymapRow[] = [
   {
     id: "extend-upstream",
     keys: ["Shift+ArrowLeft"],
-    commands: { canvas: "extendUpstream" },
+    commands: { canvas: "extendUpstream", note: "nudgeNoteLeft" },
   },
   {
     id: "extend-downstream",
     keys: ["Shift+ArrowRight"],
-    commands: { canvas: "extendDownstream" },
+    commands: { canvas: "extendDownstream", note: "nudgeNoteRight" },
+  },
+  {
+    id: "note-up-far",
+    keys: ["Shift+ArrowUp"],
+    commands: { note: "nudgeNoteUp" },
+  },
+  {
+    id: "note-down-far",
+    keys: ["Shift+ArrowDown"],
+    commands: { note: "nudgeNoteDown" },
   },
   {
     id: "execute",
@@ -440,6 +467,12 @@ export const COMMAND_LABELS: Readonly<Record<KeymapCommand, string>> = {
   nextStepDetails: "Open the next step's details",
   switchToMapped: "Switch an empty Fixed field to Mapped",
   escape: "Close, cancel, then clear the selection",
+  editNote: "Edit the note",
+  deleteNote: "Delete the note",
+  nudgeNoteLeft: "Move the note left; with Shift, farther",
+  nudgeNoteRight: "Move the note right; with Shift, farther",
+  nudgeNoteUp: "Move the note up; with Shift, farther",
+  nudgeNoteDown: "Move the note down; with Shift, farther",
   showShortcuts: "Show keyboard shortcuts",
   panelUp: "Previous entry",
   panelDown: "Next entry",
@@ -598,6 +631,7 @@ export interface SheetSection {
 const SHEET_SURFACES: readonly [KeymapSurface | "any", string][] = [
   ["any", "Everywhere"],
   ["canvas", "Canvas"],
+  ["note", "Sticky notes"],
   ["outline", "Outline"],
   ["stepDetails", "Step details"],
   ["fixedField", "Fixed fields"],

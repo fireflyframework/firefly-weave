@@ -631,13 +631,15 @@ weave-canvas-view,
   color: var(--muted);
 }
 
-/* Hover toolbar and selection toolbar. The hover toolbar sits on its
-   step's card (where: canvas-view.ts, TOOLBAR) and scales with the canvas
-   like the "+" and the handles, so it never covers a neighbor, a label or
-   the corner badge. Its commands are also in the step's right-click menu
-   and its step details, at full size. */
+/* Hover toolbar and selection toolbar. The hover toolbar sits above its
+   step, centered (where: toolbar-spot.ts). It draws at its 100% size times
+   --toolbar-scale, from its top left corner, so its buttons keep 24 px on
+   screen (44 px with a coarse pointer) at every zoom. Its commands are
+   also in the step's right-click menu and its step details. */
 .canvas-v2 .tile-toolbar {
   position: absolute;
+  transform: scale(var(--toolbar-scale, 1));
+  transform-origin: 0 0;
   z-index: 6;
   display: flex;
   gap: 2px;
@@ -647,6 +649,17 @@ weave-canvas-view,
   background: var(--surface);
   box-shadow: var(--shadow-1);
   pointer-events: auto;
+}
+/* The gap down to the step's card belongs to the toolbar, so the pointer
+   keeps it on the way up. Its left half only: the corner badge is on the
+   right. */
+.canvas-v2 .tile-toolbar::after {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  width: 50%;
+  height: calc((var(--toolbar-gap, 14px) + 2px) / var(--toolbar-scale, 1));
+  content: "";
 }
 .canvas-v2 .tile-toolbar :is(.icon-button, .row-menu-toggle) {
   width: 28px;
@@ -673,6 +686,21 @@ weave-canvas-view,
   border-radius: var(--radius-md);
   background: var(--surface);
   box-shadow: var(--shadow-2);
+}
+/* Copy and Duplicate move into More where the toolbar would wrap. */
+.canvas-v2 .selection-toolbar .selection-narrow {
+  display: none;
+}
+@media (max-width: 479px) {
+  .canvas-v2 .selection-toolbar {
+    flex-wrap: nowrap;
+  }
+  .canvas-v2 .selection-toolbar .selection-wide {
+    display: none;
+  }
+  .canvas-v2 .selection-toolbar .selection-narrow {
+    display: inline-flex;
+  }
 }
 .canvas-v2 .selection-count {
   padding: 0 var(--space-2);
@@ -800,4 +828,188 @@ weave-canvas-view,
   margin: var(--space-4) 0 var(--space-2);
   font: var(--type-label);
   color: var(--text);
+}
+
+/* "Start from a template · or paste steps (Ctrl+V)" under the empty state. */
+.canvas-v2 .empty-alternatives {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  margin: 0;
+  font: var(--type-small);
+  color: var(--muted);
+}
+/* Sticky notes: behind the steps, in their note tokens. */
+.canvas-v2 weave-notes-layer {
+  display: contents;
+}
+.canvas-v2 .sticky-note {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  padding: var(--space-3);
+  color: var(--text);
+  font: var(--type-small);
+  background: var(--note-yellow-bg);
+  border: 1px solid var(--note-yellow-bd);
+  border-radius: var(--radius-md);
+  cursor: grab;
+  /* The node layer lets presses through to the canvas; a note takes its own. */
+  pointer-events: auto;
+}
+.canvas-v2 .sticky-note[data-color="blue"] {
+  background: var(--note-blue-bg);
+  border-color: var(--note-blue-bd);
+}
+.canvas-v2 .sticky-note[data-color="green"] {
+  background: var(--note-green-bg);
+  border-color: var(--note-green-bd);
+}
+.canvas-v2 .sticky-note[data-color="pink"] {
+  background: var(--note-pink-bg);
+  border-color: var(--note-pink-bd);
+}
+.canvas-v2 .sticky-note[data-color="purple"] {
+  background: var(--note-purple-bg);
+  border-color: var(--note-purple-bd);
+}
+.canvas-v2 .sticky-note[data-color="gray"] {
+  background: var(--note-gray-bg);
+  border-color: var(--note-gray-bd);
+}
+.canvas-v2 .sticky-note:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.canvas-v2 .sticky-note.editing {
+  cursor: text;
+}
+.canvas-v2 .sticky-note-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overflow-wrap: anywhere;
+}
+.canvas-v2 .sticky-note-body :is(h3, h4, h5) {
+  margin: 0 0 var(--space-1);
+  font: var(--type-label);
+}
+.canvas-v2 .sticky-note-body :is(p, ul, ol, pre) {
+  margin: 0 0 var(--space-2);
+}
+.canvas-v2 .sticky-note-body :is(ul, ol) {
+  padding-left: var(--space-5);
+}
+.canvas-v2 .sticky-note-body code {
+  font: var(--type-mono);
+}
+.canvas-v2 .sticky-note-body pre {
+  padding: var(--space-2);
+  overflow: auto;
+  white-space: pre-wrap;
+  background: var(--sunken);
+  border-radius: var(--radius-xs);
+}
+.canvas-v2 .sticky-note-body a {
+  /* Note text stays in --text on every note color; the underline marks links. */
+  color: var(--text);
+  text-decoration: underline;
+}
+.canvas-v2 .sticky-note-empty {
+  margin: 0;
+  color: var(--muted);
+}
+.canvas-v2 .sticky-note-text {
+  flex: 1;
+  min-height: 0;
+  resize: none;
+  color: var(--text);
+  font: var(--type-small);
+  background: transparent;
+  border: 0;
+}
+/* A note's commands keep their target size on screen at any zoom: 28
+   canvas units, never under 24 px (44 px with a coarse pointer), with the
+   same inset from the note's top and right edges. */
+.canvas-v2 .sticky-note-toolbar {
+  --note-button: max(28px, calc(24px / var(--zoom, 1)));
+  --note-px: calc(1px / var(--zoom, 1));
+  position: absolute;
+  top: calc(var(--space-1) / var(--zoom, 1));
+  right: calc(var(--space-1) / var(--zoom, 1));
+  display: none;
+  gap: calc(2 * var(--note-px));
+  padding: calc(2 * var(--note-px));
+  background: var(--surface);
+  border: var(--note-px) solid var(--border);
+  border-radius: calc(var(--radius-sm) / var(--zoom, 1));
+  box-shadow: var(--shadow-1);
+}
+@media (pointer: coarse) {
+  .canvas-v2 .sticky-note-toolbar {
+    --note-button: max(28px, calc(44px / var(--zoom, 1)));
+  }
+}
+.canvas-v2 .sticky-note-toolbar .row-menu-toggle {
+  width: var(--note-button);
+  height: var(--note-button);
+  min-height: 0;
+  padding: 0;
+}
+.canvas-v2 .sticky-note-toolbar .row-menu-toggle weave-icon {
+  width: calc(var(--note-button) * 0.6);
+  height: calc(var(--note-button) * 0.6);
+}
+/* An open menu keeps its toolbar: the menu sits in the top layer, so the
+   pointer leaves the note on its way there. While its text is edited, the
+   commands stay hidden so they never cover what is typed; Escape brings
+   them back. */
+.canvas-v2
+  .sticky-note:not(.editing):is(:hover, :focus-within)
+  .sticky-note-toolbar,
+.canvas-v2 .sticky-note-toolbar:has([aria-expanded="true"]) {
+  display: flex;
+}
+.canvas-v2 .note-grip {
+  position: absolute;
+}
+.canvas-v2 .note-grip-e {
+  top: 0;
+  right: -4px;
+  width: 8px;
+  height: 100%;
+  cursor: ew-resize;
+}
+.canvas-v2 .note-grip-s {
+  left: 0;
+  bottom: -4px;
+  width: 100%;
+  height: 8px;
+  cursor: ns-resize;
+}
+.canvas-v2 .note-grip-se {
+  right: -8px;
+  bottom: -8px;
+  width: 16px;
+  height: 16px;
+  cursor: nwse-resize;
+}
+.canvas-v2.placing-note {
+  cursor: crosshair;
+}
+.canvas-v2-placing {
+  position: absolute;
+  top: var(--space-3);
+  left: 50%;
+  z-index: 3;
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  font: var(--type-small);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  transform: translateX(-50%);
 }

@@ -492,6 +492,14 @@ describe("request building", () => {
     expect(parseSample("a: &x 1\nb: *x")).toHaveProperty("error");
     expect(parseSample("")).toHaveProperty("error");
   });
+  it("measures a pasted sample in bytes, as the host does", () => {
+    expect(parseSample(`"${"界".repeat(90_000)}"`)).toEqual({
+      error: "This is larger than 256 KB. Paste a shorter example.",
+    });
+    expect(parseSample(`"${"a".repeat(262_000)}"`)).toEqual({
+      value: "a".repeat(262_000),
+    });
+  });
   it.skipIf(!available)(
     "produces requests the host builder accepts, with the effect fixed by method",
     () => {

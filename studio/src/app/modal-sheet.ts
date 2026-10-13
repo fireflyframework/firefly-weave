@@ -44,6 +44,8 @@ export const sheetWhen = {
   inspector: "(max-width: 767px)",
   /** The step palette whenever it is a popover over the canvas. */
   palette: "(max-width: 1024px)",
+  /** The new editor's Add a step panel as a full sheet: phones and browser zoom. */
+  addStep: "(max-width: 767px)",
   /** A list's detail panel floating over the list. */
   detail: "(max-width: 1024px)",
   /** The expanded simulation panel, where it can't dock beside the canvas. */
@@ -63,6 +65,7 @@ export const keepUsable = [
   "weave-modal",
   "weave-dialog-host",
   "weave-step-picker",
+  "weave-add-step-panel",
   "weave-integration-dialogs",
   "weave-ai-connection-sheet",
   "weave-start-run-dialog",

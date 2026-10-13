@@ -107,7 +107,8 @@ const sameOperation = (a: OwnedRecipe, b: ConnectorRecipe) =>
  * its ID. Call an API gets an action of its own; email and file steps share
  * the workflow's owned action for the same operation when there is one. The
  * step uses its connector's slot when the workflow declares exactly one.
- * Runs as one undo step, and leaves nothing behind when refused.
+ * A file step goes on `connector` when it names a file server. Runs as one
+ * undo step, and leaves nothing behind when refused.
  */
 export function insertOwnedStep(
   model: StructuredCanvasAdapter,
@@ -115,12 +116,20 @@ export function insertOwnedStep(
   owner: string,
   index: number | undefined,
   reserved: ReadonlySet<string> = new Set(),
+  /** A file server chosen in Add a step ("weave-ftp@1.0.0"); else the workflow's. */
+  connector?: string,
 ): string {
   return model.batch(() => {
     const workflow = model.definition;
     let recipe = action.recipe();
     if (recipe.kind === "connector" && FILE_CONNECTORS.has(recipe.connector))
-      recipe = { ...recipe, connector: fileConnector(workflow) };
+      recipe = {
+        ...recipe,
+        connector:
+          connector && FILE_CONNECTORS.has(connector)
+            ? connector
+            : fileConnector(workflow),
+      };
     // Actions whose steps were deleted since the workflow opened go now, so
     // their names are free again; Undo brings them back with this insert.
     model.canvas = pruneOwned(model.canvas, workflow, model.unplaced);
@@ -141,9 +150,9 @@ export function insertOwnedStep(
         ),
       );
     if (!shared) model.canvas = withOwnedAction(model.canvas, uses, recipe);
-    const connector = connectorRecipe?.connector ?? HTTP_CONNECTOR;
+    const slotConnector = connectorRecipe?.connector ?? HTTP_CONNECTOR;
     const slots = slotsOf(workflow).filter(
-      (slot) => slot.connector === connector,
+      (slot) => slot.connector === slotConnector,
     );
     model.insert("action", owner, index, {
       id,

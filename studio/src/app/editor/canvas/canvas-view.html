@@ -24,6 +24,7 @@ SPDX-License-Identifier: Apache-2.0
   [class.lod-minimal]="lod === 'minimal'"
   [class.revealing]="revealing()"
   [class.locked]="locked()"
+  [class.placing-note]="!!placingNote"
   [class.minimap-shown]="minimapOn || panning"
   role="group"
   aria-roledescription="workflow canvas"
@@ -46,6 +47,7 @@ SPDX-License-Identifier: Apache-2.0
   (focusout)="focusOut($event)"
   (dragover)="dragOver($event)"
   (drop)="dropOn($event)"
+  (paste)="pasteEvent($event)"
   (keydown)="key($event)"
   (keyup)="trackSpace($event)"
 >
@@ -69,6 +71,15 @@ SPDX-License-Identifier: Apache-2.0
         (fCanvasChange)="canvasMoved($event)"
       >
         <div fNodes>
+          <weave-notes-layer
+            [notes]="noteViews()"
+            [zoom]="view.zoom"
+            [locked]="fixed"
+            [editing]="editingNote"
+            (edit)="noteEdit($event)"
+            (editingChange)="editingNote = $event"
+            (notice)="h.notify($event)"
+          />
           <weave-edge-layer
             [edges]="edges()"
             [width]="l.bounds.maxX + 96"
@@ -137,6 +148,7 @@ SPDX-License-Identifier: Apache-2.0
               aria-roledescription="step"
               [attr.data-tile]="tile.id"
               [attr.data-step]="tile.step ? tile.id : null"
+              [attr.data-trigger]="tile.kind === 'trigger' ? tile.id : null"
             >
               <div class="tile-paint">
                 <div class="tile-content">
@@ -149,31 +161,51 @@ SPDX-License-Identifier: Apache-2.0
             <div
               class="tile-toolbar f-drag-blocker"
               role="group"
-              [attr.aria-label]="'Commands for ' + bar.id"
+              [attr.aria-label]="'Commands for ' + bar.name"
               [attr.data-toolbar-for]="bar.id"
               [style.left.px]="bar.x"
               [style.top.px]="bar.y"
+              [style.--toolbar-scale]="bar.scale"
+              [style.--toolbar-gap.px]="bar.gap"
+              [attr.data-clear]="bar.clear"
             >
-              <button
-                type="button"
-                class="icon-button"
-                [style.outline-width.px]="focusWidth()"
-                [style.outline-offset.px]="focusWidth()"
-                data-action="delete"
-                [attr.data-target]="bar.id"
-                [attr.aria-label]="'Delete ' + bar.id"
-                [attr.title]="'Delete ' + bar.id"
-                [attr.aria-disabled]="bar.locked || null"
-                [attr.tabindex]="bar.tabIndex"
-              >
-                <weave-icon name="trash" [size]="16" />
-              </button>
-              <weave-row-menu
-                [style.--zoom]="view.zoom"
-                [label]="'More commands for ' + bar.id"
-                [items]="bar.menu"
-                [tabIndex]="bar.tabIndex"
-              />
+              @if (bar.trigger; as trigger) {
+                <button
+                  type="button"
+                  class="icon-button"
+                  [style.outline-width.px]="focusWidth() / bar.scale"
+                  [style.outline-offset.px]="focusWidth() / bar.scale"
+                  data-action="remove-trigger"
+                  [attr.data-target]="trigger.intent"
+                  [attr.aria-label]="'Remove the ' + trigger.label + ' trigger'"
+                  [attr.title]="'Remove the ' + trigger.label + ' trigger'"
+                  [attr.aria-disabled]="bar.locked || null"
+                  [attr.tabindex]="bar.tabIndex"
+                >
+                  <weave-icon name="trash" [size]="16" />
+                </button>
+              } @else {
+                <button
+                  type="button"
+                  class="icon-button"
+                  [style.outline-width.px]="focusWidth() / bar.scale"
+                  [style.outline-offset.px]="focusWidth() / bar.scale"
+                  data-action="delete"
+                  [attr.data-target]="bar.id"
+                  [attr.aria-label]="'Delete ' + bar.id"
+                  [attr.title]="'Delete ' + bar.id"
+                  [attr.aria-disabled]="bar.locked || null"
+                  [attr.tabindex]="bar.tabIndex"
+                >
+                  <weave-icon name="trash" [size]="16" />
+                </button>
+                <weave-row-menu
+                  [style.--zoom]="view.zoom * bar.scale"
+                  [label]="'More commands for ' + bar.id"
+                  [items]="bar.menu"
+                  [tabIndex]="bar.tabIndex"
+                />
+              }
             </div>
           }
           @for (output of l.handles; track output.key) {
@@ -264,7 +296,10 @@ SPDX-License-Identifier: Apache-2.0
               >
             </button>
           }
-          @if (!h.model.definition.spec.steps.length) {
+          @if (
+            !h.model.definition.spec.steps.length &&
+            !h.model.canvas.triggers?.length
+          ) {
             <div class="empty-start" style="left: 24px; top: 96px">
               <button
                 type="button"
@@ -291,15 +326,19 @@ SPDX-License-Identifier: Apache-2.0
                   >Start with what triggers this workflow</span
                 >
               </button>
-              <button
-                type="button"
-                class="text-link f-drag-blocker"
-                [style.outline-width.px]="focusWidth()"
-                [style.outline-offset.px]="focusWidth()"
-                data-action="templates"
-              >
-                Start from a template
-              </button>
+              <p class="empty-alternatives">
+                <button
+                  type="button"
+                  class="text-link f-drag-blocker"
+                  [style.outline-width.px]="focusWidth()"
+                  [style.outline-offset.px]="focusWidth()"
+                  data-action="templates"
+                >
+                  Start from a template
+                </button>
+                <span aria-hidden="true">·</span>
+                <span>or paste steps ({{ pasteKeys }})</span>
+              </p>
             </div>
           }
         </div>
@@ -316,11 +355,20 @@ SPDX-License-Identifier: Apache-2.0
       [minimap]="minimapOn"
       (toggleMinimap)="toggleMinimap()"
       (shortcuts)="sheetOpen = true"
+      (note)="addNote()"
+      (tidy)="tidy()"
     />
+    @if (placingNote) {
+      <p class="canvas-v2-placing" role="status">
+        Click where the note should go, or press Escape.
+      </p>
+    }
     @if (selectedCount() > 1) {
       <weave-selection-toolbar
         [count]="selectedCount()"
         [blocked]="duplicateBlocked()"
+        [copyBlocked]="copyBlocked()"
+        (copy)="copySelection(false)"
         [locked]="lockedReason()"
         (duplicate)="duplicateSelection()"
         (remove)="removeSelection()"

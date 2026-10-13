@@ -4463,3 +4463,20 @@ kbd {
     font-size: 12px;
   }
 }
+
+/* The new editor has no step palette: Add a step replaces it, and the
+   toolbar's Add a step shows at every width. */
+.insert-popover-button.add-step-button {
+  display: inline-flex;
+}
+.editor-grid.no-palette {
+  grid-template-columns: minmax(0, 1fr);
+}
+.editor-grid.no-palette.side-open {
+  grid-template-columns: minmax(0, 1fr) var(--inspector-w);
+}
+@media (max-width: 767px) {
+  .editor-grid.no-palette.side-open {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

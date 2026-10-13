@@ -22,9 +22,11 @@ import {
   StructuredCanvasAdapter,
   freshWorkflow,
   ownerLabel,
+  nextFreeId,
   renamedSteps,
   type Kind,
   type Workflow,
+  rewriteStepRefs,
 } from "../src/app/model";
 import {
   emptyCanvas,
@@ -32,6 +34,7 @@ import {
   stepNotesOf,
   withOwnedRecipe,
   withStepNote,
+  type StickyNote,
 } from "../src/app/editor/state/canvas-sidecar";
 import { PendingEntries } from "../src/app/editor/ndv/pending-entries";
 describe("structured workflow authoring", () => {
@@ -1120,4 +1123,216 @@ describe("deletion keeps canvas metadata and workflow history together", () => {
         unplaced: model.unplaced,
       }).toEqual(before);
     });
+});
+
+describe("the canvas sidecar follows the workflow", () => {
+  const note = (id: string, stepId?: string): StickyNote => ({
+    id,
+    text: "",
+    color: "yellow",
+    x: 0,
+    y: 0,
+    width: 240,
+    height: 120,
+    ...(stepId ? { anchor: { stepId, dx: 0, dy: 168 } } : {}),
+  });
+
+  it("keeps a deleted step's note where it was drawn last, without its anchor, and Undo restores the anchor", () => {
+    const model = new StructuredCanvasAdapter();
+    const step = model.insert("transform");
+    model.updateCanvas({
+      ...model.canvas,
+      notes: [note("note-00000001", step.id)],
+    });
+    const revision = model.revision;
+    model.cacheNotePositions(new Map([["note-00000001", { x: 328, y: 264 }]]));
+    expect(model.revision).toBe(revision);
+    model.removeSteps([step.id]);
+    expect(model.canvas.notes?.[0]).toEqual({
+      ...note("note-00000001"),
+      x: 328,
+      y: 264,
+    });
+    model.undo();
+    expect(model.canvas.notes?.[0].anchor?.stepId).toBe(step.id);
+  });
+
+  it("shows Called by a workflow while the source makes the workflow callable", () => {
+    const model = new StructuredCanvasAdapter();
+    model.insert("transform");
+    const definition = structuredClone(model.definition);
+    definition.spec["callable"] = {};
+    model.setSource(JSON.stringify(definition), "json");
+    expect(model.canvas.triggers?.map((intent) => intent.kind)).toEqual([
+      "manual",
+      "called",
+    ]);
+    delete definition.spec["callable"];
+    model.setSource(JSON.stringify(definition), "json");
+    expect(model.canvas.triggers?.map((intent) => intent.kind)).toEqual([
+      "manual",
+    ]);
+  });
+
+  it("keeps what Studio recorded when Redo brings a later state back", () => {
+    const model = new StructuredCanvasAdapter();
+    const wait = model.insert("wait");
+    model.insert("wait");
+    model.undo();
+    model.amend(() =>
+      model.update(wait.id, JSON.stringify({ ...wait, durationSeconds: 99 })),
+    );
+    model.redo();
+    expect(
+      model.definition.spec.steps.map((step) => step["durationSeconds"]),
+    ).toEqual([99, 60]);
+    // A record that doesn't apply to a later state leaves that state alone.
+    model.undo();
+    model.amend(() => {
+      if (model.definition.spec.steps.length > 1) throw Error("not here");
+    });
+    model.redo();
+    expect(model.definition.spec.steps).toHaveLength(2);
+  });
+  it("tidies as one undo step: legacy positions go, notes move, and Undo brings both back", () => {
+    const model = new StructuredCanvasAdapter();
+    const step = model.insert("transform");
+    model.position(step.id, { x: 400, y: 80 });
+    model.updateCanvas({ ...model.canvas, notes: [note("note-00000001")] });
+    const revision = model.revision;
+    expect(
+      model.tidy({
+        ...model.canvas,
+        notes: [{ ...note("note-00000001"), x: 512 }],
+      }),
+    ).toBe(true);
+    expect(model.layout.positions).toEqual({});
+    expect(model.canvas.notes?.[0].x).toBe(512);
+    expect(model.revision).toBe(revision + 1);
+    model.undo();
+    expect(model.layout.positions).toEqual({ [step.id]: { x: 400, y: 80 } });
+    expect(model.canvas.notes?.[0].x).toBe(0);
+    const tidy = new StructuredCanvasAdapter();
+    const before = tidy.revision;
+    expect(tidy.tidy(null)).toBe(false);
+    expect(tidy.revision).toBe(before);
+  });
+});
+
+describe("pasting into the model", () => {
+  it("inserts pasted steps at one place as one undo step and selects the first", () => {
+    const model = new StructuredCanvasAdapter();
+    model.insert("transform");
+    model.insert("transform");
+    model.insertSteps("root", 1, [
+      { id: "wait-a", kind: "wait", durationSeconds: 60 },
+      { id: "wait-b", kind: "wait", durationSeconds: 60 },
+    ]);
+    expect(model.definition.spec.steps.map((step) => step.id)).toEqual([
+      "transform-1",
+      "wait-a",
+      "wait-b",
+      "transform-2",
+    ]);
+    expect(model.selected).toBe("wait-a");
+    model.undo();
+    expect(model.definition.spec.steps.map((step) => step.id)).toEqual([
+      "transform-1",
+      "transform-2",
+    ]);
+  });
+
+  it("refuses pasted steps whose IDs are taken, and changes nothing", () => {
+    const model = new StructuredCanvasAdapter();
+    model.insert("transform");
+    const revision = model.revision;
+    expect(() =>
+      model.insertSteps("root", 0, [
+        { id: "transform-1", kind: "wait", durationSeconds: 60 },
+      ]),
+    ).toThrow("Steps must have unique IDs.");
+    expect(model.revision).toBe(revision);
+  });
+
+  it("finds the next free ID on a base", () => {
+    expect(nextFreeId("check", new Set(["check-1", "check-2"]))).toBe(
+      "check-3",
+    );
+    expect(nextFreeId("check", new Set())).toBe("check-1");
+  });
+});
+
+describe("references that follow a renamed step", () => {
+  it("follow refs in expressions and leave literal data alone", () => {
+    const renamed = new Map([["a", "a-1"]]);
+    expect(
+      rewriteStepRefs(
+        {
+          id: "b",
+          kind: "transform",
+          value: {
+            object: {
+              read: { ref: "/steps/a/output/x" },
+              data: {
+                literal: { ref: "/steps/a", list: [{ ref: "/steps/a" }] },
+              },
+            },
+          },
+        },
+        renamed,
+      ),
+    ).toEqual({
+      id: "b",
+      kind: "transform",
+      value: {
+        object: {
+          read: { ref: "/steps/a-1/output/x" },
+          data: { literal: { ref: "/steps/a", list: [{ ref: "/steps/a" }] } },
+        },
+      },
+    });
+  });
+});
+
+describe("whether steps can be deleted", () => {
+  const withOutput = (output: string) => {
+    const model = new StructuredCanvasAdapter();
+    model.setSource(
+      `apiVersion: weave/v1alpha1
+kind: Workflow
+metadata: {name: w, version: 1.0.0}
+spec:
+  inputSchema: {type: object}
+  outputSchema: {type: object}
+  steps:
+    - {id: a, kind: transform, value: {literal: {}}}
+    - {id: b, kind: transform, value: {ref: /steps/a/output}}
+  output: ${output}
+`,
+      "yaml",
+    );
+    return model;
+  };
+
+  it("says why without deleting, and adds no undo step", () => {
+    const model = withOutput("{ref: /steps/b/output}");
+    const revision = model.revision;
+    const undoable = model.canUndo;
+    expect(model.removalBlocked(["b"])).toBe(
+      "This step is referenced by the workflow output. Update it before deleting it.",
+    );
+    expect(model.removalBlocked(["a"])).toBe(
+      "This step is referenced by b. Update it before deleting it.",
+    );
+    expect(model.removalBlocked(["a", "b"])).toBe(
+      "These steps are referenced by the workflow output. Update it before deleting them.",
+    );
+    expect(model.revision).toBe(revision);
+    expect(model.canUndo).toBe(undoable);
+    expect(model.definition.spec.steps.map((step) => step.id)).toEqual([
+      "a",
+      "b",
+    ]);
+    expect(withOutput("{literal: {}}").removalBlocked(["b"])).toBeNull();
+  });
 });
