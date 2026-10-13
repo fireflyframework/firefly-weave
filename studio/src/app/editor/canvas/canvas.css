@@ -687,6 +687,21 @@ weave-canvas-view,
   background: var(--surface);
   box-shadow: var(--shadow-2);
 }
+/* Copy and Duplicate move into More where the toolbar would wrap. */
+.canvas-v2 .selection-toolbar .selection-narrow {
+  display: none;
+}
+@media (max-width: 479px) {
+  .canvas-v2 .selection-toolbar {
+    flex-wrap: nowrap;
+  }
+  .canvas-v2 .selection-toolbar .selection-wide {
+    display: none;
+  }
+  .canvas-v2 .selection-toolbar .selection-narrow {
+    display: inline-flex;
+  }
+}
 .canvas-v2 .selection-count {
   padding: 0 var(--space-2);
   white-space: nowrap;

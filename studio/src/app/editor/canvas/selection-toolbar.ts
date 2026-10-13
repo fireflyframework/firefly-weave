@@ -18,19 +18,22 @@ SPDX-License-Identifier: Apache-2.0
 // The floating toolbar for several selected steps: how many, Copy and
 // Duplicate (one run of steps) and Delete (any selection). A command that can't run
 // stays in place, aria-disabled, says why to assistive technology and,
-// when pressed, in a toast.
+// when pressed, in a toast. On a narrow window the toolbar keeps one row:
+// the count, Delete, and a More menu with Copy and Duplicate.
 import {
   ChangeDetectionStrategy,
   Component,
+  computed,
   input,
   output,
 } from "@angular/core";
 import { Icon } from "../../icon";
+import { RowMenu, type RowMenuItem } from "../../row-menu";
 
 @Component({
   selector: "weave-selection-toolbar",
   standalone: true,
-  imports: [Icon],
+  imports: [Icon, RowMenu],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `@let lock = locked();
     @let duplicateReason = lock ?? blocked();
@@ -40,7 +43,7 @@ import { Icon } from "../../icon";
       >
       <button
         type="button"
-        class="tertiary"
+        class="tertiary selection-wide"
         [attr.aria-disabled]="copyBlocked() ? 'true' : null"
         [attr.aria-describedby]="copyBlocked() ? 'selection-copy-reason' : null"
         (click)="copy.emit()"
@@ -49,7 +52,7 @@ import { Icon } from "../../icon";
       </button>
       <button
         type="button"
-        class="tertiary"
+        class="tertiary selection-wide"
         [attr.aria-disabled]="duplicateReason ? 'true' : null"
         [attr.aria-describedby]="
           duplicateReason ? 'selection-duplicate-reason' : null
@@ -67,6 +70,11 @@ import { Icon } from "../../icon";
       >
         <weave-icon name="trash" [size]="16" />Delete
       </button>
+      <weave-row-menu
+        class="selection-narrow"
+        label="More commands for the selected steps"
+        [items]="more()"
+      />
       @if (duplicateReason) {
         <span class="sr-only" id="selection-duplicate-reason">{{
           duplicateReason
@@ -91,4 +99,17 @@ export class SelectionToolbar {
   copyBlocked = input<string | null>(null);
   copy = output<void>();
   remove = output<void>();
+  /** Copy and Duplicate on a narrow window; one that can't run says why. */
+  readonly more = computed((): RowMenuItem[] => [
+    {
+      label: "Copy",
+      detail: this.copyBlocked() ?? undefined,
+      run: () => this.copy.emit(),
+    },
+    {
+      label: "Duplicate",
+      detail: (this.locked() ?? this.blocked()) || undefined,
+      run: () => this.duplicate.emit(),
+    },
+  ]);
 }
