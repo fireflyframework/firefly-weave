@@ -356,7 +356,9 @@ export async function openAiModels(page: Page) {
     "true",
   );
 }
-/** The AI connection side sheet. */
-export function sheet(page: Page, name = "New AI connection"): Locator {
-  return page.getByRole("dialog", { name });
+/** The AI connection side sheet, by its title when one is given. */
+export function sheet(page: Page, name?: string): Locator {
+  return name
+    ? page.getByRole("dialog", { name })
+    : page.locator("weave-ai-connection-sheet").getByRole("dialog");
 }

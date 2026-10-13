@@ -805,3 +805,21 @@ for (const size of [
     expect(Math.abs(box.field.bottom - box.refresh.bottom)).toBeLessThan(0.5);
     expect(Math.abs(box.field.left - box.name.left)).toBeLessThan(0.5);
   });
+
+test("the sheet takes the connection's name once it is saved, and names its test section once", async ({
+  page,
+}) => {
+  await start(page);
+  const form = await newConnection(page, "Ollama");
+  await expect(form.getByRole("heading", { level: 2 })).toHaveText(
+    "New AI connection",
+  );
+  await form.getByRole("button", { name: "Save connection" }).click();
+  await expect(form.getByRole("heading", { level: 2 })).toHaveText(
+    "ollama-local",
+  );
+  await expect(form.getByRole("heading", { level: 3 })).toHaveText(
+    "Test a model",
+  );
+  await expect(form.getByText("Model", { exact: true })).toHaveCount(1);
+});

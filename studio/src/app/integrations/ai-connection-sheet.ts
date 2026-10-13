@@ -300,7 +300,7 @@ export interface AiTestRecord {
       </fieldset>
       @if (saved) {
         <section class="sheet-section">
-          <h3 id="ai-model-title">Model</h3>
+          <h3 id="ai-model-title">Test a model</h3>
           <p class="field-help">
             Choose a model to test. AI steps and Weave AI choose their own
             model.
@@ -465,7 +465,9 @@ export class AiConnectionSheet implements OnInit, OnDestroy {
   private alive = true;
 
   heading() {
-    return this.request().connection?.name ?? "New AI connection";
+    return (
+      this.saved?.name ?? this.request().connection?.name ?? "New AI connection"
+    );
   }
   get presets() {
     return presetsFor(this.draft.card, this.endpoints);
