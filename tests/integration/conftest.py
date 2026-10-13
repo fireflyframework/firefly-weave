@@ -75,6 +75,16 @@ def retain_resource(kind: str, name: str) -> None:
             handle.write(json.dumps({"kind": kind, "name": name, "observed_at": datetime.now(UTC).isoformat()}) + "\n")
 
 
+@pytest.fixture
+def retain():
+    """Record a database or role the test created itself, so it is dropped at teardown like the fixtures' own.
+
+    Tests take this fixture rather than importing ``retain_resource``: ``from conftest import`` resolves to
+    whichever conftest pytest imported last, which is not this one when ``pytest`` or ``pytest tests`` runs.
+    """
+    return retain_resource
+
+
 def control_url():
     value = os.environ.get("WEAVE_TEST_DATABASE_URL")
     if not value:
