@@ -358,16 +358,12 @@ export interface AiTestRecord {
             }
           }
           @if (canManage()) {
-            <div
-              class="notice test-status"
-              role="status"
-              aria-live="polite"
-              [attr.data-tone]="view.tone"
-            >
+            <div class="notice test-status" [attr.data-tone]="view.tone">
               @if (testing) {
                 <weave-icon name="spinner" [size]="16" />
               }
-              <span>{{ view.text }}</span>
+              <!-- Only the result is announced, not the Cancel button. -->
+              <span role="status" aria-live="polite">{{ view.text }}</span>
               @if (testing) {
                 <button
                   type="button"
