@@ -84,6 +84,17 @@ def _script(name: str) -> Any:
     return module
 
 
+def _helper(name: str) -> Any:
+    if name in sys.modules:
+        return sys.modules[name]
+    spec = importlib.util.spec_from_file_location(name, ROOT / "tests/acceptance" / f"{name}.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 ENABLEMENT = _script("acceptance_journeys").Enablement.load(ROOT / "tests/acceptance/journeys.toml")
 ACCEPTANCE = _script("acceptance")
 _STEP: dict[str, Any] = {"id": None, "started": 0.0, "ran": set(), "skipped": []}
@@ -118,12 +129,13 @@ class Run:
         input: str | None = None,
         timeout: float = 900,
         env: Mapping[str, str] | None = None,
+        cwd: Path | None = None,
     ) -> subprocess.CompletedProcess[str]:
         if env is None:
             env = {key: value for key, value in os.environ.items() if not key.startswith(("WEAVE_", "PYFLY_"))}
         return subprocess.run(
             argv,
-            cwd=self.private,
+            cwd=cwd or self.private,
             env=dict(env),
             input=input,
             text=True,
@@ -169,6 +181,40 @@ class Run:
 
     def canary(self, handle: str) -> str:
         return str(json.loads((self.private / "canaries.json").read_text(encoding="utf-8"))[handle])
+
+    def person(self, name: str) -> dict[str, Any]:
+        """The person's private file: username, password, subject and grants (never printed)."""
+        return dict(json.loads((self.private / "people" / f"{name}.json").read_text(encoding="utf-8")))
+
+    def roles(self, name: str) -> set[str]:
+        return {str(grant["role"]) for grant in self.person(name)["grants"]}
+
+    def demo_scope(self) -> dict[str, str]:
+        """The demo environment (local): the environment the owner's grants name."""
+        for grant in self.person("owner")["grants"]:
+            if "environment_id" in grant["scope"]:
+                return {key: str(value) for key, value in grant["scope"].items()}
+        raise AssertionError("The owner holds no grant on the demo environment")
+
+    def save_private(self, name: str, value: Mapping[str, Any]) -> Path:
+        """Keep a J0 record (IDs only, no secret) as private/<name>.json, mode 0600."""
+        path = self.private / f"{name}.json"
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            json.dump(dict(value), stream, indent=2, sort_keys=True)
+        return path
+
+    def private_record(self, name: str) -> dict[str, Any]:
+        return dict(json.loads((self.private / f"{name}.json").read_text(encoding="utf-8")))
+
+    @staticmethod
+    def helper(name: str) -> Any:
+        """A helper module of tests/acceptance (acceptance_people, acceptance_catalog, …), loaded by path."""
+        return _helper(name)
+
+    def client(self, name: str) -> Any:
+        """``async with run.client("owner") as owner:`` a WeaveClient signed in as that person."""
+        return _helper("acceptance_people").person_client(self, name)
 
     def save_person(self, name: str, value: Mapping[str, Any]) -> Path:
         """Keep a person's sign-in in a 0600 file under private/; never print it."""
