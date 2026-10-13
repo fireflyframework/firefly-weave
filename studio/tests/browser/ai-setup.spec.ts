@@ -662,3 +662,76 @@ test("saving Weave AI on a configured connection keeps its limits and sends its 
     },
   });
 });
+
+/** The accessible name of the focused element, when it sits in the AI connection sheet. */
+const focusInSheet = (page: Page) =>
+  page.evaluate(() => {
+    const active = document.activeElement as HTMLElement | null;
+    if (!active?.closest('[role="dialog"]')) return null;
+    return (
+      active.getAttribute("aria-label") ??
+      active.textContent?.trim() ??
+      active.tagName
+    );
+  });
+
+test("keeps keyboard focus in the sheet while a test runs, ends and saves", async ({
+  page,
+}) => {
+  const platform = await start(page, {
+    connections: [ollamaConnection],
+    testDelay: 60_000,
+  });
+  await page.getByRole("button", { name: "Test ollama-local" }).click();
+  const form = sheet(page, "ollama-local");
+  const testButton = form.getByRole("button", { name: "Test connection" });
+  await expect(testButton).toBeEnabled();
+  await testButton.focus();
+  await page.keyboard.press("Enter");
+  await expect(form.getByRole("button", { name: "Cancel test" })).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(
+    form.getByRole("status").filter({ hasText: "canceled" }),
+  ).toHaveText("Test canceled.");
+  await expect(testButton).toBeFocused();
+  platform.testDelay = 0;
+  await page.keyboard.press("Enter");
+  await expect(
+    form.getByRole("status").filter({ hasText: "Connected." }),
+  ).toBeVisible();
+  expect(await focusInSheet(page)).not.toBeNull();
+  await page.keyboard.press("Tab");
+  expect(await focusInSheet(page)).not.toBeNull();
+  await page.keyboard.press("Escape");
+  await expect(form).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Connect OpenAI" }).click();
+  const created = sheet(page);
+  await created.getByRole("button", { name: "Save connection" }).focus();
+  await page.keyboard.press("Enter");
+  await expect(created.getByLabel("Model", { exact: true })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+});
+
+test("a dialog takes focus back when its focused control is disabled", async ({
+  page,
+}) => {
+  await start(page, { connections: [ollamaConnection], testDelay: 60_000 });
+  await page.getByRole("button", { name: "Test ollama-local" }).click();
+  const form = sheet(page, "ollama-local");
+  await expect(
+    form.getByRole("button", { name: "Test connection" }),
+  ).toBeEnabled();
+  // A control that disables itself while focused, as a busy button does.
+  await page.evaluate(() => {
+    const button = [
+      ...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button'),
+    ].find((item) => item.textContent?.trim() === "Test connection")!;
+    button.focus();
+    button.disabled = true;
+  });
+  await expect.poll(() => focusInSheet(page)).not.toBeNull();
+  await page.keyboard.press("Escape");
+  await expect(form).toHaveCount(0);
+});

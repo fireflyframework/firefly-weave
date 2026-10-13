@@ -81,6 +81,7 @@ export class Autofocus implements AfterViewInit {
       [attr.aria-labelledby]="titleId"
       [attr.aria-describedby]="describedBy() || null"
       (keydown)="keydown($event)"
+      (focusout)="keepFocus($event)"
     >
       <header class="modal-header">
         <h2 [id]="titleId">{{ heading() }}</h2>
@@ -122,7 +123,37 @@ export class Modal implements AfterViewInit, OnDestroy {
     resize: ResizeObserver;
     mutation: MutationObserver;
   } | null = null;
+  /**
+   * Keys pressed while focus fell to the page (a focused control was removed)
+   * still reach the topmost dialog, so Tab and Escape keep working.
+   */
+  private readonly strayKeys = (event: KeyboardEvent) => {
+    if (!this.lostFocus() || (event.key !== "Tab" && event.key !== "Escape"))
+      return;
+    if (event.key === "Tab") {
+      event.preventDefault();
+      this.panel.focus({ preventScroll: true });
+    } else this.keydown(event);
+  };
+  /** Focus left for nowhere (body) while this is the topmost dialog. */
+  private lostFocus() {
+    const panel = this.panel;
+    const active = document.activeElement;
+    return (
+      !!panel?.isConnected &&
+      (!active || active === document.body) &&
+      [...document.querySelectorAll(".modal-panel")].at(-1) === panel
+    );
+  }
+  /** A focused control that is disabled or removed hands focus back to the dialog. */
+  keepFocus(event: FocusEvent) {
+    if (event.relatedTarget) return;
+    queueMicrotask(() => {
+      if (this.lostFocus()) this.panel.focus({ preventScroll: true });
+    });
+  }
   ngAfterViewInit() {
+    document.addEventListener("keydown", this.strayKeys);
     this.watchFooter();
     queueMicrotask(() => {
       const panel = this.panel;
@@ -170,6 +201,7 @@ export class Modal implements AfterViewInit, OnDestroy {
     this.footerWatch = { resize, mutation };
   }
   ngOnDestroy() {
+    document.removeEventListener("keydown", this.strayKeys);
     this.footerWatch?.resize.disconnect();
     this.footerWatch?.mutation.disconnect();
     const opener = this.opener;

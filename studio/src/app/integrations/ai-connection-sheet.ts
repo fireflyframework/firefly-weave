@@ -398,7 +398,12 @@ export interface AiTestRecord {
       }
       <footer class="dialog-footer">
         @if (canManage()) {
-          <button type="button" [disabled]="!canTest" (click)="runTest()">
+          <button
+            type="button"
+            data-test-connection
+            [disabled]="!canTest"
+            (click)="runTest()"
+          >
             Test connection
           </button>
           <button
@@ -603,6 +608,10 @@ export class AiConnectionSheet implements OnInit, OnDestroy {
       this.announcement = `Saved ${connection.name}, revision ${connection.revision}.`;
       this.connectionSaved.emit(connection);
       await this.loadModels(false);
+      // Saving disabled the focused Save button: continue at the model.
+      this.focusSoon(
+        "#ai-deployment, .model-row [role='combobox'], [data-test-connection]",
+      );
     } catch (error) {
       if (!this.alive) return;
       if (error instanceof ApiError && error.code === "WV-IDEMPOTENCY-CONFLICT")
@@ -656,6 +665,8 @@ export class AiConnectionSheet implements OnInit, OnDestroy {
     this.controller = controller;
     const origin = originOf(saved.config.endpoint);
     this.test = { kind: "running", model };
+    // The disabled Test button can't keep focus; Cancel is the next thing to press.
+    this.focusSoon(".test-status button", true);
     try {
       const result = await this.setup.test(saved.id, model, controller.signal);
       if (!this.alive || controller.signal.aborted) return;
@@ -668,8 +679,29 @@ export class AiConnectionSheet implements OnInit, OnDestroy {
         : refusal(error, origin);
     } finally {
       if (this.controller === controller) this.controller = null;
-      if (this.alive) this.cdr.markForCheck();
+      if (this.alive) {
+        this.cdr.markForCheck();
+        this.focusSoon("[data-test-connection]");
+      }
     }
+  }
+  /**
+   * Focuses a control of the sheet once it is rendered, when focus was lost
+   * (its control was disabled or removed) or `always` is set and focus is
+   * still in the sheet.
+   */
+  private focusSoon(selector: string, always = false) {
+    afterNextRender(
+      () => {
+        const sheet =
+          this.element.nativeElement.querySelector<HTMLElement>(".modal-panel");
+        const active = document.activeElement;
+        const lost = !active || active === document.body || active === sheet;
+        if (!sheet || !(lost || (always && sheet.contains(active)))) return;
+        sheet.querySelector<HTMLElement>(selector)?.focus();
+      },
+      { injector: this.injector },
+    );
   }
   cancelTest() {
     this.controller?.abort(
