@@ -1,0 +1,721 @@
+/*
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+*/
+/* Step details: a modal dialog over the editor (above the inspector, below
+   confirmations and toasts). An opaque layer covers the whole area under the
+   shell's top bar, with the 24 px (16 px below 1100 px) insets as padding
+   inside it, so the top strip sits on a clear band and no cut-off shell
+   content shows around the panes; the scrim still dims the top bar.
+   Each pane keeps one content edge: --sd-edge in Parameters, 16 px in Input
+   and Output. Tokens only. */
+weave-step-details {
+  display: contents;
+}
+.sd-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 17;
+  background: var(--scrim);
+}
+.step-details {
+  /* Density (--sd-control, --sd-row, --sd-target and the field rhythm) is
+     set in params/params.css, which forms outside step details share. */
+  position: fixed;
+  --sd-inset: var(--space-6);
+  inset: var(--shell-header) 0 0;
+  padding: var(--sd-inset);
+  background: var(--bg);
+  z-index: 17;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  color: var(--text);
+  font: var(--type-body);
+}
+.step-details:focus {
+  outline: none;
+}
+.step-details:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.sd-top {
+  flex: none;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  color: var(--muted);
+  min-width: 0;
+}
+/* Icon-only buttons share one target size across step details; in the
+   36 px strip a touch target overflows it rather than grow it. */
+.step-details .sd-top > button.icon-button,
+.step-details .sd-actions > weave-row-menu .row-menu-toggle {
+  width: var(--sd-target);
+  min-width: var(--sd-target);
+  height: var(--sd-target);
+  min-height: var(--sd-target);
+}
+.step-details .sd-top > button.icon-button {
+  margin-block: calc((var(--control-md) - var(--sd-target)) / 2);
+}
+.sd-crumb {
+  min-width: 0;
+  margin-right: var(--space-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: var(--type-caption);
+  color: var(--text);
+}
+.sd-spacer {
+  flex: 1;
+}
+.sd-panes {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(240px, 28%) minmax(368px, 1fr) minmax(
+      240px,
+      28%
+    );
+}
+.sd-pane {
+  container-type: inline-size;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+.sd-side {
+  margin: 14px 0;
+}
+.sd-input {
+  border-radius: var(--radius-md) 0 0 var(--radius-md);
+  border-right: 0;
+}
+.sd-output {
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  border-left: 0;
+}
+.sd-main {
+  --sd-edge: var(--space-5);
+  position: relative;
+  z-index: 1;
+  background: var(--raised);
+  border-color: var(--border-hover);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-3);
+}
+/* A dialog opened from inside step details (an example, a document to
+   view, the step's YAML) is modal over all of them, as one opened from the
+   shell is: Parameters rises above the separators, neighbor buttons and
+   pane tabs while it holds one, and step details rise above toasts. */
+.sd-main:has(.modal-backdrop) {
+  z-index: 7;
+}
+.step-details:has(.modal-backdrop) {
+  z-index: 19;
+}
+.sd-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: var(--space-4) var(--sd-edge) var(--space-3);
+}
+.sd-kind {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  background: var(--node-bg);
+  border: 1px solid var(--node-border);
+  color: var(--text);
+}
+/* The name and its subtitle start beside the tile. */
+.sd-name-block {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+}
+.step-details button.sd-name {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--space-2);
+  min-height: 24px;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: var(--type-title-sm);
+  cursor: text;
+}
+.step-details button.sd-name:disabled {
+  background: transparent;
+  color: var(--text);
+  cursor: default;
+}
+.sd-name weave-icon {
+  flex: none;
+  color: var(--subtle);
+}
+.sd-name-text,
+.sd-subtitle {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sd-subtitle {
+  max-width: 100%;
+  font: var(--type-caption);
+  color: var(--muted);
+}
+.sd-rename {
+  width: 100%;
+  min-width: 0;
+  padding: 2px var(--space-2);
+  font: var(--type-title-sm);
+  color: var(--text);
+  background: var(--sunken);
+  border: 1px solid var(--focus);
+  box-shadow: 0 0 0 1px var(--focus);
+  border-radius: var(--radius-sm);
+}
+.sd-rename-hint {
+  min-height: 16px;
+  font: var(--type-caption);
+  color: var(--muted);
+}
+/* Tabs and Docs share one baseline; the tabs sit on the row's rule. */
+.sd-tabs {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-4);
+  padding: 0 var(--sd-edge);
+  border-bottom: 1px solid var(--line);
+}
+.step-details .sd-tabs button[role="tab"] {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: var(--space-2) 0 10px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  font: var(--type-label);
+}
+.step-details .sd-tabs button[role="tab"][aria-selected="true"] {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+/* Some settings differ from their defaults, or the step has a note. */
+.sd-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--info-ink);
+}
+.sd-docs {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding-bottom: 10px;
+  font: var(--type-caption);
+  color: var(--link);
+  text-decoration: none;
+}
+.sd-docs weave-icon {
+  align-self: center;
+}
+.sd-docs:is(:hover, :focus-visible) {
+  text-decoration: underline;
+}
+.sd-tabpanel {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-4) var(--sd-edge);
+}
+.sd-neighbors {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+}
+/* The neighbor buttons straddle the panes' outer edges. */
+.sd-before {
+  left: calc(var(--sd-inset) - var(--space-4));
+}
+.sd-after {
+  right: calc(var(--sd-inset) - var(--space-4));
+}
+/* The overflow menu is one more neighbor: the same card, centered on the
+   same edge, with its count ("+1") in place of an icon. */
+.step-details button.sd-neighbor,
+.step-details .sd-neighbors button.row-menu-toggle {
+  width: 32px;
+  min-width: 32px;
+  min-height: 32px;
+  height: 32px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  background: var(--node-bg);
+  border: 1px solid var(--node-border);
+  box-shadow: var(--shadow-1);
+  color: var(--muted);
+}
+.step-details .sd-neighbors button.row-menu-toggle {
+  font: var(--type-label);
+}
+.step-details .sd-neighbors button.row-menu-toggle weave-icon {
+  display: none;
+}
+.step-details button.sd-neighbor:hover,
+.step-details .sd-neighbors button.row-menu-toggle:hover {
+  color: var(--text);
+  border-color: var(--border-hover);
+}
+@media (max-width: 1099px) {
+  .step-details {
+    --sd-inset: var(--space-4);
+  }
+  .sd-panes {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 767px), (pointer: coarse) {
+  .sd-top {
+    min-height: var(--control-touch);
+  }
+  .sd-rename,
+  .step-details button.sd-name,
+  .step-details .sd-tabs button[role="tab"] {
+    min-height: var(--control-touch);
+  }
+  .sd-docs {
+    padding-block: calc((var(--control-touch) - 16px) / 2);
+  }
+  .step-details button.sd-neighbor,
+  .step-details .sd-neighbors button.row-menu-toggle {
+    width: var(--control-touch);
+    min-width: var(--control-touch);
+    height: var(--control-touch);
+    min-height: var(--control-touch);
+  }
+}
+
+.step-details[data-layout="three"] .sd-panes[style] {
+  grid-template-columns: var(--sd-input) minmax(368px, 1fr) var(--sd-output);
+}
+.sd-separator {
+  position: absolute;
+  top: 14px;
+  bottom: 14px;
+  z-index: 3;
+  width: 24px;
+  touch-action: none;
+  cursor: col-resize;
+  border-radius: var(--radius-xs);
+}
+.sd-separator-input {
+  left: calc(var(--sd-input, 28%) - 12px);
+}
+.sd-separator-output {
+  right: calc(var(--sd-output, 28%) - 12px);
+}
+.sd-separator:hover,
+.sd-separator:focus-visible {
+  background: var(--border-hover);
+}
+.sd-separator:focus-visible {
+  outline: 2px solid var(--focus);
+}
+/* Execute step and More stay together at the header's end, also when they
+   move under the name. */
+.sd-actions {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-3);
+  margin-left: auto;
+}
+.sd-execute {
+  display: inline-flex;
+  flex: none;
+}
+.sd-execute > button {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+  gap: var(--space-2);
+}
+/* Unavailable, Execute step wears the disabled tokens, its menu half too;
+   both stay focusable: the button explains why, the menu offers what can run. */
+.step-details .sd-execute > button.primary[aria-disabled="true"],
+.step-details .sd-execute > button.primary[aria-disabled="true"]:hover {
+  cursor: help;
+}
+.sd-execute weave-row-menu .row-menu-toggle {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+.step-details
+  .sd-execute:not(:has(> button[aria-disabled="true"]))
+  .row-menu-toggle {
+  background: var(--accent);
+  border-color: var(--accent);
+  border-left-color: var(--accent-press);
+  color: var(--on-accent);
+}
+.step-details .sd-execute:has(> button[aria-disabled="true"]) .row-menu-toggle {
+  background: var(--disabled-bg);
+  border-color: transparent;
+  border-left-color: var(--line);
+  color: var(--disabled-ink);
+}
+.step-details
+  .sd-execute:has(> button[aria-disabled="true"])
+  .row-menu-toggle:hover {
+  color: var(--text);
+}
+.sd-data-tabs,
+.sd-segments {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  margin: var(--space-2) 0;
+  background: var(--sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.step-details :is(.sd-data-tabs, .sd-segments) button[role="tab"] {
+  flex: 1;
+  min-height: 28px;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--muted);
+  font: var(--type-label);
+}
+.step-details
+  :is(.sd-data-tabs, .sd-segments)
+  button[role="tab"][aria-selected="true"] {
+  background: var(--hover);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--border-hover);
+}
+.step-details[data-layout="two"] .sd-panes {
+  grid-template-columns: minmax(368px, 1fr) minmax(280px, 40%);
+  grid-template-rows: auto minmax(0, 1fr);
+}
+.step-details[data-layout="two"] .sd-main {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+}
+.step-details[data-layout="two"] .sd-data-tabs {
+  grid-column: 2;
+  grid-row: 1;
+  margin: 14px var(--space-2) 0;
+}
+.step-details[data-layout="two"] :is(.sd-input, .sd-output) {
+  grid-column: 2;
+  grid-row: 2;
+  border: 1px solid var(--border);
+  border-left: 0;
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  margin-top: 0;
+}
+.step-details[data-layout="sheet"] {
+  --sd-inset: 0px;
+  inset: 0;
+}
+.step-details[data-layout="sheet"] .sd-main {
+  --sd-edge: var(--space-4);
+}
+.step-details[data-layout="sheet"] .sd-top {
+  padding: 0 var(--space-2) 0 var(--space-4);
+}
+/* Whatever scrolls into view, by Tab and Shift+Tab too, stops below the
+   sticky pane tabs and step header (their height measured as --sd-sticky;
+   the tabs alone until it is), with room for the focus ring. */
+/* The shown pane fills the sheet to its bottom edge, however short its
+   content. */
+.step-details[data-layout="sheet"] .sd-panes {
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+  scroll-padding-top: calc(
+    var(--sd-sticky, var(--control-touch) + 2 * 2px + 1px) + var(--space-1)
+  );
+}
+.step-details[data-layout="sheet"] .sd-segments {
+  flex: none;
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  margin: 0;
+  border-radius: 0;
+  border-width: 0 0 1px;
+  background: var(--bg);
+}
+.step-details[data-layout="sheet"] .sd-pane {
+  flex: 1 0 auto;
+  margin: 0;
+  border-radius: 0;
+  border-width: 0;
+  box-shadow: none;
+}
+/* The header sticks right under the pane tabs: 44 px tabs, their 2 px
+   padding above and below, and the 1 px rule. */
+.step-details[data-layout="sheet"] .sd-head {
+  position: sticky;
+  top: calc(var(--control-touch) + 2 * 2px + 1px);
+  z-index: 3;
+  background: var(--raised);
+}
+.step-details[data-layout="sheet"] :is(.sd-tabpanel, .sd-pane-body) {
+  overflow: visible;
+}
+.sd-yaml {
+  width: 100%;
+  min-height: 240px;
+  font: var(--type-mono);
+  color: var(--text);
+  background: var(--sunken);
+  border: 1px solid var(--field-border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+}
+.sd-yaml-label {
+  display: block;
+  margin-bottom: var(--space-1);
+  font: var(--type-label);
+}
+
+.step-details .sd-pane[hidden] {
+  display: none;
+}
+.sd-name-block {
+  flex: 1;
+}
+.sd-head {
+  flex-wrap: wrap;
+}
+/* Execute step and More move under the name before the name is cut short. */
+.sd-head > .sd-name-block {
+  flex-basis: 200px;
+}
+.sd-head > .sd-spacer {
+  display: none;
+}
+.sd-actions > weave-row-menu {
+  flex: none;
+}
+@media (max-width: 767px), (pointer: coarse) {
+  .step-details :is(.sd-data-tabs, .sd-segments) button[role="tab"],
+  .sd-execute > button,
+  .sd-execute .row-menu-toggle,
+  .sd-actions > weave-row-menu .row-menu-toggle {
+    min-height: var(--control-touch);
+    min-width: var(--control-touch);
+  }
+  .sd-separator {
+    width: var(--control-touch);
+  }
+  .sd-separator-input {
+    left: calc(var(--sd-input, 28%) - 22px);
+  }
+  .sd-separator-output {
+    right: calc(var(--sd-output, 28%) - 22px);
+  }
+}
+
+.sd-map-menu {
+  position: fixed;
+  z-index: 6;
+  width: min(280px, calc(100vw - 16px));
+  max-height: min(240px, calc(100vh - 16px));
+  overflow: auto;
+  padding: var(--space-1);
+  background: var(--raised);
+  border: 1px solid var(--border-hover);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-2);
+}
+.sd-map-title,
+.sd-map-empty {
+  margin: 0;
+  padding: var(--space-1) var(--space-2);
+  font: var(--type-caption);
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.step-details .sd-map-menu button[role="menuitem"] {
+  display: block;
+  width: 100%;
+  min-height: var(--sd-row);
+  min-width: var(--sd-target);
+  padding: var(--space-1) var(--space-2);
+  text-align: left;
+  font: var(--type-body);
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  overflow-wrap: anywhere;
+}
+.step-details .sd-map-menu button[role="menuitem"]:is(:hover, :focus-visible) {
+  background: var(--hover);
+}
+.step-details .sd-map-menu :focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+/* The issues pill: a 24 px face in the step's tone, on the name's line and
+   centered on it; its target is the name line's height (24 px on desktop,
+   44 px for touch), so the header keeps its height when issues come and go.
+   The name gives way first: it ellipsizes, the pill stays whole. Its list
+   sits in the top layer; entries name the field, then the problem. */
+.sd-name-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  max-width: 100%;
+}
+.sd-name-row > .sd-name {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+weave-issues-indicator {
+  display: inline-flex;
+  flex: none;
+}
+.step-details button.sd-issues-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--sd-label-row);
+  min-height: var(--sd-label-row);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.step-details button.sd-issues-pill:hover {
+  background: transparent;
+}
+.step-details .sd-issues-face {
+  height: var(--space-6);
+  gap: var(--space-1);
+  padding: 0 var(--space-2);
+}
+.step-details
+  button.sd-issues-pill:is(:hover, [aria-expanded="true"])
+  .sd-issues-face {
+  box-shadow: inset 0 0 0 1px currentColor;
+}
+.step-details .sd-issues-list {
+  display: grid;
+  gap: 2px;
+  padding: var(--space-1);
+  overflow: auto;
+  color: var(--text);
+  background: var(--raised);
+  border: 1px solid var(--border-hover);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-2);
+}
+.step-details .sd-issues-list button[role="menuitem"] {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  justify-content: stretch;
+  justify-items: start;
+  gap: 2px;
+  width: 100%;
+  min-height: var(--sd-row);
+  padding: var(--space-1) var(--space-2);
+  text-align: left;
+  white-space: normal;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+}
+.step-details
+  .sd-issues-list
+  button[role="menuitem"]:is(:hover, :focus-visible) {
+  background: var(--hover);
+}
+.step-details .sd-issues-list :focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+.sd-issue-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  max-width: 100%;
+}
+.sd-issue-head > weave-icon {
+  flex: none;
+  color: var(--danger-ink);
+}
+[data-severity="warning"] > .sd-issue-head > weave-icon {
+  color: var(--warning-ink);
+}
+.sd-issue-field {
+  min-width: 0;
+  font: var(--type-label);
+  overflow-wrap: anywhere;
+}
+.step-details .sd-issue-status {
+  flex: none;
+  height: 20px;
+}
+/* The message starts under the field's name, past the icon. */
+.sd-issue-message {
+  padding-left: calc(16px + var(--space-2));
+  font: var(--type-small);
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}

@@ -17,6 +17,7 @@ SPDX-License-Identifier: Apache-2.0
 */
 import {
   ChangeDetectorRef,
+  DestroyRef,
   Component,
   ElementRef,
   OnChanges,
@@ -621,6 +622,7 @@ let sequence = 0;
             [label]="label || field.label"
             [hideLabel]="true"
             [options]="choiceOptions(field)"
+            [icon]="choiceIcon()"
             [value]="choiceValue(field, value)"
             [disabled]="isNull"
             [invalid]="invalid"
@@ -634,6 +636,7 @@ let sequence = 0;
             [label]="label || field.label"
             [hideLabel]="true"
             [options]="tristateOptions(member)"
+            [icon]="choiceIcon()"
             [value]="value === true ? 'true' : value === false ? 'false' : ''"
             [disabled]="isNull"
             [invalid]="invalid"
@@ -822,6 +825,10 @@ let sequence = 0;
 export class TaskForm implements OnChanges {
   fileAccess = input<FileAccess | null>(null);
   schema = input<Schema>({});
+  /** The icon on a choice list's toggle; "chevronDown" where step details opens it in place. */
+  choiceIcon = input("chevron");
+  /** Original document when an object wrapper adapts a scalar or list root. */
+  schemaRoot = input<unknown>(undefined);
   initialData = input<Record<string, unknown>>({});
   /** Edit an expression whose fields each take a value, data or a formula. */
   bindings = input(false);
@@ -867,6 +874,7 @@ export class TaskForm implements OnChanges {
   private generation = 0;
   private focusRevision = 0;
   private prefix = `schema-field-${++sequence}`;
+  private readonly lifetime = inject(DestroyRef);
   private host = inject(ElementRef<HTMLElement>);
   private cdr = inject(ChangeDetectorRef);
   private handlerCache = new Map<string, LazyOutputs>();
@@ -902,12 +910,14 @@ export class TaskForm implements OnChanges {
   ngOnChanges(changes: SimpleChanges) {
     if (
       !changes["schema"] &&
+      !changes["schemaRoot"] &&
       !changes["initialData"] &&
       !changes["expression"] &&
       !changes["bindings"]
     )
       return;
     const generation = ++this.generation;
+    if (changes["schemaRoot"]) this.fieldCache = new WeakMap();
     this.errors = {};
     this.touched.clear();
     this.dataFocus = null;
@@ -922,18 +932,21 @@ export class TaskForm implements OnChanges {
       this.bound =
         bound.kind === "object" ? bound : { kind: "object", entries: {} };
       queueMicrotask(() => {
-        if (generation === this.generation)
+        if (!this.lifetime.destroyed && generation === this.generation)
           this.missingChange.emit(this.missing());
       });
       return;
     }
-    const prepared = prepareData(this.schema(), this.initialData());
+    const prepared = prepareData(this.schema(), this.initialData(), {
+      root: this.schemaRoot() ?? this.schema(),
+    });
     this.values = prepared.data;
     // Filled defaults (a required `false`) and dropped secrets are what the
     // form submits, so the host hears about them before any edit.
     if (prepared.changed)
       queueMicrotask(() => {
-        if (generation === this.generation) this.publish();
+        if (!this.lifetime.destroyed && generation === this.generation)
+          this.publish();
       });
   }
 
@@ -962,7 +975,7 @@ export class TaskForm implements OnChanges {
     if (!fields) {
       fields =
         source === this.schema()
-          ? formFields(source)
+          ? formFields(source, { root: this.schemaRoot() ?? source })
           : "kind" in source && "context" in source
             ? fieldsOf(
                 (source as FieldInfo).schema,
@@ -1397,7 +1410,8 @@ export class TaskForm implements OnChanges {
       return typeof field.schema["minimum"] === "number"
         ? field.schema["minimum"]
         : 0;
-    if (field.kind === "object") return prepareData(field.schema, {}).data;
+    if (field.kind === "object")
+      return prepareData(field.schema, {}, field.context).data;
     return scalarMember(field) ? "" : {};
   }
   addItem(path: Path, item: FieldInfo | null, label: string) {

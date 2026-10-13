@@ -198,6 +198,33 @@ SPDX-License-Identifier: Apache-2.0
 - Update Studio's YAML parser to 2.8.3 so deeply nested documents produce a
   parser diagnostic instead of an unexpected stack-overflow exception. Update
   Vitest to 4.1.11 to include fixes for its development-server security advisories.
+- Add step details to Studio's new editor (**Settings → Preferences → Try the
+  new editor**, off by default). Double-click a step, or focus it and press
+  Enter, to configure it over the canvas with **Input**, **Parameters** and
+  **Output** panes, **Fixed | Mapped** fields, drag to map, **Settings** with
+  retries, timeouts and notes, and issues under the field they concern. The
+  trigger and End open their own details, and the gear opens **Workflow
+  settings**. The step picker lists **Call an API**, email and file steps under
+  **Common actions**; each gets an action of its own, which **Publish…** and
+  **Simulate** publish first, after you confirm. A draft saved on a platform
+  keeps those actions' settings and step notes only while it is open, and
+  **Save draft** says so. With the new editor off, Studio keeps the inspector.
+- Leaving **Source** with text you typed but haven't applied now asks **Apply
+  changes**, **Discard changes** or **Keep editing**, with the new editor on or
+  off: switching tabs, opening a step, running a command, going to another page,
+  browser Back, Undo and Redo, and a toast's **Undo** all ask first. Closing the
+  window uses the browser's own prompt.
+- Studio dialogs and toasts fit touch screens better: close and toast buttons
+  are at least 44 pixels on touch, dialog footers stack on narrow screens and
+  stay clear of the focused field, dialog headings line up with their close
+  button, and toasts no longer cover the page header or step details' top bars.
+- Studio loads the Clusters page, and the code behind **Publish…** and
+  **Simulate**, only when it is first used, so its first download is smaller.
+- The Studio host adds `GET /studio/contracts/connector-actions`, which returns
+  the built-in email and file connector actions, as Action documents, that
+  Studio's email and file steps copy into actions of their own. Its API action
+  builder (`POST /studio/local/http-action`) refuses a request larger than
+  1 MiB with 413 `WV-STUDIO-REQUEST`.
 - Run AI tasks on a local Ollama model: `weave platform ai enable --ollama auto|host|container`
   (or `--ollama-url URL`) sets up the AI gateway, the Agentic worker, a version 2 AI
   policy, development-only private-origin entries and a keyless `ollama-local`

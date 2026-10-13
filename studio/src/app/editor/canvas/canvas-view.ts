@@ -66,6 +66,7 @@ import {
   keyPlatform,
 } from "../state/canvas-commands";
 import { minimapPinned, setMinimapPinned } from "../state/canvas-preferences";
+import { stepNoteLine, type CanvasSidecar } from "../state/canvas-sidecar";
 import { CHOICE_NOT_KEPT } from "../state/editor-flag";
 import type { KeymapCommand } from "../state/keymap";
 import {
@@ -126,7 +127,6 @@ const NO_FACTS: StepFacts = { errors: [], warnings: [], setup: [] };
 const NO_BORDERS: TileBorders = {
   selected: false,
   live: false,
-  unapplied: false,
   error: false,
 };
 
@@ -254,10 +254,18 @@ export class CanvasView implements OnInit, DoCheck {
   private fitted = -1;
   private fitPending = false;
   private revealed = "";
+  /**
+   * The step a pointer press on its card just selected. It is in view where
+   * the pointer is, so selecting it pans only when part of it is hidden:
+   * otherwise the second click of a double-click would miss it.
+   */
+  private pointed = "";
   private readonly positions = new WeakMap<LtrTile, Point>();
 
+  private readonly lifetime = inject(DestroyRef);
+
   constructor() {
-    inject(DestroyRef).onDestroy(() => clearTimeout(this.panningTimer));
+    this.lifetime.onDestroy(() => clearTimeout(this.panningTimer));
     inject(FControlSchemeController).setScheme({
       nodeMove: () => false,
       createConnection: () => false,
@@ -312,8 +320,10 @@ export class CanvasView implements OnInit, DoCheck {
     const selected = h.model.selected;
     if (selected !== this.revealed) {
       this.revealed = selected;
+      const margin = selected && selected === this.pointed ? 0 : undefined;
+      this.pointed = "";
       if (selected)
-        afterNextRender(() => this.revealTile(selected), {
+        afterNextRender(() => this.revealTile(selected, margin), {
           injector: this.injector,
         });
     }
@@ -412,9 +422,9 @@ export class CanvasView implements OnInit, DoCheck {
       layout: LtrLayout,
       facts: ReadonlyMap<string, StepFacts>,
       selection: Selection,
-      dirty: string,
       active: string,
       run: CanvasRun | null,
+      canvas: CanvasSidecar,
     ): TileView[] => {
       const ctx = this.host().kindContext();
       // A selected group shows every step inside it as selected.
@@ -423,10 +433,15 @@ export class CanvasView implements OnInit, DoCheck {
         const state = tile.step ? tileRun(tile.id, run) : null;
         return this.tileView(tile, ctx, facts.get(tile.id) ?? NO_FACTS, {
           selected: chosen.has(tile.id),
-          unapplied: tile.id === dirty,
           active: tile.id === active,
           run: state,
           pulse: pulses(state, run),
+          // The trigger's note is the one its step details keep.
+          note: tile.step
+            ? stepNoteLine(canvas, tile.id)
+            : tile.kind === "trigger"
+              ? stepNoteLine(canvas, "$trigger")
+              : "",
         });
       });
     },
@@ -437,9 +452,9 @@ export class CanvasView implements OnInit, DoCheck {
       this.layout(),
       h.canvasFacts(),
       this.selection,
-      h.dirtyStep,
       this.active(),
       h.canvasRun(),
+      h.model.canvas,
     );
   }
   private position(tile: LtrTile): Point {
@@ -456,10 +471,11 @@ export class CanvasView implements OnInit, DoCheck {
     facts: StepFacts,
     state: {
       selected: boolean;
-      unapplied: boolean;
       active: boolean;
       run: TileRun;
       pulse: boolean;
+      /** The first line of the step's note when it shows on the canvas. */
+      note: string;
     },
   ): TileView {
     const h = this.host();
@@ -474,6 +490,7 @@ export class CanvasView implements OnInit, DoCheck {
       paintMargin: tilePaintMargin(tile),
       tabIndex: state.active ? (0 as const) : (-1 as const),
       pulse: state.pulse,
+      note: state.note,
     };
     if (!tile.step) {
       const trigger = tile.kind === "trigger";
@@ -502,7 +519,6 @@ export class CanvasView implements OnInit, DoCheck {
       failure: state.run === "failed" ? {} : null,
       stale: null,
       pinned: false,
-      unapplied: state.unapplied,
       selected: state.selected,
     };
     const badge = tileBadge(shown);
@@ -696,7 +712,10 @@ export class CanvasView implements OnInit, DoCheck {
       return;
     }
     const action = control.dataset["action"];
-    if (action === "tile") {
+    if (action === "issues") {
+      const id = control.closest<HTMLElement>("[data-tile]")?.dataset["tile"];
+      if (id && event.detail < 2) void this.host().openStep(id, "issues");
+    } else if (action === "tile") {
       const id = control.closest<HTMLElement>("[data-tile]")?.dataset["tile"];
       if (id) void this.openTile(id, event);
     } else if (action === "insert") this.insertAt(control);
@@ -708,6 +727,9 @@ export class CanvasView implements OnInit, DoCheck {
     }
   }
   doubleClick(event: MouseEvent) {
+    if (event.shiftKey || event.ctrlKey || event.metaKey || this.suppressClick)
+      return;
+    if ((event.target as Element).closest(".tile-issue")) return;
     const tile = (event.target as Element)
       .closest(".tile-body")
       ?.closest("[data-tile]");
@@ -719,24 +741,24 @@ export class CanvasView implements OnInit, DoCheck {
     else void this.host().openStep(id, "details");
   }
   /**
-   * A click selects the step and shows its details; with Shift, Ctrl or
-   * Command it adds the step to the selection, or takes it out.
+   * A click selects; with Shift, Ctrl or Command it adds the step to the
+   * selection, or takes it out. Opening belongs to double-click and keys.
    */
   private async openTile(id: string, event: MouseEvent) {
     const h = this.host();
-    if (id.startsWith("$trigger:"))
-      return h.openWorkflowSection("spec/inputSchema");
-    if (id === "$end") return h.openWorkflowSection("spec/output");
+    if (id.startsWith("$trigger:") || id === "$end") return;
     if (event.shiftKey || event.ctrlKey || event.metaKey) {
       this.selection = toggledCovering(this.selection, id, this.places());
       this.seenSelected = this.selection.focus ?? "";
+      this.pointed = this.selection.focus === id ? id : "";
       if (this.selection.focus) await h.selectStep(this.selection.focus, false);
       else await h.deselect();
       return;
     }
     this.selection = only(id);
     this.seenSelected = id;
-    await h.selectStep(id, true);
+    this.pointed = id;
+    await h.selectStep(id, false);
   }
   private insertAt(control: HTMLElement) {
     const h = this.host();
@@ -1254,6 +1276,29 @@ export class CanvasView implements OnInit, DoCheck {
       this.setView({ zoom: this.view.zoom, pan });
   }
 
+  /** Returns from a dialog to a current tile, revealing it after any resize. */
+  restoreFocus(target: string, current: () => boolean) {
+    const id =
+      target === "$trigger"
+        ? this.layout().tiles.find((tile) => tile.id.startsWith("$trigger:"))
+            ?.id
+        : target;
+    if (!id || this.lifetime.destroyed || !current()) return;
+    this.revealTile(id);
+    this.cdr.markForCheck();
+    afterNextRender(
+      () =>
+        setTimeout(() => {
+          if (this.lifetime.destroyed || !current()) return;
+          const tile = this.root().nativeElement.querySelector<HTMLElement>(
+            `[data-tile="${CSS.escape(id)}"] .tile-body`,
+          );
+          if (tile?.isConnected) tile.focus({ preventScroll: true });
+        }),
+      { injector: this.injector },
+    );
+  }
+
   // ---------------------------------------- selection, box and minimap
 
   clearSelection() {
@@ -1295,12 +1340,27 @@ export class CanvasView implements OnInit, DoCheck {
       )
     )
       return;
+    const target = event.target as HTMLElement;
+    const tile = target.classList.contains("tile-body");
+    const wasHeld = this.space;
     this.space = event.type === "keydown";
     if (this.space) {
       if (!event.repeat) this.spacePanned = false;
-    } else if (this.spacePanned) {
-      event.preventDefault();
+      if (tile) event.preventDefault();
+    } else {
+      const panned = this.spacePanned;
       this.spacePanned = false;
+      if (panned || tile) event.preventDefault();
+      if (
+        wasHeld &&
+        !panned &&
+        tile &&
+        !event.shiftKey &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.altKey
+      )
+        this.run("openStepDetails", target);
     }
   }
   dragStarted(event: FDragStartedEvent) {

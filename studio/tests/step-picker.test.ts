@@ -25,6 +25,7 @@ import {
   stepKindDescriptions,
   stepKindLabels,
 } from "../src/app/designer/step-picker";
+import { COMMON_ACTIONS } from "../src/app/editor/ndv/owned/common-actions";
 
 const actions = [
   {
@@ -178,5 +179,57 @@ describe("popover placement", () => {
       { width: 600, height: 500 },
     );
     expect(placed.maxHeight).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe("common actions in the picker", () => {
+  it("finds them by words and keeps them in their own group", () => {
+    const found = pickerOptions("mail", kinds, [], 50, COMMON_ACTIONS);
+    expect(found.common.map((o) => [o.label, o.section, o.common])).toEqual([
+      ["Send email", "common", "send-email"],
+      ["Reply to an email", "common", "reply-email"],
+    ]);
+    expect(pickerOptions("mail", kinds, []).common).toEqual([]);
+  });
+  it("finds Call an API by everyday words, with an icon of its own", () => {
+    for (const query of ["http", "api", "request", "url"]) {
+      const [first] = pickerOptions(
+        query,
+        kinds,
+        [],
+        50,
+        COMMON_ACTIONS,
+      ).common;
+      expect(first, query).toMatchObject({
+        label: "Call an API",
+        kind: "action",
+        common: "call-api",
+        icon: "webhook",
+      });
+    }
+  });
+  it("lets api, http, request and rest lead to Call an API, not a bare action, while common actions are offered", () => {
+    for (const query of ["api", "http", "request", "rest"]) {
+      const found = pickerOptions(query, kinds, [], 50, COMMON_ACTIONS);
+      const first = [...found.steps, ...found.common, ...found.actions][0];
+      expect(first, query).toMatchObject({ common: "call-api" });
+      expect(found.steps, query).toEqual([]);
+    }
+    // Without common actions the same words still find Call an action.
+    expect(pickerOptions("http", kinds, []).steps.map((o) => o.kind)).toEqual([
+      "action",
+    ]);
+    // A step's own name and description still find it: "message" names
+    // Wait for signal's description as well as Send email's words.
+    const message = pickerOptions("message", kinds, [], 50, COMMON_ACTIONS);
+    expect(message.steps.map((o) => o.kind)).toEqual(["signal"]);
+    expect(message.common.map((o) => o.common)).toEqual(["send-email"]);
+  });
+  it("lists every common action once, with option identities apart from steps and actions", () => {
+    const all = pickerOptions("", kinds, actions, 50, COMMON_ACTIONS);
+    expect(all.common).toHaveLength(COMMON_ACTIONS.length);
+    const ids = [...all.steps, ...all.common, ...all.actions].map((o) => o.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(all.common.every((o) => o.id.startsWith("common:"))).toBe(true);
   });
 });

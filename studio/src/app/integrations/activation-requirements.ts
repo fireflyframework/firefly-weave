@@ -613,6 +613,23 @@ async function lookup<T>(read: () => Promise<T>): Promise<Lookup<T>> {
     .binding-row > .hint {
       margin: 4px 0 0;
     }
+    /* Adds a row to the lists above: part of the dialog's content, so it
+       scrolls with it, unlike the dialog's footer. */
+    .pin-actions {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: var(--space-2);
+      margin-top: var(--space-6);
+    }
+    /* In a narrow dialog they stack full width, like its answers, rather
+       than wrap into rows of different widths. */
+    @container dialog (max-width: 424px) {
+      .pin-actions {
+        flex-direction: column;
+        align-items: stretch;
+      }
+    }
   `,
   template: `@if (loading()) {
       <p class="dialog-status" role="status">
@@ -720,7 +737,7 @@ async function lookup<T>(read: () => Promise<T>): Promise<Lookup<T>> {
         }
       }
       @if (source() === "workflow") {
-        <div class="dialog-actions">
+        <div class="pin-actions">
           <button
             type="button"
             [id]="prefix + '-add-worker'"

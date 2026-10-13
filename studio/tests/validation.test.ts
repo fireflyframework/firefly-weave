@@ -380,6 +380,55 @@ describe("manual validation and the project compile", () => {
     // The compiled artifact still serves Simulate and the publish gate.
     expect(service.canPublish("v1", "yaml")).toBe(true);
   });
+  it("lets actions published first be the only gap in a project compile", async () => {
+    const { service, compile } = harness(project);
+    compile.mockResolvedValueOnce({
+      validationOk: true,
+      errorCount: 0,
+      ok: false,
+      partial: false,
+      diagnostics: [],
+      ownedPending: 2,
+    });
+    await service.validateNow("v1", "yaml");
+    expect(service.publishBlocker("v1", "yaml")).toBe("");
+    compile.mockResolvedValueOnce({
+      validationOk: true,
+      errorCount: 1,
+      ok: false,
+      partial: false,
+      diagnostics: [],
+      ownedPending: 1,
+    });
+    await service.validateNow("v2", "yaml");
+    expect(service.publishBlocker("v2", "yaml")).toBe(
+      "Fix the errors found against the project catalog before publishing.",
+    );
+    compile.mockResolvedValueOnce({
+      validationOk: true,
+      errorCount: 0,
+      ok: false,
+      partial: false,
+      diagnostics: [],
+    });
+    await service.validateNow("v3", "yaml");
+    expect(service.publishBlocker("v3", "yaml")).toBe(
+      "Validate against the project catalog before publishing.",
+    );
+    // A compile that didn't finish still blocks, whatever the actions.
+    compile.mockResolvedValueOnce({
+      validationOk: true,
+      errorCount: 0,
+      ok: false,
+      partial: true,
+      diagnostics: [],
+      ownedPending: 2,
+    });
+    await service.validateNow("v4", "yaml");
+    expect(service.publishBlocker("v4", "yaml")).toBe(
+      "Validate against the project catalog before publishing.",
+    );
+  });
 });
 
 describe("cancelled checks", () => {
@@ -568,5 +617,45 @@ describe("banner copy", () => {
       tone: "failed",
       headline: "Studio couldn't check this workflow. Try again.",
     });
+  });
+  it("says steps that call the workflow's own actions are checked again when those actions publish", async () => {
+    const ctx = { connected: true, canCompile: true, scope: "p" };
+    const { service, compile } = harness(ctx);
+    compile.mockResolvedValueOnce({
+      validationOk: true,
+      errorCount: 0,
+      ok: false,
+      partial: false,
+      diagnostics: [
+        { code: "WV-STUDIO-OWNED_UNPUBLISHED", severity: "info", message: "x" },
+      ],
+      ownedPending: 1,
+    });
+    await service.validateNow("v1", "yaml");
+    expect(summarize(service.snapshot, ctx)).toMatchObject({
+      tone: "checked",
+      passedProjectCatalog: false,
+      headline:
+        "No other problems found. Steps that call this workflow's own actions are checked again when Publish… or Simulate publishes those actions.",
+    });
+    compile.mockResolvedValueOnce({
+      validationOk: true,
+      errorCount: 0,
+      ok: false,
+      partial: false,
+      diagnostics: [
+        { code: "WV-STUDIO-OWNED_UNPUBLISHED", severity: "info", message: "x" },
+        {
+          code: "WV-COMP-REFERENCE_PRESENCE",
+          severity: "warning",
+          message: "y",
+        },
+      ],
+      ownedPending: 1,
+    });
+    await service.validateNow("v2", "yaml");
+    expect(summarize(service.snapshot, ctx).headline).toBe(
+      "No other errors, 1 warning. Steps that call this workflow's own actions are checked again when Publish… or Simulate publishes those actions.",
+    );
   });
 });

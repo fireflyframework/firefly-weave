@@ -35,8 +35,6 @@ export interface CanvasHost {
   readonly tick: Signal<number>;
   /** True while a simulation runs: the workflow can't change. */
   readonly editingLocked: boolean;
-  /** The step whose details hold an edit not applied yet, or "". */
-  readonly dirtyStep: string;
   /** The step "Move to…" is placing, or "". */
   readonly connectingNode: string;
   showTemplates: boolean;
@@ -71,7 +69,7 @@ export interface CanvasHost {
   /** Cancels a move and returns focus to its step. */
   cancelMove(): void;
   /** Selects a step and moves focus into its details: the title, or its name to rename it. */
-  openStep(id: string, focus: "details" | "rename"): Promise<void>;
+  openStep(id: string, focus: "details" | "rename" | "issues"): Promise<void>;
   /** Deletes steps, each with everything inside it, as one undo step with an Undo toast. */
   removeSteps(ids: readonly string[]): Promise<void>;
   /** Copies a step, or a run of steps, right after itself. */

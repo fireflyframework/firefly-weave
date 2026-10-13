@@ -35,7 +35,6 @@ const facts = (extra: Partial<TileFacts> = {}): TileFacts => ({
   failure: null,
   stale: null,
   pinned: false,
-  unapplied: false,
   selected: false,
   ...extra,
 });
@@ -123,18 +122,17 @@ describe("the corner badge", () => {
 });
 
 describe("tile borders", () => {
-  it("mark only selected, live, unapplied and error", () => {
+  it("mark only selected, live and error", () => {
     expect(
       tileBorders(
         facts({
           selected: true,
-          unapplied: true,
           warnings: ["w"],
           setup: ["s"],
           pinned: true,
         }),
       ),
-    ).toEqual({ selected: true, live: false, unapplied: true, error: false });
+    ).toEqual({ selected: true, live: false, error: false });
     expect(tileBorders(facts({ run: "waiting" }))).toMatchObject({
       live: true,
     });

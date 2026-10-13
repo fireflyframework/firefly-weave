@@ -104,7 +104,7 @@ print(result.artifact.to_bytes().decode())
         ),
       )
     : null;
-  return compiled;
+  return compiled ?? null;
 }
 
 const now = "2026-10-02T09:00:00.000Z";

@@ -113,6 +113,22 @@ export const lucideNames = {
   zoomOut: "zoom-out",
   drag: "grip-vertical",
   spinner: "loader-circle",
+  edit: "pencil",
+  docs: "book-open",
+  expand: "maximize-2",
+  chevronLeft: "chevron-left",
+  chevronDown: "chevron-down",
+  schemaView: "list-tree",
+  tableView: "table-2",
+  jsonView: "file-braces",
+  typeText: "type",
+  typeNumber: "hash",
+  typeBoolean: "toggle-left",
+  typeList: "list",
+  typeObject: "box",
+  typeDate: "calendar",
+  typeFile: "file",
+  typeAny: "circle-dashed",
   overview: "gauge",
   clusters: "server",
   metrics: "chart-line",
@@ -811,6 +827,132 @@ export const iconNodes: Readonly<Record<IconName, readonly IconNode[]>> = {
     { tag: "circle", attrs: { cx: "15", cy: "19", r: "1" } },
   ],
   spinner: [{ tag: "path", attrs: { d: "M21 12a9 9 0 1 1-6.219-8.56" } }],
+  edit: [
+    {
+      tag: "path",
+      attrs: {
+        d: "M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z",
+      },
+    },
+    { tag: "path", attrs: { d: "m15 5 4 4" } },
+  ],
+  docs: [
+    { tag: "path", attrs: { d: "M12 5v16" } },
+    {
+      tag: "path",
+      attrs: {
+        d: "M20.001 19A2 2 0 0022 17V5a2 2 0 00-1.999-2L16 3.002A5 5 0 0012 5a5 5 0 00-4-2H4a2 2 0 00-2 2v12a2 2 0 001.999 2H8a5 5 0 014 2 5 5 0 014-2z",
+      },
+    },
+  ],
+  expand: [
+    { tag: "path", attrs: { d: "M15 3h6v6" } },
+    { tag: "path", attrs: { d: "m21 3-7 7" } },
+    { tag: "path", attrs: { d: "m3 21 7-7" } },
+    { tag: "path", attrs: { d: "M9 21H3v-6" } },
+  ],
+  chevronLeft: [{ tag: "path", attrs: { d: "m15 18-6-6 6-6" } }],
+  chevronDown: [{ tag: "path", attrs: { d: "m6 9 6 6 6-6" } }],
+  schemaView: [
+    { tag: "path", attrs: { d: "M8 5h13" } },
+    { tag: "path", attrs: { d: "M13 12h8" } },
+    { tag: "path", attrs: { d: "M13 19h8" } },
+    { tag: "path", attrs: { d: "M3 10a2 2 0 0 0 2 2h3" } },
+    { tag: "path", attrs: { d: "M3 5v12a2 2 0 0 0 2 2h3" } },
+  ],
+  tableView: [
+    { tag: "path", attrs: { d: "M3 9h18" } },
+    { tag: "path", attrs: { d: "M9 3v18" } },
+    {
+      tag: "rect",
+      attrs: { x: "3", y: "3", width: "18", height: "18", rx: "2" },
+    },
+  ],
+  jsonView: [
+    {
+      tag: "path",
+      attrs: {
+        d: "M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z",
+      },
+    },
+    { tag: "path", attrs: { d: "M14 2v5a1 1 0 0 0 1 1h5" } },
+    {
+      tag: "path",
+      attrs: {
+        d: "M10 12a1 1 0 0 0-1 1v1a1 1 0 0 1-1 1 1 1 0 0 1 1 1v1a1 1 0 0 0 1 1",
+      },
+    },
+    {
+      tag: "path",
+      attrs: {
+        d: "M14 18a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1 1 1 0 0 1-1-1v-1a1 1 0 0 0-1-1",
+      },
+    },
+  ],
+  typeText: [
+    { tag: "path", attrs: { d: "M12 4v16" } },
+    { tag: "path", attrs: { d: "M4 7V5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v2" } },
+    { tag: "path", attrs: { d: "M9 20h6" } },
+  ],
+  typeNumber: [
+    { tag: "line", attrs: { x1: "4", x2: "20", y1: "9", y2: "9" } },
+    { tag: "line", attrs: { x1: "4", x2: "20", y1: "15", y2: "15" } },
+    { tag: "line", attrs: { x1: "10", x2: "8", y1: "3", y2: "21" } },
+    { tag: "line", attrs: { x1: "16", x2: "14", y1: "3", y2: "21" } },
+  ],
+  typeBoolean: [
+    { tag: "circle", attrs: { cx: "9", cy: "12", r: "3" } },
+    {
+      tag: "rect",
+      attrs: { width: "20", height: "14", x: "2", y: "5", rx: "7" },
+    },
+  ],
+  typeList: [
+    { tag: "path", attrs: { d: "M3 5h.01" } },
+    { tag: "path", attrs: { d: "M3 12h.01" } },
+    { tag: "path", attrs: { d: "M3 19h.01" } },
+    { tag: "path", attrs: { d: "M8 5h13" } },
+    { tag: "path", attrs: { d: "M8 12h13" } },
+    { tag: "path", attrs: { d: "M8 19h13" } },
+  ],
+  typeObject: [
+    {
+      tag: "path",
+      attrs: {
+        d: "M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z",
+      },
+    },
+    { tag: "path", attrs: { d: "m3.3 7 8.7 5 8.7-5" } },
+    { tag: "path", attrs: { d: "M12 22V12" } },
+  ],
+  typeDate: [
+    { tag: "path", attrs: { d: "M8 2v3" } },
+    { tag: "path", attrs: { d: "M16 2v3" } },
+    {
+      tag: "rect",
+      attrs: { x: "3", y: "3", width: "18", height: "18", rx: "2" },
+    },
+    { tag: "path", attrs: { d: "M3 9h18" } },
+  ],
+  typeFile: [
+    {
+      tag: "path",
+      attrs: {
+        d: "M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z",
+      },
+    },
+    { tag: "path", attrs: { d: "M14 2v5a1 1 0 0 0 1 1h5" } },
+  ],
+  typeAny: [
+    { tag: "path", attrs: { d: "M10.1 2.182a10 10 0 0 1 3.8 0" } },
+    { tag: "path", attrs: { d: "M13.9 21.818a10 10 0 0 1-3.8 0" } },
+    { tag: "path", attrs: { d: "M17.609 3.721a10 10 0 0 1 2.69 2.7" } },
+    { tag: "path", attrs: { d: "M2.182 13.9a10 10 0 0 1 0-3.8" } },
+    { tag: "path", attrs: { d: "M20.279 17.609a10 10 0 0 1-2.7 2.69" } },
+    { tag: "path", attrs: { d: "M21.818 10.1a10 10 0 0 1 0 3.8" } },
+    { tag: "path", attrs: { d: "M3.721 6.391a10 10 0 0 1 2.7-2.69" } },
+    { tag: "path", attrs: { d: "M6.391 20.279a10 10 0 0 1-2.69-2.7" } },
+  ],
   overview: [
     { tag: "path", attrs: { d: "m12 14 4-4" } },
     { tag: "path", attrs: { d: "M3.34 19a10 10 0 1 1 17.32 0" } },

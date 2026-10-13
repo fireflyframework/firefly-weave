@@ -123,6 +123,8 @@ class HttpActionBuild(BaseModel):
     request: dict[str, Any]
 
 
+# Room for a body sample and a response sample at the 256 KB Studio accepts for each, with their schemas.
+HTTP_ACTION_LIMIT = 1024 * 1024
 LOCAL_WORK_SECONDS = 30
 LOCAL_WORKERS = 2
 
@@ -399,6 +401,12 @@ class StudioController:
 
         return JSONResponse(file_reference_schema(), headers={"Cache-Control": "no-store"})
 
+    @get_mapping("/studio/contracts/connector-actions")
+    async def connector_actions_contract(self, request: Request) -> Response:
+        from firefly_weave.contracts.connector_actions import builtin_connector_actions
+
+        return JSONResponse({"actions": builtin_connector_actions()}, headers={"Cache-Control": "no-store"})
+
     @get_mapping("/studio/contracts/lumi-configuration")
     async def lumi_configuration_contract(self, request: Request) -> Response:
         from firefly_weave.contracts.lumi import LumiConfigurationRequest
@@ -489,8 +497,11 @@ class StudioController:
     async def http_action(self, request: Request) -> Response:
         from firefly_weave.sdk.http_actions import author_http_action
 
+        raw = await request.body()
+        if len(raw) > HTTP_ACTION_LIMIT:
+            return problem(413, "WV-STUDIO-REQUEST", "HTTP request description exceeds the 1 MiB limit")
         try:
-            body = HttpActionBuild.model_validate_json(await request.body())
+            body = HttpActionBuild.model_validate_json(raw)
         except ValidationError:
             return problem(422, "WV-STUDIO-REQUEST", "Describe the HTTP request to turn into an action")
         return await local_work(lambda: author_http_action(body.request).model_dump(by_alias=True, mode="json"))

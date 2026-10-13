@@ -252,12 +252,15 @@ let sequence = 0;
           open() && activeIndex() >= 0 ? optionId(activeIndex()) : null
         "
         [attr.aria-describedby]="describedBy()"
-        [attr.aria-invalid]="hint()?.tone === 'error' ? 'true' : null"
+        [attr.aria-invalid]="
+          invalid() || hint()?.tone === 'error' ? 'true' : null
+        "
         [placeholder]="placeholder()"
         [value]="!open() && token() && !showPaths() ? token() : text()"
         [disabled]="disabled()"
         (input)="typed($event)"
         (keydown)="keydown($event)"
+        (click)="clicked()"
       />
       <button
         type="button"
@@ -589,6 +592,10 @@ export class ReferenceCombobox {
   placeholder = input("Choose data…");
   removable = input(false);
   focusOnMount = input(false);
+  /** The field has a problem the host shows (see `describedByIds`). */
+  invalid = input(false);
+  /** A click in the text box opens the list (for a field without its toggle). */
+  openOnClick = input(false);
   removed = output<void>();
   readonly showPaths = signal(false);
   private readonly touched = signal(false);
@@ -701,6 +708,10 @@ export class ReferenceCombobox {
   close() {
     this.open.set(false);
     this.activeIndex.set(-1);
+  }
+
+  clicked() {
+    if (this.openOnClick() && !this.open() && !this.disabled()) this.show();
   }
 
   toggle() {

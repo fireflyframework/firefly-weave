@@ -175,6 +175,7 @@ SPDX-License-Identifier: Apache-2.0
   --control-sm: 32px;
   --control-md: 36px;
   --control-touch: 44px;
+  --target-min: 24px; /* the smallest pointer target, for a fine pointer */
   /* motion (brand motion tokens) */
   --ease: cubic-bezier(0.22, 1, 0.36, 1); /* enter, the default */
   --ease-move: cubic-bezier(0.65, 0, 0.35, 1);
@@ -185,6 +186,7 @@ SPDX-License-Identifier: Apache-2.0
   --dur-expressive: 1200ms; /* the live pulse on real runs */
   /* layout */
   --panel-w: clamp(360px, 25vw, 480px);
+  --shell-header: 72px; /* the shell's top bar; dialogs over the editor start below it */
   font: var(--type-body);
   color: var(--text);
   background: var(--bg);
@@ -643,8 +645,8 @@ pre {
   overflow: hidden;
 }
 .topbar {
-  height: 72px;
-  min-height: 72px;
+  height: var(--shell-header);
+  min-height: var(--shell-header);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1093,6 +1095,8 @@ dd {
   padding: 16px;
 }
 .modal-panel {
+  /* Its answers stack by the room the panel has (see .dialog-actions). */
+  container: dialog / inline-size;
   background: var(--surface);
   border-radius: var(--radius-lg);
   padding: 24px 28px 28px;
@@ -1110,16 +1114,26 @@ dd {
 .modal-panel:focus {
   outline: none;
 }
-/* A dialog's footer stays at the bottom edge while its content scrolls. */
-.modal-panel .dialog-footer {
+/* Every dialog ends in one footer: its answers on a rule across the panel,
+   at the panel's bottom edge while its content scrolls (the panel's side
+   and bottom padding is 28 px). */
+.modal-panel :is(.dialog-actions, .dialog-footer) {
+  position: sticky;
   bottom: -28px;
-  margin: 20px -28px -28px;
-  padding: 12px 28px;
   z-index: 3;
+  display: flex;
   flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin: var(--space-6) -28px -28px;
+  padding: var(--space-3) 28px;
+  border-top: 1px solid var(--line);
+  background: var(--surface);
 }
-.modal-panel:has(.dialog-footer) {
-  scroll-padding-bottom: 80px;
+/* Focus scrolls a control clear of the footer, with 12 px to spare. The
+   dialog measures its footer, which grows as its answers stack. */
+.modal-panel:has(:is(.dialog-actions, .dialog-footer)) {
+  scroll-padding-bottom: calc(var(--dialog-footer-height, 68px) + 12px);
 }
 /* Activation: one row per connection slot. */
 .slot-row {
@@ -1135,8 +1149,11 @@ dd {
   margin: 4px 0 0;
 }
 /* The title and close button stay in view while a long dialog scrolls.
-   Sticky offsets count from inside the panel's 24px top padding. */
+   Sticky offsets count from inside the panel's 24px top padding. The
+   heading's first line sits on the close button's center at every density,
+   and a heading that wraps goes on below it. */
 .modal-header {
+  --modal-close: var(--control-md);
   position: sticky;
   top: -24px;
   z-index: 3;
@@ -1148,14 +1165,26 @@ dd {
   padding: 24px 28px 8px;
   background: var(--surface);
 }
+@media (max-width: 767px), (pointer: coarse) {
+  .modal-header {
+    --modal-close: var(--control-touch);
+  }
+}
+.modal-header > button.icon-button {
+  flex: none;
+  width: var(--modal-close);
+  min-height: var(--modal-close);
+}
 .modal-header h2 {
-  margin: 6px 0 0;
+  margin: calc((var(--modal-close) - 1lh) / 2) 0 0;
   overflow-wrap: anywhere;
 }
+/* A message never ends on a lone word. */
 .dialog-message {
   font-size: 13px;
   color: var(--muted);
   overflow-wrap: anywhere;
+  text-wrap: pretty;
 }
 .dialog-form label {
   margin: 16px 0 6px;
@@ -1171,8 +1200,23 @@ dd {
   display: flex;
   justify-content: flex-end;
   flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 24px;
+  gap: var(--space-2);
+  margin-top: var(--space-6);
+}
+/* In a narrow dialog the answers stack: full width and of equal height, in
+   reading order, so the main one comes last, as it does in a row. The panel
+   stacks them while its content is narrower than three answers need at
+   touch density (about 400 px), with room for wider fonts, so they never
+   wrap into uneven rows. */
+@container dialog (max-width: 424px) {
+  .modal-panel :is(.dialog-actions, .dialog-footer) {
+    flex-direction: column;
+    flex-wrap: nowrap;
+    align-items: stretch;
+  }
+  .modal-panel :is(.dialog-actions, .dialog-footer) > button {
+    margin-inline: 0;
+  }
 }
 /* Notices: warning by default; data-tone="success" | "danger" | "info" |
    "neutral". .error-notice is the danger tone under its old name. */
@@ -1476,9 +1520,10 @@ dd {
     padding: 10px;
     min-height: 44px;
   }
+  :root {
+    --shell-header: 60px;
+  }
   .topbar {
-    height: 60px;
-    min-height: 60px;
     padding: 0 12px;
   }
   .account > span:nth-child(2) {
@@ -2421,14 +2466,19 @@ input[type="file"][hidden] {
 }
 /* Toasts: one region, bottom-left of the content area. It sits above side
    sheets but under popovers (the step picker, row menus) and a modal
-   dialog's backdrop, so nothing that is open is topped by a toast. */
+   dialog's backdrop, so nothing that is open is topped by a toast. The
+   toast host measures what is beside and under it (--shell-left,
+   --toast-bottom) and, over step details, the pane it may cover
+   (--toast-pane). */
 .toast-region {
+  /* How far it stays from the content area's left and bottom edges. */
+  --toast-gap: var(--space-6);
   position: fixed;
   z-index: 18;
-  left: calc(var(--shell-left, 224px) + var(--space-6));
-  bottom: calc(var(--toast-bottom, 0px) + var(--space-6));
+  left: calc(var(--shell-left, 224px) + var(--toast-gap));
+  bottom: calc(var(--toast-bottom, 0px) + var(--toast-gap));
   display: grid;
-  max-width: 420px;
+  max-width: min(420px, var(--toast-pane, 420px));
   pointer-events: none;
 }
 .toast {
@@ -2446,7 +2496,10 @@ input[type="file"][hidden] {
   animation: toast-in var(--dur) var(--ease);
 }
 .toast button {
-  min-height: 28px;
+  /* An action's place in the toast's row: a pointer target, as the
+     dismiss button's. */
+  --toast-action: var(--target-min);
+  min-height: var(--toast-action);
   padding: 0 8px;
   background: transparent;
   border: 0;
@@ -2456,9 +2509,32 @@ input[type="file"][hidden] {
 .toast button:hover {
   background: var(--hover);
 }
-/* Over the focused control's place at the bottom: the toast shows on top. */
+/* Dismiss: a 24 px target with a fine pointer. For touch it is a 44 px
+   target that reaches into the toast's padding, so the toast keeps its
+   height and the × stays where it is. */
+.toast button.toast-dismiss {
+  min-width: var(--target-min);
+  min-height: var(--target-min);
+  padding: 0;
+}
+/* For touch, an action keeps its place in the row but is a 44 px tall
+   target, reaching into the toast's padding like the dismiss button. */
+@media (max-width: 767px), (pointer: coarse) {
+  .toast button.toast-dismiss {
+    min-width: var(--control-touch);
+    min-height: var(--control-touch);
+    margin: calc((var(--target-min) - var(--control-touch)) / 2);
+  }
+  .toast button:not(.toast-dismiss) {
+    min-height: var(--control-touch);
+    margin-block: calc((var(--toast-action) - var(--control-touch)) / 2);
+  }
+}
+/* Over the focused control's place at the bottom: the toast shows on top,
+   under the top bar, or under step details' own top bars while they are
+   open (--toast-clear, measured by the toast host). */
 .toast-region.top {
-  top: calc(72px + var(--space-4));
+  top: calc(var(--toast-clear, 72px) + var(--space-4));
   bottom: auto;
 }
 @keyframes toast-in {
@@ -2474,6 +2550,15 @@ input[type="file"][hidden] {
     right: var(--space-4);
     bottom: var(--space-4);
     max-width: none;
+  }
+}
+/* Step details cover the navigation and the diagnostics strip: a toast's
+   corner is their panes' bottom-left corner (24 px from the window, 16 px
+   below 1100 px), and it is never wider than the pane under that corner, so
+   it never crosses a pane's edge. A phone sheet keeps its content edges. */
+@media (max-width: 1099px) {
+  body:has(.step-details) .toast-region {
+    --toast-gap: var(--space-4);
   }
 }
 
@@ -3152,11 +3237,6 @@ details.disclosure[open] > summary::before {
 .graph-node.selected .node-body {
   border: 2px solid var(--accent);
   box-shadow: 0 0 0 4px var(--accent-glow);
-}
-/* Edits in the inspector that aren't applied yet. */
-.graph-node.dirty .node-body {
-  outline: 2px dashed var(--accent);
-  outline-offset: 3px;
 }
 /* Problems on the canvas: a border and a chip that names them. */
 .graph-node.has-error .node-body {
@@ -4219,7 +4299,6 @@ kbd {
 @media (forced-colors: active) {
   .node-chip,
   .branch-label,
-  .graph-node.dirty .node-body,
   .graph-node.has-error .node-body {
     border: 1px solid CanvasText;
   }

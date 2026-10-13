@@ -450,7 +450,7 @@ SPDX-License-Identifier: Apache-2.0
         } @else if (view === "clusters") {
           <section class="page-content">
             @defer (on immediate) {
-              <weave-clusters-page [host]="this" />
+              <weave-clusters-page #clustersPage [host]="this" />
             }
           </section>
         } @else if (view === "settings") {

@@ -118,6 +118,10 @@ export function describeResponse(status: number, detail: unknown): PlainError {
   return { message, code, status };
 }
 
+/** Why Publish… or Simulate stopped when the code it loads on first use didn't load. */
+export const commandNotLoaded = (purpose: "publish" | "simulate"): string =>
+  `Studio couldn't load what ${purpose === "publish" ? "Publish…" : "Simulate"} needs. Check that Weave Studio is still running, reload the page and try again.`;
+
 /** Explains any thrown value: API errors, transport failures or plain errors. */
 export function describeError(error: unknown): PlainError {
   if (error && typeof error === "object" && "plain" in error) {

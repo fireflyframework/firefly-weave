@@ -1,0 +1,488 @@
+/*
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+*/
+// The Mapped editor of a field. A reference shows as a pill and is changed
+// with the data picker; a text field with templates is edited as text with
+// {{ input.field }} placeholders; any other formula shows read-only (it is
+// edited as YAML from the More menu).
+import {
+  ChangeDetectionStrategy,
+  Component,
+  DestroyRef,
+  Injector,
+  afterNextRender,
+  computed,
+  inject,
+  input,
+  signal,
+  untracked,
+} from "@angular/core";
+import { canonicalJson } from "../../../forms/core/json";
+import { Icon } from "../../../icon";
+import { ReferenceCombobox } from "../../../forms/ui/reference-combobox";
+import type { ParamSpec } from "../registry";
+import type { FormSession } from "./form-session";
+import {
+  partsToText,
+  refToPath,
+  templateParts,
+  textToExpression,
+} from "./template-text";
+
+/** "Input › customerId" → its words for a screen reader. */
+const words = (breadcrumb: string) =>
+  breadcrumb.replace(/›/g, " ").replace(/\s+/g, " ").trim();
+
+@Component({
+  selector: "weave-ref-pill",
+  standalone: true,
+  changeDetection: ChangeDetectionStrategy.Eager,
+  imports: [Icon],
+  template: `<span class="ref-pill" [attr.title]="pointer()">
+    <weave-icon [name]="icon()" [size]="16" />
+    @for (part of parts(); track $index; let last = $last) {
+      <span>{{ part }}</span>
+      @if (!last) {
+        <span class="ref-sep" aria-hidden="true">›</span>
+      }
+    }
+  </span>`,
+})
+export class RefPill {
+  pointer = input.required<string>();
+  breadcrumb = input.required<string>();
+  icon = input("source");
+  readonly parts = computed(() => this.breadcrumb().split(" › "));
+}
+
+@Component({
+  selector: "weave-formula-field",
+  standalone: true,
+  changeDetection: ChangeDetectionStrategy.Eager,
+  imports: [ReferenceCombobox, RefPill],
+  template: `@switch (view()) {
+    @case ("template") {
+      @if (spec().type === "multiline") {
+        <textarea
+          class="param-input param-multiline param-template"
+          rows="3"
+          [id]="controlId()"
+          [attr.aria-label]="spec().label"
+          [attr.aria-required]="spec().required || null"
+          [attr.aria-describedby]="describedBy()"
+          [attr.aria-invalid]="templateError() ? 'true' : null"
+          [readOnly]="!!readOnly()"
+          [value]="templateText()"
+          (focus)="beginEdit()"
+          (input)="typed($event)"
+          (keydown)="key($event)"
+          (blur)="leave()"
+        ></textarea>
+      } @else {
+        <input
+          class="param-input param-template"
+          [id]="controlId()"
+          [attr.aria-label]="spec().label"
+          [attr.aria-required]="spec().required || null"
+          [attr.aria-describedby]="describedBy()"
+          [attr.aria-invalid]="templateError() ? 'true' : null"
+          [readOnly]="!!readOnly()"
+          [value]="templateText()"
+          (focus)="beginEdit()"
+          (input)="typed($event)"
+          (keydown)="key($event)"
+          (blur)="leave()"
+        />
+      }
+    }
+    @case ("formula") {
+      <code
+        class="param-formula"
+        [id]="controlId()"
+        tabindex="0"
+        [attr.aria-describedby]="describedBy()"
+        >{{ formulaText() }}</code
+      >
+    }
+    @case ("pill") {
+      <button
+        type="button"
+        class="ref-pill-button"
+        [id]="controlId()"
+        [disabled]="!!readOnly()"
+        [attr.aria-label]="'reference ' + words(breadcrumbOf(currentRef()))"
+        [attr.aria-describedby]="describedBy()"
+        (click)="beginPick()"
+        (dblclick)="beginPick()"
+        (keydown)="pillKey($event)"
+      >
+        <weave-ref-pill
+          [pointer]="currentRef()"
+          [breadcrumb]="breadcrumbOf(currentRef())"
+          [icon]="iconOf(currentRef())"
+        />
+      </button>
+    }
+    @default {
+      <div
+        class="param-picker"
+        (keydown.enter)="commitTyped()"
+        (focusout)="leavePicker($event)"
+      >
+        <weave-reference-combobox
+          [inputId]="controlId()"
+          [ariaLabel]="spec().label"
+          [value]="currentRef()"
+          [options]="session().scope(spec())"
+          [target]="session().expected(spec())"
+          [focusOnMount]="picking()"
+          [disabled]="!!readOnly()"
+          [describedByIds]="describedBy()"
+          (picked)="pick($event.ref)"
+          (valueChange)="typedRef = $event"
+        />
+      </div>
+    }
+  }`,
+})
+export class FormulaField {
+  session = input.required<FormSession>();
+  spec = input.required<ParamSpec>();
+  controlId = input.required<string>();
+  describedBy = input("");
+  readOnly = input<string | null>(null);
+  /**
+   * The person asked to choose data: switched the field to Mapped, or
+   * pressed its pill. Only then does the picker take focus when it shows; a
+   * field that is Mapped and empty when the form renders waits to be entered.
+   */
+  readonly picking = signal(false);
+  /** Text being typed that applies (literal text waits for blur). */
+  readonly editingText = signal<string | null>(null);
+  readonly words = words;
+  private readonly lifetime = inject(DestroyRef);
+  private readonly injector = inject(Injector);
+  private pendingRef = "";
+  private localOwner: {
+    session: FormSession;
+    descriptor: string;
+    choices: ParamSpec["choices"];
+    readOnly: ParamSpec["readOnly"];
+    showWhen: ParamSpec["showWhen"];
+  } | null = null;
+  private pickerOwner: {
+    session: FormSession;
+    descriptor: string;
+    owns: () => boolean;
+  } | null = null;
+  get typedRef(): string {
+    return this.pendingRef;
+  }
+  set typedRef(value: string) {
+    this.syncIdentity();
+    this.pendingRef = value;
+    this.pickerOwner = this.captureOwner();
+  }
+  private editingOwner: {
+    session: FormSession;
+    descriptor: string;
+    owns: () => boolean;
+    stored: string;
+  } | null = null;
+  private captureOwner() {
+    const session = this.session();
+    const spec = this.spec();
+    return {
+      session,
+      descriptor: canonicalJson(spec),
+      owns: session.owns(spec),
+    };
+  }
+  private syncIdentity() {
+    const session = this.session();
+    const spec = this.spec();
+    const descriptor = canonicalJson(spec);
+    const owner = this.localOwner;
+    if (
+      owner?.session === session &&
+      owner.descriptor === descriptor &&
+      (typeof spec.choices !== "function" || owner.choices === spec.choices) &&
+      owner.readOnly === spec.readOnly &&
+      owner.showWhen === spec.showWhen
+    )
+      return;
+    this.localOwner = {
+      session,
+      descriptor,
+      choices: spec.choices,
+      readOnly: spec.readOnly,
+      showWhen: spec.showWhen,
+    };
+    this.editingOwner = null;
+    this.pickerOwner = null;
+    this.pendingRef = "";
+    untracked(() => {
+      this.editingText.set(null);
+      this.picking.set(false);
+    });
+  }
+  /**
+   * Template text that doesn't parse: the session keeps it, Not applied,
+   * through closing and reopening step details, while the workflow keeps
+   * the last value that applied.
+   */
+  private heldText(): { text: string; message: string } | null {
+    const held = this.session().held(this.spec());
+    return held?.kind === "template" ? held : null;
+  }
+  /** Why the text on screen doesn't apply, or "". */
+  templateError(): string {
+    this.syncIdentity();
+    return this.heldText()?.message ?? "";
+  }
+  /**
+   * Escape in a template that doesn't apply takes it back to the last value
+   * that did, and stays in the field; with nothing to take back, Escape is
+   * step details' (it leaves the field, then closes).
+   */
+  key(event: KeyboardEvent) {
+    if (event.key !== "Escape" || !this.heldText()) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const session = this.session();
+    // The field stays Mapped, as it was while the text was typed.
+    if (session.read(this.spec()).mode !== "mapped")
+      void session.setMode(this.spec(), "mapped");
+    session.release(this.spec());
+    this.editingText.set(null);
+    this.beginEdit();
+    session.host.refreshView();
+  }
+  private reconcile() {
+    this.syncIdentity();
+    if (
+      this.editingOwner &&
+      this.session().isCurrent() &&
+      this.editingOwner.stored !== canonicalJson(this.stored())
+    ) {
+      untracked(() => this.editingText.set(null));
+      this.beginEdit();
+    }
+  }
+  private canEdit(): boolean {
+    return (
+      !this.lifetime.destroyed &&
+      !this.readOnly() &&
+      !this.session().controller.readOnlyReason() &&
+      this.session().isCurrent()
+    );
+  }
+  beginPick() {
+    this.syncIdentity();
+    if (!this.canEdit()) return;
+    this.pickerOwner = this.captureOwner();
+    this.picking.set(true);
+  }
+  beginEdit() {
+    this.syncIdentity();
+    this.editingOwner = {
+      ...this.captureOwner(),
+      stored: canonicalJson(this.stored()),
+    };
+  }
+  private ownsEdit(): boolean {
+    const owner = this.editingOwner;
+    return (
+      !!owner &&
+      owner.session === this.session() &&
+      owner.descriptor === canonicalJson(this.spec()) &&
+      owner.owns() &&
+      this.canEdit()
+    );
+  }
+  leave() {
+    this.syncIdentity();
+    // Text that doesn't parse stays, Not applied; nothing is written.
+    if (this.heldText()) return;
+    const text = this.editingText();
+    if (text !== null) {
+      const parsed = textToExpression(text);
+      if (!parsed.ok) return;
+      if (parsed.value.mode === "fixed" && this.ownsEdit())
+        this.session().write(this.spec(), parsed.value);
+    }
+    this.editingOwner = null;
+    this.editingText.set(null);
+  }
+
+  private stored() {
+    return this.session().read(this.spec());
+  }
+  private parts() {
+    const value = this.stored();
+    if (value.mode === "mapped") return templateParts(value.expression);
+    return value.mode === "fixed" && typeof value.value === "string"
+      ? [{ text: value.value }]
+      : null;
+  }
+  currentRef(): string {
+    this.reconcile();
+    const value = this.stored();
+    if (value.mode !== "mapped") return "";
+    const parts = templateParts(value.expression);
+    return parts?.length === 1 &&
+      "ref" in parts[0] &&
+      Object.keys(value.expression).length === 1 &&
+      "ref" in value.expression
+      ? parts[0].ref
+      : "";
+  }
+  /** template: text with placeholders; pill: one reference; picker: choosing data; formula: anything else, read-only. */
+  view(): "template" | "pill" | "picker" | "formula" {
+    this.reconcile();
+    const value = this.stored();
+    if (this.picking()) return "picker";
+    const parts = this.parts();
+    const single = this.currentRef();
+    const editable = parts?.every(
+      (part) => "text" in part || refToPath(part.ref) !== null,
+    );
+    if (
+      this.session().templates(this.spec()) &&
+      (this.editingText() !== null ||
+        !!this.heldText() ||
+        (!!parts && editable && !single))
+    )
+      return "template";
+    if (value.mode === "mapped" && !single) return "formula";
+    if (single && !this.picking()) return "pill";
+    if (!this.pickerOwner) this.pickerOwner = this.captureOwner();
+    return "picker";
+  }
+  templateText(): string {
+    this.reconcile();
+    const parts = this.parts();
+    return (
+      this.heldText()?.text ??
+      this.editingText() ??
+      (parts ? partsToText(parts) : "")
+    );
+  }
+  formulaText(): string {
+    const value = this.stored();
+    return value.mode === "mapped" ? JSON.stringify(value.expression) : "";
+  }
+  breadcrumbOf(ref: string): string {
+    const entry = this.session()
+      .scope(this.spec())
+      .find((e) => e.ref === ref);
+    return (entry?.breadcrumb ?? ref).replace(
+      /^Workflow input(?= ›|$)/,
+      "Input",
+    );
+  }
+  iconOf(ref: string): string {
+    const entry = this.session()
+      .scope(this.spec())
+      .find((e) => e.ref === ref);
+    return entry?.source === "step" ? (entry.stepKind ?? "action") : "source";
+  }
+  pick(ref: string) {
+    this.syncIdentity();
+    const owner = this.pickerOwner;
+    if (
+      !this.canEdit() ||
+      !owner ||
+      owner.session !== this.session() ||
+      owner.descriptor !== canonicalJson(this.spec()) ||
+      !owner.owns() ||
+      !/^\/(input|steps)(\/|$)/.test(ref)
+    )
+      return;
+    // Choosing from the picker (Enter, or a press in its list) keeps focus in
+    // the field: the pill that replaces the picker takes it. Both carry the
+    // field's control ID.
+    const focused = document.activeElement?.id === this.controlId();
+    this.pendingRef = "";
+    this.pickerOwner = null;
+    this.picking.set(false);
+    this.session().write(this.spec(), { mode: "mapped", expression: { ref } });
+    if (focused) this.focusControlAfterRender();
+  }
+  /** A pointer typed by hand counts once Enter is pressed or focus leaves. */
+  commitTyped() {
+    this.syncIdentity();
+    const ref = this.typedRef.trim();
+    if (ref && ref !== this.currentRef()) this.pick(ref);
+  }
+  /**
+   * Focus left the picker. A typed pointer counts; with nothing new typed,
+   * the field shows its pill again. Unfinished text stays in the picker with
+   * its hint, so nothing typed is lost.
+   */
+  leavePicker(event: FocusEvent) {
+    const next = event.relatedTarget as Node | null;
+    if (next && (event.currentTarget as HTMLElement).contains(next)) return;
+    // Another window took focus: the picker is still there on return.
+    if (!next && !document.hasFocus()) return;
+    this.commitTyped();
+    const typed = this.typedRef.trim();
+    if (typed && typed !== this.currentRef()) return;
+    this.pendingRef = "";
+    this.picking.set(false);
+  }
+  /** Focuses the field's control once it renders, unless focus moved on meanwhile. */
+  private focusControlAfterRender() {
+    const id = this.controlId();
+    afterNextRender(
+      () => {
+        if (this.lifetime.destroyed) return;
+        const active = document.activeElement;
+        if (active && active !== document.body && active.id !== id) return;
+        document.getElementById(id)?.focus();
+      },
+      { injector: this.injector },
+    );
+  }
+  pillKey(event: KeyboardEvent) {
+    if (
+      !this.readOnly() &&
+      (event.key === "Backspace" || event.key === "Delete")
+    ) {
+      event.preventDefault();
+      this.session().clear(this.spec());
+    }
+  }
+  typed(event: Event) {
+    this.reconcile();
+    if (!this.canEdit()) return;
+    if (!this.ownsEdit()) this.beginEdit();
+    if (!this.ownsEdit()) return;
+    const text = (event.target as HTMLInputElement).value;
+    this.editingText.set(text);
+    const parsed = textToExpression(text);
+    if (!parsed.ok)
+      return this.session().hold(this.spec(), "template", text, parsed.message);
+    this.session().release(this.spec());
+    // Literal text waits for blur so typing braces cannot replace the focused editor.
+    if (
+      parsed.value.mode === "mapped" &&
+      this.session().write(this.spec(), parsed.value)
+    )
+      this.beginEdit();
+  }
+}

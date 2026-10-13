@@ -1065,7 +1065,7 @@ let sequence = 0;
   standalone: true,
   imports: [NgTemplateOutlet, Modal, TaskForm, Select, RowMenu],
   template: `<section class="sd" [attr.aria-labelledby]="prefix + '-heading'">
-    <header class="sd-head">
+    <header class="sd-header">
       <h3 [id]="prefix + '-heading'">{{ heading() }}</h3>
       @if (model.editable && !readonly()) {
         <div class="sd-tools">
@@ -1148,10 +1148,12 @@ let sequence = 0;
         <weave-task-form [schema]="previewSchema" />
       </section>
     }
-    <details class="sd-json">
-      <summary>Show schema JSON</summary>
-      <pre>{{ previewText() }}</pre>
-    </details>
+    @if (json()) {
+      <details class="sd-json">
+        <summary>Show schema JSON</summary>
+        <pre>{{ previewText() }}</pre>
+      </details>
+    }
 
     <ng-template #rowsTpl let-rows let-parent="parent" let-depth="depth">
       <ol class="sd-rows" [class.nested]="depth > 0">
@@ -1187,7 +1189,7 @@ let sequence = 0;
               </div>
             }
             @if (!compact() || openRows.has(row.uid)) {
-              <div class="sd-main">
+              <div class="sd-row-main">
                 <div class="sd-field">
                   <label [for]="id(row, 'name')">Field name</label>
                   <input
@@ -1235,7 +1237,7 @@ let sequence = 0;
                     (change)="setRequired(row, $event)"
                   />Required</label
                 >
-                <div class="sd-actions">
+                <div class="sd-row-actions">
                   <button
                     type="button"
                     class="sd-small"
@@ -1644,14 +1646,14 @@ let sequence = 0;
         display: grid;
         gap: 10px;
       }
-      .sd-head {
+      .sd-header {
         display: flex;
         flex-wrap: wrap;
         align-items: center;
         justify-content: space-between;
         gap: 8px;
       }
-      .sd-head h3 {
+      .sd-header h3 {
         margin: 0;
       }
       .sd-tools {
@@ -1705,7 +1707,7 @@ let sequence = 0;
         color: var(--muted);
         flex-shrink: 0;
       }
-      .sd-main {
+      .sd-row-main {
         display: grid;
         grid-template-columns: minmax(0, 1.6fr) minmax(0, 1.2fr) auto auto;
         align-items: end;
@@ -1726,7 +1728,7 @@ let sequence = 0;
         padding-bottom: 9px;
         font-weight: 600;
       }
-      .sd-actions {
+      .sd-row-actions {
         display: flex;
         gap: 4px;
         flex-wrap: wrap;
@@ -1863,7 +1865,7 @@ let sequence = 0;
         width: 16px;
       }
       @container designer (max-width: 560px) {
-        .sd-main {
+        .sd-row-main {
           grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
         }
         .sd-required {
@@ -1871,7 +1873,7 @@ let sequence = 0;
         }
       }
       @container designer (max-width: 340px) {
-        .sd-main,
+        .sd-row-main,
         .sd-details-grid {
           grid-template-columns: minmax(0, 1fr);
         }
@@ -1893,6 +1895,8 @@ export class SchemaDesigner implements OnChanges {
   /** Shows a live form preview of the schema. */
   preview = input(true);
   compact = input(false);
+  /** Offers "Show schema JSON"; hosts with their own source view turn it off. */
+  json = input(true);
   openRows = new Set<number>();
   choiceRows = new Set<number>();
   /** Each valid edit: the whole schema. Nothing is emitted while rows are invalid. */
