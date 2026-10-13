@@ -279,10 +279,17 @@ function credentialExists(account: string) {
   return stored(service, account);
 }
 
-let baseline = new Set<string>();
+/**
+ * Bindings already stored when the suite started. Unknown until `beforeAll`
+ * has read the store: without it nothing can tell this run's bindings from the
+ * person's own, so nothing is deleted.
+ */
+let baseline: Set<string> | undefined;
 /** Bindings this run created that are still stored. */
 function leftovers() {
-  return [...credentialAccounts()].filter((a) => !baseline.has(a));
+  const before = baseline;
+  if (!before) return [];
+  return [...credentialAccounts()].filter((a) => !before.has(a));
 }
 
 /**
@@ -655,10 +662,11 @@ test.beforeAll(() => {
   baseline = credentialAccounts();
 });
 
-/** Bindings already stored when the running test started. */
-let storedBefore = new Set<string>();
+/** Bindings already stored when the running test started, once known. */
+let storedBefore: Set<string> | undefined;
 
 test.beforeEach(() => {
+  storedBefore = undefined;
   storedBefore = credentialAccounts();
 });
 
@@ -673,9 +681,10 @@ test.afterEach(async ({}, info) => {
   // A test that failed before removing its platform never signed out: delete
   // the bindings it stored, so the suite's audit reports only what a passing
   // test left behind instead of repeating this failure.
-  if (info.status !== info.expectedStatus)
+  const before = storedBefore;
+  if (before && info.status !== info.expectedStatus)
     for (const account of credentialAccounts())
-      if (!storedBefore.has(account)) deleteCredential(service, account);
+      if (!before.has(account)) deleteCredential(service, account);
 });
 
 test.afterAll(() => {
