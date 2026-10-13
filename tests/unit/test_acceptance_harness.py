@@ -47,8 +47,7 @@ spec = importlib.util.spec_from_file_location("harness_under_test", {str(HARNESS
 harness = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(harness)
 run = harness.run
-pytest_runtest_setup = harness.pytest_runtest_setup
-pytest_runtest_makereport = harness.pytest_runtest_makereport
+globals().update({{name: value for name, value in vars(harness).items() if name.startswith("pytest_")}})
 """
 FAILING_STEPS = {
     "command output": """
@@ -231,3 +230,49 @@ def test_an_expected_failure_fails_the_step_and_the_pytest_exit_code(pytester, m
     result.assert_outcomes(failed=1)
     assert [(record["id"], record["status"]) for record in records] == [("J0.1", "failed")]
     assert "known gap" in records[0]["error"]
+
+
+NEXT_STEP = '\n\n@pytest.mark.journey_step("J0.2")\ndef test_next(run):\n    pass\n'
+NOT_STARTED = {
+    "skip in a fixture": '@pytest.fixture\ndef ready():\n    pytest.skip("the platform is not ready")\n\n\n'
+    '@pytest.mark.journey_step("J0.1")\ndef test_step(run, ready):\n    pass\n',
+    "skip marker": '@pytest.mark.journey_step("J0.1")\n@pytest.mark.skip(reason="the platform is not ready")\n'
+    "def test_step(run):\n    pass\n",
+    "xfail without running": '@pytest.mark.journey_step("J0.1")\n'
+    '@pytest.mark.xfail(run=False, reason="the platform is not ready")\ndef test_step(run):\n    pass\n',
+    "error in a fixture": '@pytest.fixture\ndef ready():\n    raise RuntimeError("the platform is not ready")\n\n\n'
+    '@pytest.mark.journey_step("J0.1")\ndef test_step(run, ready):\n    pass\n',
+}
+
+
+@pytest.mark.parametrize("source", NOT_STARTED.values(), ids=NOT_STARTED.keys())
+def test_a_step_that_never_starts_is_not_run_and_stops_its_journey(pytester, monkeypatch, source):
+    result, records = run_steps(pytester, monkeypatch, source + NEXT_STEP)
+    assert result.ret == 1
+    assert [(record["id"], record["status"]) for record in records] == [("J0.1", "not_run"), ("J0.2", "not_run")]
+    assert "the platform is not ready" in records[0]["error"]
+    assert records[1]["error"] == "An earlier step of this journey failed."
+
+
+def test_a_skip_marker_on_a_step_the_harness_skips_anyway_keeps_the_harness_record(pytester, monkeypatch):
+    # J0.5 waits for a capability that has not landed: the step reads skipped with it, not not_run.
+    source = '@pytest.mark.journey_step("J0.5")\n@pytest.mark.skip(reason="later")\ndef test_step(run):\n    pass\n'
+    result, records = run_steps(pytester, monkeypatch, source)
+    assert result.ret == 0
+    assert records == [{"id": "J0.5", "status": "skipped", "missing": ["real-platform-journeys"]}]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        '@pytest.mark.journey_step("J0.1")\ndef test_step(run):\n    pytest.exit("operator stop")\n',
+        '@pytest.fixture\ndef ready():\n    pytest.exit("operator stop")\n\n\n'
+        '@pytest.mark.journey_step("J0.1")\ndef test_step(run, ready):\n    pass\n',
+    ],
+    ids=["call", "setup"],
+)
+def test_pytest_exit_in_a_step_records_it_as_not_run(pytester, monkeypatch, source):
+    result, records = run_steps(pytester, monkeypatch, source + NEXT_STEP)
+    assert result.ret != 0
+    assert [(record["id"], record["status"]) for record in records] == [("J0.1", "not_run")]
+    assert "operator stop" in records[0]["error"]

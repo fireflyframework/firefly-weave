@@ -19,7 +19,9 @@
 Journeys run only through scripts/acceptance.py, which sets WEAVE_ACC_RUN_DIR to a run
 directory it prepared. A test marked journey_step("J0.3") implements one journeys.toml
 step: a step whose capabilities have not landed is skipped and recorded with them, never
-passed, and after a failed step the rest of its journey is recorded as not run. Results go
+passed, and after a failed step the rest of its journey is recorded as not run. An enabled
+step that never starts (a skip or error in setup, xfail(run=False), pytest.exit) is recorded
+as not run, fails pytest and stops its journey the same way. Results go
 to evidence/steps.jsonl. Command output can hold generated passwords: it is parsed in
 memory and shown only when a command fails. Failure text, on the console and in a step's
 error, never carries the run's canaries or people passwords: they read [redacted].
@@ -97,7 +99,7 @@ def _helper(name: str) -> Any:
 
 ENABLEMENT = _script("acceptance_journeys").Enablement.load(ROOT / "tests/acceptance/journeys.toml")
 ACCEPTANCE = _script("acceptance")
-_STEP: dict[str, Any] = {"id": None, "started": 0.0, "ran": set(), "skipped": []}
+_STEP: dict[str, Any] = {"id": None, "started": 0.0, "ran": set(), "skipped": [], "recorded": False}
 _FAILED_JOURNEYS: set[str] = set()
 
 
@@ -314,6 +316,42 @@ def run() -> Run:
     return Run(Path(root))
 
 
+def _gate(step: str) -> tuple[str, dict[str, Any] | None] | None:
+    """Why the harness itself does not run the step, with the record that says so; None when it runs."""
+    profile = _profile()
+    if not ENABLEMENT.applies(step, profile):
+        return f"{step} does not run in the {profile} profile", None
+    missing = ENABLEMENT.missing(step)
+    if missing:
+        return f"{step} waits for {', '.join(missing)}", {"id": step, "status": "skipped", "missing": list(missing)}
+    journey = step.split(".")[0]
+    if journey in _FAILED_JOURNEYS:
+        record = {"id": step, "status": "not_run", "error": "An earlier step of this journey failed."}
+        return f"{step}: an earlier step of {journey} failed", record
+    return None
+
+
+def _not_run(step: str, cause: str) -> str:
+    """Record an enabled step that never ran as not_run, stop the rest of its journey; returns the redacted text."""
+    text = redact(f"{step} did not run: {cause}", known_secrets(_root()))
+    lines = text.strip().splitlines() or [step]
+    _record({"id": step, "status": "not_run", "error": lines[-1][:300]})
+    _FAILED_JOURNEYS.add(step.split(".")[0])
+    return text
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_protocol(item: pytest.Item, nextitem: pytest.Item | None) -> Any:
+    _STEP.update(id=None, started=time.monotonic(), ran=set(), skipped=[], recorded=False)
+    outcome = yield
+    marker = item.get_closest_marker("journey_step")
+    if marker is None or not os.environ.get("WEAVE_ACC_RUN_DIR") or _STEP["recorded"]:
+        return
+    if outcome.excinfo is not None and isinstance(outcome.excinfo[1], pytest.exit.Exception):
+        # pytest.exit stops the session before any report of this phase: the step never finished.
+        _not_run(str(marker.args[0]), f"pytest.exit: {outcome.excinfo[1]}")
+
+
 def pytest_runtest_setup(item: pytest.Item) -> None:
     marker = item.get_closest_marker("journey_step")
     if marker is None:
@@ -321,19 +359,37 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
     if not os.environ.get("WEAVE_ACC_RUN_DIR"):
         pytest.skip("Acceptance journeys run through scripts/acceptance.py.")
     step = marker.args[0]
-    _STEP.update(id=None, started=time.monotonic(), ran=set(), skipped=[])
-    profile = _profile()
-    if not ENABLEMENT.applies(step, profile):
-        pytest.skip(f"{step} does not run in the {profile} profile")
-    missing = ENABLEMENT.missing(step)
-    if missing:
-        _record({"id": step, "status": "skipped", "missing": list(missing)})
-        pytest.skip(f"{step} waits for {', '.join(missing)}")
-    journey = step.split(".")[0]
-    if journey in _FAILED_JOURNEYS:
-        _record({"id": step, "status": "not_run", "error": "An earlier step of this journey failed."})
-        pytest.skip(f"{step}: an earlier step of {journey} failed")
+    gate = _gate(step)
+    if gate is not None:
+        reason, record = gate
+        if record is not None:
+            _record(record)
+        _STEP["recorded"] = True
+        pytest.skip(reason)
     _STEP["id"] = step
+
+
+def _setup_report(step: str, report: pytest.TestReport) -> None:
+    """A step that was due to run but never started: a skip or xfail(run=False) in setup, or a setup error."""
+    if report.skipped:
+        gate = _gate(step)
+        if gate is not None:
+            # A skip marker on a step the harness skips anyway: keep the harness's own record.
+            if gate[1] is not None:
+                _record(gate[1])
+            _STEP["recorded"] = True
+            return
+    if hasattr(report, "wasxfail"):
+        cause = str(report.wasxfail)
+        del report.wasxfail
+    elif isinstance(report.longrepr, tuple):
+        cause = str(report.longrepr[2]).removeprefix("Skipped: ")
+    else:
+        cause = (str(report.longrepr).strip().splitlines() or ["setup failed"])[-1]
+    report.outcome = "failed"
+    # The console prints this text too, so it replaces pytest's own report.
+    report.longrepr = _not_run(step, cause)
+    _STEP["recorded"] = True
 
 
 @pytest.hookimpl(hookwrapper=True)
@@ -341,7 +397,12 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[None]) ->
     outcome = yield
     report = outcome.get_result()
     marker = item.get_closest_marker("journey_step")
-    if marker is None or report.when != "call" or _STEP["id"] != marker.args[0]:
+    if marker is None or not os.environ.get("WEAVE_ACC_RUN_DIR"):
+        return
+    if report.when == "setup" and not report.passed and not _STEP["recorded"]:
+        _setup_report(str(marker.args[0]), report)
+        return
+    if report.when != "call" or _STEP["id"] != marker.args[0]:
         return
     step = str(_STEP["id"])
     if hasattr(report, "wasxfail"):
@@ -384,4 +445,4 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[None]) ->
         entry["error"] = lines[-1][:300]
         _FAILED_JOURNEYS.add(step.split(".")[0])
     _record(entry)
-    _STEP["id"] = None
+    _STEP.update(id=None, recorded=True)
