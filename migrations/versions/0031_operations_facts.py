@@ -200,6 +200,11 @@ def indexes() -> None:
         f"CREATE INDEX task_facts_ready ON task_facts({SCOPE_KEY},task_type,ready_since) WHERE ready_since IS NOT NULL"
     )
     op.execute(f"CREATE INDEX incident_facts_node_opened ON incident_facts({SCOPE_KEY},node_id,opened_at,incident_id)")
+    # Incident pages newest (or oldest) opened first: known opening times walk this index in either direction.
+    op.execute(
+        f"CREATE INDEX incident_facts_opened ON incident_facts({SCOPE_KEY},opened_at DESC,incident_id DESC) "
+        "WHERE opened_at IS NOT NULL"
+    )
     op.execute(f"CREATE INDEX run_deadlines_operations_due ON run_deadlines({SCOPE_KEY},deadline) WHERE NOT consumed")
     op.execute(
         f"CREATE INDEX event_deliveries_operations_due ON event_deliveries({SCOPE_KEY},next_at) "

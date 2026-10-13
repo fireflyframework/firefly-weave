@@ -847,6 +847,7 @@ async def test_fact_query_indexes_cover_scope_and_ordering(migration_db):
             "step_facts_ended",
             "task_facts_ready",
             "incident_facts_node_opened",
+            "incident_facts_opened",
             "run_deadlines_operations_due",
             "event_deliveries_operations_due",
             "incidents_operations_active",

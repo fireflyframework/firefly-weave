@@ -453,23 +453,42 @@ class FactReadRepository(FactRepository):
             if position is not None:
                 clauses.append("i.id>:position_id")
                 params["position_id"] = position
-            order = "i.id ASC"
-        else:
-            if isinstance(position, UUID):
-                raise ValueError("Chronological order requires a time position")
-            direction, operator = ("DESC", "<") if query.order == "opened_desc" else ("ASC", ">")
+            return await self.rows(
+                _INCIDENT_KEYS + "".join(" AND " + clause for clause in clauses) + " ORDER BY i.id ASC LIMIT :limit",
+                **params,
+            )
+        if isinstance(position, UUID):
+            raise ValueError("Chronological order requires a time position")
+        direction, operator = ("DESC", "<") if query.order == "opened_desc" else ("ASC", ">")
+        # Known opening times, then the unknown-time tail, as two keyset scans in one snapshot (as run pages are
+        # read). The known-time scan excludes nulls, so the scoped opening-time index serves it in both directions
+        # with the row comparison as an index bound; the tail is read only when known times do not fill the page.
+        found: list[dict[str, Any]] = []
+        if position is None or position.at is not None:
+            known = [*clauses, "f.opened_at IS NOT NULL"]
+            bounds: dict[str, Any] = {}
             if position is not None:
-                params["position_id"] = position.id
-                if position.at is None:
-                    clauses.append(f"(f.opened_at IS NULL AND i.id{operator}:position_id)")
-                else:
-                    # Unknown opening times come after every known one, in both directions.
-                    clauses.append(f"((f.opened_at,i.id){operator}(:position_at,:position_id) OR f.opened_at IS NULL)")
-                    params["position_at"] = position.at
-            order = f"f.opened_at {direction} NULLS LAST,i.id {direction}"
-        return await self.rows(
-            _INCIDENT_KEYS + "".join(" AND " + clause for clause in clauses) + f" ORDER BY {order} LIMIT :limit",
-            **params,
+                known.append(f"(f.opened_at,f.incident_id){operator}(:position_at,:position_id)")
+                bounds = dict(position_at=position.at, position_id=position.id)
+            found = await self.rows(
+                _INCIDENT_KEYS
+                + "".join(" AND " + clause for clause in known)
+                + f" ORDER BY f.opened_at {direction},f.incident_id {direction} LIMIT :limit",
+                **params,
+                **bounds,
+            )
+            if len(found) > query.limit:
+                return found
+        unknown = [*clauses, "f.opened_at IS NULL"]
+        tail: dict[str, Any] = {"limit": query.limit + 1 - len(found)}
+        if position is not None and position.at is None:
+            unknown.append(f"i.id{operator}:position_id")
+            tail["position_id"] = position.id
+        return found + await self.rows(
+            _INCIDENT_KEYS
+            + "".join(" AND " + clause for clause in unknown)
+            + f" ORDER BY i.id {direction} LIMIT :limit",
+            **{**params, **tail},
         )
 
     async def incident_details(self, ids: list[UUID]) -> list[dict[str, Any]]:
