@@ -23,7 +23,7 @@ from uuid import UUID
 from pydantic import ValidationError
 
 from firefly_weave.compiler.api import CompiledArtifact, import_artifact
-from firefly_weave.compiler.ir import ActionNode, ForEachNode, HumanTaskNode, IRNode, SignalNode, WaitNode
+from firefly_weave.compiler.ir import ActionNode, HumanTaskNode, IRNode, SignalNode
 from firefly_weave.contracts.definitions import ActionDefinition, load_definition
 from firefly_weave.contracts.instance_keys import node_of
 from firefly_weave.contracts.operations import (
@@ -36,7 +36,14 @@ from firefly_weave.contracts.operations import (
 )
 from firefly_weave.operations.exports import bounded_size, event_node, lock_digest, safe_event, transition_digest
 from firefly_weave.operations.redaction import project
-from firefly_weave.runtime.kernel import deadline_order, transition, validate, validate_action, workflow
+from firefly_weave.runtime.kernel import (
+    deadline_order,
+    duration_steps,
+    transition,
+    validate,
+    validate_action,
+    workflow,
+)
 from firefly_weave.runtime.models import Deadline, HumanTaskIntent, RunState, RuntimeEvent, TaskIntent
 
 MAX_EVENTS = 10_000
@@ -84,6 +91,7 @@ def replay(artifact: CompiledArtifact, events: tuple[RuntimeEvent, ...]) -> Repl
     attempts: dict[str, tuple[int, str]] = {}
     eligible_at: dict[str, datetime] = {}
     nodes = {n.id: n for n in ir.graph.nodes}
+    duration_nodes = duration_steps(ir)
     expected_lock = lock_digest(artifact)
     for index, supplied in enumerate(events, 1):
         if index > MAX_EVENTS:
@@ -262,7 +270,7 @@ def replay(artifact: CompiledArtifact, events: tuple[RuntimeEvent, ...]) -> Repl
                     require(event.timestamp < deadlines[node_id].deadline, "WV-REPLAY-HUMAN-EXPIRED")
                     deadlines.pop(node_id)
             elif event.type in {"wait_elapsed", "timed_out", "signal_received"}:
-                _verify_wait(event, evidence, deadlines, nodes)
+                _verify_wait(event, evidence, deadlines, nodes, duration_nodes)
                 if event.type == "signal_received":
                     require(isinstance(node, SignalNode) and node_id in state.active, "WV-REPLAY-EVENT")
                     assert isinstance(node, SignalNode)
@@ -333,7 +341,11 @@ def replay(artifact: CompiledArtifact, events: tuple[RuntimeEvent, ...]) -> Repl
 
 
 def _verify_wait(
-    event: RuntimeEvent, evidence: RecordedEvidence, deadlines: dict[str, DeadlineFact], nodes: dict[str, IRNode]
+    event: RuntimeEvent,
+    evidence: RecordedEvidence,
+    deadlines: dict[str, DeadlineFact],
+    nodes: dict[str, IRNode],
+    duration_nodes: set[str],
 ) -> None:
     node_id = str(event.data.get("node_id", ""))
     issued = deadlines.get(node_id)
@@ -353,7 +365,6 @@ def _verify_wait(
         and all(s.accepted_at <= event.timestamp for s in pending),
         "WV-REPLAY-SIGNAL",
     )
-    duration_nodes = {key for key, node in nodes.items() if isinstance(node, (WaitNode, ForEachNode))}
     due = sorted(
         (
             d
