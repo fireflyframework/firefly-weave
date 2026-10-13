@@ -4469,9 +4469,7 @@ export class App implements CanvasHost {
   private loadingWorkflowContracts = new Set<string>();
   /** Three bounded readers warm the contracts needed by cards outside the inspector. */
   private async loadWorkflowContracts() {
-    const scope = this.profile,
-      opened = this.model.opened;
-    if (!scope || !this.can("catalog.read")) return;
+    if (!this.profile || !this.can("catalog.read")) return;
     const uses = new Set(
       this.nodes
         .filter(
@@ -4479,10 +4477,25 @@ export class App implements CanvasHost {
         )
         .map((node) => String(node.step["uses"] ?? "")),
     );
-    const queue = this.actionVersions.filter((entry) => {
+    await this.readContracts(
+      this.actionVersions.filter((entry) =>
+        uses.has(`${entry["name"]}@${entry["version"]}`),
+      ),
+    );
+  }
+  /** Add a step sorts published actions by app: their contracts say which app each one uses. */
+  warmActionContracts() {
+    if (!this.profile || !this.can("catalog.read")) return;
+    void this.readContracts(this.actionVersions.slice(0, 100));
+  }
+  /** Exports catalog entries' contracts, three at a time, skipping cached and pending ones. */
+  private async readContracts(entries: readonly Record<string, unknown>[]) {
+    const scope = this.profile,
+      opened = this.model.opened;
+    if (!scope) return;
+    const queue = entries.filter((entry) => {
       const ref = `${entry["name"]}@${entry["version"]}`;
       return (
-        uses.has(ref) &&
         !this.contractCache.has(ref) &&
         this.contractPending !== ref &&
         !this.loadingWorkflowContracts.has(ref)

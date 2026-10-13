@@ -52,6 +52,8 @@ export interface AddStepHost {
   readonly catalogState: "idle" | "loading" | "ready" | "error";
   readonly actionNextCursor: string | null;
   closePicker(): void;
+  /** Loads published actions' contracts: they say which app each action uses. */
+  warmActionContracts(): void;
   /** Keys pressed since the panel was asked to open, oldest first; stops holding them. */
   takeEarlyKeys(): readonly EarlyKey[];
   notify(text: string): void;

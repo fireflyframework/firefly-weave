@@ -43,7 +43,7 @@ import { triggerInputs, type TriggerIntent } from "../state/canvas-sidecar";
 import { keyPlatform } from "../state/canvas-commands";
 import { commandFor, eventCombo } from "../state/keymap";
 import type { AddStepHost, AddStepRequest } from "./add-step-host";
-import { loadLanguage } from "./catalog-sources";
+import { loadConnectors, loadLanguage } from "./catalog-sources";
 import {
   buildCatalog,
   type Catalog,
@@ -89,6 +89,8 @@ export class AddStepPanel implements OnInit, DoCheck {
   state: PanelState = startState("next");
   private request: AddStepRequest | null = null;
   private busy = false;
+  /** The published actions' contracts were asked for. */
+  private warmed = false;
   private readonly optionIds = new Map<string, string>();
 
   ngOnInit() {
@@ -107,12 +109,21 @@ export class AddStepPanel implements OnInit, DoCheck {
       this.language = target;
       this.cdr.markForCheck();
     });
+    if (h.profile)
+      void loadConnectors(h.api).then((connectors) => {
+        this.connectors = connectors;
+        this.cdr.markForCheck();
+      });
   }
 
   ngDoCheck() {
     const h = this.host();
     const request = h.addStep;
     if (!request) return;
+    if (!this.warmed && h.profile && h.catalogState === "ready") {
+      this.warmed = true;
+      h.warmActionContracts();
+    }
     if (request !== this.request) {
       this.request = request;
       this.state = startState(request.start);

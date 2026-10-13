@@ -16,7 +16,10 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 import { describe, expect, it } from "vitest";
-import { languageTarget } from "../src/app/editor/add-step/catalog-sources";
+import {
+  connectorPage,
+  languageTarget,
+} from "../src/app/editor/add-step/catalog-sources";
 
 describe("what the target runs", () => {
   it("reads the features and what Studio can't edit yet from the language manifest", () => {
@@ -39,5 +42,31 @@ describe("what the target runs", () => {
     expect(languageTarget({ items: [], next_cursor: null })).toBeNull();
     expect(languageTarget("<!doctype html>")).toBeNull();
     expect(languageTarget(null)).toBeNull();
+  });
+});
+
+describe("the installed apps", () => {
+  it("reads a page of connector descriptors", () => {
+    expect(
+      connectorPage({
+        items: [
+          {
+            adapter: "weave-email",
+            reference: "weave-email@1.0.0",
+            digest: "x",
+          },
+          { adapter: 7 },
+        ],
+        next_cursor: "page-2",
+      }),
+    ).toEqual({
+      items: [{ adapter: "weave-email", reference: "weave-email@1.0.0" }],
+      next: "page-2",
+    });
+    expect(connectorPage({ items: [], next_cursor: null })).toEqual({
+      items: [],
+      next: null,
+    });
+    expect(connectorPage({ code: "WV-FORBIDDEN" })).toBeNull();
   });
 });

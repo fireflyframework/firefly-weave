@@ -20,7 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 // Connected, the platform's `language.read`; locally, the Studio host's copy.
 // A read that fails is tried again the next time the panel opens.
 import type { StudioApi } from "../../api";
-import type { LanguageTarget } from "./entries";
+import type { ConnectorInfo, LanguageTarget } from "./entries";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === "object" && !Array.isArray(value);
@@ -62,6 +62,53 @@ export function loadLanguage(
     languages.set(key, pending);
     void pending.then((target) => {
       if (!target) languages.delete(key);
+    });
+  }
+  return pending;
+}
+
+/** One page of `connector_descriptors.list`; null when the answer isn't one. */
+export function connectorPage(
+  body: unknown,
+): { items: ConnectorInfo[]; next: string | null } | null {
+  if (!isRecord(body) || !Array.isArray(body["items"])) return null;
+  return {
+    items: records(body["items"]).flatMap((item) =>
+      typeof item["adapter"] === "string" &&
+      typeof item["reference"] === "string"
+        ? [{ adapter: item["adapter"], reference: item["reference"] }]
+        : [],
+    ),
+    next: typeof body["next_cursor"] === "string" ? body["next_cursor"] : null,
+  };
+}
+
+const apps = new Map<string, Promise<ConnectorInfo[] | null>>();
+
+/** The installed apps, up to ten pages; null when they can't be read. */
+export function loadConnectors(
+  api: StudioApi,
+): Promise<ConnectorInfo[] | null> {
+  const key = api.project;
+  let pending = apps.get(key);
+  if (!pending) {
+    pending = (async (): Promise<ConnectorInfo[] | null> => {
+      const found: ConnectorInfo[] = [];
+      let cursor: string | undefined;
+      for (let page = 0; page < 10; page++) {
+        const parsed = connectorPage(
+          await api.page("connector-descriptors", false, cursor),
+        );
+        if (!parsed) return null;
+        found.push(...parsed.items);
+        if (!parsed.next) return found;
+        cursor = parsed.next;
+      }
+      return found;
+    })().catch(() => null);
+    apps.set(key, pending);
+    void pending.then((list) => {
+      if (!list) apps.delete(key);
     });
   }
   return pending;
