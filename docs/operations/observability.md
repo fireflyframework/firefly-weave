@@ -261,8 +261,11 @@ yours: rehearse with your own data and hardware before relying on them.
 these reads on 200,000 runs: every chronological page walks a scoped index
 without sorting the environment, and no listing statement reads run payloads,
 events or step outputs. Studio's real-platform suite checks that Overview shows
-live figures within one second of opening it and that every scheduled refresh of
-Overview, Runs, Workers and Incidents transfers less than 50,000 bytes.
+live figures within one second of opening it once Home has finished its own reads,
+and that every scheduled refresh of Overview, Runs, Workers and Incidents transfers
+less than 50,000 bytes. Opened while Home was still reading, Overview took about two
+seconds in the same run (1.9 s), because both pages' reads share the Studio host;
+that case is recorded, not held to the one-second target.
 
 Background loop health in the summary counts a loop as `degraded` after 3
 failed cycles in a row or 3 among its last 20 (see the

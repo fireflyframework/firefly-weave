@@ -137,6 +137,30 @@ function pollRecorder(page: Page) {
 const payload = (path: string) =>
   /\/history|\/export|\/logs|include=output|\/runs\/:id$/.test(path);
 
+/**
+ * Milliseconds from choosing Overview until a paint after its live figures
+ * show: the clock starts at the click and stops two frames after the
+ * live-figures container is visible.
+ */
+async function overviewPaint(page: Page): Promise<number> {
+  await page.evaluate(() => performance.mark("overview-open"));
+  await page.getByRole("button", { name: "Overview", exact: true }).click();
+  await expect(page.getByTestId("overview-meaningful")).toBeVisible();
+  return page.evaluate(
+    () =>
+      new Promise<number>((resolve) => {
+        requestAnimationFrame(() =>
+          requestAnimationFrame(() =>
+            resolve(
+              performance.now() -
+                performance.getEntriesByName("overview-open").at(-1)!.startTime,
+            ),
+          ),
+        );
+      }),
+  );
+}
+
 test("overview first meaningful paint is under one second", async ({
   page,
 }) => {
@@ -146,9 +170,16 @@ test("overview first meaningful paint is under one second", async ({
   const name = uniqueName("e2e-overview");
   await pair(page, s.host!, "overview-pairing");
   await connectAndSignIn(page, name, person);
+  // Recorded, not gated: Overview opened while Home is still reading shares the
+  // host with Home's reads.
+  await openSidebar(page, "Home");
+  record(
+    "overview_paint_with_home_loading_ms",
+    Math.round(await overviewPaint(page)),
+  );
   await openSidebar(page, "Home");
   await expect(page.locator("weave-home-dashboard")).toBeVisible();
-  // Home has finished its own reads: the clock measures Overview alone.
+  // Home has finished its own reads: the gated clock measures Overview alone.
   await expect(page.locator("weave-home-dashboard")).not.toContainText(
     "Loading your",
     { timeout: 30_000 },
@@ -164,23 +195,8 @@ test("overview first meaningful paint is under one second", async ({
       ended: timing.startTime + timing.responseEnd,
     });
   });
-  await page.evaluate(() => performance.mark("overview-open"));
   const opened = Date.now();
-  await page.getByRole("button", { name: "Overview", exact: true }).click();
-  await expect(page.getByTestId("overview-meaningful")).toBeVisible();
-  const paintMs = await page.evaluate(
-    () =>
-      new Promise<number>((resolve) => {
-        requestAnimationFrame(() =>
-          requestAnimationFrame(() =>
-            resolve(
-              performance.now() -
-                performance.getEntriesByName("overview-open").at(-1)!.startTime,
-            ),
-          ),
-        );
-      }),
-  );
+  const paintMs = await overviewPaint(page);
   record("overview_first_meaningful_paint_ms", Math.round(paintMs));
   record(
     "overview_requests",
