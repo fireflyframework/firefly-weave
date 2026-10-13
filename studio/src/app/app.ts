@@ -211,7 +211,11 @@ import {
 import { RecordsView } from "./operations/records-view";
 import { SettingsPage } from "./settings/settings-page";
 import { LumiPanel } from "./lumi/lumi-panel";
-import { canvasSheet, keyPlatform } from "./editor/state/canvas-commands";
+import {
+  canvasSheet,
+  keyPlatform,
+  typingIn,
+} from "./editor/state/canvas-commands";
 import type {
   BuilderTab,
   HttpActionUse,
@@ -9066,7 +9070,7 @@ export class App implements CanvasHost {
     )
       return;
     const target = event.target as HTMLElement;
-    const typing = ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName);
+    const typing = typingIn(target);
     if (
       this.view === "designer" &&
       target.closest?.(".inspector") &&
