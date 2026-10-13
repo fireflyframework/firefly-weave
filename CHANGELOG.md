@@ -49,7 +49,9 @@ SPDX-License-Identifier: Apache-2.0
   **Simulate**, only when it is first used, so its first download is smaller.
 - The Studio host adds `GET /studio/contracts/connector-actions`, which returns
   the built-in email and file connector actions, as Action documents, that
-  Studio's email and file steps copy into actions of their own.
+  Studio's email and file steps copy into actions of their own. Its API action
+  builder (`POST /studio/local/http-action`) refuses a request larger than
+  1 MiB with 413 `WV-STUDIO-REQUEST`.
 - Run AI tasks on a local Ollama model: `weave platform ai enable --ollama auto|host|container`
   (or `--ollama-url URL`) sets up the AI gateway, the Agentic worker, a version 2 AI
   policy, development-only private-origin entries and a keyless `ollama-local`
