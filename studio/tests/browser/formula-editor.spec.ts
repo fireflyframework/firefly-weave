@@ -110,6 +110,12 @@ for (const size of sizes)
         "The formula ends too early. Add a value after `>`.",
       );
       await expect(formulaText(field)).toHaveAttribute("aria-invalid", "true");
+      // The Result says why, and offers no tip: the text already reads data.
+      const result = field.getByRole("region", { name: "Result of Fields" });
+      await expect(result).toContainText(
+        "The formula ends too early. Add a value after `>`.",
+      );
+      await expect(result).not.toContainText("Tip:");
       await details.close();
       expect(await stepValue(page, "flag")).toEqual(before);
       await details.openWithKeyboard("flag");

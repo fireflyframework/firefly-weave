@@ -50,7 +50,8 @@ import {
   type FieldText,
 } from "../../formula/field-text";
 import { printRef } from "../../formula/printer";
-import type { ReferenceSpan } from "../../formula/spans";
+import { referenceSpans, type ReferenceSpan } from "../../formula/spans";
+import { tokenize } from "../../formula/tokens";
 import { printTemplate } from "../../formula/template";
 import { referencesOf } from "../../formula/preview";
 import type { PreviewResult } from "../registry";
@@ -537,13 +538,18 @@ export class FormulaField implements OnInit {
       ? this.session().previewSource(this.spec(), read.value)
       : "";
   }
+  /** The tip to drag a field shows while the text reads no data (even text that doesn't parse yet). */
   resultTip(): boolean {
-    const read = readFieldText(this.shownText(), this.fieldText());
-    return (
-      read.kind !== "value" ||
-      read.value.mode !== "mapped" ||
-      !referencesOf(read.value.expression).length
-    );
+    const text = this.shownText();
+    const read = readFieldText(text, this.fieldText());
+    if (read.kind === "value")
+      return (
+        read.value.mode !== "mapped" ||
+        !referencesOf(read.value.expression).length
+      );
+    return !referenceSpans(
+      tokenize(text, this.templateMode() ? "template" : "formula"),
+    ).length;
   }
 
   escape(signal: { event: KeyboardEvent; handled: boolean }) {
