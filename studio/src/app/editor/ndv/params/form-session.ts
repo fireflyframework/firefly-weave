@@ -577,6 +577,7 @@ export class FormSession {
         caret: null,
         templates: this.templates(spec),
         mode: this.mode(spec),
+        parse: this.formulaOptions(spec),
       });
       if (plan.kind === "refuse")
         return { fit: "refused" as const, text: plan.reason };
@@ -635,6 +636,7 @@ export class FormSession {
       caret: options.caret,
       templates: this.templates(spec),
       mode: this.mode(spec),
+      parse: this.formulaOptions(spec),
     });
     if (plan.kind === "refuse") {
       this.announce(plan.reason);

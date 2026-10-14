@@ -29,6 +29,7 @@ import {
   type Schema,
   type ScopeEntry,
 } from "../../../forms/core/scope";
+import type { ParseOptions } from "../../formula/grammar";
 import type { ParamSpec } from "../registry";
 import {
   partsToText,
@@ -121,12 +122,14 @@ function insertAt(
   text: string,
   caret: number | null,
   ref: string,
+  parse?: ParseOptions,
 ): ParamValue | null {
   if (!refToPath(ref)) return null;
   const at =
     caret === null ? text.length : Math.max(0, Math.min(caret, text.length));
   const parsed = textToExpression(
     `${text.slice(0, at)}{{ ${refToPath(ref)} }}${text.slice(at)}`,
+    parse,
   );
   return parsed.ok ? parsed.value : null;
 }
@@ -139,6 +142,8 @@ export function planDrop(
     caret: number | null;
     templates: boolean;
     mode: "fixed" | "mapped" | null;
+    /** What the field's formulas may use (its loops, the platform's features). */
+    parse?: ParseOptions;
   },
 ): DropPlan {
   if (options.mode === null) return { kind: "refuse", reason: FIXED_ONLY };
@@ -187,7 +192,7 @@ export function planDrop(
       };
     }
     const next = parts
-      ? insertAt(partsToText(parts), options.caret, drag.ref)
+      ? insertAt(partsToText(parts), options.caret, drag.ref, options.parse)
       : null;
     if (next) return { kind: "write", next, replaced: null };
   }

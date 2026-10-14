@@ -165,6 +165,31 @@ describe("drag-to-map", () => {
       ref: amount.ref,
     });
   });
+  it("adds a placeholder to a template in a loop body, which reads the loop's item", () => {
+    const current = {
+      mode: "mapped" as const,
+      expression: {
+        op: {
+          name: "concat",
+          args: [{ literal: "Hi " }, { ref: "/item/name" }],
+        },
+      },
+    };
+    const plan = planDrop(field("text"), current, email, {
+      caret: null,
+      templates: true,
+      mode: "mapped",
+      parse: { features: ["text.concat"], loops: ["each"] },
+    });
+    if (plan.kind !== "write" || plan.next.mode !== "mapped")
+      throw new Error(`expected a mapping: ${JSON.stringify(plan)}`);
+    expect(plan.next.expression).toEqual({
+      op: {
+        name: "concat",
+        args: [{ literal: "Hi " }, { ref: "/item/name" }, { ref: email.ref }],
+      },
+    });
+  });
   it("replaces an exact reference leaf in a non-template field while preserving opaque formulas", () => {
     const options = { caret: null, templates: false, mode: "mapped" as const };
     expect(
