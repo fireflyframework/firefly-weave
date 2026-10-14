@@ -127,7 +127,8 @@ SPDX-License-Identifier: Apache-2.0
 - New operation `releases.usage` (`weave workers releases usage`, SDK
   `release_usage`) counts a release's online, offline, draining and revoked
   workers and the activations that pin it, and pages the deployment components
-  that run it on targets the reader may read.
+  that run it on targets the reader may read; `deployments_hidden: true` says the
+  reader may read no target.
 - The Python SDK's `list_workers` accepts a typed `query` and rejects one
   combined with keyword arguments.
 - Kubernetes runners no longer read a pod's free-text status reason, and a pod
