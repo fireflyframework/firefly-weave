@@ -377,7 +377,9 @@ classifies each distinct stored artifact once, and aggregates event timestamps p
 batch. The indexes it adds to existing tables (`run_deadlines`, `event_deliveries`
 and `incidents`) are built inside that transaction, so their locks last until the
 whole migration commits: the maintenance window is the migration's duration, which
-is one more reason to stop every writer first. Allow temporary disk space for all
+is one more reason to stop every writer first. The foreign keys of the new fact
+tables likewise lock `runs`, `task_intents`, `incidents`, `worker_instances`,
+`environments` and `tenants` against writes until the migration commits. Allow temporary disk space for all
 five projections, their indexes, and transaction/WAL overhead.
 
 Rehearse against a restored copy to measure your maintenance window. On a
@@ -401,7 +403,9 @@ upgrade keep an unknown registration time and no identity; a worker reports its
 identity when it next registers. Each run projection records when its coverage
 began.
 
-The new facts count toward ordinary storage usage. Active executions reserve
+The new facts count toward ordinary storage usage. Near a quota ceiling, this
+means a claim or completion that an earlier server accepted can be refused with
+the usual capacity answer, and it changes nothing when it is refused. Active executions reserve
 additional capacity for bounded terminal fact updates, including allocation
 provenance. Backfill inventories retained data without granting extra admission
 capacity: a platform already above a quota can still migrate, but new work must

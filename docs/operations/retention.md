@@ -193,7 +193,10 @@ usage and active work. Ending a run or expiring a debug session can release acti
 capacity while its retained bytes stay charged. Starting a debug session also
 reserves its bounded session capacity. The server's admission checks release
 expired reservations; the data of an expired session stays until eligible
-maintenance removes it.
+maintenance removes it. The operational facts kept for each run,
+step, task, incident and worker count toward retained usage too, and an active run
+reserves room for its facts' final updates, so a project near its ceiling reaches
+it a little sooner than before they existed.
 
 **Logical accounting is not disk usage.** It measures serialized data and
 allocation metadata. It does not reclaim PostgreSQL files, indexes, WAL, or
