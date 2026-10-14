@@ -40,6 +40,7 @@ from firefly_weave.compiler.ir import (
     ActionNode,
     ArtifactEnvelope,
     BranchOutputNode,
+    CallWorkflowNode,
     EndNode,
     ForEachNode,
     SwitchNode,
@@ -88,6 +89,9 @@ def _explain(artifact: CompiledArtifact) -> None:
             detail = f" uses={dependencies[node.dependency].reference}" if isinstance(node, ActionNode) else ""
             if isinstance(node, ForEachNode):
                 detail = f" concurrency={node.concurrency} maxItems={node.max_items} collect={node.collect}"
+            if isinstance(node, CallWorkflowNode):
+                failure = f" onFailure={node.on_failure}" if node.on_failure is not None else ""
+                detail = f" uses={dependencies[node.dependency].reference} mode={node.mode}{failure}"
             click.echo(f"  {node.id} ({node.kind}) {location}{detail}")
             expressions: list[Expression] = []
             if isinstance(node, ActionNode):
@@ -100,6 +104,10 @@ def _explain(artifact: CompiledArtifact) -> None:
                 expressions.extend(case.when for case in node.cases)
             elif isinstance(node, ForEachNode):
                 expressions.append(node.items)
+            elif isinstance(node, CallWorkflowNode):
+                expressions.append(node.input)
+                if node.business_key is not None:
+                    expressions.append(node.business_key)
             for expression in expressions:
                 for reference in _references(expression):
                     click.echo(f"    reads {reference}")

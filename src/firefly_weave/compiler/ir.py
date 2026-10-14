@@ -33,27 +33,19 @@ from firefly_weave.contracts import language_features
 from firefly_weave.contracts.definitions import (
     ActionDefinition,
     ActionSpec,
-    ActionStep,
     ArrayExpression,
     ConnectionRequirement,
     ConnectorDefinition,
     ConnectorSpec,
     ContractModel,
     DecisionTableSpec,
-    DecisionTableStep,
     Expression,
-    ForEachStep,
-    HumanTaskStep,
     JsonPointer,
-    LLMStep,
     Metadata,
     ObjectExpression,
     OpExpression,
-    ParallelStep,
     PositiveInt,
     ResourceName,
-    SignalStep,
-    SwitchStep,
     WorkerImplementation,
     WorkflowSpec,
     load_definition,
@@ -109,6 +101,8 @@ class Guard(ContractModel):
         "human_output",
         "branch_output",
         "loop_items",
+        "call_input",
+        "call_output",
         "workflow_input",
         "workflow_output",
     ]
@@ -178,6 +172,25 @@ class FailNode(Node):
     message: Annotated[UnicodeString, Field(min_length=1)]
 
 
+class CallWorkflowNode(Node):
+    """Starts the exact workflow version ``dependency`` names as a child run with the input ``with``."""
+
+    kind: Literal["callWorkflow"]
+    dependency: Digest
+    input: Expression = Field(alias="with")
+    mode: Literal["wait", "detach"]
+    on_failure: Literal["stop", "continue"] | None = Field(
+        default=None, alias="onFailure", exclude_if=lambda value: value is None
+    )
+    business_key: Expression | None = Field(default=None, alias="businessKey", exclude_if=lambda value: value is None)
+
+    @model_validator(mode="after")
+    def failure_needs_wait(self) -> CallWorkflowNode:
+        if self.mode == "detach" and self.on_failure is not None:
+            raise ValueError("onFailure applies only when the call waits for its result")
+        return self
+
+
 class SwitchCase(ContractModel):
     branch: UnicodeString
     when: Expression
@@ -241,6 +254,7 @@ type IRNode = Annotated[
     | SignalNode
     | HumanTaskNode
     | FailNode
+    | CallWorkflowNode
     | SwitchNode
     | ParallelNode
     | ForEachNode
@@ -369,7 +383,17 @@ class IRGraph(ContractModel):
                 if not node.completes and actual:
                     raise ValueError("Noncompleting join has successor")
             if isinstance(
-                node, (StartNode, ActionNode, DecisionTableNode, TransformNode, WaitNode, SignalNode, JoinNode)
+                node,
+                (
+                    StartNode,
+                    ActionNode,
+                    DecisionTableNode,
+                    TransformNode,
+                    WaitNode,
+                    SignalNode,
+                    CallWorkflowNode,
+                    JoinNode,
+                ),
             ):
                 expected_count = 0 if isinstance(node, JoinNode) and not node.completes else 1
                 if len(actual) != expected_count or any(
@@ -469,6 +493,11 @@ def workflow_requirements(graph: IRGraph) -> tuple[str, list[LanguageFeature]]:
         elif isinstance(node, ForEachNode):
             features.add("flow.forEach")
             expressions.append(node.items)
+        elif isinstance(node, CallWorkflowNode):
+            features.add("flow.callWorkflow")
+            expressions.append(node.input)
+            if node.business_key is not None:
+                expressions.append(node.business_key)
     while expressions:
         expression = expressions.pop()
         if isinstance(expression, OpExpression):
@@ -483,6 +512,14 @@ def workflow_requirements(graph: IRGraph) -> tuple[str, list[LanguageFeature]]:
         elif isinstance(expression, ArrayExpression):
             expressions.extend(expression.array)
     return IR_LEVELS[3 if features else level], sorted(features)
+
+
+def allows_caller(callable_field: JsonValue, caller: str) -> bool:
+    """Whether a workflow's ``callable`` field (definition JSON; ``None`` when absent) lets ``caller`` call it."""
+    if not isinstance(callable_field, dict):
+        return False
+    allowed = callable_field.get("allowedCallers")
+    return allowed is None or (isinstance(allowed, list) and caller in allowed)
 
 
 def accepted_ir_versions(features: Collection[str]) -> list[str]:
@@ -584,11 +621,18 @@ class WorkflowIR(ExecutableBase):
             raise ValueError("Unknown workflow schema")
         actions = {d.digest for d in self.dependencies if d.kind == "Action"}
         tables = {d.digest for d in self.dependencies if d.kind == "DecisionTable"}
+        workflows = {d.digest: d.document for d in self.dependencies if d.kind == "Workflow"}
         for node in self.graph.nodes:
             if isinstance(node, ActionNode) and node.dependency not in actions:
                 raise ValueError("Unknown action dependency")
             if isinstance(node, DecisionTableNode) and node.dependency not in tables:
                 raise ValueError("Unknown decision table dependency")
+            if isinstance(node, CallWorkflowNode):
+                if node.dependency not in workflows:
+                    raise ValueError("Unknown called workflow dependency")
+                callee = cast(JsonObject, workflows[node.dependency]["spec"])
+                if not allows_caller(callee.get("callable"), self.metadata.name):
+                    raise ValueError("The called workflow does not allow calls from this workflow")
             if isinstance(node, SignalNode) and node.schema_ref not in self.schemas:
                 raise ValueError("Unknown signal schema")
         return self
@@ -692,31 +736,9 @@ def _validate_dependency_closure(executable: ExecutableBase) -> None:
             for descriptor in spec.actions.values():
                 schema_roots.extend((descriptor.input_schema, descriptor.output_schema))
         elif isinstance(spec, WorkflowSpec):
+            # A workflow dependency is a called workflow's interface: its steps were checked when it was published
+            # and run in its own child run, so only its input and output schemas belong to this executable.
             schema_roots.extend((spec.input_schema, spec.output_schema))
-            connections(spec.connections)
-            pending = list(spec.steps)
-            while pending:
-                step = pending.pop()
-                if isinstance(step, (ActionStep, LLMStep)):
-                    require("Action", step.uses)
-                    action = definitions[("Action", step.uses)]
-                    assert isinstance(action, ActionDefinition)
-                    binding(step.connection, action.spec.connection, spec.connections)
-                elif isinstance(step, DecisionTableStep):
-                    require("DecisionTable", step.uses)
-                elif isinstance(step, HumanTaskStep):
-                    schema_roots.append(step.form_schema)
-                elif isinstance(step, SignalStep):
-                    schema_roots.append(step.payload_schema)
-                elif isinstance(step, SwitchStep):
-                    pending.extend(step.default.steps)
-                    for case in step.cases:
-                        pending.extend(case.steps)
-                elif isinstance(step, ParallelStep):
-                    for branch in step.branches.values():
-                        pending.extend(branch.steps)
-                elif isinstance(step, ForEachStep):
-                    pending.extend(step.body.steps)
     if isinstance(executable, WorkflowIR):
         connections(executable.connections)
         actions = {
