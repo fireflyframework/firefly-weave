@@ -53,6 +53,8 @@ class RuntimeEvent(ContractModel):
 class BranchState(ContractModel):
     owner: str
     name: str
+    # The element position of a loop iteration frame; absent for switch and parallel branches.
+    index: int | None = Field(default=None, ge=0, exclude_if=lambda v: v is None)
     target: str
     parent: str | None = None
     status: Literal["pending", "running", "completed", "cancelled"] = "pending"
@@ -71,6 +73,28 @@ class JoinState(ContractModel):
     completed: list[str] = Field(default_factory=list)
     completed_count: int = Field(default=0, ge=0)
     status: Literal["waiting", "joined", "terminated"] = "waiting"
+
+
+class LoopState(ContractModel):
+    """One loop instance: its elements, the iterations in flight and the results collected so far.
+
+    ``items``, ``outputs`` and ``visible`` are cleared when the loop joins; ``visible`` holds the bindings at the
+    loop once, so iteration frames do not copy them.
+    """
+
+    owner: str
+    join: str
+    count: int = Field(ge=0)
+    concurrency: int = Field(ge=1)
+    next_index: int = Field(default=0, ge=0)
+    running: list[int] = Field(default_factory=list)
+    completed: int = Field(default=0, ge=0)
+    output_bytes: int = Field(default=0, ge=0)
+    yields: int = Field(default=0, ge=0)
+    status: Literal["running", "joined", "terminated"] = "running"
+    items: list[JsonData] = Field(default_factory=list)
+    outputs: dict[str, JsonData] = Field(default_factory=dict)
+    visible: JsonObjectData = Field(default_factory=dict)
 
 
 class IncidentState(ContractModel):
@@ -96,6 +120,7 @@ class RunState(ContractModel):
     incident: str | None = None
     branches: dict[str, BranchState] = Field(default_factory=dict)
     joins: dict[str, JoinState] = Field(default_factory=dict)
+    loops: dict[str, LoopState] = Field(default_factory=dict, exclude_if=lambda v: not v)
     incidents: dict[str, IncidentState] = Field(default_factory=dict)
     deferred_results: list[RuntimeEvent] = Field(default_factory=list)
 
@@ -148,6 +173,8 @@ class ControlCommand(ContractModel):
     kind: Literal["spawn_branch", "accept_output", "join", "revoke_leases", "terminate"]
     node_id: str
     branch: str | None = None
+    # The element position for a loop iteration's spawn and output; absent otherwise.
+    index: int | None = Field(default=None, ge=0, exclude_if=lambda v: v is None)
 
 
 class Transition(ContractModel):

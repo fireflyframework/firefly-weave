@@ -353,6 +353,8 @@ Some runs created before the current admission policy cannot be shown safely.
 | --- | --- | --- |
 | HTTP 409 `WV-RUNTIME-RECONCILIATION_REQUIRED` | `retry_safe` was used for an action that is not safe to repeat, the incident is not tied to an action (only `terminate` works), or a reconciled result lacks `output` or `evidence_reference` | Reconcile externally and use `accept_reconciled_result` with both fields, or `terminate` |
 | HTTP 409 `WV-INCIDENT-REVISION` | Another decision changed the incident since you read it | Read the incident again; decide only if it is still active |
+| A task incident keyed `send[2]:0` | A task failed in iteration 2 of a loop; the other iterations' results wait behind the incident | Decide it like any task incident; `retry_safe` retries only that iteration |
+| `WV-RUNTIME-LOOP-ITEMS`, `WV-RUNTIME-LOOP-LIMIT`, or `WV-RUNTIME-LOOP-OUTPUT` | A loop's list was not a list, was longer than `maxItems`, or its results exceeded the payload limit; see [loops at run time](compiler.md#loops-at-run-time) | Only `terminate` applies; fix the workflow and start a new run |
 | HTTP 409 `WV-RUNTIME-STATE` | The incident is no longer active, or no failed task matches it | Read the run and its incidents again |
 | HTTP 409 `WV-RUNTIME-DEADLINE` on `retry_safe` | The action's original deadline has passed | Use `terminate`, then start a linked retry of the whole run |
 | HTTP 422 `WV-RUNTIME-OUTPUT` | The reconciled `output` does not match the action's pinned output schema or exceeds the payload limit, or an `output` was sent with `retry_safe` or `terminate` | Fix the output to match that schema; leave `output` out for the other decisions |

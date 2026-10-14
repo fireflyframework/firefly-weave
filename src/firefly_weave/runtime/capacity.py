@@ -19,7 +19,9 @@
 import json
 from collections.abc import Iterator
 from contextvars import ContextVar
+from dataclasses import dataclass
 from datetime import datetime
+from itertools import islice
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -35,6 +37,9 @@ MAX_INTENTS = 1_000
 # bytes of new step output have accumulated since the last admission.
 ADMISSION_REDUCTIONS = 64
 ADMISSION_OUTPUT_BYTES = 1024 * 1024
+# Loop work one event may start: each started iteration costs one unit plus one per node of the loop body. A loop
+# also stops starting iterations once the event holds MAX_INTENTS // 2 intents, and yields the rest to a later event.
+LOOP_TURN_UNITS = 4000
 capacity_failures: ContextVar[list[bool] | None] = ContextVar("weave_capacity_failures", default=None)
 
 
@@ -46,16 +51,77 @@ class RuntimeCapacityError(ValueError):
             observed.append(True)
 
 
+@dataclass
+class _Measured:
+    value: object
+    count: int = 0
+    size: int = 0
+    nodes: int = 0
+    depth: int = 0
+
+
+# JSON lists and objects below a model field with at least this many elements are measured once per event.
+SHARED_VALUE_ELEMENTS = 16
+
+
+class GrowingContainers:
+    """Containers whose measured elements never change while one event is reduced, measured once per element.
+
+    Registered: the transition's steps and commands, the run input, and each loop's elements and collected
+    outputs, which only grow. Also, while registered, every JSON list or object of at least
+    ``SHARED_VALUE_ELEMENTS`` elements found below a model field: the kernel never changes a JSON value in place,
+    it replaces it. Admitting a long event therefore does not walk its earlier work or its shared data again.
+    Entries keep their container alive, so an identity is never reused while it is registered.
+    """
+
+    def __init__(self) -> None:
+        self.measured: dict[int, _Measured] = {}
+
+    def add(self, value: object) -> _Measured:
+        entry = self.measured.get(id(value))
+        if entry is None or entry.value is not value:
+            entry = self.measured[id(value)] = _Measured(value)
+        return entry
+
+    def discard(self, value: object) -> None:
+        entry = self.measured.get(id(value))
+        if entry is not None and entry.value is value:
+            del self.measured[id(value)]
+
+    def entry(self, value: object) -> _Measured | None:
+        entry = self.measured.get(id(value))
+        return entry if entry is not None and entry.value is value else None
+
+
+growing_containers: ContextVar[GrowingContainers | None] = ContextVar("weave_growing_containers", default=None)
+
+
 def logical_size(value: object, ceiling: int) -> int:
     """Visit the live graph without first copying/dumping it; count shared values each time.
 
     Model defaults and optional fields are conservatively counted even when a JSON
     serializer might omit them. String chunks bound temporary encoder allocations.
+    Registered growing containers (``growing_containers``) contribute the same bytes, nodes and depth as a full
+    visit, measured once per element.
     """
-    total = nodes = 0
     strings: dict[int, tuple[str, int]] = {}
+    return _walk(value, ceiling, growing_containers.get(), strings, 0, 0, 0)[0]
+
+
+def _walk(
+    value: object,
+    ceiling: int,
+    known: GrowingContainers | None,
+    strings: dict[int, tuple[str, int]],
+    total: int,
+    nodes: int,
+    base: int,
+) -> tuple[int, int, int]:
+    """Running ``(total, nodes, deepest stack level)`` after visiting ``value`` at stack level ``base``."""
+    deepest = base
     active: set[int] = set()
-    stack: list[tuple[Iterator[object], int | None]] = [(iter((value,)), None)]
+    # Each level: its iterator, the identity of its container, and whether it yields model fields.
+    stack: list[tuple[Iterator[object], int | None, bool]] = [(iter((value,)), None, True)]
 
     def string_size(item: str) -> int:
         cached = strings.get(id(item))
@@ -73,7 +139,7 @@ def logical_size(value: object, ceiling: int) -> int:
         return size
 
     while stack:
-        iterator, identity = stack[-1]
+        iterator, identity, fields = stack[-1]
         try:
             item = next(iterator)
         except StopIteration:
@@ -82,10 +148,42 @@ def logical_size(value: object, ceiling: int) -> int:
                 active.remove(identity)
             continue
         nodes += 1
-        if nodes > 2_000_000 or len(stack) > 128:
+        level = base + len(stack)
+        deepest = max(deepest, level)
+        if nodes > 2_000_000 or level > 128:
             raise RuntimeCapacityError()
-        if isinstance(item, BaseModel):
+        model = isinstance(item, BaseModel)
+        if model:
             item = item.__dict__
+        if known is not None and not model and isinstance(item, (list, dict)):
+            entry = known.entry(item)
+            if entry is None and not fields and len(item) >= SHARED_VALUE_ELEMENTS:
+                entry = known.add(item)
+            if entry is not None:
+                # A growing container: measure only the elements added since its last visit.
+                if len(item) < entry.count:
+                    entry.count = entry.size = entry.nodes = entry.depth = 0
+                total += 2 + max(0, len(item) - 1)
+                fresh: Iterator[tuple[str | None, object]]
+                if isinstance(item, dict):
+                    fresh = islice(item.items(), entry.count, None)
+                else:
+                    fresh = ((None, element) for element in item[entry.count :])
+                for key, element in fresh:
+                    before, counted = total + entry.size, nodes + entry.nodes
+                    if key is not None:
+                        before += string_size(str(key)) + 1
+                    after, counted_after, reached = _walk(element, ceiling, known, strings, before, counted, level)
+                    entry.size += after - (total + entry.size)
+                    entry.nodes += counted_after - counted
+                    entry.depth = max(entry.depth, reached - level)
+                    entry.count += 1
+                total += entry.size
+                nodes += entry.nodes
+                deepest = max(deepest, level + entry.depth)
+                if total > ceiling or nodes > 2_000_000 or level + entry.depth > 128:
+                    raise RuntimeCapacityError()
+                continue
         if isinstance(item, dict):
             total += 2 + max(0, len(item) - 1)
             for key in item:
@@ -107,8 +205,8 @@ def logical_size(value: object, ceiling: int) -> int:
             if id(item) in active:
                 raise RuntimeCapacityError()
             active.add(id(item))
-            stack.append((children, id(item)))
-    return total
+            stack.append((children, id(item), model))
+    return total, nodes, deepest
 
 
 def admit_transition(result: Transition) -> None:

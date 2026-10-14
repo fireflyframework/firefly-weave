@@ -133,6 +133,7 @@ def test_the_committed_map_is_valid():
         "text-operators",
         "instance-keys",
         "loop-compiler",
+        "loop-runtime",
         "ai-gateway",
         "ai-models-screen",
         "run-views",
