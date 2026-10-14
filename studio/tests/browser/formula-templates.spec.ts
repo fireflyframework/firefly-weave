@@ -20,6 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 import { expect, test } from "@playwright/test";
 import { parse } from "yaml";
 import {
+  expectActiveRowOnTop,
   fieldLine,
   formulaBox,
   formulaText,
@@ -65,6 +66,7 @@ for (const size of sizes)
         "Summarize the order for {{  }}",
       );
       await expect(suggestions(page)).toBeVisible();
+      await expectActiveRowOnTop(page);
       await page.keyboard.type("input.em", { delay: 20 });
       await page.keyboard.press("Enter");
       await expect(formulaBox(field)).toHaveAttribute(

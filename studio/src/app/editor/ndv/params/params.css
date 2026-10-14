@@ -2132,48 +2132,68 @@ weave-param-field.is-conditions > .param > .param-line {
   white-space: nowrap;
 }
 
-/* The completion list: rows like the data panes (32 px on desktop, 44 px on
-   touch), the type on the right in the muted ink. */
-.cm-tooltip:has(> .cm-formula-completions) {
-  background: var(--raised);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-3);
-}
-.cm-formula-completions {
+/* The suggestion list, drawn as Studio's other menus (Add option): the
+   raised surface, a 1 px border, the large radius and the menu shadow; rows
+   32 px on desktop and 44 px on touch with 12 px sides; the name in the body
+   font and the type right-aligned in the muted ink. The keyboard's row gets
+   the menu highlight and an amber bar at its edge. CodeMirror puts
+   .cm-tooltip on the list itself and draws it in <body> above step details;
+   the doubled class outranks CodeMirror's own tooltip theme. */
+.cm-tooltip.cm-formula-completions.cm-formula-completions {
+  --suggestion-row: var(--control-sm);
+  z-index: 30;
+  box-sizing: border-box;
   max-height: min(320px, 50vh);
   min-width: 240px;
-  /* The window less both gutters and the frame's border. */
-  max-width: min(420px, calc(100vw - 2 * var(--space-4) - 2px));
+  /* The window less both gutters. */
+  max-width: min(420px, calc(100vw - 2 * var(--space-4)));
   margin: 0;
-  padding: var(--space-1) 0;
+  padding: var(--space-1);
   overflow-y: auto;
   list-style: none;
   font: var(--type-body);
+  color: var(--text);
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-2);
+}
+@media (max-width: 767px), (pointer: coarse) {
+  .cm-tooltip.cm-formula-completions.cm-formula-completions {
+    --suggestion-row: var(--control-touch);
+  }
 }
 .cm-formula-completions [role="option"] {
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  min-height: var(--sd-row, 32px);
+  box-sizing: border-box;
+  height: var(--suggestion-row);
   padding: 0 var(--space-3);
+  border-radius: var(--radius-sm);
   cursor: pointer;
 }
+.cm-formula-completions [role="option"]:hover {
+  background: var(--hover);
+}
 .cm-formula-completions [aria-selected="true"] {
-  background: var(--selected);
-  box-shadow: inset 2px 0 0 var(--accent);
+  background: var(--hover);
+  box-shadow: inset 2px 0 0 var(--focus);
 }
 .cm-formula-option-label {
   flex: 1;
   min-width: 0;
   overflow: hidden;
-  font: var(--type-mono);
+  font: var(--type-body);
+  color: var(--text);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .cm-formula-option-detail {
+  flex: none;
+  margin-inline-start: auto;
+  font: var(--type-caption);
   color: var(--muted);
-  font: var(--type-small);
 }
 
 /* The Result panel: under the focused field, in the form's flow. */

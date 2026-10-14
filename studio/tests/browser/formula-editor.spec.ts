@@ -20,6 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 import { expect, test } from "@playwright/test";
 import { parse } from "yaml";
 import {
+  expectActiveRowOnTop,
   fieldLine,
   formulaBox,
   formulaText,
@@ -262,6 +263,7 @@ for (const size of sizes)
       expect(listBox.x).toBeGreaterThanOrEqual(0);
       expect(listBox.right).toBeLessThanOrEqual(size.width);
       expect(listBox.bottom).toBeLessThanOrEqual(size.height);
+      await expectActiveRowOnTop(page);
       const active = await formulaText(field).getAttribute(
         "aria-activedescendant",
       );
@@ -413,6 +415,7 @@ test.describe("the formula editor on a phone", () => {
     expect(listBox.y).toBeGreaterThanOrEqual(0);
     expect(listBox.right).toBeLessThanOrEqual(360 - 16);
     expect(listBox.bottom).toBeLessThanOrEqual(640);
+    await expectActiveRowOnTop(page);
     await page.keyboard.press("Enter");
     await expect(formulaBox(field)).toHaveAttribute(
       "data-text",
@@ -420,3 +423,127 @@ test.describe("the formula editor on a phone", () => {
     );
   });
 });
+
+/** WCAG contrast of two `rgb(…)` colors. */
+function contrast(a: string, b: string): number {
+  const luminance = (color: string) => {
+    const [r, g, b] = color
+      .match(/[\d.]+/g)!
+      .slice(0, 3)
+      .map((part) => {
+        const c = Number(part) / 255;
+        return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+      });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  const [light, dark] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return (light + 0.05) / (dark + 0.05);
+}
+
+const frameStyle = (element: Element) => {
+  const style = getComputedStyle(element);
+  return {
+    background: style.backgroundColor,
+    border: `${style.borderTopWidth} ${style.borderTopStyle} ${style.borderTopColor}`,
+    radius: style.borderTopLeftRadius,
+    shadow: style.boxShadow,
+  };
+};
+
+// The suggestion list is one of Studio's menus: Add option's frame, rows,
+// highlight and type, readable in every row.
+for (const size of [
+  { tag: "1440x900", width: 1440, height: 900, row: 32 },
+  { tag: "360x740", width: 360, height: 740, row: 44 },
+])
+  test.describe(`the suggestion list's look at ${size.tag}`, () => {
+    test.use({ viewport: { width: size.width, height: size.height } });
+
+    test("the suggestion list looks like Studio's menus and every row reads", async ({
+      page,
+    }) => {
+      await withLanguageFeatures(page);
+      const details = await openStepFixture(page, formulasFixture);
+      await details.openWithKeyboard("review");
+      const add = details.dialog.getByRole("button", { name: "Add option" });
+      await add.scrollIntoViewIfNeeded();
+      await add.click();
+      const menu = details.dialog.getByRole("menu", { name: "Add option" });
+      const item = menu.getByRole("menuitem").first();
+      await item.hover();
+      // Buttons ease into their hover color: read it once it has settled.
+      await expect
+        .poll(() =>
+          item.evaluate((element) => getComputedStyle(element).backgroundColor),
+        )
+        .toMatch(/^rgb\(/);
+      const menuLook = await menu.evaluate(frameStyle);
+      const itemLook = await item.evaluate((element) => {
+        const style = getComputedStyle(element);
+        return {
+          background: style.backgroundColor,
+          paddingLeft: style.paddingLeft,
+          font: getComputedStyle(element.querySelector("b")!).fontFamily,
+        };
+      });
+      await page.keyboard.press("Escape");
+      await details.close();
+
+      await details.openWithKeyboard("flag");
+      const field = details.field("value");
+      await replaceFormula(page, field, "input.");
+      const list = suggestions(page);
+      await expect(list).toBeVisible();
+      await page.keyboard.press("ArrowDown");
+      const active = list.locator('[aria-selected="true"]');
+      await expect(active).toHaveCount(1);
+      expect(await list.evaluate(frameStyle)).toEqual(menuLook);
+      const rows = await list.evaluate((element) =>
+        [...element.querySelectorAll('[role="option"]')].map((option) => {
+          const label = option.querySelector(".cm-formula-option-label")!;
+          const detail = option.querySelector(".cm-formula-option-detail");
+          const style = getComputedStyle(option);
+          return {
+            selected: option.getAttribute("aria-selected") === "true",
+            height: option.getBoundingClientRect().height,
+            background: style.backgroundColor,
+            paddingLeft: style.paddingLeft,
+            label: getComputedStyle(label).color,
+            labelFont: getComputedStyle(label).fontFamily,
+            detail: detail ? getComputedStyle(detail).color : null,
+            detailRight:
+              detail &&
+              Math.abs(
+                detail.getBoundingClientRect().right -
+                  (option.getBoundingClientRect().right -
+                    parseFloat(style.paddingRight)),
+              ) < 1,
+          };
+        }),
+      );
+      expect(rows.length).toBeGreaterThan(2);
+      for (const row of rows) {
+        expect(row.height).toBe(size.row);
+        expect(row.paddingLeft).toBe(itemLook.paddingLeft);
+        expect(row.labelFont).toBe(itemLook.font);
+        const background = row.selected ? row.background : menuLook.background;
+        if (row.selected) expect(row.background).toBe(itemLook.background);
+        expect(contrast(row.label, background)).toBeGreaterThanOrEqual(4.5);
+        if (row.detail) {
+          expect(contrast(row.detail, background)).toBeGreaterThanOrEqual(4.5);
+          expect(row.detailRight).toBe(true);
+        }
+      }
+      // The active row is on top where it is drawn: nothing covers it.
+      const center = await box(active);
+      expect(
+        await page.evaluate(
+          ([x, y]) =>
+            !!document
+              .elementFromPoint(x, y)
+              ?.closest('[role="option"][aria-selected="true"]'),
+          [center.x + center.width / 2, center.middle] as const,
+        ),
+      ).toBe(true);
+    });
+  });

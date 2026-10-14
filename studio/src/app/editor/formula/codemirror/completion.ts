@@ -34,6 +34,7 @@ import {
   keymap,
   showTooltip,
   tooltips as tooltipConfig,
+  ViewPlugin,
   type Tooltip,
   type TooltipView,
 } from "@codemirror/view";
@@ -211,11 +212,38 @@ function gutterSpace(view: EditorView) {
   };
 }
 
+/**
+ * Where suggestion lists are drawn: one layer in <body>, so no header or
+ * pane of step details covers a list, and kept usable while step details or
+ * a sheet makes the rest of the page inert.
+ */
+function suggestionLayer(): HTMLElement | undefined {
+  if (typeof document === "undefined") return undefined;
+  const found = document.body.querySelector<HTMLElement>(
+    ":scope > .formula-suggestions",
+  );
+  if (found) return found;
+  const layer = document.createElement("div");
+  layer.className = "formula-suggestions";
+  document.body.append(layer);
+  return layer;
+}
+
 export function formulaCompletion(config: CompletionConfig): Extension {
   return [
     completionConfig.of(config),
     completionState,
-    tooltipConfig({ tooltipSpace: gutterSpace }),
+    tooltipConfig({ parent: suggestionLayer(), tooltipSpace: gutterSpace }),
+    // The layer goes when the last editor using it does.
+    ViewPlugin.define(() => ({
+      destroy: () =>
+        queueMicrotask(() => {
+          const layer = document.body.querySelector(
+            ":scope > .formula-suggestions",
+          );
+          if (layer && !layer.childElementCount) layer.remove();
+        }),
+    })),
     EditorView.focusChangeEffect.of((_state, focusing) =>
       focusing ? null : setOpen.of(null),
     ),

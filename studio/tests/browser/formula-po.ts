@@ -96,3 +96,19 @@ export async function caretToEnd(page: Page) {
   await page.keyboard.press("ControlOrMeta+a");
   await page.keyboard.press("ArrowRight");
 }
+
+/** The open list's keyboard row is what the pointer hits at its center: nothing covers it. */
+export async function expectActiveRowOnTop(page: Page) {
+  const active = suggestions(page).locator('[aria-selected="true"]');
+  await expect(active).toHaveCount(1);
+  await expect
+    .poll(() =>
+      active.evaluate((row) => {
+        const box = row.getBoundingClientRect();
+        return !!document
+          .elementFromPoint(box.x + box.width / 2, box.y + box.height / 2)
+          ?.closest('[role="option"][aria-selected="true"]');
+      }),
+    )
+    .toBe(true);
+}

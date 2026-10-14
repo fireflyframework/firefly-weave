@@ -37,6 +37,9 @@ import {
 } from "./formula-po";
 import { density } from "./step-geometry";
 import { connected, lookupAction, sourceText } from "./support";
+// What the page adds to <body> besides the suggestion lists' layer, which
+// exists while a formula editor does.
+const BODY_CHILDREN = "body > *:not(.formula-suggestions)";
 
 for (const size of sizes)
   test.describe(`mapping at ${size.tag}`, () => {
@@ -1181,7 +1184,7 @@ test.describe("pointer mapping", () => {
     const selection = await control.evaluate(
       (element) => (element as HTMLTextAreaElement).selectionStart,
     );
-    const bodyChildren = await page.locator("body > *").count();
+    const bodyChildren = await page.locator(BODY_CHILDREN).count();
     const box = (await control.boundingBox())!;
     await source.hover();
     await page.mouse.down();
@@ -1199,7 +1202,7 @@ test.describe("pointer mapping", () => {
         (element) => (element as HTMLTextAreaElement).selectionStart,
       ),
     ).toBe(selection);
-    await expect(page.locator("body > *")).toHaveCount(bodyChildren);
+    await expect(page.locator(BODY_CHILDREN)).toHaveCount(bodyChildren);
     await expect(
       details.dialog.locator("[data-drop-hover], [data-fit]"),
     ).toHaveCount(0);
@@ -1311,7 +1314,7 @@ test.describe("pointer mapping", () => {
         },
       };
     });
-    const bodyChildren = await page.locator("body > *").count();
+    const bodyChildren = await page.locator(BODY_CHILDREN).count();
     await source.dragTo(control, { targetPosition: position.point });
     const before = text.slice(0, position.at),
       after = text.slice(position.at);
@@ -1321,7 +1324,7 @@ test.describe("pointer mapping", () => {
     );
     await expect(formulaText(details.field("prompt"))).toBeFocused();
     expect(await caretAt(page, details.field("prompt"))).toBe(position.at + 17);
-    await expect(page.locator("body > *")).toHaveCount(bodyChildren);
+    await expect(page.locator(BODY_CHILDREN)).toHaveCount(bodyChildren);
     await page.screenshot({
       path: test.info().outputPath("wrapped-text-desktop.png"),
     });
