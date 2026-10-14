@@ -118,7 +118,8 @@ export function formState(form: FormSpec, env: FormEnv): FormState {
 /**
  * The writes that clear fields a change just hid (clear-on-hide), with
  * their labels and reasons for the Undo toast. Fields that keep their
- * value, fields at their default and options removed on purpose are left.
+ * value, fields at their default, fields whose value another field now
+ * shows and options removed on purpose are left.
  */
 export function hiddenChanges(
   before: FormState,
@@ -127,6 +128,13 @@ export function hiddenChanges(
   removed: ReadonlySet<string>,
 ): { changes: FormChange[]; labels: string[]; reasons: string[] } {
   const still = new Set(after.fields.map((field) => field.spec.id));
+  // Another field of the new form shows the same value (a transform's
+  // fields become its Text): that value isn't hidden.
+  const shown = new Set(
+    after.fields
+      .filter((field) => field.spec.path.length)
+      .map((field) => JSON.stringify(field.spec.path)),
+  );
   const reasons = new Map(
     after.addable.map((option) => [option.spec.id, option.disabled]),
   );
@@ -137,6 +145,7 @@ export function hiddenChanges(
   for (const { spec } of before.fields) {
     if (
       still.has(spec.id) ||
+      shown.has(JSON.stringify(spec.path)) ||
       removed.has(spec.id) ||
       spec.whenHidden === "keep"
     )

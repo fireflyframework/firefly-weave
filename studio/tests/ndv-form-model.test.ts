@@ -33,6 +33,7 @@ import type {
   KindContext,
   ParamSpec,
 } from "../src/app/editor/ndv/registry";
+import { transformForm } from "../src/app/editor/ndv/kinds/forms/data-forms";
 import { freshWorkflow, type Step } from "../src/app/model";
 
 const http = (method: string): Step => ({
@@ -179,6 +180,38 @@ describe("form model", () => {
         new Set(),
       ).changes,
     ).toEqual([]);
+  });
+  it("leaves a value that another field of the new form shows", () => {
+    // A transform's fields become its Text when a formula makes the value
+    // text: the value is the one just written, not a field to clear.
+    const before: Step = {
+      id: "flag",
+      kind: "transform",
+      value: { op: { name: "gt", args: [{ literal: 2 }, { literal: 1 }] } },
+    };
+    const after: Step = {
+      ...before,
+      value: {
+        op: { name: "concat", args: [{ literal: "a" }, { literal: "b" }] },
+      },
+    };
+    const form = (step: Step): FormSpec => transformForm(step);
+    const afterEnv = {
+      ...env(after),
+      subject: { ...env(after).subject, roots: [["value"]] },
+    };
+    const cleared = hiddenChanges(
+      formState(form(before), {
+        ...env(before),
+        subject: { ...env(before).subject, roots: [["value"]] },
+      }),
+      formState(form(after), afterEnv),
+      afterEnv,
+      new Set(),
+    );
+    expect(form(before).fields[0].id).toBe("value");
+    expect(form(after).fields[0].id).toBe("value-text");
+    expect(cleared).toEqual({ changes: [], labels: [], reasons: [] });
   });
   it("treats a value-less group as default when all its children are, and resets each child", () => {
     const group: ParamSpec = {
