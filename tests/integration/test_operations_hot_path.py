@@ -226,3 +226,25 @@ async def test_fact_updates_charge_usage_without_refreshing_the_run_reservation(
             {"task": task},
         )
         assert await calls("public.weave_reserve_refresh") == refreshes + 1
+
+
+async def test_a_run_start_projects_its_facts_without_importing_the_artifact_again(operations_case, monkeypatch):
+    """The start's listing metadata reuses the artifact the start already imported and compiled."""
+    import traceback
+
+    import firefly_weave.compiler.api as compiler
+    import firefly_weave.runtime.admission as admission
+    import firefly_weave.runtime.service as service
+
+    calls: list[list[str]] = []
+    original = compiler.import_artifact
+
+    def counted(*args, **kwargs):
+        calls.append([frame.filename for frame in traceback.extract_stack()[:-1]])
+        return original(*args, **kwargs)
+
+    for module in (compiler, admission, service):
+        monkeypatch.setattr(module, "import_artifact", counted)
+    await operations_case.start()
+    from_facts = [stack for stack in calls if any(path.endswith("operations/facts.py") for path in stack)]
+    assert calls and not from_facts, len(from_facts)

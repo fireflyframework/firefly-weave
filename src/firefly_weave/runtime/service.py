@@ -232,7 +232,9 @@ class RuntimeService:
                 correlation_key=request.correlation_key,
                 business_key=request.business_key,
             )
-            await repository.insert(view, envelope, request, actor.id, start_facts=start_facts, at=now)
+            await repository.insert(
+                view, envelope, request, actor.id, start_facts=start_facts, at=now, imported=artifact, ir=ir
+            )
             from firefly_weave.files.authority import admit_files
 
             await admit_files(enlisted, view.id, request.input, actor, context=context)

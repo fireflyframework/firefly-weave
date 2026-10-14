@@ -149,6 +149,8 @@ class RuntimeRepository:
         *,
         start_facts: RunStartFacts,
         at: datetime,
+        imported: Any = None,
+        ir: Any = None,
     ) -> None:
         await self.execute(
             "INSERT INTO runs VALUES(:id,:tenant,:project,:environment,:activation_id,:principal,"
@@ -162,7 +164,7 @@ class RuntimeRepository:
             state=view.state.model_dump_json(),
         )
 
-        await FactRepository(self.tx).insert_run(view, artifact, request, start_facts, at)
+        await FactRepository(self.tx).insert_run(view, artifact, request, start_facts, at, imported=imported, ir=ir)
 
     async def event(self, run_id: UUID, event_id: UUID) -> dict[str, Any] | None:
         row = (

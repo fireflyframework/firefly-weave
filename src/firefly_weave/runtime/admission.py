@@ -30,22 +30,23 @@ POLICY = "classified-v1"
 type Admission = Literal["available", "unavailable", "unsupported"]
 
 
-def admission(row: dict[str, Any]) -> Admission:
+def admission(row: dict[str, Any], *, imported: Any = None) -> Admission:
     """How this platform may treat a retained run.
 
     ``unsupported``: the run pins an IR version or language feature this platform does not run, for example after a
     rollback. It is transient: scanners skip the run without recording anything, and an upgrade runs it again.
     ``unavailable``: legacy or malformed evidence; scanners record a permanent policy block.
+    ``imported`` is the row's artifact already imported by the caller, which is then not imported again.
     """
-    return _admit(row)[0]
+    return _admit(row, imported)[0]
 
 
-def _admit(row: dict[str, Any]) -> tuple[Admission, tuple[str, ...]]:
+def _admit(row: dict[str, Any], imported: Any = None) -> tuple[Admission, tuple[str, ...]]:
     """``admission``, with the features this platform does not list for an ``unsupported`` run."""
     if row["state"].get("unavailable"):
         return "unavailable", ()
     try:
-        artifact = import_artifact(row["artifact"])
+        artifact = imported if imported is not None else import_artifact(row["artifact"])
         if row["state"].get("admission_policy") == POLICY:
             return "available", ()
         return ("unavailable" if has_markers(artifact.executable) else "available"), ()

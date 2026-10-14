@@ -57,6 +57,7 @@ SCOPE = "tenant_id=:tenant AND project_id=:project AND environment_id=:environme
 TERMINAL = {"succeeded", "failed", "cancelled", "timed_out"}
 _AUTHOR_KEY: TypeAdapter[str] = TypeAdapter(InstanceKeyText)
 _AUTHOR_NODE: TypeAdapter[str] = TypeAdapter(ResourceName)
+_STEP_KIND: TypeAdapter[StepKind] = TypeAdapter(StepKind)
 
 
 def author_instance(key: str) -> InstanceView | None:
@@ -70,8 +71,12 @@ def author_instance(key: str) -> InstanceView | None:
     return value
 
 
-def listing_metadata(row: dict[str, Any]) -> dict[str, Any]:
-    """Bounded cache metadata; execution admission remains the runtime's authority."""
+def listing_metadata(row: dict[str, Any], *, imported: Any = None, ir: Any = None) -> dict[str, Any]:
+    """Bounded cache metadata; execution admission remains the runtime's authority.
+
+    A caller that has already imported the row's artifact and compiled its workflow (a run start) passes them as
+    ``imported`` and ``ir``, so the artifact is not imported again while the caller holds its transaction.
+    """
     from firefly_weave.compiler.api import import_artifact
     from firefly_weave.runtime import admission as retained
     from firefly_weave.runtime.kernel import workflow
@@ -87,7 +92,7 @@ def listing_metadata(row: dict[str, Any]) -> dict[str, Any]:
         RunState.model_validate_json(json.dumps(row["state"]))
         Activation.model_validate_json(json.dumps(row["activation"]))
         StartRunRequest.model_validate_json(json.dumps(row["request"]))
-        decision = retained.admission(row)
+        decision = retained.admission(row, imported=imported)
         executable = row["artifact"].get("executable", {})
         version, features = executable.get("irVersion"), executable.get("features", [])
         if not isinstance(version, str) or len(version) > 256 or not isinstance(features, list):
@@ -99,10 +104,11 @@ def listing_metadata(row: dict[str, Any]) -> dict[str, Any]:
         result.update(classification_state=decision, pinned_ir_version=version, pinned_features=features)
         if decision == "available":
             kinds: dict[str, StepKind] = {}
-            for node in workflow(import_artifact(row["artifact"])).graph.nodes:
+            graph = ir if ir is not None else workflow(imported or import_artifact(row["artifact"]))
+            for node in graph.graph.nodes:
                 identity = author_instance(node.id)
                 if identity is not None:
-                    kinds[identity.node_id] = TypeAdapter(StepKind).validate_python(node.kind, strict=True)
+                    kinds[identity.node_id] = _STEP_KIND.validate_python(node.kind, strict=True)
             if len(kinds) > 10000 or len(json.dumps(kinds, ensure_ascii=False).encode()) > 1048576:
                 raise ValueError("Node-kind projection exceeds its bound")
             result["node_kinds"] = kinds
@@ -281,7 +287,15 @@ class FactRepository:
         )
 
     async def insert_run(
-        self, view: RunView, artifact: dict[str, Any], request: StartRunRequest, facts: RunStartFacts, at: datetime
+        self,
+        view: RunView,
+        artifact: dict[str, Any],
+        request: StartRunRequest,
+        facts: RunStartFacts,
+        at: datetime,
+        *,
+        imported: Any = None,
+        ir: Any = None,
     ) -> None:
         metadata = listing_metadata(
             dict(
@@ -289,7 +303,9 @@ class FactRepository:
                 artifact=artifact,
                 activation=view.activation.model_dump(mode="json"),
                 request=request.model_dump(mode="json"),
-            )
+            ),
+            imported=imported,
+            ir=ir,
         )
         await self.execute(
             "INSERT INTO run_facts(tenant_id,project_id,environment_id,run_id,definition_version_id,"
@@ -373,7 +389,7 @@ class FactRepository:
         def kind_of(node: str) -> StepKind | None:
             # Retained runs can be admitted even when their listing cache is incomplete.
             try:
-                return TypeAdapter(StepKind).validate_python(kinds.get(node), strict=True)
+                return _STEP_KIND.validate_python(kinds.get(node), strict=True)
             except ValueError:
                 return None
 
@@ -524,7 +540,7 @@ class FactRepository:
         identity = author_instance(key)
         if identity is None or disposition not in {"continue", "errorOutput"}:
             raise ValueError("Handled failure requires an author step and disposition")
-        TypeAdapter(StepKind).validate_python(kind, strict=True)
+        _STEP_KIND.validate_python(kind, strict=True)
         if task_id is not None:
             tasks = await self.rows(
                 f"SELECT run_id,node_id,status FROM task_intents WHERE {SCOPE} AND id=:task", task=task_id
