@@ -148,6 +148,48 @@ describe("text templates", () => {
     }
   });
 
+  it("keeps the meaning of a concat whose text comes in adjacent or empty pieces", () => {
+    // Adjacent text reads back as one piece: a backslash isn't doubled and
+    // braces split across pieces still read as text.
+    expect(
+      back(printTemplate(op("concat", lit("a\\"), lit("b"), ref("/input/x")))!),
+    ).toEqual(op("concat", lit("a\\b"), ref("/input/x")));
+    expect(
+      back(printTemplate(op("concat", lit("a{"), lit("{b"), ref("/input/x")))!),
+    ).toEqual(op("concat", lit("a{{b"), ref("/input/x")));
+    const next = random(13);
+    for (let i = 0; i < 3000; i++) {
+      const args: unknown[] = [];
+      for (let j = Math.floor(next() * 5); j >= 0; j--)
+        args.push(
+          next() < 0.65
+            ? lit(next() < 0.15 ? "" : text(next))
+            : PLACEHOLDERS[Math.floor(next() * PLACEHOLDERS.length)],
+        );
+      const expression = op("concat", ...args);
+      const parts = templateSegments(expression)!;
+      const meaning = templateExpression(parts, true);
+      const printed = printTemplate(expression);
+      if (printed === null) {
+        // Only when the text would read back as a bare reference, which
+        // would lose the conversion to text.
+        expect("ref" in meaning, JSON.stringify(expression)).toBe(true);
+        continue;
+      }
+      expect(back(printed), printed).toEqual(meaning);
+    }
+  });
+  it("shows a concat of one reference as a formula, not as a template that reads back bare", () => {
+    expect(printTemplate(op("concat", ref("/input/count")))).toBeNull();
+    expect(
+      printTemplate(op("concat", lit(""), ref("/input/count"))),
+    ).toBeNull();
+    expect(printTemplate(ref("/input/count"))).toBe("{{ input.count }}");
+    expect(
+      printTemplate(op("concat", op("coalesce", ref("/input/a"), lit("x")))),
+    ).toBe('{{ coalesce(input.a, "x") }}');
+  });
+
   it("escapes text inside a backtick template", () => {
     const next = random(12);
     for (let i = 0; i < 500; i++) {

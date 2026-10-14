@@ -92,12 +92,46 @@ export function templateSegments(
   );
 }
 
-/** Template text for a string literal, a lone reference or any concat; null for other trees. */
+/**
+ * Segments as the reader gives them back: adjacent text merged and empty
+ * text dropped (compiler/templates.py `template_expression`), so text is
+ * escaped against the placeholder that really follows it.
+ */
+export function mergeTextSegments(
+  parts: readonly TemplatePart[],
+): TemplatePart[] {
+  const out: TemplatePart[] = [];
+  for (const part of parts) {
+    if ("node" in part) out.push(part);
+    else if (part.text) {
+      const last = out[out.length - 1];
+      if (last && "text" in last)
+        out[out.length - 1] = { text: last.text + part.text };
+      else out.push({ text: part.text });
+    }
+  }
+  return out;
+}
+
+/**
+ * Template text for a string literal, a lone reference or any concat; null
+ * for other trees, and for a concat whose text would read back as a bare
+ * reference (`concat(input.count)` turns its value into text; the reference
+ * alone doesn't).
+ */
 export function printTemplate(expression: unknown): string | null {
   if (isTextLiteral(expression))
     return escapeTemplateText(expression.literal, "end");
-  const parts = templateSegments(expression, true);
-  if (!parts) return null;
+  const segments = templateSegments(expression, true);
+  if (!segments) return null;
+  const parts = mergeTextSegments(segments);
+  if (
+    !isReference(expression) &&
+    parts.length === 1 &&
+    "node" in parts[0] &&
+    isReference(parts[0].node)
+  )
+    return null;
   let out = "";
   for (let i = 0; i < parts.length; i++) {
     const part = parts[i];

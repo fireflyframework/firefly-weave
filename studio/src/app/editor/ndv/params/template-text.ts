@@ -26,7 +26,11 @@ import {
   type ParseOptions,
 } from "../../formula/grammar";
 import { printRef } from "../../formula/printer";
-import { printTemplate, templateSegments } from "../../formula/template";
+import {
+  mergeTextSegments,
+  printTemplate,
+  templateSegments,
+} from "../../formula/template";
 import type { Expression } from "../registry";
 import type { ParamValue } from "./value-io";
 
@@ -37,12 +41,14 @@ const TEMPLATE_FIELD: ParseOptions = { features: ["text.concat"], loops: [] };
 
 /** Text and references of a template, or null when a placeholder is any other formula. */
 export function templateParts(expression: unknown): TemplatePart[] | null {
-  const segments =
+  const found =
     typeof (expression as { literal?: unknown } | null)?.literal === "string" &&
     Object.keys(expression as object).length === 1
       ? [{ text: (expression as { literal: string }).literal }]
       : templateSegments(expression, true);
-  if (!segments) return null;
+  if (!found) return null;
+  // Text as the reader gives it back, so a drop's caret matches the text shown.
+  const segments = found.length === 1 ? found : mergeTextSegments(found);
   const parts: TemplatePart[] = [];
   for (const segment of segments) {
     if ("text" in segment) parts.push({ text: segment.text });
