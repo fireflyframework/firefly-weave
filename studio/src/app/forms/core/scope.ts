@@ -238,21 +238,96 @@ export function schemaChild(
     : { kind: "unknown" };
 }
 
-/** True when the value at `segments` below `schema`, or a value around it, is marked secret. */
+/** Every schema that may describe a value: the schema, its $ref target and each anyOf, oneOf and allOf part. */
+function describing(schemas: readonly Schema[], root: Schema): Schema[] {
+  const out: Schema[] = [];
+  const seen = new Set<unknown>();
+  const queue = [...schemas];
+  while (queue.length && out.length < 256) {
+    const schema = queue.shift()!;
+    if (seen.has(schema)) continue;
+    seen.add(schema);
+    out.push(schema);
+    const resolved = resolveRef(schema, root);
+    if (resolved !== schema) queue.push(resolved);
+    for (const word of ["anyOf", "oneOf", "allOf"]) {
+      const parts = schema[word];
+      if (Array.isArray(parts))
+        for (const part of parts) if (isObject(part)) queue.push(part);
+    }
+  }
+  return out;
+}
+
+const own = (record: Record<string, unknown>, key: string) =>
+  Object.prototype.hasOwnProperty.call(record, key);
+
+/** Every schema that may describe one key or array index of a value `schema` describes. */
+function childSchemas(schema: Schema, segment: string): Schema[] {
+  const out: Schema[] = [];
+  const properties = isObject(schema["properties"]) ? schema["properties"] : {};
+  const named = own(properties, segment);
+  if (named && isObject(properties[segment])) out.push(properties[segment]);
+  let patterned = false;
+  if (isObject(schema["patternProperties"]))
+    for (const [pattern, child] of Object.entries(
+      schema["patternProperties"],
+    )) {
+      let matches = false;
+      try {
+        matches = new RegExp(pattern, "u").test(segment);
+      } catch {
+        // A pattern JavaScript can't read may still match: count it.
+        matches = true;
+      }
+      if (matches && isObject(child)) {
+        out.push(child);
+        patterned = true;
+      }
+    }
+  if (!named && !patterned && isObject(schema["additionalProperties"]))
+    out.push(schema["additionalProperties"]);
+  if (/^(?:0|[1-9][0-9]*)$/.test(segment)) {
+    const index = Number(segment);
+    const prefix = Array.isArray(schema["prefixItems"])
+      ? schema["prefixItems"]
+      : Array.isArray(schema["items"])
+        ? schema["items"]
+        : [];
+    if (index < prefix.length) {
+      if (isObject(prefix[index])) out.push(prefix[index]);
+    } else {
+      if (isObject(schema["items"])) out.push(schema["items"]);
+      if (isObject(schema["additionalItems"]))
+        out.push(schema["additionalItems"]);
+    }
+  }
+  return out;
+}
+
+/**
+ * True when the value at `segments` below `schema`, or a value around it, is
+ * marked secret by any schema that may describe it: through $ref, every
+ * anyOf, oneOf and allOf part, additionalProperties, patternProperties,
+ * prefixItems and items.
+ */
 export function secretAt(
   schema: Schema,
   root: Schema,
   segments: readonly string[],
 ): boolean {
-  let current = schema;
+  let level: Schema[] = [schema];
   for (let i = 0; ; i++) {
-    const resolved = resolveRef(current, root);
-    for (const node of [current, resolved])
-      if (node["x-secret"] === true || node["writeOnly"] === true) return true;
+    const all = describing(level, root);
+    if (
+      all.some(
+        (node) => node["x-secret"] === true || node["writeOnly"] === true,
+      )
+    )
+      return true;
     if (i === segments.length) return false;
-    const child = schemaChild(resolved, root, segments[i]);
-    if (child.kind !== "found") return false;
-    current = child.schema;
+    level = all.flatMap((node) => childSchemas(node, segments[i]));
+    if (!level.length) return false;
   }
 }
 

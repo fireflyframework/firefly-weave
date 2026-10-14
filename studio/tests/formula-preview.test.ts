@@ -22,7 +22,9 @@ import {
   SECRET,
   UNAVAILABLE,
   WAITING,
+  formulaPreviews,
   previewFormula,
+  referencesOf,
   previewText,
   sourceLabel,
   valueTypeLabel,
@@ -142,6 +144,71 @@ describe("formula previews", () => {
         },
       });
   });
+  it("never evaluates a formula that reads a secret in a step's output", () => {
+    const scope = referenceScope(workflow, "use", "/value");
+    const at = {
+      scope: {
+        ...scope,
+        steps: scope.steps.map((step) =>
+          step.id === "check"
+            ? {
+                ...step,
+                schema: {
+                  type: "object",
+                  properties: { pin: { type: "string", "x-secret": true } },
+                },
+              }
+            : step,
+        ),
+      },
+      inputSchema: workflow.spec.inputSchema,
+      data: data(input, { check: { pin: "1234", score: 1 } }),
+    };
+    expect(previewFormula({ ref: "/steps/check/output/pin" }, at)).toEqual({
+      ok: false,
+      error: {
+        code: SECRET,
+        message:
+          "This formula reads a secret value, so Studio doesn't preview it.",
+      },
+    });
+    expect(previewFormula({ ref: "/steps/check/output/score" }, at)).toEqual({
+      ok: true,
+      value: 1,
+    });
+  });
+  it("reads a literal that looks like a reference as data, not as a read", () => {
+    const literal = { literal: { ref: "/input/password" } };
+    expect(referencesOf(literal)).toEqual([]);
+    expect(
+      previewFormula(literal, {
+        scope: referenceScope(workflow, "use", "/value"),
+        inputSchema: workflow.spec.inputSchema,
+        data: data(input),
+      }),
+    ).toEqual({ ok: true, value: { ref: "/input/password" } });
+  });
+  it("waits for the loop to run before previewing the current item", () => {
+    for (const pointer of ["/item/name", "/index", "/loops/each/item"])
+      expect(
+        previewFormula(
+          { ref: pointer },
+          {
+            scope: referenceScope(workflow, "use", "/value"),
+            inputSchema: workflow.spec.inputSchema,
+            data: data(input),
+          },
+        ),
+        pointer,
+      ).toEqual({
+        ok: false,
+        error: {
+          code: WAITING,
+          message:
+            "Can't compute yet: the current item exists only while the loop runs.",
+        },
+      });
+  });
   it("puts evaluation errors in plain words", () => {
     expect(preview("input.name > 1000", data(input))).toEqual({
       ok: false,
@@ -187,6 +254,27 @@ describe("formula previews", () => {
     });
     expect(previewFormula(wrap({ ref: "/input/amount" }), at)).toMatchObject({
       ok: false,
+    });
+  });
+  it("previews a tree nested far beyond what workflows allow through step details' hook without crashing", () => {
+    let deep: unknown = { ref: "/input/amount" };
+    for (let i = 0; i < 20_000; i++)
+      deep = { op: { name: "not", args: [deep] } };
+    const hook = formulaPreviews(() => data(input));
+    const ctx = {
+      step: { id: "use" },
+      workflow,
+      scope: () => referenceScope(workflow, "use", "/value"),
+    } as never;
+    const first = hook.preview(deep as never, ["value"], ctx);
+    expect(first.ok).toBe(false);
+    // The same deep tree again: computed again, not looked up by a key.
+    expect(hook.preview(deep as never, ["value"], ctx)).toEqual(first);
+    // Ordinary trees are still cached.
+    const amount = { ref: "/input/amount" } as never;
+    expect(hook.preview(amount, ["value"], ctx)).toEqual({
+      ok: true,
+      value: 1500,
     });
   });
   it("reads __proto__ and constructor as plain data", () => {

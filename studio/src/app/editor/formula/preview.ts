@@ -20,7 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 // them), computed in the browser by the evaluator port. Nothing is sent
 // anywhere. A formula that reads a value marked secret is never evaluated,
 // and the test input reaching here has had secret values removed already.
-import { canonicalJson, type Json } from "../../forms/core/json";
+import type { Json } from "../../forms/core/json";
 import {
   secretAt,
   type ReferenceScope,
@@ -234,6 +234,33 @@ export function previewFormula(
     : failed(result.code, wordsFor(result, expression));
 }
 
+/**
+ * A tree's canonical JSON (keys sorted) for the cache, within the printer's
+ * depth bound; null for deeper trees, which are previewed without the cache.
+ */
+function boundedKey(value: unknown, depth = 0): string | null {
+  if (depth > 128) return null;
+  if (Array.isArray(value)) {
+    const items: string[] = [];
+    for (const item of value) {
+      const text = boundedKey(item, depth + 1);
+      if (text === null) return null;
+      items.push(text);
+    }
+    return `[${items.join(",")}]`;
+  }
+  if (isRecord(value)) {
+    const members: string[] = [];
+    for (const key of Object.keys(value).sort()) {
+      const text = boundedKey(value[key], depth + 1);
+      if (text === null) return null;
+      members.push(`${JSON.stringify(key)}:${text}`);
+    }
+    return `{${members.join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
+
 /** Step details' preview hook: formulas evaluated in the browser, cached until the data or workflow changes. */
 export function formulaPreviews(
   data: (ctx: NdvContext) => PreviewData,
@@ -251,8 +278,10 @@ export function formulaPreviews(
         stamp = next;
         cache.clear();
       }
-      const key = `${ctx.step.id}\n${JSON.stringify(at)}\n${canonicalJson(expression)}`;
-      const cached = cache.get(key);
+      const tree = boundedKey(expression);
+      const key =
+        tree === null ? null : `${ctx.step.id}\n${JSON.stringify(at)}\n${tree}`;
+      const cached = key === null ? undefined : cache.get(key);
       if (cached) return cached;
       const result = previewFormula(expression, {
         scope: ctx.scope(at),
@@ -261,6 +290,7 @@ export function formulaPreviews(
         ] ?? {}) as Schema,
         data: source,
       });
+      if (key === null) return result;
       if (cache.size > 256) cache.clear();
       cache.set(key, result);
       return result;
