@@ -17,17 +17,17 @@
 """Bounded mock facts around the shared resumable reducer; no server dependencies."""
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import datetime, timedelta
 from typing import cast
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from firefly_weave.compiler.api import CompiledArtifact, import_artifact
 from firefly_weave.compiler.canonical import canonical_bytes
-from firefly_weave.compiler.ir import ActionNode, HumanTaskNode, SignalNode
+from firefly_weave.compiler.ir import ActionNode, ForEachNode, HumanTaskNode, IRNode, SignalNode
 from firefly_weave.contracts.definitions import ActionDefinition, load_definition
 from firefly_weave.contracts.diagnostics import Diagnostic
-from firefly_weave.contracts.instance_keys import InvalidInstanceKey, node_of
+from firefly_weave.contracts.instance_keys import InvalidInstanceKey, node_of, split_instance
 from firefly_weave.contracts.values import JsonObject, JsonValue
 from firefly_weave.operations.debug.models import (
     Boundary,
@@ -54,6 +54,11 @@ _DEFAULT_LIMITS = DebugLimits()
 TERMINAL = {"succeeded", "failed", "cancelled", "timed_out"}
 
 
+def enclosing_loops(nodes: Mapping[str, IRNode], node: IRNode) -> list[ForEachNode]:
+    """The loops whose bodies hold ``node``, outermost first."""
+    return [loop for owner in node.scope[::2] if isinstance(loop := nodes[owner], ForEachNode)]
+
+
 class Simulator:
     def __init__(
         self,
@@ -78,19 +83,47 @@ class Simulator:
         self.data.pending.append(self._event("started", {}))
         self._bounded()
 
+    def _instance_node(self, key: str) -> IRNode | None:
+        """The node that ``key`` addresses: a step ID (every instance), or one instance of a step inside loops.
+
+        An instance key names one position per enclosing loop, each below that loop's ``maxItems``. Repeated
+        activations (``#``) and loop yields (``~``) are not addressed by a session.
+        """
+        try:
+            parsed = split_instance(key)
+        except InvalidInstanceKey:
+            return None
+        node = self._prepared.nodes.get(parsed.node_id)
+        if node is None or parsed.segments or parsed.count is not None:
+            return None
+        if parsed.indexes:
+            loops = enclosing_loops(self._prepared.nodes, node)
+            if len(parsed.indexes) != len(loops):
+                return None
+            if any(index >= loop.max_items for index, loop in zip(parsed.indexes, loops, strict=True)):
+                return None
+        return node
+
     def _validate_mocks(self, mocks: dict[str, JsonValue]) -> None:
+        steps: dict[str, tuple[ActionDefinition, ActionNode]] = {}
         actions: dict[str, list[tuple[ActionDefinition, ActionNode]]] = {}
         for node in self.ir.graph.nodes:
             if isinstance(node, ActionNode):
                 dep = next(d for d in self.ir.dependencies if d.digest == node.dependency and d.kind == "Action")
                 definition = cast(ActionDefinition, load_definition(dep.document))
-                actions["node:" + node.id] = [(definition, node)]
+                steps[node.id] = (definition, node)
                 actions.setdefault("action:" + dep.reference, []).append((definition, node))
         for key, value in mocks.items():
-            if key not in actions:
+            if key.startswith("node:"):
+                # node:<step> mocks every instance of an action step; node:<instance key> mocks one of them.
+                step = self._instance_node(key.removeprefix("node:"))
+                targets = [steps[step.id]] if step is not None and step.id in steps else []
+            else:
+                targets = actions.get(key, [])
+            if not targets:
                 raise DebugError("WV-DEBUG-MOCK-KEY")
             try:
-                for definition, node in actions[key]:
+                for definition, node in targets:
                     validate_action(self.ir, definition, "output", value, node=node)
             except ValueError:
                 raise DebugError("WV-DEBUG-MOCK-OUTPUT") from None
@@ -246,6 +279,7 @@ class Simulator:
                     if key not in d.mocks:
                         key = "action:" + command.action_reference
                     if key not in d.mocks:
+                        tried = dict.fromkeys(["node:" + command.node_id, "node:" + node_of(command.node_id), key])
                         d.diagnostics = [
                             Diagnostic(
                                 code="WV-DEBUG-MISSING_MOCK",
@@ -253,6 +287,7 @@ class Simulator:
                                 stage="evaluation",
                                 path="",
                                 message="An action requires an explicit mock.",
+                                hint="Add a mock under " + ", ".join(tried) + ".",
                             )
                         ]
                         return True
