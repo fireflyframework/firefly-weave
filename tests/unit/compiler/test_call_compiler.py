@@ -327,3 +327,96 @@ def test_an_imported_caller_never_needs_what_the_called_workflow_uses_inside(wor
     assert sorted(d["kind"] for d in executable["dependencies"]) == ["Workflow"]
     imported = import_artifact(result.artifact.to_bytes(), features=["flow.callWorkflow"])
     assert imported.digest == result.artifact.digest
+
+
+LOOP_INPUT = {
+    "type": "object",
+    "properties": {"customers": {"type": "array", "items": {"type": "string"}, "maxItems": 10}},
+    "required": ["customers"],
+    "additionalProperties": False,
+}
+PER_CUSTOMER = {"object": {"customerId": {"ref": "/item"}, "message": {"literal": "Order received"}}}
+
+
+def per_customer(*body):
+    document = caller(
+        {
+            "id": "each",
+            "kind": "forEach",
+            "items": {"ref": "/input/customers"},
+            "maxItems": 10,
+            "body": {"steps": list(body), "output": {"literal": None}},
+        }
+    )
+    document["spec"]["inputSchema"] = LOOP_INPUT
+    return document
+
+
+def test_calls_inside_a_loop_body_compile_import_and_stop_like_any_other_call():
+    from datetime import UTC, datetime
+    from uuid import uuid4
+
+    from firefly_weave.compiler.ir import UnsupportedIR
+    from firefly_weave.runtime.kernel import transition
+    from firefly_weave.runtime.models import RunState, RuntimeEvent
+
+    loop = per_customer(
+        call(**{"with": PER_CUSTOMER}), call("status", **{"with": PER_CUSTOMER, "onFailure": "continue"})
+    )
+    result = compiled(loop, callee())
+    assert result.ok, findings(result)
+    executable = json.loads(result.artifact.to_bytes())["executable"]
+    assert (executable["irVersion"], executable["features"]) == (
+        IR_VERSION_EXTENSIONS,
+        ["flow.callWorkflow", "flow.forEach"],
+    )
+    assert [(g["path"], g["purpose"]) for g in executable["guards"] if g["purpose"].startswith("call_")] == [
+        ("/spec/steps/0/body/steps/0/with", "call_input"),
+        ("/spec/steps/0/body/steps/0", "call_output"),
+        ("/spec/steps/0/body/steps/1/with", "call_input"),
+        ("/spec/steps/0/body/steps/1", "call_output"),
+    ]
+    with pytest.raises(UnsupportedIR) as refused:
+        import_artifact(result.artifact.to_bytes())
+    assert refused.value.missing == ("flow.callWorkflow",)
+    artifact = import_artifact(result.artifact.to_bytes(), features=["flow.callWorkflow", "flow.forEach"])
+    assert artifact.digest == result.artifact.digest
+
+    started = RuntimeEvent(id=uuid4(), type="started", timestamp=datetime(2026, 10, 13, tzinfo=UTC), sequence=1)
+    stopped = transition(RunState(input={"customers": ["c-1", "c-2"]}), started, result.artifact)
+    assert stopped.state.status == "suspended"
+    assert [(item.node_id, item.code) for item in stopped.state.incidents.values()] == [
+        ("notify[0]", "WV-RUNTIME-ARTIFACT")
+    ]
+    assert stopped.steps == []
+
+
+def test_call_checks_reach_into_loop_bodies():
+    detached = call(**{"with": PER_CUSTOMER, "mode": "detach", "onFailure": "continue"})
+    assert findings(compiled(per_customer(detached), callee())) == [
+        ("WV-COMP-CALL_MODE", "/spec/steps/0/body/steps/0/onFailure", "error", "semantic")
+    ]
+    pending = validate_authoring(per_customer(call(**{"with": PER_CUSTOMER})), format="object")
+    assert findings(pending) == [("WV-COMP-CATALOG_PENDING", "/spec/steps/0/body/steps/0/uses", "info", "resolution")]
+    secret = callee(
+        input_schema={**INPUT, "properties": {**INPUT["properties"], "message": {"type": "string", "x-secret": True}}}
+    )
+    refused = compiled(per_customer(call(**{"with": PER_CUSTOMER})), secret)
+    assert not refused.ok and [d.code for d in refused.diagnostics] == ["WV-SCHEMA-SECRET_VALUE"]
+    calls_back = {**call("back", "order-intake@1.0.0"), "with": {"ref": "/input"}}
+    looping = callee(
+        steps=[
+            {
+                "id": "each",
+                "kind": "forEach",
+                "items": {"literal": [1]},
+                "maxItems": 1,
+                "body": {"steps": [calls_back], "output": {"literal": None}},
+            }
+        ]
+    )
+    itself = caller(call())
+    itself["spec"]["callable"] = {}
+    assert findings(compiled(itself, looping, itself)) == [
+        ("WV-COMP-CALL_RECURSION", "/spec/steps/0/uses", "error", "semantic")
+    ]
