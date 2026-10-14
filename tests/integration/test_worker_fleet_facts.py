@@ -895,9 +895,14 @@ async def test_release_usage_counts_workers_activations_and_permitted_deployment
     catalog_only = await usage(case.actor)
     assert catalog_only.workers.model_dump() == {"online": 1, "offline": 3, "draining": 1, "revoked": 1}
     assert catalog_only.activations == 1 and catalog_only.deployments == [] and catalog_only.next_cursor is None
+    # An empty list says why: this reader may read no deployment target.
+    assert catalog_only.deployments_hidden is True
+    assert catalog_only.model_dump(mode="json")["deployments_hidden"] is True
     viewer = Grant(role="viewer", scope=case.scope)
     everything = await principal_with(case, viewer, Grant(role="deployment_reader", scope=case.scope))
-    rows = (await usage(everything)).deployments
+    full = await usage(everything)
+    rows = full.deployments
+    assert full.deployments_hidden is False and "deployments_hidden" not in full.model_dump(mode="json")
     expected = sorted(
         [(alpha, "alpha", first, "engine"), (bravo, "bravo", second, "engine"), (bravo, "bravo", second, "zeta")],
         key=lambda row: (row[2], row[3]),

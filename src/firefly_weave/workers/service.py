@@ -542,6 +542,7 @@ class WorkerService(WorkerAdmissionPort):
                 ],
                 activations=activations,
                 next_cursor=cursor,
+                deployments_hidden=targets == (),
             )
 
     async def list(

@@ -781,7 +781,10 @@ answers `{workers, deployments, activations, next_cursor}`:
   this release: `target_id`, `target_name`, `deployment_id`, `deployment_name`,
   `component`, and `replicas`. Only targets that both the token and the current
   principal may read with `deployment.read` are listed; without that capability
-  the list is empty. `next_cursor` continues the list for the same release and
+  the list is empty and `deployments_hidden` is `true` (it is left out
+  otherwise), so an empty list from a reader who may see no target is not
+  mistaken for "nothing runs this release". The worker counts need only
+  `catalog.read`: they are counts per state, never worker identities. `next_cursor` continues the list for the same release and
   readable targets.
 - A release of another environment answers `404 WV-NOT-FOUND`.
 

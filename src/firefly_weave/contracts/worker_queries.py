@@ -113,6 +113,9 @@ class ReleaseUsage(ContractModel):
     deployments: list[ReleaseDeploymentUsage] = Field(max_length=100)
     activations: Count
     next_cursor: Cursor | None = None
+    # True when the reader may read no deployment target, so an empty `deployments` says nothing about where the
+    # release runs; left out otherwise.
+    deployments_hidden: bool = Field(default=False, exclude_if=lambda value: not value)
 
 
 @dataclass(frozen=True)

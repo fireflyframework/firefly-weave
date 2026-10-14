@@ -196,6 +196,30 @@ test.describe("releases", () => {
     await expect(detail.getByRole("table")).toHaveCount(0);
   });
 
+  test("a person who may read no target is told so, not that nothing runs the release", async ({
+    page,
+  }) => {
+    await releases(page);
+    await page.route(
+      `${environment}/worker-releases/${releaseB}/usage?*`,
+      (r) =>
+        r.fulfill({
+          json: {
+            workers: { online: 0, offline: 0, draining: 0, revoked: 0 },
+            deployments: [],
+            activations: 0,
+            deployments_hidden: true,
+          },
+        }),
+    );
+    await page.goto(`/operate/workers/releases/${releaseB}`);
+    const detail = page.locator("weave-release-detail");
+    await expect(detail).toContainText(
+      "You need deployment.read on a target to see where this release runs.",
+    );
+    await expect(detail).not.toContainText("No deployment on a target");
+  });
+
   test("without catalog.read the releases show the access they need; a missing release says so", async ({
     page,
   }) => {

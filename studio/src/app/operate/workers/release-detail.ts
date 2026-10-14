@@ -187,6 +187,11 @@ type Deployment = ReleaseUsage["deployments"][number];
               Load more deployments
             </button>
           }
+        } @else if (usage.deployments_hidden) {
+          <p class="hint">
+            You need <code>deployment.read</code> on a target to see where this
+            release runs.
+          </p>
         } @else {
           <p class="hint">
             No deployment on a target you can see runs this release.

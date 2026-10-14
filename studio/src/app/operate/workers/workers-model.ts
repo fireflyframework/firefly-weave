@@ -331,6 +331,8 @@ export interface ReleaseUsage {
   }[];
   activations: number;
   next_cursor?: string | null;
+  /** True when the reader may read no deployment target (left out otherwise). */
+  deployments_hidden?: boolean;
 }
 /** The task types a release serves, as workers register them ("echo@1.2.0"). */
 export function releaseTaskTypes(release: WorkerRelease): string[] {
