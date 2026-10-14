@@ -181,6 +181,8 @@ export class FormSession {
    * transform's Fields becoming Text), and the step's subtitle waits.
    */
   private focusedFormula: { spec: ParamSpec; top: boolean } | null = null;
+  /** Conditions the person chose to see as a formula. */
+  private formulaViews = new Set<string>();
 
   private readonly model;
   private readonly opened;
@@ -1138,6 +1140,13 @@ export class FormSession {
     const request = this.editorRequests.get(key) ?? null;
     this.editorRequests.delete(key);
     return request;
+  }
+  formulaView(spec: ParamSpec): boolean {
+    return this.formulaViews.has(this.key(spec));
+  }
+  setFormulaView(spec: ParamSpec, on: boolean): void {
+    if (on) this.formulaViews.add(this.key(spec));
+    else this.formulaViews.delete(this.key(spec));
   }
   /** The first warning the formula at this field gets from the schemas around it. */
   formulaWarning(spec: ParamSpec): string | null {

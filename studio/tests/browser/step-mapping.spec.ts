@@ -102,7 +102,7 @@ for (const size of sizes)
       ]);
       await expect(
         menu.getByRole("menuitem", { name: /Edit formula/ }),
-      ).toHaveAttribute("aria-disabled", "true");
+      ).not.toHaveAttribute("aria-disabled", "true");
       await page.keyboard.press("Escape");
       await details.close();
       expect(await sourceText(page)).toContain("ref: /input/email");

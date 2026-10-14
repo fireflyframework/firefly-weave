@@ -27,6 +27,7 @@ import {
   inject,
   input,
   signal,
+  type OnInit,
 } from "@angular/core";
 import { Icon } from "../../../icon";
 import {
@@ -93,8 +94,8 @@ import { ndvRegistry, type Json } from "../registry";
       <div class="pane-search-row">
         <input
           class="param-input pane-search"
-          aria-label="Search fields"
-          placeholder="Search fields"
+          [attr.aria-label]="searchLabel()"
+          [placeholder]="searchLabel()"
           [value]="query()"
           (input)="query.set($any($event.target).value)"
           (keydown.escape)="closeSearch($event)"
@@ -189,12 +190,20 @@ import { ndvRegistry, type Json } from "../registry";
       </div>
     </div>`,
 })
-export class InputPane {
+export class InputPane implements OnInit {
   session = input.required<FormSession>();
   /** The data the step received, once test data or a simulation provides it. */
   value = input<Json | undefined>(undefined);
   /** References already mapped in this step. */
   mapped = input<string[]>([]);
+  /** The search field's name and placeholder. */
+  searchLabel = input("Search fields");
+  /** Start with the search field open (the Edit formula dialog). */
+  openSearch = input(false);
+  /** The Edit formula dialog opens with the search field shown. */
+  ngOnInit() {
+    if (this.openSearch()) this.searching.set(true);
+  }
   readonly source = signal<string | null>(null);
   readonly view = signal<DataView>(savedView("input") ?? "schema");
   readonly searching = signal(false);

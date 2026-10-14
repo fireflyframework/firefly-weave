@@ -2219,3 +2219,54 @@ weave-param-field.is-conditions > .param > .param-line {
 .formula-result-more {
   justify-self: start;
 }
+
+/* Edit formula: Input | formula | Result; one column below 768 px. The
+   Input column scrolls on its own, so the formula stays in view while a
+   field is dragged into it. */
+.modal-panel:has(> .edit-formula) {
+  display: flex;
+  flex-direction: column;
+}
+.edit-formula {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(0, 2fr);
+  gap: var(--space-4);
+  flex: 1 1 min(480px, 60vh);
+  min-height: 0;
+}
+.edit-formula-input {
+  min-height: 0;
+  overflow: auto;
+}
+.edit-formula-main weave-formula-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(200px, 1fr);
+  align-items: start;
+  gap: var(--space-3);
+}
+.edit-formula-main .formula-box.is-multiline {
+  min-height: min(360px, 50vh);
+  max-height: min(480px, 60vh);
+  /* No Edit formula button inside the dialog. */
+  padding-inline-end: var(--space-3);
+}
+.edit-formula-main .formula-result {
+  margin-top: 0;
+}
+/* Narrow windows: the formula and its Result first, at their own height,
+   then the fields to drag up into it. */
+@media (max-width: 767px) {
+  .edit-formula,
+  .edit-formula-main weave-formula-field {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .edit-formula {
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .edit-formula-input {
+    order: 1;
+  }
+  .edit-formula-main .formula-box.is-multiline {
+    min-height: calc(3 * 20px + 2 * var(--space-3));
+  }
+}

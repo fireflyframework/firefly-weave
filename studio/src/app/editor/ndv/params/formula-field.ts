@@ -32,6 +32,7 @@ import {
   computed,
   inject,
   input,
+  output,
   signal,
   untracked,
   viewChild,
@@ -49,6 +50,7 @@ import {
   readFieldText,
   type FieldText,
 } from "../../formula/field-text";
+import { isReference } from "../../formula/grammar";
 import { printRef } from "../../formula/printer";
 import { referenceSpans, type ReferenceSpan } from "../../formula/spans";
 import { tokenize } from "../../formula/tokens";
@@ -113,7 +115,7 @@ export class RefPill {
   selector: "weave-formula-field",
   standalone: true,
   changeDetection: ChangeDetectionStrategy.Eager,
-  imports: [ReferenceCombobox, RefPill, FormulaEditor, FormulaResult],
+  imports: [ReferenceCombobox, RefPill, FormulaEditor, FormulaResult, Icon],
   template: `@switch (view()) {
     @case ("pill") {
       <button
@@ -175,7 +177,7 @@ export class RefPill {
             <weave-formula-editor
               #editor
               mode="template"
-              [multiline]="spec().type === 'multiline'"
+              [multiline]="inDialog() || spec().type === 'multiline'"
               [controlId]="controlId()"
               [labelledBy]="controlId() + '-label'"
               [describedBy]="describedBy()"
@@ -194,11 +196,14 @@ export class RefPill {
               (undo)="session().host.undo()"
               (redo)="session().host.redo()"
               (pick)="pickFor($event)"
+              [dropRefs]="inDialog()"
+              (dropped)="dropText($event)"
             />
           } @else {
             <weave-formula-editor
               #editor
               mode="formula"
+              [multiline]="inDialog()"
               [controlId]="controlId()"
               [labelledBy]="controlId() + '-label'"
               [describedBy]="describedBy()"
@@ -217,6 +222,8 @@ export class RefPill {
               (undo)="session().host.undo()"
               (redo)="session().host.redo()"
               (pick)="pickFor($event)"
+              [dropRefs]="inDialog()"
+              (dropped)="dropText($event)"
             />
           }
         } @placeholder {
@@ -227,8 +234,19 @@ export class RefPill {
             >{{ shownText() }}</code
           >
         }
+        @if (!readOnly() && !inDialog() && expandable()) {
+          <button
+            type="button"
+            class="icon-button formula-expand"
+            aria-label="Edit formula"
+            title="Edit formula"
+            (click)="expand.emit()"
+          >
+            <weave-icon name="expand" [size]="16" />
+          </button>
+        }
       </div>
-      @if (focusedIn()) {
+      @if (focusedIn() || inDialog()) {
         <weave-formula-result
           [label]="spec().label"
           [preview]="resultPreview()"
@@ -247,6 +265,11 @@ export class FormulaField implements OnInit {
   readOnly = input<string | null>(null);
   /** Escape reverts an unapplied formula here; the Edit formula dialog closes first instead. */
   escapeRestores = input(true);
+  /** Inside Edit formula: multiline, takes drops itself, Result always shown, no ⤢. */
+  inDialog = input(false);
+  /** Offers ⤢ Edit formula (the field around it opens the dialog). */
+  expandable = input(true);
+  readonly expand = output<void>();
   /** The person asked to choose data (Use data…, a pill pressed). */
   readonly picking = signal(false);
   /** Text being typed, while it is the person's and not yet shown in canonical form. */
@@ -524,12 +547,19 @@ export class FormulaField implements OnInit {
   }
   focusOut() {
     this.focusedIn.set(false);
-    this.leave();
+    // In Edit formula, focus moves to the Input column to drag a field into
+    // an emptied formula: the empty text waits for Done.
+    if (!(this.inDialog() && this.editingText() === "")) this.leave();
     this.session().leaveFormula(this.spec());
   }
   /** What the text on screen resolves to: its parse error, or the preview of its value. */
   resultPreview(): PreviewResult | null {
     const read = readFieldText(this.shownText(), this.fieldText());
+    if (read.kind === "error" && this.inDialog())
+      return {
+        ok: false,
+        error: { code: read.error.code, message: read.error.message },
+      };
     // The line under the field already says why the text doesn't apply.
     if (read.kind === "error")
       return {
@@ -560,6 +590,46 @@ export class FormulaField implements OnInit {
     return !referenceSpans(
       tokenize(text, this.templateMode() ? "template" : "formula"),
     ).length;
+  }
+
+  /** A dropped Input field: its path at the drop point. */
+  dropText(drop: { ref: string; pos: number }) {
+    this.reconcile();
+    if (!this.canEdit()) return;
+    const path = printRef(drop.ref);
+    const text = this.shownText();
+    const pos = Math.max(0, Math.min(drop.pos, text.length));
+    let insert = path;
+    let from = pos;
+    let to = pos;
+    if (this.templateMode()) {
+      const inside = tokenize(text, "template")
+        .filter((token) => token.from < pos)
+        .reduce(
+          (open, token) =>
+            token.type === "open"
+              ? true
+              : token.type === "close"
+                ? false
+                : open,
+          false,
+        );
+      if (!inside) insert = `{{ ${path} }}`;
+    } else {
+      const current = readFieldText(text, this.fieldText());
+      if (
+        current.kind === "empty" ||
+        (current.kind === "value" &&
+          current.value.mode === "mapped" &&
+          isReference(current.value.expression))
+      ) {
+        from = 0;
+        to = text.length;
+      }
+    }
+    this.beginEdit();
+    this.typed(text.slice(0, from) + insert + text.slice(to));
+    this.focusEditor(from + insert.length);
   }
 
   escape(signal: { event: KeyboardEvent; handled: boolean }) {
