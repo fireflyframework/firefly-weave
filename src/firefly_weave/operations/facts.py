@@ -378,7 +378,8 @@ class FactRepository:
                 return None
 
         def add(key: str, status: str, *, scheduled: bool = False, error: str | None = None) -> None:
-            identity = author_instance(key)
+            # A loop's yield (each~1) is a wake-up of the loop, not a run of a step.
+            identity = author_instance(key) if "~" not in key else None
             if identity is None:
                 return
             kind = kind_of(identity.node_id)
