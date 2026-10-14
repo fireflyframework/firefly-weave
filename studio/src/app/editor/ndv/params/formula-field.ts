@@ -53,7 +53,7 @@ import { printRef } from "../../formula/printer";
 import { referenceSpans, type ReferenceSpan } from "../../formula/spans";
 import { tokenize } from "../../formula/tokens";
 import { printTemplate } from "../../formula/template";
-import { referencesOf } from "../../formula/preview";
+import { UNAVAILABLE, referencesOf } from "../../formula/preview";
 import type { PreviewResult } from "../registry";
 import { FormulaResult } from "./formula-result";
 import { isMappedText } from "../pending-entries";
@@ -288,6 +288,10 @@ export class FormulaField implements OnInit {
    * a Fixed field): the field is new then, so its first check takes it.
    */
   ngOnInit() {
+    // Removed while it had focus (step details closed, another step opened).
+    this.lifetime.onDestroy(() => {
+      if (this.focusedIn()) this.session().leaveFormula(this.spec(), false);
+    });
     const request = this.session().takeEditorRequest(this.spec());
     if (request) this.request.set({ ...request, seq: ++this.seq });
   }
@@ -515,19 +519,25 @@ export class FormulaField implements OnInit {
   }
   focusIn() {
     this.focusedIn.set(true);
+    this.session().focusFormula(this.spec());
     this.beginEdit();
   }
   focusOut() {
     this.focusedIn.set(false);
     this.leave();
+    this.session().leaveFormula(this.spec());
   }
   /** What the text on screen resolves to: its parse error, or the preview of its value. */
   resultPreview(): PreviewResult | null {
     const read = readFieldText(this.shownText(), this.fieldText());
+    // The line under the field already says why the text doesn't apply.
     if (read.kind === "error")
       return {
         ok: false,
-        error: { code: read.error.code, message: read.error.message },
+        error: {
+          code: UNAVAILABLE,
+          message: "No result until the formula applies.",
+        },
       };
     if (read.kind === "empty") return null;
     return this.session().previewOf(this.spec(), read.value);

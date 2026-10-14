@@ -110,10 +110,14 @@ for (const size of sizes)
         "The formula ends too early. Add a value after `>`.",
       );
       await expect(formulaText(field)).toHaveAttribute("aria-invalid", "true");
-      // The Result says why, and offers no tip: the text already reads data.
+      // The error shows once, on the line; the Result says only that there
+      // is none yet, and offers no tip: the text already reads data.
+      await expect(
+        field.getByText("The formula ends too early. Add a value after `>`."),
+      ).toHaveCount(1);
       const result = field.getByRole("region", { name: "Result of Fields" });
       await expect(result).toContainText(
-        "The formula ends too early. Add a value after `>`.",
+        "No result until the formula applies.",
       );
       await expect(result).not.toContainText("Tip:");
       await details.close();
@@ -132,6 +136,60 @@ for (const size of sizes)
       await expect(
         details.field("value").locator(".param-line"),
       ).not.toContainText("Not applied");
+    });
+
+    test("a text formula typed in a transform's Fields keeps the field and its focus until it is left", async ({
+      page,
+    }) => {
+      const details = await openStepFixture(page, formulasFixture);
+      await details.openWithKeyboard("flag");
+      const field = details.field("value");
+      await replaceFormula(page, field, 'concat("Order ", input.customerId');
+      await page.keyboard.type(")");
+      await expect(formulaBox(field)).toHaveAttribute(
+        "data-text",
+        'concat("Order ", input.customerId)',
+      );
+      await expect(formulaText(field)).toBeFocused();
+      await expect(details.field("value-text")).toHaveCount(0);
+      await page.keyboard.type(" ");
+      await page.keyboard.press("Backspace");
+      await expect(formulaText(field)).toBeFocused();
+      await page.keyboard.press("Tab");
+      // Left: the value is text now, so the transform shows it as Text.
+      const text = details.field("value-text");
+      await expect(formulaBox(text)).toHaveAttribute(
+        "data-text",
+        "Order {{ input.customerId }}",
+      );
+      await details.close();
+      expect(await stepValue(page, "flag")).toEqual({
+        op: {
+          name: "concat",
+          args: [{ literal: "Order " }, { ref: "/input/customerId" }],
+        },
+      });
+    });
+
+    test("the step's subtitle waits until the formula is left", async ({
+      page,
+    }) => {
+      const details = await openStepFixture(page, formulasFixture);
+      await details.openWithKeyboard("flag");
+      const subtitle = details.dialog.locator(".sd-subtitle");
+      await expect(subtitle).toHaveText("Transform · Computes a value");
+      const field = details.field("value");
+      await replaceFormula(page, field, "input.customerId");
+      await expect(formulaBox(field)).toHaveAttribute(
+        "data-text",
+        "input.customerId",
+      );
+      await expect(subtitle).toHaveText("Transform · Computes a value");
+      // Escape closes the suggestions; Tab leaves the field.
+      await page.keyboard.press("Escape");
+      await expect(suggestions(page)).toHaveCount(0);
+      await page.keyboard.press("Tab");
+      await expect(subtitle).toHaveText("Transform · Copies /input/customerId");
     });
 
     test("pasting {{ input.amount }} stores a reference", async ({ page }) => {
@@ -322,6 +380,25 @@ test.describe("the formula editor's keys", () => {
 test.describe("the formula editor on a phone", () => {
   test.use({ viewport: { width: 360, height: 640 } });
 
+  test("the completion list keeps the window's gutter when it opens far right", async ({
+    page,
+  }) => {
+    await withLanguageFeatures(page);
+    const details = await openStepFixture(page, formulasFixture);
+    await details.openWithKeyboard("flag");
+    const field = details.field("value");
+    await replaceFormula(page, field, "input.amount > 1000 and input.");
+    const list = suggestions(page);
+    await expect(list).toBeVisible();
+    // CodeMirror places the list after it measures: poll until it settles.
+    await expect
+      .poll(async () => {
+        const frame = await box(list);
+        return frame.x >= 16 && frame.right <= 360 - 16;
+      })
+      .toBe(true);
+  });
+
   test("the completion list stays on screen", async ({ page }) => {
     await withLanguageFeatures(page);
     const details = await openStepFixture(page, formulasFixture);
@@ -330,10 +407,11 @@ test.describe("the formula editor on a phone", () => {
     await replaceFormula(page, field, "input.");
     const list = suggestions(page);
     await expect(list).toBeVisible();
+    // The list keeps the window's 16 px gutter on both sides.
     const listBox = await box(list);
-    expect(listBox.x).toBeGreaterThanOrEqual(0);
+    expect(listBox.x).toBeGreaterThanOrEqual(16);
     expect(listBox.y).toBeGreaterThanOrEqual(0);
-    expect(listBox.right).toBeLessThanOrEqual(360);
+    expect(listBox.right).toBeLessThanOrEqual(360 - 16);
     expect(listBox.bottom).toBeLessThanOrEqual(640);
     await page.keyboard.press("Enter");
     await expect(formulaBox(field)).toHaveAttribute(

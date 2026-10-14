@@ -404,7 +404,21 @@ export class StepDetails {
   kindIcon(): string {
     return this.iconOf(this.target());
   }
+  /** The subtitle last shown, kept while a formula field has focus. */
+  private shownSubtitle: { session: FormSession; text: string } | null = null;
+  /**
+   * The subtitle under the step's name. While a formula field has focus its
+   * intermediate formulas don't change it; it updates when the field is left.
+   */
   subtitle(): string {
+    const session = this.session();
+    const held = this.shownSubtitle;
+    if (session.formulaFocused() && held?.session === session) return held.text;
+    const text = this.liveSubtitle();
+    this.shownSubtitle = { session, text };
+    return text;
+  }
+  private liveSubtitle(): string {
     if (this.target() === "$trigger")
       return "Manual form · starts a run with its input fields";
     if (this.target() === "$end") return "End · what the workflow returns";

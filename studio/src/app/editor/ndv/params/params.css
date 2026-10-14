@@ -2143,7 +2143,8 @@ weave-param-field.is-conditions > .param > .param-line {
 .cm-formula-completions {
   max-height: min(320px, 50vh);
   min-width: 240px;
-  max-width: min(420px, calc(100vw - 32px));
+  /* The window less both gutters and the frame's border. */
+  max-width: min(420px, calc(100vw - 2 * var(--space-4) - 2px));
   margin: 0;
   padding: var(--space-1) 0;
   overflow-y: auto;

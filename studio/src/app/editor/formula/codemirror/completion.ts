@@ -33,6 +33,7 @@ import {
   EditorView,
   keymap,
   showTooltip,
+  tooltips as tooltipConfig,
   type Tooltip,
   type TooltipView,
 } from "@codemirror/view";
@@ -194,10 +195,27 @@ export function startCompletion(view: EditorView): boolean {
   return !!open;
 }
 
+/**
+ * Where tooltips may go: the window less the page gutter (`--space-4`) on
+ * each side, so a list that opens near the right edge keeps its margin.
+ */
+function gutterSpace(view: EditorView) {
+  const gutter =
+    parseFloat(getComputedStyle(view.dom).getPropertyValue("--space-4")) || 16;
+  const width = view.dom.ownerDocument.documentElement.clientWidth;
+  return {
+    top: 0,
+    left: gutter,
+    right: Math.max(gutter, width - gutter),
+    bottom: window.innerHeight,
+  };
+}
+
 export function formulaCompletion(config: CompletionConfig): Extension {
   return [
     completionConfig.of(config),
     completionState,
+    tooltipConfig({ tooltipSpace: gutterSpace }),
     EditorView.focusChangeEffect.of((_state, focusing) =>
       focusing ? null : setOpen.of(null),
     ),

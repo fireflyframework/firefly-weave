@@ -175,6 +175,12 @@ export class FormSession {
   private drafts = new Map<string, Path>();
   /** Where a field's editor puts the caret when it next appears (`{{` typed in a Fixed field). */
   private editorRequests = new Map<string, Omit<EditorRequest, "seq">>();
+  /**
+   * The formula field that has focus. While it has, the form keeps showing
+   * it even when what it writes would show another field at its path (a
+   * transform's Fields becoming Text), and the step's subtitle waits.
+   */
+  private focusedFormula: { spec: ParamSpec; top: boolean } | null = null;
 
   private readonly model;
   private readonly opened;
@@ -253,7 +259,48 @@ export class FormSession {
       : this.controller.parameters(this.target);
   }
   state(name: FormName): FormState {
-    return formState(this.form(name), this.controller.env(this.target));
+    const state = formState(this.form(name), this.controller.env(this.target));
+    const focused = this.focusedFormula;
+    if (!focused?.top) return state;
+    const kept = focused.spec;
+    if (state.fields.some((entry) => entry.spec.id === kept.id)) return state;
+    const at = state.fields.findIndex(
+      (entry) =>
+        samePath(entry.spec.path, kept.path) &&
+        (entry.spec.scope ?? "step") === (kept.scope ?? "step"),
+    );
+    if (at < 0) return state;
+    const fields = [...state.fields];
+    fields[at] = { ...this.childEntry(kept), option: fields[at].option };
+    return { ...state, fields };
+  }
+  /** A formula field took focus: keep it on screen until it is left. */
+  focusFormula(spec: ParamSpec): void {
+    const descriptor = canonicalJson(spec);
+    const top = (["parameters", "settings"] as const).some((name) =>
+      this.state(name).fields.some(
+        (entry) =>
+          entry.spec.id === spec.id && canonicalJson(entry.spec) === descriptor,
+      ),
+    );
+    this.focusedFormula = { spec, top };
+  }
+  /** The formula field was left: the form shows what its value now reads as. */
+  leaveFormula(spec: ParamSpec, refresh = true): void {
+    const focused = this.focusedFormula?.spec;
+    if (
+      !focused ||
+      focused.id !== spec.id ||
+      !samePath(focused.path, spec.path) ||
+      (focused.scope ?? "step") !== (spec.scope ?? "step")
+    )
+      return;
+    this.focusedFormula = null;
+    if (refresh) this.host.refreshView();
+  }
+  /** A formula field has focus (the step's subtitle waits for it). */
+  formulaFocused(): boolean {
+    return this.focusedFormula !== null;
   }
   subject(): FormSubject {
     return this.controller.subject(this.target);
