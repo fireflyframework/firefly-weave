@@ -266,14 +266,24 @@ export class FormSession {
     if (!focused?.top) return state;
     const kept = focused.spec;
     if (state.fields.some((entry) => entry.spec.id === kept.id)) return state;
-    const at = state.fields.findIndex(
+    // Fields at its path, inside it or around it stand in for it while it
+    // has focus (Fields that would show as Text, a whole Input as rows).
+    const overlaps = (path: Path) => {
+      if (!path.length || !kept.path.length) return false;
+      const length = Math.min(path.length, kept.path.length);
+      return samePath(path.slice(0, length), kept.path.slice(0, length));
+    };
+    const replaced = state.fields.filter(
       (entry) =>
-        samePath(entry.spec.path, kept.path) &&
+        overlaps(entry.spec.path) &&
         (entry.spec.scope ?? "step") === (kept.scope ?? "step"),
     );
-    if (at < 0) return state;
-    const fields = [...state.fields];
-    fields[at] = { ...this.childEntry(kept), option: fields[at].option };
+    if (!replaced.length) return state;
+    const fields: FieldEntry[] = [];
+    for (const entry of state.fields)
+      if (entry === replaced[0])
+        fields.push({ ...this.childEntry(kept), option: entry.option });
+      else if (!replaced.includes(entry)) fields.push(entry);
     return { ...state, fields };
   }
   /** A formula field took focus: keep it on screen until it is left. */
@@ -288,15 +298,17 @@ export class FormSession {
     this.focusedFormula = { spec, top };
   }
   /** The formula field was left: the form shows what its value now reads as. */
-  leaveFormula(spec: ParamSpec, refresh = true): void {
+  private isFocusedFormula(spec: ParamSpec): boolean {
     const focused = this.focusedFormula?.spec;
-    if (
-      !focused ||
-      focused.id !== spec.id ||
-      !samePath(focused.path, spec.path) ||
-      (focused.scope ?? "step") !== (spec.scope ?? "step")
-    )
-      return;
+    return (
+      !!focused &&
+      focused.id === spec.id &&
+      samePath(focused.path, spec.path) &&
+      (focused.scope ?? "step") === (spec.scope ?? "step")
+    );
+  }
+  leaveFormula(spec: ParamSpec, refresh = true): void {
+    if (!this.isFocusedFormula(spec)) return;
     this.focusedFormula = null;
     if (refresh) this.host.refreshView();
   }
@@ -450,6 +462,9 @@ export class FormSession {
     )
       return "mapped";
     const structured = ["fields", "keyValue", "list"].includes(spec.type);
+    // A formula being typed stays a formula until it is left, even when what
+    // it writes reads as rows (a record typed over a whole Input).
+    if (structured && this.isFocusedFormula(spec)) return "mapped";
     const mapped =
       (structured
         ? this.wholeMapping(spec)

@@ -797,7 +797,11 @@ for (const size of allSizes)
           element.append(probe);
           const font = getComputedStyle(probe).font;
           probe.remove();
-          return getComputedStyle(element).font === font;
+          // The text itself: CodeMirror's content, not the host around it.
+          return (
+            getComputedStyle(element.querySelector(".cm-content")!).font ===
+            font
+          );
         }),
       ).toBe(true);
       // In a key-value row, the picker is the row's height.

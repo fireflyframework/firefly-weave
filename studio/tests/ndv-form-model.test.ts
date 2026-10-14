@@ -213,6 +213,26 @@ describe("form model", () => {
     expect(form(after).fields[0].id).toBe("value-text");
     expect(cleared).toEqual({ changes: [], labels: [], reasons: [] });
   });
+  it("leaves a value whose part, or whose whole, another field of the new form shows", () => {
+    // A record typed over a whole Input turns it into rows inside it; rows
+    // mapped as a whole become one field around them.
+    const step = http("GET");
+    const whole = param("input", { path: ["with"], type: "fields" });
+    const row = param("body", { type: "fields" });
+    const entry = (spec: ParamSpec) => ({
+      spec,
+      option: false,
+      readOnly: null,
+      disabled: null,
+    });
+    const state = (spec: ParamSpec) => ({ fields: [entry(spec)], addable: [] });
+    expect(
+      hiddenChanges(state(whole), state(row), env(step), new Set()).changes,
+    ).toEqual([]);
+    expect(
+      hiddenChanges(state(row), state(whole), env(step), new Set()).changes,
+    ).toEqual([]);
+  });
   it("treats a value-less group as default when all its children are, and resets each child", () => {
     const group: ParamSpec = {
       id: "results",

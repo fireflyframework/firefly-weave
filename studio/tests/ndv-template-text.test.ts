@@ -25,6 +25,21 @@ import {
 } from "../src/app/editor/ndv/params/template-text";
 
 describe("template text", () => {
+  it("reads adjacent text pieces as one part, as the text shows them", () => {
+    expect(
+      templateParts({
+        op: {
+          name: "concat",
+          args: [
+            { literal: "a" },
+            { literal: "" },
+            { literal: "b" },
+            { ref: "/input/x" },
+          ],
+        },
+      }),
+    ).toEqual([{ text: "ab" }, { ref: "/input/x" }]);
+  });
   it("keeps formulas with mixed or extended parts out of editable template parts", () => {
     expect(templateParts({ literal: "Hello", ref: "/input/name" })).toBeNull();
     expect(

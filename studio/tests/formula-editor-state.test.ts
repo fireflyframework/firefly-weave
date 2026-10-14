@@ -120,6 +120,17 @@ describe("the formula editor's state", () => {
     );
   });
 
+  it("draws an error a keystroke behind the text inside the text", () => {
+    const { state } = editorState("input.a >", { from: 10, to: 12 });
+    expect(classes(state.field(formulaState).decorations)).toContain(
+      "9-9:CaretWidget",
+    );
+    const shorter = editorState("input.a", { from: 8, to: 9 }).state;
+    expect(classes(shorter.field(formulaState).decorations)).toContain(
+      "7-7:CaretWidget",
+    );
+  });
+
   it("draws pills between a template's braces and leaves the text around them plain", () => {
     const { state } = editorState("Hi {{ input.name }}!", null, "template");
     expect(classes(state.field(formulaState).decorations)).toEqual([

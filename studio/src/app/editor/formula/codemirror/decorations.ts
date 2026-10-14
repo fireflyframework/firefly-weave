@@ -159,18 +159,19 @@ function draw(state: EditorState): Drawn {
           span.to,
         ),
       );
+  // The error may be one keystroke behind the text: clamp it to the text.
   const error = config.error();
-  if (error && error.to > error.from)
+  const length = state.doc.length;
+  const errorFrom = error ? Math.min(Math.max(0, error.from), length) : 0;
+  const errorTo = error ? Math.min(Math.max(0, error.to), length) : 0;
+  if (error && errorTo > errorFrom)
     ranges.push(
-      Decoration.mark({ class: "cm-formula-error" }).range(
-        error.from,
-        Math.min(error.to, state.doc.length),
-      ),
+      Decoration.mark({ class: "cm-formula-error" }).range(errorFrom, errorTo),
     );
   else if (error)
     ranges.push(
       Decoration.widget({ widget: new CaretWidget(), side: 1 }).range(
-        Math.min(error.from, state.doc.length),
+        errorFrom,
       ),
     );
   const pills = spans.map((span) =>

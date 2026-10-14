@@ -128,13 +128,20 @@ export function hiddenChanges(
   removed: ReadonlySet<string>,
 ): { changes: FormChange[]; labels: string[]; reasons: string[] } {
   const still = new Set(after.fields.map((field) => field.spec.id));
-  // Another field of the new form shows the same value (a transform's
-  // fields become its Text): that value isn't hidden.
-  const shown = new Set(
-    after.fields
-      .filter((field) => field.spec.path.length)
-      .map((field) => JSON.stringify(field.spec.path)),
-  );
+  // Another field of the new form shows the same value, or a part of it, or
+  // the value it is part of (a transform's Fields become its Text, a whole
+  // Input becomes its rows): that value isn't hidden.
+  const shownPaths = after.fields
+    .map((field) => field.spec.path)
+    .filter((path) => path.length);
+  const overlaps = (path: readonly (string | number)[]) =>
+    path.length > 0 &&
+    shownPaths.some((shown) => {
+      const length = Math.min(shown.length, path.length);
+      for (let i = 0; i < length; i++)
+        if (String(shown[i]) !== String(path[i])) return false;
+      return true;
+    });
   const reasons = new Map(
     after.addable.map((option) => [option.spec.id, option.disabled]),
   );
@@ -145,7 +152,7 @@ export function hiddenChanges(
   for (const { spec } of before.fields) {
     if (
       still.has(spec.id) ||
-      shown.has(JSON.stringify(spec.path)) ||
+      overlaps(spec.path) ||
       removed.has(spec.id) ||
       spec.whenHidden === "keep"
     )

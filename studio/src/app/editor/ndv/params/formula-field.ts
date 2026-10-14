@@ -57,6 +57,7 @@ import { tokenize } from "../../formula/tokens";
 import { printTemplate } from "../../formula/template";
 import { UNAVAILABLE, referencesOf } from "../../formula/preview";
 import type { PreviewResult } from "../registry";
+import type { ParamValue } from "./value-io";
 import { FormulaResult } from "./formula-result";
 import { isMappedText } from "../pending-entries";
 import type { ParamSpec } from "../registry";
@@ -114,6 +115,9 @@ export class RefPill {
 @Component({
   selector: "weave-formula-field",
   standalone: true,
+  host: {
+    "(focusout)": "hostFocusOut($event)",
+  },
   changeDetection: ChangeDetectionStrategy.Eager,
   imports: [ReferenceCombobox, RefPill, FormulaEditor, FormulaResult, Icon],
   template: `@switch (view()) {
@@ -191,7 +195,6 @@ export class RefPill {
               [request]="request()"
               (textChange)="typed($event)"
               (focused)="focusIn()"
-              (blurred)="focusOut()"
               (escaped)="escape($event)"
               (undo)="session().host.undo()"
               (redo)="session().host.redo()"
@@ -217,7 +220,6 @@ export class RefPill {
               [request]="request()"
               (textChange)="typed($event)"
               (focused)="focusIn()"
-              (blurred)="focusOut()"
               (escaped)="escape($event)"
               (undo)="session().host.undo()"
               (redo)="session().host.redo()"
@@ -234,17 +236,6 @@ export class RefPill {
             >{{ shownText() }}</code
           >
         }
-        @if (!readOnly() && !inDialog() && expandable()) {
-          <button
-            type="button"
-            class="icon-button formula-expand"
-            aria-label="Edit formula"
-            title="Edit formula"
-            (click)="expand.emit()"
-          >
-            <weave-icon name="expand" [size]="16" />
-          </button>
-        }
       </div>
       @if (focusedIn() || inDialog()) {
         <weave-formula-result
@@ -253,6 +244,19 @@ export class RefPill {
           [source]="resultSource()"
           [tip]="resultTip()"
         />
+      }
+      <!-- After the Result panel, so Tab from the formula reaches Show all
+           first; drawn at the box's right end. -->
+      @if (!readOnly() && !inDialog() && expandable()) {
+        <button
+          type="button"
+          class="icon-button formula-expand"
+          aria-label="Edit formula"
+          title="Edit formula"
+          (click)="expand.emit()"
+        >
+          <weave-icon name="expand" [size]="16" />
+        </button>
       }
     }
   }`,
@@ -522,6 +526,8 @@ export class FormulaField implements OnInit {
     session.release(this.spec());
     // A literal waits for blur so the field never turns Fixed under the caret.
     if (read.kind === "empty" || read.literal) return;
+    // Text that means what the workflow already holds writes nothing.
+    if (this.holds(read.value)) return this.beginEdit();
     if (session.write(this.spec(), read.value)) this.beginEdit();
   }
   leave() {
@@ -535,7 +541,8 @@ export class FormulaField implements OnInit {
       if (read.kind === "empty") {
         session.clear(spec);
         void session.setMode(spec, "mapped");
-      } else if (read.kind === "value") session.write(spec, read.value);
+      } else if (read.kind === "value" && !this.holds(read.value))
+        session.write(spec, read.value);
     }
     this.editingOwner = null;
     this.editingText.set(null);
@@ -544,6 +551,22 @@ export class FormulaField implements OnInit {
     this.focusedIn.set(true);
     this.session().focusFormula(this.spec());
     this.beginEdit();
+  }
+  /** The workflow already holds this value. */
+  private holds(value: ParamValue): boolean {
+    return canonicalJson(value) === canonicalJson(this.stored());
+  }
+  /**
+   * Focus left the editor or the Result panel: moving into the panel (Show
+   * all) keeps the field open; anywhere else leaves it.
+   */
+  hostFocusOut(event: FocusEvent) {
+    if (!this.focusedIn()) return;
+    const next = event.relatedTarget as Element | null;
+    const host = event.currentTarget as HTMLElement;
+    if (next && host.contains(next) && next.closest("weave-formula-result"))
+      return;
+    this.focusOut();
   }
   focusOut() {
     this.focusedIn.set(false);
@@ -632,8 +655,20 @@ export class FormulaField implements OnInit {
     this.focusEditor(from + insert.length);
   }
 
+  /** Text on screen that the workflow doesn't hold yet: held, or a literal or emptiness waiting for blur. */
+  private unapplied(): boolean {
+    if (this.heldText()) return true;
+    const text = this.editingText();
+    if (text === null) return false;
+    const read = readFieldText(text, this.fieldText());
+    return (
+      (read.kind === "empty" ||
+        (read.kind === "value" && read.literal && !this.holds(read.value))) &&
+      text !== (this.storedText() ?? "")
+    );
+  }
   escape(signal: { event: KeyboardEvent; handled: boolean }) {
-    if (!this.heldText() || !this.escapeRestores()) return;
+    if (!this.unapplied() || !this.escapeRestores()) return;
     signal.handled = true;
     const session = this.session();
     if (session.read(this.spec()).mode !== "mapped")

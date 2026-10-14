@@ -623,6 +623,8 @@ SPDX-License-Identifier: Apache-2.0
 :is(.step-details, .sd-form-scope) button.ref-pill-button {
   width: 100%;
   justify-content: flex-start;
+  /* Exactly a field's height: the pill inside never grows it. */
+  height: var(--sd-control);
   min-height: var(--sd-control);
   padding: 0 var(--space-2);
   background: var(--sunken);
@@ -1137,6 +1139,14 @@ SPDX-License-Identifier: Apache-2.0
   min-height: var(--sd-target);
 }
 /* A row's key and value controls are the row height. */
+:is(.step-details, .sd-form-scope)
+  .param-row-value
+  > .param
+  > .param-control
+  > weave-formula-field
+  > button.ref-pill-button {
+  height: var(--sd-row);
+}
 .param-kv-name,
 .param-row-value > .param > .param-control > .param-input,
 .param-row-value > .param > .param-control > weave-formula-field > .param-input,
@@ -2049,6 +2059,9 @@ weave-param-field.is-conditions > .param > .param-line {
   margin-block: -1px;
 }
 .formula-box:not(.is-multiline) .cm-content {
+  /* The box's height whatever the line holds: a 20 px pill never grows it. */
+  box-sizing: border-box;
+  height: var(--sd-control);
   padding-block: calc((var(--sd-control) - 18px) / 2);
 }
 .formula-box.is-template:not(.is-multiline) .cm-content {
@@ -2074,6 +2087,7 @@ weave-param-field.is-conditions > .param > .param-line {
   > weave-formula-field
   .formula-box:not(.is-multiline)
   .cm-content {
+  height: var(--sd-row);
   padding-block: calc((var(--sd-row) - 18px) / 2);
 }
 :is(.step-details, .sd-form-scope)
@@ -2117,6 +2131,9 @@ weave-param-field.is-conditions > .param > .param-line {
   vertical-align: middle;
   font: var(--type-caption);
   cursor: default;
+}
+weave-formula-field {
+  position: relative;
 }
 .formula-expand {
   position: absolute;
