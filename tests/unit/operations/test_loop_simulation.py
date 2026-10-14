@@ -24,7 +24,8 @@ import pytest
 from firefly_weave.compiler.api import compile_source
 from firefly_weave.compiler.catalog import CatalogSnapshot
 from firefly_weave.operations.debug.models import DebugError
-from firefly_weave.operations.debug.simulator import Simulator
+from firefly_weave.operations.debug.simulator import Simulator, first_instance
+from firefly_weave.runtime.kernel import workflow
 
 NOW = datetime(2026, 10, 13, tzinfo=UTC)
 ECHO = "action:echo-action@2.0.0"
@@ -148,3 +149,64 @@ def test_a_missing_mock_names_the_keys_that_would_answer_that_iteration(worker_r
 def test_a_missing_mock_outside_loops_names_the_step_and_the_action(worker_runtime_fixture):
     view = Simulator(worker_runtime_fixture["artifact"], mocks={}, input=3, now=NOW).continue_until_breakpoint()
     assert view.diagnostics[0].hint == "Add a mock under node:work, action:echo-action@2.0.0."
+
+
+def test_an_instance_breakpoint_stops_only_that_iteration(worker_runtime_fixture):
+    artifact = sends(worker_runtime_fixture["catalog"])
+    simulator = Simulator(artifact, mocks={"node:send": 7}, input=[10, 20, 30], now=NOW)
+    simulator.set_breakpoints({"send[1]"})
+    paused = simulator.continue_until_breakpoint()
+    assert (paused.status, paused.selected_node) == ("paused", "send[1]")
+    done = simulator.continue_until_breakpoint()
+    assert (done.status, done.variables["output"]) == ("succeeded", [7, 7, 7])
+
+
+def test_a_step_breakpoint_stops_every_iteration(worker_runtime_fixture):
+    artifact = sends(worker_runtime_fixture["catalog"])
+    simulator = Simulator(artifact, mocks={"node:send": 7}, input=[10, 20], now=NOW)
+    simulator.set_breakpoints({"send"})
+    assert simulator.continue_until_breakpoint().selected_node == "send[0]"
+    assert simulator.continue_until_breakpoint().selected_node == "send[1]"
+    assert simulator.continue_until_breakpoint().status == "succeeded"
+
+
+@pytest.mark.parametrize(
+    "key", ["send[10]", "send[1][0]", "send[01]", "send#1", "each~1", "each[0]", "missing", "missing[0]", ""]
+)
+def test_breakpoints_name_a_step_or_one_of_its_iterations(worker_runtime_fixture, key):
+    simulator = Simulator(sends(worker_runtime_fixture["catalog"]), mocks={"node:send": 7}, input=[1], now=NOW)
+    with pytest.raises(DebugError, match="WV-DEBUG-BREAKPOINT"):
+        simulator.set_breakpoints({key})
+    assert simulator.inspect().status == "queued"
+
+
+def test_breakpoints_accept_synthetic_steps_and_their_iterations(worker_runtime_fixture):
+    simulator = Simulator(sends(worker_runtime_fixture["catalog"]), mocks={"node:send": 7}, input=[1, 2], now=NOW)
+    simulator.set_breakpoints({"@branch:each:0[1]", "@join:each"})
+    assert simulator.continue_until_breakpoint().selected_node == "@branch:each:0[1]"
+    assert simulator.continue_until_breakpoint().selected_node == "@join:each"
+
+
+def test_re_setting_breakpoints_keeps_a_pause_only_while_one_still_stops_there(worker_runtime_fixture):
+    simulator = Simulator(sends(worker_runtime_fixture["catalog"]), mocks={"node:send": 7}, input=[1, 2], now=NOW)
+    simulator.set_breakpoints({"send[1]"})
+    assert simulator.continue_until_breakpoint().selected_node == "send[1]"
+    simulator.set_breakpoints({"send"})
+    assert simulator.inspect().status == "paused"
+    simulator.set_breakpoints({"send[1]", "send[0]"})
+    assert simulator.inspect().status == "paused"
+    simulator.set_breakpoints({"send[0]"})
+    assert simulator.inspect().status != "paused"
+
+
+def test_a_step_id_as_a_target_means_its_first_iteration(worker_runtime_fixture):
+    nested = workflow(grid())
+    assert [first_instance(nested, step) for step in ("rows", "cells", "double", "@join:cells")] == [
+        "rows",
+        "cells[0]",
+        "double[0][0]",
+        "@join:cells[0]",
+    ]
+    assert first_instance(workflow(worker_runtime_fixture["artifact"]), "work") == "work"
+    with pytest.raises(DebugError, match="WV-DEBUG-BREAKPOINT"):
+        first_instance(nested, "missing")

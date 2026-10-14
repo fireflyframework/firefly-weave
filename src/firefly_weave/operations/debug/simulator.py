@@ -24,7 +24,7 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 
 from firefly_weave.compiler.api import CompiledArtifact, import_artifact
 from firefly_weave.compiler.canonical import canonical_bytes
-from firefly_weave.compiler.ir import ActionNode, ForEachNode, HumanTaskNode, IRNode, SignalNode
+from firefly_weave.compiler.ir import ActionNode, ForEachNode, HumanTaskNode, IRNode, SignalNode, WorkflowIR
 from firefly_weave.contracts.definitions import ActionDefinition, load_definition
 from firefly_weave.contracts.diagnostics import Diagnostic
 from firefly_weave.contracts.instance_keys import InvalidInstanceKey, node_of, split_instance
@@ -57,6 +57,17 @@ TERMINAL = {"succeeded", "failed", "cancelled", "timed_out"}
 def enclosing_loops(nodes: Mapping[str, IRNode], node: IRNode) -> list[ForEachNode]:
     """The loops whose bodies hold ``node``, outermost first."""
     return [loop for owner in node.scope[::2] if isinstance(loop := nodes[owner], ForEachNode)]
+
+
+def first_instance(ir: WorkflowIR, step_id: str) -> str:
+    """The instance a step ID stands for as a target: its first iteration, ``[0]`` in every enclosing loop.
+
+    Outside loops that is the step ID itself. An unknown step raises ``WV-DEBUG-BREAKPOINT``.
+    """
+    nodes = {node.id: node for node in ir.graph.nodes}
+    if step_id not in nodes:
+        raise DebugError("WV-DEBUG-BREAKPOINT")
+    return step_id + "[0]" * len(enclosing_loops(nodes, nodes[step_id]))
 
 
 class Simulator:
@@ -204,14 +215,17 @@ class Simulator:
             now=self.data.now,
         ).model_copy(deep=True)
 
+    def _stops_at(self, key: str) -> bool:
+        """A breakpoint stops every instance of its step, or the one instance it names."""
+        return key in self.data.breakpoints or node_of(key) in self.data.breakpoints
+
     def set_breakpoints(self, node_ids: set[str]) -> None:
-        known = {n.id for n in self.ir.graph.nodes}
-        if not node_ids <= known:
+        if any(self._instance_node(key) is None for key in node_ids):
             raise DebugError("WV-DEBUG-BREAKPOINT")
 
         def change() -> None:
             self.data.breakpoints = sorted(node_ids)
-            if self.data.paused is not None and node_of(self.data.paused) not in node_ids:
+            if self.data.paused is not None and not self._stops_at(self.data.paused):
                 self.data.paused = None
 
         self._mutate(change)
@@ -229,7 +243,7 @@ class Simulator:
             self.data.paused = None
             for _ in range(self.limits.continue_boundaries):
                 selected = self._selected()
-                if selected is not None and node_of(selected) in self.data.breakpoints and selected != skip:
+                if selected is not None and self._stops_at(selected) and selected != skip:
                     self.data.paused = selected
                     return
                 skip = None
