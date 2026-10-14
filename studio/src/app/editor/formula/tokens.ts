@@ -258,7 +258,16 @@ export function tokenize(
       message,
     });
   let at = from;
+  // Every pass reads a character or ends a part: a run of passes that does
+  // neither is a fault to report, never a frozen editor.
+  let last = -1;
+  let still = 0;
   while (at < to) {
+    if (at !== last) {
+      last = at;
+      still = 0;
+    } else if (++still > 1024)
+      throw new Error(`The formula tokenizer stopped at ${at}.`);
     const frame = stack[stack.length - 1];
     if (frame.kind === "text") {
       if (frame.tick && source[at] === "`") {

@@ -265,6 +265,32 @@ describe("trees nested beyond what formulas show", () => {
     for (let i = 0; i < 100; i++) shallow = op("not", shallow);
     expect(printFormula(shallow)).toBe("not ".repeat(100) + "input.a");
   });
+  it("prints only what the parser reads back: up to 127 levels", () => {
+    const nested = (levels: number) => {
+      let tree: unknown = ref("/input/a");
+      for (let i = 0; i < levels; i++) tree = op("not", tree);
+      return tree;
+    };
+    const deepest = printFormula(nested(127));
+    expect(deepest).not.toBeNull();
+    expect(parseFormula(deepest!, everything)).toMatchObject({
+      kind: "ok",
+      expression: nested(127),
+    });
+    expect(printFormula(nested(140))).toBeNull();
+  });
+});
+
+describe("references the printer writes", () => {
+  it("writes an index beyond what numbers hold exactly as a quoted key", () => {
+    const pointer = "/input/list/9007199254740993";
+    expect(printRef(pointer)).toBe('input.list["9007199254740993"]');
+    expect(parseFormula(printRef(pointer), everything)).toMatchObject({
+      kind: "ok",
+      expression: ref(pointer),
+    });
+    expect(printRef("/input/list/12")).toBe("input.list[12]");
+  });
 });
 
 describe("round trips", () => {
