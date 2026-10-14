@@ -28,7 +28,13 @@ import {
   withLanguageFeatures,
   yamlFile,
 } from "./step-details-po";
-import { caretAt, formulaBox, formulaText, suggestions } from "./formula-po";
+import {
+  caretAt,
+  caretToEnd,
+  formulaBox,
+  formulaText,
+  suggestions,
+} from "./formula-po";
 import { density } from "./step-geometry";
 import { connected, lookupAction, sourceText } from "./support";
 
@@ -617,6 +623,24 @@ for (const size of sizes) {
         await text.blur();
         await details.close();
         expect(await sourceText(page)).toBe(before);
+        // A key typed and taken back writes the template again, from its
+        // text: the reference is the same pointer.
+        await details.openWithKeyboard("summarize");
+        await text.focus();
+        await caretToEnd(page);
+        await page.keyboard.type("x");
+        await expect(formulaBox(details.field("prompt"))).toHaveAttribute(
+          "data-text",
+          `Value: {{ ${path} }}x`,
+        );
+        await page.keyboard.press("Backspace");
+        await page.keyboard.press("Tab");
+        await details.close();
+        expect(
+          parse(await sourceText(page)).spec.steps.find(
+            (step: { id: string }) => step.id === "summarize",
+          ).prompt,
+        ).toEqual(expression);
       });
     }
     test("a template whose placeholder is any other formula stays as it is", async ({
