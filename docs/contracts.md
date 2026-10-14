@@ -258,17 +258,22 @@ output depends on how it runs:
 | `wait` with `continue` | `{status, runId, output, error}`: `status` (`succeeded`, `failed`, `cancelled`, or `timed_out`) and `runId` are always present; read `output` and `error` with `coalesce`, since either may be missing |
 | `detach` | `null`; the step starts the call and continues |
 
-A call cannot lead back to the calling version, and the longest chain of calls
-a workflow starts may be at most 8 deep (`max_call_depth`). The compiler locks
-the called version as a `Workflow` dependency of the caller and reads only its
-input and output schemas: the called workflow's own steps, actions, and
-connections stay with its own activation. When you activate a workflow that
-calls others, `workflow_activation_ids` pins one activation of each called
-version in the same environment, by reference (for example
+A call cannot lead back to the calling version, and the longest chain of calls a
+workflow starts may be at most 8 deep (`max_call_depth`). The compiler locks the
+called version as a `Workflow` dependency of the caller and reads only its input
+and output schemas: the called workflow's own steps, actions, and connections
+stay with its own activation. The caller's artifact still includes the called
+version's definition, so the dependency digest matches the published one. Each
+called version is included once, without its own dependencies, and counts toward
+the 32 MiB artifact limit. Anyone who can read the caller's version or export
+its artifact can see the called version's steps; secret values never appear,
+because literals bound to secret inputs are refused. When you activate a
+workflow that calls others, `workflow_activation_ids` pins one activation of
+each called version in the same environment, by reference (for example
 `{"notify-customer@1.0.0": "ACTIVATION_UUID"}`). Activation refuses a missing or
-extra pin, a pin to another workflow or version, a retired activation or version,
-a version that does not allow this workflow, and a chain of calls deeper than 8
-with `422 WV-READINESS-CALL`; the activation records each pin in
+extra pin, a pin to another workflow or version, a retired activation or
+version, a version that does not allow this workflow, and a chain of calls
+deeper than 8 with `422 WV-READINESS-CALL`; the activation records each pin in
 `workflow_call_pins` and the longest chain in `call_depth`.
 
 **Human tasks** need an environment assignment binding at activation, and
@@ -486,7 +491,7 @@ backend is absent. The `integration` and `e2e` pytest markers are registered.
 | A step's `retry` or `timeoutSeconds` is rejected | Retry and per-attempt timeout belong to the action definition | Move them to the action; use `spec.timeoutSeconds` for a workflow-wide timeout |
 | `WV-COMP-UNSUPPORTED_FEATURE` | The document uses a construct whose language feature this compiler does not compile; the message names the feature | Upgrade the CLI or SDK that compiles it, or replace the construct with steps this compiler supports |
 | `WV-IR-UNSUPPORTED` when publishing a workflow with `callWorkflow` | The compiler accepts the call, but this platform does not run workflow calls yet, so it refuses to publish it; `result.missing_features` is `["flow.callWorkflow"]` | Keep the workflow as a draft until the platform lists `flow.callWorkflow` in its language manifest; the called workflow itself publishes normally |
-| `WV-READINESS-CALL` on activation | A called workflow version has no pinned activation, a pin names something the workflow does not call, or the pinned activation is retired, runs another version, or does not allow this workflow | Pin one live activation of each called version in `workflow_activation_ids` |
+| `WV-READINESS-CALL` on activation | A called workflow version has no pinned activation; a pin names something the workflow does not call; the pinned activation or its version is retired, runs another version, or does not allow this workflow; the pinned version differs from the one the workflow was compiled against; or the chain of calls is deeper than 8 | Pin one live activation of each called version in `workflow_activation_ids` |
 | `WV-IR-UNSUPPORTED` when publishing a workflow with `forEach` | The platform you publish to is older and does not list `flow.forEach` in its language manifest; `result.missing_features` is `["flow.forEach"]` | Upgrade that platform, or keep the workflow as a draft until it lists the feature |
 | `WV-DECISION-OPERATOR` | A decision table rule uses `concat` or `join` | Build the text in a Transform step before the table and pass it in as input |
 | `WV-IR-UNSUPPORTED` on activation, a catalog read, or a run read | The platform does not list an IR version or a language feature the workflow uses; `result.missing_features` names the missing features and is empty when the IR version itself is unknown. A catalog list shows such a version as an unavailable item with `reason: ir_unsupported` and the same `missing_features`. A run that uses such a feature waits for an upgrade; signals and task results for it answer the same way, and run lists show it as unavailable | Upgrade the platform, or activate a version that does not use the feature |

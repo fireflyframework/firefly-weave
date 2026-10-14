@@ -29,8 +29,10 @@ SPDX-License-Identifier: Apache-2.0
   diagnostics `WV-COMP-UNKNOWN_WORKFLOW`, `CALL_NOT_CALLABLE`, `CALL_RECURSION`,
   `CALL_DEPTH` (more than 8 calls deep, the new compiler limit
   `max_call_depth`), and `CALL_MODE` point at the field to fix. The called
-  version is locked as an interface dependency: the caller holds only its input
-  and output schemas. Activation takes `workflow_activation_ids`, one live
+  version is locked as an interface dependency: the caller's artifact carries
+  that version's definition, so its digest matches the published one, but
+  compiling, importing, and activating the caller read only its input and output
+  schemas. Activation takes `workflow_activation_ids`, one live
   activation of each called version in the same environment, and refuses wrong
   or missing pins with `422 WV-READINESS-CALL`. This platform does not start child
   runs yet, so it refuses to publish, import, or activate a workflow that calls
