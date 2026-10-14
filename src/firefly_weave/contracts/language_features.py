@@ -40,8 +40,8 @@ OPERATOR_FEATURES: Final[Mapping[str, LanguageFeature]] = MappingProxyType(
 )
 WORKFLOW_FIELD_FEATURES: Final[Mapping[str, LanguageFeature]] = MappingProxyType({"callable": "flow.callWorkflow"})
 
-# Language limits the manifest publishes. Limits uses the loop limits as defaults and the compiler enforces them;
-# workflow calls enforce the call depth in a later release.
+# Language limits the manifest publishes. Limits uses them as defaults; the compiler enforces the loop limits and the
+# call depth, and activation enforces the call depth again through the pinned workflows.
 DEFAULT_LOOP_MAX_ITEMS: Final = 1000
 MAX_LOOP_ITEMS: Final = 10_000
 MAX_LOOP_DEPTH: Final = 3

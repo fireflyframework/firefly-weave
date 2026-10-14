@@ -2096,6 +2096,1096 @@
         "truncated": false,
         "entries": []
       }
+    },
+    {
+      "name": "a call's input sees what is visible before the call",
+      "document": {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {
+          "name": "scope-cases",
+          "version": "1.0.0"
+        },
+        "spec": {
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "invoices": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "number": {
+                      "type": "string"
+                    },
+                    "customerEmail": {
+                      "type": "string",
+                      "title": "Customer email"
+                    }
+                  },
+                  "required": [
+                    "number"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "batches": {
+                "type": "array",
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "number": {
+                        "type": "string"
+                      },
+                      "customerEmail": {
+                        "type": "string",
+                        "title": "Customer email"
+                      }
+                    },
+                    "required": [
+                      "number"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              }
+            },
+            "required": [
+              "invoices",
+              "batches"
+            ],
+            "additionalProperties": false
+          },
+          "outputSchema": {},
+          "steps": [
+            {
+              "id": "notify",
+              "kind": "callWorkflow",
+              "uses": "notify-customer@1.0.0",
+              "with": {
+                "ref": "/input"
+              }
+            }
+          ],
+          "output": {
+            "literal": null
+          }
+        }
+      },
+      "path": "/spec/steps/0/with",
+      "result": {
+        "found": true,
+        "evaluated": true,
+        "truncated": false,
+        "entries": [
+          {
+            "ref": "/input",
+            "source": "input",
+            "path": [],
+            "label": "Workflow input",
+            "breadcrumb": "Workflow input",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "invoices": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "number": {
+                        "type": "string"
+                      },
+                      "customerEmail": {
+                        "type": "string",
+                        "title": "Customer email"
+                      }
+                    },
+                    "required": [
+                      "number"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "batches": {
+                  "type": "array",
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "number": {
+                          "type": "string"
+                        },
+                        "customerEmail": {
+                          "type": "string",
+                          "title": "Customer email"
+                        }
+                      },
+                      "required": [
+                        "number"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                }
+              },
+              "required": [
+                "invoices",
+                "batches"
+              ],
+              "additionalProperties": false
+            },
+            "types": [
+              "object"
+            ],
+            "typeLabel": "Group",
+            "optional": false
+          },
+          {
+            "ref": "/input/invoices",
+            "source": "input",
+            "path": [
+              "invoices"
+            ],
+            "label": "invoices",
+            "breadcrumb": "Workflow input › invoices",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "number": {
+                    "type": "string"
+                  },
+                  "customerEmail": {
+                    "type": "string",
+                    "title": "Customer email"
+                  }
+                },
+                "required": [
+                  "number"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "types": [
+              "array"
+            ],
+            "typeLabel": "List of groups",
+            "optional": false
+          },
+          {
+            "ref": "/input/batches",
+            "source": "input",
+            "path": [
+              "batches"
+            ],
+            "label": "batches",
+            "breadcrumb": "Workflow input › batches",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "number": {
+                      "type": "string"
+                    },
+                    "customerEmail": {
+                      "type": "string",
+                      "title": "Customer email"
+                    }
+                  },
+                  "required": [
+                    "number"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "types": [
+              "array"
+            ],
+            "typeLabel": "List of lists",
+            "optional": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "after a call that waits, its result is the called workflow's output, unknown without a catalog",
+      "document": {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {
+          "name": "scope-cases",
+          "version": "1.0.0"
+        },
+        "spec": {
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "invoices": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "number": {
+                      "type": "string"
+                    },
+                    "customerEmail": {
+                      "type": "string",
+                      "title": "Customer email"
+                    }
+                  },
+                  "required": [
+                    "number"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "batches": {
+                "type": "array",
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "number": {
+                        "type": "string"
+                      },
+                      "customerEmail": {
+                        "type": "string",
+                        "title": "Customer email"
+                      }
+                    },
+                    "required": [
+                      "number"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              }
+            },
+            "required": [
+              "invoices",
+              "batches"
+            ],
+            "additionalProperties": false
+          },
+          "outputSchema": {},
+          "steps": [
+            {
+              "id": "notify",
+              "kind": "callWorkflow",
+              "uses": "notify-customer@1.0.0",
+              "with": {
+                "ref": "/input"
+              }
+            }
+          ],
+          "output": {
+            "ref": "/steps/notify/output"
+          }
+        }
+      },
+      "path": "/spec/output",
+      "result": {
+        "found": true,
+        "evaluated": true,
+        "truncated": false,
+        "entries": [
+          {
+            "ref": "/input",
+            "source": "input",
+            "path": [],
+            "label": "Workflow input",
+            "breadcrumb": "Workflow input",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "invoices": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "number": {
+                        "type": "string"
+                      },
+                      "customerEmail": {
+                        "type": "string",
+                        "title": "Customer email"
+                      }
+                    },
+                    "required": [
+                      "number"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "batches": {
+                  "type": "array",
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "number": {
+                          "type": "string"
+                        },
+                        "customerEmail": {
+                          "type": "string",
+                          "title": "Customer email"
+                        }
+                      },
+                      "required": [
+                        "number"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                }
+              },
+              "required": [
+                "invoices",
+                "batches"
+              ],
+              "additionalProperties": false
+            },
+            "types": [
+              "object"
+            ],
+            "typeLabel": "Group",
+            "optional": false
+          },
+          {
+            "ref": "/input/invoices",
+            "source": "input",
+            "path": [
+              "invoices"
+            ],
+            "label": "invoices",
+            "breadcrumb": "Workflow input › invoices",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "number": {
+                    "type": "string"
+                  },
+                  "customerEmail": {
+                    "type": "string",
+                    "title": "Customer email"
+                  }
+                },
+                "required": [
+                  "number"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "types": [
+              "array"
+            ],
+            "typeLabel": "List of groups",
+            "optional": false
+          },
+          {
+            "ref": "/input/batches",
+            "source": "input",
+            "path": [
+              "batches"
+            ],
+            "label": "batches",
+            "breadcrumb": "Workflow input › batches",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "number": {
+                      "type": "string"
+                    },
+                    "customerEmail": {
+                      "type": "string",
+                      "title": "Customer email"
+                    }
+                  },
+                  "required": [
+                    "number"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "types": [
+              "array"
+            ],
+            "typeLabel": "List of lists",
+            "optional": false
+          },
+          {
+            "ref": "/steps/notify/output",
+            "source": "step",
+            "stepId": "notify",
+            "stepKind": "callWorkflow",
+            "path": [],
+            "label": "notify",
+            "breadcrumb": "notify",
+            "schema": {},
+            "types": [],
+            "typeLabel": "Any value",
+            "optional": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "a call that continues on failure returns its status, run ID, the child's output and the error",
+      "document": {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {
+          "name": "scope-cases",
+          "version": "1.0.0"
+        },
+        "spec": {
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "invoices": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "number": {
+                      "type": "string"
+                    },
+                    "customerEmail": {
+                      "type": "string",
+                      "title": "Customer email"
+                    }
+                  },
+                  "required": [
+                    "number"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "batches": {
+                "type": "array",
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "number": {
+                        "type": "string"
+                      },
+                      "customerEmail": {
+                        "type": "string",
+                        "title": "Customer email"
+                      }
+                    },
+                    "required": [
+                      "number"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              }
+            },
+            "required": [
+              "invoices",
+              "batches"
+            ],
+            "additionalProperties": false
+          },
+          "outputSchema": {},
+          "steps": [
+            {
+              "id": "notify",
+              "kind": "callWorkflow",
+              "uses": "notify-customer@1.0.0",
+              "with": {
+                "ref": "/input"
+              },
+              "onFailure": "continue"
+            }
+          ],
+          "output": {
+            "ref": "/steps/notify/output"
+          }
+        }
+      },
+      "path": "/spec/output",
+      "result": {
+        "found": true,
+        "evaluated": true,
+        "truncated": false,
+        "entries": [
+          {
+            "ref": "/input",
+            "source": "input",
+            "path": [],
+            "label": "Workflow input",
+            "breadcrumb": "Workflow input",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "invoices": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "number": {
+                        "type": "string"
+                      },
+                      "customerEmail": {
+                        "type": "string",
+                        "title": "Customer email"
+                      }
+                    },
+                    "required": [
+                      "number"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "batches": {
+                  "type": "array",
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "number": {
+                          "type": "string"
+                        },
+                        "customerEmail": {
+                          "type": "string",
+                          "title": "Customer email"
+                        }
+                      },
+                      "required": [
+                        "number"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                }
+              },
+              "required": [
+                "invoices",
+                "batches"
+              ],
+              "additionalProperties": false
+            },
+            "types": [
+              "object"
+            ],
+            "typeLabel": "Group",
+            "optional": false
+          },
+          {
+            "ref": "/input/invoices",
+            "source": "input",
+            "path": [
+              "invoices"
+            ],
+            "label": "invoices",
+            "breadcrumb": "Workflow input › invoices",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "number": {
+                    "type": "string"
+                  },
+                  "customerEmail": {
+                    "type": "string",
+                    "title": "Customer email"
+                  }
+                },
+                "required": [
+                  "number"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "types": [
+              "array"
+            ],
+            "typeLabel": "List of groups",
+            "optional": false
+          },
+          {
+            "ref": "/input/batches",
+            "source": "input",
+            "path": [
+              "batches"
+            ],
+            "label": "batches",
+            "breadcrumb": "Workflow input › batches",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "number": {
+                      "type": "string"
+                    },
+                    "customerEmail": {
+                      "type": "string",
+                      "title": "Customer email"
+                    }
+                  },
+                  "required": [
+                    "number"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "types": [
+              "array"
+            ],
+            "typeLabel": "List of lists",
+            "optional": false
+          },
+          {
+            "ref": "/steps/notify/output",
+            "source": "step",
+            "stepId": "notify",
+            "stepKind": "callWorkflow",
+            "path": [],
+            "label": "notify",
+            "breadcrumb": "notify",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "succeeded",
+                    "failed",
+                    "cancelled",
+                    "timed_out"
+                  ]
+                },
+                "runId": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "output": {},
+                "error": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "status",
+                "runId"
+              ],
+              "additionalProperties": false
+            },
+            "types": [
+              "object"
+            ],
+            "typeLabel": "Group",
+            "optional": false
+          },
+          {
+            "ref": "/steps/notify/output/status",
+            "source": "step",
+            "stepId": "notify",
+            "stepKind": "callWorkflow",
+            "path": [
+              "status"
+            ],
+            "label": "status",
+            "breadcrumb": "notify › status",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "succeeded",
+                "failed",
+                "cancelled",
+                "timed_out"
+              ]
+            },
+            "types": [
+              "string"
+            ],
+            "typeLabel": "Choice",
+            "optional": false
+          },
+          {
+            "ref": "/steps/notify/output/runId",
+            "source": "step",
+            "stepId": "notify",
+            "stepKind": "callWorkflow",
+            "path": [
+              "runId"
+            ],
+            "label": "runId",
+            "breadcrumb": "notify › runId",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "types": [
+              "string"
+            ],
+            "typeLabel": "Text",
+            "optional": false
+          },
+          {
+            "ref": "/steps/notify/output/output",
+            "source": "step",
+            "stepId": "notify",
+            "stepKind": "callWorkflow",
+            "path": [
+              "output"
+            ],
+            "label": "output",
+            "breadcrumb": "notify › output",
+            "schema": {},
+            "types": [],
+            "typeLabel": "Any value",
+            "optional": true
+          },
+          {
+            "ref": "/steps/notify/output/error",
+            "source": "step",
+            "stepId": "notify",
+            "stepKind": "callWorkflow",
+            "path": [
+              "error"
+            ],
+            "label": "error",
+            "breadcrumb": "notify › error",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "code": {
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "code",
+                "message"
+              ],
+              "additionalProperties": false
+            },
+            "types": [
+              "object"
+            ],
+            "typeLabel": "Group",
+            "optional": true
+          },
+          {
+            "ref": "/steps/notify/output/error/code",
+            "source": "step",
+            "stepId": "notify",
+            "stepKind": "callWorkflow",
+            "path": [
+              "error",
+              "code"
+            ],
+            "label": "code",
+            "breadcrumb": "notify › error › code",
+            "schema": {
+              "type": "string"
+            },
+            "types": [
+              "string"
+            ],
+            "typeLabel": "Text",
+            "optional": true
+          },
+          {
+            "ref": "/steps/notify/output/error/message",
+            "source": "step",
+            "stepId": "notify",
+            "stepKind": "callWorkflow",
+            "path": [
+              "error",
+              "message"
+            ],
+            "label": "message",
+            "breadcrumb": "notify › error › message",
+            "schema": {
+              "type": "string"
+            },
+            "types": [
+              "string"
+            ],
+            "typeLabel": "Text",
+            "optional": true
+          }
+        ]
+      }
+    },
+    {
+      "name": "a call that does not wait returns nothing",
+      "document": {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {
+          "name": "scope-cases",
+          "version": "1.0.0"
+        },
+        "spec": {
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "invoices": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "number": {
+                      "type": "string"
+                    },
+                    "customerEmail": {
+                      "type": "string",
+                      "title": "Customer email"
+                    }
+                  },
+                  "required": [
+                    "number"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "batches": {
+                "type": "array",
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "number": {
+                        "type": "string"
+                      },
+                      "customerEmail": {
+                        "type": "string",
+                        "title": "Customer email"
+                      }
+                    },
+                    "required": [
+                      "number"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              }
+            },
+            "required": [
+              "invoices",
+              "batches"
+            ],
+            "additionalProperties": false
+          },
+          "outputSchema": {},
+          "steps": [
+            {
+              "id": "notify",
+              "kind": "callWorkflow",
+              "uses": "notify-customer@1.0.0",
+              "with": {
+                "ref": "/input"
+              },
+              "mode": "detach"
+            }
+          ],
+          "output": {
+            "ref": "/steps/notify/output"
+          }
+        }
+      },
+      "path": "/spec/output",
+      "result": {
+        "found": true,
+        "evaluated": true,
+        "truncated": false,
+        "entries": [
+          {
+            "ref": "/input",
+            "source": "input",
+            "path": [],
+            "label": "Workflow input",
+            "breadcrumb": "Workflow input",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "invoices": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "number": {
+                        "type": "string"
+                      },
+                      "customerEmail": {
+                        "type": "string",
+                        "title": "Customer email"
+                      }
+                    },
+                    "required": [
+                      "number"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "batches": {
+                  "type": "array",
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "number": {
+                          "type": "string"
+                        },
+                        "customerEmail": {
+                          "type": "string",
+                          "title": "Customer email"
+                        }
+                      },
+                      "required": [
+                        "number"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                }
+              },
+              "required": [
+                "invoices",
+                "batches"
+              ],
+              "additionalProperties": false
+            },
+            "types": [
+              "object"
+            ],
+            "typeLabel": "Group",
+            "optional": false
+          },
+          {
+            "ref": "/input/invoices",
+            "source": "input",
+            "path": [
+              "invoices"
+            ],
+            "label": "invoices",
+            "breadcrumb": "Workflow input › invoices",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "number": {
+                    "type": "string"
+                  },
+                  "customerEmail": {
+                    "type": "string",
+                    "title": "Customer email"
+                  }
+                },
+                "required": [
+                  "number"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "types": [
+              "array"
+            ],
+            "typeLabel": "List of groups",
+            "optional": false
+          },
+          {
+            "ref": "/input/batches",
+            "source": "input",
+            "path": [
+              "batches"
+            ],
+            "label": "batches",
+            "breadcrumb": "Workflow input › batches",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "number": {
+                      "type": "string"
+                    },
+                    "customerEmail": {
+                      "type": "string",
+                      "title": "Customer email"
+                    }
+                  },
+                  "required": [
+                    "number"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "types": [
+              "array"
+            ],
+            "typeLabel": "List of lists",
+            "optional": false
+          },
+          {
+            "ref": "/steps/notify/output",
+            "source": "step",
+            "stepId": "notify",
+            "stepKind": "callWorkflow",
+            "path": [],
+            "label": "notify",
+            "breadcrumb": "notify",
+            "schema": {
+              "type": "null"
+            },
+            "types": [
+              "null"
+            ],
+            "typeLabel": "Empty",
+            "optional": false
+          }
+        ]
+      }
     }
   ]
 }

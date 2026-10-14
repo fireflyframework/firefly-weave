@@ -197,6 +197,25 @@ SPDX-License-Identifier: Apache-2.0
   stops sending when the person changes, and the host prefix is cleared for the
   next person.
 
+- The compiler checks and compiles **Call a workflow** (`callWorkflow`) against
+  the exact published version it calls: that version must opt in with
+  `spec.callable` (any workflow, or only `allowedCallers`), `with` is checked
+  against its input schema, a `businessKey` must be text of 1 to 200 characters,
+  and the step returns the called workflow's output, a `{status, runId, output,
+  error}` envelope with `onFailure: continue`, or `null` with `mode: detach`. New
+  diagnostics `WV-COMP-UNKNOWN_WORKFLOW`, `CALL_NOT_CALLABLE`, `CALL_RECURSION`,
+  `CALL_DEPTH` (more than 8 calls deep, the new compiler limit
+  `max_call_depth`), and `CALL_MODE` point at the field to fix. The called
+  version is locked as an interface dependency: the caller's artifact carries
+  that version's definition, so its digest matches the published one, but
+  compiling, importing, and activating the caller read only its input and output
+  schemas. Activation takes `workflow_activation_ids`, one live
+  activation of each called version in the same environment, and refuses wrong
+  or missing pins with `422 WV-READINESS-CALL`. This platform does not start child
+  runs yet, so it refuses to publish, import, or activate a workflow that calls
+  another with `WV-IR-UNSUPPORTED`; workflows without calls compile to the same
+  bytes as before. `weave workflow explain` and `weave workflow graph` show calls,
+  and the SDK's `WorkflowBuilder.with_callable()` writes `spec.callable`.
 - Loops run. A **Loop over items** (`forEach`) step runs its body once per
   element, `concurrency` at a time, in one run, and its output lists one result
   per element in element order, whatever order the iterations finish in. Each

@@ -18,7 +18,12 @@
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from firefly_weave.contracts.language_features import MAX_LOOP_DEPTH, MAX_LOOP_ITEMS, MAX_RUN_ITERATIONS
+from firefly_weave.contracts.language_features import (
+    MAX_CALL_DEPTH,
+    MAX_LOOP_DEPTH,
+    MAX_LOOP_ITEMS,
+    MAX_RUN_ITERATIONS,
+)
 
 
 class Limits(BaseModel):
@@ -36,3 +41,5 @@ class Limits(BaseModel):
     max_loop_items: int = Field(default=MAX_LOOP_ITEMS, gt=0)
     max_loop_depth: int = Field(default=MAX_LOOP_DEPTH, gt=0)
     max_run_iterations: int = Field(default=MAX_RUN_ITERATIONS, gt=0)
+    # Workflow calls: the longest chain of calls one workflow may start, counting each call once.
+    max_call_depth: int = Field(default=MAX_CALL_DEPTH, gt=0)

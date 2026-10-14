@@ -30,6 +30,15 @@ from firefly_weave.compiler.action_config import (
     ActionConfigIssue,
     ActionConfigValidator,
 )
+from firefly_weave.compiler.calls import (
+    BUSINESS_KEY_SCHEMA,
+    CALL_MESSAGES,
+    CallGraph,
+    call_output_schema,
+    check_call_target,
+    detached_failure_paths,
+    without_detached_failures,
+)
 from firefly_weave.compiler.catalog import CatalogResource, CatalogSnapshot, FrozenDocument, ResourceKind
 from firefly_weave.compiler.decision_tables import (
     DECISION_MESSAGES,
@@ -106,6 +115,8 @@ _MESSAGES = {
     "LOOP_BUDGET": (
         "Nested loops could run more than {limit:,} iterations in one run; lower maxItems on an inner loop."
     ),
+    "UNKNOWN_WORKFLOW": CALL_MESSAGES["UNKNOWN_WORKFLOW"],
+    "CALL_MODE": CALL_MESSAGES["CALL_MODE"],
 }
 
 
@@ -263,6 +274,9 @@ class _Analyzer:
         self.loops: tuple[LoopScope, ...] = ()
         # Every loop as (path, product of the enclosing loops' maxItems, its maxItems, whether it holds no loop).
         self.loop_chains: list[tuple[str, int, int, bool]] = []
+        # The analyzed workflow's exact reference, and the calls each catalog workflow makes.
+        self.reference = ""
+        self.calls = CallGraph(catalog)
 
     def location(self, path: str) -> SourceRange | None:
         while path not in self.source.locations and path:
@@ -384,6 +398,7 @@ class _Analyzer:
                 "Connector": "UNKNOWN_CONNECTOR",
                 "TaskCapability": "UNKNOWN_TASK",
                 "Adapter": "UNKNOWN_ADAPTER",
+                "Workflow": "UNKNOWN_WORKFLOW",
             }.get(kind, "UNKNOWN_RESOURCE")
             self.issue(code, path, stage="resolution")
             return None
@@ -399,6 +414,11 @@ class _Analyzer:
         elif kind == "TaskCapability":
             self.schema(cast(JsonObject, value["inputSchema"]), path)
             self.schema(cast(JsonObject, value["outputSchema"]), path)
+        elif kind == "Workflow":
+            # A called workflow is an interface: its steps were checked when it was published.
+            spec = cast(JsonObject, value["spec"])
+            self.schema(cast(JsonObject, spec["inputSchema"]), path)
+            self.schema(cast(JsonObject, spec["outputSchema"]), path)
         self.checked[key] = before == self.error_count
         return resource if self.checked[key] else None
 
@@ -568,6 +588,10 @@ class _Analyzer:
                 self.count(cast(JsonObject, step[key]), step_path + "/" + key)
             if kind == "forEach":
                 self.count(cast(JsonObject, step["items"]), step_path + "/items")
+            if kind == "callWorkflow":
+                self.count(cast(JsonObject, step["with"]), step_path + "/with")
+                if "businessKey" in step:
+                    self.count(cast(JsonObject, step["businessKey"]), step_path + "/businessKey")
             for _, child, child_path in self.branch_values(step, step_path):
                 if "when" in child:
                     self.count(cast(JsonObject, child["when"]), child_path + "/when")
@@ -910,6 +934,8 @@ class _Analyzer:
             elif kind == "forEach":
                 output, body = self.loop(step, location, visible, scope)
                 branches.append(body)
+            elif kind == "callWorkflow":
+                output = self.call(step, location, visible)
             elif kind in {"switch", "parallel"}:
                 if kind == "parallel" and cast(int, step["concurrency"]) > self.concurrency:
                     self.issue("CONCURRENCY_LIMIT", location + "/concurrency")
@@ -1037,6 +1063,37 @@ class _Analyzer:
         )
         return output_schema(body_schema, max_items, cast(str, step["collect"])), branch
 
+    def call(self, step: JsonObject, location: str, visible: dict[str, JsonObject]) -> JsonObject:
+        """Check one callWorkflow step against the workflow it calls; returns the step's output schema."""
+        identifier, reference = cast(str, step["id"]), cast(str, step["uses"])
+        mode, on_failure = cast(str, step["mode"]), cast(str | None, step.get("onFailure"))
+        resource = self.resolve("Workflow", reference, location + "/uses")
+        callee = cast(JsonObject, resource.definition.value["spec"]) if resource else None
+        if resource is not None:
+            target = check_call_target(
+                self.reference, reference, self.catalog, max_call_depth=self.limits.max_call_depth, graph=self.calls
+            )
+            for finding in target.issues:
+                self.issue(finding.code, location + "/uses", stage=finding.stage, message=finding.message)
+        input_schema = cast(JsonObject, callee["inputSchema"]) if callee else None
+        self.expression(cast(JsonObject, step["with"]), location + "/with", visible, input_schema)
+        if input_schema is not None:
+            self.guard(location + "/with", "call_input", input_schema)
+        if "businessKey" in step:
+            self.expression(
+                cast(JsonObject, step["businessKey"]), location + "/businessKey", visible, BUSINESS_KEY_SCHEMA
+            )
+        if mode == "detach":
+            return call_output_schema(mode, on_failure, {})
+        if callee is None:
+            # Offline, the called workflow's output stays unconstrained; the continue envelope around it is known.
+            if self.catalog_absent and on_failure != "continue":
+                self.pending_outputs.add(identifier)
+            return call_output_schema(mode, on_failure, {})
+        output = cast(JsonObject, callee["outputSchema"])
+        self.guard(location, "call_output", output)
+        return call_output_schema(mode, on_failure, output)
+
     def loop_items(self, schema: JsonObject, items: JsonObject, path: str) -> None:
         """Items must be a list: provably not is LOOP_ITEMS; unproved warns and keeps a loop_items guard."""
         try:
@@ -1131,15 +1188,21 @@ class _Analyzer:
             if isinstance(kind, str) and kind in {"Workflow", "Action", "Connector", "DecisionTable"}
             else "definition"
         )
-        issues = validate_contract_payload(contract, self.source.value, limits=self.contract_limits)
+        # onFailure on a call that does not wait is reported at its field, not as an anonymous contract violation.
+        detached = detached_failure_paths(self.source.value) if contract == "workflow" else []
+        for path in detached:
+            self.issue("CALL_MODE", path)
+        document = without_detached_failures(self.source.value) if detached else self.source.value
+        issues = validate_contract_payload(contract, document, limits=self.contract_limits)
         for issue in issues:
             self.add(issue)
-        if issues:
+        if issues or detached:
             return self.finish(None, None)
         model = load_definition(self.source.value)
         value = model.model_dump(by_alias=True)
         definition = FrozenDocument.from_value(value)
         self.kind, self.definition = model.kind, definition
+        self.reference = f"{model.metadata.name}@{model.metadata.version}"
         existing = self.catalog.resolve(model.kind, f"{model.metadata.name}@{model.metadata.version}")
         if existing is not None and existing.digest != definition.digest:
             self.issue("IMMUTABLE_VERSION", "/metadata/version", stage="resolution")
