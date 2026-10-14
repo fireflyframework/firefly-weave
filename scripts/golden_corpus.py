@@ -41,10 +41,10 @@ from uuid import NAMESPACE_URL, uuid5
 
 from firefly_weave.compiler.api import CompiledArtifact, compile_source, import_artifact
 from firefly_weave.compiler.catalog import CatalogSnapshot
-from firefly_weave.compiler.ir import WaitNode
 from firefly_weave.contracts.definitions import load_definition
+from firefly_weave.contracts.instance_keys import node_of
 from firefly_weave.operations.exports import transition_digest
-from firefly_weave.runtime.kernel import deadline_order, transition, workflow
+from firefly_weave.runtime.kernel import deadline_order, duration_steps, transition, workflow
 from firefly_weave.runtime.models import Deadline, HumanTaskIntent, RunState, RuntimeEvent, TaskIntent
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -57,7 +57,11 @@ MAX_EVENTS = 64
 
 @dataclass(frozen=True)
 class Scenario:
-    """One deterministic run: task outputs, human answers and signals by node ID; anything missing waits."""
+    """One deterministic run: task outputs, human answers and signals by node ID; anything missing waits.
+
+    An answer keyed by an instance key (``send[1]``) applies to that run of the step; one keyed by the step ID
+    applies to every other run of it.
+    """
 
     name: str
     input: Any
@@ -381,10 +385,17 @@ SOURCES: tuple[Source, ...] = (
 )
 
 
+def _answer(answers: Mapping[str, Any], key: str) -> tuple[bool, Any]:
+    if key in answers:
+        return True, answers[key]
+    step = node_of(key)
+    return (step in answers), answers.get(step)
+
+
 def drive(artifact: CompiledArtifact, scenario: Scenario, label: str) -> list[dict[str, Any]]:
     """Run one scenario through the production kernel; every choice depends only on the recorded state."""
     ir = workflow(artifact)
-    durations = {node.id for node in ir.graph.nodes if isinstance(node, WaitNode)}
+    durations = duration_steps(ir)
     state = RunState(input=scenario.input)
     clock = START
     pending: deque[tuple[str, dict[str, Any]]] = deque([("started", {})])
@@ -409,7 +420,10 @@ def drive(artifact: CompiledArtifact, scenario: Scenario, label: str) -> list[di
                 )
                 if retry:
                     pending.append(
-                        ("task_completed", {"node_id": incident.node_id, "output": scenario.tasks[incident.node_id]})
+                        (
+                            "task_completed",
+                            {"node_id": incident.node_id, "output": _answer(scenario.tasks, incident.node_id)[1]},
+                        )
                     )
             else:
                 live = [d for d in deadlines if d.node_id == "@run" or d.node_id in state.active]
@@ -421,7 +435,7 @@ def drive(artifact: CompiledArtifact, scenario: Scenario, label: str) -> list[di
                     key=lambda d: deadline_order(d.node_id, d.deadline, durations),
                 )[0]
                 deadlines.remove(due)
-                kind = "wait_elapsed" if due.node_id in durations else "timed_out"
+                kind = "wait_elapsed" if node_of(due.node_id) in durations else "timed_out"
                 pending.append((kind, {"node_id": due.node_id, "deadline": due.deadline.isoformat()}))
         kind, data = pending.popleft()
         sequence = state.accepted_sequence + 1
@@ -446,14 +460,10 @@ def drive(artifact: CompiledArtifact, scenario: Scenario, label: str) -> list[di
                 if command.node_id in scenario.failures and command.node_id not in failed:
                     failed.add(command.node_id)
                     pending.append(("task_failed", {"node_id": command.node_id}))
-                elif command.node_id in scenario.tasks:
-                    pending.append(
-                        ("task_completed", {"node_id": command.node_id, "output": scenario.tasks[command.node_id]})
-                    )
-            elif isinstance(command, HumanTaskIntent) and command.node_id in scenario.humans:
-                pending.append(
-                    ("human_completed", {"node_id": command.node_id, "output": scenario.humans[command.node_id]})
-                )
+                elif (answer := _answer(scenario.tasks, command.node_id))[0]:
+                    pending.append(("task_completed", {"node_id": command.node_id, "output": answer[1]}))
+            elif isinstance(command, HumanTaskIntent) and (answer := _answer(scenario.humans, command.node_id))[0]:
+                pending.append(("human_completed", {"node_id": command.node_id, "output": answer[1]}))
             elif isinstance(command, Deadline):
                 if command.name is not None and command.node_id in scenario.signals:
                     pending.append(

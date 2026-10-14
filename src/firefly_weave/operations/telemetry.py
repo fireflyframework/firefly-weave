@@ -56,10 +56,11 @@ OPERATIONS_ALLOWED = frozenset(OPERATIONS) | frozenset(
         "secret_resolve",
         "retention",
         "compatibility",
+        "loop",
         "other",
     }
 )
-STATUSES = frozenset({"ok", "rejected", "failed", "blocked", "pending", "unknown", "other"})
+STATUSES = frozenset({"ok", "rejected", "failed", "cancelled", "blocked", "pending", "unknown", "other"})
 ERRORS = frozenset(
     {
         "none",
@@ -88,6 +89,8 @@ COUNTERS = {
     "secret": "weave.secret_capacity",
     "compatibility": "weave.compatibility",
     "retention": "weave.retention",
+    "loop_iteration": "weave.loop_iterations",
+    "loop_yield": "weave.loop_yields",
     "dropped": "weave.telemetry_dropped",
     "queue_unknown": "weave.queue_unknown",
 }
@@ -231,6 +234,7 @@ class TelemetryService:
         status: str = "other",
         error_code: str = "none",
         duration: float | None = None,
+        amount: int = 1,
     ) -> None:
         name = COUNTERS.get(kind)
         if name is None:
@@ -238,7 +242,9 @@ class TelemetryService:
         attrs = attributes(operation, status, error_code)
         if duration is not None:
             _number(duration)
-        self.metrics.counter(name, "", list(LABELS)).labels(**attrs).inc()
+        if type(amount) is not int or amount < 1:
+            raise ValueError("Telemetry counts are positive integers")
+        self.metrics.counter(name, "", list(LABELS)).labels(**attrs).inc(amount)
         if duration is not None:
             self.metrics.histogram("weave.duration", "", list(LABELS)).labels(**attrs).observe(duration)
 
@@ -251,13 +257,16 @@ class TelemetryService:
         status: str = "other",
         error_code: str = "none",
         duration: float | None = None,
+        amount: int = 1,
     ) -> None:
         if kind not in COUNTERS:
             raise ValueError("Unknown telemetry event kind")
         attrs = attributes(operation, status, error_code)
         if duration is not None:
             _number(duration)
-        if register(lambda: self.record(kind, **attrs, duration=duration)) is False:
+        if type(amount) is not int or amount < 1:
+            raise ValueError("Telemetry counts are positive integers")
+        if register(lambda: self.record(kind, **attrs, duration=duration, amount=amount)) is False:
             self.record("dropped", operation="other", status="rejected")
 
     @contextmanager

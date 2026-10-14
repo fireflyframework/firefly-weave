@@ -157,9 +157,9 @@ SPEC_EXAMPLE = workflow(
 )
 
 
-def test_the_loop_feature_compiles_but_is_not_advertised_until_loops_run():
+def test_the_loop_feature_compiles_and_this_platform_runs_it():
     assert "flow.forEach" in COMPILED_FEATURES
-    assert "flow.forEach" not in ADVERTISED_FEATURES
+    assert "flow.forEach" in ADVERTISED_FEATURES
 
 
 def test_a_loop_lowers_to_an_each_edge_a_body_and_a_join():
