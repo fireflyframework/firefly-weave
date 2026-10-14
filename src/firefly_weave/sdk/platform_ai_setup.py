@@ -288,7 +288,8 @@ async def ensure_connection(client: WeaveClient, request: ConnectionRequest) -> 
 
 
 async def presence(client: WeaveClient, release_id: str) -> dict[str, Any]:
-    page = await client.invoke("workers.list", query={"limit": 100})
+    # Every worker of the release, so one not seen for hours reads as stale rather than not seen yet.
+    page = await client.invoke("workers.list", query={"release_id": release_id, "state": "all", "limit": 100})
     found = [item for item in page.items if str(item.release_id) == release_id and not item.revoked]
     best = next((item for item in found if item.presence == "recent"), found[0] if found else None)
     if best is None:

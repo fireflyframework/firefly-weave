@@ -37,6 +37,8 @@ from firefly_weave.private_origins import PrivateOrigins
 from firefly_weave.sdk.transport import WorkerTransport
 from firefly_weave.sdk.worker import Worker
 from firefly_weave.sdk.worker_auth import ClientCredentialsTokenProvider, WorkerTokenAuth, private_transport
+from firefly_weave.sdk.worker_identity import worker_identity
+from firefly_weave.sdk.worker_registration import register_worker_http
 
 from weave_agentic_worker.handler import AgenticTaskHandler, WorkerPolicy
 
@@ -101,11 +103,17 @@ async def main() -> None:
         # Plain HTTP to the API only through this process's platform-api entry, pinned and peer checked.
         transport=private_transport(api, "platform-api", max_connections=4),
     ) as client:
-        response = await client.post(
-            prefix + "/workers",
-            json={"release_id": os.environ["WEAVE_WORKER_RELEASE_ID"], "task_types": [CAPABILITY], "capacity": slots},
+        # A server that predates worker identity gets one retry without it, on this same client.
+        response = await register_worker_http(
+            client,
+            prefix,
+            {
+                "release_id": os.environ["WEAVE_WORKER_RELEASE_ID"],
+                "task_types": [CAPABILITY],
+                "capacity": slots,
+                "identity": worker_identity().model_dump(mode="json"),
+            },
         )
-        response.raise_for_status()
         transport = WorkerTransport(client, prefix, UUID(response.json()["id"]))
         worker = Worker(transport, {CAPABILITY: AgenticTaskHandler(transport, policy)}, slots)
         loop = asyncio.get_running_loop()

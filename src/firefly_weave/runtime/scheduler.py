@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from firefly_weave.access.scheduler import next_scope, tenant_page
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.operations.execution import ReservedSlots
+from firefly_weave.operations.loop_health import LoopHealth, track
 from firefly_weave.persistence.migrations import check_schema
 from firefly_weave.persistence.uow import UnitOfWork
 from firefly_weave.runtime.recovery import RecoveryService
@@ -55,10 +56,12 @@ class RecoveryLoop:
         schedules: Scheduler,
         *,
         operational: Callable[[], bool] = lambda: True,
+        health: LoopHealth | None = None,
     ) -> None:
         self.settings, self.uow, self.recovery = settings, uow, recovery
         self.schedules = schedules
         self.operational = operational
+        self.health = health if health is not None else LoopHealth()
         self.engine: AsyncEngine | None = None
         self.task: asyncio.Task[None] | None = None
 
@@ -93,12 +96,37 @@ class RecoveryLoop:
             # A request can open this loop. An empty context keeps the request's execution
             # lease and identity, which end with its response, out of the long-lived task.
             self.task = asyncio.create_task(self.poll(), name="weave-recovery", context=Context())
+            # Schedules fire inside the recovery cycle, so they run exactly while this task runs.
+            track(self.health, self.task, "recovery_loop", "schedules")
         except BaseException:
             await self.close()
             raise
 
-    async def cycle(self) -> None:
+    async def cycle(self) -> bool:
+        """One bounded traversal; True only when every tenant's recovery scan completed.
+
+        Schedules are reported separately, and only while the platform is operational: a cycle counts as a
+        schedules success only when every visited tenant's schedule scan ran and completed.
+        """
+        operational = self.operational()
+        if operational:
+            self.health.started("schedules")
+        try:
+            recovered, scheduled = await self._traverse()
+        except Exception:
+            if operational:
+                self.health.failed("schedules")
+            raise
+        if operational:
+            if scheduled:
+                self.health.succeeded("schedules")
+            else:
+                self.health.failed("schedules")
+        return recovered
+
+    async def _traverse(self) -> tuple[bool, bool]:
         assert self.engine is not None
+        recovered = scheduled = True
         async with RECOVERY_EXECUTION.execution():
             budget = min(self.settings.database_timeout_seconds, 5.0)
             async with asyncio.timeout(budget):
@@ -120,8 +148,11 @@ class RecoveryLoop:
                     logging.getLogger(__name__).error(
                         "Tenant recovery scan failed (%s); traversal will continue", failure_cause(error)
                     )
+                    # The tenant's schedules did not run in this cycle either.
+                    recovered = scheduled = False
                     continue
                 if not self.operational():
+                    scheduled = False
                     continue
                 try:
                     async with asyncio.timeout(budget):
@@ -130,15 +161,24 @@ class RecoveryLoop:
                     logging.getLogger(__name__).error(
                         "Tenant schedule scan failed (%s); traversal will continue", failure_cause(error)
                     )
+                    scheduled = False
+        return recovered, scheduled
 
     async def poll(self) -> None:
         while True:
+            self.health.started("recovery_loop")
             try:
-                await self.cycle()
+                recovered = await self.cycle()
             except Exception as error:
                 logging.getLogger(__name__).error(
                     "Recovery catalog scan failed (%s); retrying on next poll", failure_cause(error)
                 )
+                recovered = False
+            # A failure a cycle caught and logged is still a failed cycle, never a success.
+            if recovered:
+                self.health.succeeded("recovery_loop")
+            else:
+                self.health.failed("recovery_loop")
             await asyncio.sleep(self.settings.scheduler_poll_seconds)
 
     async def close(self) -> None:
@@ -147,6 +187,8 @@ class RecoveryLoop:
             with suppress(asyncio.CancelledError):
                 await self.task
             self.task = None
+        for name in ("recovery_loop", "schedules"):
+            self.health.running(name, False)
         if self.engine is not None:
             await self.engine.dispose()
             self.engine = None

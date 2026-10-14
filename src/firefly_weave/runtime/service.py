@@ -28,6 +28,7 @@ from firefly_weave.access.authorization import AccessDenied
 from firefly_weave.access.models import Principal
 from firefly_weave.access.repository import load_principal
 from firefly_weave.access.service import audit
+from firefly_weave.api.transport import encode_cursor, encode_cursor_v2
 from firefly_weave.compiler.api import import_artifact
 from firefly_weave.compiler.canonical import canonical_digest
 from firefly_weave.compiler.expressions import ExpressionFailure
@@ -36,6 +37,7 @@ from firefly_weave.contracts.catalog import Activation
 from firefly_weave.contracts.human_tasks import ManualControlRequest
 from firefly_weave.contracts.instance_keys import node_of
 from firefly_weave.contracts.operations import CancelRunRequest
+from firefly_weave.contracts.run_views import RunListQuery
 from firefly_weave.contracts.runtime import (
     CapacityRunAcknowledgment,
     RunListFilters,
@@ -45,6 +47,9 @@ from firefly_weave.contracts.runtime import (
 )
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.definitions.service import DefinitionService
+from firefly_weave.operations.fact_positions import RunPosition
+from firefly_weave.operations.fact_reads import FactReadRepository, unavailable
+from firefly_weave.operations.facts import RunStartFacts
 from firefly_weave.persistence.idempotency import Idempotency
 from firefly_weave.persistence.uow import Transaction
 from firefly_weave.runtime.kernel import KernelError, action_schemas, validate, validate_action, workflow
@@ -166,8 +171,12 @@ class RuntimeService:
         context: AuditContext,
         tx: Transaction | None = None,
         not_after: datetime | None = None,
+        start_facts: RunStartFacts | None = None,
     ) -> RunView:
         self.require(actor, scope, "run.start", context)
+        start_facts = start_facts if start_facts is not None else RunStartFacts()
+        if not isinstance(start_facts, RunStartFacts):
+            raise ValueError("Trusted start facts required")
         async with self.definitions.transaction(scope, tx) as enlisted:
             replay = Idempotency(
                 enlisted,
@@ -204,7 +213,11 @@ class RuntimeService:
             if not_after is not None and now >= not_after:
                 raise CatalogError(409, "WV-SCHEDULE-STALE", "Occurrence grace expired during admission")
             event = RuntimeEvent(
-                id=uuid4(), type="started", timestamp=now, sequence=1, data={"admission_policy": "classified-v1"}
+                id=uuid4(),
+                type="started",
+                timestamp=now,
+                sequence=1,
+                data={"admission_policy": "classified-v1", "origin": start_facts.origin},
             )
             result = await transition(RunState(input=request.input), event, artifact)
             self.require(await load_principal(enlisted.session, actor.id), scope, "run.start", context)
@@ -219,7 +232,9 @@ class RuntimeService:
                 correlation_key=request.correlation_key,
                 business_key=request.business_key,
             )
-            await repository.insert(view, envelope, request, actor.id)
+            await repository.insert(
+                view, envelope, request, actor.id, start_facts=start_facts, at=now, imported=artifact, ir=ir
+            )
             from firefly_weave.files.authority import admit_files
 
             await admit_files(enlisted, view.id, request.input, actor, context=context)
@@ -306,8 +321,10 @@ class RuntimeService:
             await RuntimeRepository(tx, self.definitions.outbox).observe_policy_block(row)
         return decision != "available"
 
-    async def set_task_status(self, tx: Transaction, identifier: UUID, status: str) -> None:
-        await RuntimeRepository(tx, self.definitions.outbox).task_status(identifier, status)
+    async def set_task_status(
+        self, tx: Transaction, identifier: UUID, status: str, *, at: datetime | None = None
+    ) -> None:
+        await RuntimeRepository(tx, self.definitions.outbox).task_status(identifier, status, at=at)
 
     async def finish_verified_task(
         self,
@@ -388,9 +405,9 @@ class RuntimeService:
             ),
         )
         if rejection_code:
-            await repository.task_status(verified.task["id"], "incident")
+            await repository.task_status(verified.task["id"], "incident", at=event.timestamp)
         elif failed:
-            await repository.task_status(verified.task["id"], "failed")
+            await repository.task_status(verified.task["id"], "failed", at=event.timestamp)
         else:
             from firefly_weave.runtime.waits import settle
 
@@ -562,7 +579,15 @@ class RuntimeService:
                 raise CatalogError(409, "WV-RUNTIME-STATE", "Only a terminal run can create a linked retry")
             # Retry replay is owned by the outer receipt; the nested start gets a fresh identity.
             start_key = str(uuid4())
-            view = await self.start(current, scope, request, start_key, context=context, tx=tx)
+            view = await self.start(
+                current,
+                scope,
+                request,
+                start_key,
+                context=context,
+                tx=tx,
+                start_facts=RunStartFacts(origin="retry", retried_from_run_id=run_id),
+            )
             await repository.execute(
                 "INSERT INTO run_retry_links VALUES(:tenant,:project,:environment,:run,:parent)",
                 run=view.id,
@@ -590,18 +615,44 @@ class RuntimeService:
         limit: int = 50,
         cursor: UUID | None = None,
         filters: RunListFilters | None = None,
+        query: RunListQuery | None = None,
+        position: RunPosition | UUID | None = None,
         context: AuditContext,
     ) -> dict[str, Any]:
         from firefly_weave.access.repository import load_principal
-        from firefly_weave.persistence.paging import page_ids
+        from firefly_weave.persistence.paging import PAGE_BYTES
+
+        # The keyword arguments are the original contract: ID order and raw UUID positions in both directions.
+        legacy_adapter = query is None
+        if query is None:
+            values = (filters or RunListFilters()).model_dump(mode="json")
+            values["status"] = [values["status"]] if values["status"] is not None else []
+            query = RunListQuery.model_validate_json(json.dumps({**values, "limit": limit, "order": "id"}))
+            position = cursor
+        elif filters is not None or cursor is not None:
+            raise ValueError("Use either a query or legacy list arguments")
+        if query.order != "id" and isinstance(position, UUID):
+            raise ValueError("Chronological order requires a time position")
+        if query.order == "id" and isinstance(position, RunPosition):
+            raise ValueError("ID order requires an ID position")
 
         self.require(actor, scope, "run.read", context)
         async with self.definitions.transaction(scope, None, mutation=False) as tx:
             actor = await load_principal(tx.session, actor.id)
             self.require(actor, scope, "run.read", context)
-            ids = await page_ids(tx, "runs", limit, cursor, run_filters=(filters or RunListFilters()).model_dump())
+            repository = FactReadRepository(tx)
+            rows = await repository.legacy_rows(query, position)
+            limit = query.limit
+            # Measure the whole visible page before any full run is fetched; the lookahead row is not charged.
+            if await repository.page_bytes([row["run_id"] for row in rows[:limit]]) > PAGE_BYTES:
+                raise CatalogError(429, "WV-PAGE-LIMIT", "Selected page exceeds the logical byte limit")
             items = []
-            for identifier in ids[:limit]:
+            for row in rows[:limit]:
+                identifier = row["run_id"]
+                # Only a policy block withholds a full-run item here; the authoritative read classifies the rest.
+                if row["policy_blocked"]:
+                    items.append(unavailable(identifier).model_dump(mode="json"))
+                    continue
                 try:
                     items.append(
                         (await self.read(actor, scope, identifier, context=context, tx=tx)).model_dump(mode="json")
@@ -617,4 +668,18 @@ class RuntimeService:
                             "omissions": [{"path": "", "reason": "classification_unavailable"}],
                         }
                     )
-            return {"items": items, "next_cursor": str(ids[limit - 1]) if len(ids) > limit else None}
+            next_cursor = None
+            if len(rows) > limit:
+                last = rows[limit - 1]
+                if query.order == "id":
+                    next_cursor = (
+                        str(last["run_id"])
+                        if legacy_adapter
+                        else encode_cursor(scope, query.cursor_collection(), last["run_id"])
+                    )
+                else:
+                    at = last["updated_at"] if query.order == "updated_desc" else last["started_at"]
+                    next_cursor = encode_cursor_v2(
+                        scope, query.cursor_collection(), at.isoformat() if at else None, str(last["run_id"])
+                    )
+            return {"items": items, "next_cursor": next_cursor}

@@ -64,9 +64,30 @@ async function inbox(page: Page, capabilities: string[]) {
     }),
   ];
   let lists = 0;
+  const queries: URLSearchParams[] = [];
   await page.route(`${environment}/incidents?*`, (r) => {
     lists++;
-    return r.fulfill({ json: { items, next_cursor: null } });
+    const query = new URL(r.request().url()).searchParams;
+    queries.push(query);
+    // As the platform does: the status, code and test filters apply here.
+    const statuses = query.getAll("status");
+    const listed = items.filter(
+      (item) =>
+        (!statuses.length || statuses.includes(String(item.status))) &&
+        (!query.get("code") || item.code === query.get("code")) &&
+        (query.get("include_test") === "true" || !item.test),
+    );
+    return r.fulfill({ json: { items: listed, next_cursor: null } });
+  });
+  await page.route(`${environment}/incidents/*`, (r) => {
+    const id = new URL(r.request().url()).pathname.split("/").pop();
+    const found = items.find((item) => item.id === id);
+    return found
+      ? r.fulfill({ json: found })
+      : r.fulfill({
+          status: 404,
+          json: { code: "WV-NOT-FOUND", message: "Incident not found" },
+        });
   });
   await page.route(`${environment}/runs/${runId}/history?*`, (r) => {
     const cursor = new URL(r.request().url()).searchParams.get("cursor");
@@ -87,7 +108,13 @@ async function inbox(page: Page, capabilities: string[]) {
       },
     });
   });
-  return { items, lists: () => lists };
+  return { items, lists: () => lists, queries: () => queries };
+}
+/** Narrow screens fold the filters behind "Filters (n)": open them. */
+async function openFilters(page: Page) {
+  await page.locator(".operate-filters").waitFor({ state: "attached" });
+  const toggle = page.locator(".filters-toggle");
+  if (await toggle.isVisible()) await toggle.click();
 }
 const rows = (page: Page) =>
   page.getByRole("table", { name: "Incidents" }).locator(".resource-row");
@@ -127,34 +154,56 @@ async function settle(page: Page, url: string, release: () => void) {
   );
 }
 
-test("filtered incidents can reach matching rows on a later page", async ({
+test("a filter asks the platform for its first page, so a match beyond the loaded pages shows", async ({
   page,
 }) => {
   await inbox(page, ["incident.read"]);
-  await page.route(`${environment}/incidents?*`, (r) =>
-    r.fulfill({
-      json: new URL(r.request().url()).searchParams.has("cursor")
-        ? { items: [incident(active)], next_cursor: null }
-        : {
-            items: Array.from({ length: 50 }, (_, i) =>
-              incident(
-                "98888888-8888-4888-8888-" + String(i).padStart(12, "0"),
-                { status: "resolved" },
+  const queries: URLSearchParams[] = [];
+  // Without a code filter, the failed incident sits on the third page.
+  await page.route(`${environment}/incidents?*`, (r) => {
+    const query = new URL(r.request().url()).searchParams;
+    queries.push(query);
+    if (query.get("code") === "WV-TASK-FAILED")
+      return r.fulfill({
+        json: {
+          items: [incident(resolved, { code: "WV-TASK-FAILED" })],
+          next_cursor: null,
+        },
+      });
+    const at = Number(query.get("cursor") ?? "0");
+    return r.fulfill({
+      json: {
+        items:
+          at === 2
+            ? [incident(resolved, { code: "WV-TASK-FAILED" })]
+            : Array.from({ length: 50 }, (_, i) =>
+                incident(
+                  "98888888-8888-4888-8888-" +
+                    String(at * 50 + i).padStart(12, "0"),
+                ),
               ),
-            ),
-            next_cursor: "next",
-          },
-    }),
-  );
+        next_cursor: at < 2 ? String(at + 1) : null,
+      },
+    });
+  });
   await page.goto("/operate/incidents");
-  const more = page.getByRole("button", { name: "Load more incidents" });
-  await expect(more).toBeVisible();
-  await expect(
-    page.getByRole("heading", { name: /loaded incidents/ }),
-  ).toBeVisible();
-  await more.click();
+  await expect(rows(page)).toHaveCount(50);
+  await expect(page.getByText("50 incidents loaded")).toBeVisible();
+  const before = queries.length;
+  await page.getByLabel("Code", { exact: true }).fill("WV-TASK-FAILED");
+  await page.getByLabel("Code", { exact: true }).press("Enter");
   await expect(rows(page)).toHaveCount(1);
-  await expect(rows(page)).toContainText("WV-TASK-AMBIGUOUS");
+  await expect(rows(page)).toContainText("WV-TASK-FAILED");
+  const filtered = queries.slice(before);
+  expect(filtered.length).toBeGreaterThan(0);
+  for (const query of filtered) {
+    expect(query.get("code")).toBe("WV-TASK-FAILED");
+    expect(query.getAll("status")).toEqual(["active"]);
+    expect(query.get("include_test")).toBe("false");
+    expect(query.get("order")).toBe("opened_desc");
+    expect(query.has("cursor")).toBe(false);
+  }
+  await expect(page).toHaveURL(/\/operate\/incidents\?code=WV-TASK-FAILED$/);
 });
 
 test("incidents coalesce repeated appends and refresh all loaded pages", async ({
@@ -267,7 +316,7 @@ test("incidents stop at the page limit and explain remaining records", async ({
     page.getByRole("button", { name: "Load more incidents" }),
   ).toHaveCount(0);
   await expect(
-    page.getByText("More incidents may exist.", { exact: false }),
+    page.getByText("Showing the first 500 incidents.", { exact: false }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
   await expect.poll(() => reads).toBe(20);
@@ -327,6 +376,7 @@ for (const viewport of [
       await expect(rows(page)).toHaveCount(1);
       await expect(rows(page).first()).toContainText("WV-TASK-AMBIGUOUS");
       await expect(rows(page).first()).toContainText("Active");
+      await openFilters(page);
       await page.getByLabel("Status").selectOption("all");
       await expect(page).toHaveURL(/\/operate\/incidents\?status=all$/);
       await expect(rows(page)).toHaveCount(2);
@@ -334,10 +384,15 @@ for (const viewport of [
       await expect(
         rows(page).nth(1).getByText("Effects may continue"),
       ).toBeAttached();
-      await page.getByLabel("Code").selectOption("WV-TASK-FAILED");
+      await page.getByLabel("Code", { exact: true }).fill("WV-TASK-FAILED");
+      await page.getByLabel("Code", { exact: true }).press("Enter");
       await expect(rows(page)).toHaveCount(1);
       await page.reload();
-      await expect(page.getByLabel("Code")).toHaveValue("WV-TASK-FAILED");
+      await openFilters(page);
+      await expect(page.getByLabel("Code", { exact: true })).toHaveValue(
+        "WV-TASK-FAILED",
+      );
+      await expect(rows(page)).toHaveCount(1);
     });
 
     test("the drawer shows the run's last 20 engine events, types only", async ({
@@ -942,7 +997,7 @@ for (const viewport of [
       await expect(drawer.getByRole("alert")).toHaveCount(0);
     });
 
-    test("Refresh incident that can't read the incidents says why in the dialog", async ({
+    test("Refresh incident that can't read the incident says why in the dialog", async ({
       page,
     }) => {
       await inbox(page, ["incident.read", "incident.resolve"]);
@@ -956,7 +1011,7 @@ for (const viewport of [
         }),
       );
       let failList = false;
-      await page.route(`${environment}/incidents?*`, (r) =>
+      await page.route(`${environment}/incidents/${active}`, (r) =>
         failList
           ? r.fulfill({
               status: 503,
@@ -1002,7 +1057,7 @@ for (const viewport of [
       await endTheRun(page);
       await dialog.getByRole("button", { name: "Refresh incident" }).click();
       await expect(dialog.getByRole("alert")).toContainText(
-        "Studio couldn't find this incident when it read the list again.",
+        "Studio couldn't find this incident when it read it again.",
       );
       await expect(
         dialog.getByRole("button", { name: "Refresh incident" }),
@@ -1266,4 +1321,252 @@ for (const viewport of [
         expect(matches).toEqual(['"3"']);
       });
     }
+  });
+
+test.describe("platform filters, direct links and opening times", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+  const hidden = "94444444-4444-4444-8444-444444444444";
+  const facts = {
+    instance_key: "charge#3",
+    opened_at: "2026-10-07T10:00:00Z",
+    updated_at: "2026-10-07T10:05:00Z",
+    workflow: { name: "invoice-approval", version: "1.3.0" },
+    run_status: "blocked",
+  };
+
+  test("every filter goes to the platform and stays in the address", async ({
+    page,
+  }) => {
+    const { queries } = await inbox(page, ["incident.read"]);
+    await page.goto("/operate/incidents");
+    await expect(rows(page)).toHaveCount(1);
+    await page.getByLabel("Status").selectOption("closed");
+    for (const [label, value] of [
+      ["Code", "WV-TASK-AMBIGUOUS"],
+      ["Workflow", "invoice-approval"],
+      ["Step", "charge"],
+    ]) {
+      await page.getByLabel(label, { exact: true }).fill(value);
+      await page.getByLabel(label, { exact: true }).press("Enter");
+    }
+    await page.getByLabel("Opened after").fill("2026-10-01T08:00");
+    await page.getByLabel("Opened after").press("Enter");
+    await page.getByLabel("Opened before").fill("2026-10-08T08:00");
+    await page.getByLabel("Opened before").press("Enter");
+    await page.getByLabel("Order").selectOption("opened_asc");
+    await page.getByLabel("Include test runs").check();
+    await expect.poll(() => queries().at(-1)?.get("include_test")).toBe("true");
+    const query = queries().at(-1)!;
+    expect(query.getAll("status")).toEqual(["closed"]);
+    expect(query.get("code")).toBe("WV-TASK-AMBIGUOUS");
+    expect(query.get("workflow")).toBe("invoice-approval");
+    expect(query.get("node_id")).toBe("charge");
+    expect(Date.parse(query.get("opened_after")!)).toBe(
+      new Date("2026-10-01T08:00").getTime(),
+    );
+    expect(Date.parse(query.get("opened_before")!)).toBe(
+      new Date("2026-10-08T08:00").getTime(),
+    );
+    expect(query.get("order")).toBe("opened_asc");
+    expect(query.has("cursor")).toBe(false);
+    const address = new URL(page.url()).searchParams;
+    expect(Object.fromEntries(address)).toMatchObject({
+      status: "closed",
+      code: "WV-TASK-AMBIGUOUS",
+      workflow: "invoice-approval",
+      node_id: "charge",
+      include_test: "true",
+      order: "opened_asc",
+    });
+    // A start after the end is refused before anything is sent.
+    const sent = queries().length;
+    await page.getByLabel("Opened after").fill("2026-10-09T08:00");
+    await page.getByLabel("Opened after").press("Enter");
+    await expect(page.getByRole("alert")).toContainText(
+      "Choose a start before the end.",
+    );
+    expect(queries().length).toBe(sent);
+    await page.getByRole("button", { name: /^Clear filters/ }).click();
+    await expect(page).toHaveURL(/\/operate\/incidents$/);
+    expect(Object.fromEntries(queries().at(-1)!)).toEqual({
+      limit: "50",
+      order: "opened_desc",
+      include_test: "false",
+      status: "active",
+    });
+  });
+
+  test("a direct link opens an incident no loaded page lists, and decides on its revision", async ({
+    page,
+  }) => {
+    await inbox(page, ["incident.read", "incident.resolve", "run.read"]);
+    // Only incidents.read finds it: no list page includes it.
+    const lost = incident(hidden, {
+      ...facts,
+      revision: 7,
+      code: "WV-TASK-LOST",
+    });
+    await page.route(`${environment}/incidents/${hidden}`, (r) =>
+      r.fulfill({ json: lost }),
+    );
+    const reads: string[] = [];
+    page.on("request", (request) => {
+      if (request.url().includes(`/incidents/${hidden}`))
+        reads.push(request.url());
+    });
+    let ifMatch = "";
+    await page.route(`${environment}/incidents/${hidden}/resolve`, (r) => {
+      ifMatch = r.request().headers()["if-match"] ?? "";
+      return r.fulfill({
+        json: { ...lost, status: "resolved", revision: 8 },
+      });
+    });
+    await page.goto(`/operate/incidents?incident=${hidden}`);
+    const drawer = page.locator("weave-incident-drawer");
+    await expect(drawer.locator("#incident-detail-title")).toHaveText(
+      "Incident WV-TASK-LOST",
+    );
+    await expect(rows(page)).toHaveCount(1);
+    expect(reads.some((url) => url.endsWith(`/incidents/${hidden}`))).toBe(
+      true,
+    );
+    await drawer
+      .getByRole("button", { name: "Resolve incident", exact: true })
+      .click();
+    await endTheRun(page);
+    await expect(page.getByText("Incident resolved.")).toBeVisible();
+    expect(ifMatch).toBe('"7"');
+    await drawer.getByRole("button", { name: "Close detail" }).click();
+    await expect(page).toHaveURL(/\/operate\/incidents$/);
+  });
+
+  test("a direct link to an incident that is missing or refused says so", async ({
+    page,
+  }) => {
+    await inbox(page, ["incident.read"]);
+    await page.goto(`/operate/incidents?incident=${hidden}`);
+    await expect(
+      page.getByRole("heading", { name: "This incident can't be found" }),
+    ).toBeVisible();
+    await expect(rows(page)).toHaveCount(1);
+    await page.route(`${environment}/incidents/${hidden}`, (r) =>
+      r.fulfill({
+        status: 403,
+        json: { code: "WV-FORBIDDEN", message: "Not allowed" },
+      }),
+    );
+    await page.goto(`/operate/incidents?incident=${hidden}`);
+    await expect(
+      page.getByRole("heading", {
+        name: "You don't have access to this incident",
+      }),
+    ).toBeVisible();
+    await expect(page.locator("weave-incident-drawer")).toHaveCount(0);
+  });
+
+  for (const [name, extra, expected, hint] of [
+    ["estimated", { opened_at_estimated: true }, /\(estimated\)/, true],
+    ["exact", { opened_at_estimated: false }, /ago$/, false],
+    ["exact when the platform leaves the flag out", {}, /ago$/, false],
+  ] as const)
+    test(`the drawer shows an opening time that is ${name}`, async ({
+      page,
+    }) => {
+      const { items } = await inbox(page, ["incident.read", "run.read"]);
+      items[0] = { ...items[0], ...facts, ...extra };
+      await page.goto(`/operate/incidents?incident=${active}`);
+      const drawer = page.locator("weave-incident-drawer");
+      const opened = drawer.locator("dd.opened");
+      await expect(opened.locator("time")).toHaveText(expected);
+      await expect(opened.locator("time")).toHaveAttribute(
+        "datetime",
+        "2026-10-07T10:00:00.000Z",
+      );
+      await expect(opened.locator("small")).toHaveCount(hint ? 1 : 0);
+      await expect(drawer).toContainText("invoice-approval 1.3.0");
+      await expect(drawer).toContainText("charge#3");
+      await expect(drawer.locator(".run-fact .status-pill")).toHaveText(
+        "Blocked",
+      );
+      // Types only: the events' data never reaches the page.
+      await expect(drawer.locator(".event-lines li")).toHaveCount(20);
+      await expect(drawer).not.toContainText("never shown");
+    });
+
+  test("an incident without an opening time says Unknown, as an earlier platform's does", async ({
+    page,
+  }) => {
+    const { items } = await inbox(page, ["incident.read", "run.read"]);
+    await page.goto(`/operate/incidents?incident=${items[0].id}`);
+    const drawer = page.locator("weave-incident-drawer");
+    await expect(drawer.locator("dd.opened")).toHaveText("Unknown");
+    await expect(drawer.locator("dt:text-is('Workflow') + dd")).toHaveText(
+      "Unknown",
+    );
+    await expect(rows(page).first()).toContainText("Unknown");
+  });
+});
+
+for (const size of [
+  { name: "a mouse at 1440x900", width: 1440, height: 900, touch: false },
+  { name: "touch at 1440x900", width: 1440, height: 900, touch: true },
+  { name: "a window at 600x500", width: 600, height: 500, touch: false },
+  { name: "a phone at 360x640", width: 360, height: 640, touch: true },
+])
+  test.describe(`alignment with ${size.name}`, () => {
+    test.use({
+      viewport: { width: size.width, height: size.height },
+      hasTouch: size.touch,
+    });
+
+    test("the count sits on the filter line, and the drawer's Run button on its status pill, as full targets", async ({
+      page,
+    }) => {
+      const { items } = await inbox(page, ["incident.read", "run.read"]);
+      items[0] = { ...items[0], run_status: "blocked" };
+      await page.goto("/operate/incidents");
+      await expect(rows(page)).toHaveCount(1);
+      await openFilters(page);
+      const coarse = await page.evaluate(
+        () => matchMedia("(pointer: coarse)").matches,
+      );
+      const target = coarse || size.width < 768 ? 44 : 36;
+      const line = await page
+        .locator(".operate-filters")
+        .evaluate((filters) => {
+          const middle = (node: Element) => {
+            const box = node.getBoundingClientRect();
+            return { top: box.top, center: box.top + box.height / 2 };
+          };
+          return {
+            count: middle(filters.querySelector(".operate-count")!),
+            checkbox: middle(filters.querySelector(".checkbox-field")!),
+          };
+        });
+      // Beside the checkbox (a wrapped line has its own row), on its center.
+      if (Math.abs(line.count.top - line.checkbox.top) < target)
+        expect(
+          Math.abs(line.count.center - line.checkbox.center),
+        ).toBeLessThanOrEqual(0.5);
+      await page
+        .getByRole("button", {
+          name: "Open incident WV-TASK-AMBIGUOUS at charge",
+        })
+        .click();
+      const fact = page.locator("weave-incident-drawer dd.run-fact");
+      await expect(fact.locator(".status-pill")).toHaveText("Blocked");
+      const run = await fact.evaluate((node) => {
+        const button = node.querySelector("button")!.getBoundingClientRect();
+        const pill = node
+          .querySelector(".status-pill")!
+          .getBoundingClientRect();
+        return {
+          height: button.height,
+          button: button.top + button.height / 2,
+          pill: pill.top + pill.height / 2,
+        };
+      });
+      expect(Math.abs(run.button - run.pill)).toBeLessThanOrEqual(0.5);
+      if (target === 44) expect(run.height).toBeGreaterThanOrEqual(43.5);
+    });
   });

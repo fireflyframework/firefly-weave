@@ -37,6 +37,7 @@ from firefly_weave.connections.secrets import ScopedSecrets
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.runtime import StartRunRequest
 from firefly_weave.definitions.models import CatalogError
+from firefly_weave.operations.facts import RunStartFacts
 from firefly_weave.runtime.repository import SCOPE, RuntimeRepository
 from firefly_weave.runtime.service import RuntimeService
 from firefly_weave.runtime.signals import SignalService
@@ -209,6 +210,7 @@ class WebhookService:
                     f"webhook:{trigger.id}:{event}",
                     context=context,
                     tx=tx,
+                    start_facts=RunStartFacts(origin="webhook"),
                 )
                 run_id = run.id
             else:

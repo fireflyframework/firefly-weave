@@ -26,7 +26,7 @@ from typing import Any
 
 import click
 
-from firefly_weave.cli.remote import family, machine_result
+from firefly_weave.cli.remote import command, family, machine_result
 
 
 @click.group("operations")
@@ -35,6 +35,8 @@ def operations() -> None:
 
     Observe a target, set desired components, create a plan, review and approve
     its digest, then apply it. The runner keeps provider credentials locally.
+    `summary` and `telemetry` read the environment's platform health and the
+    project's telemetry settings.
     """
 
 
@@ -47,6 +49,8 @@ for name, prefix in (
     ("runners", "deployment_runners"),
 ):
     operations.add_command(family(name, prefix))
+operations.add_command(command("operations_summary.read", "summary"))
+operations.add_command(command("operations_telemetry.read", "telemetry"))
 
 
 @operations.group("runner")

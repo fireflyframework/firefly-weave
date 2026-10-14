@@ -320,7 +320,7 @@ export class RunActions {
         host.notify(`Run canceled. ${effects}`);
         await host.readDetail();
       } else host.notify(`${named} canceled. ${effects}`);
-      if (host.view === "runs") void host.refresh();
+      void host.refreshRuns();
     } catch (error) {
       this.refuse(
         error,
@@ -515,7 +515,7 @@ export class RunActions {
           : `Started retry ${started} of run ${shortId(target.id)}.`,
         { label: "View", run: () => void host.viewRun(created) },
       );
-      if (host.view === "runs") void host.refresh();
+      void host.refreshRuns();
     } catch (error) {
       const plain = explainRefusal(error, "run.retry");
       const failed = `Run ${shortId(target.id)} was not retried.`;

@@ -19,6 +19,7 @@
 import asyncio
 import copy
 import json
+import re
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -83,6 +84,7 @@ def fixture(kind="worker", action="update"):
         },
         "spec": {
             "replicas": 1,
+            "selector": {"matchLabels": {"app": "engine"}},
             "strategy": {"type": "Recreate"},
             "template": {
                 "metadata": {"annotations": {"firefly.weave/configuration": "production"}},
@@ -100,11 +102,108 @@ def fixture(kind="worker", action="update"):
     return policy, plan, resource
 
 
+def pod(name, *, template="7d9f8c6b5", owner=None, namespace="owned", labels=None, deleting=None, **status):
+    """A pod as `kubectl get pods -o json` returns it, owned by the engine deployment's ReplicaSet."""
+    return {
+        "metadata": {
+            "name": name,
+            "namespace": namespace,
+            "labels": {"app": "engine", "pod-template-hash": template} if labels is None else labels,
+            "ownerReferences": [
+                owner
+                or {
+                    "apiVersion": "apps/v1",
+                    "kind": "ReplicaSet",
+                    "name": f"engine-{template}",
+                    "uid": "replicaset-uid",
+                    "controller": True,
+                }
+            ],
+            **({"deletionTimestamp": deleting} if deleting else {}),
+        },
+        "spec": {"nodeName": status.pop("node", "node-1")},
+        "status": {
+            "phase": status.pop("phase", "Running"),
+            "conditions": [{"type": "Ready", "status": status.pop("ready", "True")}],
+            "containerStatuses": status.pop(
+                "containers",
+                [
+                    {"name": "sidecar", "restartCount": 9, "state": {"running": {"startedAt": "2026-10-01T00:00:00Z"}}},
+                    {"name": "main", "restartCount": 2, "state": {"running": {"startedAt": "2026-10-03T08:15:30Z"}}},
+                ],
+            ),
+            **status,
+        },
+    }
+
+
+# Exactly the pod fields the runner reads: one tab-separated line per pod, never whole pod objects.
+POD_FIELDS = (
+    "{range .items[*]}{.metadata.name}"
+    '{"\\t"}{.metadata.namespace}'
+    '{"\\t"}{.metadata.deletionTimestamp}'
+    '{"\\t"}{.metadata.labels.pod-template-hash}'
+    '{"\\t"}{.metadata.ownerReferences[?(@.controller==true)].apiVersion}'
+    '{"\\t"}{.metadata.ownerReferences[?(@.controller==true)].kind}'
+    '{"\\t"}{.metadata.ownerReferences[?(@.controller==true)].name}'
+    '{"\\t"}{.status.phase}'
+    '{"\\t"}{.status.conditions[?(@.type=="Ready")].status}'
+    '{"\\t"}{.status.containerStatuses[?(@.name=="main")].restartCount}'
+    '{"\\t"}{.status.containerStatuses[?(@.name=="main")].state.running.startedAt}'
+    '{"\\t"}{.spec.nodeName}{"\\n"}{end}'
+)
+
+
+FIELD = re.compile(r"\{(\.[^{}]+)\}")
+
+
+def render(pods, container="main", template=POD_FIELDS):
+    """What kubectl prints for the requested JSONPath fields: missing values are empty and matches join with spaces."""
+
+    def text(value):
+        return "" if value is None else str(value)
+
+    lines = []
+    for item in pods:
+        metadata, status = item["metadata"], item.get("status", {})
+        controllers = [ref for ref in metadata.get("ownerReferences", []) if ref.get("controller") is True]
+        statuses = [entry for entry in status.get("containerStatuses", []) if entry.get("name") == container]
+        ready = [entry for entry in status.get("conditions", []) if entry.get("type") == "Ready"]
+        values = {
+            ".metadata.name": metadata.get("name"),
+            ".metadata.namespace": metadata.get("namespace"),
+            ".metadata.deletionTimestamp": metadata.get("deletionTimestamp"),
+            ".metadata.labels.pod-template-hash": metadata.get("labels", {}).get("pod-template-hash"),
+            ".metadata.ownerReferences[?(@.controller==true)].apiVersion": " ".join(
+                text(ref.get("apiVersion")) for ref in controllers
+            ),
+            ".metadata.ownerReferences[?(@.controller==true)].kind": " ".join(
+                text(ref.get("kind")) for ref in controllers
+            ),
+            ".metadata.ownerReferences[?(@.controller==true)].name": " ".join(
+                text(ref.get("name")) for ref in controllers
+            ),
+            ".status.phase": status.get("phase"),
+            ".status.reason": status.get("reason"),
+            '.status.conditions[?(@.type=="Ready")].status': " ".join(text(entry.get("status")) for entry in ready),
+            f'.status.containerStatuses[?(@.name=="{container}")].restartCount': " ".join(
+                text(entry.get("restartCount")) for entry in statuses
+            ),
+            f'.status.containerStatuses[?(@.name=="{container}")].state.running.startedAt': " ".join(
+                text(entry.get("state", {}).get("running", {}).get("startedAt")) for entry in statuses
+            ),
+            ".spec.nodeName": item.get("spec", {}).get("nodeName"),
+        }
+        lines.append("\t".join(text(values[field]) for field in FIELD.findall(template)) + "\n")
+    return "".join(lines).encode()
+
+
 class Server:
     def __init__(self, policy, resource):
         self.policy, self.resource, self.calls, self.events = policy, resource, [], []
         self.namespace_uid = policy.external_identity
         self.fail_dry = False
+        self.pods = [pod("engine-7d9f8c6b5-x2kq4")]
 
     async def command(self, argv, **kwargs):
         self.calls.append((argv, kwargs))
@@ -120,6 +219,9 @@ class Server:
             return json.dumps({"metadata": {"name": self.policy.boundary, "uid": self.namespace_uid}}).encode()
         if "horizontalpodautoscalers.autoscaling" in argv:
             return b'{"items":[]}'
+        if "pods" in argv:
+            assert argv[6:] == ["get", "pods", "--selector=app=engine", "-o=jsonpath=" + POD_FIELDS]
+            return render(self.pods)
         assert "deployments.apps" in argv and "engine" in argv
         if "get" in argv:
             return json.dumps(self.resource).encode()
@@ -160,11 +262,12 @@ async def test_observe_only_fixed_deployments_and_pinned_namespace():
     result = await KubernetesAdapter(policy, command=server.command).observe()
     assert result.complete and result.settled and result.resources[0].ownership == "imported"
     assert result.resources[0].version == "8"
-    assert len(server.calls) == 2
+    # Namespace identity, the deployment, then its pods through the deployment's own selector.
+    assert len(server.calls) == 3 and "pods" in server.calls[2][0]
     server.namespace_uid = "other"
     with pytest.raises(RunnerPolicyError):
         await KubernetesAdapter(policy, command=server.command).observe()
-    assert len(server.calls) == 3
+    assert len(server.calls) == 4
 
 
 @pytest.mark.parametrize("action", ["update", "scale_workers"])
@@ -322,3 +425,310 @@ async def test_admission_cannot_turn_api_update_into_rolling_replacement():
     with pytest.raises(RunnerPolicyError):
         await KubernetesAdapter(policy, command=command).apply(plan, server.before_write)
     assert server.events == ["dry"]
+
+
+def members_of(result):
+    return [member.model_dump(mode="json") for member in result.resources[0].members]
+
+
+def pods_command(server, *, pods=None, failure=None, output=None):
+    """Wrap the fake server so the pods listing can answer differently."""
+    calls = []
+
+    async def command(argv, **kwargs):
+        calls.append(argv)
+        if "pods" in argv:
+            if failure is not None:
+                raise failure
+            if output is not None:
+                return output
+            return render(server.pods if pods is None else pods)
+        return await server.command(argv, **kwargs)
+
+    return command, calls
+
+
+async def test_worker_members_are_the_deployment_live_pods():
+    policy, _, resource = fixture()
+    server = Server(policy, resource)
+    server.pods = [
+        pod("engine-7d9f8c6b5-zz9", phase="Pending", ready="False", containers=[], node=None),
+        pod("engine-7d9f8c6b5-x2kq4"),
+        pod("engine-5c4b3a2-old1", template="5c4b3a2", deleting="2026-10-03T09:00:00Z"),
+        pod("engine-7d9f8c6b5-done", phase="Succeeded", ready="False"),
+        pod("engine-7d9f8c6b5-evicted", phase="Failed", reason="Evicted", ready="False", containers=[]),
+        pod("engine-7d9f8c6b5-crashed", phase="Failed", ready="False"),
+    ]
+    result = await KubernetesAdapter(policy, command=server.command).observe()
+    assert members_of(result) == [
+        {
+            "host": "engine-7d9f8c6b5-x2kq4",
+            "ordinal": None,
+            "state": "running",
+            "ready": True,
+            "started_at": "2026-10-03T08:15:30Z",
+            "restarts": 2,
+            "node": "node-1",
+        },
+        {
+            "host": "engine-7d9f8c6b5-zz9",
+            "ordinal": None,
+            "state": "pending",
+            "ready": False,
+            "started_at": None,
+            "restarts": 0,
+            "node": None,
+        },
+    ]
+    assert all(argv[6] == "get" for argv, _ in server.calls)
+
+
+@pytest.mark.parametrize(
+    "foreign",
+    [
+        pod(
+            "other-abc12",
+            template="abc12",
+            owner={
+                "apiVersion": "apps/v1",
+                "kind": "ReplicaSet",
+                "name": "other-abc12",
+                "uid": "u",
+                "controller": True,
+            },
+        ),
+        pod(
+            "engine-7d9f8c6b5-a",
+            owner={"apiVersion": "apps/v1", "kind": "ReplicaSet", "name": "engine-7d9f8c6b5", "controller": False},
+        ),
+        pod(
+            "engine-7d9f8c6b5-b",
+            owner={"apiVersion": "batch/v1", "kind": "Job", "name": "engine-7d9f8c6b5", "controller": True},
+        ),
+        pod("engine-7d9f8c6b5-c", namespace="elsewhere"),
+        pod("engine-7d9f8c6b5-d", labels={"app": "engine"}),
+    ],
+)
+async def test_pods_the_deployment_does_not_own_are_not_members(foreign):
+    policy, _, resource = fixture()
+    server = Server(policy, resource)
+    server.pods = [foreign, pod("engine-7d9f8c6b5-x2kq4")]
+    result = await KubernetesAdapter(policy, command=server.command).observe()
+    assert [member["host"] for member in members_of(result)] == ["engine-7d9f8c6b5-x2kq4"]
+
+
+async def test_two_controllers_are_not_one_owner():
+    policy, _, resource = fixture()
+    server = Server(policy, resource)
+    owned = pod("engine-7d9f8c6b5-twice")
+    owned["metadata"]["ownerReferences"].append(dict(owned["metadata"]["ownerReferences"][0]))
+    server.pods = [owned]
+    assert members_of(await KubernetesAdapter(policy, command=server.command).observe()) == []
+
+
+async def test_free_text_pod_status_cannot_forge_a_member():
+    policy, _, resource = fixture()
+    server = Server(policy, resource)
+    # A status reason holding a newline would complete one listing line and start a crafted one.
+    forged = (
+        "\tTrue\t0\t\tnode-1\nengine-7d9f8c6b5-forged\towned\t\t7d9f8c6b5\tapps/v1\tReplicaSet\t"
+        "engine-7d9f8c6b5\tRunning\t"
+    )
+    pods = [pod("engine-7d9f8c6b5-x2kq4", reason=forged)]
+    requested = []
+
+    async def command(argv, **kwargs):
+        if "pods" in argv:
+            requested.append(argv[-1])
+            return render(pods, template=argv[-1].removeprefix("-o=jsonpath="))
+        return await server.command(argv, **kwargs)
+
+    result = await KubernetesAdapter(policy, command=command).observe()
+    assert [member["host"] for member in members_of(result)] == ["engine-7d9f8c6b5-x2kq4"]
+    assert requested and all(".status.reason" not in template for template in requested)
+
+
+async def test_a_ready_status_of_unknown_counts_as_not_ready():
+    policy, _, resource = fixture()
+    server = Server(policy, resource)
+    server.pods = [pod("engine-7d9f8c6b5-good"), pod("engine-7d9f8c6b5-lost", ready="Unknown")]
+    result = await KubernetesAdapter(policy, command=server.command).observe()
+    assert [(member["host"], member["ready"]) for member in members_of(result)] == [
+        ("engine-7d9f8c6b5-good", True),
+        ("engine-7d9f8c6b5-lost", False),
+    ]
+
+
+def surge(policy, plan, resource, *, live_old):
+    """A worker at 100 replicas during a rolling update: 100 new pods and 25 old ones."""
+    component = plan.steps[0].component.model_copy(update={"replicas": 100})
+    plan = plan.model_copy(update={"steps": [plan.steps[0].model_copy(update={"component": component})]})
+    resource["spec"]["replicas"] = 100
+    resource["status"].update(replicas=100, readyReplicas=100, updatedReplicas=100, availableReplicas=100)
+    server = Server(policy, resource)
+    server.pods = [pod(f"engine-7d9f8c6b5-{index:05d}") for index in range(100)] + [
+        pod(
+            f"engine-5c4b3a2-{index:05d}", template="5c4b3a2", **({} if live_old else {"deleting": "2026-10-03T09:00Z"})
+        )
+        for index in range(25)
+    ]
+    return plan, server
+
+
+async def test_update_at_the_replica_limit_completes_while_old_pods_drain():
+    policy, plan, resource = fixture()
+    plan, server = surge(policy, plan, resource, live_old=False)
+    for item in server.pods[100:]:
+        item["metadata"]["deletionTimestamp"] = "2026-10-03T09:00:00Z"
+    result = await KubernetesAdapter(policy, command=server.command).apply(plan, server.before_write)
+    assert result.settled and len(result.resources[0].members) == 100
+    assert {member.host[:16] for member in result.resources[0].members} == {"engine-7d9f8c6b5"}
+
+
+async def test_more_than_one_hundred_live_members_are_left_out_without_failing():
+    policy, plan, resource = fixture()
+    plan, server = surge(policy, plan, resource, live_old=True)
+    result = await KubernetesAdapter(policy, command=server.command).apply(plan, server.before_write)
+    assert result.settled and result.resources[0].members == []
+    assert "members" not in result.model_dump(mode="json")["resources"][0]
+    observed = await KubernetesAdapter(policy, command=server.command).observe()
+    assert observed.complete and observed.resources[0].members == []
+    server.pods = server.pods[:100]
+    assert len((await KubernetesAdapter(policy, command=server.command).observe()).resources[0].members) == 100
+
+
+async def test_exactly_one_hundred_and_one_live_pods_leave_members_out():
+    policy, _, resource = fixture()
+    server = Server(policy, resource)
+    server.pods = [pod(f"engine-7d9f8c6b5-{index:05d}") for index in range(101)]
+    observed = await KubernetesAdapter(policy, command=server.command).observe()
+    assert observed.complete and observed.resources[0].members == []
+    assert "members" not in observed.model_dump(mode="json")["resources"][0]
+    server.pods = server.pods[:100]
+    assert len((await KubernetesAdapter(policy, command=server.command).observe()).resources[0].members) == 100
+
+
+@pytest.mark.parametrize(
+    "selector,expected",
+    [
+        ({"matchLabels": {"tier": "workers", "app": "engine"}}, "app=engine,tier=workers"),
+        (
+            {
+                "matchLabels": {"app": "engine"},
+                "matchExpressions": [
+                    {"key": "track", "operator": "In", "values": ["stable", "canary"]},
+                    {"key": "app.kubernetes.io/part-of", "operator": "NotIn", "values": ["legacy"]},
+                    {"key": "weave.example/worker", "operator": "Exists"},
+                    {"key": "paused", "operator": "DoesNotExist", "values": []},
+                ],
+            },
+            "app=engine,track in (canary,stable),app.kubernetes.io/part-of notin (legacy),weave.example/worker,!paused",
+        ),
+        ({"matchExpressions": [{"key": "app", "operator": "In", "values": ["engine"]}]}, "app in (engine)"),
+    ],
+)
+async def test_selectors_become_kubectl_label_selectors(selector, expected):
+    policy, _, resource = fixture()
+    resource["spec"]["selector"] = selector
+    server = Server(policy, resource)
+    command, calls = pods_command(server)
+    result = await KubernetesAdapter(policy, command=command).observe()
+    [listing] = [argv for argv in calls if "pods" in argv]
+    assert listing[6:] == ["get", "pods", "--selector=" + expected, "-o=jsonpath=" + POD_FIELDS]
+    assert [member["host"] for member in members_of(result)] == ["engine-7d9f8c6b5-x2kq4"]
+
+
+@pytest.mark.parametrize(
+    "selector",
+    [
+        None,
+        {},
+        {"matchLabels": {}},
+        {"matchLabels": {"app": "engine,tier=x"}},
+        {"matchLabels": {"app in (a)": "engine"}},
+        {"matchLabels": {"app": "engine", "bad key": "x"}},
+        {"matchLabels": {"app": "x" * 64}},
+        {"matchLabels": ["app=engine"]},
+        {"matchLabels": {"app": 1}},
+        {"matchLabels": {"app": "engine"}, "other": {}},
+        {"matchExpressions": [{"key": "app", "operator": "In", "values": []}]},
+        {"matchExpressions": [{"key": "app", "operator": "In", "values": [""]}]},
+        {"matchExpressions": [{"key": "app", "operator": "In", "values": ["a,b"]}]},
+        {"matchExpressions": [{"key": "app", "operator": "NotIn"}]},
+        {"matchExpressions": [{"key": "app", "operator": "Exists", "values": ["x"]}]},
+        {"matchExpressions": [{"key": "app", "operator": "DoesNotExist", "values": ["x"]}]},
+        {"matchExpressions": [{"key": "app", "operator": "Gt", "values": ["1"]}]},
+        {"matchExpressions": [{"key": "bad key", "operator": "Exists"}]},
+        {"matchExpressions": [{"key": "app", "operator": "Exists", "extra": True}]},
+        {"matchExpressions": {"key": "app", "operator": "Exists"}},
+        {"matchExpressions": ["app"]},
+    ],
+)
+async def test_a_selector_kubectl_cannot_express_lists_no_pods_and_leaves_members_out(selector):
+    policy, _, resource = fixture()
+    if selector is None:
+        del resource["spec"]["selector"]
+    else:
+        resource["spec"]["selector"] = selector
+    server = Server(policy, resource)
+    result = await KubernetesAdapter(policy, command=server.command).observe()
+    assert result.complete and result.resources[0].members == []
+    assert not any("pods" in argv for argv, _ in server.calls)
+
+
+@pytest.mark.parametrize(
+    "output",
+    [
+        b"engine-7d9f8c6b5-x2kq4\towned\n",
+        b"not\ttab\tseparated\tenough\n",
+        b"\xff\xfe\n",
+        render([pod("engine-7d9f8c6b5-x2kq4"), pod("engine-7d9f8c6b5-other")])[:-1],
+    ],
+)
+async def test_unreadable_pod_output_leaves_members_out(output):
+    policy, _, resource = fixture()
+    command, _ = pods_command(Server(policy, resource), output=output)
+    result = await KubernetesAdapter(policy, command=command).observe()
+    assert result.complete and result.resources[0].members == []
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"phase": "Running Now"},
+        {"node": "node/1"},
+        {"containers": [{"name": "main", "restartCount": -1, "state": {}}]},
+        {"containers": [{"name": "main", "restartCount": "1x", "state": {}}]},
+        {"containers": [{"name": "main", "restartCount": 0, "state": {"running": {"startedAt": "today"}}}]},
+        {"ready": "Maybe"},
+    ],
+)
+async def test_one_malformed_live_pod_leaves_all_members_out(changes):
+    policy, _, resource = fixture()
+    server = Server(policy, resource)
+    server.pods = [pod("engine-7d9f8c6b5-good"), pod("engine-7d9f8c6b5-x2kq4", **changes)]
+    result = await KubernetesAdapter(policy, command=server.command).observe()
+    assert result.complete and result.resources[0].members == []
+
+
+async def test_a_failed_pod_listing_never_fails_the_observation():
+    from firefly_weave.deployment_runner.command import CommandError
+
+    policy, _, resource = fixture()
+    command, _ = pods_command(Server(policy, resource), failure=CommandError())
+    result = await KubernetesAdapter(policy, command=command).observe()
+    assert result.complete and result.settled and result.resources[0].members == []
+
+
+async def test_a_cancelled_pod_listing_still_cancels():
+    policy, _, resource = fixture()
+    command, _ = pods_command(Server(policy, resource), failure=asyncio.CancelledError())
+    with pytest.raises(asyncio.CancelledError):
+        await KubernetesAdapter(policy, command=command).observe()
+
+
+async def test_api_components_list_no_pods():
+    policy, _, resource = fixture(kind="api")
+    server = Server(policy, resource)
+    result = await KubernetesAdapter(policy, command=server.command).observe()
+    assert result.resources[0].members == [] and not any("pods" in argv for argv, _ in server.calls)

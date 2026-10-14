@@ -34,6 +34,9 @@ async def test_history_export_and_concurrent_append(
     first = await client.get(url + "/history?limit=1", headers=headers)
     assert first.status_code == 200, first.text
     assert first.json()["high_water_sequence"] == 1
+    started = first.json()["events"][0]
+    assert started["data"] == {"admission_policy": "classified-v1", "origin": "manual"}
+    assert started["evidence"]["omissions"] == []
     async with transaction_factory() as tx:
         lease = (await task_service.claim(tx, worker_ids[0], 1))[0]
         await task_service.complete(tx, lease.proof, uuid4(), 9)

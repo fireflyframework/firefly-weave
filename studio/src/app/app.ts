@@ -203,11 +203,14 @@ import {
 import { ClustersPage } from "./operate/clusters/clusters-page";
 import { WorkersPage } from "./operate/workers/workers-page";
 import { IncidentsPage } from "./operate/incidents/incidents-page";
+import { OverviewPage } from "./operate/overview/overview-page";
+import { RunsPage } from "./operate/runs/runs-page";
 import {
   navEntryVisible,
   viewFromPath,
   viewPath,
 } from "./operate/operate-routes";
+import { scopeKeyOf } from "./operate/operate-list";
 import { RecordsView } from "./operations/records-view";
 import { SettingsPage } from "./settings/settings-page";
 import { LumiPanel } from "./lumi/lumi-panel";
@@ -232,6 +235,7 @@ export type View =
   | "home"
   | "workflows"
   | "designer"
+  | "overview"
   | "runs"
   | "incidents"
   | "tasks"
@@ -395,6 +399,8 @@ const sideEffects: Record<string, string> = {
     ClustersPage,
     WorkersPage,
     IncidentsPage,
+    OverviewPage,
+    RunsPage,
     SettingsPage,
     LumiPanel,
   ],
@@ -459,8 +465,9 @@ export class App implements CanvasHost {
   emailSubmission: Record<string, unknown> | null = null;
   runHistory: Record<string, unknown> | null = null;
   runCanvas: StructuredCanvasAdapter | null = null;
+  /** The published version `runCanvas` draws, exported once per open run. */
+  private runCanvasVersion = "";
   runLifecycle: Record<string, unknown> | null = null;
-  runIncludeArchived = false;
   debugSession: Record<string, unknown> | null = null;
   pendingMutation: {
     path: string;
@@ -669,6 +676,7 @@ export class App implements CanvasHost {
     { id: "connections", label: "Connections" },
     { id: "tasks", label: "My tasks" },
     { id: "email", label: "Email" },
+    { id: "overview", label: "Overview" },
     { id: "runs", label: "Runs" },
     { id: "incidents", label: "Incidents" },
     { id: "workers", label: "Workers" },
@@ -679,7 +687,7 @@ export class App implements CanvasHost {
     ["", ["home"]],
     ["Build", ["workflows", "connections"]],
     ["Work", ["tasks", "email"]],
-    ["Operate", ["runs", "incidents", "workers", "clusters"]],
+    ["Operate", ["overview", "runs", "incidents", "workers", "clusters"]],
   ];
   private navCache: {
     key: string;
@@ -791,8 +799,14 @@ export class App implements CanvasHost {
   records: Record<string, unknown>[] = [];
   nextCursor: string | null = null;
   selectedRecord: Record<string, unknown> | null = null;
-  /** The Runs list was refused (403): the page names the access it needs. */
-  runsRefused = false;
+  /**
+   * The Runs page while it is open. A command taken there (Start run, Cancel,
+   * Retry, Archive, Restore, Delete data) reads its list again through it.
+   */
+  runsList: {
+    refresh(): Promise<void>;
+    started(run: Record<string, unknown>, scope: string): void;
+  } | null = null;
   /** The run whose read was refused (403); it stays until another opens. */
   runRefused = "";
   loading = false;
@@ -946,7 +960,6 @@ export class App implements CanvasHost {
   commandKey: string | null = null;
   unknownCommand = false;
   taskFilter = "";
-  runFilters = { business_key: "", correlation_key: "", status: "" };
   showStartRun = false;
   /** The activation the start-run dialog preselects. */
   runStartActivation = "";
@@ -1629,7 +1642,6 @@ export class App implements CanvasHost {
       this.records = [];
       this.nextCursor = null;
       this.taskRunFilter = "";
-      this.runsRefused = false;
       this.runRefused = "";
     }
     this.view = view;
@@ -6221,11 +6233,18 @@ export class App implements CanvasHost {
     }
     if (
       this.view === "connect" ||
+      this.view === "overview" ||
       this.view === "clusters" ||
       this.view === "workers" ||
       this.view === "incidents"
     )
       return;
+    if (this.view === "runs") {
+      // Operate › Runs reads its own list; run titles and Retry run still
+      // read the published versions.
+      void this.loadWorkflowVersions();
+      return;
+    }
     if (this.view === "home") {
       await this.refreshHome();
       return;
@@ -6248,7 +6267,6 @@ export class App implements CanvasHost {
     const requestedView = this.view;
     const collections: Partial<Record<View, [string, boolean]>> = {
       workflows: [this.libraryCollection, false],
-      runs: ["runs", true],
       connections: ["connections", true],
       tasks: ["human-tasks", true],
       email: ["email/conversations", true],
@@ -6258,7 +6276,6 @@ export class App implements CanvasHost {
       this.loading = false;
       return;
     }
-    if (this.view === "runs") void this.loadWorkflowVersions();
     if (this.view === "workflows" && this.libraryCollection === "workflows")
       void this.loadActivations(sequence);
     try {
@@ -6266,32 +6283,18 @@ export class App implements CanvasHost {
         c[0],
         c[1],
         append ? (this.nextCursor ?? undefined) : undefined,
-        this.view === "runs"
-          ? {
-              ...this.runFilters,
-              include_archived: this.runIncludeArchived ? "true" : "",
-            }
-          : this.view === "tasks" && this.taskFilter
-            ? { status: this.taskFilter }
-            : {},
+        this.view === "tasks" && this.taskFilter
+          ? { status: this.taskFilter }
+          : {},
       );
       if (sequence !== this.listSequence || requestedView !== this.view) return;
       this.records = append ? [...this.records, ...result.items] : result.items;
       this.nextCursor = result.next_cursor;
-      if (this.view === "runs") {
-        this.rememberRuns(result.items);
-        this.runsRefused = false;
-      }
       if (this.view === "workflows" && this.libraryCollection === "workflows")
         for (const item of result.items) this.rememberVersion(item);
       this.error = "";
     } catch (e) {
-      // A refused Runs list names the access it needs on the page, instead
-      // of a banner over an empty list that claims there are no runs.
-      if (requestedView === "runs" && describeError(e).status === 403) {
-        if (sequence === this.listSequence && requestedView === this.view)
-          this.runsRefused = true;
-      } else this.fail(e);
+      this.fail(e);
     } finally {
       this.cdr.markForCheck();
       if (sequence === this.listSequence) this.loading = false;
@@ -6433,6 +6436,39 @@ export class App implements CanvasHost {
   /** Tasks filtered to one run ("Open My tasks" from a run). */
   taskRunFilter = "";
   private runTaskSequence = 0;
+  private runFollow = 0;
+  /**
+   * The open run changed while the Runs page follows it: Studio shows its new
+   * view and reads its lifecycle and history again. The drawing of its
+   * version stays; it never changes during a run.
+   */
+  async followRun(view: Record<string, unknown>) {
+    const id = view["id"];
+    if (this.view !== "runs" || this.selectedRecord?.["id"] !== id) return;
+    const follow = ++this.runFollow;
+    this.selectedRecord = view;
+    this.cdr.markForCheck();
+    const base = `${this.api.environment}/runs/${encodeURIComponent(String(id))}`;
+    try {
+      const [lifecycle, history] = await Promise.all([
+        this.api.request<Record<string, unknown>>(`${base}/lifecycle`),
+        this.api.request<Record<string, unknown>>(`${base}/history?limit=100`),
+      ]);
+      if (
+        follow !== this.runFollow ||
+        this.view !== "runs" ||
+        this.selectedRecord?.["id"] !== id
+      )
+        return;
+      this.runLifecycle = lifecycle;
+      this.runHistory = history;
+      void this.findRunTask(this.selectedRecord);
+    } catch {
+      // The run's next read, 2 s later, tries again.
+    } finally {
+      this.cdr.markForCheck();
+    }
+  }
   private refreshRunTaskAfterIdentity() {
     if (this.view === "runs" && this.selectedRecord)
       void this.findRunTask(this.selectedRecord);
@@ -6535,8 +6571,11 @@ export class App implements CanvasHost {
         const activation = detail["activation"] as
           | { request?: { version_id?: string } }
           | undefined;
-        if (activation?.request?.version_id) {
-          const versionId = activation.request.version_id;
+        const versionId = activation?.request?.version_id;
+        if (
+          versionId &&
+          !(this.runCanvas && this.runCanvasVersion === versionId)
+        ) {
           const exported = await this.api.request<{ document: Workflow }>(
             `${this.api.project}/workflows/${versionId}/export`,
           );
@@ -6544,6 +6583,7 @@ export class App implements CanvasHost {
           canvas.setSource(JSON.stringify(exported.document), "json");
           canvas.readonly = true;
           this.runCanvas = canvas;
+          this.runCanvasVersion = versionId;
           const metadata = exported.document?.metadata;
           if (metadata?.name)
             this.workflowVersions.set(versionId, {
@@ -6860,9 +6900,20 @@ export class App implements CanvasHost {
       this.cdr.markForCheck();
     }
   }
+  /**
+   * After a command on the Runs page: the published versions and the list's
+   * first page again, so the list shows what the command changed.
+   */
+  async refreshRuns() {
+    if (this.view !== "runs") return;
+    void this.loadWorkflowVersions();
+    await this.runsList?.refresh();
+  }
   /** Starts the run; failures stay in the dialog, success opens the new run. */
   async confirmStartRun(body: StartRunRequest) {
     this.runStartError = null;
+    // The environment and person the run starts for: the list shows it only there.
+    const scope = scopeKeyOf(this);
     try {
       const run = await this.safeMutation<Record<string, unknown>>(
         `${this.api.environment}/runs`,
@@ -6877,10 +6928,9 @@ export class App implements CanvasHost {
         run: () => void this.viewRun(run),
       });
       if (this.view === "runs") {
-        await this.refresh();
-        // The list may not include a run this new yet; show it first.
-        if (run["id"] && !this.records.some((r) => r["id"] === run["id"]))
-          this.records = [run, ...this.records];
+        // The list may not include a run this new yet; it shows it first.
+        this.runsList?.started(run, scope);
+        await this.refreshRuns();
       }
     } catch (e) {
       const plain = describeError(e);
@@ -6922,54 +6972,7 @@ export class App implements CanvasHost {
   async viewRun(run: Record<string, unknown>) {
     if (this.view !== "runs") await this.navigate("runs");
     if (this.view !== "runs" || !run["id"]) return;
-    const listed = this.records.find((r) => r["id"] === run["id"]);
-    if (!listed) this.records = [run, ...this.records];
-    await this.open(listed ?? run);
-    // A run that could not be read leaves no placeholder row behind.
-    if (!listed && this.runRefused === run["id"])
-      this.records = this.records.filter((r) => r !== run);
-  }
-  applyRunFilters() {
-    if (this.runFilterTimer) clearTimeout(this.runFilterTimer);
-    this.runFilterTimer = null;
-    this.nextCursor = null;
-    this.records = [];
-    this.closeRecord();
-    void this.refresh();
-  }
-  private runFilterTimer: ReturnType<typeof setTimeout> | null = null;
-  /**
-   * Runs filters apply as they change: the typed keys after a 400 ms pause,
-   * the status and "Include archived runs" at once.
-   */
-  setRunFilter(
-    key: "business_key" | "correlation_key" | "status",
-    value: string,
-  ) {
-    if (this.runFilters[key] === value) return;
-    this.runFilters = { ...this.runFilters, [key]: value };
-    if (key === "status") return this.applyRunFilters();
-    if (this.runFilterTimer) clearTimeout(this.runFilterTimer);
-    this.runFilterTimer = setTimeout(() => this.applyRunFilters(), 400);
-  }
-  toggleArchivedRuns() {
-    this.runIncludeArchived = !this.runIncludeArchived;
-    this.applyRunFilters();
-  }
-  /** How many Runs filters are set ("Filters (2)" on narrow windows). */
-  get runFilterCount() {
-    return (
-      [
-        this.runFilters.business_key,
-        this.runFilters.correlation_key,
-        this.runFilters.status,
-      ].filter(Boolean).length + (this.runIncludeArchived ? 1 : 0)
-    );
-  }
-  clearRunFilters() {
-    this.runIncludeArchived = false;
-    this.runFilters = { business_key: "", correlation_key: "", status: "" };
-    this.applyRunFilters();
+    await this.open(run);
   }
   applyTaskFilter(event: Event) {
     this.taskFilter = this.value(event);
@@ -7671,7 +7674,6 @@ export class App implements CanvasHost {
     this.showActivation = false;
     this.exportFallback = null;
     this.records = [];
-    this.runsRefused = false;
     this.runRefused = "";
     this.closeRecord();
     this.emailDetail = null;
@@ -8976,7 +8978,7 @@ export class App implements CanvasHost {
             ? "Run archived."
             : "Run restored.",
       );
-      await this.refresh();
+      await this.refreshRuns();
     } catch (e) {
       this.fail(e);
     } finally {

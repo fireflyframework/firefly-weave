@@ -351,11 +351,11 @@ capability.
 | `create_connection`, `read_connection`, `test_connection`, `list_connections` | Immutable integration connections that hold only secret handles, and explicit checks |
 | `start_run`, `read_run`, `signal`, `cancel`, `retry`, `list_runs` | Durable runs |
 | `pause_run`, `resume_run`, `run_lifecycle`, `archive_run`, `restore_run`, `purge_run` | Run lifecycle management |
-| `history`, `export_run`, `replay`, `run_incidents`, `list_incidents`, `resolve_incident` | Bounded evidence and audited recovery |
+| `history`, `export_run`, `replay`, `run_incidents`, `list_incidents`, `read_incident`, `resolve_incident` | Bounded evidence and audited recovery |
 | `human_tasks`, `read_human_task`, `claim_human_task`, `release_human_task`, `complete_human_task`, `reassign_human_task` | Human task inbox and decisions |
 | `assignment_bindings`, `put_assignment_binding`, `put_human_group` | Who may work on which human task |
 | `register_release`, `read_release`, `list_releases`, `register_worker`, `read_worker`, `list_workers`, `revoke_worker`, `grant_connection` | Trusted worker releases and instances |
-| `drain_worker`, `resume_worker` | Revision-checked worker controls; existing leases can settle while drained |
+| `drain_worker`, `resume_worker`, `retire_stale_workers`, `release_usage` | Revision-checked worker controls, bounded retirement of offline workers, and where a release runs; existing leases can settle while drained |
 | `invoke("deployment_targets.…")`, `invoke("deployments.…")`, `invoke("deployment_observations.…")`, `invoke("deployment_plans.…")`, `invoke("deployment_jobs.…")`, `invoke("deployment_runners.…")` | Typed, environment-scoped Operations contracts; operation names and required authority are in the [API inventory](api.md#operation-inventory) |
 | `invoke("ai_endpoints.list")`, `invoke("ai_models.list", …)`, `invoke("ai_readiness.read")`, `invoke("ai_setup.publish", …)`, `invoke("ai_setup.grant", …)`, `invoke("ai_connections.test", …)`, `invoke("bindable_connections.list")` | AI model discovery, readiness, setup and connection choices; see [AI operations through the SDK](#ai-operations-through-the-sdk) |
 | `claim_tasks`, `heartbeat`, `complete_task`, `fail_task`, `request_credentials` | The typed [worker protocol](worker-protocol.md); `WorkerTransport` remains supported |
@@ -377,6 +377,27 @@ code. Paginated methods return a typed `Page`, except run history, whose
 `EventPage` also carries its high-water mark. Resource IDs and cursors must
 belong to the client's scope. Secret leases use the `CredentialLease` model,
 whose ordinary serialization leaves out the resolved value.
+
+**Worker registration.** `register_worker` sends the request's optional
+`identity`, usually from `worker_identity()` in `firefly_weave.sdk.worker_identity`.
+When an older server refuses it with `422` `WV-VALIDATION`, the method registers
+exactly once more without it; other errors are raised unchanged. A worker that
+registers with its own HTTP client calls
+`register_worker_http(client, environment_url, body)` from
+`firefly_weave.sdk.worker_registration` for the same behavior on that client.
+`worker_identity()` reads only `WEAVE_WORKER_REPORT_HOST`, `WEAVE_WORKER_LABELS`,
+`WEAVE_POD_NAMESPACE`, `WEAVE_NODE_NAME`, and `KUBERNETES_SERVICE_HOST`; see
+[worker identity](../guides/workers.md#report-where-a-worker-runs).
+
+**Worker fleet.** `list_workers` takes either the page keywords or a typed
+`query=WorkerListQuery(...)` from `firefly_weave.contracts.worker_queries`;
+passing both raises `ValueError`. Without a query the server lists current
+workers, most recently seen first. `retire_stale_workers(RetireStaleRequest(...),
+idempotency_key=...)` revokes, or with `dry_run=True` previews, up to 100
+offline workers; repeat it with a new key for the next batch.
+`release_usage(release_id, query=ReleaseUsageQuery(...))` returns worker counts,
+pinning activations and a page of readable deployments. See
+[Discovery, debugging, and history](api.md#discovery-debugging-and-history) in the API reference for the rules.
 
 ## Deployment Operations through the SDK
 

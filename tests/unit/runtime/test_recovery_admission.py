@@ -90,7 +90,7 @@ class _Harness:
             async def persist(self, view, event, result, digest, **timing):
                 harness.persisted.append(event.type)
 
-            async def task_status(self, identifier, status):
+            async def task_status(self, identifier, status, *, at=None):
                 harness.expired.remove(identifier)
 
         def transition(state, event, artifact):

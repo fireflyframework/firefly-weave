@@ -25,10 +25,21 @@ from starlette.responses import JSONResponse
 
 from firefly_weave.api.access import request_scope
 from firefly_weave.api.surface import operation
-from firefly_weave.api.transport import canonical_path, etag, page_request, page_response, parse_revision
+from firefly_weave.api.transport import (
+    canonical_path,
+    decode_cursor,
+    decode_cursor_v2,
+    etag,
+    parse_query,
+    parse_revision,
+)
+from firefly_weave.contracts.access import Scope
+from firefly_weave.contracts.incident_queries import IncidentQuery
 from firefly_weave.contracts.operations import CancelRunRequest, HistoryExport, IncidentResolution
+from firefly_weave.contracts.public import UnavailableResource
 from firefly_weave.contracts.runtime import StartRunRequest
 from firefly_weave.definitions.models import CatalogError
+from firefly_weave.operations.fact_positions import RunPosition, run_position
 from firefly_weave.operations.history import HistoryService
 from firefly_weave.operations.incidents import IncidentService
 from firefly_weave.runtime.service import RuntimeService
@@ -48,18 +59,8 @@ class OperationsController:
     async def list(self, request: Request) -> JSONResponse:
         scope = request_scope(request, environment=True)
         if canonical_path(request.url.path):
-            identifier = UUID(request.path_params["identifier"])
-            collection = "incidents.run/" + str(identifier)
-            limit, cursor = page_request(request, scope, collection)
-            page = await self.incidents.list_all(
-                request.state.principal,
-                scope,
-                run_id=identifier,
-                limit=limit,
-                cursor=cursor,
-                context=request.state.audit_context,
-            )
-            return JSONResponse(page_response(page, scope, collection, request.url.path))
+            return await self._page(request, scope, UUID(request.path_params["identifier"]))
+        # The earlier route keeps its plain array of the run's incidents.
         async with self.runtime.definitions.transaction(scope, None, mutation=False) as tx:
             result = await self.incidents.list(
                 tx,
@@ -168,9 +169,45 @@ class OperationsController:
 
     @operation("incidents.list")
     async def discover(self, request: Request) -> JSONResponse:
+        return await self._page(request, request_scope(request, environment=True), None)
+
+    @operation("incidents.read")
+    async def read_incident(self, request: Request) -> JSONResponse:
         scope = request_scope(request, environment=True)
-        limit, cursor = page_request(request, scope, "incidents")
-        result = await self.incidents.list_all(
-            request.state.principal, scope, limit=limit, cursor=cursor, context=request.state.audit_context
+        result = await self.incidents.read(
+            request.state.principal,
+            scope,
+            UUID(request.path_params["identifier"]),
+            context=request.state.audit_context,
         )
-        return JSONResponse(page_response(result, scope, "incidents", request.url.path))
+        # The revision tag lets a reader resolve what it read; a withheld incident has no revision to offer.
+        headers = {} if isinstance(result, UnavailableResource) else {"ETag": etag(result.revision, request.url.path)}
+        return JSONResponse(result.model_dump(mode="json"), headers=headers)
+
+    async def _page(self, request: Request, scope: Scope, run_id: UUID | None) -> JSONResponse:
+        query = parse_query(request.query_params, IncidentQuery)
+        canonical = canonical_path(request.url.path)
+        collection = query.cursor_collection(run_id)
+        position: RunPosition | UUID | None
+        if query.order == "id":
+            # Explicit ID order continues the earlier cursors: scope-bound here, raw IDs on the earlier route.
+            position = (
+                decode_cursor(query.cursor, scope, collection)
+                if canonical
+                else UUID(query.cursor)
+                if query.cursor
+                else None
+            )
+        else:
+            position = run_position(decode_cursor_v2(query.cursor, scope, collection))
+        result = await self.incidents.list_all(
+            request.state.principal,
+            scope,
+            run_id=run_id,
+            query=query,
+            position=position,
+            context=request.state.audit_context,
+        )
+        if query.order == "id" and not canonical and result["next_cursor"] is not None:
+            result["next_cursor"] = str(decode_cursor(result["next_cursor"], scope, collection))
+        return JSONResponse(result)

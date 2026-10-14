@@ -500,3 +500,15 @@ async def test_cancelling_a_run_ends_its_loops_on_every_terminal_path(
     assert state["loops"]["each"]["running"] == [0, 1, 2]
     frames = [frame for frame in state["branches"].values() if isinstance(frame.get("index"), int)]
     assert len(frames) == 3 and all(frame["status"] == "cancelled" for frame in frames)
+
+
+async def test_loop_yields_are_not_step_instances(worker_setup, services, access_db):
+    run = await start(worker_setup, [f"item-{i}" for i in range(2100)], await activated(worker_setup, PURE))
+    await scan_until_settled(services, access_db, worker_setup, run.id)
+    async with access_db[1]() as session:
+        keys = (
+            (await session.execute(text("SELECT instance_key FROM step_facts WHERE run_id=:id"), {"id": run.id}))
+            .scalars()
+            .all()
+        )
+    assert keys and not any("~" in key for key in keys)

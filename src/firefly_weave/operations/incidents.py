@@ -26,15 +26,21 @@ from pyfly.container import service
 from firefly_weave.access.audit import AuditContext
 from firefly_weave.access.models import Principal
 from firefly_weave.access.service import AccessService, audit
+from firefly_weave.api.transport import encode_cursor, encode_cursor_v2
 from firefly_weave.compiler.api import import_artifact
 from firefly_weave.compiler.canonical import canonical_digest
 from firefly_weave.compiler.expressions import measure_value
 from firefly_weave.compiler.ir import ActionNode
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.definitions import ActionDefinition, load_definition
+from firefly_weave.contracts.incident_queries import IncidentQuery
 from firefly_weave.contracts.instance_keys import node_of
 from firefly_weave.contracts.operations import IncidentResolution, IncidentView
+from firefly_weave.contracts.public import UnavailableResource
 from firefly_weave.definitions.models import CatalogError
+from firefly_weave.operations.fact_positions import RunPosition
+from firefly_weave.operations.fact_reads import FactReadRepository, incident_of
+from firefly_weave.operations.facts import task_fact_update
 from firefly_weave.persistence.uow import Transaction
 from firefly_weave.runtime.kernel import transition_async as transition
 from firefly_weave.runtime.kernel import validate_action, workflow
@@ -212,16 +218,20 @@ class IncidentService:
             await repository.persist(view, event, result, event_hash(event))
             if task is not None and result.state.status not in TERMINAL:
                 await repository.execute(
-                    f"UPDATE task_intents SET status=:status,next_attempt_at=NULL WHERE {SCOPE} AND id=:id",
+                    task_fact_update(
+                        f"UPDATE task_intents SET status=:status,next_attempt_at=NULL WHERE {SCOPE} AND id=:id"
+                    ),
+                    at=event.timestamp,
                     id=task["id"],
                     status="ready" if request.kind == "retry_safe" else "completed",
                 )
             elif task is not None and request.kind == "accept_reconciled_result":
-                await repository.task_status(task["id"], "completed")
+                await repository.task_status(task["id"], "completed", at=event.timestamp)
             await repository.execute(
-                "UPDATE incidents SET status='resolved',actor_id=:actor,resolved_at=:now,"
+                "WITH changed AS (UPDATE incidents SET status='resolved',actor_id=:actor,resolved_at=:now,"
                 "resolution=cast(:resolution AS jsonb) "
-                f"WHERE {SCOPE} AND id=:id",
+                f"WHERE {SCOPE} AND id=:id RETURNING id) UPDATE incident_facts SET updated_at=:now "
+                f"WHERE {SCOPE} AND incident_id IN (SELECT id FROM changed)",
                 id=incident_id,
                 actor=actor.id,
                 now=event.timestamp,
@@ -257,6 +267,18 @@ class IncidentService:
             await settle(repository, await repository.run(previous.id))
             return resolved
 
+    async def read(
+        self, actor: Principal, scope: Scope, identifier: UUID, *, context: AuditContext
+    ) -> IncidentView | UnavailableResource:
+        """One incident from its facts; the run's classification metadata decides whether it is withheld."""
+        self.runtime.require(actor, scope, "incident.read", context)
+        async with self.runtime.definitions.transaction(scope, None, mutation=False) as tx:
+            await self._require_current(actor, scope, tx, context)
+            rows = await FactReadRepository(tx).incident_details([identifier])
+            if not rows:
+                raise CatalogError(404, "WV-NOT-FOUND", "Incident not found")
+            return incident_of(rows[0])
+
     async def list_all(
         self,
         actor: Principal,
@@ -265,32 +287,47 @@ class IncidentService:
         limit: int = 50,
         cursor: UUID | None = None,
         run_id: UUID | None = None,
+        query: IncidentQuery | None = None,
+        position: RunPosition | UUID | None = None,
         context: AuditContext,
     ) -> dict[str, Any]:
-        from firefly_weave.persistence.paging import page_ids
+        """A page of incidents read from facts, never from run payloads.
 
+        The keyword arguments are the original contract: every incident in ID order, with raw ID cursors in both
+        directions. A typed query selects filters and order, and its decoded position continues a page.
+        """
+        keywords = query is None
+        if query is None:
+            if type(limit) is not int or not 1 <= limit <= 100:
+                raise CatalogError(422, "WV-PAGE", "A bounded page is required")
+            query, position = IncidentQuery(order="id", limit=limit), cursor
+        elif cursor is not None or limit != 50:
+            raise ValueError("Use either a query or legacy list arguments")
+        if query.order == "id" and isinstance(position, RunPosition):
+            raise ValueError("ID order requires an ID position")
+        if query.order != "id" and isinstance(position, UUID):
+            raise ValueError("Chronological order requires a time position")
+        self.runtime.require(actor, scope, "incident.read", context)
         async with self.runtime.definitions.transaction(scope, None, mutation=False) as tx:
-            actor = await self.access.load_principal(actor.id, tx=tx)
-            self.runtime.require(actor, scope, "incident.read", context)
-            if run_id is not None:
-                await RuntimeRepository(tx, self.runtime.definitions.outbox).run(run_id)
-            ids = await page_ids(tx, "incidents", limit, cursor, run_id=run_id)
-            items = []
-            repository = RuntimeRepository(tx, self.runtime.definitions.outbox)
-            for identifier in ids[:limit]:
-                row = (await repository.rows(f"SELECT * FROM incidents WHERE {SCOPE} AND id=:id", id=identifier))[0]
-                try:
-                    view_of(await repository.run(row["run_id"]))
-                    items.append(incident_view(row).model_dump(mode="json"))
-                except CatalogError as error:
-                    # A run waiting for an upgrade (ir_unsupported) is listed like legacy evidence.
-                    if error.code not in {"WV-LEGACY-UNAVAILABLE", "WV-IR-UNSUPPORTED"}:
-                        raise
-                    items.append(
-                        {
-                            "id": str(identifier),
-                            "unavailable": True,
-                            "omissions": [{"path": "", "reason": "classification_unavailable"}],
-                        }
-                    )
-            return {"items": items, "next_cursor": str(ids[limit - 1]) if len(ids) > limit else None}
+            await self._require_current(actor, scope, tx, context)
+            repository = FactReadRepository(tx)
+            if run_id is not None and not await repository.run_exists(run_id):
+                raise CatalogError(404, "WV-NOT-FOUND", "Run not found")
+            rows = await repository.incident_rows(query, position, run_id)
+            visible = rows[: query.limit]
+            details = {row["id"]: row for row in await repository.incident_details([row["id"] for row in visible])}
+            items = [incident_of(details[row["id"]]).model_dump(mode="json") for row in visible]
+            next_cursor = None
+            if len(rows) > query.limit:
+                last = visible[-1]
+                collection = query.cursor_collection(run_id)
+                if query.order == "id":
+                    next_cursor = str(last["id"]) if keywords else encode_cursor(scope, collection, last["id"])
+                else:
+                    at = last["opened_at"]
+                    next_cursor = encode_cursor_v2(scope, collection, at.isoformat() if at else None, str(last["id"]))
+            return {"items": items, "next_cursor": next_cursor}
+
+    async def _require_current(self, actor: Principal, scope: Scope, tx: Transaction, context: AuditContext) -> None:
+        """`incident.read` on the principal stored now, in the read transaction; the token was checked first."""
+        self.runtime.require(await self.access.load_principal(actor.id, tx=tx), scope, "incident.read", context)

@@ -569,7 +569,9 @@ capabilities, bindings, Actions, and connection settings, plus
 
 **Lists.** Canonical lists return `{ "items": [...], "next_cursor": null | "opaque" }`.
 
-- `limit` is 1 to 100 (50 by default), and items come in stable ID order.
+- `limit` is 1 to 100 (50 by default). Items come in stable ID order unless a
+  list documents another order: `runs.list` and run summaries are newest
+  started first, and incident lists newest opened first, by default (see below).
 - Pass `next_cursor` back as `cursor` for the next page. A cursor is bound to
   its tenant, project, environment, collection, and any run or schedule filter;
   a cursor from another scope or filter is rejected.
@@ -596,22 +598,277 @@ Replay reports `consistent`, `inconsistent`, or `incomplete`: a history prefix,
 or a history with unavailable or redacted parts, is never reported as success.
 See [history and replay](history-and-replay.md).
 
-**Run summaries, steps, and logs.** `run_summaries.list`, `runs.steps`, and
-`runs.logs` are published so that clients can build against them. Until this
-server serves them, an authorized request answers `501` with `WV-UNAVAILABLE`.
+**Run summaries, steps, and logs.** `run_summaries.list` and `runs.steps` serve
+scoped operational metadata after checking both token and current permissions.
+`runs.logs` remains a published contract: an authorized request answers `501`
+with `WV-UNAVAILABLE`.
 
-- These lists are ordered by time, not by ID: run summaries by start time
-  (newest first by default) or by last update, steps by scheduled time, and log
-  entries by time.
+- Run summaries and `runs.list` default to `order=started_desc`. They also accept
+  `started_asc` and `updated_desc`; `runs.list` additionally accepts `order=id`.
+  Use explicit `order=id` with legacy v1 cursors. The original business-key,
+  correlation-key, single-status and archive filters retain their v1 collection;
+  additional filters bind the cursor to the normalized query.
+- Chronological lists use v2 cursors with UUID tie breakers and unknown times
+  last. `updated_desc` is a live view: updates can move a run between pages,
+  so refresh from the first page to see its latest position. Steps sort by
+  scheduled time, static step ID and full instance key; unknown times sort last.
 - `runs.steps` and `runs.logs` accept a `limit` of 1 to 500 (200 by default).
 - Each cursor is bound to every filter and to the order. After you change a
   filter, start again from the first page.
 - Test runs are left out unless you send `include_test=true`, and archived runs
-  unless you send `include_archived=true`.
+  unless you send `include_archived=true`. This applies to `runs.list` too.
+- `runs.list` and run summaries reject unknown query parameters, and a `limit`
+  outside 1 to 100 answers `422` with `WV-VALIDATION`.
+- A `runs.list` page is limited to 8 MiB of retained run data. A larger page
+  answers `429` with `WV-PAGE-LIMIT`; request a smaller `limit`.
 - A contradictory filter, such as `version` without `workflow`, answers `422`
   with `WV-FILTER`; the message names the rule that failed.
 - Send times as RFC 3339 with an offset. Use `Z`, or encode `+` as `%2B` in the
   query string.
+- A run summary's `handled_errors` counts the failed steps whose error a step
+  setting handled so the run went on, and `has_handled_errors` filters on it; a
+  step fact's `handled` says how (`continue` or `errorOutput`). Workflows cannot
+  handle step errors yet, so this server leaves `handled_errors` out (zero) and
+  never sets `handled`; the fields are reserved so clients need no change when
+  they can.
+
+Step timelines do not read payloads unless `include=output` is requested. Only
+the displayed outputs are fetched, after checking the bounded run artifact and
+classifying each output. The outputs on one page are limited to 8 MiB in total;
+a larger page answers `429 WV-PAGE-LIMIT`, so request a smaller `limit`. An
+omitted output carries an omission reason; a returned JSON `null` is distinct
+from an omitted output. The output of an instance key with an activation
+segment (`#`) or a yield count (`~`) is omitted as `classification_unavailable`,
+because its step's schema does not describe it. Synthetic control
+instances do not appear. `complete=false` means the run has author step
+instances without facts, even when they fall outside the current page or filter.
+Their unknown timestamps remain null. Legacy metadata is streamed in batches
+of 500, up to 100,000 keys and two seconds per request; exceeding either budget
+answers `429 WV-RUNTIME-LIMIT`. A run this platform cannot run yet answers
+`422 WV-IR-UNSUPPORTED`, as `runs.read` does; a run with unavailable legacy
+evidence answers `409 WV-LEGACY-UNAVAILABLE`. Timelines, summaries and incident
+lists follow the run's stored listing decision. After an upgrade lets the
+platform run such a run again, `runs.read` serves it at once, but its timeline
+keeps answering `422 WV-IR-UNSUPPORTED` until the scheduler re-checks the
+decision in the background. Each minute the scheduler visits up to 16 tenants
+and re-checks at most 100 runs in one environment of each, so a large backlog
+takes a long time; see [Upgrades](../operations/upgrades.md#runs-that-need-a-newer-server).
+In `runs.list`, only a recorded policy block withholds a run before its own read
+classifies it.
+
+**Incidents.** `incidents.list` and the paged `incidents.run_list` read
+incident facts after checking both token and current permissions; they never
+load run payloads. `incidents.read` (`GET …/incidents/{identifier}`) reads one
+incident for a direct link and sends its revision as the `ETag`, ready for
+`incidents.resolve`.
+
+- Filters: `status` (repeatable: `active`, `closed`, `resolved`; every status
+  when omitted), `code`, `workflow`, `node_id`, `opened_after`,
+  `opened_before`, and `include_test`. `node_id` is a static step ID and
+  matches every instance of that step. Opening times follow the run summary
+  rules: RFC 3339 with an offset, `opened_after` earlier than `opened_before`,
+  and a range of at most 400 days.
+- Incident lists default to `order=opened_desc` and also accept `opened_asc`
+  and `order=id`. Incidents whose opening time is unknown come last. ID order
+  without filters keeps the earlier cursors, so send explicit `order=id` to
+  continue one; every other cursor is bound to the run, each filter, and the
+  order.
+- Incidents of test runs are left out unless you send `include_test=true`.
+  Incidents of archived runs stay listed.
+- Incident views add `opened_at`, `updated_at`, `workflow` (`name` and
+  `version`), `run_status`, `test`, and, for an incident of a repeated step
+  instance, `instance_key`; `node_id` is then the static step ID. Each is left
+  out while unknown, false, or empty. `opened_at_estimated: true` marks an
+  opening time taken from the run's last recorded event because the incident's
+  own opening event was not retained; an unknown opening time is never
+  estimated.
+- An incident on a control step, a switch or parallel branch output
+  (`@branch:…`) or a join (`@join:…`), keeps that control-step ID as `node_id`
+  and has no `instance_key`. The `node_id` filter takes author step IDs, so it
+  does not select these incidents.
+- An incident whose run metadata cannot be classified, whose run has a recorded
+  policy block, or whose step does not match its incident facts is an
+  unavailable placeholder. `incidents.read` then sends no `ETag`.
+- `incidents.resolve` answers with the incident as stored, without the added
+  fields; for a repeated step instance, its `node_id` is the full instance key.
+  Read the incident again with `incidents.read` after resolving to show it as
+  the lists do.
+- A page is limited to 8 MiB of retained incident data; a larger page answers
+  `429` with `WV-PAGE-LIMIT`. Unknown query parameters are rejected, and a
+  `limit` outside 1 to 100 answers `422` with `WV-VALIDATION`.
+
+**Worker identity.** `workers.create` accepts an optional `identity` describing
+where the worker runs: `host`, `runtime` (`embedded`, `container`, or
+`process`), `sdk_version`, `language_version`, `os`, `arch`, `platform_hint`
+(`kubernetes`, `docker`, or `none`), `namespace`, `node`, and up to 8
+`labels`. It is display metadata and never grants authority or placement.
+
+- `host`, `namespace`, and `node` are host or DNS names of at most 253
+  characters. Versions, `os`, and `arch` have at most 64 letters, digits, `.`,
+  `_`, `+`, or `-`.
+- Label keys have at most 64 characters and must not name a token, password,
+  secret, or authorization; values have at most 256 characters without control
+  characters. The whole identity is at most 4 KiB as stored JSON.
+- Unknown fields, a `placement` among them, are refused with `422`
+  `WV-VALIDATION`; placement is derived by the server, never reported.
+- The registration answer keeps its earlier shape and does not repeat the
+  identity. `workers.read`, `workers.list`, `workers.drain`, and
+  `workers.resume` return `identity` and `registered_at` (the database time of
+  registration) when they are known. Workers registered before the server
+  recorded them have neither.
+
+An older server refuses `identity` with `422` `WV-VALIDATION`. Current packaged
+workers and the Python SDK then register exactly once more without it, using the
+same client and credentials; any other failure is not retried. Native executors
+register inside the API process and always use a server of their own version.
+The registration answer's schema (`WorkerInstance`) has no `identity` field.
+
+**Worker fleet.** `workers.list` reads every page with one database query,
+including each worker's active leases, and checks `status.read` on both the
+token and the current principal.
+
+- By default it lists current workers: not revoked, and seen in the last hour
+  or, never seen, registered in the last hour. `state=all` lists every worker,
+  including revoked ones and workers registered before registration times were
+  recorded.
+- Filters: `presence` (`recent`, `stale`, or `unknown`, with the 60-second
+  presence window), `draining`, `release_id`, `task_type` (a capability as
+  workers register it, such as `echo@1.2.0`), `target_id`, and `host_prefix`, a
+  literal, case-sensitive prefix of the reported host in which `%` and `_`
+  match only themselves. `target_id` needs `deployment.read` on that target.
+- Orders: `last_seen_desc` (default) and `registered_desc`; unknown times come
+  last, and equal times are ordered by ID. Cursors are bound to every filter and
+  the order. A `limit` outside 1 to 100 or an unknown query parameter answers
+  `422 WV-VALIDATION`, and a page is limited to 8 MiB of worker data
+  (`429 WV-PAGE-LIMIT`).
+- `placement` names the deployment component a worker runs in:
+  `target_id`, `target_name`, `deployment_id`, and `component`. The server
+  matches the worker's reported `host` against the members of the latest
+  complete observation of each target, taken at the target's current revision
+  and not yet expired. Only targets that both the token and the current
+  principal may read with `deployment.read` are considered, so other targets'
+  names never appear. A host listed by more than one readable target or
+  component, a native executor (`runtime: embedded`), and a worker without a
+  reported host have no placement. Because uniqueness is decided among readable
+  targets, a reader restricted to some targets can see a placement for a host
+  that a reader of every target sees as ambiguous, and so without placement.
+- `drained_at` is the time the worker started draining. A repeated drain keeps
+  it and resuming clears it; workers drained before the time was recorded show
+  none. `workers.read` returns the same fields as the list, and `workers.drain`
+  and `workers.resume` answers include `drained_at` but no placement.
+
+`workers.retire_stale` (`POST …/workers/retire-stale`, `release.retire`,
+Idempotency-Key) revokes workers that hold no active lease and whose last
+contact (or registration, if never seen) is older than `older_than_seconds`,
+from one hour to 30 days. A worker without either time is never retired. Each
+command revokes at most 100 workers, oldest last contact first, and answers
+`{matched, revoked, worker_ids}`: `matched` counts every eligible worker, and
+`revoked` and `worker_ids` describe this batch. `dry_run: true` returns the same
+batch without revoking it. Repeating an Idempotency-Key returns the saved
+answer; send a new key for the next batch. Retirement never deletes or settles
+leases, and a worker another command is holding is left for the next batch.
+
+`releases.usage` (`GET …/worker-releases/{identifier}/usage`, `catalog.read`)
+answers `{workers, deployments, activations, next_cursor}`:
+
+- `workers` counts every instance of the release once: `revoked`, else
+  `draining`, else `online` (seen in the last 60 seconds) or `offline`.
+- `activations` counts the activation revisions that pin the release and can
+  still start runs: neither they, the latest revision of their activation, nor
+  their workflow version is retired.
+- `deployments` lists, at most `limit` (1 to 100, default 100) at a time, the
+  desired deployment components whose admitted release and image digest are
+  this release: `target_id`, `target_name`, `deployment_id`, `deployment_name`,
+  `component`, and `replicas`. Only targets that both the token and the current
+  principal may read with `deployment.read` are listed; without that capability
+  the list is empty and `deployments_hidden` is `true` (it is left out
+  otherwise), so an empty list from a reader who may see no target is not
+  mistaken for "nothing runs this release". The worker counts need only
+  `catalog.read`: they are counts per state, never worker identities. `next_cursor` continues the list for the same release and
+  readable targets.
+- A release of another environment answers `404 WV-NOT-FOUND`.
+
+**Environment summary.** `operations_summary.read`
+(`GET …/environments/{environment}/operations/summary`, `weave operations
+summary`) answers one environment's platform health in a single read. It needs
+`status.read` on both the token and the current principal, and reads every
+section in the same transaction that reloads those grants.
+
+- `observed_at` is the database time of the answer. `api` names the server
+  `version`, its image `build` digest when the server knows it, the `instance`
+  ID of the process that answered (new each time it starts), its
+  `uptime_seconds`, and `compatibility` (`mode` and the number of this
+  project's `findings`).
+- `health` lists `database` (with `latency_ms` of a bounded probe), each
+  background loop (`recovery_loop`, `schedules`, `outbox_loop`,
+  `provider_loop`, `kafka_loop`, `operations_loop`, `alert_evaluator`),
+  `native_executors`, and `telemetry`, each with a `state` of `ok`, `degraded`,
+  `down`, or `disabled`. Loops add `last_started_at` and `last_ok_at` when
+  known, `consecutive_failures`, and `recent_failures` (failed cycles among
+  the last 20). `telemetry` is `disabled` while export is off, `degraded` when
+  the process dropped telemetry within the last three metrics export intervals
+  (90 seconds by default), and `ok` otherwise. Health is measured by the
+  process that answered; no exception text is returned.
+- `load`: `runs_active` (active by status, as the run usage counter counts
+  them, with test runs left out), `tasks_ready` and
+  `oldest_ready_seconds` (tasks due now; a retry joins when its next attempt is
+  due), `tasks_leased`, `waits_active`, `waits_overdue` and
+  `oldest_overdue_seconds`, `outbox_pending` and `outbox_oldest_seconds`,
+  `provider_pending`, and `sources_enabled`. Task and worker figures count test
+  runs' work too, because they measure shared capacity. An age is `null` when
+  nothing waits.
+- `workers` counts current workers as `workers.list` lists them by default:
+  `online` (seen in the last 60 seconds), `offline`, `draining`, the `capacity`
+  of online workers that are not draining, and the `active_leases` workers hold.
+- `targets` needs `deployment.read` and counts only the targets both the token
+  and the current principal may read: `total`, `runner_online`, `busy` (an
+  active job), `reconciliation_required`, and `awaiting_approval` (plans that
+  can still be approved: unexpired, on a fresh observation of the current
+  target and deployment revisions, and neither approved nor applied).
+- `incidents` needs `incident.read`: `active` and `opened_24h`, leaving out
+  incidents of test runs. `opened_24h` counts only known opening times: an
+  incident whose opening time the upgrade estimated is never counted.
+- `attention` lists at most 20 items, `{kind, id, title}` plus `expires_at` for
+  approvals, in this order: jobs that need reconciliation, plans you may
+  approve (soonest expiry first), offline workers that still hold active
+  leases, active incidents, targets whose runners are all offline, a restricted
+  compatibility verdict (`id` is `compatibility`), and runs that failed in the
+  last hour. Within a kind, items come oldest first, then by ID. Each kind
+  needs the capability that reads its records: `deployment.read` on the target
+  for jobs and runners, `deployment.read` and `deployment.approve` on the same
+  target for approvals, `incident.read` for incidents, and `run.read` for
+  failed runs. Items you may not read are left out; test runs never appear.
+- A section you may not read is `{"state": "forbidden"}`; none of its queries
+  run, and leaving it out records no authorization denial. Each section has two
+  seconds of database time in all (or a stricter statement timeout already in
+  force), shared by its queries: each runs under what is left. One that runs
+  out, or meets a transient database failure, is `{"state": "unavailable"}`
+  while the others are still served with `200`. Neither state is ever reported
+  as zero. The answer has no 24-hour run figures yet.
+
+Loop states follow these rules. A loop is `disabled` when its setting turns it
+off (API-only replicas disable every scheduler loop) and `down` while its task
+is not running. It is `degraded` before its first successful cycle, after 3
+failed cycles in a row or 3 failed cycles among its last 20, and when its last
+success is older than three poll intervals. The window is those 20 cycles only:
+a failure that comes back fewer than 3 times in any 20 cycles, for example once
+every 10 cycles, leaves the loop `ok`, with only `recent_failures` showing it. A cycle still running within its
+loop's budget is on time: 5 seconds for the outbox and broker traversals, 30
+seconds for recovery and schedules, and 60 seconds for provider and mailbox
+polling. A cycle that starts no work, such as an outbox cycle while the platform
+is not ready or while no delivery slot is free, is neither a success nor a
+failure, so a loop that keeps waiting turns `degraded` without counting
+failures. Ages use the process's monotonic clock; the times shown come from
+its wall clock.
+
+**Telemetry settings.** `operations_telemetry.read`
+(`GET …/projects/{project}/operations/telemetry`, `weave operations
+telemetry`) needs `status.read` for the project, on both the token and the
+current principal; an environment grant is not enough. It answers whether
+telemetry export is `enabled`, whether `traces` and `metrics` have a collector
+`configured` and its `host` name, the metrics `interval_seconds`, and how many
+telemetry items this process has `dropped`. It never returns endpoint paths,
+ports, queries, credentials, or headers.
 
 **Answers that say "unavailable".** Cancellation and task completion can return
 an unavailable acknowledgment when the platform cannot classify the historical
@@ -661,6 +918,8 @@ operation in the [full API reference](api-explorer.md); to generate a client,
 | `lumi.status` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/lumi/status` | lumi.use |
 | `lumi.ask` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/lumi/ask` | lumi.use |
 | `compatibility.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/operations/compatibility` | status.read |
+| `operations_summary.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/operations/summary` | status.read |
+| `operations_telemetry.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/operations/telemetry` | status.read |
 | `compatibility.check` | `POST /api/v1/tenants/{tenant}/projects/{project}/operations/compatibility/check` | compatibility.check |
 | `retention.plan` | `POST /api/v1/tenants/{tenant}/projects/{project}/operations/retention/plans` | retention.plan |
 | `retention.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/operations/retention/plans/{identifier}` | retention.plan |
@@ -771,14 +1030,17 @@ operation in the [full API reference](api-explorer.md); to generate a client,
 | `runs.logs` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/runs/{identifier}/logs` | run.read |
 | `incidents.run_list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/runs/{identifier}/incidents` | incident.read |
 | `incidents.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/incidents` | incident.read |
+| `incidents.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/incidents/{identifier}` | incident.read |
 | `incidents.resolve` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/incidents/{identifier}/resolve` | incident.resolve |
 | `releases.create` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/worker-releases` | release.activate |
 | `releases.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/worker-releases` | catalog.read |
 | `releases.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/worker-releases/{identifier}` | catalog.read |
+| `releases.usage` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/worker-releases/{identifier}/usage` | catalog.read |
 | `workers.create` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/workers` | worker.register |
 | `workers.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/workers` | status.read |
 | `workers.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/workers/{identifier}` | status.read |
 | `workers.revoke` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/workers/{identifier}/revoke` | release.retire |
+| `workers.retire_stale` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/workers/retire-stale` | release.retire |
 | `workers.grant` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/worker-connection-grants` | connection.manage |
 | `tasks.claim` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/tasks/claim` | task.claim |
 | `tasks.context` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/tasks/context` | task.claim |
@@ -860,6 +1122,17 @@ and runner registrations belong to one environment. Child-resource reads check
 the target grant. Lists filter authorized target IDs before pagination; use
 `target_id` to select a target, and `deployment_id` to narrow plan history.
 An observation is a dated snapshot, not a promise of current health.
+A worker component's observed resource lists up to 100 live `members`, one per
+running or starting container or pod: `host`, `ordinal`, `state`, `ready`,
+`started_at`, `restarts`, and `node`. Compose reports the container ID prefix,
+which is the container's default hostname, and its Compose number as
+`ordinal`; Kubernetes reports the pod name and node. Stopped, terminating,
+finished, failed, and evicted containers or pods are left out. Members are
+placement only: with more than 100 live members, or when the runner cannot list
+them all, the field is left out (placement unknown) rather than truncated, and
+the observation still succeeds. A resource without the field therefore has no
+members or unknown ones, and its observation keeps its digest. Upgrade the
+server before its runners; an older server refuses a report with `members`.
 
 The server creates an immutable plan from the desired revision and a fresh,
 complete observation. Approval records its exact digest. Applying checks the

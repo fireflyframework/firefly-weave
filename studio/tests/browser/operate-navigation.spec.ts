@@ -17,7 +17,8 @@ SPDX-License-Identifier: Apache-2.0
 */
 // Operate navigation: the Work and Operate groups, entries shown by
 // capability, the paths from before Operate, and run addresses that open and
-// close the run.
+// close the run. The Runs list reads run summaries; a run's detail reads the
+// run itself.
 import { test, expect, Page, Route } from "@playwright/test";
 import { connected, offline } from "./support";
 
@@ -30,6 +31,32 @@ const run = {
   business_key: "order-7",
   state: { status: "waiting", active: [] },
 };
+/** The run as the Runs list summarizes it: its row opens by its workflow name. */
+const summaryOf = (record: typeof run, workflow: string) => ({
+  id: record.id,
+  workflow: {
+    name: workflow,
+    version: "1.0.0",
+    definition_version_id: "5e6f7a8b-0000-4000-8000-0000000000aa",
+  },
+  activation_id: "5e6f7a8b-0000-4000-8000-0000000000bb",
+  activation: { name: workflow, revision: 1 },
+  status: record.state.status,
+  paused: false,
+  test: false,
+  origin: "manual",
+  caller: null,
+  retried_from_run_id: null,
+  started_at: new Date(Date.now() - 60_000).toISOString(),
+  updated_at: new Date(Date.now() - 30_000).toISOString(),
+  ended_at: null,
+  duration_ms: null,
+  business_key: record.business_key,
+  correlation_key: null,
+  failed_step: null,
+  active_incidents: 0,
+  archived: false,
+});
 
 async function navLabels(page: Page) {
   return page
@@ -46,8 +73,13 @@ const denied = (r: Route) =>
   r.fulfill({ status: 403, json: { code: "WV-DENIED", message: "Denied" } });
 
 async function runRoutes(page: Page) {
-  await page.route(`${environment}/runs?*`, (r) =>
-    r.fulfill({ json: { items: [run], next_cursor: null } }),
+  await page.route(`${environment}/run-summaries?*`, (r) =>
+    r.fulfill({
+      json: { items: [summaryOf(run, "orders")], next_cursor: null },
+    }),
+  );
+  await page.route(`${environment}/runs/*/steps?*`, (r) =>
+    r.fulfill({ json: { items: [], next_cursor: null, complete: true } }),
   );
   await page.route(`${environment}/runs/${runId}`, (r) =>
     r.fulfill({ json: run }),
@@ -139,7 +171,7 @@ for (const viewport of [
         ["/runs", "/operate/runs", "Runs"],
         ["/workers", "/operate/workers", "Workers"],
         ["/operations", "/operate/clusters", "Clusters"],
-        ["/operate", "/operate/runs", "Runs"],
+        ["/operate", "/operate/overview", "Overview"],
       ]) {
         await page.goto(old);
         await expect(page).toHaveURL(new RegExp(`${path}$`));
@@ -199,7 +231,7 @@ for (const viewport of [
       await detail.getByRole("button", { name: "Close detail" }).click();
       await expect(page).toHaveURL(/\/operate\/runs$/);
       await expect(detail).toHaveCount(0);
-      await page.getByRole("button", { name: "order-7", exact: true }).click();
+      await page.getByRole("button", { name: "orders", exact: true }).click();
       await expect(page).toHaveURL(new RegExp(`/operate/runs/${runId}$`));
       await expect(detail.locator("#record-detail-title")).toHaveText(
         "order-7",
@@ -225,20 +257,20 @@ for (const viewport of [
       ).toHaveCount(0);
       let listReads = 0;
       page.on("request", (request) => {
-        if (/\/environments\/development\/runs\?/.test(request.url()))
+        if (/\/environments\/development\/run-summaries\?/.test(request.url()))
           listReads++;
       });
       await page.getByRole("button", { name: "Runs", exact: true }).click();
       await expect(page).toHaveURL(/\/operate\/runs$/);
+      // Only the reads opening and closing cause count here, not the timer.
+      await page.getByRole("switch", { name: "Auto-refresh" }).uncheck();
       await expect(
-        page.getByRole("button", { name: "order-7", exact: true }),
+        page.getByRole("button", { name: "orders", exact: true }),
       ).toBeVisible();
       const reads = listReads;
       const detail = page.locator(".record-detail");
       for (let cycle = 0; cycle < 2; cycle++) {
-        await page
-          .getByRole("button", { name: "order-7", exact: true })
-          .click();
+        await page.getByRole("button", { name: "orders", exact: true }).click();
         await expect(page).toHaveURL(new RegExp(`/operate/runs/${runId}$`));
         await expect(detail.locator("#record-detail-title")).toHaveText(
           "order-7",
@@ -261,7 +293,7 @@ for (const viewport of [
       await connected(page, { capabilities: ["run.read"] });
       await runRoutes(page);
       await page.getByRole("button", { name: "Runs", exact: true }).click();
-      await page.getByRole("button", { name: "order-7", exact: true }).click();
+      await page.getByRole("button", { name: "orders", exact: true }).click();
       const detail = page.locator(".record-detail");
       await expect(page).toHaveURL(new RegExp(`/operate/runs/${runId}$`));
       await expect(detail.locator("#record-detail-title")).toHaveText(
@@ -288,7 +320,7 @@ for (const viewport of [
       page,
     }) => {
       await connected(page, { capabilities: ["status.read"] });
-      await page.route(`${environment}/runs?*`, denied);
+      await page.route(`${environment}/run-summaries?*`, denied);
       await page.goto("/operate/runs");
       await expect(page.locator("#main h1")).toHaveText("Runs");
       await expect(page.locator("weave-operate-state")).toContainText(
@@ -305,7 +337,7 @@ for (const viewport of [
       page,
     }) => {
       await connected(page, { capabilities: ["status.read"] });
-      await page.route(`${environment}/runs?*`, denied);
+      await page.route(`${environment}/run-summaries?*`, denied);
       await page.route(`${environment}/runs/${runId}`, denied);
       await page.goto(`/operate/runs/${runId}`);
       await expect(page.locator("weave-operate-state")).toContainText(
@@ -325,7 +357,9 @@ for (const viewport of [
       await runRoutes(page);
       await page.route(`${environment}/runs/${hidden}`, denied);
       await page.goto(`/operate/runs/${hidden}`);
-      const state = page.locator("weave-operate-state");
+      const state = page
+        .locator("weave-operate-state")
+        .filter({ hasText: "You don't have access to this run" });
       await expect(state).toContainText("You don't have access to this run");
       await expect(state).toContainText(
         "You need run.read in this environment.",
@@ -335,11 +369,11 @@ for (const viewport of [
       await expect(page.getByText("Run 6f7a8b9c")).toHaveCount(0);
       // The runs this person can read stay on the page.
       await expect(
-        page.getByRole("button", { name: "order-7", exact: true }),
+        page.getByRole("button", { name: "orders", exact: true }),
       ).toBeVisible();
       await expect(page.locator(".error-banner")).toHaveCount(0);
       // Opening a run they can read puts the explanation away.
-      await page.getByRole("button", { name: "order-7", exact: true }).click();
+      await page.getByRole("button", { name: "orders", exact: true }).click();
       await expect(
         page.locator(".record-detail #record-detail-title"),
       ).toHaveText("order-7");
@@ -354,19 +388,18 @@ for (const viewport of [
         await runRoutes(page);
         await page.getByRole("button", { name: "Runs", exact: true }).click();
         const detail = page.locator(".record-detail");
-        await page
-          .getByRole("button", { name: "order-7", exact: true })
-          .click();
+        await page.getByRole("button", { name: "orders", exact: true }).click();
         await expect(page).toHaveURL(new RegExp(`/operate/runs/${runId}$`));
         await expect(detail).toHaveCount(1);
         await page
+          .getByRole("group", { name: "Status" })
           .getByRole("button", { name: "Waiting", exact: true })
           .click();
-        await expect(page).toHaveURL(/\/operate\/runs$/);
+        await expect(page).toHaveURL(/\/operate\/runs\?status=waiting$/);
         await expect(detail).toHaveCount(0);
-        // The list stays after a reload, and Back leaves Runs.
+        // The list and its filter stay after a reload, and Back leaves Runs.
         await page.reload();
-        await expect(page).toHaveURL(/\/operate\/runs$/);
+        await expect(page).toHaveURL(/\/operate\/runs\?status=waiting$/);
         await expect(detail).toHaveCount(0);
         await page.goBack();
         await expect(page).toHaveURL(/\/home$/);
@@ -380,8 +413,13 @@ for (const viewport of [
         second.business_key = "order-8";
         await connected(page, { capabilities: ["run.read"] });
         await runRoutes(page);
-        await page.route(`${environment}/runs?*`, (r) =>
-          r.fulfill({ json: { items: [run, second], next_cursor: null } }),
+        await page.route(`${environment}/run-summaries?*`, (r) =>
+          r.fulfill({
+            json: {
+              items: [summaryOf(run, "orders"), summaryOf(second, "refunds")],
+              next_cursor: null,
+            },
+          }),
         );
         await page.route(`${environment}/runs/${second.id}`, (r) =>
           r.fulfill({ json: second }),
@@ -401,12 +439,10 @@ for (const viewport of [
         );
         await page.getByRole("button", { name: "Runs", exact: true }).click();
         const detail = page.locator(".record-detail");
-        await page
-          .getByRole("button", { name: "order-7", exact: true })
-          .click();
+        await page.getByRole("button", { name: "orders", exact: true }).click();
         await expect(page).toHaveURL(new RegExp(`/operate/runs/${runId}$`));
         await page
-          .getByRole("button", { name: "order-8", exact: true })
+          .getByRole("button", { name: "refunds", exact: true })
           .click();
         await expect(page).toHaveURL(new RegExp(`/operate/runs/${second.id}$`));
         await expect(detail.locator("#record-detail-title")).toHaveText(

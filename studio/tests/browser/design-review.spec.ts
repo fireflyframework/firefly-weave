@@ -29,6 +29,7 @@ import {
   insertStep,
   newWorkflow,
   offline,
+  runSummaries,
 } from "./support";
 import { DesignerPage } from "./designer-po";
 import { chooseAction, openPaletteIntegrations } from "./integrations-po";
@@ -86,6 +87,7 @@ async function openRun(page: Page) {
   await page.route(`${environment}/runs?*`, (r) =>
     r.fulfill({ json: { items: [run], next_cursor: null } }),
   );
+  await runSummaries(page, [run]);
   await page.route(`${environment}/runs/${run.id}`, (r) =>
     r.fulfill({ json: run }),
   );

@@ -100,12 +100,17 @@ start, the dialog stays open and says "The run didn't start." with the reason.
 **Find runs later** with the filters above the list in **Runs**. The list
 updates as soon as you change a filter; there is no button to apply them.
 
-- Type an exact business key in **Search by business key**.
-- Choose a status: **All**, **Waiting**, **Failed**, or **Succeeded**.
+- Type an exact business key in **Business key**.
+- Choose one or more statuses, such as **Waiting** and **Failed**; choose a
+  status again to remove it.
+- Choose a **Time range**: the last 24 hours by default, a longer or shorter
+  one, or a custom range.
 - Open **More filters** to enter an exact **Correlation key** or to check
   **Include archived runs**.
 
-To remove a filter, empty its field, choose **All**, or clear the check box.
+To remove a filter, empty its field, choose its status again, or clear the
+check box; **Clear filters** removes them all. Business and correlation keys
+never appear in the page's address.
 
 ### With the CLI
 
@@ -179,10 +184,11 @@ explicitly which run should receive the event.
 Open a run in Studio's **Runs** view. Its detail shows, from top to bottom:
 the status, business key, and run ID (**Copy** copies the full ID); a **Now**
 line that says what the run is doing; its commands; the graph of the workflow
-version it runs, with **Now** on the current step; a **Timeline** of its
-recorded events; **Technical details**; and **Archive**. The detail does not
-update by itself: select **Refresh** at the bottom of the detail to read the
-run again.
+version it runs, with **Now** on the current step; its **Steps**, each with the
+time it waited and the time it ran; its recorded **Events**; **Technical
+details**; and **Archive**. While the run is still going, Studio reads it again
+every 2 seconds; select **Refresh** at the bottom of the detail to read it at
+once.
 
 The **Now** line, or the card that replaces it, tells you what the run waits
 for. STEP stands for the step's ID:
