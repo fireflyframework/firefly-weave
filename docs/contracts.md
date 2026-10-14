@@ -217,10 +217,10 @@ other workflows are part of the language; compensation is not.
 
 **New language constructs.** `forEach`, `callWorkflow`, `concat`, and `join`
 each need a language feature: `flow.forEach`, `flow.callWorkflow`, `text.concat`,
-and `text.join`. This version compiles and runs `concat` and `join`, and compiles
-`forEach`: the compiler checks a loop's scope, types, and limits and lowers it,
-but this platform does not run loops yet, so it refuses to publish, import, or
-activate a workflow that uses one (`WV-IR-UNSUPPORTED`). It also compiles
+and `text.join`. This version compiles and runs `concat`, `join`, and `forEach`;
+see [loops at run time](reference/compiler.md#loops-at-run-time). A platform
+that does not list `flow.forEach` refuses to publish, import, or activate a
+workflow that uses a loop (`WV-IR-UNSUPPORTED`). It also compiles
 `callWorkflow` (see **Workflow calls** below) and refuses to publish a workflow
 that calls another until it runs calls. A platform runs a construct only when its
 [language manifest](#language-manifest) lists the feature. Step IDs can never
@@ -487,7 +487,7 @@ backend is absent. The `integration` and `e2e` pytest markers are registered.
 | `WV-COMP-UNSUPPORTED_FEATURE` | The document uses a construct whose language feature this compiler does not compile; the message names the feature | Upgrade the CLI or SDK that compiles it, or replace the construct with steps this compiler supports |
 | `WV-IR-UNSUPPORTED` when publishing a workflow with `callWorkflow` | The compiler accepts the call, but this platform does not run workflow calls yet, so it refuses to publish it; `result.missing_features` is `["flow.callWorkflow"]` | Keep the workflow as a draft until the platform lists `flow.callWorkflow` in its language manifest; the called workflow itself publishes normally |
 | `WV-READINESS-CALL` on activation | A called workflow version has no pinned activation, a pin names something the workflow does not call, or the pinned activation is retired, runs another version, or does not allow this workflow | Pin one live activation of each called version in `workflow_activation_ids` |
-| `WV-IR-UNSUPPORTED` when publishing a workflow with `forEach` | The compiler accepts the loop, but this platform does not run loops yet, so it refuses to publish it; `result.missing_features` is `["flow.forEach"]` | Keep the workflow as a draft until the platform lists `flow.forEach` in its language manifest |
+| `WV-IR-UNSUPPORTED` when publishing a workflow with `forEach` | The platform you publish to is older and does not list `flow.forEach` in its language manifest; `result.missing_features` is `["flow.forEach"]` | Upgrade that platform, or keep the workflow as a draft until it lists the feature |
 | `WV-DECISION-OPERATOR` | A decision table rule uses `concat` or `join` | Build the text in a Transform step before the table and pass it in as input |
 | `WV-IR-UNSUPPORTED` on activation, a catalog read, or a run read | The platform does not list an IR version or a language feature the workflow uses; `result.missing_features` names the missing features and is empty when the IR version itself is unknown. A catalog list shows such a version as an unavailable item with `reason: ir_unsupported` and the same `missing_features`. A run that uses such a feature waits for an upgrade; signals and task results for it answer the same way, and run lists show it as unavailable | Upgrade the platform, or activate a version that does not use the feature |
 | `onFailure` is rejected on a call step | `onFailure` applies only when the call waits for its result | Remove `onFailure`, or set `mode: wait` |

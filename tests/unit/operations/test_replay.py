@@ -435,6 +435,7 @@ def test_signal_receipt_selection_obeys_recorded_active_node_order():
             evidence,
             {"first": earlier_deadline, "pause": initial.issued_deadlines[0]},
             {"first": earlier_node, "pause": node},
+            set(),
         )
     assert caught.value.code == "WV-REPLAY-SIGNAL-ORDER"
 
@@ -669,3 +670,67 @@ def test_recorded_attempt_lifecycle(worker_runtime_fixture, recorded_events, rou
         assert (report.status, report.last_verified_sequence) == ("incomplete", 3)
     else:
         assert (report.status, report.last_verified_sequence) == ("consistent", 4), report
+
+
+def test_a_loop_that_yields_replays_its_wake_up_as_a_duration_deadline():
+    from firefly_weave.compiler.api import compile_source
+    from firefly_weave.compiler.catalog import CatalogSnapshot
+    from firefly_weave.contracts.access import Scope
+    from firefly_weave.contracts.operations import DeadlineFact, RecordedEvidence, SourceReference, WaitReceipt
+    from firefly_weave.operations.exports import lock_digest, transition_digest
+    from firefly_weave.operations.redaction import SafeProjection
+    from firefly_weave.operations.replay import replay
+    from firefly_weave.runtime.kernel import transition
+    from firefly_weave.runtime.models import Deadline, RunState, RuntimeEvent
+
+    loop = {"id": "each", "kind": "forEach", "items": {"ref": "/input"}, "maxItems": 10_000}
+    artifact = compile_source(
+        {
+            "apiVersion": "weave/v1alpha1",
+            "kind": "Workflow",
+            "metadata": {"name": "yields", "version": "1.0.0"},
+            "spec": {
+                "inputSchema": {"type": "array", "items": {"type": "integer"}},
+                "outputSchema": {},
+                "steps": [{**loop, "body": {"steps": [], "output": {"ref": "/item"}}}],
+                "output": {"ref": "/steps/each/output"},
+            },
+        },
+        format="object",
+        catalog=CatalogSnapshot.empty(),
+    ).artifact
+    scope = Scope(tenant_id=uuid4(), project_id=uuid4(), environment_id=uuid4())
+    base = dict(
+        run_id=uuid4(),
+        scope=scope,
+        artifact_digest=artifact.digest,
+        lock_digest=lock_digest(artifact),
+        source=SourceReference(scope=scope, version_id=uuid4(), source_hash=artifact.source_hash, format="json"),
+        provenance="synthetic_kernel",
+    )
+    items = list(range(2500))
+    first = RuntimeEvent(
+        id=uuid4(), sequence=1, timestamp=NOW, type="started", data={"admission_policy": "classified-v1"}
+    )
+    change = transition(RunState(input=items), first, artifact)
+    (command,) = [c for c in change.commands if isinstance(c, Deadline)]
+    assert command.node_id == "each~1"
+    due = DeadlineFact(wait_id=uuid4(), node_id=command.node_id, deadline=command.deadline, name=command.name)
+    evidence = RecordedEvidence(
+        **base,
+        initial_input=SafeProjection(available=True, value=items),
+        expected_transition_digest=transition_digest(change),
+        issued_deadlines=[due],
+    )
+    first = first.model_copy(update={"evidence": evidence.model_dump(mode="json")})
+    data = {"node_id": "each~1", "deadline": due.deadline.isoformat(), "wait_id": str(due.wait_id)}
+    last = RuntimeEvent(id=uuid4(), sequence=2, timestamp=NOW, type="wait_elapsed", data=data)
+    final = transition(change.state, last, artifact)
+    assert final.state.status == "succeeded"
+    evidence = RecordedEvidence(
+        **base,
+        expected_transition_digest=transition_digest(final),
+        wait_receipt=WaitReceipt(wait_id=due.wait_id, pending_signals=[]),
+    )
+    events = (first, last.model_copy(update={"evidence": evidence.model_dump(mode="json")}))
+    assert replay(artifact, events).status == "consistent"

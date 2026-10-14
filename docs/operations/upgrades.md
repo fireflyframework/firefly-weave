@@ -418,6 +418,18 @@ before you reopen traffic on a server that includes them:
   reservation in the database, which grew with each run ever started. Usage
   figures and limits are unchanged. Apply the migration before you restart the
   server; a server that includes it refuses to start on the previous schema.
+- **Loops run; upgrade CLIs and SDKs with the server.** The server lists
+  `flow.forEach` in its language manifest and capabilities and runs workflows
+  with **Loop over items** (`forEach`) steps. The capabilities response gains
+  `operations.runtime.loop_units_per_turn`, and human tasks inside a loop
+  answer with `instance_key` and `iteration`. CLIs and SDKs check every answer
+  against the fields they know, so alpha15 and earlier clients fail
+  `capabilities.read` (`weave remote capabilities`, `capabilities()` in the SDK)
+  with `WV-WIRE` against such a server. Upgrade them together with the server. Before
+  you roll back to alpha15, let every run that uses a loop finish, or cancel it:
+  alpha15 does not list `flow.forEach`, so such runs wait until a server that
+  runs loops takes over, as described in
+  [runs that need a newer server](#runs-that-need-a-newer-server).
 - **AI test times use the database clock.** A recorded AI connection test is
   dated with the database's clock, the same clock readiness uses to measure its
   age. Tests recorded by an earlier server keep their API-host timestamps.

@@ -208,6 +208,11 @@ sidecar, committed in the same transaction as the fact:
   spelling makes the history inconsistent. An export's `node_paths` stays keyed
   by node ID, so map an event's `node_id` to its path through the node ID part of
   the key (`node_of`).
+- A loop's history shows `spawn_branch` and `accept_output` commands with the
+  element position in `index`, its iterations' events under keys such as
+  `send[2]`, and each yield as a `wait_elapsed` event for its yield key
+  (`notify~1`). Replay checks these like any other fact, so the exported history
+  of a run with loops replays as `consistent`.
 - The expected transition is the SHA-256 of a canonical `classified-v1` safe
   projection of the kernel state, identified as `sha256-rfc8785-v1`; no
   duplicate snapshot is stored.

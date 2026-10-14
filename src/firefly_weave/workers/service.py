@@ -31,6 +31,7 @@ from firefly_weave.access.service import audit
 from firefly_weave.compiler.api import CompiledArtifact
 from firefly_weave.compiler.catalog import CatalogSnapshot
 from firefly_weave.compiler.expressions import measure_value
+from firefly_weave.compiler.ir import executable_node_kinds
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.catalog import ActivationRequest
 from firefly_weave.contracts.workers import (
@@ -270,22 +271,7 @@ class WorkerService(WorkerAdmissionPort):
             raise AccessDenied()
         self.definitions.require(actor, scope, capability, context)
         executable: dict[str, Any] = dict(artifact.executable)
-        supported = {
-            "decisionTable",
-            "start",
-            "end",
-            "transform",
-            "action",
-            "callWorkflow",
-            "signal",
-            "humanTask",
-            "wait",
-            "switch",
-            "parallel",
-            "branch-output",
-            "join",
-            "fail",
-        }
+        supported = executable_node_kinds()
         if any(n["kind"] not in supported for n in executable["graph"]["nodes"]):
             raise CatalogError(422, "WV-READINESS", "Unsupported executable node")
         required: dict[str, set[str]] = {}

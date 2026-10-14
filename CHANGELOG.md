@@ -37,13 +37,35 @@ SPDX-License-Identifier: Apache-2.0
   another with `WV-IR-UNSUPPORTED`; workflows without calls compile to the same
   bytes as before. `weave workflow explain` and `weave workflow graph` show calls,
   and the SDK's `WorkflowBuilder.with_callable()` writes `spec.callable`.
+- Loops run. A **Loop over items** (`forEach`) step runs its body once per
+  element, `concurrency` at a time, in one run, and its output lists one result
+  per element in element order, whatever order the iterations finish in. Each
+  iteration's steps, tasks, human tasks, waits, and incidents use their own
+  instance key (`send[2]`); a task incident in one iteration suspends the run, a
+  `fail` step in one fails it, and canceling ends every iteration. Finished
+  iterations are removed from the run state. An `items` value that is not a list,
+  more elements than `maxItems`, or results over the 1 MiB payload limit open
+  `WV-RUNTIME-LOOP-ITEMS`, `WV-RUNTIME-LOOP-LIMIT`, or `WV-RUNTIME-LOOP-OUTPUT`.
+  A long loop yields after 4,000 units of work in one event and continues about
+  one scanner poll later; the capabilities response reports the budget as
+  `operations.runtime.loop_units_per_turn`. The platform now lists
+  `flow.forEach` and `forEach` in its language manifest and capabilities, so it
+  publishes, imports, and activates workflows with loops. Debug sessions run
+  loops with the same reducer. New counters `weave.loop_iterations` (`status:
+  ok` for each collected result, `cancelled` for each iteration still running
+  when its run ends) and `weave.loop_yields`. Upgrade the CLI and SDK together with the server: older
+  clients do not know the human task `instance_key` and `iteration` fields or
+  the new capability fields.
+- Evaluating an expression inside a loop body and admitting a long event no
+  longer walk data that has not changed since the event started, so a loop's
+  cost grows linearly with its number of elements.
 - The compiler checks and compiles **Loop over items** (`forEach`): `/item`,
   `/index`, and `/loops/<id>/…` inside a loop body, a typed list of results after
   it, `WV-COMP-LOOP_*` diagnostics for wrong items, scope, nesting, limits, and
   signals in a body (with a suggested `maxItems` for a loop budget that is too
   high), and an IR `forEach` node with an `each` edge and an `each` join that
-  requires the `flow.forEach` feature. This platform does not run loops yet, so
-  it refuses to publish, import, or activate such a workflow with
+  requires the `flow.forEach` feature. A platform that does not list the
+  feature refuses to publish, import, or activate such a workflow with
   `WV-IR-UNSUPPORTED`; workflows without loops compile to the same bytes as
   before. The compiler limits add `max_loop_items`, `max_loop_depth`, and
   `max_run_iterations`. Studio's local host answers `POST /studio/local/scope`

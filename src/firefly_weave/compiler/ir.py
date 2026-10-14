@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from collections import deque
 from collections.abc import Collection
-from typing import Annotated, Literal, cast
+from typing import Annotated, Literal, cast, get_args
 
 from pydantic import AfterValidator, Field, model_validator
 
@@ -551,6 +551,24 @@ def require_supported_ir(executable: object, features: Collection[str] | None = 
         missing = tuple(sorted(set(cast(list[str], declared)) - set(advertised)))
     if missing or executable.get("irVersion") not in accepted_ir_versions(advertised):
         raise UnsupportedIR(missing)
+
+
+def executable_node_kinds(features: Collection[str] | None = None) -> frozenset[str]:
+    """IR node kinds a platform runs: every kind, except those whose language feature it does not advertise.
+
+    ``features`` defaults to the advertised ones, read at call time.
+    """
+    advertised = language_features.ADVERTISED_FEATURES if features is None else features
+    kinds = (
+        kind
+        for model in get_args(get_args(IRNode.__value__)[0])
+        for kind in get_args(model.model_fields["kind"].annotation)
+    )
+    return frozenset(
+        kind
+        for kind in kinds
+        if kind not in language_features.KIND_FEATURES or language_features.KIND_FEATURES[kind] in advertised
+    )
 
 
 class ExecutableBase(ContractModel):
