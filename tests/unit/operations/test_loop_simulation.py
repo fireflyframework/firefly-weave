@@ -23,7 +23,7 @@ import pytest
 
 from firefly_weave.compiler.api import compile_source
 from firefly_weave.compiler.catalog import CatalogSnapshot
-from firefly_weave.operations.debug.models import DebugError
+from firefly_weave.operations.debug.models import DebugError, LoopView
 from firefly_weave.operations.debug.simulator import Simulator, first_instance
 from firefly_weave.runtime.kernel import workflow
 
@@ -210,3 +210,63 @@ def test_a_step_id_as_a_target_means_its_first_iteration(worker_runtime_fixture)
     assert first_instance(workflow(worker_runtime_fixture["artifact"]), "work") == "work"
     with pytest.raises(DebugError, match="WV-DEBUG-BREAKPOINT"):
         first_instance(nested, "missing")
+
+
+def test_an_instance_breakpoint_shows_the_iteration_item_and_loop_progress(worker_runtime_fixture):
+    artifact = sends(worker_runtime_fixture["catalog"])
+    simulator = Simulator(artifact, mocks={"node:send": 7}, input=[10, 20, 30], now=NOW)
+    simulator.set_breakpoints({"send[1]"})
+    paused = simulator.continue_until_breakpoint()
+    assert paused.selected_scope.model_dump(mode="json") == {
+        "item": 20,
+        "index": 1,
+        "loops": {"each": {"item": 20, "index": 1}},
+    }
+    assert paused.loops == [
+        LoopView(node_id="each", instance_key="", count=3, completed=1, running=1, next_index=2, status="running")
+    ]
+    done = simulator.continue_until_breakpoint()
+    assert done.selected_scope is None
+    assert done.loops == [
+        LoopView(node_id="each", instance_key="", count=3, completed=3, running=0, next_index=3, status="joined")
+    ]
+
+
+def test_nested_loops_show_each_instance_in_document_order_and_every_enclosing_item():
+    simulator = Simulator(grid(), mocks={}, input=[[1, 2], [3]], now=NOW)
+    simulator.set_breakpoints({"double[1][0]"})
+    paused = simulator.continue_until_breakpoint()
+    assert paused.selected_node == "double[1][0]"
+    assert paused.selected_scope.model_dump(mode="json") == {
+        "item": 3,
+        "index": 0,
+        "loops": {"rows": {"item": [3], "index": 1}, "cells": {"item": 3, "index": 0}},
+    }
+    # The first row's inner loop was released with its iteration; the second row's is running.
+    assert [(view.node_id, view.instance_key, view.completed, view.count) for view in paused.loops] == [
+        ("rows", "", 1, 2),
+        ("cells", "cells[1]", 0, 1),
+    ]
+    assert Simulator.restore(simulator.serialize()).inspect() == paused
+    assert simulator.continue_until_breakpoint().variables["output"] == [["1", "2"], ["3"]]
+
+
+def test_views_of_workflows_without_loops_keep_their_shape(worker_runtime_fixture):
+    view = Simulator(worker_runtime_fixture["artifact"], mocks={"node:work": 9}, input=3, now=NOW).inspect()
+    dumped = view.model_dump(mode="json")
+    assert "loops" not in dumped and "selected_scope" not in dumped
+
+
+def test_a_loop_cut_after_its_target_still_runs_the_target_on_every_item():
+    # How a host slices a workflow to execute one step in a loop body: the body ends at the target, returning null.
+    pick = {"id": "pick", "kind": "transform", "value": {"ref": "/item"}}
+    loop = {
+        "id": "each",
+        "kind": "forEach",
+        "items": {"ref": "/input"},
+        "body": {"steps": [pick], "output": {"literal": None}},
+    }
+    simulator = Simulator(compiled([loop], {"literal": None}), mocks={}, input=[4, 5, 6], now=NOW)
+    simulator.set_breakpoints({"pick[2]"})
+    assert simulator.continue_until_breakpoint().selected_scope.item == 6
+    assert simulator.continue_until_breakpoint().status == "succeeded"

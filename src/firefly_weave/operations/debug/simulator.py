@@ -36,8 +36,11 @@ from firefly_weave.operations.debug.models import (
     DebugLimits,
     DebugState,
     DebugView,
+    LoopView,
+    SelectedScope,
     SignalReceipt,
 )
+from firefly_weave.runtime.control import loop_scope
 from firefly_weave.runtime.kernel import (
     _advance_owned,
     begin,
@@ -198,6 +201,40 @@ class Simulator:
         cursor = self.data.cursor
         return cursor.ready[0] if cursor is not None and cursor.ready else None
 
+    def _loops(self, state: RunState) -> list[LoopView]:
+        """Every loop instance in ``state``: in definition order, an outer loop before the loops in its body."""
+
+        def position(key: str) -> tuple[tuple[tuple[int, int | str], ...], tuple[int, ...]]:
+            # Definition paths order steps; numeric segments compare as numbers (steps/2 before steps/10).
+            path = self._prepared.nodes[node_of(key)].path
+            segments = tuple((0, int(part)) if part.isdigit() else (1, part) for part in path.split("/"))
+            return segments, split_instance(key).indexes
+
+        keys = sorted(state.loops, key=position)
+        views = []
+        for key in keys:
+            loop = state.loops[key]
+            step = node_of(key)
+            views.append(
+                LoopView(
+                    node_id=step,
+                    instance_key="" if key == step else key,
+                    count=loop.count,
+                    completed=loop.completed,
+                    running=len(loop.running),
+                    next_index=loop.next_index,
+                    status=loop.status,
+                )
+            )
+        return views
+
+    def _scope(self, state: RunState, selected: str | None) -> SelectedScope | None:
+        """The loop values the selected instance reads, or None outside loop bodies."""
+        if selected is None:
+            return None
+        scope = loop_scope(self._prepared.nodes, state, self._prepared.nodes[node_of(selected)], selected)
+        return SelectedScope.model_validate(scope) if scope else None
+
     def inspect(self) -> DebugView:
         selected = self._selected()
         state = self.data.cursor.result.state if self.data.cursor else self.data.state
@@ -213,6 +250,8 @@ class Simulator:
             boundary=self.data.boundaries[-1] if self.data.boundaries else None,
             boundaries=self.data.boundaries,
             now=self.data.now,
+            loops=self._loops(state),
+            selected_scope=self._scope(state, selected),
         ).model_copy(deep=True)
 
     def _stops_at(self, key: str) -> bool:

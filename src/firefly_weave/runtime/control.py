@@ -16,7 +16,9 @@
 
 """Pure lexical frames keyed by instance keys, and deterministic direct-branch capacity accounting."""
 
-from firefly_weave.compiler.ir import Node
+from collections.abc import Mapping
+
+from firefly_weave.compiler.ir import ForEachNode, Node
 from firefly_weave.contracts.instance_keys import node_of, split_instance
 from firefly_weave.contracts.values import JsonObject, JsonValue
 from firefly_weave.runtime.models import BranchState, JoinState, RunState
@@ -72,6 +74,26 @@ def bindings(state: RunState, node: Node, key: str) -> JsonObject:
         # An iteration frame shares the bindings visible at its loop, stored once on the loop instance.
         return {**state.loops[branch.owner + enclosing_suffix(key)].visible, **branch.steps}
     return {**branch.visible, **branch.steps}
+
+
+def loop_scope(nodes: Mapping[str, Node], state: RunState, node: Node, key: str) -> JsonObject:
+    """The loop roots instance ``key`` of ``node`` reads; empty outside loop bodies.
+
+    ``item`` and ``index`` belong to the innermost enclosing loop, and ``loops`` holds ``{item, index}`` for every
+    enclosing loop by its step ID. Each loop is read from its instance in ``state``.
+    """
+    owners = [owner for owner in node.scope[::2] if isinstance(nodes[owner], ForEachNode)]
+    if not owners:
+        return {}
+    indexes = split_instance(key).indexes
+    scopes: JsonObject = {}
+    innermost: JsonObject = {}
+    for depth, owner in enumerate(owners):
+        index = indexes[depth]
+        loop = state.loops[owner + "".join(f"[{i}]" for i in indexes[:depth])]
+        innermost = {"item": loop.items[index], "index": index}
+        scopes[owner] = innermost
+    return {**innermost, "loops": scopes}
 
 
 def joined_output(state: RunState, join: JoinState) -> JsonValue:
