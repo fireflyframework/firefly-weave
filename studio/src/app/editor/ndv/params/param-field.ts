@@ -379,6 +379,11 @@ export class ParamField {
         kind: "hint" as const,
         text: "Nothing to choose from yet. Use By name.",
       };
+    // While the Result panel is open under the field, the "=" line would repeat it.
+    if (line.kind === "preview" && this.formula()?.focusedIn())
+      return this.spec().hint
+        ? { kind: "hint" as const, text: this.spec().hint! }
+        : { kind: "none" as const, text: "" };
     return line;
   }
   /** An unfinished condition row, once the rows were left. */

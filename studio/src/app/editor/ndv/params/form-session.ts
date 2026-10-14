@@ -104,6 +104,7 @@ import {
   type FormSpec,
   type ParamSpec,
   type Path,
+  type PreviewResult,
 } from "../registry";
 import { connectorOf } from "../kinds/forms/action-forms";
 import { pathPlaceholders, recipeOf } from "../owned/owned-actions";
@@ -130,7 +131,7 @@ import {
   type HeldFact,
   type StepDetailsRequest,
 } from "../step-details-service";
-import { previewText } from "../../formula/preview";
+import { previewText, sourceLabel } from "../../formula/preview";
 import { checkFormula, type CheckScope } from "../../formula/check";
 import type { EditorRequest } from "../../formula/codemirror/formula-editor";
 import type { CompletionScope } from "../../formula/complete";
@@ -1096,6 +1097,20 @@ export class FormSession {
     return (
       checkFormula(value.expression, this.checkScope(spec))[0]?.message ?? null
     );
+  } /** What a value resolves to at this field: a Fixed value as it is, a formula through the preview. */
+  previewOf(spec: ParamSpec, value: ParamValue): PreviewResult | null {
+    if (value.mode === "absent") return null;
+    if (value.mode === "fixed") return { ok: true, value: value.value };
+    return this.controller
+      .ndvContext(this.target)
+      .evaluate(value.expression, spec.path);
+  }
+  /** Where a value's data comes from, for the Result panel. */
+  previewSource(spec: ParamSpec, value: ParamValue): string {
+    void spec;
+    return value.mode === "mapped"
+      ? sourceLabel(value.expression, this.controller.previewData())
+      : "";
   }
 
   /** The schema a field's value must fit, when the step's contract says. */

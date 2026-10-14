@@ -52,6 +52,9 @@ import {
 import { printRef } from "../../formula/printer";
 import type { ReferenceSpan } from "../../formula/spans";
 import { printTemplate } from "../../formula/template";
+import { referencesOf } from "../../formula/preview";
+import type { PreviewResult } from "../registry";
+import { FormulaResult } from "./formula-result";
 import { isMappedText } from "../pending-entries";
 import type { ParamSpec } from "../registry";
 import type { FormSession } from "./form-session";
@@ -109,7 +112,7 @@ export class RefPill {
   selector: "weave-formula-field",
   standalone: true,
   changeDetection: ChangeDetectionStrategy.Eager,
-  imports: [ReferenceCombobox, RefPill, FormulaEditor],
+  imports: [ReferenceCombobox, RefPill, FormulaEditor, FormulaResult],
   template: `@switch (view()) {
     @case ("pill") {
       <button
@@ -184,8 +187,8 @@ export class RefPill {
               [completions]="completions"
               [request]="request()"
               (textChange)="typed($event)"
-              (focused)="beginEdit()"
-              (blurred)="leave()"
+              (focused)="focusIn()"
+              (blurred)="focusOut()"
               (escaped)="escape($event)"
               (undo)="session().host.undo()"
               (redo)="session().host.redo()"
@@ -207,8 +210,8 @@ export class RefPill {
               [completions]="completions"
               [request]="request()"
               (textChange)="typed($event)"
-              (focused)="beginEdit()"
-              (blurred)="leave()"
+              (focused)="focusIn()"
+              (blurred)="focusOut()"
               (escaped)="escape($event)"
               (undo)="session().host.undo()"
               (redo)="session().host.redo()"
@@ -224,6 +227,14 @@ export class RefPill {
           >
         }
       </div>
+      @if (focusedIn()) {
+        <weave-formula-result
+          [label]="spec().label"
+          [preview]="resultPreview()"
+          [source]="resultSource()"
+          [tip]="resultTip()"
+        />
+      }
     }
   }`,
 })
@@ -240,6 +251,8 @@ export class FormulaField implements OnInit {
   /** Text being typed, while it is the person's and not yet shown in canonical form. */
   readonly editingText = signal<string | null>(null);
   readonly request = signal<EditorRequest | null>(null);
+  /** The editor has focus: the Result panel is open. */
+  readonly focusedIn = signal(false);
   readonly editor = viewChild<FormulaEditor>("editor");
   readonly words = words;
   readonly printRef = printRef;
@@ -499,6 +512,40 @@ export class FormulaField implements OnInit {
     this.editingOwner = null;
     this.editingText.set(null);
   }
+  focusIn() {
+    this.focusedIn.set(true);
+    this.beginEdit();
+  }
+  focusOut() {
+    this.focusedIn.set(false);
+    this.leave();
+  }
+  /** What the text on screen resolves to: its parse error, or the preview of its value. */
+  resultPreview(): PreviewResult | null {
+    const read = readFieldText(this.shownText(), this.fieldText());
+    if (read.kind === "error")
+      return {
+        ok: false,
+        error: { code: read.error.code, message: read.error.message },
+      };
+    if (read.kind === "empty") return null;
+    return this.session().previewOf(this.spec(), read.value);
+  }
+  resultSource(): string {
+    const read = readFieldText(this.shownText(), this.fieldText());
+    return read.kind === "value"
+      ? this.session().previewSource(this.spec(), read.value)
+      : "";
+  }
+  resultTip(): boolean {
+    const read = readFieldText(this.shownText(), this.fieldText());
+    return (
+      read.kind !== "value" ||
+      read.value.mode !== "mapped" ||
+      !referencesOf(read.value.expression).length
+    );
+  }
+
   escape(signal: { event: KeyboardEvent; handled: boolean }) {
     if (!this.heldText() || !this.escapeRestores()) return;
     signal.handled = true;

@@ -81,13 +81,18 @@ for (const size of sizes)
       await page.keyboard.type(" > 1000 && exists(input.email", { delay: 10 });
       await page.keyboard.press("Escape");
       await page.keyboard.type(")");
-      await expect(fieldLine(details, "value")).toHaveText("= true");
+      // While the field has focus its Result shows the value; at rest, the line.
+      const result = field.locator(".formula-result-value");
+      await expect(result).toHaveText("true");
       await page.keyboard.press("Tab");
       await expect(formulaBox(field)).toHaveAttribute(
         "data-text",
         "input.amount > 1000 and exists(input.email)",
       );
+      await expect(fieldLine(details, "value")).toHaveText("= true");
       await replaceFormula(page, field, "input.amount > 2000");
+      await expect(result).toHaveText("false");
+      await page.keyboard.press("Tab");
       await expect(fieldLine(details, "value")).toHaveText("= false");
     });
 

@@ -2168,3 +2168,47 @@ weave-param-field.is-conditions > .param > .param-line {
   color: var(--muted);
   font: var(--type-small);
 }
+
+/* The Result panel: under the focused field, in the form's flow. */
+.formula-result {
+  display: grid;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.formula-result-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+  font: var(--type-caption);
+  color: var(--muted);
+}
+.formula-result-title {
+  color: var(--text);
+  text-transform: uppercase;
+}
+.formula-result-value {
+  max-height: 160px;
+  margin: 0;
+  overflow: auto;
+  font: var(--type-mono);
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.formula-result-message,
+.formula-result-tip {
+  margin: 0;
+  font: var(--type-small);
+  color: var(--muted);
+}
+.formula-result-message[data-tone="danger"] {
+  color: var(--danger-ink);
+}
+.formula-result-more {
+  justify-self: start;
+}
