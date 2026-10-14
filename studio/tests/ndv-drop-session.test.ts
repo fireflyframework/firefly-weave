@@ -178,7 +178,6 @@ describe("live mapping edits", () => {
     "closed",
     "account",
     "limit",
-    "whole",
     "unsupported",
   ] as const) {
     it(`does not claim a row was added after ${failure}`, () => {
@@ -216,6 +215,21 @@ describe("live mapping edits", () => {
       expect(f.announcements.join()).not.toMatch(/Mapped|Added/);
     });
   }
+  it("replaces the one reference that maps the rows as a whole, as on any lone reference", () => {
+    const f = session("check-customer");
+    const spec = valueField(f);
+    const step = f.controller.step("check-customer")!;
+    f.model.update(
+      step.id,
+      JSON.stringify({ ...step, value: { ref: "/input" } }),
+    );
+    expect(f.form.applyDrop(spec, email, options)).toBe(true);
+    expect(f.controller.step("check-customer")!["value"]).toEqual({
+      ref: email.ref,
+    });
+    expect(f.announcements.join()).toMatch(/Mapped/);
+    expect(f.announcements.join()).not.toMatch(/Added/);
+  });
   it("adds all escaped keys once and undoes the batch", () => {
     const f = session("check-customer"),
       spec = valueField(f);

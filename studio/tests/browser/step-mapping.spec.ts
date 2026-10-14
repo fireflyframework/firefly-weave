@@ -1072,7 +1072,7 @@ for (const size of [
       await expect(row).toBeFocused();
       await expect(
         details.dialog.locator("[aria-live=polite]:not(.cm-announced)"),
-      ).toHaveText(/cannot be extended here/);
+      ).toHaveText(/Type the field's path in the formula/);
       await details.close();
       expect(
         parse(await sourceText(page)).spec.steps.find(

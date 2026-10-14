@@ -148,3 +148,36 @@ export function printTemplate(expression: unknown): string | null {
   }
   return out;
 }
+
+/**
+ * Template text with `{{ path }}` put in at a caret. Backslashes right before
+ * the caret were plain text; before a placeholder the reader would take them
+ * as escapes, so they are doubled. A caret inside an escape (backslashes
+ * before `{{`) moves before it, so the escape keeps its meaning.
+ */
+export function insertPlaceholder(
+  text: string,
+  at: number,
+  path: string,
+): { text: string; caret: number } {
+  let from = Math.max(0, Math.min(at, text.length));
+  let start = from;
+  while (start > 0 && text[start - 1] === "\\") start--;
+  let end = from;
+  while (end < text.length && text[end] === "\\") end++;
+  let before = text.slice(0, from);
+  const run = end - start;
+  if (run && text.startsWith("{{", end)) {
+    // Backslashes before `{{`: an odd run escapes it, so the placeholder
+    // goes before the run; an even run is text before a placeholder, so it
+    // goes after the run.
+    from = run % 2 ? start : end;
+    before = text.slice(0, from);
+  } else if (from > start)
+    before = text.slice(0, start) + "\\".repeat(2 * (from - start));
+  const insert = `{{ ${path} }}`;
+  return {
+    text: before + insert + text.slice(from),
+    caret: before.length + insert.length,
+  };
+}

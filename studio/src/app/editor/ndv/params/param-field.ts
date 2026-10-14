@@ -292,6 +292,13 @@ export class ParamField {
       this.conditions()?.drop(drag, x, y);
       return;
     }
+    // Text in the formula editor: the path goes in at the drop point, as typing would
+    // (its own unapplied text is what the drop extends).
+    const formula = this.formula();
+    if (this.mode() === "mapped" && formula?.view() === "editor") {
+      formula.dropAt(drag.ref, x, y);
+      return;
+    }
     if (!canMapFields(this.element.nativeElement, this.session())) return;
     const control = this.element.nativeElement.querySelector(
       ".param-control input:not([type=checkbox]), .param-control textarea",

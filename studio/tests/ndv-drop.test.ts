@@ -364,6 +364,96 @@ describe("mapping transport and preserved values", () => {
       }).kind,
     ).toBe("refuse");
   });
+  it("says how to map into a formula without a caret, and refuses only trees the editor can't show", () => {
+    const options = { caret: null, templates: false, mode: "mapped" as const };
+    expect(
+      planDrop(
+        field("text"),
+        {
+          mode: "mapped",
+          expression: {
+            op: { name: "gt", args: [{ ref: "/input/a" }, { literal: 1 }] },
+          },
+        },
+        email,
+        options,
+      ),
+    ).toEqual({
+      kind: "refuse",
+      reason:
+        "Type the field's path in the formula, or drag it to a place in the text.",
+    });
+    expect(
+      planDrop(
+        field("text"),
+        { mode: "mapped", expression: { op: { name: "add", args: [] } } },
+        email,
+        options,
+      ),
+    ).toEqual({
+      kind: "refuse",
+      reason:
+        "This formula uses parts the editor can't show. Edit it with Edit as YAML in the More menu.",
+    });
+  });
+  it("keeps backslashes before a dropped placeholder as text", () => {
+    const options = (caret: number | null) => ({
+      caret,
+      templates: true,
+      mode: "mapped" as const,
+    });
+    const concat = (...args: unknown[]) => ({
+      mode: "mapped" as const,
+      expression: { op: { name: "concat", args } },
+    });
+    const y = { ref: "/input/y" };
+    // `{{ input.y }}C:\` with the field dropped at the end.
+    expect(
+      planDrop(
+        field("text"),
+        concat(y, { literal: "C:\\" }),
+        email,
+        options(null),
+      ),
+    ).toEqual({
+      kind: "write",
+      next: concat(y, { literal: "C:\\" }, { ref: "/input/email" }),
+      replaced: null,
+    });
+    // `C:\\{{ input.y }}` (one backslash, then a placeholder), dropped
+    // after the backslashes.
+    expect(
+      planDrop(
+        field("text"),
+        concat({ literal: "C:\\" }, y),
+        email,
+        options(4),
+      ),
+    ).toEqual({
+      kind: "write",
+      next: concat({ literal: "C:\\" }, { ref: "/input/email" }, y),
+      replaced: null,
+    });
+    // `a\{{b{{ input.y }}` (literal braces), dropped inside the escape: the
+    // placeholder goes before it.
+    expect(
+      planDrop(
+        field("text"),
+        concat({ literal: "a{{b" }, y),
+        email,
+        options(2),
+      ),
+    ).toEqual({
+      kind: "write",
+      next: concat(
+        { literal: "a" },
+        { ref: "/input/email" },
+        { literal: "{{b" },
+        y,
+      ),
+      replaced: null,
+    });
+  });
   it("writes references whose keys need brackets into template text", () => {
     const options = { caret: null, templates: true, mode: "mapped" as const };
     expect(

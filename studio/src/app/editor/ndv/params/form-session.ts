@@ -670,6 +670,25 @@ export class FormSession {
       this.announce("Open the path's conditions to map data into them.");
       return false;
     }
+    // Rows mapped as a whole by one reference show it as a pill: a drop on
+    // it replaces the reference, as on any other lone reference.
+    if (
+      (spec.type === "keyValue" || spec.type === "list") &&
+      this.wholeMapping(spec) &&
+      this.loneReference(spec)
+    ) {
+      const reference = this.dragReference(spec, drag);
+      if (!reference) {
+        this.announce("This field cannot read that data.");
+        return false;
+      }
+      const ok = this.write(spec, {
+        mode: "mapped",
+        expression: { ref: reference.ref },
+      });
+      if (ok) this.mapped(spec, reference);
+      return ok;
+    }
     const reason = this.mappingReason(spec);
     if (reason) {
       this.announce(reason);
@@ -728,6 +747,17 @@ export class FormSession {
       );
     } else this.tipOnce();
     return true;
+  }
+  /** The value is exactly one reference. */
+  private loneReference(spec: ParamSpec): boolean {
+    const value = this.read(spec);
+    return (
+      value.mode === "mapped" &&
+      typeof value.expression === "object" &&
+      value.expression !== null &&
+      Object.keys(value.expression).length === 1 &&
+      typeof (value.expression as { ref?: unknown }).ref === "string"
+    );
   }
   private mapped(spec: ParamSpec, drag: DragRef) {
     const fit = dropFit(

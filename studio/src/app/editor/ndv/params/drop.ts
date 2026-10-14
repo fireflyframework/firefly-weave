@@ -30,6 +30,8 @@ import {
   type ScopeEntry,
 } from "../../../forms/core/scope";
 import type { ParseOptions } from "../../formula/grammar";
+import { printFormula } from "../../formula/printer";
+import { insertPlaceholder } from "../../formula/template";
 import type { ParamSpec } from "../registry";
 import {
   partsToText,
@@ -124,11 +126,9 @@ function insertAt(
   ref: string,
   parse?: ParseOptions,
 ): ParamValue | null {
-  if (!refToPath(ref)) return null;
-  const at =
-    caret === null ? text.length : Math.max(0, Math.min(caret, text.length));
+  const at = caret === null ? text.length : caret;
   const parsed = textToExpression(
-    `${text.slice(0, at)}{{ ${refToPath(ref)} }}${text.slice(at)}`,
+    insertPlaceholder(text, at, refToPath(ref)).text,
     parse,
   );
   return parsed.ok ? parsed.value : null;
@@ -161,19 +161,7 @@ export function planDrop(
   if (options.templates) {
     const parts =
       current.mode === "mapped" ? templateParts(current.expression) : null;
-    if (parts?.some((part) => "ref" in part && !refToPath(part.ref)))
-      return {
-        kind: "refuse",
-        reason:
-          "This formula cannot be edited as text. Use Edit as YAML in the More menu.",
-      };
     if (current.mode === "fixed" && typeof current.value === "string") {
-      if (!refToPath(drag.ref))
-        return {
-          kind: "refuse",
-          reason:
-            "This field name cannot be inserted as text. Use Edit as YAML in the More menu.",
-        };
       const at =
         options.caret === null
           ? current.value.length
@@ -204,11 +192,18 @@ export function planDrop(
     typeof current.expression["ref"] === "string"
   )
     return { kind: "write", next: reference, replaced: "the previous mapping" };
-  if (current.mode === "mapped" || textField)
+  if (current.mode === "mapped")
     return {
       kind: "refuse",
       reason:
-        "This value cannot be extended here. Use Edit as YAML in the More menu.",
+        printFormula(current.expression) === null
+          ? "This formula uses parts the editor can't show. Edit it with Edit as YAML in the More menu."
+          : "Type the field's path in the formula, or drag it to a place in the text.",
+    };
+  if (textField)
+    return {
+      kind: "refuse",
+      reason: "This platform can't mix text and data in one value.",
     };
   return { kind: "write", next: reference, replaced: shown(current.value) };
 }

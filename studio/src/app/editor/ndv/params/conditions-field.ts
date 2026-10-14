@@ -97,6 +97,7 @@ export class ConditionsField {
   /** The formula editor's id: the label's id without "-label". */
   readonly controlId = () => this.labelId().replace(/-label$/, "");
   private readonly editor = viewChild(ConditionEditor);
+  private readonly formula = viewChild(FormulaField);
   private readonly element = inject<ElementRef<HTMLElement>>(ElementRef);
 
   constructor() {
@@ -150,6 +151,12 @@ export class ConditionsField {
    */
   drop(drag: DragRef, x: number | null, y: number | null): boolean {
     const session = this.session();
+    // Shown as a formula: the path goes in at the drop point.
+    const formula = this.formula();
+    if (formula && formula.view() === "editor" && x !== null && y !== null) {
+      formula.dropAt(drag.ref, x, y);
+      return true;
+    }
     const decision = session.conditionDrop(this.spec(), drag);
     if ("reason" in decision) {
       session.announce(decision.reason);

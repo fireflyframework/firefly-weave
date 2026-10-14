@@ -54,7 +54,7 @@ import { isReference } from "../../formula/grammar";
 import { printRef } from "../../formula/printer";
 import { referenceSpans, type ReferenceSpan } from "../../formula/spans";
 import { tokenize } from "../../formula/tokens";
-import { printTemplate } from "../../formula/template";
+import { insertPlaceholder, printTemplate } from "../../formula/template";
 import { UNAVAILABLE, referencesOf } from "../../formula/preview";
 import type { PreviewResult } from "../registry";
 import type { ParamValue } from "./value-io";
@@ -637,7 +637,14 @@ export class FormulaField implements OnInit {
                 : open,
           false,
         );
-      if (!inside) insert = `{{ ${path} }}`;
+      if (!inside) {
+        // Outside a placeholder: `{{ path }}`, keeping backslashes before it as text.
+        const placed = insertPlaceholder(text, pos, path);
+        this.beginEdit();
+        this.typed(placed.text);
+        this.focusEditor(placed.caret);
+        return;
+      }
     } else {
       const current = readFieldText(text, this.fieldText());
       if (
@@ -667,6 +674,15 @@ export class FormulaField implements OnInit {
       text !== (this.storedText() ?? "")
     );
   }
+  /** A drop on the editor in the form: the path at the text position under the pointer. */
+  dropAt(ref: string, x: number, y: number) {
+    const editor = this.editor();
+    this.dropText({
+      ref,
+      pos: editor ? editor.posAt(x, y) : this.shownText().length,
+    });
+  }
+
   escape(signal: { event: KeyboardEvent; handled: boolean }) {
     if (!this.unapplied() || !this.escapeRestores()) return;
     signal.handled = true;
