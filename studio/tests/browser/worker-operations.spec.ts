@@ -1521,6 +1521,36 @@ test.describe("another person on the same environment", () => {
     ).toHaveCount(0);
   });
 
+  test("a bulk action confirmed after the person changes sends nothing", async ({
+    page,
+  }) => {
+    const people = await janeThenJohn(page);
+    const sent: string[] = [];
+    await page.route("**/workers/*/drain", (r) => {
+      sent.push(people.person());
+      return r.fulfill({ json: { revoked: false } });
+    });
+    await page.getByLabel("Select every worker on this list, up to 50").check();
+    await page
+      .getByRole("region", { name: "Selected workers" })
+      .getByRole("button", { name: "Drain" })
+      .click();
+    const dialog = page.getByRole("dialog", { name: "Drain 3 workers?" });
+    await expect(dialog).toBeVisible();
+    // John turns out to be signed in while Jane's confirmation is open.
+    await people.switch(true);
+    await expect
+      .poll(() => people.lists.filter((item) => item.person === "john").length)
+      .toBeGreaterThan(0);
+    if (await dialog.isVisible())
+      await dialog.getByRole("button", { name: "Drain" }).click();
+    await page.waitForTimeout(500);
+    expect(sent).toEqual([]);
+    await expect(
+      page.getByRole("region", { name: "Drain workers" }),
+    ).toHaveCount(0);
+  });
+
   test("a host prefix typed by one person is gone for the next", async ({
     page,
   }) => {

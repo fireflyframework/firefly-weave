@@ -1715,6 +1715,9 @@ export class RunsPage implements DoCheck, OnInit, OnDestroy {
   async bulkCancel() {
     const ids = [...this.selection];
     if (!ids.length || this.bulkRunning || !this.host.can("run.cancel")) return;
+    // The workspace and person the selection belongs to: a change while the
+    // confirmation is open sends nothing.
+    const key = scopeKeyOf(this.host);
     const values = await this.host.dialogs.form({
       title:
         ids.length === 1 ? "Cancel this run?" : `Cancel ${ids.length} runs?`,
@@ -1733,7 +1736,7 @@ export class RunsPage implements DoCheck, OnInit, OnDestroy {
         },
       ],
     });
-    if (!values) return;
+    if (!values || key !== scopeKeyOf(this.host)) return;
     await this.runBulk(
       "Cancel runs",
       ids,
@@ -1756,6 +1759,9 @@ export class RunsPage implements DoCheck, OnInit, OnDestroy {
   async bulkRetry() {
     const ids = [...this.selection];
     if (!ids.length || this.bulkRunning || !this.host.can("run.retry")) return;
+    // The workspace and person the selection belongs to: a change while the
+    // confirmation is open sends nothing.
+    const key = scopeKeyOf(this.host);
     const confirmed = await this.host.dialogs.confirm({
       title: ids.length === 1 ? "Retry this run?" : `Retry ${ids.length} runs?`,
       message:
@@ -1763,7 +1769,7 @@ export class RunsPage implements DoCheck, OnInit, OnDestroy {
       confirmLabel: ids.length === 1 ? "Retry run" : "Retry runs",
       cancelLabel: "Keep as is",
     });
-    if (!confirmed) return;
+    if (!confirmed || key !== scopeKeyOf(this.host)) return;
     await this.runBulk(
       "Retry runs",
       ids,

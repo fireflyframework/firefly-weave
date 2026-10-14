@@ -1261,6 +1261,10 @@ export class WorkersPage implements DoCheck, OnInit, OnDestroy {
   async bulkAction(action: BulkAction) {
     const ids = [...this.selection].slice(0, BULK_LIMIT);
     if (!ids.length || this.bulkRunning) return;
+    // The workspace and person the selection belongs to: a change while the
+    // confirmation is open sends nothing.
+    const scope = this.scope;
+    const key = this.scopeKey;
     const count = ids.length;
     const workers = count === 1 ? "this worker" : `${count} workers`;
     const confirmed = await this.host.dialogs.confirm(
@@ -1286,9 +1290,7 @@ export class WorkersPage implements DoCheck, OnInit, OnDestroy {
               confirmLabel: "Resume",
             },
     );
-    if (!confirmed) return;
-    const scope = this.scope;
-    const key = this.scopeKey;
+    if (!confirmed || key !== scopeKeyOf(this.host)) return;
     const rows = new Map(
       this.workers
         .filter((item) => !isUnavailableWorker(item))
