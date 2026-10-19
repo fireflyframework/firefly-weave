@@ -26,6 +26,7 @@ import {
   ChangeDetectionStrategy,
   Component,
   DestroyRef,
+  ElementRef,
   Injector,
   type OnInit,
   afterNextRender,
@@ -293,6 +294,7 @@ export class FormulaField implements OnInit {
   private seq = 0;
   private readonly lifetime = inject(DestroyRef);
   private readonly injector = inject(Injector);
+  private readonly element = inject<ElementRef<HTMLElement>>(ElementRef);
   private pendingRef = "";
   private localOwner: {
     session: FormSession;
@@ -550,9 +552,19 @@ export class FormulaField implements OnInit {
     this.editingText.set(null);
   }
   focusIn() {
+    const opening = !this.focusedIn();
     this.focusedIn.set(true);
     this.session().focusFormula(this.spec());
     this.beginEdit();
+    // The Result panel opens under the field: scroll the form so it shows.
+    if (opening && !this.inDialog())
+      afterNextRender(
+        () =>
+          this.element.nativeElement
+            .querySelector(".formula-result")
+            ?.scrollIntoView({ block: "nearest" }),
+        { injector: this.injector },
+      );
   }
   /** The workflow already holds this value. */
   private holds(value: ParamValue): boolean {
