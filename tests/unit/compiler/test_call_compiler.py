@@ -358,7 +358,7 @@ def test_calls_inside_a_loop_body_compile_import_and_stop_like_any_other_call():
 
     from firefly_weave.compiler.ir import UnsupportedIR
     from firefly_weave.runtime.kernel import transition
-    from firefly_weave.runtime.models import RunState, RuntimeEvent
+    from firefly_weave.runtime.models import CallIntent, RunState, RuntimeEvent
 
     loop = per_customer(
         call(**{"with": PER_CUSTOMER}), call("status", **{"with": PER_CUSTOMER, "onFailure": "continue"})
@@ -383,12 +383,10 @@ def test_calls_inside_a_loop_body_compile_import_and_stop_like_any_other_call():
     assert artifact.digest == result.artifact.digest
 
     started = RuntimeEvent(id=uuid4(), type="started", timestamp=datetime(2026, 10, 13, tzinfo=UTC), sequence=1)
-    stopped = transition(RunState(input={"customers": ["c-1", "c-2"]}), started, result.artifact)
-    assert stopped.state.status == "suspended"
-    assert [(item.node_id, item.code) for item in stopped.state.incidents.values()] == [
-        ("notify[0]", "WV-RUNTIME-ARTIFACT")
-    ]
-    assert stopped.steps == []
+    waiting = transition(RunState(input={"customers": ["c-1", "c-2"]}), started, result.artifact)
+    assert waiting.state.status == "waiting"
+    # Loops run one iteration at a time by default: the first customer's call waits for its child.
+    assert [c.node_id for c in waiting.commands if isinstance(c, CallIntent)] == ["notify[0]"]
 
 
 def test_call_checks_reach_into_loop_bodies():

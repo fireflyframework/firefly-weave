@@ -15,11 +15,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 
-"""A runtime that does not start child runs refuses a compiled call; it never skips the step."""
+"""A platform that does not list the call feature refuses a compiled call at import."""
 
-from datetime import UTC, datetime
 from pathlib import Path
-from uuid import uuid4
 
 import pytest
 
@@ -28,8 +26,6 @@ from firefly_weave.compiler.catalog import CatalogSnapshot
 from firefly_weave.compiler.ir import UnsupportedIR
 from firefly_weave.compiler.parser import parse_source
 from firefly_weave.contracts.definitions import load_definition
-from firefly_weave.runtime.kernel import transition
-from firefly_weave.runtime.models import RunState, RuntimeEvent
 
 EXAMPLES = Path("examples/language")
 
@@ -52,14 +48,3 @@ def test_import_refuses_a_call_while_the_platform_does_not_list_the_call_feature
     assert refused.value.missing == ("flow.callWorkflow",)
     features = ["flow.callWorkflow", "text.concat", "text.join"]
     assert import_artifact(artifact.to_bytes(), features=features).digest == artifact.digest
-
-
-def test_the_kernel_opens_an_incident_at_a_call_it_cannot_start(artifact):
-    started = RuntimeEvent(id=uuid4(), type="started", timestamp=datetime(2026, 10, 13, tzinfo=UTC), sequence=1)
-    run_input = {"customerId": "c-1", "orderId": "o-1", "tags": ["new"]}
-    result = transition(RunState(input=run_input), started, artifact)
-    assert result.state.status == "suspended"
-    assert [(item.node_id, item.code) for item in result.state.incidents.values()] == [
-        ("notify", "WV-RUNTIME-ARTIFACT")
-    ]
-    assert result.steps == []

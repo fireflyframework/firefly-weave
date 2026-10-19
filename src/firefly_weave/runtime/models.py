@@ -44,6 +44,7 @@ class RuntimeEvent(ContractModel):
         "incident_opened",
         "incident_resolved",
         "cancelled",
+        "call_completed",
     ]
     data: JsonObjectData = Field(default_factory=dict)
     timestamp: AwareDatetime
@@ -155,6 +156,22 @@ class HumanTaskIntent(ContractModel):
     expires_at: datetime | None = None
 
 
+class CallIntent(ContractModel):
+    """Start the exact workflow version ``workflow_reference`` as a child run with ``input``.
+
+    ``on_failure`` is set only when the call waits for its result; ``node_id`` is the call's instance key.
+    """
+
+    kind: Literal["call"] = "call"
+    node_id: str
+    workflow_digest: str
+    workflow_reference: str
+    input: JsonData
+    mode: Literal["wait", "detach"]
+    on_failure: Literal["stop", "continue"] | None = Field(default=None, exclude_if=lambda v: v is None)
+    business_key: str | None = Field(default=None, exclude_if=lambda v: v is None)
+
+
 class Deadline(ContractModel):
     kind: Literal["deadline"] = "deadline"
     node_id: str
@@ -179,5 +196,5 @@ class ControlCommand(ContractModel):
 
 class Transition(ContractModel):
     state: RunState
-    commands: list[TaskIntent | HumanTaskIntent | Deadline | ControlCommand] = Field(default_factory=list)
+    commands: list[TaskIntent | HumanTaskIntent | Deadline | ControlCommand | CallIntent] = Field(default_factory=list)
     steps: list[StepChange] = Field(default_factory=list)
