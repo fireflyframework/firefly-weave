@@ -526,8 +526,6 @@ export class FormulaField implements OnInit {
     session.release(this.spec());
     // A literal waits for blur so the field never turns Fixed under the caret.
     if (read.kind === "empty" || read.literal) return;
-    // Text that means what the workflow already holds writes nothing.
-    if (this.holds(read.value)) return this.beginEdit();
     if (session.write(this.spec(), read.value)) this.beginEdit();
   }
   leave() {
@@ -541,8 +539,7 @@ export class FormulaField implements OnInit {
       if (read.kind === "empty") {
         session.clear(spec);
         void session.setMode(spec, "mapped");
-      } else if (read.kind === "value" && !this.holds(read.value))
-        session.write(spec, read.value);
+      } else if (read.kind === "value") session.write(spec, read.value);
     }
     this.editingOwner = null;
     this.editingText.set(null);

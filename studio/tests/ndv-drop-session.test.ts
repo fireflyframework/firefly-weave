@@ -230,6 +230,16 @@ describe("live mapping edits", () => {
     expect(f.announcements.join()).toMatch(/Mapped/);
     expect(f.announcements.join()).not.toMatch(/Added/);
   });
+  it("writes nothing when a value is set to what it already is", () => {
+    const f = session("check-customer");
+    const spec = f.form.keyedSpec(valueField(f), "customer");
+    const value = f.form.read(spec);
+    const revision = f.model.revision;
+    const before = JSON.stringify(f.model.definition);
+    expect(f.form.write(spec, value)).toBe(true);
+    expect(f.model.revision).toBe(revision);
+    expect(JSON.stringify(f.model.definition)).toBe(before);
+  });
   it("adds all escaped keys once and undoes the batch", () => {
     const f = session("check-customer"),
       spec = valueField(f);

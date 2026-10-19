@@ -545,9 +545,24 @@ export class StepDetailsController {
         afterEnv,
         new Set(),
       );
+      // Changes that leave the step as it is write nothing: the file keeps
+      // its bytes (a space typed in a formula, a value set to itself).
+      // Key order counts: moving rows reorders an object's keys.
+      const same = (a: unknown, b: unknown) =>
+        a === b || JSON.stringify(a) === JSON.stringify(b);
+      const unchanged =
+        !!step &&
+        !hidden.changes.length &&
+        same(subject.step, env.subject.step) &&
+        same(subject.action, env.subject.action) &&
+        same(subject.workflow, env.subject.workflow);
       const apply = () => {
         moves = this.write(target, [...changes, ...hidden.changes]);
       };
+      if (unchanged) {
+        outcome = { ok: true, removed: [] };
+        return;
+      }
       if (merge) model.continueEdit(burst!.revision, apply);
       else model.batch(apply);
       outcome = { ok: true, removed: hidden.labels };
