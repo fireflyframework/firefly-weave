@@ -59,9 +59,10 @@ STOPPED = {
 }
 # Refusals that pass: the platform cannot start runs right now, so the call stays requested and a later scan tries
 # again. A refusal of the child itself (its activation, its input, its grant, or a first step too big for any run) is
-# permanent and rejects the call instead.
+# permanent and rejects the call instead, and so are the bounded-budget refusals: a retained run or definition that
+# exceeds a fixed fetch budget is refused the same way on every attempt.
 TRANSIENT_CODES = frozenset({"WV-COMPATIBILITY", "WV-QUOTA-LIMIT"})
-PERMANENT_CODES = frozenset({"WV-RUNTIME-LIMIT"})
+PERMANENT_CODES = frozenset({"WV-RUNTIME-LIMIT", "WV-PAGE-LIMIT"})
 OUTCOMES = {
     "succeeded": "ok",
     "failed": "failed",

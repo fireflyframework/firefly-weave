@@ -528,7 +528,10 @@ async def test_the_history_of_a_caller_and_of_its_child_replay_consistently_and_
 async def test_a_run_lists_its_calls_with_each_child_run_and_never_their_data(platform):
     leaf = await activate(platform, NOTIFY)
     flow = caller("orders", call("notify", "notify@1.0.0"), call("audit", "notify@1.0.0", mode="detach"))
-    run = await start(platform, await activate(platform, flow, notify=leaf.id))
+    activation = await activate(platform, flow, notify=leaf.id)
+    run = await start(platform, activation)
+    # Another run's calls in the same environment never appear in this run's list.
+    await start(platform, activation, "c-2")
     await scan(platform)
     rows = {row["node_id"]: row for row in await calls(platform, run.id)}
     page = await platform.runtime.calls(platform.actor, platform.scope, run.id, context=AuditContext())
@@ -537,8 +540,13 @@ async def test_a_run_lists_its_calls_with_each_child_run_and_never_their_data(pl
         ("notify", "wait", "succeeded", str(rows["notify"]["child_run_id"])),
     ]
     assert all("input" not in item and "result" not in item for item in page["items"])
+    assert page["next_cursor"] is None
     first = await platform.runtime.calls(platform.actor, platform.scope, run.id, limit=1, context=AuditContext())
     assert len(first["items"]) == 1 and first["next_cursor"] == first["items"][0]["id"]
+    rest = await platform.runtime.calls(
+        platform.actor, platform.scope, run.id, limit=10, cursor=UUID(first["next_cursor"]), context=AuditContext()
+    )
+    assert [item["id"] for item in first["items"] + rest["items"]] == sorted(item["id"] for item in page["items"])
 
 
 TEXT = {
@@ -791,3 +799,65 @@ async def test_the_dispatcher_never_starts_a_waiting_call_of_a_caller_that_alrea
         None,
     )
     assert await runs_of(platform, leaf.id) == []
+
+
+async def test_a_call_incident_refuses_a_reconciled_result_of_the_wrong_shape_and_a_retry_while_a_child_runs(
+    platform,
+):
+    from firefly_weave.definitions.models import CatalogError
+
+    leaf = await activate(platform, NOTIFY)
+    run = await start(
+        platform, await activate(platform, caller("orders", call("notify", "notify@1.0.0")), notify=leaf.id)
+    )
+    await platform.definitions.retire_activation(
+        platform.actor, platform.scope, leaf.id, str(uuid4()), 1, context=AuditContext()
+    )
+    await scan(platform)
+    assert (await state(platform, run.id))["incident"] == "WV-CALL-START"
+    with pytest.raises(CatalogError) as shape:
+        await resolve(
+            platform,
+            run.id,
+            "accept_reconciled_result",
+            output={"customerId": 3, "delivered": True},
+            evidence_reference="ticket:7",
+        )
+    assert (shape.value.status, shape.value.code) == (422, "WV-RUNTIME-OUTPUT")
+    # A latest call whose child still runs cannot be retried: a second child would run beside it.
+    async with platform.access_db[1]() as session, session.begin():
+        await session.execute(text("UPDATE run_calls SET status='started' WHERE caller_run_id=:id"), {"id": run.id})
+    with pytest.raises(CatalogError) as running:
+        await resolve(platform, run.id, "retry_safe")
+    assert (running.value.status, running.value.code) == (409, "WV-RUNTIME-STATE")
+    async with platform.access_db[1]() as session, session.begin():
+        await session.execute(text("UPDATE run_calls SET status='rejected' WHERE caller_run_id=:id"), {"id": run.id})
+    await resolve(
+        platform,
+        run.id,
+        "accept_reconciled_result",
+        output={"customerId": "c-1", "delivered": True},
+        evidence_reference="ticket:7",
+    )
+    result = await state(platform, run.id)
+    assert (result["status"], result["output"]) == ("succeeded", {"customerId": "c-1", "delivered": True})
+    assert [row["generation"] for row in await calls(platform, run.id)] == [0]
+
+
+@pytest.mark.parametrize("code", ["WV-RUNTIME-LIMIT", "WV-PAGE-LIMIT"])
+async def test_a_child_start_refused_the_same_way_every_time_rejects_the_call(platform, monkeypatch, code):
+    from firefly_weave.definitions.models import CatalogError
+    from firefly_weave.runtime.calls import CallService
+
+    async def refuse(self, tx, row, caller_row, child):
+        raise CatalogError(429, code, "The called workflow exceeds a bounded fetch budget")
+
+    leaf = await activate(platform, NOTIFY)
+    run = await start(
+        platform, await activate(platform, caller("orders", call("notify", "notify@1.0.0")), notify=leaf.id)
+    )
+    monkeypatch.setattr(CallService, "start_child", refuse)
+    await scan(platform)
+    [row] = await calls(platform, run.id)
+    assert (row["status"], row["code"], row["delivered"]) == ("rejected", "WV-CALL-START", True)
+    assert (await state(platform, run.id))["incident"] == "WV-CALL-START"
