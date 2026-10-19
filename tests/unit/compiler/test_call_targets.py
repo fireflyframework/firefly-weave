@@ -131,6 +131,23 @@ def test_the_longest_chain_of_calls_stays_within_the_call_depth():
     assert codes(check_call_target("top@1.0.0", "c1@1.0.0", catalog(*chain(9)))) == [("CALL_DEPTH", "semantic")]
 
 
+def test_each_chain_of_calls_is_walked_once_per_analysis():
+    graph = CallGraph(catalog(*chain(8)))
+    walked: list[str] = []
+    calls = graph.calls
+
+    def counted(reference: str) -> tuple[str, ...]:
+        walked.append(reference)
+        return calls(reference)
+
+    graph.calls = counted  # type: ignore[method-assign]
+    assert graph.depth("c1@1.0.0") == 7
+    first = len(walked)
+    # The depths of every workflow on the chain are known now: asking again walks nothing.
+    assert [graph.depth(f"c{index}@1.0.0") for index in range(1, 9)] == [7, 6, 5, 4, 3, 2, 1, 0]
+    assert len(walked) == first
+
+
 def test_calls_that_never_end_without_reaching_the_caller_are_too_deep():
     cycle = catalog(
         workflow("b@1.0.0", call("c", "c@1.0.0"), callable_field={}),
