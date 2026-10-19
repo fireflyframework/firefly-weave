@@ -124,7 +124,11 @@ def journey_results(enablement: Any, profile: str, records: Iterable[Mapping[str
                 missing = enablement.missing(step_id)
                 if record is not None:
                     keys = ("status", "seconds", "missing", "skipped_checks", "error", "screenshot")
-                    steps.append({"n": number, **{key: record[key] for key in keys if key in record}})
+                    step = {"n": number, **{key: record[key] for key in keys if key in record}}
+                    drift = _drift(enablement, step_id, record)
+                    if drift:
+                        step = {**step, "status": "failed", "error": drift}
+                    steps.append(step)
                 elif missing:
                     steps.append({"n": number, "status": "skipped", "missing": list(missing)})
                 else:
@@ -141,6 +145,17 @@ def journey_results(enablement: Any, profile: str, records: Iterable[Mapping[str
                 }
             )
     return results
+
+
+def _drift(enablement: Any, step_id: str, record: Mapping[str, Any]) -> str | None:
+    """Why a record's waiting capabilities differ from the orchestrator's map, or None when they match."""
+    if record.get("status") == "skipped" and sorted(record.get("missing", [])) != sorted(enablement.missing(step_id)):
+        return f"{step_id} was recorded as waiting for capabilities the journey map does not name"
+    for skipped in record.get("skipped_checks", []):
+        check = str(skipped.get("check"))
+        if check not in enablement.steps or sorted(skipped.get("missing", [])) != sorted(enablement.missing(check)):
+            return f"{check} was recorded as waiting for capabilities the journey map does not name"
+    return None
 
 
 class MissingStorage(Exception):

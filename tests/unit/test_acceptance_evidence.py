@@ -98,7 +98,7 @@ def test_journey_results_report_passes_partials_skips_and_gaps():
                 "id": "J0.3",
                 "status": "partial",
                 "seconds": 300.0,
-                "skipped_checks": [{"check": "J0.3/owner-roles", "missing": ["A3|O3"]}],
+                "skipped_checks": [{"check": "J0.3/operations", "missing": ["compose-operations"]}],
             },
         ],
     )
@@ -117,7 +117,7 @@ def test_journey_results_report_passes_partials_skips_and_gaps():
     assert (first["criteria"], first["viewport"], first["status"]) == (["SC7"], "cli", "failed")
     steps = {step["n"]: step for step in first["steps"]}
     assert steps[1] == {"n": 1, "status": "passed", "seconds": 1.0}
-    assert steps[3]["status"] == "partial" and steps[3]["skipped_checks"][0]["check"] == "J0.3/owner-roles"
+    assert steps[3]["status"] == "partial" and steps[3]["skipped_checks"][0]["check"] == "J0.3/operations"
     assert steps[2] == {"n": 2, "status": "not_run"}
     assert steps[5] == {"n": 5, "status": "not_run"}
     assert 12 not in steps and 13 not in steps
@@ -423,3 +423,17 @@ def test_each_signed_in_person_keeps_at_least_one_prefixed_entry(tmp_path):
     assert evidence.storage_key_problems(tmp_path, expected=["J9-1440x900-builder", "J9-1440x900-viewer"]) == [
         "J9-1440x900-viewer: no storage entry with an account, local: or ui: prefix"
     ]
+
+
+def test_a_record_whose_waiting_capabilities_differ_from_the_map_fails_its_step():
+    # A harness that rewrote its copy of the map could record an enabled step as skipped; the orchestrator's own
+    # map decides what may wait.
+    records = [
+        {"id": "J0.1", "status": "skipped", "missing": ["acceptance-foundations"]},
+        {"id": "J0.3", "status": "partial", "skipped_checks": [{"check": "J0.3/operations", "missing": ["logs"]}]},
+        {"id": "J0.4", "status": "partial", "skipped_checks": [{"check": "J0.4/alert-manager", "missing": ["alerts"]}]},
+    ]
+    steps = {step["n"]: step for step in evidence.journey_results(ENABLEMENT, "pr", records)[0]["steps"]}
+    assert steps[1]["status"] == "failed" and "J0.1" in steps[1]["error"]
+    assert steps[3]["status"] == "failed" and "J0.3/operations" in steps[3]["error"]
+    assert steps[4]["status"] == "partial"

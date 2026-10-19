@@ -262,6 +262,15 @@ export function storageAccountKeys(dump: {
   ].filter((key) => ACCOUNT_KEY.test(key)).length;
 }
 
+/** `value`, frozen all the way down: what a run reads stays what the orchestrator wrote. */
+export function deepFreeze<T>(value: T): T {
+  if (value && typeof value === "object" && !Object.isFrozen(value)) {
+    Object.freeze(value);
+    for (const item of Object.values(value)) deepFreeze(item);
+  }
+  return value;
+}
+
 /** Why a dump is not the person's Studio storage, or "" when it is. */
 export function dumpOriginProblem(origin: string, host: string): string {
   if (!host) return "storage was read before the Studio host started";

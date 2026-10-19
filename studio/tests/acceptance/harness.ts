@@ -57,6 +57,7 @@ import type { Person } from "../browser/real-platform-support";
 import { openSidebar } from "../browser/real-platform-support";
 import {
   accountsToDelete,
+  deepFreeze,
   dumpName,
   dumpOriginProblem,
   errorLine,
@@ -277,9 +278,11 @@ interface Enablement {
 let resolved: Enablement | null = null;
 /** What this run may record: RUN_DIR/enablement.json, written by the orchestrator. */
 export function enablement(): Enablement {
-  resolved ??= JSON.parse(
-    readFileSync(join(runDir, "enablement.json"), "utf8"),
-  ) as Enablement;
+  resolved ??= deepFreeze(
+    JSON.parse(
+      readFileSync(join(runDir, "enablement.json"), "utf8"),
+    ) as Enablement,
+  );
   return resolved;
 }
 

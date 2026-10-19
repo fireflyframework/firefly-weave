@@ -25,6 +25,7 @@ import {
   redact,
   secretsOf,
   stepOutcome,
+  deepFreeze,
   storageAccountKeys,
   storageKeyCheckOn,
   viewportName,
@@ -322,6 +323,21 @@ describe("acceptance step records", () => {
       ],
       problems: [],
     });
+  });
+});
+
+describe("the journey map a run reads", () => {
+  it("cannot be changed by a journey", () => {
+    const map = deepFreeze({
+      steps: { "J9.2": { applies: true, missing: [] as string[] } },
+    });
+    expect(() => {
+      (map.steps["J9.2"]!.missing as string[]).push("editor-canvas");
+    }).toThrow();
+    expect(() => {
+      (map.steps as Record<string, unknown>)["J9.2"] = { applies: false };
+    }).toThrow();
+    expect(map.steps["J9.2"]).toEqual({ applies: true, missing: [] });
   });
 });
 
