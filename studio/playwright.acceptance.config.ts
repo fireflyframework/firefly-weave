@@ -44,7 +44,9 @@ export default defineConfig({
     timezoneId: "UTC",
     actionTimeout: 30_000,
     navigationTimeout: 30_000,
-    trace: "retain-on-failure",
+    // The harness traces every context it opens and keeps the trace only on
+    // failure; Playwright's own tracing would start first and refuse it.
+    trace: "off",
     video: "off",
     screenshot: "off",
   },

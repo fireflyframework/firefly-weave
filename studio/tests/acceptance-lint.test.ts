@@ -422,6 +422,9 @@ describe("the Playwright configuration", () => {
       "args",
       'use: { launchOptions: { args: ["--host-resolver-rules=MAP * 127.0.0.1"] } }',
     ],
+    // Playwright would start tracing every context itself, and the harness's own
+    // tracing.start would then fail on each sign-in.
+    ["trace", 'use: { trace: "retain-on-failure" }'],
   ])("refuses %s", (key, option) => {
     const folder = scratch();
     lintTree(folder, {});

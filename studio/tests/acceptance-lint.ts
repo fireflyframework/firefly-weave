@@ -385,6 +385,18 @@ function nodeProblems(
           add(node, `${FORBIDDEN_OPTIONS[key]}: ${key}`);
         if (kind === "config" && Object.hasOwn(CONFIG_OPTIONS, key))
           add(node, `${CONFIG_OPTIONS[key]}: ${key}`);
+        // The harness traces each context it opens; Playwright's own tracing
+        // would start first and make the harness's tracing.start fail.
+        if (
+          kind === "config" &&
+          key === "trace" &&
+          !(
+            ts.isPropertyAssignment(node) &&
+            ts.isStringLiteralLike(node.initializer) &&
+            node.initializer.text === "off"
+          )
+        )
+          add(node, "Playwright-managed traces: trace");
         if (key === "force" && !folderRemoval(node)) {
           const value = ts.isPropertyAssignment(node) ? node.initializer : node;
           if (value.kind !== ts.SyntaxKind.FalseKeyword)

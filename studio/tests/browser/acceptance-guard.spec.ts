@@ -48,6 +48,8 @@ test("a guarded context and its pages refuse every denied method", async ({
   baseURL,
 }) => {
   const context = guardContext(await journeyBrowser.newContext());
+  // As Journey.signIn: the harness traces the context itself.
+  await context.tracing.start({ screenshots: true, snapshots: true });
   const page = guardPage(await context.newPage());
   const later = await context.newPage();
   for (const name of DENIED_CONTEXT)
@@ -101,6 +103,7 @@ test("a guarded context and its pages refuse every denied method", async ({
   expect(typeof original).toBe("function");
   expect(original).not.toBe(page.route);
 
-  // Closing still works: the context disposes its request through the guard.
+  // Closing still works: the trace stops and the context disposes its request through the guard.
+  await context.tracing.stop();
   await context.close();
 });
