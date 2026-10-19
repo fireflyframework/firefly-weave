@@ -612,3 +612,20 @@ def test_the_scan_checks_storage_keys_once_the_editor_prefixes_them(tmp_path, mo
     (storage / "J9-1440x900-viewer.after-removal.json").write_text(json.dumps(after), encoding="utf-8")
     acceptance.scan(plan, FakeRecorder())
     assert scan_steps(plan)[-1]["status"] == "passed" and "skipped_checks" not in scan_steps(plan)[-1]
+
+
+def test_the_studio_harness_registers_each_person_before_signing_in():
+    # A sign-in that fails must still leave its people line and its place in close(), or the scan would neither
+    # expect nor see that context's storage.
+    harness = (acceptance.ROOT / "studio/tests/acceptance/harness.ts").read_text(encoding="utf-8")
+    body = harness[harness.index("  async signIn(name: string)") :]
+    body = body[: body.index("\n  }\n")]
+    order = [
+        body.index("this.people.push(signed);"),
+        body.index("appendPrivate(\n      STUDIO_PEOPLE,"),
+        body.index("await session(page)"),
+        body.index("await pair(page"),
+        body.index("await connectAndSignIn(page"),
+        body.index("signed.signedIn = true;"),
+    ]
+    assert order == sorted(order)
