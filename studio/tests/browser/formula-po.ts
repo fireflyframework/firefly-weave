@@ -83,11 +83,11 @@ export async function replaceFormula(page: Page, field: Locator, text: string) {
  */
 export async function caretAt(page: Page, field: Locator): Promise<number> {
   const box = formulaBox(field);
-  await page.keyboard.type("§");
-  await expect(box).toHaveAttribute("data-text", /§/);
-  const at = (await box.getAttribute("data-text"))!.indexOf("§");
+  await page.keyboard.type("¤");
+  await expect(box).toHaveAttribute("data-text", /¤/);
+  const at = (await box.getAttribute("data-text"))!.indexOf("¤");
   await page.keyboard.press("Backspace");
-  await expect(box).not.toHaveAttribute("data-text", /§/);
+  await expect(box).not.toHaveAttribute("data-text", /¤/);
   return at;
 }
 
