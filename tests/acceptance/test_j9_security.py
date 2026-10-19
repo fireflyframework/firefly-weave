@@ -32,6 +32,7 @@ import hashlib
 import ipaddress
 import json
 import time
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -40,6 +41,7 @@ import pytest
 from firefly_weave.access.roles import ROLE_CAPABILITIES
 from firefly_weave.contracts.catalog import RetirementRequest
 from firefly_weave.contracts.surface import OPERATIONS
+from firefly_weave.private_origins import canonical_origin
 from firefly_weave.sdk.errors import WeaveError
 
 pytestmark = pytest.mark.acceptance
@@ -177,6 +179,63 @@ def egress_address(run, fragment: str) -> str:
     raise AssertionError(f"No container named like {fragment} on {network}")
 
 
+REFUSED = '{"action":"private_origins.refused"'
+# The rule each refused destination must meet (spec: private origins). The identity provider is the control plane
+# the API shares its network namespace with; the Acme service by address has no exact entry; the metadata address is
+# always refused.
+REFUSALS = {
+    "identity-provider-j9": "control-plane",
+    "acme-address-j9": "no-entry",
+    "metadata-j9": "always-refused",
+}
+
+
+def refusal_records(text: str) -> list[dict[str, Any]]:
+    """Every private_origins.refused record in a log, whatever prefix the log line carries."""
+    decoder = json.JSONDecoder()
+    records = []
+    for line in text.splitlines():
+        start = line.find(REFUSED)
+        if start < 0:
+            continue
+        try:
+            record, _ = decoder.raw_decode(line[start:])
+        except ValueError:
+            continue
+        records.append(record)
+    return records
+
+
+def refusal_reasons(records: list[dict[str, Any]], origins: dict[str, str]) -> dict[str, list[str]]:
+    """For each named origin, the reasons the connector policy logged refusing it, in order."""
+    return {
+        name: [
+            record["reason"]
+            for record in records
+            if record.get("origin") == origin and record.get("purpose") == "http-connector"
+        ]
+        for name, origin in origins.items()
+    }
+
+
+def api_logs(run, since: str) -> str:
+    """The API container's log since ``since`` (RFC 3339), standard output and error."""
+    project = f"weave-local-{run.platform_state()['id']}"
+    listed = run.require(
+        run.docker(
+            "ps",
+            "--quiet",
+            "--filter",
+            f"label=com.docker.compose.project={project}",
+            "--filter",
+            "label=com.docker.compose.service=api",
+        )
+    ).stdout.split()
+    assert len(listed) == 1, f"expected one API container in {project}, found {len(listed)}"
+    logs = run.require(run.docker("logs", "--since", since, listed[0]))
+    return logs.stdout + logs.stderr
+
+
 async def _test_connection(owner: Any, catalog: Any, version: UUID, name: str, url: str) -> str:
     """Create and test a keyless connection; "refused at creation", or the test answer's code."""
     try:
@@ -197,19 +256,31 @@ async def test_j9_03_connections_reach_only_the_approved_private_origin(run):
     key = hashlib.sha256(run.canary("acme-api-key").encode()).hexdigest()
     revision = UUID(run.private_record("catalog")["connection_revision_id"])
     before = len(run.acme_control("/_control/journal")["entries"])
+    # A minute of slack for the Docker host's clock; the origins below are this run's addresses.
+    since = (datetime.now(UTC) - timedelta(minutes=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    destinations = {
+        "identity-provider-j9": f"http://{identity_ip}:8080",
+        "acme-address-j9": f"http://{acme_ip}:8080",
+        "metadata-j9": "http://169.254.169.254",
+    }
     async with run.client("owner") as owner:
         approved = await owner.invoke("connections.test", identifier=revision, body=RetirementRequest())
         reached = run.acme_control("/_control/journal")["entries"][before:]
         version = await catalog.connector_version(owner)
         refused = {
-            name: await _test_connection(owner, catalog, version, name, url)
-            for name, url in (
-                ("identity-provider-j9", f"http://{identity_ip}:8080"),
-                ("acme-address-j9", f"http://{acme_ip}:8080"),
-                ("metadata-j9", "http://169.254.169.254"),
-            )
+            name: await _test_connection(owner, catalog, version, name, url) for name, url in destinations.items()
         }
+    origins = {name: canonical_origin(url, "http-connector") for name, url in destinations.items()}
+    reasons = refusal_reasons(refusal_records(api_logs(run, since)), origins)
+    (run.evidence / "private-origins-j9.json").write_text(
+        json.dumps({"results": refused, "origins": origins, "reasons": reasons}, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     assert approved.ok is True and approved.encrypted is False
     assert reached and {entry["key_sha256"] for entry in reached} == {key}
     assert {name: result for name, result in refused.items() if result == "ok"} == {}
+    # A failed test is not a refusal: each destination needs the policy's own record, with the rule that refused it.
+    assert {name: sorted(set(found)) for name, found in reasons.items()} == {
+        name: [reason] for name, reason in REFUSALS.items()
+    }
     assert len(run.acme_control("/_control/journal")["entries"]) == before + len(reached)

@@ -93,3 +93,49 @@ def test_rows_that_name_a_random_id_are_told_apart():
     by_name = {row.operation: security.names_random(row) for row in rows}
     assert by_name["incidents.read"] and by_name["runs.start"] and by_name["activations.create"]
     assert not by_name["definitions.publish"] and not by_name["language.read"]
+
+
+def test_refusal_records_are_read_from_the_api_log_whatever_the_line_prefix():
+    log = "\n".join(
+        [
+            'WARNING weave.private_origins {"action":"private_origins.refused","origin":"http://10.0.0.4:8080",'
+            '"purpose":"http-connector","reason":"no-entry","version":1}',
+            '2026-10-19T12:00:00Z {"action":"private_origins.refused","origin":"http://169.254.169.254:80",'
+            '"purpose":"http-connector","reason":"always-refused","version":1}',
+            '{"action":"private_origins.refused","origin":"http://10.0.0.4:8080","purpose":"mail","reason":"x"}',
+            '{"action":"private_origins.refused", broken',
+            "INFO request finished",
+        ]
+    )
+    records = security.refusal_records(log)
+    assert len(records) == 3
+    origins = {"acme": "http://10.0.0.4:8080", "metadata": "http://169.254.169.254:80", "silent": "http://10.0.0.9:80"}
+    # Only the connector purpose counts; a destination nobody refused has no reason, so it never passes as refused.
+    assert security.refusal_reasons(records, origins) == {
+        "acme": ["no-entry"],
+        "metadata": ["always-refused"],
+        "silent": [],
+    }
+
+
+def test_the_policy_refuses_the_service_by_address_and_the_metadata_address_by_their_rules():
+    from firefly_weave.private_origins import PrivateOrigin, PrivateOriginDenied, PrivateOrigins
+
+    policy = PrivateOrigins(
+        platform="local-development",
+        entries=(
+            PrivateOrigin(
+                origin="http://acme.acceptance.test:8080",
+                purpose="http-connector",
+                networks=("10.246.49.0/24",),
+                credentials="bridge",
+            ),
+        ),
+    )
+    for name, url, address in (
+        ("acme-address-j9", "http://10.246.49.4:8080", "10.246.49.4"),
+        ("metadata-j9", "http://169.254.169.254", "169.254.169.254"),
+    ):
+        with pytest.raises(PrivateOriginDenied) as refused:
+            policy.check("http-connector", url, [address], local=lambda ip: False)
+        assert refused.value.reason == security.REFUSALS[name]
