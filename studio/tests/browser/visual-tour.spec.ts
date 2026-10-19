@@ -1693,6 +1693,8 @@ const scenes: Record<string, Scene> = {
   },
   // Call an API with the full address under its URL.
   async "formula-url-address"({ page, shot }) {
+    // Placeholders in the URL are built into the action by the Studio host.
+    test.skip(!hasPython, "Needs the repository's Python environment.");
     const details = await openStepFixture(page, stepFixture, apiAuthoring);
     await addCommonStep(page, "Call an API");
     await showParameters(page, details.dialog);
