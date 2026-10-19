@@ -33,7 +33,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urljoin, urlsplit
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import httpx
 
@@ -133,7 +133,7 @@ async def follow_sign_in(
 
 
 def session_store(private: Path, name: str) -> FileCredentialStore:
-    """The person's private token file: private/sessions/<name>.json in a 0700 folder."""
+    """A private token file, private/sessions/<name>.json, in a 0700 folder."""
     folder = private / "sessions"
     folder.mkdir(mode=0o700, exist_ok=True)
     os.chmod(folder, 0o700)
@@ -175,15 +175,20 @@ async def person_client(run: Any, name: str) -> AsyncIterator[WeaveClient]:
         scopes=("openid",),
         allow_loopback_http=True,
     )
-    store = session_store(run.private, name)
+    # Each client has its own token file, removed when the client closes: a sign-in marks the record
+    # authenticating, and a second client sharing the file would fail every request of the first meanwhile.
+    store = session_store(run.private, f"{name}-{uuid4().hex}")
     session = OAuthSession(config, store)
 
     async def browser(url: str) -> None:
         await follow_sign_in(url, issuer_origin, person["username"], person["password"])
 
-    await session.login(flow="pkce", browser=browser)
-    async with WeaveClient(api, session, scope_of(run.demo_scope())) as client:
-        yield client
+    try:
+        await session.login(flow="pkce", browser=browser)
+        async with WeaveClient(api, session, scope_of(run.demo_scope())) as client:
+            yield client
+    finally:
+        store.path.unlink(missing_ok=True)
 
 
 def read_json(path: Path) -> dict[str, Any]:

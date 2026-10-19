@@ -122,7 +122,14 @@ async def test_the_sign_in_follows_only_the_callback_the_authorization_request_n
 
 @pytest.mark.parametrize(
     "redirect",
-    [None, "http://evil.example/callback", "http://127.0.0.1/callback?x=1", "http://localhost:43123/callback"],
+    [
+        None,
+        "http://evil.example/callback",
+        "http://127.0.0.1:43123/callback?x=1",
+        "http://localhost:43123/callback",
+        "http://127.0.0.1/callback",
+        "https://127.0.0.1:43123/callback",
+    ],
 )
 async def test_the_sign_in_needs_a_loopback_redirect_uri_in_the_authorization_request(redirect):
     seen = []
@@ -273,9 +280,10 @@ class SignedInRun:
 class SeededStore:
     """A credential store holding one record for any binding, as a run's private file store would."""
 
-    def __init__(self, state):
+    def __init__(self, state, path):
         from firefly_weave.sdk.credentials import CredentialRecord
 
+        self.path = path
         self.record = None if state is None else CredentialRecord(binding="seeded", state=state)
 
     def load(self, binding):
@@ -291,7 +299,7 @@ def signed_in(tmp_path, monkeypatch):
     from firefly_weave.sdk.credentials import CredentialRecord
 
     sign_ins = []
-    stores = {"builder": SeededStore(None)}
+    stores = {"builder": SeededStore(None, tmp_path / "seeded.json")}
 
     async def login(session, *, flow, browser):
         sign_ins.append((flow, session.store.load(session.config.binding)))
@@ -312,11 +320,11 @@ def signed_in(tmp_path, monkeypatch):
             return None
 
     def seed(state):
-        stores["builder"] = SeededStore(state)
+        stores["builder"] = SeededStore(state, tmp_path / "seeded.json")
 
     monkeypatch.setattr(people.OAuthSession, "login", login)
     monkeypatch.setattr(people, "WeaveClient", Client)
-    monkeypatch.setattr(people, "session_store", lambda private, name: stores[name])
+    monkeypatch.setattr(people, "session_store", lambda private, name: stores[name.rsplit("-", 1)[0]])
     return SignedInRun(tmp_path / "private"), sign_ins, seed
 
 
@@ -339,3 +347,39 @@ async def test_two_clients_for_one_person_sign_in_twice(signed_in):
         async with people.person_client(run, "builder"):
             pass
     assert len(sign_ins) == 2
+
+
+async def test_concurrent_clients_for_one_person_keep_separate_sessions(tmp_path, monkeypatch):
+    # A sign-in marks its record authenticating; a client that shared the file would fail every request meanwhile.
+    from firefly_weave.sdk.credentials import CredentialRecord
+
+    open_sessions, seen = [], []
+
+    async def login(session, *, flow, browser):
+        binding = session.config.binding
+        session.store.save(binding, CredentialRecord(binding=binding, state="authenticating"))
+        seen.append([other.store.load(other.config.binding).state for other in open_sessions])
+        session.store.save(binding, CredentialRecord(binding=binding, state="active", access_token="t", expires_at=9e9))
+        open_sessions.append(session)
+        return {}
+
+    class Client:
+        def __init__(self, api, session, scope):
+            self.session = session
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc_info):
+            return None
+
+    monkeypatch.setattr(people.OAuthSession, "login", login)
+    monkeypatch.setattr(people, "WeaveClient", Client)
+    (tmp_path / "private").mkdir(mode=0o700)
+    run = SignedInRun(tmp_path / "private")
+    async with people.person_client(run, "builder") as first, people.person_client(run, "builder") as second:
+        assert first.session.store.path != second.session.store.path
+        assert first.session.store.path.parent == tmp_path / "private" / "sessions"
+        assert first.session.store.path.name.startswith("builder-")
+    assert seen == [[], ["active"]]
+    assert list((tmp_path / "private" / "sessions").iterdir()) == []
