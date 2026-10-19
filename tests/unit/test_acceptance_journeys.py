@@ -162,6 +162,8 @@ def test_the_committed_map_is_valid():
     assert enablement.applies("J8.4", "nightly") and not enablement.applies("J8.4", "pr")
     assert "step-error-handling" in enablement.missing("J3.10")
     assert enablement.checks("J9.2") == ("J9.2/execute-in-local", "J9.2/operations-controls")
+    # The connection Test that sends a request is J1.3's, not J9.3's; it waits for connections in step details.
+    assert "step-details" in enablement.missing("J1.3/test-sends-request")
     assert enablement.checks("J9.4") == ("J9.4/storage-keys",)
     # A connection's Test is no step test, and the Incidents inbox reads no metrics.
     assert [step for step in enablement.journey_steps("J1") if "step-tests" in enablement.steps[step]] == []

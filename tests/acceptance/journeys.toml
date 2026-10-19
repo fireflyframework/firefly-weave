@@ -136,6 +136,9 @@ J15 = ["SC1", "SC7"]
 "J1.1" = ["real-platform-journeys", "studio-brand", "brand-assets"]
 "J1.2" = ["real-platform-journeys", "editor-canvas", "add-step-panel", "step-details"]
 "J1.3" = ["real-platform-journeys", "editor-canvas", "add-step-panel", "step-details"]
+# A connection Test sends one request (spec J1 row 3): weave-http@2.0.0's Test validates the stored connection
+# and sends none today, so this check waits for connections in step details, the milestone that owns the Test.
+"J1.3/test-sends-request" = ["real-platform-journeys", "step-details"]
 "J1.4" = ["real-platform-journeys", "editor-canvas", "add-step-panel", "step-details"]
 "J1.5" = ["real-platform-journeys", "editor-canvas", "add-step-panel", "step-details"]
 "J1.6" = ["real-platform-journeys", "editor-canvas", "add-step-panel", "step-details", "loops", "loop-compiler", "decision-table-editor", "text-templates"]

@@ -106,3 +106,26 @@ def test_connection_requests_reference_the_secret_handle_never_a_value():
     assert request.secret_refs == {"api_key": "acme-api-key"}
     open_request = catalog.open_connection_request("metadata-j9", "http://169.254.169.254", version)
     assert open_request.secret_refs == {} and open_request.config["baseUrl"] == "http://169.254.169.254"
+
+
+def test_the_reader_workflow_calls_the_acme_customer_action_through_one_connection_slot():
+    from firefly_weave.compiler.api import compile_source
+    from firefly_weave.compiler.catalog import CatalogSnapshot
+    from firefly_weave.contracts.definitions import ConnectorDefinition, load_definition
+    from firefly_weave.contracts.http_profiles import HTTP_PROFILE_DESCRIPTOR
+    from firefly_weave.sdk.http_actions import HTTP_ADAPTER
+
+    snapshot = CatalogSnapshot.from_definitions(
+        [
+            ConnectorDefinition.model_validate(HTTP_PROFILE_DESCRIPTOR.manifest.value),
+            *(load_definition(document) for document in catalog.actions().values()),
+        ],
+        tasks=list(HTTP_PROFILE_DESCRIPTOR.capabilities),
+        adapters=[HTTP_ADAPTER],
+    )
+    source = catalog.reader_workflow()
+    compiled = compile_source(source, format="yaml", catalog=snapshot, filename="acme-reader.yaml")
+    assert compiled.ok, [d.code for d in compiled.diagnostics if d.severity == "error"]
+    document = yaml.safe_load(source)
+    assert document["metadata"] == {"name": catalog.READER_WORKFLOW, "version": "1.0.0"}
+    assert document["spec"]["connections"] == {catalog.READER_SLOT: {"connector": "weave-http@2.0.0"}}

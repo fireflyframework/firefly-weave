@@ -212,3 +212,54 @@ def test_a_permitted_call_may_give_an_answer_its_row_names():
     assert security.wrong(named | {"answers": []})
     # A denied call is still exactly 403 WV-FORBIDDEN, whatever the row names.
     assert security.wrong(named | {"permitted": False})
+
+
+class Runs:
+    """runs.read answers in order, as the platform would while a run progresses."""
+
+    def __init__(self, *states):
+        self.states = list(states)
+
+    async def invoke(self, operation, identifier=None):
+        from types import SimpleNamespace
+
+        status, incident = self.states.pop(0) if len(self.states) > 1 else self.states[0]
+        return SimpleNamespace(state=SimpleNamespace(status=status, incident=incident))
+
+
+async def test_a_run_settles_when_it_finishes_or_stops_at_an_incident():
+    from uuid import uuid4
+
+    assert await security.settle(Runs(("queued", None), ("running", None), ("succeeded", None)), uuid4(), pause=0) == (
+        "succeeded",
+        None,
+    )
+    assert (
+        await security.settle(Runs(("running", None), ("suspended", "WV-TASK-FAILED")), uuid4(), pause=0)
+        == security.REFUSED_RUN
+    )
+    with pytest.raises(AssertionError, match="still running"):
+        await security.settle(Runs(("running", None)), uuid4(), timeout=0, pause=0)
+
+
+def test_refusals_are_read_from_every_container_of_the_platform():
+    import subprocess
+
+    calls = []
+
+    class Run:
+        def platform_state(self):
+            return {"id": "p1"}
+
+        def docker(self, *args, **_):
+            calls.append(list(args))
+            if args[0] == "ps":
+                return subprocess.CompletedProcess(args, 0, stdout="api1\nworker1\n", stderr="")
+            return subprocess.CompletedProcess(args, 0, stdout=f"out {args[-1]}", stderr=f"err {args[-1]}")
+
+        def require(self, result):
+            return result
+
+    text = security.platform_logs(Run(), "2026-10-19T00:00:00Z")
+    assert calls[0] == ["ps", "--quiet", "--filter", "label=com.docker.compose.project=weave-local-p1"]
+    assert all(f"{kind} {name}" in text for kind in ("out", "err") for name in ("api1", "worker1"))

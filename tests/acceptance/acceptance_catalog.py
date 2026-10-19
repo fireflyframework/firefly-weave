@@ -117,6 +117,15 @@ def decision_table() -> str:
     return (FIXTURES / "workflows/risk-tier.yaml").read_text(encoding="utf-8")
 
 
+READER_WORKFLOW = "acme-reader"
+READER_SLOT = "acme"
+
+
+def reader_workflow() -> str:
+    """The workflow J9.3 runs through each connection: one acme-get-customer call through the "acme" slot."""
+    return (FIXTURES / f"workflows/{READER_WORKFLOW}.yaml").read_text(encoding="utf-8")
+
+
 CHILD_WORKFLOW = "notify-customer"
 
 

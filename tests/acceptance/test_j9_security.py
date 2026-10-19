@@ -21,9 +21,10 @@ owner, builder, approver, operator and viewer: exactly 403 WV-FORBIDDEN where th
 the operation's scope lack the capability, and elsewhere the operation's own answer, never an
 authentication or authorization refusal or a server error; then a revoked person loses access, in the
 open session and after signing in again.
-J9.3 shows the private-origin policy on connections: the approved Acme origin works over plain HTTP
-with its key; the identity provider by address and under its approved alias, the Acme service by
-address and a metadata address are refused before any request reaches them, each by its own rule.
+J9.3 shows the private-origin policy on connections by running an action through each: through the
+approved Acme connection the run succeeds over plain HTTP with its key; through connections to the
+identity provider by address and under its approved alias, the Acme service by address and a metadata
+address, the policy refuses the request by its own rule before it leaves and the run stops at the action.
 Runs only through scripts/acceptance.py (the run stage).
 """
 
@@ -45,7 +46,6 @@ from uuid import UUID, uuid4
 import pytest
 
 from firefly_weave.access.roles import ROLE_CAPABILITIES
-from firefly_weave.contracts.catalog import RetirementRequest
 from firefly_weave.contracts.surface import OPERATIONS
 from firefly_weave.private_origins import canonical_origin
 from firefly_weave.sdk.errors import WeaveError
@@ -255,44 +255,79 @@ def refusal_reasons(records: list[dict[str, Any]], origins: dict[str, str]) -> d
     }
 
 
-def api_logs(run, since: str) -> str:
-    """The API container's log since ``since`` (RFC 3339), standard output and error."""
+def platform_logs(run, since: str) -> str:
+    """The logs of every container of the platform since ``since`` (RFC 3339), standard output and error: the API
+    and whatever process runs connector actions."""
     project = f"weave-local-{run.platform_state()['id']}"
     listed = run.require(
-        run.docker(
-            "ps",
-            "--quiet",
-            "--filter",
-            f"label=com.docker.compose.project={project}",
-            "--filter",
-            "label=com.docker.compose.service=api",
-        )
+        run.docker("ps", "--quiet", "--filter", f"label=com.docker.compose.project={project}")
     ).stdout.split()
-    assert len(listed) == 1, f"expected one API container in {project}, found {len(listed)}"
-    logs = run.require(run.docker("logs", "--since", since, listed[0]))
-    return logs.stdout + logs.stderr
+    assert listed, f"no container of {project} is running"
+    texts = []
+    for container in listed:
+        logs = run.require(run.docker("logs", "--since", since, container))
+        texts.append(logs.stdout + logs.stderr)
+    return "\n".join(texts)
 
 
-async def _test_connection(owner: Any, catalog: Any, version: UUID, name: str, url: str) -> str:
-    """Create and test a keyless connection; "refused at creation", or the test answer's code."""
-    try:
-        connection = await owner.invoke("connections.create", body=catalog.open_connection_request(name, url, version))
-    except WeaveError as error:
-        assert error.status == 422, (name, error.status, error.code)
-        return "refused at creation"
-    answer = await owner.invoke("connections.test", identifier=connection.id, body=RetirementRequest())
-    return "ok" if answer.ok else answer.code
+# A run that called a refused destination stops at the action: the failed task opens an incident.
+REFUSED_RUN = ("suspended", "WV-TASK-FAILED")
+SETTLED = frozenset({"succeeded", "failed", "cancelled", "timed_out"})
+
+
+async def settle(client: Any, run_id: UUID, *, timeout: float = 180, pause: float = 2) -> tuple[str, str | None]:
+    """A run's status and incident code once it finished or stopped at an incident; fails after ``timeout``."""
+    deadline = time.monotonic() + timeout
+    while True:
+        view = await client.invoke("runs.read", identifier=run_id)
+        status, incident = view.state.status, view.state.incident
+        if status in SETTLED or (status == "suspended" and incident):
+            return status, incident
+        assert time.monotonic() < deadline, f"run still {status} after {timeout:.0f} seconds"
+        await asyncio.sleep(pause)
+
+
+async def run_through(
+    client: Any, run, reader: Any, connection_id: UUID, releases: dict[UUID, UUID], name: str
+) -> tuple[str, str | None]:
+    """Activate the reader workflow with ``connection_id`` in its slot, start one run and wait for it."""
+    from firefly_weave.contracts.catalog import ActivationRequest
+    from firefly_weave.contracts.runtime import StartRunRequest
+
+    catalog = run.helper("acceptance_catalog")
+    activation = await client.invoke(
+        "activations.create",
+        body=ActivationRequest(
+            version_id=reader.id,
+            artifact_digest=reader.digest,
+            scope=client.scope,
+            connection_revision_ids={catalog.READER_SLOT: connection_id},
+            connector_release_ids=releases,
+        ),
+        idempotency_key=f"j9-03-activate-{name}-{run.run_id}",
+    )
+    started = await client.invoke(
+        "runs.start",
+        body=StartRunRequest(activation_id=activation.id, input={}),
+        idempotency_key=f"j9-03-run-{name}-{run.run_id}",
+    )
+    return await settle(client, started.id)
 
 
 @pytest.mark.journey_step("J9.3")
 async def test_j9_03_connections_reach_only_the_approved_private_origin(run):
+    """People use a connection by running an action through it, so each destination gets one run of the same
+    workflow: the approved Acme connection reaches Acme with its key; every private destination is refused by the
+    policy's own rule before any request leaves, and the run stops at the action."""
+    from firefly_weave.contracts.catalog import PublicationRequest
+
     catalog = run.helper("acceptance_catalog")
     subnet = ipaddress.ip_network(run.platform_state()["private_origins"]["subnet"])
     identity_ip, acme_ip = egress_address(run, "keycloak"), egress_address(run, "acme-api")
     assert ipaddress.ip_address(identity_ip) in subnet and ipaddress.ip_address(acme_ip) in subnet
     key = hashlib.sha256(run.canary("acme-api-key").encode()).hexdigest()
-    revision = UUID(run.private_record("catalog")["connection_revision_id"])
-    before = len(run.acme_control("/_control/journal")["entries"])
+    approved_connection = UUID(run.private_record("catalog")["connection_revision_id"])
+    releases = {UUID(version): UUID(release) for version, release in run.status()["connector_release_ids"].items()}
     # A minute of slack for the Docker host's clock; the origins below are this run's addresses.
     since = (datetime.now(UTC) - timedelta(minutes=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
     destinations = {
@@ -302,24 +337,47 @@ async def test_j9_03_connections_reach_only_the_approved_private_origin(run):
         "metadata-j9": "http://169.254.169.254",
     }
     async with run.client("owner") as owner:
-        approved = await owner.invoke("connections.test", identifier=revision, body=RetirementRequest())
+        reader = await owner.invoke(
+            "definitions.publish",
+            collection="workflows",
+            body=PublicationRequest(source=catalog.reader_workflow(), format="yaml"),
+            idempotency_key=f"j9-03-reader-{run.run_id}",
+        )
+        before = len(run.acme_control("/_control/journal")["entries"])
+        approved = await run_through(owner, run, reader, approved_connection, releases, "approved")
         reached = run.acme_control("/_control/journal")["entries"][before:]
         version = await catalog.connector_version(owner)
+        connections = {
+            name: (
+                await owner.invoke("connections.create", body=catalog.open_connection_request(name, url, version))
+            ).id
+            for name, url in destinations.items()
+        }
+        refused_from = len(run.acme_control("/_control/journal")["entries"])
         with identity_alias(run):
-            refused = {
-                name: await _test_connection(owner, catalog, version, name, url) for name, url in destinations.items()
+            runs = {
+                name: await run_through(owner, run, reader, connection, releases, name)
+                for name, connection in connections.items()
             }
+        after = run.acme_control("/_control/journal")["entries"][refused_from:]
     origins = {name: canonical_origin(url, "http-connector") for name, url in destinations.items()}
-    reasons = refusal_reasons(refusal_records(api_logs(run, since)), origins)
+    reasons = refusal_reasons(refusal_records(platform_logs(run, since)), origins)
     (run.evidence / "private-origins-j9.json").write_text(
-        json.dumps({"results": refused, "origins": origins, "reasons": reasons}, indent=2, sort_keys=True) + "\n",
+        json.dumps(
+            {"approved": approved, "runs": runs, "origins": origins, "reasons": reasons, "acme_after": len(after)},
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
         encoding="utf-8",
     )
-    assert approved.ok is True and approved.encrypted is False
+    # The approved origin: the run succeeds over plain HTTP and Acme sees exactly the canary key's hash.
+    assert approved == ("succeeded", None)
     assert reached and {entry["key_sha256"] for entry in reached} == {key}
-    assert {name: result for name, result in refused.items() if result == "ok"} == {}
-    # A failed test is not a refusal: each destination needs the policy's own record, with the rule that refused it.
+    # Every private destination: the policy's own record with the rule that refused it, the run stopped at the
+    # action, and nothing reached Acme.
     assert {name: sorted(set(found)) for name, found in reasons.items()} == {
         name: [reason] for name, reason in REFUSALS.items()
     }
-    assert len(run.acme_control("/_control/journal")["entries"]) == before + len(reached)
+    assert runs == dict.fromkeys(destinations, REFUSED_RUN)
+    assert after == []
