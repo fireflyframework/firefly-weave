@@ -92,6 +92,20 @@ def test_matrix_requests_fit_the_operation_contracts(row):
         parse_query(QueryParams({name: str(value) for name, value in query.items()}), operation.query)
 
 
+@pytest.mark.parametrize("row", ROWS, ids=lambda row: row.operation)
+def test_a_permitted_probe_previews_where_the_request_can_preview(row):
+    # A permitted person's call must change nothing: a request that can preview (retiring stale workers) sends
+    # dry_run = true, so the owner's and operator's probes never retire a worker.
+    request = OPERATIONS[row.operation].request
+    if request is not None and "dry_run" in request.model_fields:
+        assert (row.body or {}).get("dry_run") is True, row.operation
+
+
+def test_the_preview_rule_covers_retiring_stale_workers():
+    (row,) = [row for row in ROWS if row.operation == "workers.retire_stale"]
+    assert "dry_run" in OPERATIONS[row.operation].request.model_fields
+
+
 def test_materialize_names_a_new_uuid_for_each_random_value():
     first, second = matrix.materialize(["random", "random"])
     assert UUID(first) != UUID(second)
