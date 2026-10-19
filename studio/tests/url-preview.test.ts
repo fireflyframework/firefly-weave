@@ -45,41 +45,108 @@ describe("the full address of Call an API", () => {
     expect(
       urlPreview("/customers/{id}/orders", new Map([["id", ok("c 1042")]]), [
         { name: "status", preview: ok("open") },
-        { name: "limit", preview: ok(25) },
-        { name: "all", preview: ok(true) },
+        { name: "sort", preview: ok("-date") },
       ]),
-    ).toBe(
-      "Connection address/customers/c%201042/orders?status=open&limit=25&all=true",
-    );
+    ).toEqual({
+      address:
+        "Connection address/customers/c%201042/orders?status=open&sort=-date",
+    });
   });
-  it("repeats a list's name in the query and refuses what the connector refuses", () => {
+  it("refuses a value of another type than the parameter's, as the connector does", () => {
+    // Studio's own actions declare every parameter as text.
+    expect(urlPreview("/orders/{id}", new Map([["id", ok(1042)]]), [])).toEqual(
+      { refused: "{id} must be text, not a whole number" },
+    );
     expect(
-      urlPreview("/orders", new Map(), [
-        { name: "tag", preview: ok(["a b", "c"]) },
-      ]),
-    ).toBe("Connection address/orders?tag=a%20b&tag=c");
-    expect(
-      urlPreview("/orders/{id}", new Map([["id", ok("a\nb")]]), []),
-    ).toBeNull();
-    expect(
-      urlPreview("/orders/{id}", new Map([["id", ok("x".repeat(4097))]]), []),
-    ).toBeNull();
+      urlPreview("/orders", new Map(), [{ name: "all", preview: ok(true) }]),
+    ).toEqual({ refused: "all must be text, not Yes/No" });
     expect(
       urlPreview("/orders", new Map(), [{ name: "q", preview: ok(null) }]),
-    ).toBeNull();
-  });
-  it("shows nothing until every value computes and fits a path", () => {
-    expect(
-      urlPreview("/customers/{id}", new Map([["id", waiting]]), []),
-    ).toBeNull();
+    ).toEqual({ refused: "q must be text, not empty" });
     expect(
       urlPreview("/customers/{id}", new Map([["id", ok({ a: 1 })]]), []),
-    ).toBeNull();
-    expect(
-      urlPreview("/customers/{id}", new Map([["id", ok("..")]]), []),
-    ).toBeNull();
+    ).toEqual({ refused: "{id} must be text, not a group" });
     expect(
       urlPreview("/customers/{id}", new Map([["id", ok(1.5)]]), []),
+    ).toEqual({ refused: "{id} must be text, not a number" });
+    // A parameter declared as a whole number or Yes/No takes those.
+    const typed = (location: "path" | "query", name: string) =>
+      name === "limit"
+        ? { type: "integer" as const, array: false }
+        : name === "all"
+          ? { type: "boolean" as const, array: false }
+          : { type: "string" as const, array: location === "query" };
+    expect(
+      urlPreview(
+        "/orders",
+        new Map(),
+        [
+          { name: "limit", preview: ok(25) },
+          { name: "all", preview: ok(false) },
+          { name: "tag", preview: ok(["a b", "c"]) },
+        ],
+        typed,
+      ),
+    ).toEqual({
+      address: "Connection address/orders?limit=25&all=false&tag=a%20b&tag=c",
+    });
+    expect(
+      urlPreview(
+        "/orders",
+        new Map(),
+        [{ name: "limit", preview: ok(true) }],
+        typed,
+      ),
+    ).toEqual({ refused: "limit must be a whole number, not Yes/No" });
+    expect(
+      urlPreview(
+        "/orders",
+        new Map(),
+        [{ name: "tag", preview: ok("a") }],
+        typed,
+      ),
+    ).toEqual({ refused: "tag takes a list" });
+    expect(
+      urlPreview(
+        "/orders",
+        new Map(),
+        [{ name: "tag", preview: ok(Array.from({ length: 101 }, () => "a")) }],
+        typed,
+      ),
+    ).toEqual({ refused: "tag has more than 100 items" });
+  });
+  it("refuses a list where the parameter takes one value", () => {
+    expect(
+      urlPreview("/orders", new Map(), [
+        { name: "tag", preview: ok(["a", "c"]) },
+      ]),
+    ).toEqual({ refused: "tag takes one value, not a list" });
+  });
+  it("refuses text the connector refuses", () => {
+    expect(
+      urlPreview("/orders/{id}", new Map([["id", ok("a\nb")]]), []),
+    ).toEqual({ refused: "{id} has a control character" });
+    expect(
+      urlPreview("/orders/{id}", new Map([["id", ok("x".repeat(4097))]]), []),
+    ).toEqual({ refused: "{id} is longer than 4,096 characters" });
+    for (const segment of ["", ".", ".."])
+      expect(
+        urlPreview("/customers/{id}", new Map([["id", ok(segment)]]), []),
+      ).toEqual({ refused: '{id} can\'t be empty, "." or ".."' });
+  });
+  it("refuses an address longer than the connector's 16,384 bytes", () => {
+    const long = "é".repeat(4000); // 24,000 bytes encoded
+    expect(urlPreview("/a/{b}", new Map([["b", ok(long)]]), [])).toEqual({
+      refused: "the address is longer than 16,384 bytes",
+    });
+    const fits = "a".repeat(4000);
+    expect(urlPreview("/a/{b}", new Map([["b", ok(fits)]]), [])).toEqual({
+      address: `Connection address/a/${fits}`,
+    });
+  });
+  it("shows nothing until every value computes", () => {
+    expect(
+      urlPreview("/customers/{id}", new Map([["id", waiting]]), []),
     ).toBeNull();
     expect(
       urlPreview("/customers", new Map(), [{ name: "q", preview: null }]),

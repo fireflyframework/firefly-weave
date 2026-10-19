@@ -41,7 +41,7 @@ import {
   withNewEditor,
   yamlFile,
 } from "./step-details-po";
-import { formulaBox, formulaText } from "./formula-po";
+import { formulaBox, formulaText, setTestInput } from "./formula-po";
 import { box, density, expectAligned } from "./step-geometry";
 import { connected, newWorkflow, offline, sourceText } from "./support";
 
@@ -861,5 +861,37 @@ for (const size of sizes)
       await expect(url.locator(":scope > .param > .param-line")).toHaveText(
         "= Connection address/customers/c%201042/orders",
       );
+    });
+
+    test("the URL says when the connection would refuse a value instead of showing an address", async ({
+      page,
+    }) => {
+      await withLanguageFeatures(page);
+      const details = await openStepFixture(page, stepFixture, authoring);
+      await setTestInput(page, details, {
+        "Customer ID": "c-1042",
+        Email: "ada@example.com",
+        Amount: "1500",
+      });
+      await addCommonStep(page, "Call an API");
+      const url = details.field("url");
+      await url
+        .getByRole("textbox", { name: "URL" })
+        .fill("/customers/{id}/orders");
+      const id = details.dialog
+        .locator('[data-param="url.path.id"]')
+        .getByRole("textbox")
+        .first();
+      // The amount is a number: the action sends {id} as text.
+      await id.press("=");
+      const row = details.dialog.locator('[data-param="url.path.id"]');
+      await expect(formulaText(row)).toBeFocused();
+      await page.keyboard.insertText("input.amount");
+      await page.keyboard.press("Tab");
+      const line = url.locator(":scope > .param > .param-line");
+      await expect(line).toHaveText(
+        "The connection would refuse this address: {id} must be text, not a whole number.",
+      );
+      await expect(line).not.toContainText("= Connection address");
     });
   });

@@ -399,7 +399,9 @@ POST, PUT and PATCH. **Add option** offers **Query parameters**, **Headers**,
 **Accepted status codes** and **Description**.
 
 Once every value computes from the test input, the line under **URL** shows
-the full address, such as `= Connection address/customers/c-1042/orders`.
+the full address, such as `= Connection address/customers/c-1042/orders`, or
+why the connection would refuse it: each value goes into the address as text,
+so a number or a list there says so.
 
 Studio keeps the request as an action this workflow owns, named after the
 workflow and the step, and renames it with the step until the action is

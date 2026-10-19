@@ -56,7 +56,7 @@ import type {
   PendingKind,
   PendingOwner,
 } from "../pending-entries";
-import { urlPreview } from "./url-preview";
+import { urlPreview, type UrlPreview } from "./url-preview";
 import { isMappedText } from "../pending-entries";
 import { retryProblem, retryShown } from "../settings/settings-rules";
 import {
@@ -1218,8 +1218,11 @@ export class FormSession {
       : "";
   }
 
-  /** The full address a Call an API step calls, when every value in it computes. */
-  urlAddress(spec: ParamSpec): string | null {
+  /**
+   * The full address a Call an API step calls, or why the connector would
+   * refuse it, once every value in it computes.
+   */
+  urlAddress(spec: ParamSpec): UrlPreview | null {
     const path = this.urlPath(spec);
     if (spec.type !== "urlTemplate" || !path) return null;
     const values = new Map(
@@ -1328,7 +1331,12 @@ export class FormSession {
     const warning = this.formulaWarning(spec);
     if (warning) return { kind: "warning", text: warning };
     const address = spec.type === "urlTemplate" ? this.urlAddress(spec) : null;
-    if (address) return { kind: "preview", text: `= ${address}` };
+    if (address && "refused" in address)
+      return {
+        kind: "warning",
+        text: `The connection would refuse this address: ${address.refused}.`,
+      };
+    if (address) return { kind: "preview", text: `= ${address.address}` };
     const value = this.read(spec);
     if (value.mode === "mapped") {
       const preview = this.controller
