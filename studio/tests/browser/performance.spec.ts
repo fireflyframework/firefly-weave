@@ -390,20 +390,40 @@ test(
     await page.keyboard.press("End");
     const result = title.getByRole("region", { name: "Result of Title" });
     await expect(result).toContainText("Review order of 1500");
+    // From the keydown to the frame that shows the new value: the timer
+    // stops once the Result reads the expected text, after the next
+    // animation frame and the task that follows it (when the frame paints).
     await page.evaluate(() => {
-      const w = window as unknown as { previewMs: number[]; pressedAt: number };
+      const w = window as unknown as {
+        previewMs: number[];
+        pressedAt: number;
+        typed: string;
+      };
       w.previewMs = [];
       w.pressedAt = 0;
+      w.typed = "";
       document.addEventListener(
         "keydown",
-        () => (w.pressedAt = performance.now()),
+        (event) => {
+          w.typed += event.key;
+          w.pressedAt = performance.now();
+        },
         { capture: true },
       );
       const region = document.querySelector('[aria-label="Result of Title"]')!;
-      new MutationObserver(() => {
-        if (!w.pressedAt) return;
-        w.previewMs.push(performance.now() - w.pressedAt);
+      const painted = new MessageChannel();
+      let started = 0;
+      painted.port1.onmessage = () => {
+        w.previewMs.push(performance.now() - started);
         w.pressedAt = 0;
+      };
+      new MutationObserver(() => {
+        if (w.pressedAt <= 0) return;
+        const value = region.querySelector(".formula-result-value");
+        if (value?.textContent !== `Review order of 1500${w.typed}`) return;
+        started = w.pressedAt;
+        w.pressedAt = -1;
+        requestAnimationFrame(() => painted.port2.postMessage(null));
       }).observe(region, {
         subtree: true,
         childList: true,
