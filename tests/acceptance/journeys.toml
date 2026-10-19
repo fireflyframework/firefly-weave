@@ -21,9 +21,9 @@
 # steps and checks it enables, with their tests.
 
 [capabilities]
-"studio-brand" = false
-"brand-assets" = false
-"docs-brand" = false
+"studio-brand" = true
+"brand-assets" = true
+"docs-brand" = true
 "editor-contracts" = false
 "editor-canvas" = false
 "add-step-panel" = false
@@ -70,7 +70,7 @@
 "alerts" = false
 "operations-explanations" = false
 "acceptance-foundations" = true
-"real-platform-journeys" = false
+"real-platform-journeys" = true
 "ai-and-cluster-profiles" = false
 "quality-gates" = false
 "release-verification" = false

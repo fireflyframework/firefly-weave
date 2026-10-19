@@ -130,6 +130,9 @@ def test_the_committed_map_is_valid():
     assert enablement.capabilities["acceptance-foundations"] is True
     landed = [name for name, value in enablement.capabilities.items() if value]
     assert landed == [
+        "studio-brand",
+        "brand-assets",
+        "docs-brand",
         "text-operators",
         "instance-keys",
         "loop-compiler",
@@ -140,6 +143,7 @@ def test_the_committed_map_is_valid():
         "ai-models-screen",
         "run-views",
         "acceptance-foundations",
+        "real-platform-journeys",
     ]
     assert enablement.journey_steps("J0") == tuple(f"J0.{n}" for n in range(1, 15))
     assert enablement.profiles["pr"] == ("J0", "J1", "J2", "J3", "J5", "J8", "J9")
