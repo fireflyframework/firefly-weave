@@ -82,12 +82,17 @@ def wrong(outcome: dict[str, Any]) -> bool:
 async def test_j9_01_every_new_operation_answers_by_role_and_revocation_takes_effect(run):
     matrix = run.helper("acceptance_authorization")
     _, rows = matrix.load()
+    scope = run.demo_scope()
+
+    def materialize(value: Any) -> Any:
+        return matrix.materialize(value, scope=scope)
+
     outcomes = []
     for name in PEOPLE:
         roles = run.roles(name)
         async with run.client(name) as client:
             for row in rows:
-                status, code = await probe(client, row, matrix.materialize)
+                status, code = await probe(client, row, materialize)
                 permitted = matrix.holds(roles, row.capability, ROLE_CAPABILITIES)
                 outcomes.append(
                     {"person": name, "operation": row.operation, "permitted": permitted, "status": status, "code": code}

@@ -29,6 +29,8 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[2]
 MATRIX = ROOT / "tests/acceptance/authorization.toml"
 RANDOM = "random"
+# The demo environment's scope (tenant, project and environment IDs); without one, three new UUIDs.
+DEMO_SCOPE = "demo-scope"
 TABLES = ("operations", "controls")
 KEYS = {"capability", "identifier", "query", "body", "collection"}
 
@@ -79,12 +81,18 @@ def holds(roles: Iterable[str], capability: str, role_capabilities: Mapping[str,
     return any(option in role_capabilities.get(role, frozenset()) for role in roles for option in options)
 
 
-def materialize(value: Any) -> Any:
-    """The value with every "random" replaced by a new UUID string."""
+def materialize(value: Any, *, scope: Mapping[str, str] | None = None) -> Any:
+    """The value with every "random" replaced by a new UUID string and "demo-scope" by ``scope``."""
     if value == RANDOM:
         return str(uuid.uuid4())
+    if value == DEMO_SCOPE:
+        return (
+            dict(scope)
+            if scope is not None
+            else {key: str(uuid.uuid4()) for key in ("tenant_id", "project_id", "environment_id")}
+        )
     if isinstance(value, Mapping):
-        return {key: materialize(item) for key, item in value.items()}
+        return {key: materialize(item, scope=scope) for key, item in value.items()}
     if isinstance(value, list):
-        return [materialize(item) for item in value]
+        return [materialize(item, scope=scope) for item in value]
     return value

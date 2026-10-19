@@ -20,7 +20,7 @@ import importlib.util
 import json
 import sys
 from pathlib import Path
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from starlette.datastructures import QueryParams
@@ -110,3 +110,14 @@ def test_materialize_names_a_new_uuid_for_each_random_value():
     first, second = matrix.materialize(["random", "random"])
     assert UUID(first) != UUID(second)
     assert matrix.materialize({"a": {"b": "random"}, "c": 1})["c"] == 1
+
+
+def test_activate_is_sent_as_each_person_on_the_demo_environment():
+    # Studio's Activate… is a control the viewer cannot use; J9.1 sends the same call so the server's refusal is
+    # checked too. Its body names the environment of the path, so a permitted person passes the scope rule.
+    (row,) = [row for row in ROWS if row.operation == "activations.create"]
+    assert (row.table, row.capability) == ("controls", "release.activate")
+    scope = {"tenant_id": str(uuid4()), "project_id": str(uuid4()), "environment_id": str(uuid4())}
+    body = matrix.materialize(dict(row.body), scope=scope)
+    assert body["scope"] == scope and UUID(body["version_id"])
+    assert set(matrix.materialize(dict(row.body))["scope"]) == set(scope)

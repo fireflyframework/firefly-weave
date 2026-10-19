@@ -18,7 +18,8 @@
 # after the baseline release, [controls] the operations behind Studio controls a viewer must not
 # use. Each row names the capability the operation needs (tests/contracts checks it against the
 # operation registry) and one request that is safe to send as any person: "random" becomes a new
-# UUID, so a permitted call names nothing that exists; collection names the catalog collection of
+# UUID, so a permitted call names nothing that exists, and "demo-scope" becomes the demo environment's
+# tenant, project and environment IDs; collection names the catalog collection of
 # operations whose path has one. The journey expects exactly
 # 403 WV-FORBIDDEN where the person's roles lack the capability, and any other answer elsewhere.
 baseline = "tests/fixtures/contracts/operations-0.1.0a14.json"
@@ -88,6 +89,10 @@ body = { older_than_seconds = 2592000, dry_run = true }
 capability = "definition.publish"
 collection = "workflows"
 body = { source = "apiVersion: weave/v1alpha1\nkind: Workflow\nmetadata: {name: authorization-probe-j9, version: 1.0.0}\n", format = "yaml" }
+
+[controls."activations.create"]
+capability = "release.activate"
+body = { version_id = "random", artifact_digest = "0000000000000000000000000000000000000000000000000000000000000000", scope = "demo-scope" }
 
 [controls."runs.start"]
 capability = "run.start"
