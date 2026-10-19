@@ -401,3 +401,142 @@ def test_main_judges_only_the_journeys_of_the_requested_stages(tmp_path, monkeyp
     assert acceptance.main([*argv, "--stages", "up"]) == 1
     monkeypatch.setitem(acceptance.STAGE_FUNCTIONS, "up", lambda plan, recorder: record_steps(plan))
     assert acceptance.main([*argv, "--stages", "up"]) == 0
+
+
+class CallRecorder:
+    """Records every command; commands whose text holds a ``failing`` marker exit 1."""
+
+    def __init__(self, failing=()):
+        self.calls, self.failing = [], tuple(failing)
+
+    def run(self, argv, **kwargs):
+        self.calls.append((list(argv), kwargs))
+        code = 1 if any(marker in " ".join(argv) for marker in self.failing) else 0
+        return subprocess.CompletedProcess(list(argv), code, stdout="", stderr="")
+
+
+def journeys_plan(tmp_path):
+    state = {"profile": "pr", "origins": [acceptance.FIXTURE_ORIGIN], "acme_control_port": 40001}
+    plan = acceptance.Plan(tmp_path, RUN, "pr", "default", False, False, state)
+    plan.private.mkdir(parents=True)
+    plan.evidence.mkdir()
+    return plan
+
+
+def test_run_drives_legacy_suites_and_the_studio_journeys(tmp_path):
+    plan = journeys_plan(tmp_path)
+    recorder = CallRecorder()
+    acceptance.run(plan, recorder)
+    commands = [" ".join(argv) for argv, _ in recorder.calls]
+    assert "-m pytest" in commands[0]
+    assert any("tests/browser/real-platform.spec.ts" in command for command in commands)
+    studio = [(argv, kwargs) for argv, kwargs in recorder.calls if acceptance.STUDIO_JOURNEYS_CONFIG in argv]
+    assert len(studio) == 1 and studio[0][0][-2:] == ["--retries", "0"]
+    assert studio[0][1]["env"]["WEAVE_ACC_RUN_DIR"] == str(plan.root)
+    assert studio[0][1]["cwd"] == acceptance.ROOT / "studio"
+    resolved = json.loads((plan.root / "enablement.json").read_text(encoding="utf-8"))
+    assert resolved["profile"] == "pr" and "J1.1" in resolved["steps"]
+
+
+def test_a_failed_suite_still_runs_the_studio_journeys(tmp_path):
+    plan = journeys_plan(tmp_path)
+    recorder = CallRecorder(failing=("real-platform.spec.ts",))
+    with pytest.raises(acceptance.StageFailed, match="the platform-session suite"):
+        acceptance.run(plan, recorder)
+    assert any(acceptance.STUDIO_JOURNEYS_CONFIG in argv for argv, _ in recorder.calls)
+
+
+def journeys_map(tmp_path, enabled):
+    """The committed map with real-platform-journeys switched on or off."""
+    text = (acceptance.ROOT / "tests/acceptance/journeys.toml").read_text(encoding="utf-8")
+    text = re.sub(
+        r'"real-platform-journeys" = (true|false)', f'"real-platform-journeys" = {str(enabled).lower()}', text
+    )
+    path = tmp_path / ("on.toml" if enabled else "off.toml")
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def scan_steps(plan):
+    path = plan.evidence / "steps.jsonl"
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()] if path.is_file() else []
+
+
+def test_the_scan_records_j9_4_only_when_it_is_enabled(tmp_path, monkeypatch):
+    monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+    plan = journeys_plan(tmp_path / "run")
+    monkeypatch.setattr(acceptance, "JOURNEYS", journeys_map(tmp_path, False))
+    acceptance.scan(plan, FakeRecorder())
+    assert scan_steps(plan) == []
+    monkeypatch.setattr(acceptance, "JOURNEYS", journeys_map(tmp_path, True))
+    acceptance.scan(plan, FakeRecorder())
+    (record,) = scan_steps(plan)
+    assert (record["id"], record["status"]) == ("J9.4", "passed")
+
+
+def test_studio_steps_without_storage_dumps_fail_j9_4(tmp_path, monkeypatch):
+    monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+    plan = journeys_plan(tmp_path / "run")
+    monkeypatch.setattr(acceptance, "JOURNEYS", journeys_map(tmp_path, True))
+    (plan.evidence / "steps.jsonl").write_text(
+        json.dumps({"id": "J1.1", "status": "passed", "viewport": "1440x900"}) + "\n", encoding="utf-8"
+    )
+    with pytest.raises(acceptance.StageFailed, match="No browser storage was captured"):
+        acceptance.scan(plan, FakeRecorder())
+    assert scan_steps(plan)[-1]["status"] == "failed"
+
+
+def test_scan_counts_browser_storage_entries_and_finds_canaries_in_them(tmp_path, monkeypatch):
+    monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+    plan = journeys_plan(tmp_path / "run")
+    monkeypatch.setattr(acceptance, "JOURNEYS", journeys_map(tmp_path, True))
+    (plan.private / "canaries.json").write_text(json.dumps({"acme-api-key": "wv-canary-x1-unit"}), encoding="utf-8")
+    storage = plan.private / "browser-storage"
+    storage.mkdir()
+    dump = {"local": {"a": "1"}, "session": {"b": "2"}, "indexed_db": []}
+    (storage / "J1-1440x900-builder.json").write_text(json.dumps(dump), encoding="utf-8")
+    acceptance.scan(plan, FakeRecorder())
+    assert plan.state["secret_scan"]["browser_storage_entries"] == 2 and plan.state["secret_scan"]["hits"] == 0
+    dump["local"]["leak"] = "wv-canary-x1-unit"
+    (storage / "J1-1440x900-builder.json").write_text(json.dumps(dump), encoding="utf-8")
+    with pytest.raises(acceptance.StageFailed, match="found a secret"):
+        acceptance.scan(plan, FakeRecorder())
+    assert scan_steps(plan)[-1] == {
+        "id": "J9.4",
+        "status": "failed",
+        "seconds": scan_steps(plan)[-1]["seconds"],
+        "error": "The canary scan found a secret in 1 file(s)",
+    }
+
+
+def test_scan_steps_are_judged_by_the_scan_stage():
+    journeys = [
+        {"id": "J9", "status": "failed", "steps": [{"n": 1, "status": "passed"}, {"n": 4, "status": "not_run"}]}
+    ]
+    assert acceptance.failed_journeys(journeys, ("run",)) == []
+    assert acceptance.failed_journeys(journeys, ("run", "scan")) == ["J9"]
+
+
+def test_each_person_a_studio_journey_signed_in_as_needs_a_storage_dump(tmp_path, monkeypatch):
+    monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+    plan = journeys_plan(tmp_path / "run")
+    monkeypatch.setattr(acceptance, "JOURNEYS", journeys_map(tmp_path, True))
+    (plan.evidence / "steps.jsonl").write_text(
+        json.dumps({"id": "J9.2", "status": "passed", "viewport": "1440x900"}) + "\n", encoding="utf-8"
+    )
+    people = [{"journey": "J9", "viewport": "1440x900", "person": name} for name in ("builder", "viewer")]
+    (plan.private / acceptance.STUDIO_PEOPLE).write_text(
+        "".join(json.dumps(person) + "\n" for person in people), encoding="utf-8"
+    )
+    storage = plan.private / "browser-storage"
+    storage.mkdir()
+    dump = {"local": {"a": "1"}, "session": {}, "indexed_db": []}
+    (storage / "J9-1440x900-builder.json").write_text(json.dumps(dump), encoding="utf-8")
+    with pytest.raises(acceptance.StageFailed, match="captured for J9-1440x900-viewer"):
+        acceptance.scan(plan, FakeRecorder())
+    assert scan_steps(plan)[-1]["status"] == "failed"
+    assert plan.state["secret_scan"]["browser_storage_entries"] == 1
+    (storage / "J9-1440x900-viewer.json").write_text(json.dumps(dump), encoding="utf-8")
+    acceptance.scan(plan, FakeRecorder())
+    assert scan_steps(plan)[-1]["status"] == "passed"
+    assert plan.state["secret_scan"]["browser_storage_entries"] == 2
