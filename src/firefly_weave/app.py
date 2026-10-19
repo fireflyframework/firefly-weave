@@ -19,10 +19,11 @@
 import asyncio
 import logging
 import os
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from pyfly.client.ports.outbound import BoundedHttpClientPort
 from pyfly.container.bean import bean
@@ -56,6 +57,7 @@ from firefly_weave.api.health import HealthController
 from firefly_weave.api.human_files import HumanFileController
 from firefly_weave.api.lumi import LumiController
 from firefly_weave.api.operations import OperationsController
+from firefly_weave.api.operations_summary import OperationsSummaryController
 from firefly_weave.api.providers import ProviderController
 from firefly_weave.api.run_views import RunViewController
 from firefly_weave.api.runs import RunController
@@ -102,10 +104,13 @@ from firefly_weave.operations.debug.store import DebugService
 from firefly_weave.operations.event_delivery import OutboxDispatcher
 from firefly_weave.operations.history import HistoryService
 from firefly_weave.operations.incidents import IncidentService
+from firefly_weave.operations.loop import OperationsLoop
+from firefly_weave.operations.loop_health import LoopHealth, register_background_loops
 from firefly_weave.operations.lumi import LumiService
 from firefly_weave.operations.lumi_gateway import LumiGatewayClient
 from firefly_weave.operations.outbox_loop import OutboxLoop
 from firefly_weave.operations.run_views import RunViewService
+from firefly_weave.operations.summary import OperationsSummaryService
 from firefly_weave.operations.telemetry import TelemetryService
 from firefly_weave.persistence.resources import DatabaseResources
 from firefly_weave.persistence.uow import UnitOfWork
@@ -263,8 +268,15 @@ def make_app(
         dispatcher = None
         kafka_loop = None
         provider_loop = None
+        operations_loop = None
         effects_open = False
         compatibility = None
+        # One registry for this process's background loops; every loop reports into it.
+        health = LoopHealth()
+        register_background_loops(health, settings)
+        app.state.loop_health = health
+        # The summary names the process that answered and how long it has been up.
+        instance, started = uuid4(), time.monotonic()
         try:
             if settings.broker.enabled:
                 require_driver()
@@ -357,12 +369,24 @@ def make_app(
                 RunViewService,
                 RunViewController,
                 WorkerController,
+                OperationsSummaryController,
             ):
                 pyfly.context.get_bean(required)
             app.state.authentication = pyfly.context.get_bean(AuthenticationService)
             await resources.check_startup()
             compatibility = pyfly.context.get_bean(CompatibilityService)
             app.state.compatibility = compatibility
+            app.state.operations_summary = OperationsSummaryService(
+                pyfly.context.get_bean(UnitOfWork),
+                pyfly.context.get_bean(AuthorizationService),
+                settings,
+                health,
+                compatibility,
+                drops=telemetry_drops,
+                instance=instance,
+                started_monotonic=started,
+                native=lambda: getattr(app.state, "dispatcher", None),
+            )
             app.state.telemetry_service = pyfly.context.get_bean(TelemetryService)
             registry.set_operational_guard(lambda: compatibility.ready, retry_after=compatibility.retry_after_seconds)
 
@@ -376,6 +400,7 @@ def make_app(
                     pyfly.context.get_bean(RecoveryService),
                     pyfly.context.get_bean(Scheduler),
                     operational=lambda: compatibility.ready,
+                    health=health,
                 )
                 try:
                     await candidate.open()
@@ -389,15 +414,20 @@ def make_app(
                 app.state.recovery_loop = recovery_loop
 
             async def open_effects() -> None:
-                nonlocal outbox_loop, dispatcher, kafka_loop, provider_loop, effects_open
+                nonlocal outbox_loop, dispatcher, kafka_loop, provider_loop, operations_loop, effects_open
                 if effects_open:
                     return
-                if any(loop is not None for loop in (outbox_loop, dispatcher, kafka_loop, provider_loop)):
+                if any(
+                    loop is not None for loop in (outbox_loop, dispatcher, kafka_loop, provider_loop, operations_loop)
+                ):
                     await close_effects()
                 await open_control_loop(required=True)
                 try:
                     outbox_loop = OutboxLoop(
-                        settings, pyfly.context.get_bean(UnitOfWork), pyfly.context.get_bean(OutboxDispatcher)
+                        settings,
+                        pyfly.context.get_bean(UnitOfWork),
+                        pyfly.context.get_bean(OutboxDispatcher),
+                        health=health,
                     )
                     await outbox_loop.open()
                     app.state.outbox_loop = outbox_loop
@@ -414,6 +444,7 @@ def make_app(
                         pyfly.context.get_bean(UnitOfWork),
                         pyfly.context.get_bean(KafkaTrigger),
                         pyfly.context.get_bean(BrokerClients),
+                        health=health,
                     )
                     await kafka_loop.open()
                     app.state.kafka_loop = kafka_loop
@@ -422,9 +453,13 @@ def make_app(
                         pyfly.context.get_bean(UnitOfWork),
                         pyfly.context.get_bean(ProviderDispatcher),
                         pyfly.context.get_bean(EmailSourceService),
+                        health=health,
                     )
                     await provider_loop.open()
                     app.state.provider_loop = provider_loop
+                    operations_loop = OperationsLoop(settings, pyfly.context.get_bean(UnitOfWork), health)
+                    await operations_loop.open()
+                    app.state.operations_loop = operations_loop
                 except BaseException:
                     try:
                         await close_effects()
@@ -434,11 +469,14 @@ def make_app(
                 effects_open = True
 
             async def close_effects() -> None:
-                nonlocal outbox_loop, dispatcher, kafka_loop, provider_loop, effects_open
+                nonlocal outbox_loop, dispatcher, kafka_loop, provider_loop, operations_loop, effects_open
                 effects_open = False
-                remaining = [provider_loop, kafka_loop, dispatcher, outbox_loop]
+                # The operations loop opened last, so it closes first.
+                remaining = [operations_loop, provider_loop, kafka_loop, dispatcher, outbox_loop]
                 cleanup_error: BaseException | None = None
-                for index, name in enumerate(("provider_loop", "kafka_loop", "dispatcher", "outbox_loop")):
+                for index, name in enumerate(
+                    ("operations_loop", "provider_loop", "kafka_loop", "dispatcher", "outbox_loop")
+                ):
                     loop = remaining[index]
                     if loop is not None:
                         try:
@@ -449,10 +487,11 @@ def make_app(
                             remaining[index] = None
                     setattr(app.state, name, remaining[index])
                 # Failed owners remain reachable for the next refresh or final cleanup.
-                provider_loop = None if remaining[0] is None else provider_loop
-                kafka_loop = None if remaining[1] is None else kafka_loop
-                dispatcher = None if remaining[2] is None else dispatcher
-                outbox_loop = None if remaining[3] is None else outbox_loop
+                operations_loop = None if remaining[0] is None else operations_loop
+                provider_loop = None if remaining[1] is None else provider_loop
+                kafka_loop = None if remaining[2] is None else kafka_loop
+                dispatcher = None if remaining[3] is None else dispatcher
+                outbox_loop = None if remaining[4] is None else outbox_loop
                 if cleanup_error is not None:
                     raise cleanup_error
                 await open_control_loop()
@@ -470,6 +509,11 @@ def make_app(
             if compatibility is not None:
                 try:
                     await compatibility.close()
+                except BaseException as error:
+                    cleanup_error = error
+            if operations_loop is not None:
+                try:
+                    await operations_loop.close()
                 except BaseException as error:
                     cleanup_error = error
             if provider_loop is not None:

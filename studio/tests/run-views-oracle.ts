@@ -78,7 +78,11 @@ export function validateWithPython(
 }
 
 /** The query models that parse_query decodes in the run views. */
-export type QueryModel = "RunSummaryQuery" | "RunStepQuery" | "RunLogQuery";
+export type QueryModel =
+  | "RunSummaryQuery"
+  | "RunListQuery"
+  | "RunStepQuery"
+  | "RunLogQuery";
 const queryScript = `
 import json, sys
 from starlette.datastructures import QueryParams
@@ -141,4 +145,29 @@ export function rejectionMessagesWithPython(queries: string[]): string[] {
       input: JSON.stringify(queries),
     }),
   ) as string[];
+}
+
+/** Serialize fixture pages through Python to check additive wire fields. */
+export function roundTripWithPython(pages: RunViewPages): {
+  summaries: import("../src/app/operate/run-contracts").RunSummaryPage[];
+  steps: import("../src/app/operate/run-contracts").StepFactPage[];
+  logs: import("../src/app/operate/run-contracts").RunLogPage[];
+} {
+  return JSON.parse(
+    execFileSync(
+      python,
+      [
+        "-c",
+        `
+import json, sys
+from firefly_weave.contracts import run_views as v
+pages = json.load(sys.stdin)
+for name, model in (("summaries", v.RunSummaryPage), ("steps", v.StepFactPage), ("logs", v.RunLogPage)):
+    pages[name] = [model.model_validate_json(json.dumps(page)).model_dump(mode="json") for page in pages[name]]
+print(json.dumps(pages))
+`,
+      ],
+      { ...pythonOptions, input: JSON.stringify(pages) },
+    ),
+  );
 }

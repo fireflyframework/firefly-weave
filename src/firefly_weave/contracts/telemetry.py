@@ -42,6 +42,8 @@ class TelemetryOptions(BaseModel):
             valid = (
                 url.scheme in {"http", "https"}
                 and url.hostname
+                # A DNS name has at most 253 characters, and the host is all that is ever shown.
+                and len(url.hostname) <= 253
                 and url.port != 0
                 and not url.username
                 and not url.password

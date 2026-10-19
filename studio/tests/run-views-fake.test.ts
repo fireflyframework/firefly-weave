@@ -76,6 +76,11 @@ const invalidQueries = [
   "colour=red",
   "workflow=a&workflow=b",
   "include_test=1",
+  "started_after=1791374400",
+  "started_after=2026-10-07%2012:00:00Z",
+  "started_after=2026-10-07T12:00:00",
+  "started_after=2026-10-07T12:00:00." + "1".repeat(65) + "Z",
+  "has_handled_errors=1",
   "limit=101",
   "status=canceled",
   "started_after=2026-10-07T12:00:00+02:00",
@@ -498,6 +503,8 @@ describe.skipIf(!pythonAvailable)("query decisions match parse_query", () => {
   };
   const summaryQueries = [
     "",
+    "has_handled_errors=true",
+    "has_handled_errors=false",
     "include_test=true&order=updated_desc&limit=100",
     "status=queued&status=failed&status=queued",
     "status=queued&status=queued&status=queued&status=queued&status=queued&status=queued&status=queued&status=queued",
@@ -643,5 +650,29 @@ describe.skipIf(!pythonAvailable)("query decisions match parse_query", () => {
     expect(
       differences("RunLogQuery", `/runs/${fixtureIds.failed}/logs`, logQueries),
     ).toEqual([]);
+  });
+});
+
+describe("handled failures", () => {
+  it("filters nonzero counts and treats absent counts as zero", async () => {
+    const yes = await listRunSummaries(api, { has_handled_errors: true });
+    expect(ids(yes)).toEqual([fixtureIds.retry]);
+    expect(summary(yes, fixtureIds.retry).handled_errors).toBe(1);
+    const no = await listRunSummaries(api, { has_handled_errors: false });
+    expect(ids(no)).not.toContain(fixtureIds.retry);
+    expect(ids(no)).toContain(fixtureIds.succeeded);
+    expect(summary(no, fixtureIds.succeeded)).not.toHaveProperty(
+      "handled_errors",
+    );
+  });
+  it("binds both handled filters to pagination cursors", async () => {
+    const first = await listRunSummaries(api, { limit: 1 });
+    for (const has_handled_errors of [true, false])
+      await expect(
+        listRunSummaries(api, {
+          cursor: first.next_cursor!,
+          has_handled_errors,
+        }),
+      ).rejects.toMatchObject({ status: 422, code: "WV-VALIDATION" });
   });
 });

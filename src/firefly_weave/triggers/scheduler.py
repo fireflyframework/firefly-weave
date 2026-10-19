@@ -31,6 +31,7 @@ from firefly_weave.access.scheduler import _SchedulerScope
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.runtime import StartRunRequest
 from firefly_weave.definitions.models import CatalogError, capacity_rejected
+from firefly_weave.operations.facts import RunStartFacts
 from firefly_weave.persistence.uow import Transaction
 from firefly_weave.runtime.repository import SCOPE, RuntimeRepository
 from firefly_weave.runtime.service import RuntimeService
@@ -127,6 +128,7 @@ class Scheduler:
                 occurrence_key(row["id"], row["revision"], instant),
                 context=AuditContext(),
                 tx=tx,
+                start_facts=RunStartFacts(origin="schedule"),
                 not_after=instant + timedelta(seconds=60),
             )
             await repository.execute(

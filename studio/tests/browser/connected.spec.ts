@@ -15,7 +15,7 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-import { selectChoice } from "./support";
+import { runSummaries, selectChoice } from "./support";
 import { execFileSync } from "node:child_process";
 import { test, expect, Page } from "@playwright/test";
 import { chooseAction } from "./integrations-po";
@@ -303,10 +303,7 @@ test("run keys group separate executions and filters reset the cursor", async ({
       },
     }),
   );
-  await page.route("**/runs?*", (r) => {
-    queries.push(new URL(r.request().url()));
-    return r.fulfill({ json: { items: [], next_cursor: "old-page" } });
-  });
+  await runSummaries(page, [], queries);
   await page.route("**/environments/development/runs", (r) => {
     starts.push(r.request().postDataJSON());
     keys.push(r.request().headers()["idempotency-key"]);
@@ -356,10 +353,13 @@ test("run keys group separate executions and filters reset the cursor", async ({
   ]);
   expect(keys[0]).not.toBe(keys[1]);
   // Filters apply as they change: no Apply button.
-  await page.getByLabel("Search by business key").fill("expense-104");
+  await page.getByLabel("Business key", { exact: true }).fill("expense-104");
   await page.getByRole("button", { name: "More filters" }).click();
   await page.getByLabel("Correlation key", { exact: true }).fill("batch-2026");
-  await page.getByRole("button", { name: "Waiting", exact: true }).click();
+  await page
+    .getByRole("group", { name: "Status" })
+    .getByRole("button", { name: "Waiting", exact: true })
+    .click();
   await expect
     .poll(() => queries.at(-1)?.searchParams.get("status"))
     .toBe("waiting");
@@ -368,7 +368,7 @@ test("run keys group separate executions and filters reset the cursor", async ({
     .toBe("batch-2026");
   expect(queries.at(-1)?.searchParams.get("business_key")).toBe("expense-104");
   expect(queries.at(-1)?.searchParams.has("cursor")).toBe(false);
-  await page.getByLabel("Search by business key").fill("");
+  await page.getByLabel("Business key", { exact: true }).fill("");
   await expect
     .poll(() => queries.at(-1)?.searchParams.has("business_key"))
     .toBe(false);
@@ -392,9 +392,7 @@ test("archive and purge require terminal state, revision and exact run ID confir
     state: { status: "succeeded", active: [] },
     activation: { request: { version_id: "version" } },
   };
-  await page.route("**/runs?*", (r) =>
-    r.fulfill({ json: { items: [run], next_cursor: null } }),
-  );
+  await runSummaries(page, [run]);
   await page.route("**/runs/" + id, (r) => r.fulfill({ json: run }));
   await page.route("**/runs/" + id + "/history?*", (r) =>
     r.fulfill({ json: { events: [], next_cursor: null } }),

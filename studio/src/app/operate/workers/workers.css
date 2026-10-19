@@ -15,8 +15,25 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-.worker-list {
+/* Operate › Workers: the fleet, its releases and their details, in design
+   tokens only. A fine pointer on a wide screen gets 36 px controls; a narrow
+   screen or a touch pointer gets 44 px targets. */
+:host {
+  --target: var(--control-md);
+  --cell: calc(var(--control-sm) - var(--space-1));
+  display: block;
+  min-width: 0;
+}
+@media (max-width: 767px), (pointer: coarse) {
+  :host {
+    --target: var(--control-touch);
+    --cell: var(--control-touch);
+  }
+}
+.worker-list,
+.release-list {
   display: grid;
+  align-content: start;
   min-width: 0;
   container: workers / inline-size;
 }
@@ -24,61 +41,137 @@ SPDX-License-Identifier: Apache-2.0
 weave-operate-state {
   margin-bottom: var(--space-4);
 }
+.operate-filters select,
+.operate-filters input:not([type="checkbox"]) {
+  min-height: var(--target);
+}
+.host-field input {
+  width: 14ch;
+}
 .worker-table {
-  --cols: minmax(180px, 1fr) 170px 110px 150px 130px;
+  --cols: minmax(150px, 1.2fr) 150px minmax(110px, 1fr) 110px
+    minmax(110px, 0.9fr) 130px 104px 104px;
+}
+.worker-table.selectable {
+  --cols: var(--target) minmax(150px, 1.2fr) 150px minmax(110px, 1fr) 110px
+    minmax(110px, 0.9fr) 130px 104px 104px;
 }
 .worker-table .table-head,
 .worker-table .resource-row {
   grid-template-columns: var(--cols);
 }
-.worker-table .row-text {
+.worker-table .row-text,
+.release-table .row-text,
+.worker-table .cell-text {
   display: grid;
   min-width: 0;
 }
-.worker-table small {
+.worker-table small,
+.release-table small {
   font: var(--type-caption);
   font-weight: 400;
   color: var(--muted);
 }
-.worker-table [role="cell"] {
+.worker-table [role="cell"],
+.release-table [role="cell"] {
   min-width: 0;
   font: var(--type-small);
   color: var(--muted);
 }
-/* The worker's name stays on one line and ends in an ellipsis. */
-.worker-table .row-open {
+/* One line each, ending in an ellipsis with the whole value in its title. */
+.worker-table .row-open,
+.release-table .row-open,
+.worker-table small,
+.release-table small,
+.worker-table .cell-text,
+.release-table .cell-text {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* The five columns need about 840 px; the shared table rules that hide a
-   column title on smaller screens don't apply while all five fit. */
-@container workers (min-width: 840px) {
+.worker-table .cell-text,
+.release-table .cell-text {
+  display: block;
+}
+/* The checkbox sits above the row's own button, which covers the row. */
+.cell-select {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+}
+.select-box {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--target);
+  height: var(--cell);
+  cursor: pointer;
+}
+.select-box input {
+  width: var(--space-4);
+  height: var(--space-4);
+  margin: 0;
+}
+/* Every column fits from about 1,100 px; the shared table rules that hide
+   column titles on smaller screens don't apply while they fit. */
+@container workers (min-width: 1100px) {
   .worker-table .table-head > [role="columnheader"] {
     display: block;
   }
 }
-/* Narrower (a worker open beside the list, or a small screen) rows keep the
+/* Narrower: version and registration time move to the worker's detail. */
+@container workers (max-width: 1099px) {
+  .worker-table {
+    --cols: minmax(150px, 1.2fr) 150px minmax(110px, 1fr) 110px 130px 104px;
+  }
+  .worker-table.selectable {
+    --cols: var(--target) minmax(150px, 1.2fr) 150px minmax(110px, 1fr) 110px
+      130px 104px;
+  }
+  .worker-table [data-wider] {
+    display: none;
+  }
+}
+@container workers (min-width: 840px) and (max-width: 1099px) {
+  .worker-table .table-head > [role="columnheader"]:not([data-wider]) {
+    display: block;
+  }
+}
+/* Narrower still (a worker open beside the list, or a small screen): the
    worker, its status and its load, with the load on a line of its own. */
 @container workers (max-width: 839px) {
+  /* A fixed status column: every row's grid is its own, so an auto width
+     would put each row's status somewhere else. */
   .worker-table {
-    --cols: minmax(0, 1fr) auto;
+    --cols: minmax(0, 1fr) 150px;
   }
-  .worker-table [data-wide],
-  .worker-table .table-head > [role="columnheader"]:nth-child(4) {
+  .worker-table.selectable {
+    --cols: var(--target) minmax(0, 1fr) 150px;
+  }
+  .worker-table [data-wide] {
+    display: none;
+  }
+  .worker-table .table-head > .cell-load {
     display: none;
   }
   .worker-table .resource-row {
     row-gap: var(--space-2);
   }
-  .worker-table .resource-row > [role="cell"]:nth-child(4) {
+  .worker-table .resource-row > .cell-load {
     grid-column: 1 / -1;
+  }
+  .worker-table.selectable .resource-row > .cell-load {
+    grid-column: 2 / -1;
   }
 }
 /* Without room for the column titles the rows speak for themselves; on a
    phone each row reads top to bottom: worker, status, load. */
 @container workers (max-width: 559px) {
-  .worker-table .table-head {
+  .worker-table .table-head:not(:has(.cell-select)) {
+    display: none;
+  }
+  .worker-table .table-head > [role="columnheader"]:not(.cell-select) {
     display: none;
   }
 }
@@ -86,4 +179,226 @@ weave-operate-state {
   .worker-table {
     --cols: minmax(0, 1fr);
   }
+  .worker-table.selectable {
+    --cols: var(--target) minmax(0, 1fr);
+  }
+  .worker-table.selectable .resource-row > .badges {
+    grid-column: 2 / -1;
+  }
+}
+
+/* Bulk actions on the selected workers, and their result per worker. */
+.bulk-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+  padding: var(--space-2) var(--space-3);
+  border: thin solid var(--accent);
+  border-radius: var(--radius-md);
+  background: var(--selected);
+}
+.bulk-bar button {
+  min-height: var(--target);
+}
+.bulk-count {
+  margin-right: auto;
+  font: var(--type-label);
+}
+.bulk-results {
+  display: grid;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+  padding: var(--space-3);
+  border: thin solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+.bulk-results-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.bulk-results h2 {
+  margin: 0;
+  font: var(--type-label);
+}
+.bulk-results ul,
+.retired-ids,
+.worker-labels,
+.release-workers {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.bulk-result {
+  display: grid;
+  grid-template-columns: var(--space-4) auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-sm);
+  font: var(--type-small);
+  color: var(--text);
+}
+.bulk-result[data-ok="true"] weave-icon {
+  color: var(--success-ink);
+}
+.bulk-result[data-ok="false"] weave-icon {
+  color: var(--warning-ink);
+}
+.list-limit {
+  margin: var(--space-3) 0 0;
+  font: var(--type-small);
+  color: var(--muted);
+}
+
+/* Retire offline workers: the threshold, what matches and what was revoked.
+   The threshold is a full target on narrow screens and with touch. */
+@media (max-width: 767px), (pointer: coarse) {
+  .dialog-form select {
+    min-height: var(--control-touch);
+  }
+}
+.retire-status {
+  margin: var(--space-3) 0;
+  min-height: 1lh;
+}
+.retired-ids {
+  grid-template-columns: repeat(auto-fill, minmax(10ch, 1fr));
+  gap: var(--space-1) var(--space-3);
+  max-height: calc(var(--space-6) * 6);
+  overflow-y: auto;
+  margin-bottom: var(--space-3);
+  font: var(--type-small);
+}
+.worker-labels {
+  gap: var(--space-1);
+}
+
+/* Releases: the list, the CLI command that admits one, and a release. */
+.releases-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-4);
+  margin-bottom: var(--space-4);
+}
+.release-table {
+  --cols: minmax(180px, 1fr) minmax(160px, 1.4fr) 110px;
+}
+.release-table .table-head,
+.release-table .resource-row {
+  grid-template-columns: var(--cols);
+}
+@container workers (min-width: 560px) {
+  .release-table .table-head > [role="columnheader"] {
+    display: block;
+  }
+}
+@container workers (max-width: 559px) {
+  .release-table {
+    --cols: minmax(0, 1fr);
+  }
+  .release-table .table-head,
+  .release-table [role="cell"]:not(.row-text) {
+    display: none;
+  }
+}
+.release-admission {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-6);
+}
+.release-admission h2 {
+  margin: 0;
+  font: var(--type-label);
+}
+.release-admission .hint {
+  margin: 0;
+}
+.command-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3);
+  border: thin solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--sunken);
+}
+.command-line code {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font: var(--type-mono);
+  font-variant-ligatures: none;
+}
+.command-line .icon-button {
+  flex: none;
+}
+.release-workers {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+.release-workers li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: var(--space-1) var(--space-2);
+}
+.release-workers .figure {
+  font: var(--type-title-md);
+  color: var(--text);
+}
+.release-workers .figure-label {
+  font: var(--type-small);
+  color: var(--muted);
+}
+.release-workers .meter-track {
+  grid-column: 1 / -1;
+  width: 100%;
+}
+.release-workers [data-state="offline"] .meter-fill {
+  background: var(--danger);
+}
+.release-workers [data-state="draining"] .meter-fill {
+  background: var(--warning);
+}
+.release-workers [data-state="revoked"] .meter-fill {
+  background: var(--subtle);
+}
+.usage-table {
+  margin-bottom: var(--space-3);
+}
+.usage-table .table-head,
+.usage-table .resource-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-height: var(--target);
+}
+.usage-table [role="cell"] {
+  min-width: 0;
+  font: var(--type-small);
+}
+.usage-table .cell-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.usage-table .table-head > [role="columnheader"] {
+  display: block;
+}
+.numeric-cell {
+  text-align: right;
+}
+.record-detail h3 {
+  margin: var(--space-4) 0 var(--space-2);
+  font: var(--type-label);
+}
+.action-row button {
+  min-height: var(--target);
 }

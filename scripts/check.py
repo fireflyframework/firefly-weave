@@ -126,8 +126,9 @@ def run(root: Path, evidence: Path, *, release: bool, context: str | None, integ
             (
                 "unit-contracts",
                 [python, "-m", "pytest", "tests/unit", "tests/contracts", "-q", "--tb=short", "--show-capture=no"],
-                # More than 3,000 tests: about 4 minutes locally, up to 10 on a shared CI runner.
-                1800,
+                # More than 7,000 tests: about 15 minutes locally and 15 to 30 on a shared CI
+                # runner, so the limit leaves room for a slow runner without hiding a hang.
+                2700,
             ),
             *worker_stages(),
             ("prepare", [python, "scripts/prepare_release.py", "--output", str(evidence / "release")], 300),

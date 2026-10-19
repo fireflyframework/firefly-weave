@@ -1752,8 +1752,28 @@ dd {
   align-items: center;
   gap: 8px;
 }
+/* An Operate list count is centered on the filter controls beside it (one
+   copy here: every Operate page's own styles would repeat it). */
+.operate-filters .operate-count {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--control-md);
+}
+@media (max-width: 767px), (pointer: coarse) {
+  .operate-filters .operate-count {
+    min-height: var(--control-touch);
+  }
+}
 .checkbox-field input {
   width: 16px;
+}
+/* A checkbox beside its label is the same 16 px box on every page, centered on
+   the label's line; this outranks the generic label > input[type="checkbox"]. */
+.checkbox-field > input[type="checkbox"] {
+  flex: none;
+  width: var(--space-4);
+  height: var(--space-4);
+  margin: 0;
 }
 .human-decision-form {
   border-top: 1px solid var(--line);

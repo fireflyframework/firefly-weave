@@ -43,8 +43,14 @@ import {
     (dismiss)="cancel.emit()"
   >
     <p id="resolve-description" class="dialog-message">
-      {{ incident().code }} at {{ incident().node_id || "the run" }}. Check the
-      other system first: Weave can't look it up for you.
+      {{ incident().code }} at {{ incident().node_id || "the run" }}
+      @if (
+        incident().instance_key &&
+        incident().instance_key !== incident().node_id
+      ) {
+        ({{ incident().instance_key }})
+      }
+      . Check the other system first: Weave can't look it up for you.
     </p>
     <form class="dialog-form resolve-form" novalidate (submit)="send($event)">
       <fieldset

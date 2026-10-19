@@ -36,6 +36,7 @@ from firefly_weave.definitions.models import CatalogError, capacity_rejected
 from firefly_weave.email.mime import parse_message
 from firefly_weave.email.service import EmailService, unavailable
 from firefly_weave.email.transport import IMAPTransport
+from firefly_weave.operations.facts import RunStartFacts
 from firefly_weave.persistence.uow import Transaction
 from firefly_weave.runtime.repository import SCOPE, RuntimeRepository
 from firefly_weave.runtime.service import RuntimeService
@@ -493,6 +494,7 @@ class EmailSourceService:
                             key,
                             context=AuditContext(),
                             tx=tx,
+                            start_facts=RunStartFacts(origin="email"),
                         )
                         run_id, signal_id = outcome_run.id, None
                         await db.execute(

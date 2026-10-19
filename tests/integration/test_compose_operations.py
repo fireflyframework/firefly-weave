@@ -120,6 +120,23 @@ async def test_compose_deploy_scale_and_zero_replica_observation(tmp_path):
         running = await adapter.apply(first, before_write)
         assert running.settled and running.resources[0].ready_replicas == 1
         assert running.resources[0].ownership == "managed"
+        # The member host is the hostname a worker in the container reports.
+        [member] = running.resources[0].members
+        container = (await run_command([*adapter._files(), "ps", "--quiet", "--no-trunc", "worker"])).decode().strip()
+        hostname = json.loads(
+            await run_command(
+                [executable, "--context", context, "inspect", "--format", "{{json .Config.Hostname}}", container]
+            )
+        )
+        assert member.host == container[:12] == hostname
+        assert (member.ordinal, member.state, member.ready, member.restarts, member.node) == (
+            1,
+            "running",
+            True,
+            0,
+            None,
+        )
+        assert member.started_at is not None and member.started_at <= datetime.now(UTC)
         # The stale first observation cannot be reused after creating a container.
         with pytest.raises(RunnerPolicyError):
             await adapter.apply(first, before_write)
@@ -132,6 +149,7 @@ async def test_compose_deploy_scale_and_zero_replica_observation(tmp_path):
         assert running.settled and running.resources[0].ready_replicas == 1
         stopped = await adapter.apply(plan(running, 0, "scale_workers"), before_write)
         assert stopped.settled and stopped.resources[0].replicas == 0
+        assert stopped.resources[0].members == []
         assert stopped.resources[0].image == image
         assert effects == 3
     finally:

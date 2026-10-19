@@ -24,7 +24,8 @@ export type StatusKind =
   | "email"
   | "connection"
   | "worker"
-  | "account";
+  | "account"
+  | "health";
 /** A pill's `data-tone`; neutral pills carry no tone attribute. */
 export type Tone = "neutral" | "info" | "success" | "warning" | "danger";
 
@@ -67,6 +68,13 @@ const statuses: Record<StatusKind, Record<string, [string, Tone]>> = {
     human: ["Person", "neutral"],
     application: ["App", "neutral"],
     worker: ["Worker", "neutral"],
+  },
+  // Platform health on Overview: a component switched off reads "Off".
+  health: {
+    ok: ["OK", "success"],
+    degraded: ["Degraded", "warning"],
+    down: ["Down", "danger"],
+    disabled: ["Off", "neutral"],
   },
 };
 

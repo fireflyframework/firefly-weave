@@ -75,3 +75,22 @@ async def test_all_column_measurements_equal_jsonb_and_reject_new_column_drift(w
             raise RuntimeError("rollback owned schema trial")
     async with access_db[1]() as owner:
         assert await owner.scalar(text("SELECT public.weave_runs_bytes(r)=octet_length(to_jsonb(r)::text) FROM runs r"))
+
+
+async def test_operational_facts_are_in_the_charged_inventory(migration_db):
+    from firefly_weave.operations.facts import FACT_TABLES
+
+    async with migration_db() as owner:
+        rows = (
+            await owner.execute(
+                text(
+                    "SELECT c.relname,t.tgargs FROM pg_trigger t "
+                    "JOIN pg_class c ON c.oid=t.tgrelid WHERE t.tgname='operation_usage' AND c.relname=ANY(:tables)"
+                ),
+                {"tables": list(FACT_TABLES)},
+            )
+        ).all()
+        assert {row.relname for row in rows} == set(FACT_TABLES)
+        assert (
+            next(row.tgargs for row in rows if row.relname == "step_facts") == b"run_id\x00node_id\x00instance_key\x00"
+        )

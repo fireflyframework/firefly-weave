@@ -15,19 +15,23 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-// One incident: what happened, the run's last engine events (types only),
-// how it was resolved, and Resolve incident while it is active.
+// One incident: what happened (its step and full step instance, the run and
+// its status, when it opened, marked when that time is an estimate), the
+// run's last engine events (types only, never their data), how it was
+// resolved, and Resolve incident while it is active. A time the platform
+// doesn't know reads Unknown.
 import { Component, input, output } from "@angular/core";
 import type { App } from "../../app";
 import type { PlainError } from "../../errors";
 import { shortId } from "../../format";
 import { Icon } from "../../icon";
-import { toneAttribute } from "../../status-labels";
+import { statusLabel, statusTone, toneAttribute } from "../../status-labels";
 import { OperateState } from "../operate-state";
 import { timeAbsolute, timeIso, timeRelative } from "../operate-time";
 import {
   incidentStatusLabel,
   incidentTone,
+  openedText,
   resolutionLabel,
   type EventLine,
   type IncidentView,
@@ -61,6 +65,9 @@ export interface RecentEvents {
     </header>
     <p class="badges">
       <span class="status-pill" [attr.data-tone]="tone(i)">{{ label(i) }}</span>
+      @if (i.test) {
+        <span class="tag">Test run</span>
+      }
     </p>
     @if (i.external_effects_may_continue) {
       <p class="notice" data-tone="warning">
@@ -79,17 +86,62 @@ export interface RecentEvents {
           <code>{{ i.origin_code }}</code>
         </dd>
       }
+      <dt>Opened</dt>
+      <dd class="opened">
+        @if (i.opened_at && relative(i.opened_at)) {
+          <time
+            [attr.datetime]="iso(i.opened_at)"
+            [attr.title]="absolute(i.opened_at)"
+            >{{ opened(i) }}</time
+          >
+          @if (i.opened_at_estimated) {
+            <small class="hint"
+              >From the run's last recorded event: the incident's own opening
+              wasn't kept.</small
+            >
+          }
+        } @else {
+          Unknown
+        }
+      </dd>
+      @if (i.updated_at && relative(i.updated_at)) {
+        <dt>Last changed</dt>
+        <dd>
+          <time
+            [attr.datetime]="iso(i.updated_at)"
+            [attr.title]="absolute(i.updated_at)"
+            >{{ relative(i.updated_at) }}</time
+          >
+        </dd>
+      }
+      <dt>Workflow</dt>
+      <dd>
+        {{
+          i.workflow ? i.workflow.name + " " + i.workflow.version : "Unknown"
+        }}
+      </dd>
       <dt>Step</dt>
       <dd>{{ i.node_id || "Not tied to a step" }}</dd>
+      @if (i.instance_key && i.instance_key !== i.node_id) {
+        <dt>Step instance</dt>
+        <dd>
+          <code class="mono-id">{{ i.instance_key }}</code>
+        </dd>
+      }
       @if (i.generation !== null) {
         <dt>Attempt</dt>
         <dd>{{ i.generation }}</dd>
       }
       <dt>Run</dt>
-      <dd>
+      <dd class="run-fact">
         <button type="button" class="tertiary sm" (click)="openRun.emit()">
           Run {{ short(i.run_id) }}
         </button>
+        @if (i.run_status) {
+          <span class="status-pill" [attr.data-tone]="runTone(i.run_status)">{{
+            runLabel(i.run_status)
+          }}</span>
+        }
       </dd>
     </dl>
     @if (i.resolution; as resolution) {
@@ -200,8 +252,18 @@ export class IncidentDrawer {
   decision(kind: Parameters<typeof resolutionLabel>[0]) {
     return resolutionLabel(kind);
   }
-  /** A resolution time that isn't a date shows nothing rather than "Unknown". */
+  /** A time that isn't a date shows nothing; the template says Unknown. */
   relative(value: string) {
     return timeRelative(value, "");
+  }
+  /** When it opened, with an estimate marked as one. */
+  opened(incident: IncidentView) {
+    return openedText(incident, (value) => this.relative(value));
+  }
+  runLabel(status: string) {
+    return statusLabel("run", status);
+  }
+  runTone(status: string) {
+    return toneAttribute(statusTone("run", status));
   }
 }
