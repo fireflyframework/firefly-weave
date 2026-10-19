@@ -32,7 +32,7 @@ RANDOM = "random"
 # The demo environment's scope (tenant, project and environment IDs); without one, three new UUIDs.
 DEMO_SCOPE = "demo-scope"
 TABLES = ("operations", "controls")
-KEYS = {"capability", "identifier", "query", "body", "collection"}
+KEYS = {"capability", "identifier", "query", "body", "collection", "answers"}
 
 
 @dataclass(frozen=True)
@@ -44,6 +44,8 @@ class Row:
     query: Mapping[str, Any] = field(default_factory=dict)
     body: Mapping[str, Any] | None = None
     collection: str | None = None
+    # Answers a permitted call may also give: {status, code}, and "until" a journeys.toml capability lands.
+    answers: tuple[Mapping[str, Any], ...] = ()
 
 
 def load(path: Path = MATRIX) -> tuple[Path, list[Row]]:
@@ -55,8 +57,11 @@ def load(path: Path = MATRIX) -> tuple[Path, list[Row]]:
         for operation, row in data[table].items():
             if set(row) - KEYS or "capability" not in row or row.get("identifier", RANDOM) != RANDOM:
                 raise ValueError(
-                    f'{table}.{operation}: use capability, identifier = "random", query, body and collection'
+                    f'{table}.{operation}: use capability, identifier = "random", query, body, collection and answers'
                 )
+            for answer in row.get("answers", ()):
+                if set(answer) - {"status", "code", "until"} or not {"status", "code"} <= set(answer):
+                    raise ValueError(f"{table}.{operation}: each answer has status, code and optionally until")
             rows.append(
                 Row(
                     operation,
@@ -66,6 +71,7 @@ def load(path: Path = MATRIX) -> tuple[Path, list[Row]]:
                     row.get("query", {}),
                     row.get("body"),
                     row.get("collection"),
+                    tuple(row.get("answers", ())),
                 )
             )
     return ROOT / data["baseline"], rows
@@ -79,6 +85,15 @@ def holds(roles: Iterable[str], capability: str, role_capabilities: Mapping[str,
     """True when one of the roles grants the capability, or one of its alternatives ("a or b")."""
     options = [part.strip() for part in capability.split(" or ")]
     return any(option in role_capabilities.get(role, frozenset()) for role in roles for option in options)
+
+
+def accepted(row: Row, capabilities: Mapping[str, bool]) -> set[tuple[int, str]]:
+    """The answers a permitted call of ``row`` may also give while their capability has not landed."""
+    return {
+        (int(answer["status"]), str(answer["code"]))
+        for answer in row.answers
+        if not capabilities.get(str(answer.get("until", "")), False)
+    }
 
 
 def level(path: str) -> str:

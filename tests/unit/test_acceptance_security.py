@@ -204,3 +204,11 @@ def test_the_identity_alias_is_added_at_keycloaks_address_and_taken_away_afterwa
         ["network", "disconnect", "weave-local-p-egress", "weave-local-p-keycloak-1"],
         ["network", "connect", "--ip", "10.246.50.3", "weave-local-p-egress", "weave-local-p-keycloak-1"],
     ]
+
+
+def test_a_permitted_call_may_give_an_answer_its_row_names():
+    named = outcome(True, 501, "WV-UNAVAILABLE", random=True) | {"answers": [[501, "WV-UNAVAILABLE"]]}
+    assert not security.wrong(named)
+    assert security.wrong(named | {"answers": []})
+    # A denied call is still exactly 403 WV-FORBIDDEN, whatever the row names.
+    assert security.wrong(named | {"permitted": False})

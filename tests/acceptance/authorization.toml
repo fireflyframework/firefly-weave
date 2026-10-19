@@ -21,7 +21,9 @@
 # UUID, so a permitted call names nothing that exists, and "demo-scope" becomes the demo environment's
 # tenant, project and environment IDs; collection names the catalog collection of
 # operations whose path has one. The journey expects exactly
-# 403 WV-FORBIDDEN where the person's roles lack the capability, and any other answer elsewhere.
+# 403 WV-FORBIDDEN where the person's grants at the operation's scope lack the capability, and elsewhere the
+# operation's own answer: success, or for a random target its not-found, conflict or validation answer, or one of
+# the row's answers.
 baseline = "tests/fixtures/contracts/operations-0.1.0a14.json"
 
 [operations."ai_connections.test"]
@@ -47,6 +49,8 @@ body = { connection_revision_id = "random" }
 [operations."ai_setup.publish"]
 capability = "definition.publish"
 body = {}
+# Without an AI worker (the pr profile installs none) publishing the AI setup is refused by its own precondition.
+answers = [{ status = 422, code = "WV-AI-WORKER-MISSING" }]
 
 [operations."bindable_connections.list"]
 capability = "connection.bind"
@@ -74,6 +78,8 @@ capability = "run.read"
 [operations."runs.logs"]
 capability = "run.read"
 identifier = "random"
+# Run logs answer 501 until the platform has a log reader (the logs capability).
+answers = [{ status = 501, code = "WV-UNAVAILABLE", until = "logs" }]
 
 [operations."runs.steps"]
 capability = "run.read"

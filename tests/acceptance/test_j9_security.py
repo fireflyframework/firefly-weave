@@ -34,9 +34,11 @@ import hashlib
 import ipaddress
 import json
 import time
+import tomllib
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -49,6 +51,8 @@ from firefly_weave.private_origins import canonical_origin
 from firefly_weave.sdk.errors import WeaveError
 
 pytestmark = pytest.mark.acceptance
+
+ROOT = Path(__file__).resolve().parents[2]
 
 PEOPLE = ("owner", "builder", "approver", "operator", "viewer")
 FORBIDDEN = (403, "WV-FORBIDDEN")
@@ -91,7 +95,7 @@ def wrong(outcome: dict[str, Any]) -> bool:
     status, code = outcome["status"], outcome["code"]
     if not outcome["permitted"]:
         return (status, code) != FORBIDDEN
-    if 200 <= status < 300:
+    if 200 <= status < 300 or [status, code] in [list(answer) for answer in outcome.get("answers", [])]:
         return False
     allowed = NAMED_NOTHING if outcome["random"] else ALREADY_DONE
     return status not in allowed or not str(code).startswith("WV-")
@@ -107,6 +111,7 @@ async def test_j9_01_every_new_operation_answers_by_role_and_revocation_takes_ef
     matrix = run.helper("acceptance_authorization")
     _, rows = matrix.load()
     scope = run.demo_scope()
+    capabilities = tomllib.loads((ROOT / "tests/acceptance/journeys.toml").read_text(encoding="utf-8"))["capabilities"]
 
     def materialize(value: Any) -> Any:
         return matrix.materialize(value, scope=scope)
@@ -126,6 +131,7 @@ async def test_j9_01_every_new_operation_answers_by_role_and_revocation_takes_ef
                         "operation": row.operation,
                         "permitted": permitted,
                         "random": names_random(row),
+                        "answers": sorted(matrix.accepted(row, capabilities)),
                         "status": status,
                         "code": code,
                     }
