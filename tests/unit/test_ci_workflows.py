@@ -152,3 +152,16 @@ def test_the_acceptance_pr_profile_runs_on_every_pull_request_and_push_to_main()
     concurrency = document["concurrency"]
     assert concurrency["cancel-in-progress"] == "${{ github.event_name == 'pull_request' }}"
     assert concurrency["group"] == workflow("ci.yml")["concurrency"]["group"]
+
+
+def test_the_acceptance_workflow_reads_only_and_never_keeps_or_names_credentials():
+    # It runs for fork pull requests, so it gets no write token, keeps no checkout credentials and uses no secret.
+    text = (WORKFLOWS / "acceptance.yml").read_text(encoding="utf-8")
+    document = workflow("acceptance.yml")
+    assert document["permissions"] == {"contents": "read"}
+    assert "pull_request_target" not in document["on"]
+    (checkout,) = [
+        step for step in document["jobs"]["pr"]["steps"] if step.get("uses", "").startswith("actions/checkout")
+    ]
+    assert checkout["with"]["persist-credentials"] is False
+    assert "secrets." not in text
