@@ -202,10 +202,11 @@ class RuntimeService:
         if not isinstance(start_facts, RunStartFacts):
             raise ValueError("Trusted start facts required")
         async with self.definitions.transaction(scope, tx) as enlisted:
+            # A child start keeps its keys apart from public starts, so no public start can claim a call's key.
             replay = Idempotency(
                 enlisted,
                 actor.id,
-                f"run.start:{scope.environment_id}",
+                f"run.{'start' if child is None else 'call'}:{scope.environment_id}",
                 idempotency_key,
                 request.model_dump(mode="json"),
             )

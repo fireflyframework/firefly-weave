@@ -539,3 +539,179 @@ async def test_a_run_lists_its_calls_with_each_child_run_and_never_their_data(pl
     assert all("input" not in item and "result" not in item for item in page["items"])
     first = await platform.runtime.calls(platform.actor, platform.scope, run.id, limit=1, context=AuditContext())
     assert len(first["items"]) == 1 and first["next_cursor"] == first["items"][0]["id"]
+
+
+TEXT = {
+    "type": "object",
+    "properties": {"text": {"type": "string"}},
+    "required": ["text"],
+    "additionalProperties": False,
+}
+# Forty steps that each copy its input: a child whose first transition always exceeds the state a run may keep.
+BULKY = {
+    "apiVersion": "weave/v1alpha1",
+    "kind": "Workflow",
+    "metadata": {"name": "bulky", "version": "1.0.0"},
+    "spec": {
+        "callable": {},
+        "inputSchema": TEXT,
+        "outputSchema": {},
+        "steps": [{"id": f"copy{index}", "kind": "transform", "value": {"ref": "/input/text"}} for index in range(40)],
+        "output": {"literal": None},
+    },
+}
+
+
+async def runs_of(platform, activation_id) -> list[UUID]:
+    async with platform.access_db[1]() as session:
+        return list(
+            (
+                await session.execute(text("SELECT id FROM runs WHERE activation_id=:id"), {"id": activation_id})
+            ).scalars()
+        )
+
+
+@pytest.mark.parametrize("mode", ["wait", "detach"])
+async def test_a_child_too_big_for_its_first_step_is_refused_and_later_calls_still_start(platform, mode):
+    from firefly_weave.contracts.runtime import StartRunRequest
+    from firefly_weave.definitions.models import CatalogError
+
+    bulky = await activate(platform, BULKY)
+    value = {"text": "x" * 950_000}
+    # Started on its own, the same child is refused: its size never fits, so retrying it cannot help.
+    with pytest.raises(CatalogError) as direct:
+        await platform.runtime.start(
+            platform.actor,
+            platform.scope,
+            StartRunRequest(activation_id=bulky.id, input=value),
+            str(uuid4()),
+            context=AuditContext(),
+        )
+    assert direct.value.code == "WV-RUNTIME-LIMIT"
+    document = workflow(
+        "bulk-orders",
+        [
+            {
+                "id": "copy",
+                "kind": "callWorkflow",
+                "uses": "bulky@1.0.0",
+                "with": {"object": {"text": {"ref": "/input/text"}}},
+                "mode": mode,
+            }
+        ],
+        {"literal": "done"},
+        called=False,
+    )
+    document["spec"]["inputSchema"] = TEXT
+    first = await platform.runtime.start(
+        platform.actor,
+        platform.scope,
+        StartRunRequest(activation_id=(await activate(platform, document, bulky=bulky.id)).id, input=value),
+        str(uuid4()),
+        context=AuditContext(),
+    )
+    leaf = await activate(platform, NOTIFY)
+    later = await start(
+        platform, await activate(platform, caller("orders", call("notify", "notify@1.0.0")), notify=leaf.id)
+    )
+    await scan(platform)
+    [row] = await calls(platform, first.id)
+    assert (row["status"], row["code"], row["child_run_id"], row["delivered"]) == (
+        "rejected",
+        "WV-CALL-START",
+        None,
+        True,
+    )
+    assert await runs_of(platform, bulky.id) == []
+    async with platform.access_db[1]() as session:
+        blocked = await session.scalar(
+            text("SELECT count(*) FROM runtime_capacity_blocks WHERE active AND run_id=:id"), {"id": first.id}
+        )
+    assert blocked == 0
+    caller_state = await state(platform, first.id)
+    if mode == "wait":
+        assert (caller_state["status"], caller_state["incident"]) == ("suspended", "WV-CALL-START")
+    else:
+        assert caller_state["status"] == "succeeded"
+    assert (await state(platform, later.id))["status"] == "succeeded"
+
+
+async def test_a_call_refused_for_now_does_not_hold_back_later_calls(platform, monkeypatch):
+    from firefly_weave.definitions.models import CatalogError
+    from firefly_weave.runtime.calls import CallService
+
+    leaf = await activate(platform, NOTIFY)
+    flow = await activate(platform, caller("orders", call("notify", "notify@1.0.0")), notify=leaf.id)
+    oldest = await start(platform, flow, "c-1")
+    later = await start(platform, flow, "c-2")
+    original = CallService.start_child
+
+    async def refuse_the_oldest(self, tx, row, caller_row, child):
+        if row["caller_run_id"] == oldest.id:
+            raise CatalogError(503, "WV-COMPATIBILITY", "Execution compatibility unavailable")
+        return await original(self, tx, row, caller_row, child)
+
+    monkeypatch.setattr(CallService, "start_child", refuse_the_oldest)
+    await scan(platform)
+    [held] = await calls(platform, oldest.id)
+    assert (held["status"], held["child_run_id"]) == ("requested", None)
+    assert (await state(platform, later.id))["status"] == "succeeded"
+    # The refusal passes: the same call starts on a later scan, still first in line.
+    monkeypatch.setattr(CallService, "start_child", original)
+    await scan(platform)
+    assert (await state(platform, oldest.id))["status"] == "succeeded"
+
+
+async def test_a_call_step_with_a_long_id_inside_a_loop_starts_its_child(platform):
+    from firefly_weave.runtime.calls import child_key
+
+    long = "notify-" + "n" * 173
+    loop = {
+        "id": "each",
+        "kind": "forEach",
+        "items": {"literal": ["c-1", "c-2"]},
+        "body": {
+            "steps": [call(long, "notify@1.0.0", **{"with": {"object": {"customerId": {"ref": "/item"}}}})],
+            "output": {"ref": f"/steps/{long}/output/delivered"},
+        },
+    }
+    leaf = await activate(platform, NOTIFY)
+    run = await start(platform, await activate(platform, caller("orders", loop), notify=leaf.id))
+    await scan(platform)
+    rows = await calls(platform, run.id)
+    assert [(len(row["node_id"]), row["status"], row["code"]) for row in rows] == [
+        (183, "succeeded", None),
+        (183, "succeeded", None),
+    ]
+    assert all(len(child_key(run.id, row["node_id"], 0)) <= 200 for row in rows)
+    assert (await state(platform, run.id))["output"] == [True, True]
+
+
+async def test_a_public_start_with_a_call_key_never_becomes_the_child_of_that_call(platform):
+    from firefly_weave.contracts.runtime import StartRunRequest
+    from firefly_weave.runtime.calls import child_key
+
+    leaf = await activate(platform, NOTIFY)
+    run = await start(
+        platform, await activate(platform, caller("orders", call("notify", "notify@1.0.0")), notify=leaf.id)
+    )
+    # The caller's own principal starts the called workflow with the same request and the key its call uses.
+    claimed = await platform.runtime.start(
+        platform.actor,
+        platform.scope,
+        StartRunRequest(activation_id=leaf.id, input={"customerId": "c-1"}),
+        child_key(run.id, "notify", 0),
+        context=AuditContext(),
+    )
+    await scan(platform)
+    [row] = await calls(platform, run.id)
+    assert row["child_run_id"] not in {None, claimed.id}
+    assert (row["status"], (await state(platform, run.id))["status"]) == ("succeeded", "succeeded")
+    async with platform.access_db[1]() as session:
+        linked = list(
+            (
+                await session.execute(text("SELECT run_id FROM run_call_links WHERE caller_run_id=:id"), {"id": run.id})
+            ).scalars()
+        )
+    assert linked == [row["child_run_id"]]
+

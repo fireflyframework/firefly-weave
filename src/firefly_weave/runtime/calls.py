@@ -23,6 +23,7 @@ caller's call row under the child's own run lock. The only acquisition against t
 locking child runs, skips rows another transaction holds, so no transaction waits in a cycle.
 """
 
+import hashlib
 from dataclasses import dataclass
 from datetime import datetime
 from functools import partial
@@ -56,8 +57,11 @@ STOPPED = {
     "cancelled": ("WV-RUN-CANCELLED", "The called run was cancelled."),
     "timed_out": ("WV-RUN-TIMED_OUT", "The called run timed out."),
 }
-# Refusals that pass: the call stays requested and the next scan tries again.
-TRANSIENT_CODES = frozenset({"WV-COMPATIBILITY", "WV-RUNTIME-LIMIT", "WV-QUOTA-LIMIT"})
+# Refusals that pass: the platform cannot start runs right now, so the call stays requested and a later scan tries
+# again. A refusal of the child itself (its activation, its input, its grant, or a first step too big for any run) is
+# permanent and rejects the call instead.
+TRANSIENT_CODES = frozenset({"WV-COMPATIBILITY", "WV-QUOTA-LIMIT"})
+PERMANENT_CODES = frozenset({"WV-RUNTIME-LIMIT"})
 OUTCOMES = {
     "succeeded": "ok",
     "failed": "failed",
@@ -79,6 +83,12 @@ class ChildStart:
     generation: int
     mode: str
     depth: int
+
+
+def child_key(caller_run_id: UUID, node_id: str, generation: int) -> str:
+    """The idempotency key of a call's child start: one per call generation, and bounded whatever the step ID."""
+    digest = hashlib.sha256(f"{caller_run_id}\n{node_id}\n{generation}".encode()).hexdigest()
+    return f"call:{digest}"
 
 
 def trace_context() -> JsonObject | None:
@@ -299,7 +309,8 @@ class CallService:
         """Start or reject at most one requested call, in its own transaction; returns (started, rejected).
 
         Candidates are read without locks, oldest first. A caller another transaction holds is left for the next
-        scan, so a busy caller never blocks the calls of others.
+        scan, and so is a call whose start is refused for now: the next candidate is tried instead, so neither holds
+        back the calls behind it, and each stays first in line for the next scan.
         """
         repository = RuntimeRepository(tx, self.runtime.definitions.outbox)
         candidates = await repository.rows(
@@ -316,12 +327,15 @@ class CallService:
             )
             if not rows or rows[0]["status"] != "requested":
                 continue
-            return await self._dispatch(repository, rows[0], caller)
+            outcome = await self._dispatch(repository, rows[0], caller)
+            if outcome is not None:
+                return outcome
         return 0, 0
 
     async def _dispatch(
         self, repository: RuntimeRepository, row: dict[str, Any], caller: dict[str, Any]
-    ) -> tuple[int, int]:
+    ) -> tuple[int, int] | None:
+        """Start, reject or cancel one locked call; None when its start is refused for now."""
         tx = repository.tx
         now = await repository.now()
         if row["mode"] == "wait" and caller["state"]["status"] in TERMINAL:
@@ -339,14 +353,28 @@ class CallService:
         child = ChildStart(
             row["id"], row["caller_run_id"], row["node_id"], row["generation"], row["mode"], row["depth"]
         )
+        from firefly_weave.runtime.capacity import RuntimeCapacityError, capacity_failures
+
+        failures = capacity_failures.get()
+        marked = list(failures) if failures is not None else None
+        candidate = tx.session.info.get("weave_runtime_candidate")
         try:
             async with tx.session.begin_nested():
                 view = await self.start_child(tx, row, caller, child)
         except (AccessDenied, AuthenticationFailed):
             return 0, await self._reject(repository, row, caller, "WV-CALL-START", now)
+        except RuntimeCapacityError:
+            # The child's own first transition is too big for any run: the same input and version never fit, so
+            # retrying cannot help. The refusal belongs to the call, not to the caller, which must not be blocked.
+            if failures is not None and marked is not None:
+                failures[:] = marked
+            tx.session.info["weave_runtime_candidate"] = candidate
+            return 0, await self._reject(repository, row, caller, "WV-CALL-START", now)
         except CatalogError as error:
+            if error.code in PERMANENT_CODES:
+                return 0, await self._reject(repository, row, caller, "WV-CALL-START", now)
             if capacity_rejected(error) or error.code in TRANSIENT_CODES or error.status in {429, 503}:
-                return 0, 0
+                return None
             return 0, await self._reject(repository, row, caller, "WV-CALL-START", now)
         started = await repository.now()
         await repository.execute(
@@ -404,7 +432,7 @@ class CallService:
             correlation_key=caller["request"].get("correlation_key"),
             business_key=row["business_key"],
         )
-        key = f"call:{row['caller_run_id']}:{row['node_id']}:{row['generation']}"
+        key = child_key(row["caller_run_id"], row["node_id"], row["generation"])
         start = partial(
             self.runtime.start,
             principal,
