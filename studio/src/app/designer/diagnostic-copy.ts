@@ -96,6 +96,26 @@ const compiler: Record<string, Copy> = {
   UNKNOWN_RESOURCE: {
     text: "Something this definition depends on isn't in the project catalog.",
   },
+  UNKNOWN_WORKFLOW: {
+    text: "This workflow version isn't published in the project.",
+    hint: "Check its name and version, or publish that workflow first.",
+  },
+  CALL_NOT_CALLABLE: {
+    text: "That workflow version doesn't accept calls from this workflow.",
+    hint: "Publish a new version of it with the Called by a workflow trigger that allows this workflow.",
+  },
+  CALL_RECURSION: {
+    text: "This call would end up calling this workflow again.",
+    hint: "Call a workflow that doesn't lead back to this one.",
+  },
+  CALL_DEPTH: {
+    text: "Workflows would call each other more levels deep than the platform allows.",
+    hint: "Call a workflow that starts fewer workflows of its own.",
+  },
+  CALL_MODE: {
+    text: "This step can continue after the called run fails only when it waits for the called workflow's result.",
+    hint: "Set When it runs to Wait for its result, or clear If the called run fails.",
+  },
   CATALOG_PENDING: {
     text: "This is checked against the project catalog when you validate while connected to a platform.",
   },
@@ -120,7 +140,39 @@ const compiler: Record<string, Copy> = {
     text: "Branches are nested deeper than the platform allows.",
   },
   CONCURRENCY_LIMIT: {
-    text: "The parallel limit is higher than the platform allows.",
+    text: "More steps would run at the same time than the platform allows.",
+  },
+  LOOP_ITEMS: {
+    text: "A loop needs a list to go through.",
+    hint: "Choose a list, such as the rows an earlier step returns.",
+  },
+  LOOP_SCOPE: {
+    text: "This uses a loop's current item outside that loop.",
+    hint: "Use the current item only in the loop's own steps, or choose a loop that contains this step.",
+  },
+  LOOP_SIGNAL: {
+    text: "A loop can't wait for a signal.",
+    hint: "Move the wait before or after the loop.",
+  },
+  LOOP_BODY_INCOMPLETE: {
+    text: "The steps inside this loop never finish, so the run would stop at the first item.",
+    hint: "Finish the loop's steps with a result for each item.",
+  },
+  LOOP_DEPTH: {
+    text: "Loops are nested deeper than the platform allows.",
+    hint: "Put fewer loops inside one another.",
+  },
+  LOOP_MAX_ITEMS: {
+    text: "This loop accepts more items than the platform allows.",
+    hint: "Lower the number of items in Up to.",
+  },
+  LOOP_BUDGET: {
+    text: "These loops together could go through more items than one run allows.",
+    hint: "Lower Up to on an inner loop.",
+  },
+  LOOP_FANOUT: {
+    text: "These nested loops could start more than 1,000 tasks at once, so the work is spread over time.",
+    hint: "Lower At a time on one of the loops if the tasks must start together.",
   },
   RESOURCE_LIMIT: {
     text: "This part of the definition is too large or complex to check.",

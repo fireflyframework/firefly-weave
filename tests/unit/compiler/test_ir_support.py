@@ -93,8 +93,8 @@ def test_malformed_feature_lists_stay_contract_errors(change):
 def test_the_default_is_what_the_platform_advertises():
     assert import_artifact(envelope(CONCAT)).executable["features"] == ["text.concat"]
     with pytest.raises(UnsupportedIR) as refused:
-        import_artifact(forged(lambda e: e.update(features=["flow.forEach"])))
-    assert refused.value.missing == ("flow.forEach",)
+        import_artifact(forged(lambda e: e.update(features=["flow.callWorkflow"])))
+    assert refused.value.missing == ("flow.callWorkflow",)
 
 
 def test_existing_artifacts_import_on_a_platform_without_features():

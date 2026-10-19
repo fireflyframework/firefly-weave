@@ -367,7 +367,11 @@ SPDX-License-Identifier: Apache-2.0
                     : 'Local authoring'
                 "
                 (createWorkflow)="newWorkflow()"
+                [pairsCanvas]="editorNext"
                 (importWorkflow)="importWorkflow($event)"
+                (importWithCanvas)="
+                  importWorkflow($event.workflow, $event.canvas)
+                "
                 (connect)="openWizard('server')"
                 (connectModel)="openAiModels()"
                 (navigate)="navigate($event)"
@@ -423,6 +427,18 @@ SPDX-License-Identifier: Apache-2.0
                 <span class="loading-spinner small"></span>Opening the
                 connection assistant…
               </p>
+            }
+          </section>
+        } @else if (view === "overview") {
+          <section class="page-content">
+            @defer (on immediate) {
+              <weave-overview-page [host]="this" />
+            }
+          </section>
+        } @else if (view === "runs") {
+          <section class="page-content">
+            @defer (on immediate) {
+              <weave-runs-page [host]="this" />
             }
           </section>
         } @else if (view === "incidents") {

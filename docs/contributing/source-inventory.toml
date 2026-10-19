@@ -300,6 +300,15 @@ author = "Firefly Software Foundation"
 license = "Apache-2.0"
 
 [[exceptions]]
+path = "tests/fixtures/golden/loops.json"
+kind = "generated"
+source = "scripts/golden_loops.py"
+reason = "Strict JSON golden corpus of compiled loop workflows and their kernel transition streams, recorded once by the release that started running loops; never regenerate it to make a change pass."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
 path = "tests/fixtures/public/c6-wire.json"
 kind = "commentless"
 reason = "Strict JSON or canonical fixture; preserve parser contract and exact data bytes."
@@ -473,6 +482,15 @@ path = "studio/tests/fixtures/language/manifest.json"
 kind = "generated"
 source = "scripts/language_fixtures.py"
 reason = "Strict JSON snapshot of the language manifest shared by the Python and Studio suites; regenerate with the generator, which also checks freshness."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
+path = "studio/tests/fixtures/language/scope.json"
+kind = "generated"
+source = "scripts/language_fixtures.py"
+reason = "Strict JSON scope suggestion cases inside and around loops shared by the Python and Studio suites; regenerate with the generator, which also checks freshness."
 copyright = "Copyright 2026 Firefly Software Foundation."
 author = "Firefly Software Foundation"
 license = "Apache-2.0"

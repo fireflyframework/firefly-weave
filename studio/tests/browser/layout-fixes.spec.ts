@@ -24,6 +24,7 @@ import {
   connected,
   newWorkflow,
   offline,
+  runSummaries,
   tokenColor,
 } from "./support";
 import { DesignerPage } from "./designer-po";
@@ -413,6 +414,7 @@ test.describe("1440x900", () => {
     await page.route("**/environments/development/runs?*", (r) =>
       r.fulfill({ json: { items: [run], next_cursor: null } }),
     );
+    await runSummaries(page, [run]);
     await page.route(`**/environments/development/runs/${run.id}`, (r) =>
       r.fulfill({ json: run }),
     );

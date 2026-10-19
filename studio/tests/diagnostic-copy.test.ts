@@ -55,6 +55,19 @@ const compilerCodes = [
   "INPUT_CONTRACT",
   "OUTPUT_CONTRACT",
   "ROUTING_CONTRACT",
+  "LOOP_ITEMS",
+  "LOOP_SCOPE",
+  "LOOP_SIGNAL",
+  "LOOP_BODY_INCOMPLETE",
+  "LOOP_DEPTH",
+  "LOOP_MAX_ITEMS",
+  "LOOP_BUDGET",
+  "LOOP_FANOUT",
+  "UNKNOWN_WORKFLOW",
+  "CALL_NOT_CALLABLE",
+  "CALL_RECURSION",
+  "CALL_DEPTH",
+  "CALL_MODE",
 ].map((code) => `WV-COMP-${code}`);
 
 describe("plain-language diagnostic copy", () => {
@@ -71,6 +84,19 @@ describe("plain-language diagnostic copy", () => {
       expect(view.code).toBe(code);
       expect(view.technical).toBe("Definition violates the contract.");
     }
+  });
+  it("names the call settings by their Studio labels for CALL_MODE", () => {
+    const view = describeDiagnostic({
+      code: "WV-COMP-CALL_MODE",
+      severity: "error",
+      message: "onFailure applies only to mode wait.",
+    });
+    expect(view.text).toBe(
+      "This step can continue after the called run fails only when it waits for the called workflow's result.",
+    );
+    expect(view.hint).toBe(
+      "Set When it runs to Wait for its result, or clear If the called run fails.",
+    );
   });
   it("explains the dominance error in the author's terms", () => {
     const view = describeDiagnostic({
@@ -202,12 +228,13 @@ describe.skipIf(!pythonAvailable())(
             "-c",
             `
 import inspect, json, re
-from firefly_weave.compiler import analyzer, api, action_config
-text = inspect.getsource(analyzer) + inspect.getsource(api)
+from firefly_weave.compiler import analyzer, api, action_config, calls
+text = inspect.getsource(analyzer) + inspect.getsource(api) + inspect.getsource(calls)
 codes = set(re.findall(r'(?:self\\.issue|issue)\\(\\s*"([A-Z_]+)"', text))
 codes |= set(re.findall(r'"(UNKNOWN_[A-Z_]+)"', text))
 codes |= set(re.findall(r'WV-COMP-([A-Z_]+)', text))
 codes |= set(action_config.ACTION_CONFIG_CODES)
+codes |= set(calls.CALL_MESSAGES)
 print(json.dumps(sorted("WV-COMP-" + c for c in codes)))
 `,
           ],

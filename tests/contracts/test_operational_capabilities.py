@@ -96,10 +96,10 @@ async def test_capabilities_list_the_language_features_and_ir_versions_this_plat
     controller, request, _, _, _ = controller_fixture(ready_state())
     result = await controller.capabilities(request)
     manifest = language_manifest()
-    assert result["language_features"] == manifest.features == ["text.concat", "text.join"]
+    assert result["language_features"] == manifest.features == ["flow.forEach", "text.concat", "text.join"]
     assert result["ir_versions"] == manifest.ir_versions
     assert result["ir_versions"][-1] == "weave/ir-v1alpha4"
-    assert "forEach" not in result["step_kinds"] and "callWorkflow" not in result["step_kinds"]
+    assert "forEach" in result["step_kinds"] and "callWorkflow" not in result["step_kinds"]
 
 
 async def test_native_injection_declares_actual_policy_and_enforcement_limits():
@@ -120,7 +120,13 @@ async def test_native_injection_declares_actual_policy_and_enforcement_limits():
         DEBUG_SLOTS,
         TransportPolicy,
     )
-    from firefly_weave.runtime.capacity import MAX_INTENTS, MAX_REDUCTIONS, STATE_BYTES, TRANSITION_BYTES
+    from firefly_weave.runtime.capacity import (
+        LOOP_TURN_UNITS,
+        MAX_INTENTS,
+        MAX_REDUCTIONS,
+        STATE_BYTES,
+        TRANSITION_BYTES,
+    )
 
     controller, request, service, settings, scope = controller_fixture(ready_state())
     result = await controller.capabilities(request)
@@ -136,6 +142,7 @@ async def test_native_injection_declares_actual_policy_and_enforcement_limits():
         "transition_bytes": TRANSITION_BYTES,
         "reductions_per_turn": MAX_REDUCTIONS,
         "intents_per_turn": MAX_INTENTS,
+        "loop_units_per_turn": LOOP_TURN_UNITS,
     }
     assert declaration["process"] == {
         "work_slots": WORK_SLOTS,

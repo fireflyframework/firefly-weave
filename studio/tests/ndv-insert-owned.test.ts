@@ -554,3 +554,41 @@ describe("the Connection field of a file step", () => {
     expect(JSON.stringify([model.definition, model.canvas])).toBe(before);
   });
 });
+
+describe("a file step inserted from an app's own view", () => {
+  it("calls an action on that file server", () => {
+    const model = new StructuredCanvasAdapter();
+    const write = COMMON_ACTIONS.find((action) => action.id === "write-file")!;
+    const id = insertOwnedStep(
+      model,
+      write,
+      "root",
+      0,
+      new Set(),
+      "weave-ftp@1.0.0",
+    );
+    const uses = String(
+      model.definition.spec.steps.find((step) => step.id === id)!["uses"],
+    );
+    expect(ownedActionsOf(model.canvas)[uses]).toMatchObject({
+      kind: "connector",
+      connector: "weave-ftp@1.0.0",
+      action: "write",
+    });
+    // A connector that isn't a file server changes nothing.
+    const other = insertOwnedStep(
+      model,
+      write,
+      "root",
+      0,
+      new Set(),
+      "weave-http@2.0.0",
+    );
+    const otherUses = String(
+      model.definition.spec.steps.find((step) => step.id === other)!["uses"],
+    );
+    expect(ownedActionsOf(model.canvas)[otherUses]).toMatchObject({
+      connector: "weave-sftp@1.0.0",
+    });
+  });
+});

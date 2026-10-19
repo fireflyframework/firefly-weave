@@ -42,10 +42,10 @@
 "language-contracts" = false
 "text-operators" = true
 "instance-keys" = true
-"loop-compiler" = false
-"loop-runtime" = false
+"loop-compiler" = true
+"loop-runtime" = true
 "loop-simulation" = false
-"workflow-call-compiler" = false
+"workflow-call-compiler" = true
 "workflow-call-runtime" = false
 "workflow-call-simulation" = false
 "workflow-call-fast-path" = false
@@ -61,7 +61,7 @@
 "agent-memory" = false
 "run-view-contracts" = false
 "operations-studio" = false
-"run-views" = false
+"run-views" = true
 "compose-operations" = false
 "kubernetes-operations" = false
 "metrics" = false
@@ -128,6 +128,8 @@ J15 = ["SC1", "SC7"]
 "J0.12" = ["ai-and-cluster-profiles", "ai-gateway"]
 "J0.13" = ["ai-and-cluster-profiles", "kubernetes-operations"]
 "J0.14" = ["acceptance-foundations"]
+# J5 platform administration.
+"J5.1" = ["run-views"]
 
 [step_profiles]
 "J0.2/cluster-tools" = ["cluster", "k3d", "nightly", "release"]
@@ -135,3 +137,4 @@ J15 = ["SC1", "SC7"]
 "J0.7/sftp-password" = ["nightly", "release"]
 "J0.12" = ["ai", "nightly", "release"]
 "J0.13" = ["cluster", "k3d", "nightly", "release"]
+"J5.1" = ["pr", "nightly", "release"]

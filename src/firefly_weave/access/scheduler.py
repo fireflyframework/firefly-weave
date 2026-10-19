@@ -64,22 +64,32 @@ async def scopes(engine: AsyncEngine, uow: UnitOfWork) -> list[_SchedulerScope]:
     return result
 
 
-async def tenant_page(engine: AsyncEngine, limit: int = 16) -> list[UUID]:
-    """Reserve a persistent bounded catalog turn; this grants no business capability."""
+async def tenant_page(engine: AsyncEngine, limit: int = 16, *, operations: bool = False) -> list[UUID]:
+    """Reserve a persistent bounded catalog turn; this grants no business capability.
+
+    The operations traversal keeps its own tenant cursor, so it never moves the recovery traversal's.
+    """
+    function = "weave_operations_tenants" if operations else "weave_scheduler_tenants"
     async with engine.begin() as connection:
         await connection.execute(text("SET LOCAL statement_timeout='4000ms'"))
         await connection.execute(text("SET LOCAL lock_timeout='1000ms'"))
-        return list(
-            (await connection.execute(text("SELECT weave_scheduler_tenants(:limit)"), {"limit": limit})).scalars()
-        )
+        return list((await connection.execute(text(f"SELECT {function}(:limit)"), {"limit": limit})).scalars())
 
 
 async def next_scope(
-    uow: UnitOfWork, tenant: UUID, *, broker: bool = False, outbox: bool = False, provider: bool = False
+    uow: UnitOfWork,
+    tenant: UUID,
+    *,
+    broker: bool = False,
+    outbox: bool = False,
+    provider: bool = False,
+    operations: bool = False,
 ) -> _SchedulerScope | None:
     """One environment per tenant turn, advanced before work so failures cannot pin traversal."""
     table = (
-        "provider_environment_cursors"
+        "operations_environment_cursors"
+        if operations
+        else "provider_environment_cursors"
         if provider
         else "outbox_environment_cursors"
         if outbox

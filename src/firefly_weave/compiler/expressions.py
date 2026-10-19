@@ -180,6 +180,28 @@ def measure_value(
     return size
 
 
+def value_shape(value: object, *, limits: Limits = DEFAULT_LIMITS) -> tuple[int, int]:
+    """The nodes and container depth of one part of an evaluation context.
+
+    The part first passes the checks ``measure_value(part, context=True)`` applies, so a context assembled from
+    parts can be checked without walking each part again: its nodes are the sum of its parts', and a part at depth
+    ``d`` nests containers down to depth ``d + height``.
+    """
+    measure_value(value, limits=limits, context=True)
+    nodes = height = 0
+    stack: list[tuple[object, int]] = [(value, 0)]
+    while stack:
+        item, depth = stack.pop()
+        nodes += 1
+        if type(item) is dict:
+            height = max(height, depth + 1)
+            stack.extend((child, depth + 1) for child in cast(dict[str, object], item).values())
+        elif type(item) is list:
+            height = max(height, depth + 1)
+            stack.extend((child, depth + 1) for child in cast(list[object], item))
+    return nodes, height
+
+
 def _children(expression: object, path: str, limits: Limits, work: _ValueWork) -> list[tuple[JsonObject, str]]:
     if type(expression) is not dict or len(cast(dict[object, object], expression)) != 1:
         raise ExpressionFailure("INVALID", path)
@@ -486,10 +508,14 @@ class ExpressionSession:
         return measure_value(value, limits=self.limits, path=path, work=self._evaluator.value_work)
 
 
-def evaluate(expression: JsonObject, context: JsonObject, *, limits: Limits = DEFAULT_LIMITS) -> JsonValue:
+def evaluate(
+    expression: JsonObject, context: JsonObject, *, limits: Limits = DEFAULT_LIMITS, measured: bool = False
+) -> JsonValue:
+    """Evaluate ``expression`` over ``context``; ``measured`` says the caller already checked the context."""
     count_expression_nodes(expression, limits=limits)
     if type(context) is not dict:
         raise ExpressionFailure("INVALID_JSON")
-    measure_value(context, limits=limits, context=True)
+    if not measured:
+        measure_value(context, limits=limits, context=True)
     result = cast(JsonValue, _Evaluator(context, limits).run(expression))
     return _copy(result)

@@ -175,7 +175,7 @@ export function tileName(parts: TileNameParts): string {
     .join(", ");
 }
 
-/** "Manual form · 3 fields": the workflow's input form starts it. */
+/** "3 fields": what the Manual form trigger asks for, from the workflow's inputs. */
 export function triggerSubtitle(workflow: {
   spec: Record<string, unknown>;
 }): string {
@@ -188,7 +188,5 @@ export function triggerSubtitle(workflow: {
     properties && typeof properties === "object"
       ? Object.keys(properties).length
       : 0;
-  return count
-    ? `Manual form · ${count} ${count === 1 ? "field" : "fields"}`
-    : "Manual form";
+  return count ? `${count} ${count === 1 ? "field" : "fields"}` : "No fields";
 }

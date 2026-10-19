@@ -21,6 +21,7 @@ SPDX-License-Identifier: Apache-2.0
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { openWorkflow, type CanvasPage } from "./canvas-po";
 import { stepFixture } from "./step-details-po";
+import { clippedText } from "./step-geometry";
 
 const MINIMAP_KEY = "ui:weave.canvas.minimap";
 
@@ -113,6 +114,26 @@ test.describe("selecting steps", () => {
       "route",
       "record-result",
     ]);
+  });
+
+  test("on a wide window the selection toolbar shows Copy, Duplicate and Delete, and no More", async ({
+    page,
+  }) => {
+    const canvas = await openWorkflow(page);
+    await canvas.tileBody("prepare-request").click();
+    await canvas.tileBody("approval").click({ modifiers: ["Shift"] });
+    const bar = canvas.root.getByRole("toolbar", { name: "Selected steps" });
+    await expect(bar).toContainText("2 steps");
+    for (const name of ["Copy", "Duplicate", "Delete"])
+      await expect(
+        bar.getByRole("button", { name, exact: true }),
+      ).toBeVisible();
+    await expect(
+      bar.getByRole("button", {
+        name: "More commands for the selected steps",
+        exact: true,
+      }),
+    ).toBeHidden();
   });
 
   test("a box drawn with Shift adds just the steps it touches, and pressing a step's name changes nothing", async ({
@@ -482,5 +503,68 @@ for (const size of [
           );
         })
         .toBe(true);
+    });
+  });
+
+for (const touch of [false, true])
+  test.describe(`the selection toolbar at 360x740${touch ? " on touch" : ""}`, () => {
+    test.use({ viewport: { width: 360, height: 740 }, hasTouch: touch });
+
+    test("keeps one row: the count, Delete and More, with Copy and Duplicate in More", async ({
+      page,
+    }) => {
+      const canvas = await openWorkflow(page);
+      await canvas.tileBody("prepare-request").click();
+      await canvas.tileBody("approval").click({ modifiers: ["Shift"] });
+      const bar = canvas.root.getByRole("toolbar", { name: "Selected steps" });
+      await expect(bar).toContainText("2 steps");
+      const rows = await bar.evaluate((element) =>
+        [...element.children]
+          .filter((child) => child.getClientRects().length)
+          .filter((child) => !child.classList.contains("sr-only"))
+          .map((child) => {
+            const box = child.getBoundingClientRect();
+            return Math.round(box.top + box.height / 2);
+          }),
+      );
+      expect(rows.length).toBe(3);
+      expect(new Set(rows).size).toBe(1);
+      const area = (await canvas.root.boundingBox())!;
+      const box = (await bar.boundingBox())!;
+      expect(box.x).toBeGreaterThanOrEqual(area.x);
+      expect(box.x + box.width).toBeLessThanOrEqual(area.x + area.width);
+      const minimum = touch ? 44 : 24;
+      const more = bar.getByRole("button", {
+        name: "More commands for the selected steps",
+        exact: true,
+      });
+      for (const button of [
+        bar.getByRole("button", { name: "Delete", exact: true }),
+        more,
+      ]) {
+        await expect(button).toBeInViewport({ ratio: 1 });
+        const target = (await button.boundingBox())!;
+        expect(target.height).toBeGreaterThanOrEqual(minimum);
+        expect(target.width).toBeGreaterThanOrEqual(minimum);
+      }
+      await expect(
+        bar.getByRole("button", { name: "Copy", exact: true }),
+      ).toBeHidden();
+      expect(await clippedText(bar, "")).toEqual([]);
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth - window.innerWidth,
+        ),
+      ).toBeLessThanOrEqual(0);
+      const tiles = await canvas.root.locator(".tile-node").count();
+      await more.click();
+      for (const name of ["Copy", "Duplicate"])
+        await expect(
+          page.getByRole("menuitem", { name, exact: true }),
+        ).toBeInViewport({ ratio: 1 });
+      await page
+        .getByRole("menuitem", { name: "Duplicate", exact: true })
+        .click();
+      await expect(canvas.root.locator(".tile-node")).toHaveCount(tiles + 2);
     });
   });

@@ -311,6 +311,16 @@ test.describe("leaving Source with text that isn't applied", () => {
     page,
   }) => {
     await openStepFixture(page);
+    // One applied edit, so Undo has something to take back: opening the
+    // file isn't a step Undo takes back.
+    await viewTab(page, "Source").click();
+    const source = sourceBox(page);
+    await source.fill(
+      (await source.inputValue()).replace("name: order-intake", "name: edited"),
+    );
+    await page
+      .getByRole("button", { name: "Apply changes", exact: true })
+      .click();
     const { typed } = await typeInSource(page);
     // A command: Keep editing validates nothing.
     const toast = page.locator(".toast-region");

@@ -21,6 +21,7 @@ SPDX-License-Identifier: Apache-2.0
 // API actions and lists the built-in email and file actions.
 import { readFileSync } from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
+import { AddStepPanel, addStepSearch } from "./add-step-po";
 import { parse, stringify } from "yaml";
 import {
   builtinActions,
@@ -511,9 +512,7 @@ for (const size of sizes)
           .filter({ visible: true })
           .first()
           .click();
-        const search = page.getByRole("combobox", {
-          name: "Search steps and actions",
-        });
+        const search = addStepSearch(page);
         await search.fill(word);
         await search.press("Enter");
         await expect(details.dialogFor(id)).toBeVisible();
@@ -540,9 +539,10 @@ for (const size of sizes)
         }),
         authoring,
       );
-      await addCommonStep(page, "Write a file");
+      // Both steps go on SFTP, the server the "files" slot names.
+      await addCommonStep(page, "Write a file", START_PLUS, "SFTP");
       await details.close();
-      await addCommonStep(page, "Write a file");
+      await addCommonStep(page, "Write a file", START_PLUS, "SFTP");
       await expect(details.dialogFor("write-file-2")).toBeVisible();
       const connection = details
         .field("connection")
@@ -582,7 +582,7 @@ for (const size of sizes)
     });
   });
 
-test.describe("inserting from the step picker with the platform", () => {
+test.describe("inserting from Add a step with the platform", () => {
   test.use({ viewport: { width: 1440, height: 900 } });
 
   test("a published action opens on its first required empty field", async ({
@@ -599,10 +599,9 @@ test.describe("inserting from the step picker with the platform", () => {
       .filter({ visible: true })
       .first()
       .click();
-    await page
-      .getByRole("group", { name: "Published actions" })
-      .getByRole("option", { name: /^crm\.lookup/ })
-      .click();
+    const panel = new AddStepPanel(page);
+    await panel.search.fill("crm.lookup");
+    await panel.option("crm.lookup").first().click();
     await expect(details.dialogFor("call-action-1")).toBeVisible();
     await expectFirstRequiredEmptyFocused(details);
   });
@@ -628,10 +627,9 @@ test.describe("inserting from the step picker with the platform", () => {
       .filter({ visible: true })
       .first()
       .click();
-    await page
-      .getByRole("group", { name: "Published actions" })
-      .getByRole("option", { name: /^crm\.lookup/ })
-      .click();
+    const panel = new AddStepPanel(page);
+    await panel.search.fill("crm.lookup");
+    await panel.option("crm.lookup").first().click();
     // The insert is waiting for the action's details.
     await expect.poll(() => asked).toBe(true);
     await page.getByRole("button", { name: "Home", exact: true }).click();
@@ -690,99 +688,8 @@ const allSizes = [
 ];
 
 for (const size of allSizes)
-  test.describe(`the Common actions group at ${size.tag}`, () => {
+  test.describe(`inserting Call an API at ${size.tag}`, () => {
     test.use({ viewport: { width: size.width, height: size.height } });
-
-    test("lines up with the picker's other rows and fits the window", async ({
-      page,
-    }) => {
-      await openStepFixture(page, stepFixture, authoring);
-      const fit = page.getByRole("button", { name: "Fit all", exact: true });
-      if (await fit.isVisible()) await fit.click();
-      await page
-        .getByRole("button", { name: START_PLUS })
-        .filter({ visible: true })
-        .first()
-        .click();
-      const picker = page.locator(".step-picker");
-      const group = picker.getByRole("group", { name: "Common actions" });
-      const list = picker.locator(".step-picker-list");
-      await group.scrollIntoViewIfNeeded();
-      await expect(group.getByRole("option")).toHaveCount(9);
-      const frame = await box(picker);
-      // The picker stays in the window.
-      expect(frame.x).toBeGreaterThanOrEqual(0);
-      expect(frame.y).toBeGreaterThanOrEqual(0);
-      expect(frame.right).toBeLessThanOrEqual(size.width);
-      expect(frame.bottom).toBeLessThanOrEqual(size.height);
-      const steps = page
-        .getByRole("group", { name: "Steps" })
-        .getByRole("option")
-        .first();
-      const reference = {
-        row: await box(steps),
-        icon: await box(steps.locator(".step-icon")),
-        label: await box(steps.locator(".step-picker-label")),
-      };
-      const shown = await box(list);
-      const heading = await box(group.locator(".step-picker-group"));
-      expectAligned(
-        [heading.x, (await box(page.locator(".step-picker-group").first())).x],
-        "group headings",
-      );
-      // Every row of the group, measured in the list's own coordinates.
-      const rows = await group.evaluate((element) => {
-        const list = element.closest<HTMLElement>(".step-picker-list")!;
-        const top = list.getBoundingClientRect().top - list.scrollTop;
-        return [...element.querySelectorAll<HTMLElement>("[role=option]")].map(
-          (row) => {
-            const at = (selector: string) => {
-              const r = row.querySelector(selector)!.getBoundingClientRect();
-              return { x: r.x, right: r.right, y: r.y - top, height: r.height };
-            };
-            const r = row.getBoundingClientRect();
-            return {
-              row: { x: r.x, right: r.right, y: r.y - top, height: r.height },
-              icon: at(".step-icon"),
-              label: at(".step-picker-label"),
-              text: at(".step-picker-text"),
-              cut: [...row.querySelectorAll<HTMLElement>("span, small")].some(
-                (part) => part.scrollWidth > part.clientWidth + 1,
-              ),
-            };
-          },
-        );
-      });
-      const target = (await density(page)).touch ? 44 : 24;
-      const middle = (b: { y: number; height: number }) => b.y + b.height / 2;
-      rows.forEach((item, i) => {
-        // One left and one right edge with the Steps rows.
-        expectAligned([item.row.x, reference.row.x], "row left");
-        expectAligned([item.row.right, reference.row.right], "row right");
-        expectAligned([item.icon.x, reference.icon.x], "icon left");
-        expectAligned([item.label.x, reference.label.x], "label left");
-        // The icon sits on the row's center line, beside the text.
-        expectAligned([middle(item.icon), middle(item.text)], "icon center");
-        expect(item.icon.right).toBeLessThanOrEqual(item.label.x);
-        expect(item.text.right).toBeLessThanOrEqual(item.row.right + 0.5);
-        // Inside the list's box, a full target, after the row above it.
-        expect(item.row.x).toBeGreaterThanOrEqual(shown.x - 0.5);
-        expect(item.row.right).toBeLessThanOrEqual(shown.right + 0.5);
-        expect(item.row.height).toBeGreaterThanOrEqual(target);
-        if (i)
-          expect(item.row.y).toBeGreaterThanOrEqual(
-            rows[i - 1].row.y + rows[i - 1].row.height - 0.5,
-          );
-        // No word is cut.
-        expect(item.cut).toBe(false);
-      });
-      expect(shown.width).toBeGreaterThan(0);
-      expect(
-        await page.evaluate(
-          () => document.documentElement.scrollWidth <= window.innerWidth + 1,
-        ),
-      ).toBe(true);
-    });
 
     test("an insert opens step details with the first required empty field focused in view", async ({
       page,

@@ -19,9 +19,12 @@
 import json
 import socket
 from datetime import UTC, datetime
+from typing import get_args
 from uuid import uuid4
 
 import pytest
+
+from firefly_weave.contracts.run_views import RunOrigin
 
 NOW = datetime(2026, 1, 1, tzinfo=UTC)
 
@@ -126,6 +129,52 @@ def test_required_redaction_stops_at_prefix(worker_runtime_fixture, recorded_eve
     last = recorded_events[1].model_copy(update={"data": {"node_id": "work", "generation": 1}, "evidence": evidence})
     report = replay(worker_runtime_fixture["artifact"], (recorded_events[0], last))
     assert report.status == "incomplete" and report.last_verified_sequence == 1
+
+
+def recorded_start(artifact, recorded_events, origin):
+    from firefly_weave.operations.exports import transition_digest
+    from firefly_weave.runtime.kernel import transition
+    from firefly_weave.runtime.models import RunState
+
+    # The runtime records how a run started next to its admission policy.
+    started = recorded_events[0].model_copy(deep=True)
+    started.data["origin"] = origin
+    change = transition(RunState(input=3), started.model_copy(update={"evidence": None}), artifact)
+    started.evidence["expected_transition_digest"] = transition_digest(change)
+    return started
+
+
+@pytest.mark.parametrize("origin", sorted(get_args(RunOrigin.__value__)))
+def test_recorded_start_origin_is_disclosed_and_replays(worker_runtime_fixture, recorded_events, origin):
+    from firefly_weave.operations.exports import safe_event
+    from firefly_weave.operations.replay import replay
+
+    artifact = worker_runtime_fixture["artifact"]
+    events = (recorded_start(artifact, recorded_events, origin), recorded_events[1])
+    disclosed = tuple(safe_event(event, artifact) for event in events)
+    assert disclosed[0].data == {"admission_policy": "classified-v1", "origin": origin}
+    assert disclosed[0].evidence["omissions"] == []
+    for supplied in (events, disclosed):
+        report = replay(artifact, supplied)
+        assert (report.status, report.last_verified_sequence) == ("consistent", 2), report
+
+
+@pytest.mark.parametrize(
+    "origin", ["Manual", "private operator note", "", None, 1, True, ["manual"], {"origin": "manual"}]
+)
+def test_unrecognized_start_origin_stays_withheld(worker_runtime_fixture, recorded_events, origin):
+    from firefly_weave.operations.exports import safe_event
+    from firefly_weave.operations.replay import replay
+
+    artifact = worker_runtime_fixture["artifact"]
+    events = (recorded_start(artifact, recorded_events, origin), recorded_events[1])
+    withheld = safe_event(events[0], artifact)
+    assert withheld.data == {"admission_policy": "classified-v1"}
+    assert withheld.evidence["omissions"] == [{"path": "/data/*", "reason": "classification_unavailable"}]
+    for supplied in (events, (withheld, events[1])):
+        report = replay(artifact, supplied)
+        assert (report.status, report.last_verified_sequence) == ("incomplete", 0), report
+        assert [(d.code, d.sequence) for d in report.diagnostics] == [("WV-REPLAY-REDACTED", 1)]
 
 
 @pytest.mark.parametrize(
@@ -435,6 +484,7 @@ def test_signal_receipt_selection_obeys_recorded_active_node_order():
             evidence,
             {"first": earlier_deadline, "pause": initial.issued_deadlines[0]},
             {"first": earlier_node, "pause": node},
+            set(),
         )
     assert caught.value.code == "WV-REPLAY-SIGNAL-ORDER"
 
@@ -669,3 +719,67 @@ def test_recorded_attempt_lifecycle(worker_runtime_fixture, recorded_events, rou
         assert (report.status, report.last_verified_sequence) == ("incomplete", 3)
     else:
         assert (report.status, report.last_verified_sequence) == ("consistent", 4), report
+
+
+def test_a_loop_that_yields_replays_its_wake_up_as_a_duration_deadline():
+    from firefly_weave.compiler.api import compile_source
+    from firefly_weave.compiler.catalog import CatalogSnapshot
+    from firefly_weave.contracts.access import Scope
+    from firefly_weave.contracts.operations import DeadlineFact, RecordedEvidence, SourceReference, WaitReceipt
+    from firefly_weave.operations.exports import lock_digest, transition_digest
+    from firefly_weave.operations.redaction import SafeProjection
+    from firefly_weave.operations.replay import replay
+    from firefly_weave.runtime.kernel import transition
+    from firefly_weave.runtime.models import Deadline, RunState, RuntimeEvent
+
+    loop = {"id": "each", "kind": "forEach", "items": {"ref": "/input"}, "maxItems": 10_000}
+    artifact = compile_source(
+        {
+            "apiVersion": "weave/v1alpha1",
+            "kind": "Workflow",
+            "metadata": {"name": "yields", "version": "1.0.0"},
+            "spec": {
+                "inputSchema": {"type": "array", "items": {"type": "integer"}},
+                "outputSchema": {},
+                "steps": [{**loop, "body": {"steps": [], "output": {"ref": "/item"}}}],
+                "output": {"ref": "/steps/each/output"},
+            },
+        },
+        format="object",
+        catalog=CatalogSnapshot.empty(),
+    ).artifact
+    scope = Scope(tenant_id=uuid4(), project_id=uuid4(), environment_id=uuid4())
+    base = dict(
+        run_id=uuid4(),
+        scope=scope,
+        artifact_digest=artifact.digest,
+        lock_digest=lock_digest(artifact),
+        source=SourceReference(scope=scope, version_id=uuid4(), source_hash=artifact.source_hash, format="json"),
+        provenance="synthetic_kernel",
+    )
+    items = list(range(2500))
+    first = RuntimeEvent(
+        id=uuid4(), sequence=1, timestamp=NOW, type="started", data={"admission_policy": "classified-v1"}
+    )
+    change = transition(RunState(input=items), first, artifact)
+    (command,) = [c for c in change.commands if isinstance(c, Deadline)]
+    assert command.node_id == "each~1"
+    due = DeadlineFact(wait_id=uuid4(), node_id=command.node_id, deadline=command.deadline, name=command.name)
+    evidence = RecordedEvidence(
+        **base,
+        initial_input=SafeProjection(available=True, value=items),
+        expected_transition_digest=transition_digest(change),
+        issued_deadlines=[due],
+    )
+    first = first.model_copy(update={"evidence": evidence.model_dump(mode="json")})
+    data = {"node_id": "each~1", "deadline": due.deadline.isoformat(), "wait_id": str(due.wait_id)}
+    last = RuntimeEvent(id=uuid4(), sequence=2, timestamp=NOW, type="wait_elapsed", data=data)
+    final = transition(change.state, last, artifact)
+    assert final.state.status == "succeeded"
+    evidence = RecordedEvidence(
+        **base,
+        expected_transition_digest=transition_digest(final),
+        wait_receipt=WaitReceipt(wait_id=due.wait_id, pending_signals=[]),
+    )
+    events = (first, last.model_copy(update={"evidence": evidence.model_dump(mode="json")}))
+    assert replay(artifact, events).status == "consistent"

@@ -310,3 +310,62 @@ test(
     console.log(JSON.stringify(result));
   },
 );
+
+test(
+  "pastes 50 steps on the new canvas in at most 300 ms",
+  { tag: "@performance" },
+  async ({ page, context }, info) => {
+    test.setTimeout(120_000);
+    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+    await useNewEditor(page);
+    await openNewWorkflow(page);
+    await expect(page.locator(".canvas-v2[data-ready]")).toBeVisible();
+    const steps = Array.from({ length: 50 }, (_, i) => ({
+      id: `pasted-${i}`,
+      kind: "transform",
+      value: { literal: {} },
+    }));
+    const clipboard = `# Firefly Weave steps. Paste into Studio.\n${JSON.stringify({ weaveClipboard: 1, steps, connections: {}, llmProfiles: {}, pins: {} })}`;
+    await page.evaluate(
+      (text) => navigator.clipboard.writeText(text),
+      clipboard,
+    );
+    await page.evaluate(() => {
+      const w = window as unknown as { pasteStart?: number; pasteEnd?: number };
+      document.addEventListener(
+        "paste",
+        () => (w.pasteStart = performance.now()),
+        {
+          capture: true,
+          once: true,
+        },
+      );
+      const observer = new MutationObserver(() => {
+        if (
+          w.pasteStart !== undefined &&
+          document.querySelectorAll(".canvas-v2 [data-step]").length >= 50
+        ) {
+          w.pasteEnd = performance.now();
+          observer.disconnect();
+        }
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+    });
+    await page.locator(".canvas-v2").focus();
+    await page.keyboard.press("ControlOrMeta+v");
+    await page
+      .locator(".canvas-v2 [data-step]")
+      .nth(49)
+      .waitFor({ state: "attached" });
+    const pasteMs = await page.evaluate(() => {
+      const w = window as unknown as { pasteStart: number; pasteEnd: number };
+      return Math.round(w.pasteEnd - w.pasteStart);
+    });
+    await info.attach("paste-measurement", {
+      body: JSON.stringify({ steps: 50, pasteMs }),
+      contentType: "application/json",
+    });
+    console.log(JSON.stringify({ steps: 50, pasteMs }));
+    expect(pasteMs, "paste 50 steps").toBeLessThanOrEqual(300);
+  },
+);

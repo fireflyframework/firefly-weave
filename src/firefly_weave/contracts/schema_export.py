@@ -104,6 +104,7 @@ def contract_models() -> dict[str, SchemaModel]:
         DeploymentTarget,
         JobCancelRequest,
         ObservationReport,
+        ObservedMember,
         ObservedResource,
         ObserveRequest,
         PlanApproval,
@@ -152,6 +153,7 @@ def contract_models() -> dict[str, SchemaModel]:
         TaskGroupRequest,
     )
     from firefly_weave.contracts.identity import IdentityView
+    from firefly_weave.contracts.incident_queries import IncidentQuery
     from firefly_weave.contracts.language import LanguageManifest
     from firefly_weave.contracts.lumi import (
         LumiAskRequest,
@@ -169,7 +171,14 @@ def contract_models() -> dict[str, SchemaModel]:
         PrincipalRecord,
         PrincipalStatusRequest,
     )
-    from firefly_weave.contracts.operations import EventPage, HistoryExport, RecordedEvidence, ReplayReport
+    from firefly_weave.contracts.operations import (
+        EventPage,
+        HistoryExport,
+        IncidentView,
+        RecordedEvidence,
+        ReplayReport,
+    )
+    from firefly_weave.contracts.operations_summary import OperationsSummary, OperationsTelemetry
     from firefly_weave.contracts.providers import (
         ProviderEvent,
         ProviderIngressResponse,
@@ -192,6 +201,7 @@ def contract_models() -> dict[str, SchemaModel]:
     )
     from firefly_weave.contracts.run_lifecycle import RunLifecycle, RunLifecycleRequest, RunPurgeRequest
     from firefly_weave.contracts.run_views import (
+        RunListQuery,
         RunLogPage,
         RunLogQuery,
         RunStepQuery,
@@ -208,6 +218,13 @@ def contract_models() -> dict[str, SchemaModel]:
     from firefly_weave.contracts.schedules import ScheduleOccurrence, ScheduleRequest, ScheduleView
     from firefly_weave.contracts.teams import TeamsReactivateRequest, TeamsReference, TeamsRevokeRequest
     from firefly_weave.contracts.whatsapp import WhatsAppDeliveryState, WhatsAppStatusFact
+    from firefly_weave.contracts.worker_queries import (
+        ReleaseUsage,
+        ReleaseUsageQuery,
+        RetireStaleRequest,
+        RetireStaleResult,
+        WorkerListQuery,
+    )
     from firefly_weave.contracts.workers import (
         ClaimRequest,
         CompleteRequest,
@@ -224,7 +241,9 @@ def contract_models() -> dict[str, SchemaModel]:
         TaskLease,
         UnavailableCompletionReceipt,
         WorkerControlRequest,
+        WorkerIdentity,
         WorkerInstance,
+        WorkerPlacement,
         WorkerRelease,
         WorkerStatus,
     )
@@ -240,6 +259,7 @@ def contract_models() -> dict[str, SchemaModel]:
         "operations-component-spec": ComponentSpec,
         "operations-deployment-request": DeploymentRequest,
         "operations-deployment": Deployment,
+        "operations-observed-member": ObservedMember,
         "operations-observed-resource": ObservedResource,
         "operations-observation-report": ObservationReport,
         "operations-deployment-observation": DeploymentObservation,
@@ -296,10 +316,13 @@ def contract_models() -> dict[str, SchemaModel]:
         "run-purge-request": RunPurgeRequest,
         "run-summary-page": RunSummaryPage,
         "run-summary-query": RunSummaryQuery,
+        "run-list-query": RunListQuery,
         "step-fact-page": StepFactPage,
         "run-step-query": RunStepQuery,
         "run-log-page": RunLogPage,
         "run-log-query": RunLogQuery,
+        "incident-view": IncidentView,
+        "incident-query": IncidentQuery,
         "human-task": HumanTask,
         "human-task-command": HumanTaskCommand,
         "complete-human-task": CompleteHumanTask,
@@ -380,10 +403,19 @@ def contract_models() -> dict[str, SchemaModel]:
         "start-run-request": StartRunRequest,
         "worker-release-request": ReleaseRequest,
         "worker-release": WorkerRelease,
+        "worker-identity": WorkerIdentity,
         "worker-instance-request": InstanceRequest,
         "worker-instance": WorkerInstance,
         "worker-status": WorkerStatus,
         "worker-control-request": WorkerControlRequest,
+        "worker-placement": WorkerPlacement,
+        "worker-list-query": WorkerListQuery,
+        "retire-stale-request": RetireStaleRequest,
+        "retire-stale-result": RetireStaleResult,
+        "release-usage-query": ReleaseUsageQuery,
+        "release-usage": ReleaseUsage,
+        "operations-summary": OperationsSummary,
+        "operations-telemetry": OperationsTelemetry,
         "lease-proof": LeaseProof,
         "task-lease": TaskLease,
         "completion-receipt": CompletionReceipt,

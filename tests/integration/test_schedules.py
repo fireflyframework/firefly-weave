@@ -79,6 +79,7 @@ async def test_two_schedulers_create_one_run_for_same_occurrence(
             == 1
         )
         assert await session.scalar(text("SELECT count(*) FROM runs")) == 1
+        assert await session.scalar(text("SELECT origin FROM run_facts")) == "schedule"
 
 
 @pytest.fixture

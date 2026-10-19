@@ -48,9 +48,30 @@ def frame(state: RunState, node: Node, key: str) -> BranchState | None:
     return None if name is None else state.branches[name]
 
 
+def iteration_suffix(suffix: str, index: int) -> str:
+    """The loop suffix of iteration ``index`` of a loop instance whose own suffix is ``suffix``."""
+    return f"{suffix}[{index}]"
+
+
+def enclosing_suffix(key: str) -> str:
+    """The loop suffix of ``key`` without its innermost index: the suffix of the innermost loop instance."""
+    suffix = loop_suffix(key)
+    return suffix[: suffix.rindex("[")] if suffix else ""
+
+
+def frame_suffix(key: str, branch: BranchState) -> str:
+    """The loop suffix of a frame key: the text after ``owner/name``."""
+    return key[len(branch.owner) + 1 + len(branch.name) :]
+
+
 def bindings(state: RunState, node: Node, key: str) -> JsonObject:
     branch = frame(state, node, key)
-    return state.steps if branch is None else {**branch.visible, **branch.steps}
+    if branch is None:
+        return state.steps
+    if branch.index is not None:
+        # An iteration frame shares the bindings visible at its loop, stored once on the loop instance.
+        return {**state.loops[branch.owner + enclosing_suffix(key)].visible, **branch.steps}
+    return {**branch.visible, **branch.steps}
 
 
 def joined_output(state: RunState, join: JoinState) -> JsonValue:

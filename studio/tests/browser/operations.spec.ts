@@ -20,7 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 // inline confirmation, one "Send reply", and what local mode and a signed-out
 // platform show instead of dead filters.
 import { test, expect, Page, Request } from "@playwright/test";
-import { allCapabilities, connected, offline } from "./support";
+import { allCapabilities, connected, offline, runSummaries } from "./support";
 import { acmePlatform, platformHost } from "./platform-host";
 
 const environment =
@@ -115,18 +115,11 @@ async function runPlatform(page: Page) {
       },
     }),
   );
-  await page.route(`${environment}/runs?*`, (r) => {
-    const url = new URL(r.request().url());
-    queries.push(url);
-    const status = url.searchParams.get("status");
-    const key = url.searchParams.get("business_key");
-    const items = runs.filter(
-      (run) =>
-        (!status || run.state.status === status) &&
-        (!key || run.business_key?.includes(key)),
-    );
-    return r.fulfill({ json: { items, next_cursor: null } });
-  });
+  // Home reads its recent runs; Operate › Runs reads run summaries.
+  await page.route(`${environment}/runs?*`, (r) =>
+    r.fulfill({ json: { items: runs, next_cursor: null } }),
+  );
+  await runSummaries(page, runs, queries);
   for (const run of runs) {
     await page.route(`${environment}/runs/${run.id}`, (r) =>
       r.fulfill({ json: run }),
@@ -185,23 +178,29 @@ for (const viewport of [
       await page.getByRole("button", { name: "Runs", exact: true }).click();
       const rows = page.locator(".resource-row");
       await expect(rows).toHaveCount(3);
-      await expect(
-        page.getByRole("status").filter({ hasText: /runs$/ }),
-      ).toHaveText("3 runs");
-      await expect(rows.first()).toContainText("expense-review 1.0.0");
+      await expect(rows.first()).toContainText("expense-review");
       await expect(rows.first()).toContainText("expense-104");
-      await expect(rows.last()).toContainText("Run 92d3e4f5");
-      for (const secondary of await rows.locator("small").allTextContents())
-        expect(secondary).not.toMatch(uuid);
-      await expect(rows.last().locator(".status-pill")).toHaveAttribute(
-        "data-tone",
-        "danger",
-      );
-      await expect(rows.last().locator(".status-pill")).toHaveText("Failed");
+      // A run is named by its workflow and a short ID, never a whole UUID.
+      for (const text of await rows.allTextContents())
+        expect(text).not.toMatch(uuid);
+      await expect(rows.last()).toContainText("92d3e4f5");
+      const pill = rows.last().locator(".status-pill").first();
+      await expect(pill).toHaveAttribute("data-tone", "danger");
+      await expect(pill).toHaveText("Failed");
       if (viewport.width > 1024)
         await expect(
           page.getByRole("columnheader").allTextContents(),
-        ).resolves.toEqual(["Run", "Status", "Started", "Duration"]);
+        ).resolves.toEqual([
+          "",
+          "Status",
+          "Workflow",
+          "Origin",
+          "Started",
+          "Duration",
+          "Incidents",
+          "Business key",
+          "Run",
+        ]);
     });
 
     test("a run's detail leads with what it waits for and hides the JSON", async ({
@@ -364,18 +363,23 @@ for (const viewport of [
       const queries = await runPlatform(page);
       await page.getByRole("button", { name: "Runs", exact: true }).click();
       await expect(page.locator(".resource-row")).toHaveCount(3);
-      if (viewport.width <= 1024) {
+      if (viewport.width < 768) {
         const toggle = page.getByRole("button", { name: "Filters (0)" });
         await toggle.click();
         await expect(toggle).toHaveAttribute("aria-expanded", "true");
       }
-      await page.getByRole("button", { name: "Failed", exact: true }).click();
+      const failed = page
+        .getByRole("group", { name: "Status" })
+        .getByRole("button", { name: "Failed", exact: true });
+      await failed.click();
       await expect
         .poll(() => queries.at(-1)?.searchParams.get("status"))
         .toBe("failed");
       await expect(page.locator(".resource-row")).toHaveCount(1);
-      await page.getByRole("button", { name: "All", exact: true }).click();
-      await page.getByLabel("Search by business key").fill("expense-104");
+      await failed.click();
+      await page
+        .getByLabel("Business key", { exact: true })
+        .fill("expense-104");
       await expect
         .poll(() => queries.at(-1)?.searchParams.get("business_key"))
         .toBe("expense-104");
@@ -553,9 +557,7 @@ test("local mode: operations pages offer a way to connect, not dead filters", as
   await expect(page.locator("weave-connection-wizard")).toBeVisible();
 });
 
-test("signed out: a calm banner offers sign-in and the filters wait", async ({
-  page,
-}) => {
+test("signed out: Runs offers sign-in instead of filters", async ({ page }) => {
   await platformHost(page, { platforms: [acmePlatform()], active: "Acme" });
   await page.locator(".platform-indicator").click();
   await page
@@ -568,12 +570,14 @@ test("signed out: a calm banner offers sign-in and the filters wait", async ({
     .click();
   await expect(page.locator(".toast")).toContainText("Signed out of Acme.");
   await page.getByRole("button", { name: "Runs", exact: true }).click();
-  const banner = page.locator(".records-banner");
-  await expect(banner).toContainText(
-    "You're signed out of Acme. Sign in to see runs and tasks.",
-  );
-  await expect(banner.getByRole("button", { name: "Sign in" })).toBeVisible();
-  await expect(page.getByLabel("Search by business key")).toBeDisabled();
+  const runs = page.locator("weave-runs-page");
+  await expect(
+    runs.getByRole("heading", { name: "Sign in to see runs" }),
+  ).toBeVisible();
+  await expect(runs).toContainText("You're signed out of Acme.");
+  await expect(runs.getByRole("button", { name: "Sign in" })).toBeVisible();
+  // No filters until there is something to filter.
+  await expect(page.getByLabel("Business key", { exact: true })).toHaveCount(0);
 });
 
 test("the unknown-outcome banner asks to check, and checking resends the same request", async ({
@@ -583,9 +587,7 @@ test("the unknown-outcome banner asks to check, and checking resends the same re
     capabilities: [...allCapabilities, "run.pause", "run.resume"],
   });
   const run = runs[0];
-  await page.route(`${environment}/runs?*`, (r) =>
-    r.fulfill({ json: { items: [run], next_cursor: null } }),
-  );
+  await runSummaries(page, [run]);
   await page.route(`${environment}/runs/${run.id}`, (r) =>
     r.fulfill({ json: run }),
   );

@@ -22,6 +22,7 @@ import { StepDetailsMount } from "../src/app/editor/ndv/step-details-mount";
 import { App } from "../src/app/app";
 import { StructuredCanvasAdapter } from "../src/app/model";
 import { CanvasView } from "../src/app/editor/canvas/canvas-view";
+import { emptyCanvas } from "../src/app/editor/state/canvas-sidecar";
 import {
   StepDetailsService,
   openRequest,
@@ -52,6 +53,7 @@ function fixture(id = "lookup", badge = false) {
     suppressClick: false,
     places: () => new Map([["lookup", { id: "lookup", owner: "root" }]]),
     host: () => ({
+      model: { canvas: emptyCanvas() },
       selectStep: async (step: string, open: boolean) => {
         selected.push(step);
         if (open) service.open(openRequest(step));

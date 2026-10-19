@@ -275,7 +275,8 @@ Open the assistant in any of these ways:
 - While you work locally, select **Connect to a platform** on **Home**, in the
   platform menu at the top right, in the designer next to "Saving, publishing
   and runs need a platform.", or on the **Connections**, **My tasks**,
-  **Email**, **Runs**, **Incidents**, **Workers**, and **Clusters** pages.
+  **Email**, **Overview**, **Runs**, **Incidents**, **Workers**, and
+  **Clusters** pages.
 - In **Settings → Platforms**, select **Add platform** while you use a platform,
   or **Connect to a platform** while you work locally.
 
@@ -774,22 +775,64 @@ choice in this browser, and you can turn it off at any time. **Outline** and
   appears when you point at an edge or move focus to it (it inserts between two
   steps), or the dashed box of an empty path, which has **Add a step** under
   it. You can also drag from a step's output handle to an empty part of the
-  canvas: the step picker opens there, and the new step goes where that output
+  canvas: **Add a step** opens there, and the new step goes where that output
   leads, which is right after the step, or first in the path for a Decision or
   Parallel output. Dropping on a step or near one does nothing, because steps
   run in the order of their path: Studio says "Steps run in order. Use + to
   insert."
+- **Add a step.** Every **+**, the dashed boxes, a handle dragged to an empty
+  part of the canvas, N or / and **Add a step** in the toolbar open the **Add a
+  step** panel on the right (the whole window on narrow screens). On an empty
+  workflow it asks **What triggers this workflow?** and lists the seven
+  triggers first; after that it asks **What happens next?** with **AI**,
+  **Action in an app**, **Data transformation**, **Flow**, **Wait**, **Human
+  review** and **Add another trigger**. Type to search: everyday words work, so
+  "http" finds **Call an API**, and when nothing matches the panel offers
+  **Make a custom API call**. **Action in an app** starts with **Call an API**,
+  **Call an action**, and the email and file apps; a file app opens on its
+  servers' actions. An app opens on its actions and its triggers. Something
+  your platform can't run yet stays in the list, dimmed, with the reason. You
+  can also drag a step from the panel onto a **+**.
+- **Triggers.** A trigger you choose appears at the start of the workflow and
+  reads **Set up at activation**: Studio keeps the choice, and you set the
+  trigger up when you activate the workflow. To remove one, point at it and
+  select **Remove the Webhook trigger** (or the trigger's own name), or press
+  Delete on it; removing **Called by a workflow** asks first.
+- **Copy and paste.** Ctrl+C, Ctrl+X and Ctrl+V (Command on a Mac) copy, cut
+  and paste a run of steps next to each other in one path, also from one
+  workflow to another. Studio copies them as YAML, so you can also paste them
+  into a text file. Pasted steps whose IDs are taken get new ones, references
+  between them follow, and Studio asks before it adds the connection slots and
+  AI profiles they use. A reference the new place can't read shows **Setup
+  needed** until you fix it.
+- **Sticky notes.** Press Shift+S or select **Add a sticky note** in the canvas
+  tools. Double-click a note to write in it; notes understand headings, bold,
+  italics, lists, code and links, and hold up to 4,000 characters. A note has
+  six colors and three sizes, and you can drag it, resize it from its edges,
+  move it with the arrow keys or with **Move…**. A note added while a step is
+  selected starts in the nearest free spot under or beside that step and
+  follows it; a note added with nothing selected starts in the middle of the
+  view, clear of other notes. Studio keeps notes and trigger choices with the
+  workflow: for a draft on a platform, in this browser for your account, so
+  they come back when you open the draft again here.
+- **Tidy layout.** Shift+Alt+T or **Tidy layout** in the canvas tools moves
+  notes that cover a step out of the way and fits the view; a note that
+  follows a step stays with it. Undo puts them back.
+- **Files.** With the new editor, **Save to file** writes the workflow and a
+  `.canvas.json` file with its notes and trigger choices. To open both, choose
+  the two files together in **Import workflow**.
 - **Move, duplicate and delete.** Point at a step, or move focus to it, to show
-  its toolbar with **Delete** and **More**; right-click a step for the same
-  menu. **More** holds **Open**, **Rename**, **Duplicate**, **Move to…** and
+  its toolbar with **Delete** and **More** above the step; right-click a step
+  for the same menu. **More** holds **Open**, **Rename**, **Duplicate**, **Move to…** and
   **Delete**, and **Add paths for answers** on a Human task. Drag a step onto a
   highlighted **+** to move it, or choose **Move to…** and then a **+**.
 - **Select several steps.** Shift-click or Ctrl-click (Command-click on a Mac)
   adds or removes a step, and dragging on an empty part of the canvas draws a
   selection box. Selecting a Decision or Parallel step selects every step inside
   it, and the group counts as one step. With two or more steps selected, a
-  toolbar shows how many, **Duplicate** (for steps next to each other in one
-  path) and **Delete**.
+  toolbar shows how many, **Copy** and **Duplicate** (for steps next to each
+  other in one path) and **Delete**; in a window narrower than 480 pixels,
+  **Copy** and **Duplicate** are under its **More** button (⋯).
 - **Find your way.** Scroll to pan (hold Shift to pan sideways), and hold Ctrl
   or Command while you scroll to zoom, from 25 to 200 percent. Space, Ctrl or
   Command with a drag, or the middle mouse button, also pans. The canvas tools
@@ -824,9 +867,12 @@ describes the current one.
 | Shift+→ and Shift+← | Add the next or previous step to the selection |
 | Enter | Open the step details; on **Trigger** or **End**, open the workflow inputs or result |
 | F2 | Rename the step |
-| N or / | Open the step picker after the focused step |
+| N or / | Open **Add a step** after the focused step |
 | Ctrl+A or Command-A | Select every step |
 | Ctrl+D or Command-D | Duplicate the selected steps |
+| Ctrl+C, Ctrl+X, Ctrl+V (Command on a Mac) | Copy, cut and paste steps |
+| Shift+S | Add a sticky note |
+| Shift+Alt+T | Tidy layout |
 | Delete or Backspace | Delete the selected steps |
 | Ctrl+Z or Command-Z | Undo |
 | Ctrl+Shift+Z or Command-Shift-Z; Ctrl+Y on Windows and Linux | Redo |
@@ -836,6 +882,10 @@ describes the current one.
 | 1 | Fit view |
 | ? | Show the keyboard shortcuts |
 | Escape | One step per press: end a drag or **Move to…**, otherwise hide the toolbar shown over a step, otherwise clear the selection. An open picker, menu or dialog takes Escape first |
+
+On a focused note, Enter edits it, Delete removes it and the arrow keys move it
+(with Shift, farther); Escape ends editing. In **Add a step**, ↑ and ↓ move,
+Enter adds, → opens a category or app, ← goes back and Escape closes.
 
 ### Edit workflow settings and step properties
 
@@ -985,8 +1035,8 @@ API** keeps its **URL** as a path, with a row under it for the value of each
 The step reference lists
 [each step's fields in step details](studio-step-reference.md#fields-in-step-details).
 
-**Call an API, email and file steps.** With the new editor on, the step picker
-lists them under **Common actions**, and each one gets an action of its own,
+**Call an API, email and file steps.** With the new editor on, **Add a step**
+lists them under **Action in an app**, and each one gets an action of its own,
 edited right in step details. **Publish…** and **Simulate** publish those
 actions first, after you confirm; see
 [where Studio keeps their actions](studio-step-reference.md#email-and-file-steps).
@@ -1210,6 +1260,12 @@ never part of what runs. The browser downloads both files; the desktop app saves
 them to your Downloads folder. Working locally, **Save to file** is the
 designer's main button; while you are connected, it is in the toolbar's **More**
 menu (⋯).
+
+With the new editor on, **Save to file** writes a `.canvas.json` file instead
+of the layout file. It keeps the notes, trigger choices, step notes and the
+settings of the actions the workflow owns, so the two files together hold
+everything Studio shows. Choose both files in **Import workflow** to open them
+together.
 
 **Studio is designed for a desktop-size screen.** In the designer, the
 navigation opens in full, with the names, in a window 1440 pixels wide or wider,
@@ -1463,27 +1519,94 @@ Every start creates a new run, even with the same business key; a business key
 groups related runs. Studio remembers the last input for each version in this
 browser, leaving out fields the schema marks as secret.
 
-**Follow and manage runs in Runs.**
+**See the platform at a glance in Overview.** **Operate** opens on
+**Overview**, which needs `status.read`. It reads the environment's summary
+every 15 seconds while the page is visible, and after a failed read it waits
+longer, up to a minute.
 
-- **Find runs** with the filters above the list: type an exact business key in
-  **Search by business key**, choose **All**, **Waiting**, **Failed**, or
-  **Succeeded**, or open **More filters** for an exact **Correlation key** and
-  **Include archived runs**. The list updates as you change a filter. In a
-  narrow window, the filters fold behind a button such as "Filters (2)".
+- **Health** has one tile each for the API, the database, the scheduler, the
+  outbox, compatibility and telemetry export, with a state (**OK**,
+  **Degraded**, **Down** or **Off**) and one figure such as "Latency 4 ms" or
+  "Last success 2 min ago". Each tile's details button lists its facts or its
+  background loops, with each loop's last success and failures in a row.
+- **Load** shows active runs (test runs left out), ready tasks with the oldest
+  wait, waits with how many are overdue, the outbox backlog and the provider
+  backlog.
+- **Workers and clusters** counts online, offline and draining workers, free
+  task slots against ready tasks, runners, busy targets, targets that need
+  reconciliation and plans waiting for approval, and active incidents.
+- **Needs attention** lists up to 20 items, most urgent first: jobs that need
+  reconciliation, plans you may approve, offline workers that still hold work,
+  active incidents, targets without an online runner, a restricted
+  compatibility verdict and runs that failed in the last hour. A job, plan,
+  worker or failed run opens its record; an incident opens **Incidents**, a
+  target without a runner opens **Runners**, and the compatibility verdict has
+  no link.
+
+A section you may not read says which permission it needs, such as "You need
+`incident.read` in this environment.", instead of showing zeros; a section the
+platform could not compute in time says "This section could not be loaded."
+with **Try again**, while the rest of the page stays usable.
+
+**Follow and manage runs in Runs.** The list shows the newest runs first
+(choose another **Order** under **More filters**; the line under the title
+says which order is in use): each run's status (a run that succeeded after handling errors reads "Succeeded
+with errors"), its workflow and version, how it started (**Retry of** and
+**Called by** open the run it came from), when it started, how long it ran
+(counting up while it runs), its active incidents, its business key and its
+short run ID with **Copy**. On a wide screen each run is one line: a long
+workflow name or business key ends in "…", and pointing at it shows the whole
+value, as the run's detail does.
+
+- **Find runs** with the filters above the list: **Time range** (the last 15
+  minutes, hour, 24 hours, 7 days or 30 days, or a custom range; the last 24
+  hours by default), **Workflow** and **Version**, **Origin**, an exact
+  **Business key**, one or more statuses, and **Include test runs**. **More
+  filters** adds an exact **Correlation key**, **Handled errors**, **Order**,
+  **Has active incident**, **Top-level runs only** and **Include archived
+  runs**. The list updates as you change a filter, and **Clear filters** resets
+  them all. The address keeps every filter except the business and correlation
+  keys, so you can share a view without sharing business data. In a narrow
+  window, the filters fold behind a button such as "Filters (2)".
+- **Keep the list current.** With **Auto-refresh** on (the default), the list
+  reads its first page again every 10 seconds while the page is visible; a
+  relative time range then ends at that moment. **Refresh** does the same at
+  once. **Load more runs** continues exactly the list you are reading, so pages
+  never shift under you; while more than the first page is open, or runs are
+  selected, the list waits for **Refresh**. Starting, canceling, retrying,
+  archiving or restoring a run, or deleting its data, from this page reads the
+  first page again at once. While the list shows new runs first (**Newest
+  first** or **Recently updated**), a run you just started shows first, as
+  "Just started", until the list includes it; with **Oldest first** it
+  appears in its place once a page reaches it.
+- **Act on several runs.** Select runs, up to 50, and choose **Cancel runs**
+  (one reason for all) or **Retry runs** (each on its own version with its own
+  input). Studio sends them one at a time and reports the result for each run.
 - **Open a run** to watch it. The **Now** line says what it is doing, such as
   "Waiting for a person at review, assigned to reviewers", and offers **Open
   task** or **Open My tasks** when a person must act
   ([what each reason means](execution-management.md#3-understand-why-a-run-is-waiting)).
   The graph of the version it runs marks the current step **Now** and finished
-  steps with a check. **Timeline** lists the recorded events in plain sentences,
-  each with **View raw event**, and **Technical details** holds the run ID, the
-  correlation key, the artifact, and the run data. The view does not update by
-  itself: select **Refresh** at the bottom of the run's detail.
-- **Pause run** and **Resume run** need their own permissions, ask for a
-  **Reason**, and appear only while the run hasn't finished; only one of them
-  shows at a time. Studio has no controls to cancel or retry a run or to resolve
-  an incident; a blocked run shows "This run stopped at" and the step. Use the
-  CLI or the API, as in [incident operations](../reference/incident-operations.md).
+  steps with a check. **Steps** draws one bar per step: the time it waited in
+  the queue and the time it ran. Loop iterations sit under their step, and a
+  step that called a workflow opens the run it called. **Input/Output** shows a
+  step's recorded output only when you select **Show output**, and says why
+  when an output can't be shown. **Logs** aren't available yet. **Events**
+  lists the recorded events in plain sentences, each with **View raw event**,
+  and **Technical details** holds the run ID, the correlation key, the
+  artifact, and the run data. While the run is still going, Studio reads it and
+  its steps every 2 seconds; **Refresh** at the bottom of the detail reads it at
+  once. Each of those reads takes every page of steps on screen again: after
+  **Load more steps**, which stops at 10 pages (2,000 step instances) and says
+  so, a running run costs up to 10 step requests every 2 seconds, one after
+  another, and a slow platform slows the reads down instead of overlapping them.
+- **Cancel run**, **Retry run**, **Send signal** and **Export history** work as
+  [Manage runs and business cases](execution-management.md#3-understand-why-a-run-is-waiting)
+  describes. **Pause run** and **Resume run** need their own permissions, ask
+  for a **Reason**, and appear only while the run hasn't finished; only one of
+  them shows at a time. A blocked run shows "This run stopped at" and the step;
+  resolve its incident in **Incidents**, or as in
+  [incident operations](../reference/incident-operations.md).
 - **Archive run**, under **Archive**, hides a finished run from the list and
   keeps its history. Open **More filters** and check **Include archived runs** to
   show it again; **Restore run** returns it to the list.
@@ -1621,8 +1744,8 @@ security policy, start preferences, and local validation when the repository
 Python `.venv` is available. Connected API fixtures test request shapes and
 failure handling; they are separate from database/mail transport integration
 evidence. `tests/browser/real-platform.spec.ts` drives the connection, sign-in,
-session expiry and revocation, switch-account, and quick-integration journeys
-against a running local platform and its Keycloak, with the system credential
+session expiry and revocation, switch-account, quick-integration and Runs
+refresh journeys against a running local platform and its Keycloak, with the system credential
 store; it is skipped unless `WEAVE_E2E_PLATFORM_DIR` and
 `WEAVE_E2E_PERSON_FILE` are set, as its header explains. Its quick-integration
 test also needs `WEAVE_E2E_ACME_ORIGIN`, the Acme fixture origin the platform

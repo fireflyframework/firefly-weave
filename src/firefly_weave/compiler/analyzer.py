@@ -30,6 +30,15 @@ from firefly_weave.compiler.action_config import (
     ActionConfigIssue,
     ActionConfigValidator,
 )
+from firefly_weave.compiler.calls import (
+    BUSINESS_KEY_SCHEMA,
+    CALL_MESSAGES,
+    CallGraph,
+    call_output_schema,
+    check_call_target,
+    detached_failure_paths,
+    without_detached_failures,
+)
 from firefly_weave.compiler.catalog import CatalogResource, CatalogSnapshot, FrozenDocument, ResourceKind
 from firefly_weave.compiler.decision_tables import (
     DECISION_MESSAGES,
@@ -48,13 +57,22 @@ from firefly_weave.compiler.expressions import (
 )
 from firefly_weave.compiler.language_support import unsupported_uses
 from firefly_weave.compiler.llm import llm_action_valid, llm_input, llm_output_schema
+from firefly_weave.compiler.loops import (
+    LOOP_ROOTS,
+    MAX_CONCURRENT_TASKS,
+    LoopScope,
+    index_schema,
+    item_schema,
+    loops_schema,
+    output_schema,
+)
 from firefly_weave.compiler.parser import ParsedSource
 from firefly_weave.compiler.schema_profile import DEFAULT_CONTRACT_LIMITS, SchemaLimits
 from firefly_weave.compiler.schemas import validate_contract_payload, validate_payload, validate_schema
 from firefly_weave.compiler.source_map import pointer_child
 from firefly_weave.compiler.typecheck import TypeCheckLimit, check_compatibility, schema_types
 from firefly_weave.contracts.definitions import load_definition
-from firefly_weave.contracts.diagnostics import Diagnostic, RelatedLocation, SourceRange
+from firefly_weave.contracts.diagnostics import Diagnostic, RelatedLocation, SourceRange, SuggestedEdit
 from firefly_weave.contracts.limits import Limits
 from firefly_weave.contracts.values import JsonObject, JsonValue
 
@@ -82,11 +100,30 @@ _MESSAGES = {
     "REFERENCE_PRESENCE": "Reference presence is unproved; runtime validation is required.",
     "UNAVAILABLE_REFERENCE": "Referenced step does not dominate this expression in its lexical scope.",
     "CATALOG_PENDING": "This reference is checked against the project catalog when the definition is compiled.",
+    "LOOP_ITEMS": "The items of a loop must be a list.",
+    "LOOP_SCOPE": (
+        "/item, /index and /loops are available only inside a forEach body, and /loops/ID must name an enclosing loop."
+    ),
+    "LOOP_SIGNAL": "A loop body cannot wait for a signal; move the wait before or after the loop.",
+    "LOOP_BODY_INCOMPLETE": "The loop body never completes, so any non-empty list would stop the run.",
+    "LOOP_FANOUT": (
+        f"Nested concurrency can issue more than {MAX_CONCURRENT_TASKS:,} tasks at once; "
+        "work will be spread over several turns."
+    ),
+    "LOOP_DEPTH": "Loops can be nested at most {limit:,} deep.",
+    "LOOP_MAX_ITEMS": "maxItems exceeds this platform's limit of {limit:,}.",
+    "LOOP_BUDGET": (
+        "Nested loops could run more than {limit:,} iterations in one run; lower maxItems on an inner loop."
+    ),
+    "UNKNOWN_WORKFLOW": CALL_MESSAGES["UNKNOWN_WORKFLOW"],
+    "CALL_MODE": CALL_MESSAGES["CALL_MODE"],
 }
 
 
-def _message(code: str) -> str:
-    return _MESSAGES.get(code, "Definition violates the " + code.lower().replace("_", " ") + " contract.")
+def _message(code: str, **values: object) -> str:
+    """The message for ``code``; ``values`` fill the configured limits that some messages name."""
+    template = _MESSAGES.get(code, "Definition violates the " + code.lower().replace("_", " ") + " contract.")
+    return template.format(**values) if values else template
 
 
 def reference_available(step_id: str, completed: frozenset[str]) -> bool:
@@ -125,6 +162,19 @@ class AnalyzedStep:
     branches: tuple[AnalyzedBranch, ...] = ()
     completes: bool = True
     reachable: bool = True
+
+
+@dataclass(frozen=True)
+class ScopeCapture:
+    """What an expression at one definition path may read, captured during analysis."""
+
+    input_schema: JsonObject
+    # Steps whose outputs are visible, in execution order: step ID to (kind, output schema).
+    steps: tuple[tuple[str, str, JsonObject], ...]
+    # Enclosing loops, outermost first.
+    loops: tuple[LoopScope, ...]
+    # False when every path to the position fails, so the compiler never evaluates it.
+    evaluated: bool
 
 
 @dataclass(frozen=True)
@@ -190,8 +240,13 @@ class _Analyzer:
         action_validators: Mapping[str, ActionConfigValidator] | None = None,
         *,
         catalog_absent: bool = False,
+        capture: str | None = None,
     ) -> None:
         self.source, self.catalog, self.strict = source, catalog, strict
+        # A definition path whose scope analysis records in ``captured``.
+        self.capture = capture
+        self.captured: ScopeCapture | None = None
+        self.kinds: dict[str, str] = {}
         self.action_validators = dict(action_validators or {})
         # Offline authoring: every catalog reference is pending rather than unknown.
         self.catalog_absent = catalog_absent
@@ -215,6 +270,13 @@ class _Analyzer:
         self.llm_profiles: JsonObject = {}
         self.kind: Literal["Workflow", "Action", "Connector", "DecisionTable"] | None = None
         self.definition: FrozenDocument | None = None
+        # Loops enclosing the position being analyzed, outermost first.
+        self.loops: tuple[LoopScope, ...] = ()
+        # Every loop as (path, product of the enclosing loops' maxItems, its maxItems, whether it holds no loop).
+        self.loop_chains: list[tuple[str, int, int, bool]] = []
+        # The analyzed workflow's exact reference, and the calls each catalog workflow makes.
+        self.reference = ""
+        self.calls = CallGraph(catalog)
 
     def location(self, path: str) -> SourceRange | None:
         while path not in self.source.locations and path:
@@ -245,15 +307,19 @@ class _Analyzer:
         unknown: bool = False,
         stage: Literal["resolution", "semantic"] = "semantic",
         related: str | None = None,
+        severity: Literal["error", "warning"] | None = None,
+        message: str | None = None,
+        edit: SuggestedEdit | None = None,
     ) -> None:
         self.add(
             Diagnostic(
                 code="WV-COMP-" + code,
-                severity=severity_for_unknown(self.strict) if unknown else "error",
+                severity=severity or (severity_for_unknown(self.strict) if unknown else "error"),
                 stage=stage,
                 path=path,
-                message=_message(code),
+                message=message or _message(code),
                 related=[] if related is None else [RelatedLocation(path=related, source=self.location(related))],
+                suggestedEdit=edit,
             )
         )
 
@@ -292,15 +358,19 @@ class _Analyzer:
 
     def reads_pending(self, expression: JsonObject) -> bool:
         """Whether a value reads an output that only the absent catalog leaves unconstrained."""
-        if not self.pending_outputs:
+        pending_loops = {loop.id for loop in self.loops if loop.quiet}
+        if not self.pending_outputs and not pending_loops:
             return False
         stack = [expression]
         while stack:
             node = stack.pop()
             if "ref" in node:
                 segments = pointer_segments(cast(str, node["ref"]))
-                if not segments or (
-                    segments[0] == "steps" and (len(segments) == 1 or segments[1] in self.pending_outputs)
+                if (
+                    not segments
+                    or (segments[0] == "steps" and (len(segments) == 1 or segments[1] in self.pending_outputs))
+                    or (segments[0] == "item" and bool(self.loops) and self.loops[-1].quiet)
+                    or (segments[0] == "loops" and (len(segments) == 1 or segments[1] in pending_loops))
                 ):
                     return True
             stack.extend(child for child, _ in _children(node, ""))
@@ -328,6 +398,7 @@ class _Analyzer:
                 "Connector": "UNKNOWN_CONNECTOR",
                 "TaskCapability": "UNKNOWN_TASK",
                 "Adapter": "UNKNOWN_ADAPTER",
+                "Workflow": "UNKNOWN_WORKFLOW",
             }.get(kind, "UNKNOWN_RESOURCE")
             self.issue(code, path, stage="resolution")
             return None
@@ -343,6 +414,11 @@ class _Analyzer:
         elif kind == "TaskCapability":
             self.schema(cast(JsonObject, value["inputSchema"]), path)
             self.schema(cast(JsonObject, value["outputSchema"]), path)
+        elif kind == "Workflow":
+            # A called workflow is an interface: its steps were checked when it was published.
+            spec = cast(JsonObject, value["spec"])
+            self.schema(cast(JsonObject, spec["inputSchema"]), path)
+            self.schema(cast(JsonObject, spec["outputSchema"]), path)
         self.checked[key] = before == self.error_count
         return resource if self.checked[key] else None
 
@@ -510,6 +586,12 @@ class _Analyzer:
             if kind in {"action", "decisionTable", "transform"}:
                 key = "value" if kind == "transform" else "with"
                 self.count(cast(JsonObject, step[key]), step_path + "/" + key)
+            if kind == "forEach":
+                self.count(cast(JsonObject, step["items"]), step_path + "/items")
+            if kind == "callWorkflow":
+                self.count(cast(JsonObject, step["with"]), step_path + "/with")
+                if "businessKey" in step:
+                    self.count(cast(JsonObject, step["businessKey"]), step_path + "/businessKey")
             for _, child, child_path in self.branch_values(step, step_path):
                 if "when" in child:
                     self.count(cast(JsonObject, child["when"]), child_path + "/when")
@@ -534,18 +616,22 @@ class _Analyzer:
                 (name, cast(JsonObject, branch), pointer_child(path + "/branches", name))
                 for name, branch in sorted(cast(JsonObject, step["branches"]).items())
             ]
+        if step["kind"] == "forEach":
+            return [("body", cast(JsonObject, step["body"]), path + "/body")]
         return []
 
     def infer(self, expression: JsonObject, visible: dict[str, JsonObject]) -> InferredType:
         requested: set[str] = set()
-        include_input = include_all = include_steps = False
+        include_input = include_all = include_steps = include_loops = False
         stack = [expression]
         while stack:
             node = stack.pop()
             if "ref" in node:
                 segments = pointer_segments(cast(str, node["ref"]))
                 if not segments:
-                    include_input = include_all = include_steps = True
+                    include_input = include_all = include_steps = include_loops = True
+                elif segments[0] in LOOP_ROOTS:
+                    include_loops = True
                 elif segments[0] == "input":
                     include_input = True
                 elif segments[0] == "steps":
@@ -562,11 +648,28 @@ class _Analyzer:
             context["steps"] = _object(
                 {key: _object({"output": schema}) for key, schema in visible.items() if include_all or key in requested}
             )
+        if include_loops and self.loops:
+            context["item"] = self.loops[-1].item
+            context["index"] = self.loops[-1].index
+            context["loops"] = loops_schema(self.loops)
         return infer_expression(expression, context, limits=self.limits, schema_limits=self.schema_limits)
+
+    def observe(self, path: str, visible: dict[str, JsonObject], evaluated: bool = True) -> None:
+        """Record the scope at the expression ``path`` when it holds the captured position."""
+        if self.capture is None or self.captured is not None:
+            return
+        if self.capture == path or self.capture.startswith(path + "/"):
+            self.captured = ScopeCapture(
+                self.input_schema,
+                tuple((key, self.kinds[key], schema) for key, schema in visible.items()),
+                self.loops,
+                evaluated,
+            )
 
     def expression(
         self, expression: JsonObject, path: str, visible: dict[str, JsonObject], target: JsonObject | None = None
     ) -> JsonObject:
+        self.observe(path, visible)
         try:
             # Dominance is a syntactic requirement, including lazy operands.
             stack = [(expression, path)]
@@ -580,6 +683,8 @@ class _Analyzer:
                         and not reference_available(segments[1], frozenset(visible))
                     ):
                         self.issue("UNAVAILABLE_REFERENCE", location + "/ref")
+                    if not self.in_loop_scope(segments):
+                        self.issue("LOOP_SCOPE", location + "/ref")
                 stack.extend(_children(node, location))
             self.operands(expression, path, visible)
             result = self.infer(expression, visible)
@@ -605,7 +710,7 @@ class _Analyzer:
             result = self.infer(expression, visible)
             segments = pointer_segments(cast(str, expression["ref"]))
             unavailable = len(segments) >= 2 and segments[0] == "steps" and segments[1] not in visible
-            if unavailable:
+            if unavailable or not self.in_loop_scope(segments):
                 return
             if not handled and len(segments) > 3 and segments[0] == "steps" and segments[2] == "output":
                 variants = [visible[segments[1]]]
@@ -684,6 +789,14 @@ class _Analyzer:
                     self.issue("TYPE_MISMATCH" if definite else "UNKNOWN_COMPATIBILITY", path, unknown=not definite)
                 if not definite:
                     self.guard(path, "operator_operands", {})
+
+    def in_loop_scope(self, segments: tuple[str, ...]) -> bool:
+        """Whether a reference to a loop root names a loop enclosing the current position."""
+        if not segments or segments[0] not in LOOP_ROOTS:
+            return True
+        if not self.loops:
+            return False
+        return segments[0] != "loops" or len(segments) == 1 or any(loop.id == segments[1] for loop in self.loops)
 
     def text_operand(
         self, operand: JsonObject, path: str, schema: JsonObject, accepted: JsonObject, rejected: tuple[JsonObject, ...]
@@ -814,8 +927,15 @@ class _Analyzer:
                 }
                 self.guard(location, "human_output", output)
             elif kind == "signal":
+                if self.loops:
+                    self.issue("LOOP_SIGNAL", location)
                 output = cast(JsonObject, step["payloadSchema"])
                 self.guard(location, "signal_payload", output)
+            elif kind == "forEach":
+                output, body = self.loop(step, location, visible, scope)
+                branches.append(body)
+            elif kind == "callWorkflow":
+                output = self.call(step, location, visible)
             elif kind in {"switch", "parallel"}:
                 if kind == "parallel" and cast(int, step["concurrency"]) > self.concurrency:
                     self.issue("CONCURRENCY_LIMIT", location + "/concurrency")
@@ -831,9 +951,11 @@ class _Analyzer:
                         scope + (identifier, name),
                     )
                     expression = cast(JsonObject, branch["output"])
-                    branch_schema = (
-                        self.expression(expression, branch_path + "/output", branch_visible) if branch_completes else {}
-                    )
+                    if branch_completes:
+                        branch_schema = self.expression(expression, branch_path + "/output", branch_visible)
+                    else:
+                        self.observe(branch_path + "/output", branch_visible, evaluated=False)
+                        branch_schema = {}
                     self.guard(branch_path + "/output", "branch_output", branch_schema)
                     if branch_completes and self.reads_pending(expression):
                         self.pending_outputs.add(identifier)
@@ -873,10 +995,139 @@ class _Analyzer:
                     reachable,
                 )
             )
+            self.kinds[identifier] = kind
             if reachable and completes:
                 visible[identifier] = output
             reachable = reachable and completes
         return tuple(nodes), visible, reachable
+
+    def loop(
+        self, step: JsonObject, location: str, visible: dict[str, JsonObject], scope: tuple[str, ...]
+    ) -> tuple[JsonObject, AnalyzedBranch]:
+        """Check one forEach and its body; returns the loop's output schema and its analyzed body."""
+        identifier = cast(str, step["id"])
+        concurrency, max_items = cast(int, step["concurrency"]), cast(int, step["maxItems"])
+        if len(self.loops) >= self.limits.max_loop_depth:
+            self.issue("LOOP_DEPTH", location, message=_message("LOOP_DEPTH", limit=self.limits.max_loop_depth))
+        if concurrency > self.concurrency:
+            self.issue("CONCURRENCY_LIMIT", location + "/concurrency")
+        if max_items > self.limits.max_loop_items:
+            self.issue(
+                "LOOP_MAX_ITEMS",
+                location + "/maxItems",
+                message=_message("LOOP_MAX_ITEMS", limit=self.limits.max_loop_items),
+            )
+        tasks = 1
+        for enclosing in self.loops:
+            tasks *= enclosing.concurrency
+        if self.loops and tasks <= MAX_CONCURRENT_TASKS < tasks * concurrency:
+            self.issue("LOOP_FANOUT", location, severity="warning")
+        items = cast(JsonObject, step["items"])
+        before = self.error_count
+        source = self.expression(items, location + "/items", visible)
+        if self.error_count == before:
+            self.loop_items(source, items, location + "/items")
+        # Items that are already wrong, or unknown until the catalog is present, leave /item unchecked.
+        quiet = self.error_count != before or self.reads_pending(items)
+        scope_entry = LoopScope(identifier, item_schema(source), index_schema(max_items), concurrency, max_items, quiet)
+        body = cast(JsonObject, step["body"])
+        expression = cast(JsonObject, body["output"])
+        nested = len(self.loop_chains)
+        self.loops += (scope_entry,)
+        try:
+            children, body_visible, completes = self.block(
+                cast(list[JsonObject], body["steps"]), location + "/body/steps", visible, scope + (identifier, "body")
+            )
+            if completes:
+                body_schema = self.expression(expression, location + "/body/output", body_visible)
+                if self.reads_pending(expression):
+                    self.pending_outputs.add(identifier)
+            else:
+                self.issue("LOOP_BODY_INCOMPLETE", location + "/body")
+                self.observe(location + "/body/output", body_visible, evaluated=False)
+                body_schema = {}
+        finally:
+            self.loops = self.loops[:-1]
+        outer = 1
+        for enclosing in self.loops:
+            outer *= enclosing.max_items
+        self.loop_chains.append((location, outer, max_items, len(self.loop_chains) == nested))
+        self.guard(location + "/body/output", "branch_output", body_schema)
+        branch = AnalyzedBranch(
+            "body",
+            location + "/body",
+            children,
+            FrozenDocument.from_value(expression),
+            self.freeze_schema(body_schema),
+            completes,
+        )
+        return output_schema(body_schema, max_items, cast(str, step["collect"])), branch
+
+    def call(self, step: JsonObject, location: str, visible: dict[str, JsonObject]) -> JsonObject:
+        """Check one callWorkflow step against the workflow it calls; returns the step's output schema."""
+        identifier, reference = cast(str, step["id"]), cast(str, step["uses"])
+        mode, on_failure = cast(str, step["mode"]), cast(str | None, step.get("onFailure"))
+        resource = self.resolve("Workflow", reference, location + "/uses")
+        callee = cast(JsonObject, resource.definition.value["spec"]) if resource else None
+        if resource is not None:
+            target = check_call_target(
+                self.reference, reference, self.catalog, max_call_depth=self.limits.max_call_depth, graph=self.calls
+            )
+            for finding in target.issues:
+                self.issue(finding.code, location + "/uses", stage=finding.stage, message=finding.message)
+        input_schema = cast(JsonObject, callee["inputSchema"]) if callee else None
+        self.expression(cast(JsonObject, step["with"]), location + "/with", visible, input_schema)
+        if input_schema is not None:
+            self.guard(location + "/with", "call_input", input_schema)
+        if "businessKey" in step:
+            self.expression(
+                cast(JsonObject, step["businessKey"]), location + "/businessKey", visible, BUSINESS_KEY_SCHEMA
+            )
+        if mode == "detach":
+            return call_output_schema(mode, on_failure, {})
+        if callee is None:
+            # Offline, the called workflow's output stays unconstrained; the continue envelope around it is known.
+            if self.catalog_absent and on_failure != "continue":
+                self.pending_outputs.add(identifier)
+            return call_output_schema(mode, on_failure, {})
+        output = cast(JsonObject, callee["outputSchema"])
+        self.guard(location, "call_output", output)
+        return call_output_schema(mode, on_failure, output)
+
+    def loop_items(self, schema: JsonObject, items: JsonObject, path: str) -> None:
+        """Items must be a list: provably not is LOOP_ITEMS; unproved warns and keeps a loop_items guard."""
+        try:
+            outcome = check_compatibility(schema, {"type": "array"}, self.bundle, limits=self.schema_limits)
+        except TypeCheckLimit:
+            self.issue("RESOURCE_LIMIT", path)
+            return
+        if outcome == "incompatible":
+            self.issue("LOOP_ITEMS", path)
+        elif outcome == "unknown":
+            if not self.reads_pending(items):
+                self.issue("UNKNOWN_COMPATIBILITY", path, unknown=True)
+            self.guard(path, "loop_items", {"type": "array"})
+
+    def loop_budget(self) -> None:
+        """All loops together, each multiplied by the loops around it, stay within the run's iteration budget.
+
+        The finding sits at the innermost loop with the largest product that one lower ``maxItems`` brings within
+        the budget, with that edit; when no innermost loop can, it sits at the largest product without an edit.
+        """
+        limit = self.limits.max_run_iterations
+        total = sum(outer * max_items for _, outer, max_items, _ in self.loop_chains)
+        if total <= limit:
+            return
+        innermost = sorted(
+            (chain for chain in self.loop_chains if chain[3]), key=lambda chain: chain[1] * chain[2], reverse=True
+        )
+        location, edit = innermost[0][0], None
+        for path, outer, max_items, _ in innermost:
+            lowered = min((limit - (total - outer * max_items)) // outer, self.limits.max_loop_items)
+            if lowered >= 1:
+                location, edit = path, SuggestedEdit(path=path + "/maxItems", value=lowered)
+                break
+        self.issue("LOOP_BUDGET", location, message=_message("LOOP_BUDGET", limit=limit), edit=edit)
 
     def settle_pending(self) -> None:
         """Catalog-pending notes are the lowest priority: they only fill capacity that findings left.
@@ -937,15 +1188,21 @@ class _Analyzer:
             if isinstance(kind, str) and kind in {"Workflow", "Action", "Connector", "DecisionTable"}
             else "definition"
         )
-        issues = validate_contract_payload(contract, self.source.value, limits=self.contract_limits)
+        # onFailure on a call that does not wait is reported at its field, not as an anonymous contract violation.
+        detached = detached_failure_paths(self.source.value) if contract == "workflow" else []
+        for path in detached:
+            self.issue("CALL_MODE", path)
+        document = without_detached_failures(self.source.value) if detached else self.source.value
+        issues = validate_contract_payload(contract, document, limits=self.contract_limits)
         for issue in issues:
             self.add(issue)
-        if issues:
+        if issues or detached:
             return self.finish(None, None)
         model = load_definition(self.source.value)
         value = model.model_dump(by_alias=True)
         definition = FrozenDocument.from_value(value)
         self.kind, self.definition = model.kind, definition
+        self.reference = f"{model.metadata.name}@{model.metadata.version}"
         existing = self.catalog.resolve(model.kind, f"{model.metadata.name}@{model.metadata.version}")
         if existing is not None and existing.digest != definition.digest:
             self.issue("IMMUTABLE_VERSION", "/metadata/version", stage="resolution")
@@ -1006,10 +1263,13 @@ class _Analyzer:
                 "Connector", cast(str, cast(JsonObject, slot)["connector"]), pointer_child("/spec/connections", name)
             )
         graph, visible, completes = self.block(cast(list[JsonObject], spec["steps"]), "/spec/steps", {}, ())
+        self.loop_budget()
         if completes:
             self.expression(
                 cast(JsonObject, spec["output"]), "/spec/output", visible, cast(JsonObject, spec["outputSchema"])
             )
+        else:
+            self.observe("/spec/output", visible, evaluated=False)
         self.guard("/spec/output", "workflow_output", cast(JsonObject, spec["outputSchema"]))
         return self.finish(model.kind, definition, graph)
 
@@ -1067,6 +1327,30 @@ def analyze_authoring(
     except (ExpressionFailure, RecursionError) as failure:
         analyzer.issue("RESOURCE_LIMIT", failure.path if isinstance(failure, ExpressionFailure) else "")
         return analyzer.finish(analyzer.kind, analyzer.definition)
+
+
+def analyze_scope(source: ParsedSource, path: str, catalog: CatalogSnapshot | None = None) -> ScopeCapture | None:
+    """The scope of the expression at ``path``, or ``None`` when analysis never reaches an expression there.
+
+    Without a catalog, references resolve as in offline authoring and their outputs stay unconstrained.
+    """
+    analyzer = _Analyzer(
+        source,
+        catalog or CatalogSnapshot.empty(),
+        False,
+        _DEFAULT_LIMITS,
+        _DEFAULT_SCHEMA_LIMITS,
+        DEFAULT_CONTRACT_LIMITS,
+        1000,
+        catalog_absent=catalog is None,
+        capture=path,
+    )
+    try:
+        analyzer.run()
+    except (ExpressionFailure, RecursionError):
+        # A budget failure later in the document keeps the scope already captured.
+        return analyzer.captured
+    return analyzer.captured
 
 
 def analyze_partial(

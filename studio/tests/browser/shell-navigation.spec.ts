@@ -95,6 +95,7 @@ for (const viewport of [
             "My tasks",
             "Email",
             "Operate",
+            "Overview",
             "Runs",
             "Incidents",
             "Workers",

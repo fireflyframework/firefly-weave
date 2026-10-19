@@ -23,7 +23,15 @@ from pathlib import Path
 SNAPSHOT = Path(__file__).resolve().parents[1] / "fixtures/contracts/run-views.snapshot.json"
 OPERATION_IDS = ("run_summaries.list", "runs.steps", "runs.logs")
 # Pages embed their item schemas (RunSummary, StepFact, StepFactWithOutput, RunLogEntry) under $defs.
-SCHEMAS = ("run-summary-page", "run-summary-query", "step-fact-page", "run-step-query", "run-log-page", "run-log-query")
+SCHEMAS = (
+    "run-summary-page",
+    "run-summary-query",
+    "run-list-query",
+    "step-fact-page",
+    "run-step-query",
+    "run-log-page",
+    "run-log-query",
+)
 
 
 def render() -> str:
@@ -64,7 +72,7 @@ def test_snapshot_documents_each_operation_exactly():
             "method": "GET",
             "path": environment + "/run-summaries",
             "capability": "run.read",
-            "served": False,
+            "served": True,
             "query": [
                 "workflow",
                 "version",
@@ -79,22 +87,23 @@ def test_snapshot_documents_each_operation_exactly():
                 "business_key",
                 "correlation_key",
                 "has_active_incident",
+                "has_handled_errors",
                 "include_archived",
                 "activation_id",
                 "order",
                 "limit",
                 "cursor",
             ],
-            "responses": ["200", "401", "403", "404", "409", "412", "413", "422", "500", "501"],
+            "responses": ["200", "401", "403", "404", "409", "412", "413", "422", "500"],
             "response": "RunSummaryPage",
         },
         "runs.steps": {
             "method": "GET",
             "path": environment + "/runs/{identifier}/steps",
             "capability": "run.read",
-            "served": False,
+            "served": True,
             "query": ["step", "include", "limit", "cursor"],
-            "responses": ["200", "401", "403", "404", "409", "412", "413", "422", "500", "501"],
+            "responses": ["200", "401", "403", "404", "409", "412", "413", "422", "500"],
             "response": "StepFactPage",
         },
         "runs.logs": {
@@ -109,9 +118,9 @@ def test_snapshot_documents_each_operation_exactly():
     }
     assert sorted(document["schemas"]) == sorted(SCHEMAS)
     summary = document["schemas"]["run-summary-page"]["$defs"]["RunSummary"]
-    assert sorted(summary["required"]) == sorted(summary["properties"])
+    assert set(summary["properties"]) - set(summary["required"]) == {"handled_errors"}
     steps = document["schemas"]["step-fact-page"]["$defs"]
-    assert set(steps["StepFact"]["properties"]) - set(steps["StepFact"]["required"]) == {"omissions"}
+    assert set(steps["StepFact"]["properties"]) - set(steps["StepFact"]["required"]) == {"omissions", "handled"}
     assert set(steps["StepFactWithOutput"]["required"]) - set(steps["StepFact"]["required"]) == {"output"}
 
 

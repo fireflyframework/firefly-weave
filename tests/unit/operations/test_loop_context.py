@@ -31,8 +31,11 @@ from firefly_weave.connectors.kafka_transport import BrokerClients
 from firefly_weave.contracts.access import Scope
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.operations import compatibility, outbox_loop
+from firefly_weave.operations import loop as operations_loop
 from firefly_weave.operations.compatibility import CompatibilityService
 from firefly_weave.operations.execution import debug_execution, execute_pure, request_execution
+from firefly_weave.operations.loop import OperationsLoop
+from firefly_weave.operations.loop_health import LoopHealth
 from firefly_weave.operations.outbox_loop import OutboxLoop
 from firefly_weave.providers import loop as provider_loop
 from firefly_weave.providers.loop import ProviderLoop
@@ -133,6 +136,13 @@ def provider(monkeypatch, probe):
     return owner
 
 
+def operations(monkeypatch, probe):
+    _without_database(monkeypatch, operations_loop)
+    owner = OperationsLoop(_settings(), None, LoopHealth())  # type: ignore[arg-type]
+    monkeypatch.setattr(owner, "poll", probe)
+    return owner
+
+
 def native(monkeypatch, probe):
     release = SimpleNamespace(
         id=uuid4(), image_digest=DIGEST, connector_bindings=[SimpleNamespace(task_reference=TASK, adapter="http")]
@@ -199,7 +209,7 @@ def inventory_freshness(monkeypatch, probe):
     return owner
 
 
-@pytest.mark.parametrize("owner", [recovery, outbox, kafka, provider, native, inventory_freshness])
+@pytest.mark.parametrize("owner", [recovery, outbox, kafka, provider, operations, native, inventory_freshness])
 async def test_task_opened_during_a_request_runs_pure_work_after_the_request_ends(monkeypatch, owner):
     probe = Probe()
     opened = owner(monkeypatch, probe)

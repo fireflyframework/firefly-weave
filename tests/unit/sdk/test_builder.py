@@ -430,3 +430,16 @@ def test_human_task_builder_uses_native_contract_and_new_ir():
     result = compile_source(builder.to_document(), format="object", catalog=CatalogSnapshot.empty())
     assert result.ok and result.artifact.executable["irVersion"] == "weave/ir-v1alpha2"
     assert builder.to_definition().spec.steps[0].kind == "humanTask"
+
+
+def test_with_callable_lets_any_workflow_or_only_named_workflows_call_this_version():
+    builder = new_builder()
+    assert "callable" not in builder.to_document()["spec"]
+    assert builder.with_callable().to_document()["spec"]["callable"] == {}
+    named = builder.with_callable(["order-intake", "invoice-run"])
+    assert named.to_document()["spec"]["callable"] == {"allowedCallers": ["order-intake", "invoice-run"]}
+    assert named.to_definition().spec.callable is not None
+    with pytest.raises(ValidationError):
+        builder.with_callable(["order-intake", "order-intake"])
+    result = compile_source(named.to_document(), format="object", catalog=CatalogSnapshot.empty())
+    assert result.ok and "features" not in result.artifact.executable

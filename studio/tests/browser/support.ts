@@ -251,6 +251,78 @@ export async function connected(
   return recorder;
 }
 /**
+ * A run a test answers runs.read with, as Operate › Runs lists it
+ * (run_summaries.list): its workflow from its activation, its status, keys and
+ * start. The row opens by its workflow name.
+ */
+export function runSummary(run: Record<string, unknown>) {
+  const state = (run["state"] ?? {}) as Record<string, unknown>;
+  const activation = (run["activation"] ?? {}) as Record<string, unknown>;
+  const name =
+    (run["workflow_name"] as string | undefined) ??
+    (activation["name"] as string | undefined) ??
+    "workflow";
+  const started = (run["started_at"] ??
+    run["created_at"] ??
+    new Date().toISOString()) as string;
+  const status = String(state["status"] ?? "running");
+  return {
+    id: String(run["id"]),
+    workflow: {
+      name,
+      version: String(run["workflow_version"] ?? "1.0.0"),
+      definition_version_id: "0f8fad5b-d9cb-469f-a165-70867728950e",
+    },
+    activation_id: String(
+      activation["id"] ?? "1f8fad5b-d9cb-469f-a165-70867728950e",
+    ),
+    activation: { name, revision: Number(activation["revision"] ?? 1) },
+    status,
+    paused: !!state["manual_paused"],
+    test: false,
+    origin: "manual",
+    caller: null,
+    retried_from_run_id: null,
+    started_at: started,
+    updated_at: started,
+    ended_at: null,
+    duration_ms: null,
+    business_key: (run["business_key"] as string | undefined) ?? null,
+    correlation_key: (run["correlation_key"] as string | undefined) ?? null,
+    failed_step: null,
+    active_incidents: 0,
+    archived: false,
+  };
+}
+/**
+ * Answers Operate › Runs from the runs a test answers runs.read with, filtered
+ * by status and exact business key as the platform filters them. Returns the
+ * list requests it saw.
+ */
+export async function runSummaries(
+  page: Page,
+  runs:
+    | readonly Record<string, unknown>[]
+    | (() => readonly Record<string, unknown>[]),
+  queries: URL[] = [],
+): Promise<URL[]> {
+  await page.route("**/run-summaries?**", (route) => {
+    const url = new URL(route.request().url());
+    queries.push(url);
+    const statuses = url.searchParams.getAll("status");
+    const key = url.searchParams.get("business_key");
+    const items = (typeof runs === "function" ? runs() : runs)
+      .map(runSummary)
+      .filter(
+        (summary) =>
+          (!statuses.length || statuses.includes(summary.status)) &&
+          (!key || summary.business_key === key),
+      );
+    return route.fulfill({ json: { items, next_cursor: null } });
+  });
+  return queries;
+}
+/**
  * A design token's color as the browser computes colors ("rgb(r, g, b)"),
  * read from the page at run time so tests follow the token, not a copy of it.
  */
@@ -302,14 +374,35 @@ export async function newWorkflow(page: Page) {
   // The designer loads with its first use: wait until it is on screen,
   // its lists rendered too.
   await expect(page.locator(".editor-bar")).toBeVisible();
-  await expect(page.locator(".palette-step").first()).toBeAttached();
+  // The classic designer draws its palette; the new editor its canvas (or,
+  // on a phone, the outline first).
+  await expect(
+    page.locator(".palette-step, .canvas-v2, .outline").first(),
+  ).toBeAttached();
   // Below 600 px a workflow opens on its outline; these specs use the canvas.
   const canvas = page.getByRole("button", { name: "Show canvas" });
   if (await canvas.isVisible()) await canvas.click();
 }
-// Inserts a palette step, opening the palette popover on narrow layouts. The
-// popover is a modal sheet there: the insert closes it before anything else.
+// Inserts a step by its label: with the new editor, from the toolbar's Add a
+// step; otherwise from the palette, opening its popover on narrow layouts.
+// The popover is a modal sheet there: the insert closes it before anything else.
 export async function insertStep(page: Page, label: string) {
+  const addStep = page
+    .getByRole("toolbar", { name: "Workflow commands" })
+    .getByRole("button", { name: "Add a step", exact: true });
+  if (await addStep.isVisible()) {
+    await addStep.click();
+    const panel = page.locator(".add-step-panel");
+    // The panel focuses its search once it is drawn and bound.
+    await expect(panel.getByRole("combobox")).toBeFocused();
+    await panel.getByRole("combobox").fill(label);
+    await panel
+      .getByRole("option", { name: label, exact: true })
+      .first()
+      .click();
+    await expect(panel).toHaveCount(0);
+    return;
+  }
   await expect(page.locator(".palette-step").first()).toBeAttached();
   const step = page
     .locator(".palette")

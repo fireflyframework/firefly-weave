@@ -15,7 +15,29 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-import { canvasFromStored, ownedRecipes } from "./editor/state/canvas-sidecar";
+import {
+  canvasFile,
+  canvasFromStored,
+  ownedRecipes,
+  readCanvas,
+  removeTrigger,
+  type CanvasSidecar,
+} from "./editor/state/canvas-sidecar";
+import { TRIGGER_LABELS } from "./editor/canvas/trigger-tiles";
+import type { AddStepRequest } from "./editor/add-step/add-step-host";
+import { EarlyKeys, type EarlyKey } from "./editor/add-step/early-keys";
+import { placeMark } from "./editor/add-step/place";
+import type { PanelEntry } from "./editor/add-step/entries";
+import type {
+  InsertHost,
+  InsertOutcome,
+  InsertRequest,
+} from "./editor/add-step/insert";
+import type { ClipboardContent, PastePlan } from "./editor/state/clipboard";
+import type { TriggerKind } from "./editor/canvas/layout-ltr";
+import { DraftCanvases, type KeptWhere } from "./editor/state/draft-canvas";
+import { readImport } from "./import-files";
+import type { AccountScope } from "./editor/state/browser-store";
 import {
   stepDetailsEnabled,
   type StepDetailsHost,
@@ -181,15 +203,22 @@ import {
 import { ClustersPage } from "./operate/clusters/clusters-page";
 import { WorkersPage } from "./operate/workers/workers-page";
 import { IncidentsPage } from "./operate/incidents/incidents-page";
+import { OverviewPage } from "./operate/overview/overview-page";
+import { RunsPage } from "./operate/runs/runs-page";
 import {
   navEntryVisible,
   viewFromPath,
   viewPath,
 } from "./operate/operate-routes";
+import { scopeKeyOf } from "./operate/operate-list";
 import { RecordsView } from "./operations/records-view";
 import { SettingsPage } from "./settings/settings-page";
 import { LumiPanel } from "./lumi/lumi-panel";
-import { canvasSheet, keyPlatform } from "./editor/state/canvas-commands";
+import {
+  canvasSheet,
+  keyPlatform,
+  typingIn,
+} from "./editor/state/canvas-commands";
 import type {
   BuilderTab,
   HttpActionUse,
@@ -206,6 +235,7 @@ export type View =
   | "home"
   | "workflows"
   | "designer"
+  | "overview"
   | "runs"
   | "incidents"
   | "tasks"
@@ -369,6 +399,8 @@ const sideEffects: Record<string, string> = {
     ClustersPage,
     WorkersPage,
     IncidentsPage,
+    OverviewPage,
+    RunsPage,
     SettingsPage,
     LumiPanel,
   ],
@@ -420,6 +452,27 @@ export class App implements CanvasHost {
   platformBusy = "";
   // Fences platform checks and status reads against later platform changes.
   private platformGeneration = 0;
+  /** Checks of who is signed in that have not answered yet. */
+  private identityChecks?: Set<Promise<unknown>>;
+  /**
+   * True while Studio is still finding out who is signed in: until it
+   * answers, the person a command would be sent for is not known.
+   */
+  get checkingIdentity() {
+    return !!this.identityChecks?.size;
+  }
+  /** Resolves once no check of who is signed in is still out. */
+  async identitySettled() {
+    while (this.identityChecks?.size)
+      await Promise.allSettled([...this.identityChecks]);
+  }
+  private trackIdentity<T>(check: Promise<T>): Promise<T> {
+    const checks = (this.identityChecks ??= new Set());
+    checks.add(check);
+    const done = () => checks.delete(check);
+    check.then(done, done);
+    return check;
+  }
   private stepDataGeneration = 0;
   private stepDataPrincipal = "";
   /** Samples follow account invalidation, while routine same-account checks retain them. */
@@ -433,8 +486,9 @@ export class App implements CanvasHost {
   emailSubmission: Record<string, unknown> | null = null;
   runHistory: Record<string, unknown> | null = null;
   runCanvas: StructuredCanvasAdapter | null = null;
+  /** The published version `runCanvas` draws, exported once per open run. */
+  private runCanvasVersion = "";
   runLifecycle: Record<string, unknown> | null = null;
-  runIncludeArchived = false;
   debugSession: Record<string, unknown> | null = null;
   pendingMutation: {
     path: string;
@@ -534,6 +588,9 @@ export class App implements CanvasHost {
   }
   set view(view: View) {
     if (view === this.currentView) return;
+    // Add a step belongs to the designer it opened in: leaving closes it
+    // quietly, so it never comes back, or speaks, on another workflow.
+    if (this.currentView === "designer" && this.addStep) this.closePicker();
     this.currentView = view;
     this.focusBeforeView = document.activeElement;
     this.viewFocusPending = true;
@@ -640,6 +697,7 @@ export class App implements CanvasHost {
     { id: "connections", label: "Connections" },
     { id: "tasks", label: "My tasks" },
     { id: "email", label: "Email" },
+    { id: "overview", label: "Overview" },
     { id: "runs", label: "Runs" },
     { id: "incidents", label: "Incidents" },
     { id: "workers", label: "Workers" },
@@ -650,7 +708,7 @@ export class App implements CanvasHost {
     ["", ["home"]],
     ["Build", ["workflows", "connections"]],
     ["Work", ["tasks", "email"]],
-    ["Operate", ["runs", "incidents", "workers", "clusters"]],
+    ["Operate", ["overview", "runs", "incidents", "workers", "clusters"]],
   ];
   private navCache: {
     key: string;
@@ -762,8 +820,14 @@ export class App implements CanvasHost {
   records: Record<string, unknown>[] = [];
   nextCursor: string | null = null;
   selectedRecord: Record<string, unknown> | null = null;
-  /** The Runs list was refused (403): the page names the access it needs. */
-  runsRefused = false;
+  /**
+   * The Runs page while it is open. A command taken there (Start run, Cancel,
+   * Retry, Archive, Restore, Delete data) reads its list again through it.
+   */
+  runsList: {
+    refresh(): Promise<void>;
+    started(run: Record<string, unknown>, scope: string): void;
+  } | null = null;
   /** The run whose read was refused (403); it stays until another opens. */
   runRefused = "";
   loading = false;
@@ -917,7 +981,6 @@ export class App implements CanvasHost {
   commandKey: string | null = null;
   unknownCommand = false;
   taskFilter = "";
-  runFilters = { business_key: "", correlation_key: "", status: "" };
   showStartRun = false;
   /** The activation the start-run dialog preselects. */
   runStartActivation = "";
@@ -1600,7 +1663,6 @@ export class App implements CanvasHost {
       this.records = [];
       this.nextCursor = null;
       this.taskRunFilter = "";
-      this.runsRefused = false;
       this.runRefused = "";
     }
     this.view = view;
@@ -1646,9 +1708,104 @@ export class App implements CanvasHost {
   // --- local drafts -----------------------------------------------------
   /** Autosave: local work is kept on this computer 800 ms after a change. */
   private keepLocally() {
-    if (this.profile) return;
+    if (this.profile) {
+      this.keepDraftCanvas();
+      return;
+    }
     if (this.localTimer) clearTimeout(this.localTimer);
     this.localTimer = setTimeout(() => this.flushLocalSave(true), 800);
+  }
+  // --- a platform draft's canvas on this computer -------------------------
+  private readonly draftCanvases = new DraftCanvases();
+  /** Where the open platform draft's canvas is kept; "memory" until it is written. */
+  draftCanvasKept: KeptWhere = "memory";
+  private draftCanvasTimer: ReturnType<typeof setTimeout> | null = null;
+  private draftCanvasWrite: (() => Promise<KeptWhere>) | null = null;
+  /** A platform draft waits for the signed-in account before its canvas comes back. */
+  private draftCanvasPending: { draftId: string; opened: number } | null = null;
+  /** The pending draft whose kept canvas is being read. */
+  private draftCanvasReading: { draftId: string; opened: number } | null = null;
+  /** The account a platform draft's canvas belongs to; null when it can't be told. */
+  private accountScope(): AccountScope | null {
+    const profile = this.profile;
+    if (!profile?.tenantId || !profile.projectId) return null;
+    return {
+      profileName: profile.name,
+      subject: this.identity?.principal_id ?? null,
+      tenantId: profile.tenantId,
+      projectId: profile.projectId,
+    };
+  }
+  /** The draft a waiting write belongs to. */
+  private draftCanvasFor = "";
+  /**
+   * Connected: the canvas is kept on this computer 800 ms after a change,
+   * for the platform it was made on. Another draft's waiting write goes first.
+   */
+  private keepDraftCanvas() {
+    if (this.draftCanvasWrite && this.draftCanvasFor !== this.draftId)
+      void this.flushDraftCanvas();
+    // A draft whose kept canvas hasn't come back yet writes nothing: its
+    // canvas lacks what is kept, and would replace it.
+    if (this.draftCanvasPending?.draftId === this.draftId) return;
+    if (this.draftCanvasTimer) clearTimeout(this.draftCanvasTimer);
+    const profile = this.profile;
+    const draftId = this.draftId;
+    const canvas = this.model.canvas;
+    this.draftCanvasFor = draftId;
+    this.draftCanvasWrite = async () => {
+      // The account is read when writing: it may arrive after the change.
+      const scope = this.profile === profile ? this.accountScope() : null;
+      const kept = scope
+        ? await this.draftCanvases.write(scope, draftId, canvas)
+        : "memory";
+      // Another draft opened meanwhile keeps its own state.
+      if (this.draftId === draftId) this.draftCanvasKept = kept;
+      return kept;
+    };
+    this.draftCanvasTimer = setTimeout(() => void this.flushDraftCanvas(), 800);
+  }
+  /** Writes a waiting canvas now; says where the canvas is kept. */
+  private async flushDraftCanvas(): Promise<KeptWhere> {
+    if (this.draftCanvasTimer) clearTimeout(this.draftCanvasTimer);
+    this.draftCanvasTimer = null;
+    const write = this.draftCanvasWrite;
+    this.draftCanvasWrite = null;
+    return write ? write() : this.draftCanvasKept;
+  }
+  /** Brings back a platform draft's canvas kept for this account, once the account is known. */
+  private async restoreDraftCanvas() {
+    const pending = this.draftCanvasPending;
+    const scope = this.accountScope();
+    if (!pending || !scope?.subject || this.draftCanvasReading === pending)
+      return;
+    // The draft writes nothing until its kept canvas is read (keepDraftCanvas).
+    this.draftCanvasReading = pending;
+    const model = this.model;
+    const canvas = model.canvas;
+    const stored = await this.draftCanvases.read(scope, pending.draftId);
+    this.draftCanvasReading = null;
+    if (this.draftCanvasPending === pending) this.draftCanvasPending = null;
+    const same =
+      this.model === model &&
+      model.opened === pending.opened &&
+      this.draftId === pending.draftId;
+    // A canvas changed while it was read keeps that change, and is kept now.
+    if (same && model.canvas !== canvas) this.keepDraftCanvas();
+    if (stored === null || !same || model.canvas !== canvas) return;
+    const read = canvasFromStored(stored, model.definition, model.stepIdSet());
+    this.draftCanvasKept = "computer";
+    if (read.problems.length) {
+      this.notify(
+        "Studio couldn't read the notes and settings kept for this draft on this computer, so it opened without them.",
+        undefined,
+        "danger",
+      );
+      return;
+    }
+    model.amend(() => (model.canvas = read.canvas));
+    this.tick.update((n) => n + 1);
+    this.cdr.markForCheck();
   }
   /** Saves the open workflow now when an autosave is waiting. */
   flushLocalSave(due = false) {
@@ -1746,6 +1903,7 @@ export class App implements CanvasHost {
     if (!this.paired) return;
     this.flushInspector();
     this.flushLocalSave();
+    void this.flushDraftCanvas();
     if (!this.unsavedWork) return;
     event.preventDefault();
     event.returnValue = "";
@@ -1822,12 +1980,36 @@ export class App implements CanvasHost {
         // Not on the platform either: explained below.
       }
     await this.navigate("workflows");
-    this.notify(
-      "That workflow isn't available. It may have been deleted, or it belongs to another workspace.",
-      undefined,
-      "danger",
-    );
+    if (this.openedFromFiles.has(id))
+      this.notify(
+        "That workflow was opened from a file and not changed, so Studio didn't keep a copy. Choose Import workflow to open the file again.",
+      );
+    else
+      this.notify(
+        "That workflow isn't available. It may have been deleted, or it belongs to another workspace.",
+        undefined,
+        "danger",
+      );
     return false;
+  }
+  /**
+   * Workflows opened from a file in this window. One left unchanged isn't
+   * kept on this computer, so Back to it explains that instead of saying
+   * it may have been deleted.
+   */
+  private readonly openedFromFiles = new Set<string>();
+  /**
+   * A published version opens under an identity of its own, set before its
+   * workflow replaces the one open: the draft open until now keeps its last
+   * change and its canvas, and is never saved over.
+   */
+  private openPublished(record: Record<string, unknown>) {
+    void this.flushDraftCanvas();
+    this.draftId = crypto.randomUUID();
+    this.draftRevision = undefined;
+    this.published = record;
+    this.draftCanvasPending = null;
+    this.draftCanvasKept = "memory";
   }
   /** Opens a platform draft in the designer. */
   private openPlatformDraft(
@@ -1835,6 +2017,8 @@ export class App implements CanvasHost {
     document: Workflow,
   ) {
     this.flushLocalSave();
+    // The draft open until now keeps its last change.
+    void this.flushDraftCanvas();
     this.model.replace(document);
     this.resetValidation();
     this.changed();
@@ -1845,6 +2029,16 @@ export class App implements CanvasHost {
     this.draftRevision = Number(detail["revision"]);
     this.published = null;
     this.saveState = "Draft saved";
+    // Opening is no change to keep (changed() above scheduled one): the kept canvas comes back instead.
+    if (this.draftCanvasTimer) clearTimeout(this.draftCanvasTimer);
+    this.draftCanvasTimer = null;
+    this.draftCanvasWrite = null;
+    this.draftCanvasKept = "memory";
+    this.draftCanvasPending = {
+      draftId: this.draftId,
+      opened: this.model.opened,
+    };
+    void this.restoreDraftCanvas();
     this.openTab();
     void this.router.navigateByUrl(`/workflows/${this.draftId}/designer`);
     this.scheduleFit();
@@ -3468,32 +3662,362 @@ export class App implements CanvasHost {
     this.cdr.markForCheck();
     this.focusField(section);
   }
+  /** The new editor's Add a step panel and where it inserts; null while closed. */
+  addStep: AddStepRequest | null = null;
+  /** Keys pressed while Add a step opens; its search replays them. */
+  private readonly earlyKeys = new EarlyKeys("weave-add-step-panel");
+  /**
+   * A "+", a dropped edge, Add first step, N or /: the Add a step panel in
+   * the new editor (triggers first on an empty workflow), the step picker
+   * in the classic one.
+   */
   openPicker(
     insert: { owner: string; index: number },
     label: string,
     anchor: HTMLElement | AnchorRect,
   ) {
     if (this.editingLocked || this.model.readonly) return;
-    this.picker = {
-      target: { ...insert, point: { x: 0, y: 0 }, label },
-      anchor,
-    };
     if (this.profile) void this.loadActionCatalog();
+    if (this.editorNext) {
+      const empty =
+        !this.model.definition.spec.steps.length &&
+        !this.model.canvas.triggers?.length;
+      this.picker = null;
+      this.earlyKeys.start();
+      this.addStep = {
+        insert,
+        label,
+        anchor,
+        start: empty ? "triggers" : "next",
+        opened: this.model.opened,
+        mark: placeMark(this.model, insert),
+      };
+    } else
+      this.picker = {
+        target: { ...insert, point: { x: 0, y: 0 }, label },
+        anchor,
+      };
     this.cdr.markForCheck();
   }
   isPickerOpenAt(insert: { owner: string; index: number }) {
-    return (
-      this.picker?.target.owner === insert.owner &&
-      this.picker.target.index === insert.index
-    );
+    const open = this.addStep?.insert ?? this.picker?.target;
+    return !!open && open.owner === insert.owner && open.index === insert.index;
   }
   closePicker() {
     this.picker = null;
+    this.addStep = null;
+    this.earlyKeys.stop();
     this.cdr.markForCheck();
+  }
+  takeEarlyKeys(): readonly EarlyKey[] {
+    return this.earlyKeys.take();
+  }
+  /** The toolbar's Add a step: after the selected step, or at the end; a second press closes it. */
+  openAddStepFromToolbar(event: Event) {
+    if (this.addStep) return this.closePicker();
+    const node = this.selected;
+    this.openPicker(
+      node
+        ? { owner: node.owner, index: node.index + 1 }
+        : { owner: "root", index: this.model.definition.spec.steps.length },
+      node ? `Add a step after ${node.step.id}` : "Add a step at the end",
+      event.currentTarget as HTMLElement,
+    );
+  }
+  /** What Add a step chose, inserted at its place as one undo step, then opened. */
+  async insertFromPanel(
+    entry: PanelEntry,
+    request: InsertRequest,
+  ): Promise<InsertOutcome> {
+    const { insertEntry } = await import("./editor/add-step/insert");
+    const current = this.insertOwner();
+    const host: InsertHost = {
+      model: this.model,
+      editingLocked: this.editingLocked,
+      ensureApplied: () => this.ensureApplied(),
+      edit: (change) => {
+        this.perform(change);
+        this.cdr.markForCheck();
+        return this.error;
+      },
+      notify: (text) => this.notify(text),
+      openInserted: (id) => {
+        this.revealSelected();
+        this.openInserted(id, current);
+      },
+      openTrigger: (id, kind) => this.openChosenTrigger(id, kind, current),
+      insertCommon: (common, at, connector, still) =>
+        this.insertCommon(common, at, () => current() && still(), connector),
+      insertPublished: async (uses, id, at, still) => {
+        const bridge = await import("./integrations/editor-bridge");
+        const here = () => current() && still();
+        if (!here()) return "";
+        return bridge.insertCatalogAction(
+          this,
+          { uses, ...(id ? { id } : {}) },
+          { ...at, point: { x: 0, y: 0 }, label: "" },
+          true,
+          here,
+        );
+      },
+      openTemplates: () => {
+        this.showTemplates = true;
+        this.cdr.markForCheck();
+      },
+      openNewApiAction: () => void this.openApiBuilder("workflow"),
+      loadActionCatalog: (append, force) =>
+        this.loadActionCatalog(append, force),
+    };
+    return insertEntry(host, entry, request);
+  }
+  /** A trigger chosen in Add a step: the input form opens its details; another one's tile takes focus. */
+  private openChosenTrigger(
+    id: string,
+    kind: TriggerKind,
+    current: () => boolean,
+  ) {
+    if (!current()) return;
+    if (kind === "manual") {
+      void this.openStepDetails("$trigger");
+      return;
+    }
+    this.notify(
+      `Added the ${TRIGGER_LABELS[kind]} trigger. Set it up when you activate the workflow.`,
+    );
+    this.cdr.markForCheck();
+    afterNextRender(
+      () =>
+        document
+          .querySelector<HTMLElement>(
+            `[data-tile="${CSS.escape(`$trigger:${id}`)}"] .tile-body`,
+          )
+          ?.focus(),
+      { injector: this.injector },
+    );
   }
   moveStep(id: string, insert: { owner: string; index: number }) {
     this.connectingNode = "";
     this.moveTo(id, { ...insert, point: { x: 0, y: 0 }, label: "" });
+  }
+  /** Applies a canvas sidecar change, and a workflow change it needs, as one undo step. */
+  changeCanvas(next: CanvasSidecar, options: { workflow?: Workflow } = {}) {
+    if (this.editingLocked || this.model.readonly) {
+      this.notify(
+        this.model.readonly
+          ? "Fix the source before changing the canvas."
+          : "Editing is paused while the simulation runs.",
+      );
+      return false;
+    }
+    this.perform(() =>
+      this.model.batch(() => {
+        if (options.workflow) this.model.updateWorkflow(options.workflow);
+        this.model.canvas = next;
+      }),
+    );
+    return !this.error;
+  }
+  /** Removes a trigger choice; Called by a workflow asks first, because callers depend on it. */
+  async removeTrigger(id: string) {
+    const intent = this.model.canvas.triggers?.find((item) => item.id === id);
+    if (!intent || this.editingLocked || this.model.readonly) return;
+    if (
+      intent.kind === "called" &&
+      !(await this.dialogs.confirm({
+        title: "Stop other workflows from calling this one?",
+        message:
+          "Workflows that call this one fail at their next activation until they stop calling it.",
+        confirmLabel: "Remove trigger",
+        danger: true,
+      }))
+    )
+      return;
+    let change: ReturnType<typeof removeTrigger>;
+    try {
+      change = removeTrigger(this.model.canvas, this.model.definition, id);
+    } catch (error) {
+      this.notify(error instanceof Error ? error.message : String(error));
+      return;
+    }
+    if (
+      !this.changeCanvas(
+        change.canvas,
+        change.workflow ? { workflow: change.workflow } : {},
+      )
+    )
+      return;
+    const revision = this.model.revision;
+    this.notify(`Removed the ${TRIGGER_LABELS[intent.kind]} trigger.`, {
+      label: "Undo",
+      run: () => {
+        if (this.model.revision !== revision)
+          return this.notify(
+            "The workflow changed since. Use Undo in the toolbar.",
+          );
+        this.undo();
+      },
+    });
+  }
+  /**
+   * Pastes steps at a place: the plan renumbers them and brings what they
+   * use; slots and AI profiles the workflow lacks are added after asking.
+   * One undo step. Returns the plan applied, or null.
+   */
+  async pasteSteps(
+    content: ClipboardContent,
+    at: { owner: string; index: number },
+  ): Promise<PastePlan | null> {
+    if (this.editingLocked || this.model.readonly) {
+      this.notify(
+        this.model.readonly
+          ? "Fix the source before pasting steps."
+          : "Editing is paused while the simulation runs.",
+      );
+      return null;
+    }
+    // The workflow it started in, by identity as well as by its openings:
+    // opening a file builds a new model whose count can match.
+    const model = this.model;
+    const opened = model.opened;
+    const moved = () => this.model !== model || model.opened !== opened;
+    if (!(await this.ensureApplied()) || moved()) return null;
+    const [{ planPaste }, { withOwnedAction }, { reservedActionNames }] =
+      await Promise.all([
+        import("./editor/state/clipboard"),
+        import("./editor/ndv/owned/owned-store"),
+        import("./editor/ndv/owned/insert-owned"),
+      ]);
+    if (moved()) return null;
+    const planned = planPaste(
+      this.model.definition,
+      content,
+      at,
+      new Set([
+        ...this.model.stepIdSet(),
+        ...this.model.unplaced.map((step) => step.id),
+      ]),
+      {
+        canvas: this.model.canvas,
+        reserved: reservedActionNames(
+          this.catalogContracts,
+          this.actionVersions,
+          this.model.canvas,
+        ),
+      },
+    );
+    if ("reason" in planned) {
+      this.notify(planned.reason);
+      return null;
+    }
+    const record = (value: unknown): Record<string, unknown> =>
+      value && typeof value === "object" && !Array.isArray(value)
+        ? (value as Record<string, unknown>)
+        : {};
+    const slots = Object.entries(planned.addConnections);
+    const profiles = Object.keys(planned.addProfiles);
+    if (slots.length || profiles.length) {
+      const parts = [
+        ...(slots.length
+          ? [
+              `the connection ${slots.length === 1 ? "slot" : "slots"} ${slots
+                .map(
+                  ([name, value]) =>
+                    `${name} (${String(record(value)["connector"] ?? "")})`,
+                )
+                .join(", ")}`,
+            ]
+          : []),
+        ...(profiles.length
+          ? [
+              `the AI ${profiles.length === 1 ? "profile" : "profiles"} ${profiles.join(", ")}`,
+            ]
+          : []),
+      ];
+      if (
+        !(await this.dialogs.confirm({
+          title: "Add what the pasted steps use?",
+          message: `The steps use ${parts.join(" and ")}, which this workflow doesn't have yet. Pasting adds them.`,
+          confirmLabel: "Paste and add",
+        }))
+      )
+        return null;
+      if (moved()) return null;
+    }
+    const definition = this.model.definition;
+    this.perform(() =>
+      this.model.batch(() => {
+        if (slots.length || profiles.length)
+          this.model.updateWorkflow({
+            ...definition,
+            spec: {
+              ...definition.spec,
+              ...(slots.length
+                ? {
+                    connections: {
+                      ...record(definition.spec["connections"]),
+                      ...planned.addConnections,
+                    },
+                  }
+                : {}),
+              ...(profiles.length
+                ? {
+                    llmProfiles: {
+                      ...record(definition.spec["llmProfiles"]),
+                      ...planned.addProfiles,
+                    },
+                  }
+                : {}),
+            },
+          });
+        this.model.insertSteps(
+          planned.at.owner,
+          planned.at.index,
+          planned.steps,
+        );
+        for (const add of planned.ownedAdds)
+          this.model.canvas = withOwnedAction(
+            this.model.canvas,
+            add.uses,
+            add.recipe,
+          );
+      }),
+    );
+    if (this.error) return null;
+    const renamed = Object.keys(planned.renamed).length;
+    this.notify(
+      `Pasted ${planned.ids.length === 1 ? planned.ids[0] : `${planned.ids.length} steps`}.${
+        renamed
+          ? ` ${renamed === 1 ? "1 step got a new ID" : `${renamed} steps got new IDs`}, because theirs were taken.`
+          : ""
+      }`,
+    );
+    return planned;
+  }
+  /** Tidy layout on the new canvas: one undo step, with an Undo toast. */
+  tidyCanvas(next: CanvasSidecar | null): boolean {
+    if (this.editingLocked || this.model.readonly) {
+      this.notify(
+        this.model.readonly
+          ? "Fix the source before tidying the canvas."
+          : "Editing is paused while the simulation runs.",
+      );
+      return false;
+    }
+    if (!next && !Object.keys(this.model.layout.positions).length) {
+      this.notify("The canvas is already tidy.");
+      return true;
+    }
+    this.perform(() => this.model.tidy(next));
+    if (this.error) return false;
+    const revision = this.model.revision;
+    this.notify("Tidied the canvas.", {
+      label: "Undo",
+      run: () =>
+        this.model.revision === revision
+          ? this.undo()
+          : this.notify("The workflow changed since. Use Undo in the toolbar."),
+    });
+    return true;
   }
   /** Selects a step and moves focus into its details: their title, or the step name to rename it. */
   async openStep(id: string, focus: "details" | "rename" | "issues") {
@@ -4166,9 +4690,7 @@ export class App implements CanvasHost {
   private loadingWorkflowContracts = new Set<string>();
   /** Three bounded readers warm the contracts needed by cards outside the inspector. */
   private async loadWorkflowContracts() {
-    const scope = this.profile,
-      opened = this.model.opened;
-    if (!scope || !this.can("catalog.read")) return;
+    if (!this.profile || !this.can("catalog.read")) return;
     const uses = new Set(
       this.nodes
         .filter(
@@ -4176,10 +4698,25 @@ export class App implements CanvasHost {
         )
         .map((node) => String(node.step["uses"] ?? "")),
     );
-    const queue = this.actionVersions.filter((entry) => {
+    await this.readContracts(
+      this.actionVersions.filter((entry) =>
+        uses.has(`${entry["name"]}@${entry["version"]}`),
+      ),
+    );
+  }
+  /** Add a step sorts published actions by app: their contracts say which app each one uses. */
+  warmActionContracts() {
+    if (!this.profile || !this.can("catalog.read")) return;
+    void this.readContracts(this.actionVersions.slice(0, 100));
+  }
+  /** Exports catalog entries' contracts, three at a time, skipping cached and pending ones. */
+  private async readContracts(entries: readonly Record<string, unknown>[]) {
+    const scope = this.profile,
+      opened = this.model.opened;
+    if (!scope) return;
+    const queue = entries.filter((entry) => {
       const ref = `${entry["name"]}@${entry["version"]}`;
       return (
-        uses.has(ref) &&
         !this.contractCache.has(ref) &&
         this.contractPending !== ref &&
         !this.loadingWorkflowContracts.has(ref)
@@ -5717,11 +6254,18 @@ export class App implements CanvasHost {
     }
     if (
       this.view === "connect" ||
+      this.view === "overview" ||
       this.view === "clusters" ||
       this.view === "workers" ||
       this.view === "incidents"
     )
       return;
+    if (this.view === "runs") {
+      // Operate › Runs reads its own list; run titles and Retry run still
+      // read the published versions.
+      void this.loadWorkflowVersions();
+      return;
+    }
     if (this.view === "home") {
       await this.refreshHome();
       return;
@@ -5744,7 +6288,6 @@ export class App implements CanvasHost {
     const requestedView = this.view;
     const collections: Partial<Record<View, [string, boolean]>> = {
       workflows: [this.libraryCollection, false],
-      runs: ["runs", true],
       connections: ["connections", true],
       tasks: ["human-tasks", true],
       email: ["email/conversations", true],
@@ -5754,7 +6297,6 @@ export class App implements CanvasHost {
       this.loading = false;
       return;
     }
-    if (this.view === "runs") void this.loadWorkflowVersions();
     if (this.view === "workflows" && this.libraryCollection === "workflows")
       void this.loadActivations(sequence);
     try {
@@ -5762,32 +6304,18 @@ export class App implements CanvasHost {
         c[0],
         c[1],
         append ? (this.nextCursor ?? undefined) : undefined,
-        this.view === "runs"
-          ? {
-              ...this.runFilters,
-              include_archived: this.runIncludeArchived ? "true" : "",
-            }
-          : this.view === "tasks" && this.taskFilter
-            ? { status: this.taskFilter }
-            : {},
+        this.view === "tasks" && this.taskFilter
+          ? { status: this.taskFilter }
+          : {},
       );
       if (sequence !== this.listSequence || requestedView !== this.view) return;
       this.records = append ? [...this.records, ...result.items] : result.items;
       this.nextCursor = result.next_cursor;
-      if (this.view === "runs") {
-        this.rememberRuns(result.items);
-        this.runsRefused = false;
-      }
       if (this.view === "workflows" && this.libraryCollection === "workflows")
         for (const item of result.items) this.rememberVersion(item);
       this.error = "";
     } catch (e) {
-      // A refused Runs list names the access it needs on the page, instead
-      // of a banner over an empty list that claims there are no runs.
-      if (requestedView === "runs" && describeError(e).status === 403) {
-        if (sequence === this.listSequence && requestedView === this.view)
-          this.runsRefused = true;
-      } else this.fail(e);
+      this.fail(e);
     } finally {
       this.cdr.markForCheck();
       if (sequence === this.listSequence) this.loading = false;
@@ -5852,20 +6380,18 @@ export class App implements CanvasHost {
         if (d && typeof d === "object" && this.libraryCollection === "drafts")
           this.openPlatformDraft(detail, d as Workflow);
         else if (d && typeof d === "object") {
+          this.openPublished(record);
           this.model.replace(d as Workflow);
           this.resetValidation();
           this.changed();
           this.dirty = false;
           this.view = "designer";
           this.activation = null;
-          // A published version is never saved over the draft opened before it.
-          this.draftId = crypto.randomUUID();
-          this.draftRevision = undefined;
-          this.published = record;
           this.saveState = "Published";
           this.openTab();
           void this.router.navigateByUrl(`/workflows/${this.draftId}/designer`);
         } else if (typeof detail["source"] === "string") {
+          this.openPublished(record);
           this.model.setSource(
             detail["source"],
             detail["format"] === "json" ? "json" : "yaml",
@@ -5876,10 +6402,7 @@ export class App implements CanvasHost {
           this.changed();
           this.dirty = false;
           this.view = "designer";
-          this.draftId = crypto.randomUUID();
-          this.draftRevision = undefined;
           this.activation = null;
-          this.published = record;
           this.saveState = "Published";
           this.openTab();
           void this.router.navigateByUrl(`/workflows/${this.draftId}/designer`);
@@ -5934,6 +6457,39 @@ export class App implements CanvasHost {
   /** Tasks filtered to one run ("Open My tasks" from a run). */
   taskRunFilter = "";
   private runTaskSequence = 0;
+  private runFollow = 0;
+  /**
+   * The open run changed while the Runs page follows it: Studio shows its new
+   * view and reads its lifecycle and history again. The drawing of its
+   * version stays; it never changes during a run.
+   */
+  async followRun(view: Record<string, unknown>) {
+    const id = view["id"];
+    if (this.view !== "runs" || this.selectedRecord?.["id"] !== id) return;
+    const follow = ++this.runFollow;
+    this.selectedRecord = view;
+    this.cdr.markForCheck();
+    const base = `${this.api.environment}/runs/${encodeURIComponent(String(id))}`;
+    try {
+      const [lifecycle, history] = await Promise.all([
+        this.api.request<Record<string, unknown>>(`${base}/lifecycle`),
+        this.api.request<Record<string, unknown>>(`${base}/history?limit=100`),
+      ]);
+      if (
+        follow !== this.runFollow ||
+        this.view !== "runs" ||
+        this.selectedRecord?.["id"] !== id
+      )
+        return;
+      this.runLifecycle = lifecycle;
+      this.runHistory = history;
+      void this.findRunTask(this.selectedRecord);
+    } catch {
+      // The run's next read, 2 s later, tries again.
+    } finally {
+      this.cdr.markForCheck();
+    }
+  }
   private refreshRunTaskAfterIdentity() {
     if (this.view === "runs" && this.selectedRecord)
       void this.findRunTask(this.selectedRecord);
@@ -6036,8 +6592,11 @@ export class App implements CanvasHost {
         const activation = detail["activation"] as
           | { request?: { version_id?: string } }
           | undefined;
-        if (activation?.request?.version_id) {
-          const versionId = activation.request.version_id;
+        const versionId = activation?.request?.version_id;
+        if (
+          versionId &&
+          !(this.runCanvas && this.runCanvasVersion === versionId)
+        ) {
           const exported = await this.api.request<{ document: Workflow }>(
             `${this.api.project}/workflows/${versionId}/export`,
           );
@@ -6045,6 +6604,7 @@ export class App implements CanvasHost {
           canvas.setSource(JSON.stringify(exported.document), "json");
           canvas.readonly = true;
           this.runCanvas = canvas;
+          this.runCanvasVersion = versionId;
           const metadata = exported.document?.metadata;
           if (metadata?.name)
             this.workflowVersions.set(versionId, {
@@ -6099,7 +6659,7 @@ export class App implements CanvasHost {
       this.draftSavedAt = new Date().toISOString();
       if (source === this.model.source) this.dirty = false;
       this.error = "";
-      const note = await this.draftNote(model);
+      const note = await this.draftNote(model, await this.flushDraftCanvas());
       this.notify(note ? `Draft saved. ${note}` : "Draft saved.");
     } catch (e) {
       this.saveState = "Not saved";
@@ -6119,10 +6679,14 @@ export class App implements CanvasHost {
    * notes. The note's code loads on demand; when it can't load, the draft is
    * saved without the note.
    */
-  private async draftNote(model: StructuredCanvasAdapter): Promise<string> {
+  private async draftNote(
+    model: StructuredCanvasAdapter,
+    where: KeptWhere,
+  ): Promise<string> {
     try {
       return (await import("./editor/ndv/owned/owned-commands")).draftNote(
         model,
+        where,
       );
     } catch (error) {
       console.error("Studio couldn't load the note for Save draft", error);
@@ -6357,9 +6921,20 @@ export class App implements CanvasHost {
       this.cdr.markForCheck();
     }
   }
+  /**
+   * After a command on the Runs page: the published versions and the list's
+   * first page again, so the list shows what the command changed.
+   */
+  async refreshRuns() {
+    if (this.view !== "runs") return;
+    void this.loadWorkflowVersions();
+    await this.runsList?.refresh();
+  }
   /** Starts the run; failures stay in the dialog, success opens the new run. */
   async confirmStartRun(body: StartRunRequest) {
     this.runStartError = null;
+    // The environment and person the run starts for: the list shows it only there.
+    const scope = scopeKeyOf(this);
     try {
       const run = await this.safeMutation<Record<string, unknown>>(
         `${this.api.environment}/runs`,
@@ -6374,10 +6949,9 @@ export class App implements CanvasHost {
         run: () => void this.viewRun(run),
       });
       if (this.view === "runs") {
-        await this.refresh();
-        // The list may not include a run this new yet; show it first.
-        if (run["id"] && !this.records.some((r) => r["id"] === run["id"]))
-          this.records = [run, ...this.records];
+        // The list may not include a run this new yet; it shows it first.
+        this.runsList?.started(run, scope);
+        await this.refreshRuns();
       }
     } catch (e) {
       const plain = describeError(e);
@@ -6419,54 +6993,7 @@ export class App implements CanvasHost {
   async viewRun(run: Record<string, unknown>) {
     if (this.view !== "runs") await this.navigate("runs");
     if (this.view !== "runs" || !run["id"]) return;
-    const listed = this.records.find((r) => r["id"] === run["id"]);
-    if (!listed) this.records = [run, ...this.records];
-    await this.open(listed ?? run);
-    // A run that could not be read leaves no placeholder row behind.
-    if (!listed && this.runRefused === run["id"])
-      this.records = this.records.filter((r) => r !== run);
-  }
-  applyRunFilters() {
-    if (this.runFilterTimer) clearTimeout(this.runFilterTimer);
-    this.runFilterTimer = null;
-    this.nextCursor = null;
-    this.records = [];
-    this.closeRecord();
-    void this.refresh();
-  }
-  private runFilterTimer: ReturnType<typeof setTimeout> | null = null;
-  /**
-   * Runs filters apply as they change: the typed keys after a 400 ms pause,
-   * the status and "Include archived runs" at once.
-   */
-  setRunFilter(
-    key: "business_key" | "correlation_key" | "status",
-    value: string,
-  ) {
-    if (this.runFilters[key] === value) return;
-    this.runFilters = { ...this.runFilters, [key]: value };
-    if (key === "status") return this.applyRunFilters();
-    if (this.runFilterTimer) clearTimeout(this.runFilterTimer);
-    this.runFilterTimer = setTimeout(() => this.applyRunFilters(), 400);
-  }
-  toggleArchivedRuns() {
-    this.runIncludeArchived = !this.runIncludeArchived;
-    this.applyRunFilters();
-  }
-  /** How many Runs filters are set ("Filters (2)" on narrow windows). */
-  get runFilterCount() {
-    return (
-      [
-        this.runFilters.business_key,
-        this.runFilters.correlation_key,
-        this.runFilters.status,
-      ].filter(Boolean).length + (this.runIncludeArchived ? 1 : 0)
-    );
-  }
-  clearRunFilters() {
-    this.runIncludeArchived = false;
-    this.runFilters = { business_key: "", correlation_key: "", status: "" };
-    this.applyRunFilters();
+    await this.open(run);
   }
   applyTaskFilter(event: Event) {
     this.taskFilter = this.value(event);
@@ -6711,6 +7238,7 @@ export class App implements CanvasHost {
     id: string,
     target: Pick<Target, "owner" | "index">,
     current = this.insertOwner(),
+    connector?: string,
   ): Promise<string> {
     if (this.editingLocked) return "";
     const [{ COMMON_ACTIONS }, { insertOwnedStep, reservedActionNames }] =
@@ -6732,6 +7260,7 @@ export class App implements CanvasHost {
           this.actionVersions,
           this.model.canvas,
         ),
+        connector,
       );
     });
     if (this.error || !inserted) return "";
@@ -6902,22 +7431,28 @@ export class App implements CanvasHost {
             : "application/yaml",
         content: this.model.source,
       },
-      {
-        name: `${filename}.layout.json`,
-        mime: "application/json",
-        content: JSON.stringify(
-          {
-            draftId: this.draftId,
-            draftRevision: this.draftRevision,
-            schemaVersion: 1,
-            semanticDigest: await this.semanticDigest(),
-            ...this.model.layout,
-            viewport: { ...this.pan, zoom: this.zoom },
+      this.editorNext
+        ? {
+            name: `${filename}.canvas.json`,
+            mime: "application/json",
+            content: canvasFile(this.model.canvas, await this.semanticDigest()),
+          }
+        : {
+            name: `${filename}.layout.json`,
+            mime: "application/json",
+            content: JSON.stringify(
+              {
+                draftId: this.draftId,
+                draftRevision: this.draftRevision,
+                schemaVersion: 1,
+                semanticDigest: await this.semanticDigest(),
+                ...this.model.layout,
+                viewport: { ...this.pan, zoom: this.zoom },
+              },
+              null,
+              2,
+            ),
           },
-          null,
-          2,
-        ),
-      },
     ];
     const model = this.model;
     const deliveries = files.map((file) =>
@@ -6927,9 +7462,12 @@ export class App implements CanvasHost {
     if (deliveries.includes("unconfirmed")) this.exportFallback = files;
     else this.message = exportNotice(files.map((f) => f.name));
     this.cdr.markForCheck();
-    // Steps whose actions aren't published lose their settings in these
-    // files. The note's code loads on demand, after the files are on their
-    // way: when it can't load, the files are delivered without the note.
+    // The canvas file keeps them; only the classic layout file leaves them out.
+    if (this.editorNext) return;
+    // With the classic editor, steps whose actions aren't published lose
+    // their settings in the layout file. The note's code loads on demand,
+    // after the files are on their way: when it can't load, the files are
+    // delivered without the note.
     try {
       const note = (
         await import("./editor/ndv/owned/owned-commands")
@@ -6976,7 +7514,7 @@ export class App implements CanvasHost {
     input.value = "";
     if (file) await this.importWorkflow(file);
   }
-  async importWorkflow(file: File) {
+  async importWorkflow(file: File, canvasFile: File | null = null) {
     if (this.view === "designer" && !this.leaveInspector()) return;
     this.flushLocalSave();
     if (file.size > 1024 * 1024) {
@@ -6984,10 +7522,8 @@ export class App implements CanvasHost {
       return;
     }
     const generation = ++this.importGeneration;
-    let source: string;
-    try {
-      source = await file.text();
-    } catch {
+    const read = await readImport(file, canvasFile);
+    if (!read) {
       if (generation === this.importGeneration) {
         this.error =
           "The workflow file could not be read. Your current draft is preserved.";
@@ -6996,10 +7532,12 @@ export class App implements CanvasHost {
       return;
     }
     if (generation !== this.importGeneration) return;
+    const { source, canvas: canvasText } = read;
     this.keptLocally = false;
     this.restoredView = false;
     this.model = new StructuredCanvasAdapter();
     this.draftId = crypto.randomUUID();
+    this.openedFromFiles.add(this.draftId);
     this.draftRevision = undefined;
     this.published = null;
     this.activation = null;
@@ -7007,6 +7545,13 @@ export class App implements CanvasHost {
       source,
       file.name.toLowerCase().endsWith(".json") ? "json" : "yaml",
     );
+    if (canvasText !== null) this.applyCanvasFile(canvasText);
+    else if (read.canvasUnreadable)
+      this.notify(
+        "The workflow opened without its canvas file: Studio couldn't read that file.",
+      );
+    // Opening a file is where its history starts: Undo never empties it.
+    this.model.clearHistory();
     this.view = "designer";
     this.openTab();
     void this.router.navigateByUrl(`/workflows/${this.draftId}/designer`);
@@ -7015,10 +7560,51 @@ export class App implements CanvasHost {
     this.dirty = false;
     this.scheduleFit();
   }
+  /** The canvas file chosen with a workflow; a file Studio can't use is set aside with a reason. */
+  private applyCanvasFile(text: string) {
+    let value: unknown;
+    try {
+      value = JSON.parse(text);
+    } catch {
+      this.notify(
+        "The workflow opened without its canvas file: it isn't JSON.",
+      );
+      return;
+    }
+    // A source that doesn't read yet has no steps to check anchors against:
+    // the canvas waits as it is, and meets its steps once the source is fixed.
+    const read = this.model.readonly ? readCanvas(value) : null;
+    const stored =
+      read === null
+        ? canvasFromStored(value, this.model.definition, this.model.stepIdSet())
+        : read.ok
+          ? { canvas: read.canvas, problems: [], dropped: false }
+          : {
+              canvas: this.model.canvas,
+              problems: read.problems,
+              dropped: false,
+            };
+    if (stored.problems.length) {
+      const [path, ...rest] = stored.problems[0].split(": ");
+      const detail = rest.join(": ");
+      this.notify(
+        `The workflow opened without its canvas file: ${path === "/" ? detail : `at ${path}, ${detail}`}`,
+      );
+      return;
+    }
+    this.model.canvas = stored.canvas;
+    if (stored.dropped)
+      this.notify(
+        "The canvas file mentions steps this workflow doesn't have. Their step notes were left out, and notes anchored to them stay on the canvas without an anchor.",
+      );
+  }
   pretty(value: unknown) {
     return JSON.stringify(value, null, 2);
   }
-  async loadIdentity() {
+  loadIdentity() {
+    return this.trackIdentity(this.readIdentity());
+  }
+  private async readIdentity() {
     if (!this.profile) return;
     const sampleScope = this.stepDataScope;
     try {
@@ -7026,6 +7612,8 @@ export class App implements CanvasHost {
         "/studio/api/api/v1/identity",
       );
       this.catalogAfterIdentity();
+      // A platform draft opened before the account was known gets its canvas now.
+      void this.restoreDraftCanvas();
     } catch (error) {
       const plain = describeError(error);
       if (
@@ -7110,7 +7698,6 @@ export class App implements CanvasHost {
     this.showActivation = false;
     this.exportFallback = null;
     this.records = [];
-    this.runsRefused = false;
     this.runRefused = "";
     this.closeRecord();
     this.emailDetail = null;
@@ -7131,7 +7718,10 @@ export class App implements CanvasHost {
    * Reads the host's platform connection and checks the active platform
    * silently. Failures become a non-blocking notice; local work never waits.
    */
-  async verifyPlatform(startup = false) {
+  verifyPlatform(startup = false) {
+    return this.trackIdentity(this.readPlatform(startup));
+  }
+  private async readPlatform(startup: boolean) {
     const generation = ++this.platformGeneration;
     const status = await this.connection.status().catch(() => null);
     if (generation !== this.platformGeneration || !this.paired) return;
@@ -7156,7 +7746,10 @@ export class App implements CanvasHost {
     }
     await this.checkPlatform(generation);
   }
-  private async checkPlatform(generation = ++this.platformGeneration) {
+  private checkPlatform(generation = ++this.platformGeneration) {
+    return this.trackIdentity(this.testPlatform(generation));
+  }
+  private async testPlatform(generation: number) {
     const sampleScope = this.stepDataScope;
     const name = this.profile?.name ?? "";
     try {
@@ -7606,6 +8199,10 @@ export class App implements CanvasHost {
       this.platformNotice = null;
       this.reportSignOut(result, name);
       this.notify(`Signed out of ${name}.`);
+      void this.draftCanvases.forgetPlatform(name);
+      void import("./editor/add-step/catalog-sources").then((sources) =>
+        sources.forgetCatalog(name),
+      );
       await this.refresh();
     } catch (e) {
       this.platformFail(e, name);
@@ -7633,6 +8230,10 @@ export class App implements CanvasHost {
       const result = await this.connection.remove(name, true);
       this.applyConnection(result, active, name);
       this.notify(`Removed ${name}.`);
+      void this.draftCanvases.forgetPlatform(name);
+      void import("./editor/add-step/catalog-sources").then((sources) =>
+        sources.forgetCatalog(name),
+      );
       if (active) await this.refresh();
     } catch (e) {
       this.platformFail(e, name);
@@ -8407,7 +9008,7 @@ export class App implements CanvasHost {
             ? "Run archived."
             : "Run restored.",
       );
-      await this.refresh();
+      await this.refreshRuns();
     } catch (e) {
       this.fail(e);
     } finally {
@@ -8511,12 +9112,12 @@ export class App implements CanvasHost {
     if (
       this.stepDetails.ownedPublish() ||
       (event.target as HTMLElement).closest?.(
-        "weave-step-details, weave-workflow-settings-dialog",
+        "weave-step-details, weave-workflow-settings-dialog, weave-add-step-panel",
       )
     )
       return;
     const target = event.target as HTMLElement;
-    const typing = ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName);
+    const typing = typingIn(target);
     if (
       this.view === "designer" &&
       target.closest?.(".inspector") &&

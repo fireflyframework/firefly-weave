@@ -27,7 +27,7 @@ import {
 } from "./step-details-po";
 import { insertStep, newWorkflow, offline } from "./support";
 
-/** Palette steps and their default field counts. A new action step has no action yet, so it shows Action alone; its connection and required inputs follow the chosen action. */
+/** Add a step's entries for each kind and their default field counts. A new action step has no action yet, so it shows Action alone; its connection and required inputs follow the chosen action. */
 const kinds: [string, number][] = [
   ["Call an action", 1],
   ["Decision table", 1],
@@ -37,8 +37,8 @@ const kinds: [string, number][] = [
   ["Parallel", 1],
   ["Wait for time", 1],
   ["Wait for signal", 1],
-  ["Human task", 3],
-  ["Fail", 2],
+  ["Approve or reject", 3],
+  ["Stop with error", 2],
 ];
 const common: [string, number][] = [
   ["Call an API", 3],

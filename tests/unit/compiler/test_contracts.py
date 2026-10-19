@@ -60,6 +60,10 @@ def test_definition_budget_cannot_coerce_strings():
         "max_document_nodes": 100_000,
         "max_payload_bytes": 1_048_576,
         "max_diagnostics": 100,
+        "max_loop_items": 10_000,
+        "max_loop_depth": 3,
+        "max_run_iterations": 100_000,
+        "max_call_depth": 8,
     }
 
 

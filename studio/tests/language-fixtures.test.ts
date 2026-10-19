@@ -21,6 +21,7 @@ SPDX-License-Identifier: Apache-2.0
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { schemaTypes, typeLabel } from "../src/app/forms/core/scope";
 
 const fixture = (name: string) =>
   JSON.parse(
@@ -103,6 +104,43 @@ describe("shared language fixtures", () => {
         if (index > 0)
           expect(isText(arg) && isText(args[index - 1]), name).toBe(false);
       });
+    }
+  });
+  it("names loop data by the loop that owns it and labels types as Studio does", () => {
+    type Entry = {
+      ref: string;
+      source: string;
+      loop?: string;
+      path: string[];
+      schema: Record<string, unknown>;
+      types: string[];
+      typeLabel: string;
+    };
+    const { cases } = fixture("scope.json") as {
+      cases: {
+        name: string;
+        result: { found: boolean; entries: Entry[] };
+      }[];
+    };
+    expect(cases.length).toBeGreaterThan(5);
+    expect(cases.some(({ result }) => !result.found)).toBe(true);
+    for (const { name, result } of cases) {
+      const loops = result.entries.filter((entry) => entry.loop !== undefined);
+      // The innermost loop is read as /item and /index; enclosing loops by ID.
+      const innermost = loops.find((entry) => entry.ref === "/item")?.loop;
+      for (const entry of result.entries) {
+        expect(typeLabel(entry.schema), `${name}: ${entry.ref}`).toBe(
+          entry.typeLabel,
+        );
+        expect(schemaTypes(entry.schema), `${name}: ${entry.ref}`).toEqual(
+          entry.types,
+        );
+        if (entry.source === "item" || entry.source === "index") {
+          const base = entry.loop === innermost ? "" : `/loops/${entry.loop}`;
+          const root = `${base}/${entry.source}`;
+          expect(entry.ref, name).toBe([root, ...entry.path].join("/"));
+        } else expect(entry.loop, name).toBeUndefined();
+      }
     }
   });
   it("publishes the manifest with Studio marks on every entry", () => {

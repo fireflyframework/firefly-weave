@@ -36,6 +36,8 @@ LABELS = {
     "humanTask": "Wait for a human decision",
     "switch": "Choose a branch",
     "parallel": "Run branches",
+    "forEach": "Loop over items",
+    "callWorkflow": "Call a workflow",
     "branch-output": "Collect branch result",
     "join": "Continue after branches",
     "fail": "Stop with a failure",
@@ -43,7 +45,14 @@ LABELS = {
 
 # The light diagram palette of the documentation: an exported file is opened outside the product, on paper.
 GROUND, INK, LINE, NUMERAL = "#F3F1EB", "#272820", "#62645B", "#FFFFFF"
-NODE_FILLS = {"start": "#EAE7DF", "end": "#EAE7DF", "switch": "#FFF0D8", "parallel": "#FFF0D8", "join": "#FFF0D8"}
+NODE_FILLS = {
+    "start": "#EAE7DF",
+    "end": "#EAE7DF",
+    "switch": "#FFF0D8",
+    "parallel": "#FFF0D8",
+    "forEach": "#FFF0D8",
+    "join": "#FFF0D8",
+}
 TASK_FILL = "#FFFFFF"
 
 

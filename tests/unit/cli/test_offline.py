@@ -320,3 +320,88 @@ def test_admin_migrate_help_does_not_load_server():
     )
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
+
+
+def test_explain_prints_a_loop_with_its_settings_and_its_each_edge(tmp_path):
+    loop = {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {"name": "label-items", "version": "1.0.0"},
+        "spec": {
+            "inputSchema": {"type": "array", "items": {"type": "string"}},
+            "outputSchema": {"type": "array"},
+            "steps": [
+                {
+                    "id": "label",
+                    "kind": "forEach",
+                    "items": {"ref": "/input"},
+                    "concurrency": 2,
+                    "body": {"steps": [], "output": {"ref": "/item"}},
+                }
+            ],
+            "output": {"ref": "/steps/label/output"},
+        },
+    }
+    source = tmp_path / "label-items.workflow.json"
+    source.write_text(json.dumps(loop))
+    lock = tmp_path / "empty.lock.json"
+    lock.write_text('{"definitions":[],"tasks":[],"adapters":[],"schemas":{}}')
+    result = invoke("workflow", "explain", source, "--catalog", lock)
+    assert result.exit_code == 0, result.output
+    for expected in (
+        "label (forEach)",
+        " concurrency=2 maxItems=1000 collect=all",
+        "    reads /input\n",
+        "    reads /item\n",
+        "label -> @branch:label:0 (each branch=body)",
+        "@branch:label:0 -> @join:label (join branch=body)",
+    ):
+        assert expected in result.output
+
+
+def test_explain_prints_a_call_with_its_called_workflow_and_mode(tmp_path):
+    from firefly_weave.compiler.catalog import FrozenDocument
+    from firefly_weave.contracts.definitions import load_definition
+
+    examples = Path("examples/language")
+    callee = load_definition(
+        parse_source((examples / "notify-customer.workflow.yaml").read_text(), format="yaml").value
+    )
+    document = callee.model_dump(by_alias=True)
+    lock = tmp_path / "calls.lock.json"
+    lock.write_text(
+        json.dumps(
+            {
+                "definitions": [{"document": document, "digest": FrozenDocument.from_value(document).digest}],
+                "tasks": [],
+                "adapters": [],
+                "schemas": {},
+            }
+        )
+    )
+    result = invoke("workflow", "explain", examples / "order-intake.workflow.yaml", "--catalog", lock)
+    assert result.exit_code == 0, result.output
+    for expected in (
+        "  Workflow notify-customer@1.0.0 sha256=",
+        "notify (callWorkflow)",
+        " uses=notify-customer@1.0.0 mode=wait onFailure=continue\n",
+        "audit (callWorkflow)",
+        " uses=notify-customer@1.0.0 mode=detach\n",
+        "    reads /input/customerId\n",
+        "    reads /input/orderId\n",
+        "    reads /input/tags\n",
+        "notify -> audit (next)",
+        "  /spec/steps/0 call_output schema=",
+        "  /spec/steps/1/with call_input schema=",
+    ):
+        assert expected in result.output
+    # The business key is read even when nothing in `with` reads the same input.
+    keyed = tmp_path / "order-intake.workflow.yaml"
+    source = (examples / "order-intake.workflow.yaml").read_text()
+    keyed.write_text(
+        source.replace('{literal: "Order "}, {ref: /input/orderId}', '{literal: "Order "}, {literal: "new"}')
+    )
+    result = invoke("workflow", "explain", keyed, "--catalog", lock)
+    assert result.exit_code == 0, result.output
+    assert "{ref: /input/orderId}" not in keyed.read_text().split("businessKey")[0]
+    assert "    reads /input/orderId\n" in result.output

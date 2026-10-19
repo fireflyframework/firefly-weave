@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from collections import deque
 from collections.abc import Collection
-from typing import Annotated, Literal, cast
+from typing import Annotated, Literal, cast, get_args
 
 from pydantic import AfterValidator, Field, model_validator
 
@@ -33,26 +33,19 @@ from firefly_weave.contracts import language_features
 from firefly_weave.contracts.definitions import (
     ActionDefinition,
     ActionSpec,
-    ActionStep,
     ArrayExpression,
     ConnectionRequirement,
     ConnectorDefinition,
     ConnectorSpec,
     ContractModel,
     DecisionTableSpec,
-    DecisionTableStep,
     Expression,
-    HumanTaskStep,
     JsonPointer,
-    LLMStep,
     Metadata,
     ObjectExpression,
     OpExpression,
-    ParallelStep,
     PositiveInt,
     ResourceName,
-    SignalStep,
-    SwitchStep,
     WorkerImplementation,
     WorkflowSpec,
     load_definition,
@@ -107,6 +100,9 @@ class Guard(ContractModel):
         "signal_payload",
         "human_output",
         "branch_output",
+        "loop_items",
+        "call_input",
+        "call_output",
         "workflow_input",
         "workflow_output",
     ]
@@ -176,6 +172,25 @@ class FailNode(Node):
     message: Annotated[UnicodeString, Field(min_length=1)]
 
 
+class CallWorkflowNode(Node):
+    """Starts the exact workflow version ``dependency`` names as a child run with the input ``with``."""
+
+    kind: Literal["callWorkflow"]
+    dependency: Digest
+    input: Expression = Field(alias="with")
+    mode: Literal["wait", "detach"]
+    on_failure: Literal["stop", "continue"] | None = Field(
+        default=None, alias="onFailure", exclude_if=lambda value: value is None
+    )
+    business_key: Expression | None = Field(default=None, alias="businessKey", exclude_if=lambda value: value is None)
+
+    @model_validator(mode="after")
+    def failure_needs_wait(self) -> CallWorkflowNode:
+        if self.mode == "detach" and self.on_failure is not None:
+            raise ValueError("onFailure applies only when the call waits for its result")
+        return self
+
+
 class SwitchCase(ContractModel):
     branch: UnicodeString
     when: Expression
@@ -201,6 +216,18 @@ class ParallelNode(Node):
     join: NodeId
 
 
+class ForEachNode(Node):
+    """Runs the body that starts at ``target`` once per element of ``items``; ``join`` collects the results."""
+
+    kind: Literal["forEach"]
+    items: Expression
+    concurrency: PositiveInt
+    max_items: PositiveInt = Field(alias="maxItems")
+    collect: Literal["all", "nonNull"]
+    target: NodeId
+    join: NodeId
+
+
 class BranchOutputNode(Node):
     kind: Literal["branch-output"]
     owner: NodeId
@@ -212,7 +239,7 @@ class BranchOutputNode(Node):
 class JoinNode(Node):
     kind: Literal["join"]
     owner: NodeId
-    mode: Literal["all", "selected"]
+    mode: Literal["all", "selected", "each"]
     branches: list[NodeId] = Field(min_length=1)
     completes: bool
 
@@ -227,18 +254,24 @@ type IRNode = Annotated[
     | SignalNode
     | HumanTaskNode
     | FailNode
+    | CallWorkflowNode
     | SwitchNode
     | ParallelNode
+    | ForEachNode
     | BranchOutputNode
     | JoinNode,
     Field(discriminator="kind"),
 ]
 
 
+# Nodes that own lexical blocks and a join.
+CONTROL_NODES = (SwitchNode, ParallelNode, ForEachNode)
+
+
 class IREdge(ContractModel):
     source: NodeId
     target: NodeId
-    kind: Literal["next", "case", "default", "fork", "join"]
+    kind: Literal["next", "case", "default", "fork", "each", "join"]
     branch: UnicodeString | None
 
 
@@ -265,10 +298,14 @@ class IRGraph(ContractModel):
         join_members = {n.id: set(n.branches) for n in self.nodes if isinstance(n, JoinNode)}
         control_names = {
             n.id: (
-                {c.branch for c in n.cases} | {"default"} if isinstance(n, SwitchNode) else {b.name for b in n.branches}
+                {c.branch for c in n.cases} | {"default"}
+                if isinstance(n, SwitchNode)
+                else {"body"}
+                if isinstance(n, ForEachNode)
+                else {b.name for b in n.branches}
             )
             for n in self.nodes
-            if isinstance(n, (SwitchNode, ParallelNode))
+            if isinstance(n, CONTROL_NODES)
         }
         seen = set()
         for edge in self.edges:
@@ -295,7 +332,7 @@ class IRGraph(ContractModel):
             actual = {(e.target, e.kind, e.branch) for e in outgoing[node.id]}
             if isinstance(node, (FailNode, EndNode)) and actual:
                 raise ValueError("Terminal node has outgoing edges")
-            if isinstance(node, (SwitchNode, ParallelNode)):
+            if isinstance(node, CONTROL_NODES):
                 join = nodes.get(node.join)
                 if not isinstance(join, JoinNode) or join.owner != node.id:
                     raise ValueError("Invalid control join")
@@ -305,6 +342,10 @@ class IRGraph(ContractModel):
                     }
                     names = [c.branch for c in node.cases] + ["default"]
                     mode = "selected"
+                elif isinstance(node, ForEachNode):
+                    expected = {(node.target, "each", "body")}
+                    names = ["body"]
+                    mode = "each"
                 else:
                     expected = {(b.target, "fork", b.name) for b in node.branches}
                     names = [b.name for b in node.branches]
@@ -319,11 +360,13 @@ class IRGraph(ContractModel):
                 if [n.branch for n in outputs if isinstance(n, BranchOutputNode)] != names:
                     raise ValueError("Invalid join branch order")
                 completion = [n.completes for n in outputs if isinstance(n, BranchOutputNode)]
-                if join.completes != (all(completion) if mode == "all" else any(completion)):
+                if join.completes != (any(completion) if mode == "selected" else all(completion)):
                     raise ValueError("Invalid join completion")
+                if mode == "each" and not join.completes:
+                    raise ValueError("A loop body must complete")
             elif isinstance(node, BranchOutputNode):
                 owner = nodes.get(node.owner)
-                if not isinstance(owner, (SwitchNode, ParallelNode)):
+                if not isinstance(owner, CONTROL_NODES):
                     raise ValueError("Orphan branch output")
                 owner_join = nodes.get(owner.join)
                 if not isinstance(owner_join, JoinNode) or node.id not in join_members[owner_join.id]:
@@ -335,16 +378,22 @@ class IRGraph(ContractModel):
                     raise ValueError("Invalid branch completion edges")
             elif isinstance(node, JoinNode):
                 owner = nodes.get(node.owner)
-                if (
-                    not isinstance(owner, (SwitchNode, ParallelNode))
-                    or owner.join != node.id
-                    or owner.scope != node.scope
-                ):
+                if not isinstance(owner, CONTROL_NODES) or owner.join != node.id or owner.scope != node.scope:
                     raise ValueError("Orphan join")
                 if not node.completes and actual:
                     raise ValueError("Noncompleting join has successor")
             if isinstance(
-                node, (StartNode, ActionNode, DecisionTableNode, TransformNode, WaitNode, SignalNode, JoinNode)
+                node,
+                (
+                    StartNode,
+                    ActionNode,
+                    DecisionTableNode,
+                    TransformNode,
+                    WaitNode,
+                    SignalNode,
+                    CallWorkflowNode,
+                    JoinNode,
+                ),
             ):
                 expected_count = 0 if isinstance(node, JoinNode) and not node.completes else 1
                 if len(actual) != expected_count or any(
@@ -357,14 +406,15 @@ class IRGraph(ContractModel):
             source, target = nodes[edge.source], nodes[edge.target]
             if edge.kind == "next" and source.scope != target.scope:
                 raise ValueError("Sequential edge crosses lexical scopes")
-            if edge.kind in {"case", "default", "fork"} and target.scope != source.scope + [source.id, edge.branch]:
+            control = edge.kind in {"case", "default", "fork", "each"}
+            if control and target.scope != source.scope + [source.id, edge.branch]:
                 raise ValueError("Control edge crosses lexical scopes")
         for node in self.nodes:
             if len(node.scope) % 2:
                 raise ValueError("Invalid lexical scope")
             for index in range(0, len(node.scope), 2):
                 owner = nodes.get(node.scope[index])
-                if not isinstance(owner, (SwitchNode, ParallelNode)) or owner.scope != node.scope[:index]:
+                if not isinstance(owner, CONTROL_NODES) or owner.scope != node.scope[:index]:
                     raise ValueError("Unknown lexical owner")
                 if node.scope[index + 1] not in control_names[owner.id]:
                     raise ValueError("Unknown lexical branch")
@@ -383,13 +433,15 @@ class IRGraph(ContractModel):
         # A completing branch must have a path to its output within that lexical block.
         # Nested scopes cap repeated traversal to the declared lexical nesting ceiling.
         for node in self.nodes:
-            if not isinstance(node, (SwitchNode, ParallelNode)):
+            if not isinstance(node, CONTROL_NODES):
                 continue
             join = nodes[node.join]
             assert isinstance(join, JoinNode)
             entries = (
                 {c.branch: c.target for c in node.cases} | {"default": node.default}
                 if isinstance(node, SwitchNode)
+                else {"body": node.target}
+                if isinstance(node, ForEachNode)
                 else {b.name: b.target for b in node.branches}
             )
             for output_id in join.branches:
@@ -438,6 +490,14 @@ def workflow_requirements(graph: IRGraph) -> tuple[str, list[LanguageFeature]]:
             expressions.extend((node.title, node.context))
         elif isinstance(node, SwitchNode):
             expressions.extend(case.when for case in node.cases)
+        elif isinstance(node, ForEachNode):
+            features.add("flow.forEach")
+            expressions.append(node.items)
+        elif isinstance(node, CallWorkflowNode):
+            features.add("flow.callWorkflow")
+            expressions.append(node.input)
+            if node.business_key is not None:
+                expressions.append(node.business_key)
     while expressions:
         expression = expressions.pop()
         if isinstance(expression, OpExpression):
@@ -452,6 +512,14 @@ def workflow_requirements(graph: IRGraph) -> tuple[str, list[LanguageFeature]]:
         elif isinstance(expression, ArrayExpression):
             expressions.extend(expression.array)
     return IR_LEVELS[3 if features else level], sorted(features)
+
+
+def allows_caller(callable_field: JsonValue, caller: str) -> bool:
+    """Whether a workflow's ``callable`` field (definition JSON; ``None`` when absent) lets ``caller`` call it."""
+    if not isinstance(callable_field, dict):
+        return False
+    allowed = callable_field.get("allowedCallers")
+    return allowed is None or (isinstance(allowed, list) and caller in allowed)
 
 
 def accepted_ir_versions(features: Collection[str]) -> list[str]:
@@ -483,6 +551,24 @@ def require_supported_ir(executable: object, features: Collection[str] | None = 
         missing = tuple(sorted(set(cast(list[str], declared)) - set(advertised)))
     if missing or executable.get("irVersion") not in accepted_ir_versions(advertised):
         raise UnsupportedIR(missing)
+
+
+def executable_node_kinds(features: Collection[str] | None = None) -> frozenset[str]:
+    """IR node kinds a platform runs: every kind, except those whose language feature it does not advertise.
+
+    ``features`` defaults to the advertised ones, read at call time.
+    """
+    advertised = language_features.ADVERTISED_FEATURES if features is None else features
+    kinds = (
+        kind
+        for model in get_args(get_args(IRNode.__value__)[0])
+        for kind in get_args(model.model_fields["kind"].annotation)
+    )
+    return frozenset(
+        kind
+        for kind in kinds
+        if kind not in language_features.KIND_FEATURES or language_features.KIND_FEATURES[kind] in advertised
+    )
 
 
 class ExecutableBase(ContractModel):
@@ -535,11 +621,18 @@ class WorkflowIR(ExecutableBase):
             raise ValueError("Unknown workflow schema")
         actions = {d.digest for d in self.dependencies if d.kind == "Action"}
         tables = {d.digest for d in self.dependencies if d.kind == "DecisionTable"}
+        workflows = {d.digest: d.document for d in self.dependencies if d.kind == "Workflow"}
         for node in self.graph.nodes:
             if isinstance(node, ActionNode) and node.dependency not in actions:
                 raise ValueError("Unknown action dependency")
             if isinstance(node, DecisionTableNode) and node.dependency not in tables:
                 raise ValueError("Unknown decision table dependency")
+            if isinstance(node, CallWorkflowNode):
+                if node.dependency not in workflows:
+                    raise ValueError("Unknown called workflow dependency")
+                callee = cast(JsonObject, workflows[node.dependency]["spec"])
+                if not allows_caller(callee.get("callable"), self.metadata.name):
+                    raise ValueError("The called workflow does not allow calls from this workflow")
             if isinstance(node, SignalNode) and node.schema_ref not in self.schemas:
                 raise ValueError("Unknown signal schema")
         return self
@@ -643,29 +736,9 @@ def _validate_dependency_closure(executable: ExecutableBase) -> None:
             for descriptor in spec.actions.values():
                 schema_roots.extend((descriptor.input_schema, descriptor.output_schema))
         elif isinstance(spec, WorkflowSpec):
+            # A workflow dependency is a called workflow's interface: its steps were checked when it was published
+            # and run in its own child run, so only its input and output schemas belong to this executable.
             schema_roots.extend((spec.input_schema, spec.output_schema))
-            connections(spec.connections)
-            pending = list(spec.steps)
-            while pending:
-                step = pending.pop()
-                if isinstance(step, (ActionStep, LLMStep)):
-                    require("Action", step.uses)
-                    action = definitions[("Action", step.uses)]
-                    assert isinstance(action, ActionDefinition)
-                    binding(step.connection, action.spec.connection, spec.connections)
-                elif isinstance(step, DecisionTableStep):
-                    require("DecisionTable", step.uses)
-                elif isinstance(step, HumanTaskStep):
-                    schema_roots.append(step.form_schema)
-                elif isinstance(step, SignalStep):
-                    schema_roots.append(step.payload_schema)
-                elif isinstance(step, SwitchStep):
-                    pending.extend(step.default.steps)
-                    for case in step.cases:
-                        pending.extend(case.steps)
-                elif isinstance(step, ParallelStep):
-                    for branch in step.branches.values():
-                        pending.extend(branch.steps)
     if isinstance(executable, WorkflowIR):
         connections(executable.connections)
         actions = {

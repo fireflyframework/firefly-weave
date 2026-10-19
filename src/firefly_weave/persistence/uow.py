@@ -41,9 +41,13 @@ class Transaction:
     def repository(self, factory: Callable[[AsyncSession], Repository]) -> Repository:
         return factory(self.session)
 
-    def record(self, kind: str, operation: str, status: str = "ok", error_code: str = "none") -> None:
+    def record(
+        self, kind: str, operation: str, status: str = "ok", error_code: str = "none", *, amount: int = 1
+    ) -> None:
         if self.telemetry is not None:
-            self.telemetry.after_commit(self.on_commit, kind, operation=operation, status=status, error_code=error_code)
+            self.telemetry.after_commit(
+                self.on_commit, kind, operation=operation, status=status, error_code=error_code, amount=amount
+            )
 
     def on_commit(self, callback: Callable[[], None]) -> bool:
         """Register bounded value-free telemetry work on the outer owned transaction."""

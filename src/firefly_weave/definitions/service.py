@@ -35,7 +35,7 @@ from firefly_weave.compiler.api import CompileResult, compile_source, import_art
 from firefly_weave.compiler.catalog import CatalogLock, CatalogSnapshot, FrozenDocument
 from firefly_weave.compiler.decision_tables import DecisionFailure, evaluate_decision_table
 from firefly_weave.compiler.expressions import ExpressionFailure, measure_value
-from firefly_weave.compiler.ir import DecisionTableIR, UnsupportedIR
+from firefly_weave.compiler.ir import DecisionTableIR, UnsupportedIR, require_supported_ir
 from firefly_weave.compiler.parser import parse_source
 from firefly_weave.connections.registry import ConnectorRegistry
 from firefly_weave.contracts.access import Scope
@@ -331,6 +331,11 @@ class DefinitionService:
                 raise CatalogError(
                     422, "WV-COMPILE", "Definition compilation failed", result=json.loads(result.to_bytes())
                 )
+            # A version this platform could not read back or run is never stored.
+            try:
+                require_supported_ir(result.artifact.executable)
+            except UnsupportedIR as error:
+                raise ir_unsupported(error.missing) from None
             model = load_definition(parse_source(source, format=format).value)
             if model.kind != kind:
                 raise CatalogError(422, "WV-KIND", "Definition kind does not match collection")
@@ -510,6 +515,15 @@ class DefinitionService:
             connector_pins = await self.execution_readiness(
                 actor, scope, request, artifact, capability="release.activate", context=context, tx=tx
             )
+            from firefly_weave.definitions.calls import call_pins, pinned_callee
+
+            workflow_call_pins, call_depth = await call_pins(
+                row["name"],
+                scope,
+                artifact.executable,
+                request.workflow_activation_ids,
+                lambda identifier: pinned_callee(repository, scope, identifier),
+            )
             from firefly_weave.compiler.ir import ActionNode, HumanTaskNode
             from firefly_weave.human_tasks.service import pin_assignments
             from firefly_weave.runtime.kernel import workflow
@@ -551,6 +565,8 @@ class DefinitionService:
                 request=request,
                 connector_execution_pins=connector_pins,
                 assignment_pins=assignment_pins,
+                workflow_call_pins=workflow_call_pins,
+                call_depth=call_depth,
             )
             await self._insert_activation(repository, activation)
             for slot, identifier in request.connection_revision_ids.items():
@@ -894,6 +910,8 @@ class DefinitionService:
                 retired=True,
                 connector_execution_pins=selected.connector_execution_pins,
                 assignment_pins=selected.assignment_pins,
+                workflow_call_pins=selected.workflow_call_pins,
+                call_depth=selected.call_depth,
             )
             await self._insert_activation(repository, activation)
             await audit(

@@ -18,9 +18,11 @@
 
 The fixtures pin the stable language contracts: instance-key parse and format cases with the
 ``INSTANCE_KEY_PATTERN`` expression, the text conversion table for ``concat`` and ``join``, template segments
-with their saved form, and the language manifest snapshot. Expected values are written here by hand; the
-generator refuses to write a fixture that the implementation disagrees with. Later releases add ``scope_at``
-cases.
+with their saved form, ``scope_at`` suggestions inside and around loops and after workflow calls, and the language
+manifest snapshot.
+Expected values are written here by hand; the generator refuses to write a fixture that the implementation
+disagrees with. Scope cases pin each suggestion's reference, source, loop and type label by hand and record the
+rest of each entry as ``scope_at`` returns it.
 
 Run ``uv run --locked --all-extras python scripts/language_fixtures.py`` to regenerate the files, or add
 ``--check`` to fail when they are out of date.
@@ -36,6 +38,7 @@ from typing import Any
 import rfc8785
 
 from firefly_weave.compiler.expressions import text_of as evaluator_text
+from firefly_weave.compiler.scope import scope_at
 from firefly_weave.compiler.templates import Segment, template_expression
 from firefly_weave.compiler.templates import segments as template_segments
 from firefly_weave.contracts.instance_keys import (
@@ -232,6 +235,166 @@ TEMPLATE_CASES: tuple[tuple[str, Any, list[tuple[str, Any]] | None, Any], ...] =
 )
 
 
+_INVOICE = {
+    "type": "object",
+    "properties": {"number": {"type": "string"}, "customerEmail": {"type": "string", "title": "Customer email"}},
+    "required": ["number"],
+    "additionalProperties": False,
+}
+
+
+def _workflow(*steps: dict[str, Any], output: dict[str, Any] | None = None) -> dict[str, Any]:
+    return {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {"name": "scope-cases", "version": "1.0.0"},
+        "spec": {
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "invoices": {"type": "array", "items": _INVOICE},
+                    "batches": {"type": "array", "items": {"type": "array", "items": _INVOICE}},
+                },
+                "required": ["invoices", "batches"],
+                "additionalProperties": False,
+            },
+            "outputSchema": {},
+            "steps": list(steps),
+            "output": output or {"literal": None},
+        },
+    }
+
+
+def _loop(identifier: str, items: str, *steps: dict[str, Any], **options: Any) -> dict[str, Any]:
+    return {
+        "id": identifier,
+        "kind": "forEach",
+        "items": {"ref": items},
+        **options,
+        "body": {"steps": list(steps), "output": {"ref": "/item"}},
+    }
+
+
+_LABEL = {"id": "label", "kind": "transform", "value": _concat({"literal": "Invoice "}, {"ref": "/item/number"})}
+_NOTIFY = _loop(
+    "notify", "/input/invoices", _LABEL, {"id": "send", "kind": "transform", "value": {"ref": "/item"}}, maxItems=500
+)
+_LINES = _loop(
+    "line", "/item", {"id": "pair", "kind": "transform", "value": {"ref": "/loops/batch/index"}}, maxItems=50
+)
+
+
+def _call(identifier: str, **options: Any) -> dict[str, Any]:
+    return {
+        "id": identifier,
+        "kind": "callWorkflow",
+        "uses": "notify-customer@1.0.0",
+        "with": {"ref": "/input"},
+        **options,
+    }
+
+
+_INPUT_ROWS = [
+    ("/input", "input", None, "Group"),
+    ("/input/invoices", "input", None, "List of groups"),
+    ("/input/batches", "input", None, "List of lists"),
+]
+_ITEM_ROWS = [
+    ("/item", "item", "notify", "Group"),
+    ("/item/number", "item", "notify", "Text"),
+    ("/item/customerEmail", "item", "notify", "Text"),
+    ("/index", "index", "notify", "Whole number"),
+]
+# (name, document, path, (ref, source, loop, typeLabel) per entry, or None when the position is not found)
+SCOPE_CASES: tuple[tuple[str, dict[str, Any], str, list[tuple[str, str, str | None, str]] | None], ...] = (
+    (
+        "a loop body sees the current item, its position and earlier steps",
+        _workflow(_NOTIFY),
+        "/spec/steps/0/body/steps/1/value",
+        [*_INPUT_ROWS, *_ITEM_ROWS, ("/steps/label/output", "step", None, "Text")],
+    ),
+    (
+        "the loop result per item sees every step of the iteration",
+        _workflow(_NOTIFY),
+        "/spec/steps/0/body/output",
+        [
+            *_INPUT_ROWS,
+            *_ITEM_ROWS,
+            ("/steps/label/output", "step", None, "Text"),
+            ("/steps/send/output", "step", None, "Group"),
+            ("/steps/send/output/number", "step", None, "Text"),
+            ("/steps/send/output/customerEmail", "step", None, "Text"),
+        ],
+    ),
+    (
+        "loop items see what is visible before the loop, not the loop's own item",
+        _workflow(_NOTIFY),
+        "/spec/steps/0/items",
+        _INPUT_ROWS,
+    ),
+    (
+        "after a loop only its list of results is visible",
+        _workflow(_NOTIFY, output={"ref": "/steps/notify/output"}),
+        "/spec/output",
+        [*_INPUT_ROWS, ("/steps/notify/output", "step", None, "List of groups")],
+    ),
+    (
+        "an inner loop reads its own item and outer loops by ID",
+        _workflow(_loop("batch", "/input/batches", _LINES, maxItems=20)),
+        "/spec/steps/0/body/steps/0/body/steps/0/value",
+        [
+            *_INPUT_ROWS,
+            ("/item", "item", "line", "Group"),
+            ("/item/number", "item", "line", "Text"),
+            ("/item/customerEmail", "item", "line", "Text"),
+            ("/index", "index", "line", "Whole number"),
+            ("/loops/batch/item", "item", "batch", "List of groups"),
+            ("/loops/batch/index", "index", "batch", "Whole number"),
+        ],
+    ),
+    (
+        "inner loop items read the outer item",
+        _workflow(_loop("batch", "/input/batches", _LINES, maxItems=20)),
+        "/spec/steps/0/body/steps/0/items",
+        [*_INPUT_ROWS, ("/item", "item", "batch", "List of groups"), ("/index", "index", "batch", "Whole number")],
+    ),
+    ("a field that is not an expression has no scope", _workflow(_NOTIFY), "/spec/steps/0/maxItems", None),
+    (
+        "a call's input sees what is visible before the call",
+        _workflow(_call("notify")),
+        "/spec/steps/0/with",
+        _INPUT_ROWS,
+    ),
+    (
+        "after a call that waits, its result is the called workflow's output, unknown without a catalog",
+        _workflow(_call("notify"), output={"ref": "/steps/notify/output"}),
+        "/spec/output",
+        [*_INPUT_ROWS, ("/steps/notify/output", "step", None, "Any value")],
+    ),
+    (
+        "a call that continues on failure returns its status, run ID, the child's output and the error",
+        _workflow(_call("notify", onFailure="continue"), output={"ref": "/steps/notify/output"}),
+        "/spec/output",
+        [
+            *_INPUT_ROWS,
+            ("/steps/notify/output", "step", None, "Group"),
+            ("/steps/notify/output/status", "step", None, "Choice"),
+            ("/steps/notify/output/runId", "step", None, "Text"),
+            ("/steps/notify/output/output", "step", None, "Any value"),
+            ("/steps/notify/output/error", "step", None, "Group"),
+            ("/steps/notify/output/error/code", "step", None, "Text"),
+            ("/steps/notify/output/error/message", "step", None, "Text"),
+        ],
+    ),
+    (
+        "a call that does not wait returns nothing",
+        _workflow(_call("notify", mode="detach"), output={"ref": "/steps/notify/output"}),
+        "/spec/output",
+        [*_INPUT_ROWS, ("/steps/notify/output", "step", None, "Empty")],
+    ),
+)
+
+
 def text_of(value: str | bool | int | float) -> str:
     """The reference conversion of a value to text for ``concat`` and ``join``."""
     if isinstance(value, str):
@@ -317,6 +480,17 @@ def template_cases() -> dict[str, Any]:
     return {"generator": GENERATOR, "rule": "concat template segments", "cases": cases}
 
 
+def scope_cases() -> dict[str, Any]:
+    cases = []
+    for name, document, path, expected in SCOPE_CASES:
+        result = scope_at(document, path).model_dump(mode="json", by_alias=True)
+        actual = [(e["ref"], e["source"], e.get("loop"), e["typeLabel"]) for e in result["entries"]]
+        if result["found"] is (expected is None) or (expected is not None and actual != expected):
+            raise SystemExit(f"Implementation disagrees with the scope case {name!r}")
+        cases.append({"name": name, "document": document, "path": path, "result": result})
+    return {"generator": GENERATOR, "rule": "scope suggestions", "cases": cases}
+
+
 def manifest_snapshot() -> dict[str, Any]:
     return {"generator": GENERATOR, "manifest": language_manifest().model_dump(mode="json")}
 
@@ -326,6 +500,7 @@ def render() -> dict[str, str]:
         "instance-keys.json": instance_key_cases(),
         "text-conversion.json": conversion_cases(),
         "template-segments.json": template_cases(),
+        "scope.json": scope_cases(),
         "manifest.json": manifest_snapshot(),
     }
     return {name: json.dumps(value, indent=2, ensure_ascii=False) + "\n" for name, value in files.items()}

@@ -97,6 +97,7 @@ class _Harness:
                 raise
 
         async def start(actor, scope, request, key, **options):
+            assert options["start_facts"].origin == "provider"
             if harness.errors:
                 raise harness.errors.pop(0)
             return SimpleNamespace(id=uuid4())

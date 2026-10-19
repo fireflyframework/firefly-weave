@@ -59,16 +59,32 @@ import { Icon } from "../../icon";
 import { RowMenu, type RowMenuItem } from "../../row-menu";
 import type { Workflow } from "../../model";
 import { loadKindRegistrations } from "../ndv/kinds";
+import { memo } from "../memo";
 import { ndvRegistry, type KindContext } from "../ndv/registry";
 import {
   canvasCommand,
   canvasSheet,
   keyPlatform,
+  noteCommand,
+  typingIn,
 } from "../state/canvas-commands";
 import { minimapPinned, setMinimapPinned } from "../state/canvas-preferences";
-import { stepNoteLine, type CanvasSidecar } from "../state/canvas-sidecar";
+import {
+  CANVAS_TOO_BIG,
+  NOTE_SIZES,
+  addNote,
+  canvasBytes,
+  removeNote,
+  stepNoteLine,
+  triggerInputs,
+  updateNote,
+  type CanvasSidecar,
+  type NotePatch,
+  type StickyNote,
+  type TriggerIntent,
+} from "../state/canvas-sidecar";
 import { CHOICE_NOT_KEPT } from "../state/editor-flag";
-import type { KeymapCommand } from "../state/keymap";
+import { formatCombo, type KeymapCommand } from "../state/keymap";
 import {
   NO_SELECTION,
   blockedReason,
@@ -97,11 +113,13 @@ import {
   pathLabelScale,
   tilePaintMargin,
   type Insertion,
+  type LtrBounds,
   type LtrLayout,
   type LtrTile,
   type Point,
 } from "./layout-ltr";
 import { neighbor, placesOf, type Direction } from "./navigation";
+import { toolbarSpot } from "./toolbar-spot";
 import { NodeTile, type TileView } from "./node-tile";
 import {
   edgeRun,
@@ -113,12 +131,32 @@ import {
 } from "./run-state";
 import { SelectionToolbar } from "./selection-toolbar";
 import { SubNodeRow, chipIcon, type SubNodeView } from "./sub-node-row";
+import { TRIGGER_LABELS, triggerNoteKey, triggerTile } from "./trigger-tiles";
+import { noteTitle } from "./note-markdown";
+import { NotesLayer, type NoteEdit, type NoteView } from "./notes-layer";
+import {
+  freeSpot,
+  noteObstacles,
+  tidyNotes,
+  tileBoxes,
+  type Box,
+} from "./tidy";
+import { CANVAS_MAX_BYTES } from "../state/test-data";
+import { ownedActionsOf } from "../ndv/owned/owned-store";
+import {
+  CLIPBOARD_WEB_FORMAT,
+  copySteps,
+  readClipboard,
+  stillUnreadable,
+  unreadableMessage,
+  type Copied,
+  type Unreadable,
+} from "../state/clipboard";
 import {
   runText,
   tileBadge,
   tileBorders,
   tileName,
-  triggerSubtitle,
   type StepFacts,
   type TileBorders,
 } from "./tile-facts";
@@ -130,35 +168,27 @@ const NO_BORDERS: TileBorders = {
   error: false,
 };
 
-/** Recomputes only when an input changed, compared by identity. */
-function memo<A extends unknown[], T>(
-  compute: (...inputs: A) => T,
-): (...inputs: A) => T {
-  let last: A | null = null;
-  let value!: T;
-  return (...inputs: A) => {
-    if (!last || inputs.some((item, i) => item !== last![i])) {
-      last = inputs;
-      value = compute(...inputs);
-    }
-    return value;
-  };
-}
-/**
- * The hover toolbar: two 28-unit buttons, a 2-unit gap, padding and border.
- * Paths are 224 units apart, so under a step's three-line label block the
- * step below has as little as 9 units of room above it at 40%. The toolbar
- * therefore sits on its step's card, at the top left corner, rising 6 units
- * above it: clear of the corner badge (at most 38 units wide, so from 68
- * units in), of the icon (from 32 units down) and of the label above. A
- * parallel step's bar is 20 units wide with its paths' labels on both
- * sides, so its toolbar sits left of the bar's lower half, under the edge
- * coming in. Nothing assumes one output handle: they are on the right.
- */
-const TOOLBAR = { width: 64, height: 34, rise: 6 } as const;
 /** "Insert a step between a and b" becomes "Move x between a and b". */
 const moveName = (name: string, id: string) =>
   name.replace(/^(Insert|Add) a step/, `Move ${id}`);
+/** A step's hover toolbar, or a chosen trigger's (one Remove button). */
+interface ToolbarView {
+  id: string;
+  /** What "Commands for …" names: the step ID, or "the Webhook trigger". */
+  name: string;
+  x: number;
+  y: number;
+  /** How much larger than at 100% it draws, so its buttons keep their size on screen. */
+  scale: number;
+  /** Nothing else is drawn where it sits. */
+  clear: boolean;
+  /** From its bottom to its step's top, in canvas units. */
+  gap: number;
+  locked: boolean;
+  tabIndex: 0 | -1;
+  menu: RowMenuItem[];
+  trigger: { intent: string; label: string } | null;
+}
 
 @Component({
   selector: "weave-canvas-view",
@@ -173,6 +203,7 @@ const moveName = (name: string, id: string) =>
     SubNodeRow,
     CanvasTools,
     SelectionToolbar,
+    NotesLayer,
   ],
   // A drag on empty canvas draws a selection box; Space, Ctrl or Command
   // with a drag, or the middle button, pans; the canvas handles the wheel.
@@ -211,6 +242,21 @@ export class CanvasView implements OnInit, DoCheck {
   } | null = null;
   /** The edge drawn from a handle while it is dragged, in canvas units. */
   band: { key: string; from: Point; to: Point } | null = null;
+  /** The insertion a dropped edge opened Add a step for: its edge stays drawn meanwhile. */
+  private bandFor: Insertion | null = null;
+  /** "Ctrl+V", or "Cmd+V" on macOS, for the empty canvas's hint. */
+  readonly pasteKeys = formatCombo("Mod+V", keyPlatform());
+  /** References pasted steps hold that their place can't read, until they are fixed. */
+  private readonly pasteGaps = new Map<string, readonly Unreadable[]>();
+  /** Bumped when pasteGaps changes, so the tiles draw again. */
+  private pasteGapsVersion = 0;
+  /** The note whose text is edited, and the note "Move…" places, or "". */
+  editingNote = "";
+  placingNote = "";
+  private cachedNotes: NoteView[] | null = null;
+  /** A coarse pointer: the toolbars' buttons keep 44 px on screen instead of 24. */
+  private readonly coarse =
+    typeof matchMedia === "function" ? matchMedia("(pointer: coarse)") : null;
   /** The step dragged to a new place, or "". */
   draggingStep = "";
   /** The click that ends a drag does nothing else. */
@@ -287,7 +333,7 @@ export class CanvasView implements OnInit, DoCheck {
     !event.metaKey &&
     isOnFlowBackground(event) &&
     !(event.target as Element | null)?.closest?.(
-      ".f-minimap, [data-handle], .tile-toolbar",
+      ".f-minimap, [data-handle], .tile-toolbar, .sticky-note",
     );
 
   ngOnInit() {
@@ -306,6 +352,21 @@ export class CanvasView implements OnInit, DoCheck {
   ngDoCheck() {
     if (!this.ready) return;
     const h = this.host();
+    if (this.bandFor && !h.isPickerOpenAt(this.bandFor)) {
+      this.band = null;
+      this.bandFor = null;
+    }
+    const notes = this.noteViews();
+    if (notes !== this.cachedNotes) {
+      this.cachedNotes = notes;
+      h.model.cacheNotePositions(
+        new Map(
+          notes
+            .filter((note) => note.anchor)
+            .map((note) => [note.id, { x: note.x, y: note.y }]),
+        ),
+      );
+    }
     if (this.fitted !== h.model.opened && !this.fitPending) {
       this.fitPending = true;
       afterNextRender(
@@ -354,7 +415,12 @@ export class CanvasView implements OnInit, DoCheck {
   // ------------------------------------------------------------ layout
 
   private readonly layoutMemo = memo(
-    (_tick: number, workflow: Workflow, _ready: boolean): LtrLayout =>
+    (
+      _tick: number,
+      workflow: Workflow,
+      _ready: boolean,
+      canvas: CanvasSidecar,
+    ): LtrLayout =>
       layoutLtr(workflow, {
         role: (kind) => ndvRegistry.kind(kind)?.role,
         slots: (kind) =>
@@ -363,14 +429,17 @@ export class CanvasView implements OnInit, DoCheck {
             label: slot.label,
             required: slot.required,
           })),
-        triggers: workflow.spec.steps.length
-          ? [{ id: "manual", kind: "manual" }]
-          : [],
+        triggers: triggerInputs(canvas, workflow.spec.steps.length > 0),
       }),
   );
   layout(): LtrLayout {
     const h = this.host();
-    return this.layoutMemo(h.tick(), h.model.definition, this.ready);
+    return this.layoutMemo(
+      h.tick(),
+      h.model.definition,
+      this.ready,
+      h.model.canvas,
+    );
   }
   private readonly placesMemo = memo((layout: LtrLayout) => placesOf(layout));
   places(): Map<string, StepPlace> {
@@ -425,24 +494,30 @@ export class CanvasView implements OnInit, DoCheck {
       active: string,
       run: CanvasRun | null,
       canvas: CanvasSidecar,
+      _gapsVersion: number,
     ): TileView[] => {
       const ctx = this.host().kindContext();
       // A selected group shows every step inside it as selected.
       const chosen = covered(selection, this.places());
       return layout.tiles.map((tile) => {
         const state = tile.step ? tileRun(tile.id, run) : null;
-        return this.tileView(tile, ctx, facts.get(tile.id) ?? NO_FACTS, {
-          selected: chosen.has(tile.id),
-          active: tile.id === active,
-          run: state,
-          pulse: pulses(state, run),
-          // The trigger's note is the one its step details keep.
-          note: tile.step
-            ? stepNoteLine(canvas, tile.id)
-            : tile.kind === "trigger"
-              ? stepNoteLine(canvas, "$trigger")
-              : "",
-        });
+        return this.tileView(
+          tile,
+          ctx,
+          this.withPasteGaps(tile, facts.get(tile.id) ?? NO_FACTS),
+          {
+            selected: chosen.has(tile.id),
+            active: tile.id === active,
+            run: state,
+            pulse: pulses(state, run),
+            // The trigger's note is the one its step details keep.
+            note: tile.step
+              ? stepNoteLine(canvas, tile.id)
+              : tile.kind === "trigger"
+                ? stepNoteLine(canvas, triggerNoteKey(tile.id, canvas))
+                : "",
+          },
+        );
       });
     },
   );
@@ -455,6 +530,7 @@ export class CanvasView implements OnInit, DoCheck {
       this.active(),
       h.canvasRun(),
       h.model.canvas,
+      this.pasteGapsVersion,
     );
   }
   private position(tile: LtrTile): Point {
@@ -493,17 +569,21 @@ export class CanvasView implements OnInit, DoCheck {
       note: state.note,
     };
     if (!tile.step) {
-      const trigger = tile.kind === "trigger";
-      const subtitle = trigger ? triggerSubtitle(h.model.definition) : "";
+      const trigger =
+        tile.kind === "trigger" ? this.triggerText(tile.id) : null;
       return {
         ...common,
         step: false,
-        icon: trigger ? "manualTrigger" : "",
-        title: trigger ? "Trigger" : "End",
-        subtitle,
-        name: trigger ? `Trigger, ${subtitle}` : "End, workflow result",
+        icon: trigger?.icon ?? "",
+        title: trigger ? trigger.title : "End",
+        subtitle: trigger?.subtitle ?? "",
+        name: trigger
+          ? `${trigger.title} trigger, ${trigger.subtitle}`
+          : "End, workflow result",
         tooltip: trigger
-          ? "Open the workflow inputs"
+          ? trigger.manual
+            ? "Open the workflow inputs"
+            : `${trigger.title} · ${trigger.subtitle}`
           : "Open the workflow result",
         badge: null,
         borders: NO_BORDERS,
@@ -544,6 +624,31 @@ export class CanvasView implements OnInit, DoCheck {
       borders: tileBorders(shown),
       selected: state.selected,
     };
+  }
+  private intentOf(tileId: string): TriggerIntent | null {
+    return (
+      this.host().model.canvas.triggers?.find(
+        (item) => `$trigger:${item.id}` === tileId,
+      ) ?? null
+    );
+  }
+  /** A trigger tile's icon and subtitle; the implicit input form has no choice behind it. */
+  private triggerText(tileId: string) {
+    const kind = this.intentOf(tileId)?.kind ?? "manual";
+    return {
+      ...triggerTile(kind, this.host().model.definition),
+      manual: kind === "manual",
+    };
+  }
+  /** Double-click or Enter on a trigger: the input form opens its details; other triggers are set up when you activate. */
+  private openTrigger(tileId: string) {
+    const h = this.host();
+    const intent = this.intentOf(tileId);
+    if (!intent || intent.kind === "manual")
+      return void h.openWorkflowSection("spec/inputSchema");
+    h.notify(
+      `${TRIGGER_LABELS[intent.kind]} is set up when you activate this workflow.`,
+    );
   }
 
   // -------------------------------------------------- insertion targets
@@ -691,6 +796,29 @@ export class CanvasView implements OnInit, DoCheck {
       this.suppressClick = false;
       return;
     }
+    if (this.placingNote) {
+      const target = event.target as Element;
+      if (
+        target.closest(
+          "[data-action], .sticky-note, .tile-node, .canvas-v2-tools, [role='menu']",
+        )
+      )
+        return;
+      const id = this.placingNote;
+      this.placingNote = "";
+      const note = this.noteViews().find((item) => item.id === id);
+      const point = this.toWorld(event.clientX, event.clientY);
+      if (note)
+        this.noteEdit({
+          kind: "box",
+          id,
+          x: point.x,
+          y: point.y,
+          width: note.width,
+          height: note.height,
+        });
+      return;
+    }
     const control = (event.target as Element).closest<HTMLElement>(
       "[data-action]",
     );
@@ -705,7 +833,7 @@ export class CanvasView implements OnInit, DoCheck {
       if (
         still &&
         !(event.target as Element).closest(
-          "button, a, [role=menu], [data-handle], [data-tile], .canvas-v2-tools, .selection-toolbar, .tile-toolbar, f-minimap",
+          "button, a, [role=menu], [data-handle], [data-tile], .canvas-v2-tools, .selection-toolbar, .tile-toolbar, .sticky-note, f-minimap",
         )
       )
         this.clearSelection();
@@ -720,7 +848,11 @@ export class CanvasView implements OnInit, DoCheck {
       if (id) void this.openTile(id, event);
     } else if (action === "insert") this.insertAt(control);
     else if (action === "templates") this.host().showTemplates = true;
-    else if (action === "delete") {
+    else if (action === "remove-trigger") {
+      const id = control.dataset["target"];
+      if (id && control.getAttribute("aria-disabled") !== "true")
+        void this.host().removeTrigger(id);
+    } else if (action === "delete") {
       const id = control.dataset["target"];
       if (id && control.getAttribute("aria-disabled") !== "true")
         void this.host().removeSteps([id]);
@@ -735,8 +867,7 @@ export class CanvasView implements OnInit, DoCheck {
       ?.closest("[data-tile]");
     const id = tile?.getAttribute("data-tile");
     if (!id) return;
-    if (id.startsWith("$trigger:"))
-      void this.host().openWorkflowSection("spec/inputSchema");
+    if (id.startsWith("$trigger:")) this.openTrigger(id);
     else if (id === "$end") void this.host().openWorkflowSection("spec/output");
     else void this.host().openStep(id, "details");
   }
@@ -814,9 +945,12 @@ export class CanvasView implements OnInit, DoCheck {
   }
   /** The step an element belongs to, as a step or in its toolbar; else "". */
   private toolbarStep(element: Element): string {
-    const holder = element.closest?.("[data-step], [data-toolbar-for]");
+    const holder = element.closest?.(
+      "[data-step], [data-trigger], [data-toolbar-for]",
+    );
     return (
       holder?.getAttribute("data-step") ??
+      holder?.getAttribute("data-trigger") ??
       holder?.getAttribute("data-toolbar-for") ??
       ""
     );
@@ -831,24 +965,54 @@ export class CanvasView implements OnInit, DoCheck {
       hovered: string,
       locked: boolean,
       dismissed: readonly string[],
+      canvas: CanvasSidecar,
+      zoom: number,
+      coarse: boolean,
     ) =>
-      [...new Set([focused, hovered])].flatMap((id) => {
+      [...new Set([focused, hovered])].flatMap((id): ToolbarView[] => {
         const tile =
           id && !dismissed.includes(id)
-            ? layout.tiles.find((item) => item.id === id && item.step)
+            ? layout.tiles.find((item) => item.id === id)
             : undefined;
-        if (!tile) return [];
-        const bar = tile.shape === "fork";
+        if (!tile || tile.kind === "end") return [];
+        const tabIndex = id === focused ? (0 as const) : (-1 as const);
+        if (!tile.step) {
+          const intent = canvas.triggers?.find(
+            (item) => `$trigger:${item.id}` === tile.id,
+          );
+          if (!intent) return [];
+          const label = TRIGGER_LABELS[intent.kind];
+          const spot = toolbarSpot(tile, layout, zoom, { buttons: 1, coarse });
+          return [
+            {
+              id: tile.id,
+              name: `the ${label} trigger`,
+              x: spot.x,
+              y: spot.y,
+              scale: spot.scale,
+              clear: spot.clear,
+              gap: spot.gap,
+              locked,
+              tabIndex,
+              menu: [],
+              trigger: { intent: intent.id, label },
+            },
+          ];
+        }
+        const spot = toolbarSpot(tile, layout, zoom, { coarse });
         return [
           {
             id: tile.id,
-            x: bar ? tile.x + tile.width - TOOLBAR.width : tile.x,
-            y: bar
-              ? tile.y + tile.height - TOOLBAR.height
-              : tile.y - TOOLBAR.rise,
+            name: tile.id,
+            x: spot.x,
+            y: spot.y,
+            scale: spot.scale,
+            clear: spot.clear,
+            gap: spot.gap,
             locked,
-            tabIndex: id === focused ? 0 : -1,
+            tabIndex,
             menu: this.menuFor(tile, locked),
+            trigger: null,
           },
         ];
       }),
@@ -866,6 +1030,9 @@ export class CanvasView implements OnInit, DoCheck {
       this.hoveredTile,
       this.locked(),
       this.dismissed,
+      this.host().model.canvas,
+      this.view.zoom,
+      this.coarse?.matches ?? false,
     );
   }
   /**
@@ -911,6 +1078,26 @@ export class CanvasView implements OnInit, DoCheck {
       event.stopPropagation();
     }
   }
+  /** A pasted reference its place can't read is setup the step needs, until it is fixed. */
+  private withPasteGaps(tile: LtrTile, facts: StepFacts): StepFacts {
+    const gaps = tile.step ? this.pasteGaps.get(tile.id) : undefined;
+    if (!gaps || !tile.step) return facts;
+    const definition = this.host().model.definition;
+    const open = gaps.filter((gap) =>
+      stillUnreadable(definition, tile.step!, gap),
+    );
+    if (open.length) this.pasteGaps.set(tile.id, open);
+    else this.pasteGaps.delete(tile.id);
+    return open.length
+      ? {
+          ...facts,
+          setup: [
+            ...facts.setup,
+            ...open.map((gap) => `replace the reference to ${gap.target}`),
+          ],
+        }
+      : facts;
+  }
   private menuFor(tile: LtrTile, locked: boolean): RowMenuItem[] {
     const h = this.host();
     const id = tile.id;
@@ -921,6 +1108,7 @@ export class CanvasView implements OnInit, DoCheck {
         disabled: locked,
         run: () => void h.openStep(id, "rename"),
       },
+      { label: "Copy", run: () => void this.copyIds([id], false) },
       {
         label: "Duplicate",
         disabled: locked,
@@ -1093,6 +1281,7 @@ export class CanvasView implements OnInit, DoCheck {
     setTimeout(() => (this.suppressClick = false));
     const h = this.host();
     if (press.kind === "handle") {
+      const band = this.band;
       this.band = null;
       const control = press.target as HTMLElement;
       const hit = control.getBoundingClientRect();
@@ -1119,13 +1308,19 @@ export class CanvasView implements OnInit, DoCheck {
         const point = this.toWorld(event.clientX, event.clientY);
         if (dropOutcome(point, this.layout(), this.view.zoom) === "refused")
           h.notify(DROP_REFUSED);
-        else
+        else {
           h.openPicker(port.insert, port.name, {
             left: event.clientX,
             top: event.clientY,
             width: 0,
             height: 0,
           });
+          // The edge stays drawn to where it was dropped while Add a step is open there.
+          if (band && h.isPickerOpenAt(port.insert)) {
+            this.band = band;
+            this.bandFor = port.insert;
+          }
+        }
       }
     } else {
       this.draggingStep = "";
@@ -1243,12 +1438,37 @@ export class CanvasView implements OnInit, DoCheck {
     const root = this.root().nativeElement;
     if (!root.clientWidth || !root.clientHeight) return false;
     this.setView(
-      openView(this.layout().bounds, {
+      openView(this.fitBounds(), {
         width: root.clientWidth,
         height: root.clientHeight,
       }),
     );
     return true;
+  }
+  /** What Fit view shows: the steps and every note. */
+  private fitBounds(): LtrBounds {
+    const bounds = this.layout().bounds;
+    const notes = this.noteViews();
+    if (!notes.length) return bounds;
+    const steps = this.layout().tiles.length > 0;
+    return {
+      minX: Math.min(
+        ...(steps ? [bounds.minX] : []),
+        ...notes.map((note) => note.x),
+      ),
+      minY: Math.min(
+        ...(steps ? [bounds.minY] : []),
+        ...notes.map((note) => note.y),
+      ),
+      maxX: Math.max(
+        ...(steps ? [bounds.maxX] : []),
+        ...notes.map((note) => note.x + note.width),
+      ),
+      maxY: Math.max(
+        ...(steps ? [bounds.maxY] : []),
+        ...notes.map((note) => note.y + note.height),
+      ),
+    };
   }
   /** Opens a workflow the canvas hasn't shown yet with Fit view. */
   fitIfNew() {
@@ -1333,13 +1553,7 @@ export class CanvasView implements OnInit, DoCheck {
   }
   /** Space held: a drag pans. */
   trackSpace(event: KeyboardEvent) {
-    if (
-      event.key !== " " ||
-      (event.target as Element).matches(
-        "input, textarea, select, [contenteditable='true']",
-      )
-    )
-      return;
+    if (event.key !== " " || typingIn(event.target)) return;
     const target = event.target as HTMLElement;
     const tile = target.classList.contains("tile-body");
     const wasHeld = this.space;
@@ -1449,13 +1663,24 @@ export class CanvasView implements OnInit, DoCheck {
    * toolbar or a menu, keys act on that control.
    */
   key(event: KeyboardEvent) {
+    const into = event.target as HTMLElement;
+    const noteId =
+      into.closest?.("[data-note]")?.getAttribute("data-note") ?? "";
+    // A note's text box keeps its keys, its own undo and the paste included.
+    if (noteId && into.matches("textarea")) return;
+    if (noteId && !into.closest("[role=menu], .sticky-note-toolbar")) {
+      const command = noteCommand(event, this.platform);
+      if (command && this.runNote(command, noteId, event.shiftKey)) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+    }
     this.trackSpace(event);
     const target = event.target as HTMLElement;
     // A control that handled the key, or an open menu, owns it.
     if (event.defaultPrevented || target.closest("[role=menu]")) return;
-    const typing = target.matches(
-      "input, textarea, select, [contenteditable='true']",
-    );
+    const typing = typingIn(target);
     const onStep =
       target === this.root().nativeElement ||
       target.classList.contains("tile-body");
@@ -1492,8 +1717,7 @@ export class CanvasView implements OnInit, DoCheck {
         this.fit();
         return true;
       case "openStepDetails":
-        if (focus.startsWith("$trigger:"))
-          void h.openWorkflowSection("spec/inputSchema");
+        if (focus.startsWith("$trigger:")) this.openTrigger(focus);
         else if (focus === "$end") void h.openWorkflowSection("spec/output");
         else if (step) void h.openStep(step, "details");
         else return false;
@@ -1517,6 +1741,15 @@ export class CanvasView implements OnInit, DoCheck {
         return true;
       }
       case "deleteSelection": {
+        const chosen = focus.startsWith("$trigger:")
+          ? this.intentOf(focus)
+          : null;
+        if (chosen && target.closest("[data-trigger]")) {
+          const reason = this.lockedReason();
+          if (reason) h.notify(reason);
+          else void h.removeTrigger(chosen.id);
+          return true;
+        }
         const ids = topLevel(this.keyTargets(target, step), places);
         if (!ids.length) return false;
         const reason = this.lockedReason();
@@ -1544,6 +1777,22 @@ export class CanvasView implements OnInit, DoCheck {
           step,
           command === "extendUpstream" ? "upstream" : "downstream",
         );
+      case "copy":
+      case "cut":
+        void this.copySelection(
+          command === "cut",
+          this.keyTargets(target, step),
+        );
+        return true;
+      case "paste":
+        // The browser's paste event brings the clipboard's text: pasteEvent.
+        return false;
+      case "tidyLayout":
+        this.tidy();
+        return true;
+      case "addStickyNote":
+        this.addNote();
+        return true;
       case "save":
         h.saveShortcut();
         return true;
@@ -1665,6 +1914,11 @@ export class CanvasView implements OnInit, DoCheck {
    * dialog or an open menu takes Escape first.
    */
   private escape(target: HTMLElement): boolean {
+    if (this.placingNote) {
+      this.placingNote = "";
+      this.cdr.markForCheck();
+      return true;
+    }
     if (this.endGesture() || this.hideToolbars(target)) return true;
     if (!this.selection.ids.length) return false;
     const focus = this.selection.focus;
@@ -1688,6 +1942,322 @@ export class CanvasView implements OnInit, DoCheck {
     h.cancelMove();
     return true;
   }
+  // ------------------------------------------------------------- notes
+
+  private readonly notesMemo = memo(
+    (layout: LtrLayout, notes: StickyNote[] | undefined): NoteView[] =>
+      (notes ?? []).map((note) => {
+        const tile = note.anchor
+          ? layout.tiles.find((item) => item.id === note.anchor!.stepId)
+          : undefined;
+        return {
+          id: note.id,
+          text: note.text,
+          color: note.color,
+          x: tile ? tile.x + note.anchor!.dx : note.x,
+          y: tile ? tile.y + note.anchor!.dy : note.y,
+          width: note.width,
+          height: note.height,
+          anchor: tile?.id ?? "",
+          title: noteTitle(note.text),
+        };
+      }),
+  );
+  noteViews(): NoteView[] {
+    return this.notesMemo(this.layout(), this.host().model.canvas.notes);
+  }
+  /**
+   * Shift+S and the tools' note: under the selected step (anchored), else at
+   * the view's center; then the nearest free spot. A step's note keeps clear
+   * of every step, name, path label, "+" and other note at this zoom; a free
+   * note keeps clear of other notes (Tidy layout moves it off any step it
+   * covers), so a second Shift+S never stacks on the first.
+   */
+  addNote() {
+    const h = this.host();
+    const reason = this.lockedReason();
+    if (reason)
+      return h.notify(
+        h.model.readonly ? "Fix the source before adding notes." : reason,
+      );
+    const focus = this.selection.focus ?? h.model.selected;
+    const tile = this.layout().tiles.find(
+      (item) => item.id === focus && item.step,
+    );
+    const below = LTR.tile + LTR.labelGap + LTR.labelHeight + 16;
+    const box = this.root().nativeElement.getBoundingClientRect();
+    const center = this.toWorld(
+      box.left + box.width / 2,
+      box.top + box.height / 2,
+    );
+    const notes: Box[] = this.noteViews();
+    const spot = freeSpot(
+      {
+        ...(tile
+          ? { x: tile.x, y: tile.y + below }
+          : {
+              x: center.x - NOTE_SIZES.small.width / 2,
+              y: center.y - NOTE_SIZES.small.height / 2,
+            }),
+        ...NOTE_SIZES.small,
+      },
+      tile
+        ? [...noteObstacles(this.layout(), this.view.zoom), ...notes]
+        : notes,
+    );
+    let added: { canvas: CanvasSidecar; id: string };
+    try {
+      added = addNote(
+        h.model.canvas,
+        spot,
+        tile
+          ? { stepId: tile.id, dx: spot.x - tile.x, dy: spot.y - tile.y }
+          : null,
+      );
+    } catch (error) {
+      return h.notify(error instanceof Error ? error.message : String(error));
+    }
+    if (!h.changeCanvas(added.canvas)) return;
+    this.editingNote = added.id;
+    this.cdr.markForCheck();
+  }
+  noteEdit(edit: NoteEdit) {
+    const h = this.host();
+    if (edit.kind === "place") {
+      this.placingNote = edit.id;
+      this.cdr.markForCheck();
+      return;
+    }
+    if (edit.kind === "remove") {
+      if (!h.changeCanvas(removeNote(h.model.canvas, edit.id))) return;
+      const revision = h.model.revision;
+      h.notify("Deleted the note.", {
+        label: "Undo",
+        run: () =>
+          h.model.revision === revision
+            ? h.undo()
+            : h.notify("The workflow changed since. Use Undo in the toolbar."),
+      });
+      return;
+    }
+    const patch: NotePatch =
+      edit.kind === "text"
+        ? { text: edit.text }
+        : edit.kind === "color"
+          ? { color: edit.color }
+          : this.boxPatch(edit);
+    let next: CanvasSidecar;
+    try {
+      next = updateNote(h.model.canvas, edit.id, patch);
+    } catch (error) {
+      return h.notify(error instanceof Error ? error.message : String(error));
+    }
+    if (next !== h.model.canvas) h.changeCanvas(next);
+  } /** Tidy layout: legacy positions go, free notes leave the steps they cover, then Fit view. */
+  tidy() {
+    const h = this.host();
+    const moves = tidyNotes(
+      this.noteViews().map((note) => ({ ...note, anchored: !!note.anchor })),
+      tileBoxes(this.layout()),
+    );
+    const canvas = h.model.canvas;
+    const next = moves.size
+      ? {
+          ...canvas,
+          notes: (canvas.notes ?? []).map((note) => {
+            const to = moves.get(note.id);
+            return to ? { ...note, x: to.x, y: to.y } : note;
+          }),
+        }
+      : null;
+    if (next && canvasBytes(next) > CANVAS_MAX_BYTES)
+      return h.notify(CANVAS_TOO_BIG);
+    if (h.tidyCanvas(next)) this.fit();
+  }
+
+  /** A moved anchored note keeps following its step from its new offset. */
+  private boxPatch(edit: {
+    id: string;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  }): NotePatch {
+    const note = this.host().model.canvas.notes?.find(
+      (item) => item.id === edit.id,
+    );
+    const tile = note?.anchor
+      ? this.layout().tiles.find((item) => item.id === note.anchor!.stepId)
+      : undefined;
+    return {
+      x: edit.x,
+      y: edit.y,
+      width: edit.width,
+      height: edit.height,
+      ...(note?.anchor && tile
+        ? {
+            anchor: {
+              ...note.anchor,
+              dx: edit.x - tile.x,
+              dy: edit.y - tile.y,
+            },
+          }
+        : {}),
+    };
+  }
+  /** A focused note's keys: Enter edits, Delete deletes, arrows move it (Shift: farther). */
+  private runNote(command: KeymapCommand, id: string, far: boolean): boolean {
+    const note = this.noteViews().find((item) => item.id === id);
+    if (!note || this.locked()) return false;
+    const by = far ? 32 : 8;
+    const shift = (dx: number, dy: number) =>
+      this.noteEdit({
+        kind: "box",
+        id,
+        x: note.x + dx,
+        y: note.y + dy,
+        width: note.width,
+        height: note.height,
+      });
+    switch (command) {
+      case "editNote":
+        this.editingNote = id;
+        this.cdr.markForCheck();
+        return true;
+      case "deleteNote":
+        this.noteEdit({ kind: "remove", id });
+        this.root().nativeElement.focus();
+        return true;
+      case "nudgeNoteLeft":
+        shift(-by, 0);
+        return true;
+      case "nudgeNoteRight":
+        shift(by, 0);
+        return true;
+      case "nudgeNoteUp":
+        shift(0, -by);
+        return true;
+      case "nudgeNoteDown":
+        shift(0, by);
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  // ------------------------------------------------------ copy and paste
+
+  copyBlocked(): string | null {
+    return blockedReason("copy", this.selection, this.places());
+  }
+  /**
+   * Ctrl/Cmd+C or X and the selection toolbar's Copy: the steps a key acts
+   * on (the selection, or the focused step outside it), else the selection.
+   */
+  async copySelection(cut: boolean, chosen: Selection = this.selection) {
+    const places = this.places();
+    const reason =
+      (cut ? this.lockedReason() : null) ??
+      blockedReason(cut ? "cut" : "copy", chosen, places);
+    if (reason) return this.host().notify(reason);
+    await this.copyIds(topLevel(chosen, places), cut);
+  }
+  async copyIds(ids: string[], cut: boolean) {
+    const h = this.host();
+    // A cut that can't delete says why and leaves the clipboard as it was.
+    const blocked = cut ? h.model.removalBlocked(ids) : null;
+    if (blocked) return h.notify(blocked);
+    const copied = copySteps(
+      h.model.definition,
+      ids,
+      {},
+      ownedActionsOf(h.model.canvas),
+    );
+    if (!(await this.writeClipboard(copied)))
+      return h.notify("Studio couldn't write to the clipboard. Try again.");
+    if (cut) await h.removeSteps(ids);
+    else
+      h.notify(`Copied ${ids.length === 1 ? ids[0] : `${ids.length} steps`}.`);
+  }
+  /** YAML as text, and the same document as JSON in the web custom format where the browser has it. */
+  private async writeClipboard(copied: Copied): Promise<boolean> {
+    try {
+      const item = globalThis.ClipboardItem as
+        | (typeof ClipboardItem & { supports?: (type: string) => boolean })
+        | undefined;
+      if (item?.supports?.(CLIPBOARD_WEB_FORMAT))
+        await navigator.clipboard.write([
+          new item({
+            "text/plain": new Blob([copied.yaml], { type: "text/plain" }),
+            [CLIPBOARD_WEB_FORMAT]: new Blob([copied.json], {
+              type: CLIPBOARD_WEB_FORMAT,
+            }),
+          }),
+        ]);
+      else await navigator.clipboard.writeText(copied.yaml);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  /** Ctrl/Cmd+V on the canvas: the browser's paste event, read without a permission prompt. */
+  pasteEvent(event: ClipboardEvent) {
+    const target = event.target as HTMLElement;
+    if (typingIn(target)) return;
+    event.preventDefault();
+    // Only the text: a paste event doesn't expose the web custom format copy
+    // also writes, and the text holds the same document.
+    void this.paste(
+      event.clipboardData?.getData("text/plain") ?? "",
+      this.pastePlace(target),
+    );
+  }
+  /** At the focused "+", else after the focused or selected step, else at the end. */
+  private pastePlace(target: HTMLElement): Insertion {
+    const control = target.closest?.("[data-insert]");
+    const insert = control ? this.insertOf(control) : null;
+    if (insert) return insert;
+    const id =
+      target.closest?.("[data-tile]")?.getAttribute("data-tile") ??
+      this.selection.focus ??
+      this.host().model.selected;
+    const tile = this.layout().tiles.find((item) => item.id === id);
+    return (
+      tile?.after ?? {
+        owner: "root",
+        index: this.host().model.definition.spec.steps.length,
+      }
+    );
+  }
+  async paste(text: string, at: Insertion) {
+    const h = this.host();
+    const reason = this.lockedReason();
+    if (reason)
+      return h.notify(
+        h.model.readonly ? "Fix the source before pasting steps." : reason,
+      );
+    const reading = readClipboard(text);
+    if (!reading.ok) return h.notify(reading.reason);
+    const plan = await h.pasteSteps(reading.content, at);
+    if (!plan) return;
+    for (const gap of plan.unreadable)
+      this.pasteGaps.set(gap.stepId, [
+        ...(this.pasteGaps.get(gap.stepId) ?? []),
+        gap,
+      ]);
+    this.pasteGapsVersion++;
+    if (plan.unreadable.length) {
+      const first = plan.unreadable[0].stepId;
+      h.notify(unreadableMessage(plan.unreadable), {
+        label: "Review",
+        run: () => void h.selectStep(first, true),
+      });
+    }
+    this.selection = selectionOf(plan.ids, plan.ids[0]);
+    this.seenSelected = plan.ids[0];
+    this.cdr.markForCheck();
+  }
+
   private setView(view: View) {
     this.view = view;
     this.cdr.markForCheck();

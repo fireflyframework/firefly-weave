@@ -45,7 +45,7 @@ the desktop app never migrates a platform.
 | alpha13 | `0030_worker_presence` | No new schema migration. Workers retry explicit capacity rejections while they read task context or credentials, and an Agentic preparation timeout before provider execution counts as not started. Upgrade the Agentic and Files workers to 0.1.5 together with the server. |
 | alpha14 | `0030_worker_presence` | No new schema migration. Adds the detached Docker development platform (`weave platform up`); existing foreground installations keep working and are never converted. The Agentic and Files workers 0.1.6 pin this server version. |
 | alpha15 | `0030_worker_presence` | No new schema migration and no role change. Upgrade CLIs and SDKs together with the server, review native executor `capacity` and the legacy private-network settings before restarting, and finish runs that use text templates before any rollback to alpha14; see [what changes in alpha15](#what-changes-in-alpha15). The Agentic and Files workers 0.1.7 pin this server version. |
-| Unreleased | `0030_worker_presence` | No schema change. `weave platform up --username` grants the local owner roles (developer, deployer, operator, viewer, task_participant, tenant_admin, lumi_manager, execution_manager, worker_operator, deployment_reader, deployment_planner, deployment_approver, deployment_operator); existing accounts keep their roles until `weave platform user grant` adds more. `weave platform user` is now a command group; `weave platform user --username` works as before. |
+| Unreleased | `0032_operations_facts` | Two new migrations. `0031_operations_key_collation` only replaces two internal accounting functions: no table, data, or role changes. `0032_operations_facts` adds [scoped operational fact storage](#operational-fact-storage), a bounded historical backfill, and reserved capacity for terminal fact updates. Explicitly migrate the server before restarting it. Upgrade CLIs and SDKs together with the server, and upgrade the server before its deployment runners; see [incident list compatibility](#incident-list-compatibility), [worker identity compatibility](#worker-identity-compatibility) and [worker fleet compatibility](#worker-fleet-compatibility). `weave platform up --username` grants the local owner roles (developer, deployer, operator, viewer, task_participant, tenant_admin, lumi_manager, execution_manager, worker_operator, deployment_reader, deployment_planner, deployment_approver, deployment_operator); existing accounts keep their roles until `weave platform user grant` adds more. `weave platform user` is now a command group; `weave platform user --username` works as before. |
 
 ![Schema, compatibility and execution acceptance gates](../diagrams/operations-upgrade.svg)
 
@@ -147,6 +147,273 @@ the same policy as the database. Rerunning an already-current migration is not a
 policy update, and this release has no in-place policy-change operation: a
 mismatch leaves the runtime restricted. Never rewrite the fingerprint or counters
 by hand to force readiness.
+
+## Run list and timeline compatibility
+
+The server now serves run summaries and step timelines. `runs.list` changes its
+default to `started_desc`, with `started_asc` and `updated_desc` also available.
+Clients that continue a legacy v1 cursor must send `order=id` and retain its
+original filters. New filters bind ID cursors to the normalized query; time
+orders use v2 cursors. Restart pagination after changing filters or order.
+The `weave runs list` command does not send `order=id` yet, so it cannot
+continue a cursor saved before the upgrade; start such a listing again.
+
+`runs.list` also changes how it reads requests:
+
+- It accepts the run summary filters and leaves out test runs unless the
+  request sends `include_test=true`.
+- It rejects unknown query parameters with `422 WV-VALIDATION`; the earlier
+  route ignored them.
+- A `limit` outside 1 to 100 answers `422 WV-VALIDATION` instead of
+  `422 WV-PAGE`.
+- An older server reads only `limit`, `cursor`, `business_key`,
+  `correlation_key`, a single `status` and `include_archived`. It ignores the
+  other filters, and it keeps only the last of several `status` values. Upgrade
+  servers before relying on the new filters.
+
+The Python SDK's `list_runs` takes either a `query` or the keyword filters;
+passing both raises `ValueError` instead of silently dropping the keywords.
+
+Request telemetry records an authorized `501 WV-UNAVAILABLE` answer, such as
+`runs.logs`, with the status `unavailable` instead of `failed`. Alerts that
+count `weave.requests` with `status=failed` no longer include these answers.
+
+The update-time order is a live view: a later update can move an item between
+pages. Refresh from the first page to see the latest ordering. Unknown historical
+times sort last and are never replaced by the fact projection's creation date.
+Restored runs reappear even though their archive lifecycle record is retained.
+
+Old runs may have incomplete timelines. The server reads their missing author
+step metadata in batches of 500, retaining only the requested page candidates.
+A request stops after 100,000 keys or two seconds with `429 WV-RUNTIME-LIMIT`;
+the time budget can be reached first. Synthetic control instances do not count
+toward completeness or the key cap. Step outputs remain optional and classified.
+`runs.logs` still answers authorized requests with `501 WV-UNAVAILABLE`.
+
+## Incident list compatibility
+
+`incidents.list` and the paged `incidents.run_list` now read incident facts
+instead of loading each incident's run. Their default order changes to
+`opened_desc`, newest opened first, with `opened_asc` also available; incidents
+whose opening time is unknown come last. Clients that continue a cursor saved
+before the upgrade must send `order=id` without filters. The
+`weave runs incidents list` and `run-list` commands do not send `order=id` yet,
+so they cannot continue such a cursor; start the listing again.
+
+The incident lists also change how they read requests:
+
+- They accept `status` (repeatable), `code`, `workflow`, `node_id`, an opening
+  time range, and `include_test`. Without `status` they still list every
+  status.
+- Incidents of test runs are left out unless the request sends
+  `include_test=true`.
+- They reject unknown query parameters with `422 WV-VALIDATION`; the earlier
+  routes ignored them. A `limit` outside 1 to 100 answers `422 WV-VALIDATION`
+  instead of `422 WV-PAGE`.
+- An older server ignores the filters and the order and lists every incident in
+  ID order. Upgrade servers before relying on them.
+
+Incident views gain optional fields that are left out while unknown, false, or
+empty. **Upgrade CLIs and SDKs with the server.** Earlier releases reject the
+new fields: `weave runs incidents list` and `run-list`, and the Python SDK's
+`list_incidents` and `run_incidents`, fail with `502 WV-WIRE` on the first page
+that lists an available incident. Stored resolution receipts and
+`incidents.resolve` answers keep their bytes, and so does the earlier plain
+array of a run's incidents. A resolve answer is the incident as stored, so read
+it again with `incidents.read` to show it as the lists do.
+
+For an incident of a repeated step instance, `node_id` becomes the static step
+ID and `instance_key` carries the full key; other incidents, including those on
+a switch or parallel branch output or a join, keep the same `node_id`. Whether
+an incident is withheld now comes from its run's metadata, its policy blocks,
+and whether its step matches its incident facts, so a list never loads runs.
+The new `incidents.read` operation serves direct links and sends the revision
+as `ETag`. The Python SDK adds `read_incident`, and `list_incidents` and
+`run_incidents` take either a `query` or the keyword arguments; passing both
+raises `ValueError`.
+
+Historical opening times come from each incident's opening event. When that
+event was not retained, the upgrade used the run's last recorded event and
+marks the time `opened_at_estimated`; without either, the opening time stays
+unknown.
+
+## Worker identity compatibility
+
+Workers can now report where they run when they register, and worker reads
+return it. Deployment observations can also list the containers or pods of a
+worker component. Both changes cross versions:
+
+- **New workers, older server.** The Agentic and Files workers and the Python
+  SDK's `register_worker` send an `identity`. A server without it refuses the
+  field with `422 WV-VALIDATION`; the worker then registers exactly once more
+  without it, on the same connection and credentials. Other failures are not
+  retried. Upgrade servers first to keep the identity. Native executors register
+  inside the API process, so they always use a server of their own version.
+- **Older clients, new server.** Worker reads, lists, and drain or resume
+  answers add `identity` and `registered_at` when they are known. **Upgrade
+  CLIs and SDKs with the server.** Earlier releases reject the new fields:
+  `weave workers list`, `read`, `drain`, and `resume`, and the Python SDK's
+  `read_worker`, `list_workers`, `drain_worker`, and `resume_worker`, fail with
+  `502 WV-WIRE` for a worker registered after the upgrade. A drain or resume is
+  still applied; read the worker again with an upgraded client. Workers
+  registered before the upgrade, the registration answer, and stored worker
+  records keep their earlier shape.
+- **Labels.** `WEAVE_WORKER_LABELS` is read only from the worker's own
+  environment. An invalid label stops the worker before it registers, so check
+  the setting before rolling out new worker images. With native executors
+  configured, an invalid label on the API's own environment stops the API from
+  starting.
+
+**Upgrade the server before its runners.** An upgraded runner reports
+`members` for worker components, and an older server refuses them: the runner's
+observe jobs fail, and an apply that touches a worker component ends
+`reconciliation_required` with an ambiguous receipt, even though the change
+was applied. Upgrade the API first, then each runner.
+
+- **Older clients, observations with members.** Observations that an upgraded
+  runner recorded with `members` fail with `502 WV-WIRE` in earlier releases:
+  `weave operations observations read` and `list`, and the Python SDK's
+  `invoke("deployment_observations.read")` and
+  `invoke("deployment_observations.list")`. Upgrade CLIs and SDKs with the
+  server before upgrading runners.
+- **Unchanged.** Observations without members, their digests, plans reviewed
+  against them, and Compose and Kubernetes resource versions keep their bytes.
+- **Members are placement only.** They list live containers or pods: stopped,
+  terminating, finished, failed, and evicted ones are left out. When a worker
+  component has more than 100 live members, or the runner cannot list them all,
+  `members` is left out and placement is unknown; the observation itself still
+  succeeds.
+- **Kubernetes.** After upgrading the server, and before upgrading a Kubernetes
+  runner, grant it `list` on `pods` in the namespace. Without that permission
+  the runner leaves `members` out. See
+  [the runner guide](operations-runner.md#kubernetes).
+
+## Worker fleet compatibility
+
+`workers.list` now reads each page with one query and changes what it lists by
+default:
+
+- **Current workers only.** Without `state=all`, it leaves out revoked workers
+  and workers neither seen nor registered in the last hour. Workers registered
+  before the upgrade that were never seen are listed only with `state=all`.
+- **Newest contact first.** The default order is `last_seen_desc`;
+  `registered_desc` is also available, and unknown times come last.
+- **Cursors.** Cursors issued before the upgrade are refused with
+  `422 WV-VALIDATION`; start the listing again. `weave workers list` sends only
+  `limit` and `cursor`, so it lists current workers.
+- **Requests.** Unknown query parameters are refused with `422 WV-VALIDATION`
+  instead of being ignored, and a `limit` outside 1 to 100 answers
+  `422 WV-VALIDATION` instead of `422 WV-PAGE`. An older server ignores the new
+  filters and lists every worker in ID order, so upgrade servers before relying
+  on them.
+- **Earlier Studio hosts and desktop apps.** The Studio bridge forwards answers
+  unchanged, so an earlier Studio host or desktop app gets this reduced default
+  list from an upgraded server. Its Workers page lists only current workers,
+  **Show revoked workers** shows none, and rows reorder as workers check in.
+  Upgrade Studio and the desktop app with the server. Until then, the Python
+  SDK's `list_workers(query=WorkerListQuery(state="all"))` lists every worker.
+  The upgraded Studio asks the platform for current workers and turns on
+  `state=all` with **Show retired workers**; against an older server its filters
+  are ignored and it lists every worker.
+
+Worker reads and lists add optional `placement` and `drained_at`, and drain and
+resume answers add `drained_at`. **Upgrade CLIs and SDKs with the server.**
+Earlier releases reject these fields: `weave workers list`, `read`, `drain`, and
+`resume`, and the Python SDK's `read_worker`, `list_workers`, `drain_worker`,
+and `resume_worker`, fail with `502 WV-WIRE` for a worker that is placed, or
+drained since the upgrade. A drain or resume is still applied. Stored worker records and the registration
+answer keep their bytes, and workers drained before the upgrade show no drain
+time.
+
+Two operations are new: `workers.retire_stale` (`weave workers retire-stale`,
+SDK `retire_stale_workers`) revokes up to 100 offline workers without active
+leases per command, and `releases.usage` (`weave workers releases usage`, SDK
+`release_usage`) reports where a release runs. Neither changes an existing
+answer. Earlier servers do not serve them and answer `404` or `405`.
+
+## Environment summary and telemetry settings
+
+Two reads are new, and neither changes an existing answer:
+
+- `operations_summary.read` (`weave operations summary`) answers an
+  environment's health, load, workers, targets, incidents and the items that
+  need attention. It needs `status.read`; each section beyond health, load and
+  workers needs its own capability, and a section you may not read answers
+  `{"state": "forbidden"}` instead of zeros. Run figures leave out test runs.
+- `operations_telemetry.read` (`weave operations telemetry`) answers whether
+  telemetry export is on and which collector hosts it uses. It needs
+  `status.read` granted for the project, not only for an environment, and
+  never returns endpoint paths, credentials or headers.
+
+Earlier servers do not serve them and answer `404` or `405`. For the first 24
+hours after the upgrade, `opened_24h` leaves out incidents whose opening time
+the upgrade could only estimate. A `WEAVE_TELEMETRY` collector URL whose host
+name is longer than 253 characters, which no DNS name is, now stops startup with
+`Invalid WEAVE_TELEMETRY configuration`. Loop health is
+measured in each API process and starts again when the process restarts, so a
+freshly started process reads `degraded` until each loop completes a cycle. An
+answer from an API-only replica reports every scheduler loop as `disabled`; the
+summary's `instance` ID tells you which process answered. The reference explains
+how each state is decided; see
+[Discovery, debugging, and history](../reference/api.md#discovery-debugging-and-history).
+
+The Studio host bridge now forwards both reads and `releases.usage`. An earlier
+Studio host or desktop app refuses them with `404`, so upgrade Studio and the
+desktop app with the server before relying on the pages that use them.
+
+## Operational fact storage
+
+The `0032_operations_facts` migration adds five scoped operational projections
+and the operations loop's bounded traversal cursors: one for tenants, one per
+tenant for environments, and one per environment for re-checking stored listing
+decisions. The scheduler login reaches tenants through the new execute-only
+`weave_operations_tenants(integer)`, granted to `weave_scheduler`, so it never
+moves the recovery traversal's cursors. The migration does not add columns to
+stored runs or events. Apply it explicitly with all writers stopped, using the procedure above.
+
+The migration runs in one transaction and reads retained runs in UUID order, at
+most 10,000 IDs per batch. It validates each run's state, activation and request,
+classifies each distinct stored artifact once, and aggregates event timestamps per
+batch. The indexes it adds to existing tables (`run_deadlines`, `event_deliveries`
+and `incidents`) are built inside that transaction, so their locks last until the
+whole migration commits: the maintenance window is the migration's duration, which
+is one more reason to stop every writer first. The foreign keys of the new fact
+tables likewise lock `runs`, `task_intents`, `incidents`, `worker_instances`,
+`environments` and `tenants` against writes until the migration commits. Allow temporary disk space for all
+five projections, their indexes, and transaction/WAL overhead.
+
+Rehearse against a restored copy to measure your maintenance window. On a
+development machine (PostgreSQL 17 in a 4-CPU, 8 GiB virtual machine with default
+memory settings, upgrading from `0031_operations_key_collation`), the migration
+took 17 seconds for 10,000 retained runs and 32 seconds for 50,000, and the
+database grew by 1.4 to 1.6 KB per retained run (16 MB and 70 MB). Usage counters
+equaled an independent recomputation afterwards in both. Larger sizes were not
+measured: if the time keeps growing linearly, 1,000,000 runs would take roughly 10
+to 15 minutes on similar hardware, but treat that as an estimate, not a
+measurement.
+
+Historical run times come from accepted events. Missing, malformed or oversized
+evidence remains unavailable, and malformed lifecycle values remain unknown
+instead of being labeled as queued. A run requiring an unsupported IR version or
+language feature keeps that separate classification. Historical origins remain
+unknown unless an explicit start, retry or matching start receipt proves them.
+Signal delivery receipts do not establish how a run started. Historical step
+and task times are not invented, and worker instances registered before the
+upgrade keep an unknown registration time and no identity; a worker reports its
+identity when it next registers. Each run projection records when its coverage
+began.
+
+The new facts count toward ordinary storage usage. Near a quota ceiling, this
+means a claim or completion that an earlier server accepted can be refused with
+the usual capacity answer, and it changes nothing when it is refused. Active executions reserve
+additional capacity for bounded terminal fact updates, including allocation
+provenance. Backfill inventories retained data without granting extra admission
+capacity: a platform already above a quota can still migrate, but new work must
+satisfy the unchanged quotas. Purging an authorized archived run also removes
+its run, step, task and incident facts; deleting a worker removes its facts.
+The cursor tables hold a single row for tenants, one row per tenant for
+environments, and one row per environment for re-checks. They have no business
+payload or retained history.
 
 ## Start and inspect compatibility
 
@@ -265,6 +532,26 @@ on the older server records only the cancellation, as for
 and its state stays withheld after you upgrade. To keep a run's full record,
 let it finish or cancel it before you roll back.
 
+After the upgrade, `runs.read` serves the run at once, but run summaries, step
+timelines and incident lists keep withholding it until the scheduler re-checks
+its stored listing decision; its timeline answers `422 WV-IR-UNSUPPORTED`
+meanwhile. The scheduler does this in the background: each minute it visits up
+to 16 tenants, gives each one's next environment up to one second of database
+work, and re-checks at most 100 runs there, fewer when the second runs out
+first. A tenant's environments take turns, one per minute. So in an installation
+with one tenant and one environment, 10,000 waiting runs take at least 100
+minutes, and a million about a week. More environments in a tenant, or more
+than 16 tenants, make each environment wait longer.
+
+Runs recorded under an earlier classification policy are re-checked the same
+way, and their timelines answer `409 WV-LEGACY-UNAVAILABLE` meanwhile. A policy
+change re-checks available and unsupported decisions only: unavailable ones,
+such as runs whose history the upgrade could not trust, stay unavailable. API
+replicas that disable the scheduler rely on the scheduler replica for this. A
+run whose re-check fails, for example because its record cannot be locked in
+time or ordinary storage is full, stays withheld, is logged by error class, and
+is tried again on a later pass while the others continue.
+
 **A server whose capabilities do not list `language_features` predates
 language features.** It cannot recognize such a run, treats it as legacy
 evidence, and can block it permanently; a blocked run's tasks are never offered
@@ -359,8 +646,8 @@ changes before you reopen traffic:
 
 ## What changes after alpha15
 
-These changes are not yet in a release. They add no schema migration (the head
-stays `0030_worker_presence`), no role, and no change to definition schemas or
+These changes are not yet in a release. They add two schema migrations (the head
+becomes `0032_operations_facts`), no role, and no change to definition schemas or
 the stored digests of the built-in AI Connector, Action and task. Check them
 before you reopen traffic on a server that includes them:
 
@@ -411,6 +698,25 @@ before you reopen traffic on a server that includes them:
   A caller whose grant was revoked gets 403 (or 401) instead of the stored 201
   answer. Scripts that retry activations with a token whose grant was removed
   must get the grant back first.
+- **Starting a run no longer slows down as executions accumulate.** Migration
+  `0031_operations_key_collation` fixes the usage accounting that runs on
+  every run start and every change to quota-counted records: it now finds its
+  reservation and allocation entries by primary key instead of reading every
+  reservation in the database, which grew with each run ever started. Usage
+  figures and limits are unchanged. Apply the migration before you restart the
+  server; a server that includes it refuses to start on the previous schema.
+- **Loops run; upgrade CLIs and SDKs with the server.** The server lists
+  `flow.forEach` in its language manifest and capabilities and runs workflows
+  with **Loop over items** (`forEach`) steps. The capabilities response gains
+  `operations.runtime.loop_units_per_turn`, and human tasks inside a loop
+  answer with `instance_key` and `iteration`. CLIs and SDKs check every answer
+  against the fields they know, so alpha15 and earlier clients fail
+  `capabilities.read` (`weave remote capabilities`, `capabilities()` in the SDK)
+  with `WV-WIRE` against such a server. Upgrade them together with the server. Before
+  you roll back to alpha15, let every run that uses a loop finish, or cancel it:
+  alpha15 does not list `flow.forEach`, so such runs wait until a server that
+  runs loops takes over, as described in
+  [runs that need a newer server](#runs-that-need-a-newer-server).
 - **AI test times use the database clock.** A recorded AI connection test is
   dated with the database's clock, the same clock readiness uses to measure its
   age. Tests recorded by an earlier server keep their API-host timestamps.

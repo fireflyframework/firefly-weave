@@ -41,12 +41,13 @@ def native(identifier: str) -> dict:
 
 
 @pytest.mark.parametrize("identifier", sorted(EXPECTED))
-def test_operations_are_registered_as_not_served_run_reads(identifier):
+def test_operation_availability_matches_served_reads(identifier):
     operation = OPERATIONS[identifier]
     path, response = EXPECTED[identifier]
     assert (operation.method, operation.canonical_path, operation.response) == ("GET", path, response)
     assert operation.capability == "run.read"
-    assert operation.served is False and operation.page is False and operation.request is None
+    assert operation.served is (identifier != "runs.logs")
+    assert operation.page is False and operation.request is None
     assert all(other.served for key, other in OPERATIONS.items() if key not in EXPECTED)
 
 
@@ -56,11 +57,15 @@ def test_openapi_documents_query_501_and_bearer_security(identifier):
     query = [parameter for parameter in document["parameters"] if parameter["in"] == "query"]
     assert [parameter["name"] for parameter in query] == list(OPERATIONS[identifier].query.model_fields)
     assert all(parameter["required"] is False for parameter in query)
-    assert "501" in document["responses"] and "422" in document["responses"]
-    assert document["responses"]["501"]["content"]["application/problem+json"]["schema"]["$ref"].endswith("/Problem")
+    assert ("501" in document["responses"]) is (identifier == "runs.logs")
+    assert "422" in document["responses"]
+    if identifier == "runs.logs":
+        assert document["responses"]["501"]["content"]["application/problem+json"]["schema"]["$ref"].endswith(
+            "/Problem"
+        )
     assert document["security"] == [{"bearer": []}]
     assert "Required capability: run.read" in document["description"]
-    assert "answers 501 WV-UNAVAILABLE" in document["description"]
+    assert ("answers 501 WV-UNAVAILABLE" in document["description"]) is (identifier == "runs.logs")
 
 
 def test_query_parameters_keep_their_constraints_and_defaults():

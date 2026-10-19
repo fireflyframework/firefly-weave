@@ -1,0 +1,161 @@
+<!--
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+-->
+@let v = view();
+<section
+  class="add-step-panel"
+  role="dialog"
+  [attr.aria-labelledby]="prefix + '-title'"
+  [attr.aria-describedby]="prefix + '-place'"
+  [weaveModalSheet]="true"
+  [sheetWhen]="sheetWhen.addStep"
+  sheetInitialFocus=".add-step-search input"
+  (sheetDismiss)="close(true)"
+  (keydown)="key($event)"
+>
+  <header class="add-step-head">
+    <div class="add-step-title-row">
+      @if (state.stack.length > 1 && v.parent; as parent) {
+        <button
+          type="button"
+          class="icon-button add-step-back"
+          [attr.aria-label]="'Back to ' + parent.title"
+          title="Back (←)"
+          (click)="back()"
+        >
+          <weave-icon name="chevronLeft" [size]="16" />
+        </button>
+      }
+      <h2 class="add-step-title" [id]="prefix + '-title'">
+        {{ v.view.title }}
+      </h2>
+      <button
+        type="button"
+        class="icon-button add-step-close"
+        aria-label="Close"
+        title="Close (Esc)"
+        (click)="close(true)"
+      >
+        <weave-icon name="close" [size]="16" />
+      </button>
+    </div>
+    <p class="sr-only" [id]="prefix + '-place'">{{ place() }}</p>
+    @if (v.view.subtitle) {
+      <p class="add-step-subtitle">{{ v.view.subtitle }}</p>
+    }
+    <div class="search-field add-step-search">
+      <weave-icon name="search" />
+      <input
+        type="text"
+        role="combobox"
+        autocomplete="off"
+        spellcheck="false"
+        aria-autocomplete="list"
+        aria-expanded="true"
+        [attr.aria-controls]="prefix + '-list'"
+        [attr.aria-activedescendant]="activeId(v)"
+        [attr.aria-label]="searchLabel()"
+        [placeholder]="searchLabel() + '…'"
+        [value]="state.query"
+        (input)="type($event)"
+      />
+      <kbd class="add-step-kbd" aria-hidden="true">/</kbd>
+    </div>
+  </header>
+  <div
+    class="add-step-list"
+    role="listbox"
+    [id]="prefix + '-list'"
+    [attr.aria-label]="v.view.title"
+  >
+    @if (v.note) {
+      <p class="add-step-note" role="presentation">{{ v.note }}</p>
+    }
+    @for (section of v.sections; track $index; let s = $index) {
+      <div
+        role="group"
+        [attr.aria-labelledby]="
+          section.heading ? prefix + '-group-' + s : prefix + '-title'
+        "
+      >
+        @if (section.heading) {
+          <div
+            class="add-step-group"
+            role="presentation"
+            [id]="prefix + '-group-' + s"
+          >
+            {{ section.heading }}
+          </div>
+        }
+        @for (entry of section.entries; track entry.id; let e = $index) {
+          @let index = v.starts[s] + e;
+          @let id = optionId(entry);
+          <div
+            class="add-step-entry"
+            role="option"
+            [id]="id"
+            [class.active]="index === state.active"
+            [attr.aria-selected]="index === state.active"
+            [attr.aria-disabled]="entry.disabled ? 'true' : null"
+            [attr.aria-labelledby]="id + '-label'"
+            [attr.aria-describedby]="id + '-description'"
+            [attr.data-entry]="entry.id"
+            [attr.draggable]="entry.drag ? 'true' : null"
+            (mousedown)="press($event, entry)"
+            (mousemove)="hover(index)"
+            (click)="pick(index)"
+            (dragstart)="dragStart($event, entry)"
+            (dragend)="dragEnd($event)"
+          >
+            <span
+              class="entry-tile"
+              [class.trigger]="entry.shape === 'trigger'"
+              aria-hidden="true"
+              ><weave-icon [name]="entry.icon" [size]="16"
+            /></span>
+            <span class="entry-text">
+              <span class="entry-label" [id]="id + '-label'">{{
+                entry.label
+              }}</span>
+              <span
+                class="entry-description"
+                [id]="id + '-description'"
+                [attr.title]="entry.disabled ?? entry.description"
+                >{{ entry.disabled ?? entry.description }}</span
+              >
+            </span>
+            @if (entry.meta) {
+              <span class="entry-meta">{{ entry.meta }}</span>
+            }
+            @if (entry.chevron) {
+              <weave-icon class="entry-chevron" name="chevron" [size]="16" />
+            } @else if (index === state.active && !entry.disabled) {
+              <kbd class="entry-enter" aria-hidden="true">↵</kbd>
+            }
+          </div>
+        }
+      </div>
+    }
+  </div>
+  <p class="sr-only" aria-live="polite">{{ countText(v) }}</p>
+  <footer class="add-step-foot" aria-hidden="true">
+    <span><kbd>↑</kbd><kbd>↓</kbd>Move</span>
+    <span><kbd>Enter</kbd>Add</span>
+    <span><kbd>→</kbd>Open</span>
+    <span><kbd>Esc</kbd>Close</span>
+  </footer>
+</section>

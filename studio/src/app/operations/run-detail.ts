@@ -16,8 +16,9 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 // A run, read by an operator: what it is, what it waits for now, where it
-// stopped, its workflow with the live thread, a plain-language timeline, and
-// the technical details only on request. Part of the lazy operations chunk.
+// stopped, its workflow with the live thread, its steps (when the Runs page
+// gives them), its events in plain language, and the technical details only
+// on request. Part of the lazy operations chunk.
 import {
   ChangeDetectionStrategy,
   ChangeDetectorRef,
@@ -33,6 +34,7 @@ import type { App } from "../app";
 import { copyText } from "../connection";
 import { Icon } from "../icon";
 import { RunActions, runState } from "../operate/runs/run-actions";
+import { StepTimeline, type RunStepsView } from "../operate/runs/step-timeline";
 import { StartRunDialog } from "../run/start-run-dialog";
 import type { Node } from "../model";
 import { absoluteTime, isoTime, relativeTime, shortId } from "../format";
@@ -61,7 +63,7 @@ const isRecord = (value: unknown): value is Json =>
   selector: "weave-run-detail",
   changeDetection: ChangeDetectionStrategy.Eager,
   standalone: true,
-  imports: [Icon, FFlowModule, StartRunDialog],
+  imports: [Icon, FFlowModule, StartRunDialog, StepTimeline],
   styleUrl: "./run-detail.css",
   template: `@let h = host();
     @let run = h.selectedRecord!;
@@ -292,8 +294,11 @@ const isRecord = (value: unknown): value is Json =>
         </ol>
       </section>
     }
+    @if (timeline(); as view) {
+      <weave-step-timeline [view]="view" />
+    }
     <section class="run-timeline" aria-labelledby="run-timeline-title">
-      <h3 id="run-timeline-title">Timeline</h3>
+      <h3 id="run-timeline-title">Events</h3>
       @if (rows().length) {
         <ol class="timeline">
           @for (row of rows(); track $index) {
@@ -416,6 +421,8 @@ const isRecord = (value: unknown): value is Json =>
 })
 export class RunDetail implements DoCheck, OnDestroy {
   host = input.required<App>();
+  /** The run's step timeline from runs.steps, when the page showing the run reads it. */
+  timeline = input<RunStepsView | null>(null);
   private cdr = inject(ChangeDetectorRef);
   /** Cancel run, Retry run, Send signal and Export history. */
   readonly actions = new RunActions(

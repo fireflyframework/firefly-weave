@@ -31,6 +31,7 @@ import {
   partnerOption,
   platformHost,
 } from "./platform-host";
+import { runSummary } from "./support";
 
 const heading = (page: Page) => page.locator("#wizard-heading");
 const wizard = (page: Page) => page.locator("weave-connection-wizard");
@@ -1290,6 +1291,27 @@ test.describe("startup and saved platforms", () => {
     await page.getByRole("button", { name: "Cancel sign-in" }).click();
     await page.getByRole("button", { name: "Settings", exact: true }).click();
 
+    // Canvases kept for platform drafts on this computer, one per platform.
+    const keptCanvas = (profile: string) =>
+      page.evaluate(async (name) => {
+        const digest = await crypto.subtle.digest(
+          "SHA-256",
+          new TextEncoder().encode(name),
+        );
+        const hex = [...new Uint8Array(digest)]
+          .map((byte) => byte.toString(16).padStart(2, "0"))
+          .join("");
+        return `p${hex.slice(0, 16)}:0123456789abcdef:0b9b5a59-6c63-4f3e-9d58-6a3c8f0e2b11:5f0c2d4e-7a1b-4c3d-8e9f-0a1b2c3d4e5f:canvas.6a1f8c52-1d2e-4f3a-9b8c-7d6e5f4a3b2c`;
+      }, profile);
+    const acmeCanvas = await keptCanvas("Acme");
+    const globexCanvas = await keptCanvas("Globex");
+    await page.evaluate(
+      (keys) => keys.forEach((key) => localStorage.setItem(key, "{}")),
+      [acmeCanvas, globexCanvas],
+    );
+    const stored = (key: string) =>
+      page.evaluate((name) => localStorage.getItem(name) !== null, key);
+
     // Sign out asks first.
     await page.getByRole("button", { name: "Sign out of Acme" }).click();
     const dialog = page.getByRole("dialog");
@@ -1302,6 +1324,9 @@ test.describe("startup and saved platforms", () => {
     expect(host.requests("/studio/connection/logout")[0].body).toEqual({
       revoke: true,
     });
+    // Signing out forgets what this computer kept for Acme's drafts, and only that.
+    await expect.poll(() => stored(acmeCanvas)).toBe(false);
+    expect(await stored(globexCanvas)).toBe(true);
     await expect(
       page.getByRole("button", { name: "Sign in to Acme" }),
     ).toBeVisible();
@@ -2300,7 +2325,7 @@ test("a platform call after the sign-in ended shows the calm expired notice", as
   );
   // The host could not renew the access token: the provider ended the session.
   await page.route(
-    (url) => url.pathname.endsWith("/runs"),
+    (url) => url.pathname.endsWith("/run-summaries"),
     (route) =>
       route.fulfill({
         status: 401,
@@ -2395,10 +2420,10 @@ test("after signing out, lists and Home ask to sign in instead of reporting an e
   );
   await expect(page.locator(".platform-banner")).toHaveCount(0);
   await expect(page.locator(".error-banner")).toHaveCount(0);
-  // A calm banner offers the sign-in; the filters wait for it.
-  await expect(page.getByLabel("Search by business key")).toBeDisabled();
+  // The page offers the sign-in; no filters wait on a list it can't read.
+  await expect(page.getByLabel("Business key", { exact: true })).toHaveCount(0);
   await page
-    .locator(".records-banner")
+    .locator("weave-runs-page")
     .getByRole("button", { name: "Sign in" })
     .click();
   await expect(heading(page)).toHaveText("Sign in to Acme");
@@ -2412,11 +2437,11 @@ test("a list shows only its own rows, labeled with the workspace's names", async
     /Signed in as jane@acme\.example/,
   );
   await page.route(
-    (url) => url.pathname.endsWith("/runs"),
+    (url) => url.pathname.endsWith("/run-summaries"),
     (route) =>
       route.fulfill({
         json: {
-          items: [{ id: "run-7", state: { status: "succeeded" } }],
+          items: [runSummary({ id: "run-7", state: { status: "succeeded" } })],
           next_cursor: null,
         },
       }),
@@ -2432,9 +2457,6 @@ test("a list shows only its own rows, labeled with the workspace's names", async
   );
   await page.getByRole("button", { name: "Runs", exact: true }).click();
   await expect(page.locator(".resource-row")).toContainText("run-7");
-  await expect(page.locator(".scope-label")).toHaveText(
-    "Acme · Payments / Production",
-  );
   // While Workflows loads, the run rows are gone, not shown under its heading.
   await page.getByRole("button", { name: "Workflows", exact: true }).click();
   await expect(page.getByText("Loading workflows…")).toBeVisible();
@@ -2443,4 +2465,7 @@ test("a list shows only its own rows, labeled with the workspace's names", async
   await expect(
     page.getByRole("heading", { name: "No workflows yet" }),
   ).toBeVisible();
+  await expect(page.locator(".scope-label")).toHaveText(
+    "Acme · Payments / Production",
+  );
 });

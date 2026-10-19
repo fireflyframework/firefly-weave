@@ -39,9 +39,11 @@ import {
   connected,
   newWorkflow,
   offline,
+  runSummaries,
   workerAction,
   type CatalogEntry,
 } from "./support";
+import type { OperationsSummary } from "../../src/app/operate/overview/overview-model";
 import {
   HostOptions,
   PlatformHost,
@@ -69,7 +71,13 @@ import {
   readiness,
   sheet,
 } from "./ai-models-po";
-import { CanvasPage, openWorkflow, useNewEditor } from "./canvas-po";
+import {
+  CanvasPage,
+  openStoredWorkflow,
+  openWorkflow,
+  useNewEditor,
+} from "./canvas-po";
+import { AddStepPanel } from "./add-step-po";
 import {
   debugSession,
   later,
@@ -121,7 +129,7 @@ const versionId = "11111111-1111-4111-8111-111111111111";
 
 /** Floating surfaces that cover the page on purpose while they are open. */
 const overlays =
-  '[aria-modal="true"], .modal-backdrop, [role="dialog"], [role="menu"], [role="listbox"], .platform-menu, .inspector, .record-detail, .palette.popover-visible, .sim-panel, .toast, .canvas-v2 f-minimap, .canvas-v2 .selection-toolbar, .canvas-v2 .tile-toolbar';
+  '[aria-modal="true"], .modal-backdrop, [role="dialog"], [role="menu"], [role="listbox"], .platform-menu, .inspector, .record-detail, .palette.popover-visible, .sim-panel, .toast, .canvas-v2 f-minimap, .canvas-v2 .selection-toolbar, .canvas-v2 .tile-toolbar, .add-step-panel';
 
 test.describe.configure({ mode: "parallel" });
 test.afterAll(() => stopLocalAuthoring());
@@ -1051,6 +1059,61 @@ async function runRoutes(page: Page) {
   await page.route("**/environments/*/runs?*", (r) =>
     r.fulfill({ json: { items: runs, next_cursor: null } }),
   );
+  // Operate › Runs lists run summaries; the open run reads its step facts.
+  await runSummaries(
+    page,
+    runs.map((run) => ({
+      ...run,
+      workflow_name: "expense-review",
+      started_at: new Date(Date.now() - 45 * 60_000).toISOString(),
+    })),
+  );
+  const at = (seconds: number) =>
+    new Date(Date.now() - 45 * 60_000 + seconds * 1000).toISOString();
+  await page.route("**/runs/*/steps?*", (r) =>
+    r.fulfill({
+      json: {
+        items: [
+          {
+            node_id: "check",
+            instance_key: "",
+            iteration: [],
+            kind: "transform",
+            status: "succeeded",
+            scheduled_at: at(0),
+            started_at: at(1),
+            ended_at: at(2),
+            duration_ms: 1000,
+            queue_wait_ms: 1000,
+            attempts: 1,
+            worker_id: null,
+            error_code: null,
+            child_run_id: null,
+            log_entries: 0,
+          },
+          {
+            node_id: "review",
+            instance_key: "",
+            iteration: [],
+            kind: "humanTask",
+            status: "waiting",
+            scheduled_at: at(2),
+            started_at: at(2),
+            ended_at: null,
+            duration_ms: null,
+            queue_wait_ms: 0,
+            attempts: 1,
+            worker_id: null,
+            error_code: null,
+            child_run_id: null,
+            log_entries: 0,
+          },
+        ],
+        next_cursor: null,
+        complete: true,
+      },
+    }),
+  );
   for (const run of runs) {
     await page.route(`**/environments/*/runs/${run.id}`, (r) =>
       r.fulfill({ json: run }),
@@ -1411,6 +1474,86 @@ async function apiAuthoring(page: Page) {
   await offline(page);
 }
 
+/** An empty workflow and two steps, kept on this computer, for the Add a step and notes scenes. */
+const tourEmpty = `apiVersion: weave/v1alpha1
+kind: Workflow
+metadata: {name: tour-empty, version: 1.0.0}
+spec:
+  inputSchema: {type: object}
+  outputSchema: {type: object}
+  steps: []
+  output: {literal: {}}
+`;
+const tourSteps = `apiVersion: weave/v1alpha1
+kind: Workflow
+metadata: {name: tour-steps, version: 1.0.0}
+spec:
+  inputSchema: {type: object}
+  outputSchema: {type: object}
+  steps:
+    - {id: check, kind: transform, value: {literal: {}}}
+    - {id: record, kind: transform, value: {literal: {}}}
+  output: {literal: {}}
+`;
+const tourNote = (
+  n: number,
+  color: string,
+  text: string,
+  at: { x: number; y: number },
+  anchor?: { stepId: string; dx: number; dy: number },
+) => ({
+  id: `note-0000000${n}`,
+  text,
+  color,
+  ...at,
+  width: 240,
+  height: 120,
+  ...(anchor ? { anchor } : {}),
+});
+/** Six notes, one per color, clear of the steps; the first follows check. */
+const tourNotes = {
+  schemaVersion: 2,
+  kind: "weave.studio/canvas",
+  notes: [
+    tourNote(
+      1,
+      "yellow",
+      "## Reviewed with **ops**\nCheck the totals before record runs.",
+      { x: 344, y: 264 },
+      {
+        stepId: "check",
+        dx: 0,
+        dy: 168,
+      },
+    ),
+    tourNote(
+      2,
+      "blue",
+      "Ask finance about [the limits](https://weave.example/limits).",
+      { x: 96, y: 420 },
+    ),
+    tourNote(3, "green", "- First item\n- Second item with `code`", {
+      x: 352,
+      y: 420,
+    }),
+    tourNote(4, "pink", "_Waiting_ on the vendor", { x: 608, y: 420 }),
+    tourNote(5, "purple", "```\nretry: 3\n```", { x: 96, y: 570 }),
+    tourNote(6, "gray", `https://weave.example/${"a".repeat(80)}`, {
+      x: 352,
+      y: 570,
+    }),
+  ],
+};
+/** Opens two stored steps and Add a step after the last one. */
+async function tourPanel(page: Page, id: string) {
+  await useNewEditor(page);
+  const canvas = await openStoredWorkflow(page, { id, source: tourSteps });
+  await canvas.insertTarget("Add a step after record").click();
+  const panel = new AddStepPanel(page);
+  await expect(panel.title).toHaveText("What happens next?");
+  return panel;
+}
+
 type Scene = (tour: Tour) => Promise<void>;
 const scenes: Record<string, Scene> = {
   async lumi({ page, shot }) {
@@ -1702,6 +1845,88 @@ ${paths}
     await canvas.tileBody("lookup").dblclick();
     await expect(details.dialogFor("lookup")).toBeVisible();
     await shot("103-canvas-step-details", { tabs: 2 });
+  },
+  // Add a step on an empty workflow: the triggers first, the search focused.
+  async "add-step-triggers"({ page, shot }) {
+    await useNewEditor(page);
+    const canvas = await openStoredWorkflow(page, {
+      id: "tour-empty",
+      source: tourEmpty,
+    });
+    await canvas.insertTarget("Add first step").click();
+    const panel = new AddStepPanel(page);
+    await expect(panel.title).toHaveText("What triggers this workflow?");
+    await expect(panel.search).toBeFocused();
+    await shot("130-add-step-triggers", { tabs: 0 });
+  },
+  async "add-step-next"({ page, shot }) {
+    const panel = await tourPanel(page, "tour-next");
+    await expect(panel.option("Add another trigger")).toBeVisible();
+    await shot("131-add-step-next", { tabs: 0 });
+  },
+  async "add-step-search"({ page, shot }) {
+    const panel = await tourPanel(page, "tour-search");
+    await panel.search.fill("mail");
+    await expect(panel.option("Send email")).toBeVisible();
+    await shot("132-add-step-search", { tabs: 0 });
+    await panel.search.fill("zzzz");
+    await expect(panel.list).toContainText("Make a custom API call");
+    await shot("133-add-step-no-match", { tabs: 0 });
+  },
+  async "add-step-app"({ page, shot }) {
+    const panel = await tourPanel(page, "tour-app");
+    await panel.option("Action in an app").click();
+    await panel.option("Email").click();
+    await expect
+      .poll(() => panel.headings())
+      .toEqual(["Actions (2)", "Triggers (1)"]);
+    await shot("134-add-step-app", { tabs: 0 });
+  },
+  async "canvas-notes"({ page, shot }) {
+    await useNewEditor(page);
+    const canvas = await openStoredWorkflow(page, {
+      id: "tour-notes",
+      source: tourSteps,
+      canvas: tourNotes,
+    });
+    await expect(canvas.root.locator(".sticky-note")).toHaveCount(6);
+    await shot("135-canvas-notes", { tabs: 0 });
+    await canvas.root
+      .getByRole("group", { name: "Note: Reviewed with ops" })
+      .dblclick();
+    await expect(
+      canvas.root.getByRole("textbox", { name: "Note text" }),
+    ).toBeFocused();
+    await shot("136-canvas-note-editing", { tabs: 0 });
+  },
+  async "canvas-triggers-copy"({ page, size, shot }) {
+    await useNewEditor(page);
+    const canvas = await openStoredWorkflow(page, {
+      id: "tour-triggers",
+      source: tourSteps,
+      canvas: {
+        schemaVersion: 2,
+        kind: "weave.studio/canvas",
+        triggers: [
+          { id: "trigger-0000000a", kind: "webhook" },
+          { id: "trigger-0000000b", kind: "schedule" },
+        ],
+      },
+    });
+    await canvas.tileBody("check").click();
+    await canvas.tileBody("record").click({ modifiers: ["Shift"] });
+    // Below 480 px, Copy and Duplicate are under the toolbar's More.
+    await expect(
+      canvas.root
+        .getByRole("toolbar", { name: "Selected steps" })
+        .getByRole("button", {
+          name:
+            size.width < 480 ? "More commands for the selected steps" : "Copy",
+          exact: true,
+        }),
+    ).toBeVisible();
+    await expect(canvas.root.locator("[data-trigger]")).toHaveCount(2);
+    await shot("137-canvas-triggers-copy", { tabs: 0 });
   },
   async pairing({ page, shot }) {
     await page.route("**/studio/session", (r) =>
@@ -3039,6 +3264,9 @@ spec:
       "Workflow expense-review 1.0.0",
     );
     await expect(
+      page.getByRole("list", { name: "Step timeline" }).locator(".step-row"),
+    ).toHaveCount(2);
+    await expect(
       page.getByRole("button", { name: "Cancel run", exact: true }),
     ).toBeVisible();
     await shot("81-runs-detail", { end: ".record-detail, .page-content" });
@@ -3047,6 +3275,152 @@ spec:
       page.getByRole("dialog", { name: "Cancel this run?" }),
     ).toBeVisible();
     await shot("94-runs-cancel");
+  },
+
+  async overview({ page, shot }) {
+    await connected(page, {
+      capabilities: [
+        ...allCapabilities,
+        "status.read",
+        "incident.read",
+        "deployment.read",
+        "deployment.approve",
+      ],
+    });
+    const now = Date.now();
+    const ago = (seconds: number) =>
+      new Date(now - seconds * 1000).toISOString();
+    const id = (n: number) =>
+      `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+    const loop = (seconds: number) => ({
+      state: "ok" as const,
+      last_started_at: ago(seconds),
+      last_ok_at: ago(seconds),
+      consecutive_failures: 0,
+      recent_failures: 0,
+    });
+    const summary: OperationsSummary = {
+      observed_at: ago(0),
+      api: {
+        version: "0.1.0a15",
+        build: null,
+        instance: id(1),
+        uptime_seconds: 26_400,
+        compatibility: { mode: "ready", findings: 0 },
+      },
+      health: [
+        { component: "database", state: "ok", latency_ms: 3.8 },
+        { component: "recovery_loop", ...loop(2) },
+        { component: "schedules", ...loop(2) },
+        {
+          component: "outbox_loop",
+          state: "degraded",
+          last_started_at: ago(1),
+          last_ok_at: ago(75),
+          consecutive_failures: 4,
+          recent_failures: 4,
+        },
+        { component: "provider_loop", ...loop(1) },
+        {
+          component: "kafka_loop",
+          state: "disabled",
+          consecutive_failures: 0,
+          recent_failures: 0,
+        },
+        { component: "operations_loop", ...loop(20) },
+        {
+          component: "alert_evaluator",
+          state: "disabled",
+          consecutive_failures: 0,
+          recent_failures: 0,
+        },
+        { component: "native_executors", state: "ok" },
+        { component: "telemetry", state: "ok" },
+      ],
+      load: {
+        runs_active: 1_204,
+        tasks_ready: 14,
+        tasks_leased: 9,
+        oldest_ready_seconds: 41,
+        waits_active: 37,
+        waits_overdue: 2,
+        oldest_overdue_seconds: 95,
+        outbox_pending: 6,
+        outbox_oldest_seconds: 12,
+        provider_pending: 0,
+        sources_enabled: 4,
+      },
+      workers: {
+        online: 3,
+        offline: 1,
+        draining: 1,
+        capacity: 12,
+        active_leases: 9,
+      },
+      targets: {
+        total: 2,
+        runner_online: 1,
+        busy: 1,
+        reconciliation_required: 1,
+        awaiting_approval: 1,
+      },
+      incidents: { active: 2, opened_24h: 5 },
+      attention: [
+        {
+          kind: "job",
+          id: id(2),
+          title: "Deployment job on payments-cluster needs reconciliation",
+        },
+        {
+          kind: "approval",
+          id: id(3),
+          title: "Approve the plan to update on payments-cluster",
+          expires_at: new Date(now + 9 * 60_000).toISOString(),
+        },
+        {
+          kind: "worker",
+          id: id(4),
+          title: "Offline worker still holds 2 active leases",
+        },
+        {
+          kind: "incident",
+          id: id(5),
+          title: "Active incident in expense-review",
+        },
+        { kind: "run", id: id(6), title: "A run of expense-review failed" },
+      ],
+    };
+    await page.route(`${environment}/operations/summary`, (r) =>
+      r.fulfill({ json: summary }),
+    );
+    await open(page, "Overview");
+    await expect(page.locator("li.health-tile")).toHaveCount(6);
+    await shot("77-overview", { end: ".page-content" });
+    await page
+      .getByRole("button", { name: "Outbox details", exact: true })
+      .click();
+    await expect(
+      page.getByRole("dialog", { name: "Outbox details" }),
+    ).toBeVisible();
+    await shot("78-overview-details");
+    await page.keyboard.press("Escape");
+    // Sections the person may not read, and one the platform could not compute.
+    await page.unroute(`${environment}/operations/summary`);
+    await page.route(`${environment}/operations/summary`, (r) =>
+      r.fulfill({
+        json: {
+          ...summary,
+          targets: { state: "forbidden" },
+          incidents: { state: "forbidden" },
+          load: { state: "unavailable" },
+        },
+      }),
+    );
+    await page.getByRole("button", { name: "Refresh", exact: true }).click();
+    await expect(
+      page.getByText("This section could not be loaded.", { exact: true }),
+    ).toBeVisible();
+    await shot("79-overview-sections", { end: ".page-content" });
   },
 
   async "canvas-v2-empty"({ page, shot, size }) {
@@ -3302,6 +3676,24 @@ spec:
         observed_at: seen(0),
         active_leases: 3,
         available_capacity: 1,
+        registered_at: seen(-86_400),
+        identity: {
+          host: "billing-workers-7f9c4d8b6-x2p4q",
+          runtime: "container",
+          sdk_version: "0.1.0a15",
+          language_version: "3.12.4",
+          os: "Linux",
+          arch: "x86_64",
+          platform_hint: "kubernetes",
+          namespace: "weave",
+          node: "node-a",
+        },
+        placement: {
+          target_id: "55555555-5555-4555-8555-555555555555",
+          target_name: "eu-west",
+          deployment_id: "66666666-6666-4666-8666-666666666666",
+          component: "billing-workers",
+        },
       },
       {
         id: "7c9e6679-7425-40de-944b-e07fc1f90ae8",
@@ -3332,6 +3724,69 @@ spec:
     await page.locator(".resource-row").first().click();
     await expect(page.locator(".record-detail")).toContainText("crm-lookup");
     await shot("87-workers-detail");
+  },
+
+  // Workers › Releases: the admitted releases, the CLI command that admits
+  // one, and a release's workers and the deployments that run it.
+  async "workers-releases"({ page, shot }) {
+    await connected(page, {
+      capabilities: [...allCapabilities, "status.read", "catalog.read"],
+    });
+    const release = (id: string, digit: string, types: string[]) => ({
+      id,
+      image_digest: "sha256:" + digit.repeat(64),
+      capabilities: types.map((type) => {
+        const [taskType, taskVersion] = type.split("@");
+        return { taskType, taskVersion };
+      }),
+      credential_capabilities: [],
+    });
+    const releases = [
+      release("11111111-1111-4111-8111-111111111111", "3f", [
+        "crm-lookup@1.0.0",
+        "weave-connector-http-read@2.0.0",
+      ]),
+      release("11111111-1111-4111-8111-111111111112", "9c", [
+        "email-send@1.0.0",
+      ]),
+    ];
+    await page.route(`${environment}/worker-releases?*`, (r) =>
+      r.fulfill({ json: { items: releases, next_cursor: null } }),
+    );
+    await page.route(`${environment}/worker-releases/${releases[0].id}`, (r) =>
+      r.fulfill({ json: releases[0] }),
+    );
+    await page.route(`${environment}/worker-releases/*/usage?*`, (r) =>
+      r.fulfill({
+        json: {
+          workers: { online: 3, offline: 1, draining: 1, revoked: 2 },
+          deployments: ["eu-west", "us-east"].map((target, i) => ({
+            target_id: `55555555-5555-4555-8555-55555555555${i}`,
+            target_name: target,
+            deployment_id: `66666666-6666-4666-8666-66666666666${i}`,
+            deployment_name: "billing",
+            component: "billing-workers",
+            replicas: 2,
+          })),
+          activations: 4,
+        },
+      }),
+    );
+    await open(page, "Workers");
+    await page.getByRole("tab", { name: "Releases" }).click();
+    await expect(
+      page.getByRole("table", { name: "Releases" }).locator(".resource-row"),
+    ).toHaveCount(2);
+    await shot("107-workers-releases");
+    await page
+      .getByRole("table", { name: "Releases" })
+      .locator(".row-open")
+      .first()
+      .click();
+    await expect(page.locator("weave-release-detail")).toContainText("Used by");
+    await shot("108-workers-release-detail", {
+      end: ".record-detail, .page-content",
+    });
   },
 
   // The editor's navigation: nothing chosen (full at 1440 px and wider, the
@@ -3381,6 +3836,11 @@ spec:
       status: "active",
       revision: 2,
       external_effects_may_continue: false,
+      instance_key: `${step}#${generation}`,
+      opened_at: new Date(Date.now() - 3_600_000).toISOString(),
+      ...(step === "notify-warehouse" ? { opened_at_estimated: true } : {}),
+      workflow: { name: "order-fulfillment", version: "2.4.0" },
+      run_status: "blocked",
     }));
     await page.route(`${environment}/incidents?*`, (r) =>
       r.fulfill({ json: { items: incidents, next_cursor: null } }),
