@@ -220,11 +220,15 @@ def identity_alias(run) -> Iterator[None]:
         if "keycloak" in container["Name"]
     ]
     run.require(run.docker("network", "disconnect", network, name))
-    run.require(run.docker("network", "connect", "--ip", address, "--alias", IDENTITY_ALIAS, network, name))
+    aliased = False
     try:
+        run.require(run.docker("network", "connect", "--ip", address, "--alias", IDENTITY_ALIAS, network, name))
+        aliased = True
         yield
     finally:
-        run.require(run.docker("network", "disconnect", network, name))
+        # Keycloak rejoins without the alias whatever happened, so later steps meet the same platform.
+        if aliased:
+            run.require(run.docker("network", "disconnect", network, name))
         run.require(run.docker("network", "connect", "--ip", address, network, name))
 
 

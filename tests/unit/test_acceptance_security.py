@@ -337,3 +337,31 @@ def test_each_destination_needs_records_of_its_own_rule_one_per_task_attempt():
     assert security.refusal_problems({"a": ["no-entry", "control-plane"], "b": ["always-refused"]}, expected) == [
         "a: refused by control-plane, expected no-entry"
     ]
+
+
+def test_keycloak_rejoins_the_egress_network_when_the_alias_cannot_be_added():
+    import json
+    import subprocess
+
+    calls = []
+
+    class Run:
+        def platform_state(self):
+            return {"private_origins": {"network": "net"}}
+
+        def docker(self, *args, **_):
+            calls.append(list(args))
+            stdout = ""
+            if args[:2] == ("network", "inspect"):
+                stdout = json.dumps([{"Containers": {"k": {"Name": "kc", "IPv4Address": "10.0.0.3/24"}}}])
+            return subprocess.CompletedProcess(args, 0, stdout=stdout, stderr="")
+
+        def require(self, result):
+            if "--alias" in result.args:
+                raise AssertionError("address in use")
+            return result
+
+    with pytest.raises(AssertionError, match="address in use"), security.identity_alias(Run()):
+        pass
+    assert calls[-1] == ["network", "connect", "--ip", "10.0.0.3", "net", "kc"]
+    assert ["network", "disconnect", "net", "kc"] in calls[:-1]
