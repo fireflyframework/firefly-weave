@@ -44,7 +44,7 @@
 "instance-keys" = true
 "loop-compiler" = true
 "loop-runtime" = true
-"loop-simulation" = false
+"loop-simulation" = true
 "workflow-call-compiler" = true
 "workflow-call-runtime" = true
 "workflow-call-simulation" = false
