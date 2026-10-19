@@ -19,7 +19,7 @@ import { createHash } from "node:crypto";
 // Pure helpers of the Studio journey harness: step outcomes, redaction, the
 // credential-store guard and the network rules. harness.ts does the I/O.
 
-export const REDACTED = "[redacted]";
+const REDACTED = "[redacted]";
 
 export interface StepState {
   applies: boolean;
@@ -203,7 +203,7 @@ export function accountsToDelete(
 }
 
 /** The login fields a sign-in's credential-store binding is derived from. */
-export interface Login {
+interface Login {
   provider_id: string;
   issuer: string;
   client_id: string;
@@ -275,7 +275,7 @@ export function storageKeyCheckOn(
 
 // scripts/acceptance_evidence.py ACCOUNT_KEY: <profileId>:<subjectHash>:<tenantId>:<projectId>:
 const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
-export const ACCOUNT_KEY = new RegExp(
+const ACCOUNT_KEY = new RegExp(
   `^p[0-9a-f]{16}:[0-9a-f]{16}:${UUID}:${UUID}:`,
   "i",
 );

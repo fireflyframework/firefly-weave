@@ -79,7 +79,7 @@ import type { SkippedCheck, StepRecord, StepState } from "./records";
 // Journeys import everything they use from this file (tests/acceptance-lint.ts).
 export { expect, openSidebar };
 
-export const runDir = process.env["WEAVE_ACC_RUN_DIR"]?.trim() ?? "";
+const runDir = process.env["WEAVE_ACC_RUN_DIR"]?.trim() ?? "";
 
 /**
  * Methods a journey's browser context may not use: request interception and
@@ -310,7 +310,7 @@ interface Enablement {
 
 let resolved: Enablement | null = null;
 /** What this run may record: RUN_DIR/enablement.json, written by the orchestrator. */
-export function enablement(): Enablement {
+function enablement(): Enablement {
   resolved ??= deepFreeze(
     JSON.parse(
       readFileSync(join(runDir, "enablement.json"), "utf8"),
@@ -320,7 +320,7 @@ export function enablement(): Enablement {
 }
 
 /** A person's private file: username, password, subject and grants. Never printed. */
-export function person(name: string): Person {
+function person(name: string): Person {
   return JSON.parse(
     readFileSync(join(runDir, "private", "people", `${name}.json`), "utf8"),
   ) as Person;
@@ -512,7 +512,7 @@ interface SignedIn {
   signedIn: boolean;
 }
 
-export class Journey {
+class Journey {
   // Private at run time too, so a journey can neither reset a failure nor
   // edit the running step's record.
   #failed = false;

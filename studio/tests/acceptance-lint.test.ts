@@ -18,9 +18,10 @@ SPDX-License-Identifier: Apache-2.0
 // The static no-mocks rule for the Studio journeys (tests/acceptance-lint.ts):
 // the committed journeys pass, and each bypass in the corpus below is either
 // caught or listed as one only the run-time guard can stop.
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import ts from "typescript";
 import { afterEach, describe, expect, it } from "vitest";
 import { analyzeJourneys, lintJourneys, lintTree } from "./acceptance-lint";
 
@@ -633,5 +634,67 @@ describe("the Playwright configuration", () => {
         root: folder,
       }).map((f) => f.rule),
     ).toContainEqual(expect.stringContaining(key));
+  });
+});
+
+describe("the harness's surface", () => {
+  it("exports only what a journey, a test or the harness itself imports", () => {
+    const names = (path: string): string[] => {
+      const file = ts.createSourceFile(
+        path,
+        readFileSync(join(STUDIO, path), "utf8"),
+        ts.ScriptTarget.ES2022,
+      );
+      const exported: string[] = [];
+      for (const statement of file.statements) {
+        const modifiers = ts.canHaveModifiers(statement)
+          ? ts.getModifiers(statement)
+          : undefined;
+        if (!modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword)) {
+          if (
+            ts.isExportDeclaration(statement) &&
+            statement.exportClause &&
+            ts.isNamedExports(statement.exportClause)
+          )
+            exported.push(
+              ...statement.exportClause.elements.map((e) => e.name.text),
+            );
+          continue;
+        }
+        if (ts.isVariableStatement(statement))
+          exported.push(
+            ...statement.declarationList.declarations.map((d) =>
+              d.name.getText(file),
+            ),
+          );
+        else if (
+          (ts.isFunctionDeclaration(statement) ||
+            ts.isClassDeclaration(statement) ||
+            ts.isInterfaceDeclaration(statement) ||
+            ts.isTypeAliasDeclaration(statement)) &&
+          statement.name
+        )
+          exported.push(statement.name.text);
+      }
+      return exported;
+    };
+    const importers = [
+      "tests/acceptance/harness.ts",
+      "tests/acceptance/build.spec.ts",
+      "tests/acceptance/brand.spec.ts",
+      "tests/acceptance/security.spec.ts",
+      "tests/browser/acceptance-guard.spec.ts",
+      "tests/acceptance-records.test.ts",
+    ].map((path) => readFileSync(join(STUDIO, path), "utf8"));
+    const unused = [
+      ...names("tests/acceptance/harness.ts"),
+      ...names("tests/acceptance/records.ts"),
+    ].filter(
+      (name) =>
+        !importers.some((text) =>
+          new RegExp(`import[^;]*\\b${name}\\b[^;]*from`, "s").test(text),
+        ),
+    );
+    expect(unused).toEqual([]);
   });
 });
