@@ -57,10 +57,16 @@ OPERATIONS_ALLOWED = frozenset(OPERATIONS) | frozenset(
         "retention",
         "compatibility",
         "loop",
+        "call.wait",
+        "call.detach",
+        "call.dispatch",
+        "call.delivery",
         "other",
     }
 )
-STATUSES = frozenset({"ok", "rejected", "failed", "cancelled", "blocked", "pending", "unknown", "unavailable", "other"})
+STATUSES = frozenset(
+    {"ok", "rejected", "failed", "cancelled", "timed_out", "blocked", "pending", "unknown", "unavailable", "other"}
+)
 ERRORS = frozenset(
     {
         "none",
@@ -91,6 +97,7 @@ COUNTERS = {
     "retention": "weave.retention",
     "loop_iteration": "weave.loop_iterations",
     "loop_yield": "weave.loop_yields",
+    "call": "weave.calls",
     "dropped": "weave.telemetry_dropped",
     "queue_unknown": "weave.queue_unknown",
 }
