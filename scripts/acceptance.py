@@ -598,7 +598,7 @@ def _scan_step(plan: Plan, hits: int, storage_error: str | None, seconds: float)
             problems = acceptance_evidence.storage_key_problems(folder, expected=studio_people(plan))
             error = "; ".join(problems) or None
     status = "failed" if error else "partial" if skipped else "passed"
-    entry: dict[str, Any] = {"id": SCAN_STEP, "status": status, "seconds": round(seconds, 1)}
+    entry: dict[str, Any] = {"id": SCAN_STEP, "status": status, "seconds": round(seconds, 1), "source": "scan"}
     if skipped:
         entry["skipped_checks"] = skipped
     if error:

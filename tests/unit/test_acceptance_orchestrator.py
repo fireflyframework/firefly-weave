@@ -275,6 +275,8 @@ def record_steps(plan, leave_out=()):
                 if ENABLEMENT.applies(check, "pr") and ENABLEMENT.missing(check)
             ]
             record = {"id": step, "status": "partial" if skipped else "passed", "seconds": 1.0}
+            if acceptance.acceptance_journeys.step_stage(step) == "scan":
+                record["source"] = "scan"
             lines.append({**record, "skipped_checks": skipped} if skipped else record)
     (plan.evidence / "steps.jsonl").write_text("".join(json.dumps(line) + "\n" for line in lines), encoding="utf-8")
 
@@ -508,6 +510,7 @@ def test_scan_counts_browser_storage_entries_and_finds_canaries_in_them(tmp_path
         "status": "failed",
         "seconds": scan_steps(plan)[-1]["seconds"],
         "error": "The canary scan found a secret in 1 file(s)",
+        "source": "scan",
     }
 
 

@@ -437,3 +437,34 @@ def test_a_record_whose_waiting_capabilities_differ_from_the_map_fails_its_step(
     assert steps[1]["status"] == "failed" and "J0.1" in steps[1]["error"]
     assert steps[3]["status"] == "failed" and "J0.3/operations" in steps[3]["error"]
     assert steps[4]["status"] == "partial"
+
+
+def j9(records):
+    (journey,) = [j for j in evidence.journey_results(ENABLEMENT, "pr", records) if j["id"] == "J9"]
+    return journey, {step["n"]: step for step in journey["steps"]}
+
+
+def test_a_step_recorded_twice_fails_whatever_the_last_record_says():
+    for records in (
+        # failed, then passed
+        [{"id": "J9.1", "status": "failed", "error": "x"}, {"id": "J9.1", "status": "passed"}],
+        # two passes: a step runs once
+        [{"id": "J9.1", "status": "passed"}, {"id": "J9.1", "status": "passed"}],
+        # a pytest record and a Studio record for one step
+        [{"id": "J9.2", "status": "failed", "error": "x"}, {"id": "J9.2", "status": "passed", "viewport": "1440x900"}],
+    ):
+        journey, steps = j9(records)
+        number = int(records[0]["id"].split(".")[1])
+        assert steps[number]["status"] == "failed" and "recorded 2 times" in steps[number]["error"], records
+        assert journey["status"] == "failed"
+
+
+def test_the_scan_step_counts_only_the_scan_record():
+    scan = {"id": "J9.4", "status": "failed", "error": "hit", "source": "scan"}
+    studio = {"id": "J9.4", "status": "passed", "viewport": "1440x900"}
+    _, steps = j9([scan, studio])
+    assert steps[4]["status"] == "failed"
+    _, steps = j9([studio])
+    assert steps[4]["status"] == "failed" and "only by the scan" in steps[4]["error"]
+    _, steps = j9([{"id": "J9.4", "status": "passed", "source": "scan"}])
+    assert steps[4]["status"] == "passed"

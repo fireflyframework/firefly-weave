@@ -31,6 +31,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from acceptance_journeys import step_stage
 from jsonschema import Draft202012Validator
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -108,10 +109,10 @@ def journey_results(enablement: Any, profile: str, records: Iterable[Mapping[str
     """One entry per journey and viewport of the profile: recorded steps, skipped steps with their missing
     capabilities, and enabled steps without a record as not_run (a harness gap fails the journey, and with it
     the run). A Studio record names its viewport; a record without one counts for every viewport."""
-    by_step: dict[tuple[str, str | None], Mapping[str, Any]] = {}
+    by_step: dict[tuple[str, str | None], list[Mapping[str, Any]]] = {}
     for item in records:
         viewport = item.get("viewport")
-        by_step[(str(item["id"]), None if viewport is None else str(viewport))] = item
+        by_step.setdefault((str(item["id"]), None if viewport is None else str(viewport)), []).append(item)
     results = []
     for journey in enablement.profiles[profile]:
         for viewport in enablement.viewports(profile, journey):
@@ -120,7 +121,9 @@ def journey_results(enablement: Any, profile: str, records: Iterable[Mapping[str
                 if not enablement.applies(step_id, profile):
                     continue
                 number = int(step_id.split(".")[1])
-                record = by_step.get((step_id, viewport)) or by_step.get((step_id, None))
+                record = _one_record(
+                    step_id, [*by_step.get((step_id, viewport), []), *by_step.get((step_id, None), [])]
+                )
                 missing = enablement.missing(step_id)
                 if record is not None:
                     keys = ("status", "seconds", "missing", "skipped_checks", "error", "screenshot")
@@ -145,6 +148,20 @@ def journey_results(enablement: Any, profile: str, records: Iterable[Mapping[str
                 }
             )
     return results
+
+
+def _one_record(step_id: str, found: list[Mapping[str, Any]]) -> Mapping[str, Any] | None:
+    """The step's record for one viewport. A step runs once: two records (a retry, a second test, a pytest and a
+    Studio record) fail it, so a later pass can never hide a failure. The scan's step counts only the scan's
+    record."""
+    if step_stage(step_id) == "scan":
+        foreign = [item for item in found if item.get("source") != "scan"]
+        if foreign:
+            return {"status": "failed", "error": f"{step_id} is recorded only by the scan; a test recorded it too"}
+    if len(found) > 1:
+        statuses = ", ".join(str(item.get("status")) for item in found)
+        return {"status": "failed", "error": f"{step_id} was recorded {len(found)} times ({statuses})"}
+    return found[0] if found else None
 
 
 def _drift(enablement: Any, step_id: str, record: Mapping[str, Any]) -> str | None:
