@@ -50,8 +50,22 @@ body = {}
 [operations."bindable_connections.list"]
 capability = "connection.bind"
 
+[operations."incidents.read"]
+capability = "incident.read"
+identifier = "random"
+
 [operations."language.read"]
 capability = "catalog.read"
+
+[operations."operations_summary.read"]
+capability = "status.read"
+
+[operations."operations_telemetry.read"]
+capability = "status.read"
+
+[operations."releases.usage"]
+capability = "catalog.read"
+identifier = "random"
 
 [operations."run_summaries.list"]
 capability = "run.read"
@@ -63,6 +77,11 @@ identifier = "random"
 [operations."runs.steps"]
 capability = "run.read"
 identifier = "random"
+
+# A permitted call is a dry run, so no worker is retired.
+[operations."workers.retire_stale"]
+capability = "release.retire"
+body = { older_than_seconds = 2592000, dry_run = true }
 
 # A permitted publish fails compilation (no spec), so nothing is published.
 [controls."definitions.publish"]
