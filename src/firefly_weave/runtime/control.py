@@ -76,13 +76,18 @@ def bindings(state: RunState, node: Node, key: str) -> JsonObject:
     return {**branch.visible, **branch.steps}
 
 
+def enclosing_loops(nodes: Mapping[str, Node], node: Node) -> list[ForEachNode]:
+    """The loops whose bodies hold ``node``, outermost first."""
+    return [loop for owner in node.scope[::2] if isinstance(loop := nodes[owner], ForEachNode)]
+
+
 def loop_scope(nodes: Mapping[str, Node], state: RunState, node: Node, key: str) -> JsonObject:
     """The loop roots instance ``key`` of ``node`` reads; empty outside loop bodies.
 
     ``item`` and ``index`` belong to the innermost enclosing loop, and ``loops`` holds ``{item, index}`` for every
     enclosing loop by its step ID. Each loop is read from its instance in ``state``.
     """
-    owners = [owner for owner in node.scope[::2] if isinstance(nodes[owner], ForEachNode)]
+    owners = [loop.id for loop in enclosing_loops(nodes, node)]
     if not owners:
         return {}
     indexes = split_instance(key).indexes

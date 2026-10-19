@@ -17,14 +17,14 @@
 """Bounded mock facts around the shared resumable reducer; no server dependencies."""
 
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from typing import cast
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from firefly_weave.compiler.api import CompiledArtifact, import_artifact
 from firefly_weave.compiler.canonical import canonical_bytes
-from firefly_weave.compiler.ir import ActionNode, ForEachNode, HumanTaskNode, IRNode, SignalNode, WorkflowIR
+from firefly_weave.compiler.ir import ActionNode, HumanTaskNode, IRNode, SignalNode, WorkflowIR
 from firefly_weave.contracts.definitions import ActionDefinition, load_definition
 from firefly_weave.contracts.diagnostics import Diagnostic
 from firefly_weave.contracts.instance_keys import InvalidInstanceKey, node_of, split_instance
@@ -41,7 +41,7 @@ from firefly_weave.operations.debug.models import (
     SignalReceipt,
 )
 from firefly_weave.runtime.capacity import ADMISSION_OUTPUT_BYTES, ADMISSION_REDUCTIONS, TRANSITION_BYTES, logical_size
-from firefly_weave.runtime.control import loop_scope
+from firefly_weave.runtime.control import enclosing_loops, loop_scope
 from firefly_weave.runtime.kernel import (
     _advance_owned,
     begin,
@@ -56,11 +56,6 @@ from firefly_weave.runtime.models import Deadline, RunState, RuntimeEvent, TaskI
 _DEFAULT_LIMITS = DebugLimits()
 
 TERMINAL = {"succeeded", "failed", "cancelled", "timed_out"}
-
-
-def enclosing_loops(nodes: Mapping[str, IRNode], node: IRNode) -> list[ForEachNode]:
-    """The loops whose bodies hold ``node``, outermost first."""
-    return [loop for owner in node.scope[::2] if isinstance(loop := nodes[owner], ForEachNode)]
 
 
 def first_instance(ir: WorkflowIR, step_id: str) -> str:

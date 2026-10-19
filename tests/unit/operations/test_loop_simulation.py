@@ -123,6 +123,36 @@ def test_instance_mock_keys_must_name_an_iteration_of_an_action_step(worker_runt
         Simulator(artifact, mocks={key: 1}, input=[1], now=NOW)
 
 
+def nested_sends(catalog):
+    """Rows of cells whose inner body runs the action step `send`: two loops enclose `send`."""
+    send = {"id": "send", "kind": "action", "uses": "echo-action@2.0.0", "with": {"ref": "/item"}}
+    cells = {
+        "id": "cells",
+        "kind": "forEach",
+        "items": {"ref": "/item"},
+        "maxItems": 5,
+        "body": {"steps": [send], "output": {"ref": "/steps/send/output"}},
+    }
+    rows = {
+        "id": "rows",
+        "kind": "forEach",
+        "items": {"ref": "/input"},
+        "maxItems": 5,
+        "body": {"steps": [cells], "output": {"ref": "/steps/cells/output"}},
+    }
+    schema = {"type": "array", "items": {"type": "array", "items": {"type": "integer"}}}
+    return compiled([rows], {"ref": "/steps/rows/output"}, catalog, input_schema=schema)
+
+
+@pytest.mark.parametrize("key", ["node:send[1]", "node:send[0]", "node:send[1][0][0]"])
+def test_instance_mock_keys_give_one_position_for_every_enclosing_loop(worker_runtime_fixture, key):
+    artifact = nested_sends(worker_runtime_fixture["catalog"])
+    with pytest.raises(DebugError, match="WV-DEBUG-MOCK-KEY"):
+        Simulator(artifact, mocks={key: 1, "node:send": 7}, input=[[1]], now=NOW)
+    simulator = Simulator(artifact, mocks={"node:send[1][0]": 70, "node:send": 7}, input=[[1, 2], [3]], now=NOW)
+    assert simulator.continue_until_breakpoint().variables["output"] == [[7, 7], [70]]
+
+
 def test_an_instance_mock_is_checked_against_the_action_output_and_restored(worker_runtime_fixture):
     artifact = sends(worker_runtime_fixture["catalog"])
     with pytest.raises(DebugError, match="WV-DEBUG-MOCK-OUTPUT"):
@@ -178,6 +208,15 @@ def test_breakpoints_name_a_step_or_one_of_its_iterations(worker_runtime_fixture
     with pytest.raises(DebugError, match="WV-DEBUG-BREAKPOINT"):
         simulator.set_breakpoints({key})
     assert simulator.inspect().status == "queued"
+
+
+@pytest.mark.parametrize("key", ["double[1]", "double[0]", "cells[0][0]", "double[0][0][0]"])
+def test_breakpoints_give_one_position_for_every_enclosing_loop(key):
+    simulator = Simulator(grid(), mocks={}, input=[[1, 2], [3]], now=NOW)
+    with pytest.raises(DebugError, match="WV-DEBUG-BREAKPOINT"):
+        simulator.set_breakpoints({key})
+    simulator.set_breakpoints({"double[1][0]", "cells[1]"})
+    assert simulator.continue_until_breakpoint().selected_node == "cells[1]"
 
 
 def test_breakpoints_accept_synthetic_steps_and_their_iterations(worker_runtime_fixture):
@@ -249,6 +288,24 @@ def test_nested_loops_show_each_instance_in_document_order_and_every_enclosing_i
     ]
     assert Simulator.restore(simulator.serialize()).inspect() == paused
     assert simulator.continue_until_breakpoint().variables["output"] == [["1", "2"], ["3"]]
+
+
+def test_loops_are_listed_in_definition_order_with_step_positions_compared_as_numbers():
+    # Eleven top-level steps: loops at positions 2 and 10, so "steps/10" sorts before "steps/2" as text.
+    def loop(step_id):
+        pick = {"id": f"{step_id}-pick", "kind": "transform", "value": {"ref": "/item"}}
+        body = {"steps": [pick], "output": {"ref": f"/steps/{step_id}-pick/output"}}
+        return {"id": step_id, "kind": "forEach", "items": {"ref": "/input"}, "body": body}
+
+    steps = [{"id": f"t{position}", "kind": "transform", "value": {"literal": position}} for position in range(11)]
+    steps[2] = loop("zeta")
+    steps[10] = loop("alpha")
+    last = {"id": "last", "kind": "transform", "value": {"ref": "/steps/alpha/output"}}
+    simulator = Simulator(compiled([*steps, last], {"ref": "/steps/last/output"}), mocks={}, input=[1], now=NOW)
+    simulator.set_breakpoints({"last"})
+    paused = simulator.continue_until_breakpoint()
+    assert paused.selected_node == "last"
+    assert [view.node_id for view in paused.loops] == ["zeta", "alpha"]
 
 
 def test_views_of_workflows_without_loops_keep_their_shape(worker_runtime_fixture):
