@@ -64,6 +64,7 @@ import {
   errorLine,
   networkProblems,
   platformBinding,
+  shotName,
   stepRefusal,
   redact,
   secretsOf,
@@ -614,7 +615,7 @@ export class Journey {
   /** A step screenshot in evidence/screens/<journey>/<viewport>/<nn>-<slug>.png. */
   async shot(page: Page, slug: string): Promise<void> {
     this.#shots += 1;
-    const file = `${String(this.#shots).padStart(2, "0")}-${slug}.png`;
+    const file = shotName(this.#shots, slug);
     const folder = join(runDir, "evidence", "screens", this.id, this.viewport);
     mkdirSync(folder, { recursive: true });
     await page.screenshot({ path: join(folder, file) });

@@ -18,6 +18,7 @@ SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from "vitest";
 import {
   accountsToDelete,
+  shotName,
   stepRefusal,
   loginBinding,
   platformBinding,
@@ -371,6 +372,16 @@ describe("what a journey may record", () => {
     expect(stepRefusal("J9.2", "J8", steps, stages)).toBe(
       "J9.2 is not a step of J8",
     );
+  });
+});
+
+describe("step screenshots", () => {
+  it("stay inside the journey's folder", () => {
+    expect(shotName(3, "builder-can-publish")).toBe(
+      "03-builder-can-publish.png",
+    );
+    for (const slug of ["../../../x", "a/b", "", "UPPER", "a b"])
+      expect(() => shotName(1, slug)).toThrow(/slug/);
   });
 });
 

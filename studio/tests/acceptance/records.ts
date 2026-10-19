@@ -328,6 +328,13 @@ export function stepRefusal(
   return "";
 }
 
+/** A step screenshot's file name: `<nn>-<slug>.png`, with a slug of lower-case letters, digits and dashes only. */
+export function shotName(ordinal: number, slug: string): string {
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug))
+    throw Error(`A screenshot slug uses a-z, 0-9 and dashes, not "${slug}"`);
+  return `${String(ordinal).padStart(2, "0")}-${slug}.png`;
+}
+
 /** Why a dump is not the person's Studio storage, or "" when it is. */
 export function dumpOriginProblem(origin: string, host: string): string {
   if (!host) return "storage was read before the Studio host started";
