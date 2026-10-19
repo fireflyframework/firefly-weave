@@ -18,7 +18,8 @@
 
 J9.1 sends every operation added since 0.1.0a14 (and the operations behind Studio controls) as the
 owner, builder, approver, operator and viewer: exactly 403 WV-FORBIDDEN where the person's roles
-lack the capability, never 403 or a server error elsewhere; then a revoked person loses access.
+lack the capability, and elsewhere the operation's own answer, never an authentication or authorization
+refusal or a server error; then a revoked person loses access, in the open session and after signing in again.
 J9.3 shows the private-origin policy on connections: the approved Acme origin works over plain HTTP
 with its key, and the identity provider, the Acme service by address and a metadata address are
 refused before any request reaches them. Runs only through scripts/acceptance.py (the run stage).
@@ -71,11 +72,28 @@ async def probe(client: Any, row: Any, materialize: Any) -> tuple[int, str]:
     return 200, "ok"
 
 
+# A permitted call passes authorization and is answered by the operation: success, or, for a row that names a new
+# random ID, the operation's own "not found", conflict or validation answer. A row that names nothing random may
+# also meet the object an earlier person's identical call created (409).
+NAMED_NOTHING = frozenset({404, 409, 422})
+ALREADY_DONE = frozenset({409})
+
+
 def wrong(outcome: dict[str, Any]) -> bool:
-    answer = (outcome["status"], outcome["code"])
-    if outcome["permitted"]:
-        return answer == FORBIDDEN or outcome["status"] >= 500
-    return answer != FORBIDDEN
+    """True when the answer breaks the matrix: a denied call that is not exactly 403 WV-FORBIDDEN, or a permitted
+    call refused by authentication, authorization, rate limits, a malformed probe or a server error."""
+    status, code = outcome["status"], outcome["code"]
+    if not outcome["permitted"]:
+        return (status, code) != FORBIDDEN
+    if 200 <= status < 300:
+        return False
+    allowed = NAMED_NOTHING if outcome["random"] else ALREADY_DONE
+    return status not in allowed or not str(code).startswith("WV-")
+
+
+def names_random(row: Any) -> bool:
+    """The row's request names a new random ID (its path identifier, body or query)."""
+    return row.identifier or "random" in json.dumps([row.body, dict(row.query)])
 
 
 @pytest.mark.journey_step("J9.1")
@@ -95,7 +113,14 @@ async def test_j9_01_every_new_operation_answers_by_role_and_revocation_takes_ef
                 status, code = await probe(client, row, materialize)
                 permitted = matrix.holds(roles, row.capability, ROLE_CAPABILITIES)
                 outcomes.append(
-                    {"person": name, "operation": row.operation, "permitted": permitted, "status": status, "code": code}
+                    {
+                        "person": name,
+                        "operation": row.operation,
+                        "permitted": permitted,
+                        "random": names_random(row),
+                        "status": status,
+                        "code": code,
+                    }
                 )
     (run.evidence / "authorization-j9.json").write_text(
         json.dumps(outcomes, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -132,9 +157,14 @@ async def _revocation_takes_effect(run) -> None:
                 await person.invoke("run_summaries.list")
             except WeaveError as error:
                 assert (error.status, error.code) == FORBIDDEN
-                return
+                break
             assert time.monotonic() < deadline, "a revoked person still reads runs after 30 seconds"
             await asyncio.sleep(1)
+    # Signing in again does not bring the grant back.
+    async with run.client(REVOKED) as fresh:
+        with pytest.raises(WeaveError) as refused:
+            await fresh.invoke("run_summaries.list")
+    assert (refused.value.status, refused.value.code) == FORBIDDEN
 
 
 def egress_address(run, fragment: str) -> str:
