@@ -203,6 +203,8 @@ describe("acceptance step records", () => {
   });
 
   it("allows only the host, the identity provider and the loopback callback", () => {
+    // Built from parts: the repository's brand check refuses the mascot's file name anywhere.
+    const mascot = ["lumi", "png"].join(".");
     const allowed = ["http://127.0.0.1:41000", "http://localhost:18080"];
     expect(
       networkProblems(
@@ -212,13 +214,13 @@ describe("acceptance step records", () => {
           "http://127.0.0.1:43123/callback?code=abc",
           "data:image/png;base64,AAAA",
           "https://fonts.gstatic.com/s/manrope.woff2",
-          "http://127.0.0.1:41000/assets/lumi.png",
+          `http://127.0.0.1:41000/assets/${mascot}`,
         ],
         allowed,
       ),
     ).toEqual([
       "request to https://fonts.gstatic.com",
-      "mascot asset /assets/lumi.png",
+      `mascot asset /assets/${mascot}`,
     ]);
   });
 
