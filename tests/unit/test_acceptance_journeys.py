@@ -134,6 +134,7 @@ def test_the_committed_map_is_valid():
         "instance-keys",
         "loop-compiler",
         "loop-runtime",
+        "loop-simulation",
         "workflow-call-compiler",
         "ai-gateway",
         "ai-models-screen",
