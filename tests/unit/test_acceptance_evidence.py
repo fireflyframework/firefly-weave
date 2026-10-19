@@ -290,3 +290,41 @@ def test_a_missing_storage_dump_fails_the_count_for_each_person(tmp_path):
         evidence.storage_entries(tmp_path, expected=expected)
     with pytest.raises(evidence.MissingStorage, match="J1-1440x900-builder"):
         evidence.storage_entries(tmp_path / "missing", expected=["J1-1440x900-builder"])
+
+
+CONNECTED = (
+    "p0123456789abcdef:fedcba9876543210:11111111-2222-3333-4444-555555555555:66666666-7777-8888-9999-000000000000:"
+)
+
+
+def dump(local=(), session=()):
+    return json.dumps({"local": dict.fromkeys(local, "v"), "session": dict.fromkeys(session, "v"), "indexed_db": []})
+
+
+def test_every_studio_storage_key_carries_an_account_prefix_and_removal_purges_them(tmp_path):
+    (tmp_path / "J9-1440x900-viewer.json").write_text(
+        dump([CONNECTED + "weave.lastExecution.d1", "local:weave.localDraft.d2"], ["ui:weave.editorNext"]),
+        encoding="utf-8",
+    )
+    (tmp_path / "J9-1440x900-viewer.after-removal.json").write_text(
+        dump(["local:weave.localDraft.d2"], ["ui:weave.editorNext"]), encoding="utf-8"
+    )
+    assert evidence.storage_key_problems(tmp_path, expected=["J9-1440x900-viewer"]) == []
+
+
+def test_unprefixed_keys_and_keys_left_after_removal_are_reported_without_naming_them(tmp_path):
+    (tmp_path / "J9-1440x900-viewer.json").write_text(
+        dump(["weave.localDrafts.v1", CONNECTED + "x"], ["weave-studio-run-input:a"]), encoding="utf-8"
+    )
+    (tmp_path / "J9-1440x900-viewer.after-removal.json").write_text(dump([CONNECTED + "x"]), encoding="utf-8")
+    (tmp_path / "J9-1440x900-builder.json").write_text(dump(["local:x"]), encoding="utf-8")
+    problems = evidence.storage_key_problems(
+        tmp_path, expected=["J9-1440x900-viewer", "J9-1440x900-builder", "J9-1440x900-operator"]
+    )
+    assert problems == [
+        "J9-1440x900-builder: no storage was captured after its platform was removed",
+        "J9-1440x900-operator: no storage was captured",
+        "J9-1440x900-viewer: 2 storage key(s) without an account, local: or ui: prefix",
+        "J9-1440x900-viewer: 1 account key(s) left after its platform was removed",
+    ]
+    assert not any("weave.localDrafts" in problem for problem in problems)

@@ -65,6 +65,8 @@ export const runDir = process.env["WEAVE_ACC_RUN_DIR"]?.trim() ?? "";
 const SERVICE = "firefly-weave";
 // scripts/acceptance.py STUDIO_PEOPLE: the scan expects one storage dump per line.
 const STUDIO_PEOPLE = "studio-people.jsonl";
+// scripts/acceptance_evidence.py AFTER_REMOVAL: the dump taken after the platform was removed.
+const AFTER_REMOVAL = ".after-removal";
 
 interface Enablement {
   profile: string;
@@ -450,13 +452,38 @@ export class Journey {
           .map((line) => JSON.stringify({ line: redact(line, secrets()) }))
           .join("\n"),
       );
+      let removed = false;
       try {
-        if (signed.signedIn) await removePlatform(signed.page, signed.platform);
+        if (signed.signedIn) {
+          await removePlatform(signed.page, signed.platform);
+          removed = true;
+        }
       } catch (error) {
         problems.push(
           `removing ${signed.name}'s platform: ${errorLine(error, secrets())}`,
         );
       }
+      // Removing the platform purges its account keys: a second dump shows what is left.
+      if (removed)
+        try {
+          const dump = await dumpStorage(signed.page);
+          const wrong = dumpOriginProblem(dump.origin, signed.host);
+          if (wrong) throw Error(wrong);
+          keepPrivate(
+            "browser-storage",
+            `${base}${AFTER_REMOVAL}.json`,
+            JSON.stringify({
+              journey: this.id,
+              viewport: this.viewport,
+              person: signed.name,
+              ...dump,
+            }),
+          );
+        } catch (error) {
+          problems.push(
+            `storage of ${signed.name} after removal: ${errorLine(error, secrets())}`,
+          );
+        }
       await signed.context.tracing.stop(
         failed
           ? {

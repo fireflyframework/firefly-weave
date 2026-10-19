@@ -25,6 +25,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -161,6 +162,42 @@ def storage_entries(folder: Path, *, expected: Iterable[str]) -> int:
         dump = json.loads(path.read_text(encoding="utf-8"))
         total += len(dump["local"]) + len(dump["session"]) + len(dump["indexed_db"])
     return total
+
+
+# The dump of a person's browser storage taken after Studio removed their platform.
+AFTER_REMOVAL = ".after-removal"
+_UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+# Studio's storage keys: <profileId>:<subjectHash>:<tenantId>:<projectId>: for an account's work, local: for work
+# kept on this computer, ui: for preferences without workflow data.
+ACCOUNT_KEY = re.compile(rf"p[0-9a-f]{{16}}:[0-9a-f]{{16}}:{_UUID}:{_UUID}:", re.IGNORECASE)
+OWN_KEY = re.compile(rf"{ACCOUNT_KEY.pattern}|local:|ui:", re.IGNORECASE)
+
+
+def storage_key_problems(folder: Path, *, expected: Iterable[str]) -> list[str]:
+    """Why the dumps of ``expected`` break Studio's storage rules: a localStorage or sessionStorage key without an
+    account, local: or ui: prefix, or an account key left after the platform was removed. Problems count keys and
+    never name them."""
+    problems: list[str] = []
+    for name in sorted(set(expected)):
+        before, after = folder / f"{name}.json", folder / f"{name}{AFTER_REMOVAL}.json"
+        if not before.is_file():
+            problems.append(f"{name}: no storage was captured")
+            continue
+        keys = _keys(before)
+        unprefixed = sum(1 for key in keys if not OWN_KEY.match(key))
+        if not after.is_file():
+            problems.append(f"{name}: no storage was captured after its platform was removed")
+        if unprefixed:
+            problems.append(f"{name}: {unprefixed} storage key(s) without an account, local: or ui: prefix")
+        left = sum(1 for key in _keys(after) if ACCOUNT_KEY.match(key)) if after.is_file() else 0
+        if left:
+            problems.append(f"{name}: {left} account key(s) left after its platform was removed")
+    return problems
+
+
+def _keys(path: Path) -> list[str]:
+    dump = json.loads(path.read_text(encoding="utf-8"))
+    return [*dump["local"], *dump["session"]]
 
 
 def artifacts(evidence: Path) -> list[dict[str, str]]:

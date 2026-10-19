@@ -156,6 +156,8 @@ def test_the_committed_map_is_valid():
     assert enablement.applies("J8.4", "nightly") and not enablement.applies("J8.4", "pr")
     assert "step-error-handling" in enablement.missing("J3.10")
     assert enablement.checks("J9.2") == ("J9.2/execute-in-local", "J9.2/operations-controls")
+    assert enablement.checks("J9.4") == ("J9.4/storage-keys",)
+    assert "editor-contracts" in enablement.missing("J9.4/storage-keys")
 
 
 def test_resolved_enablement_lists_each_step_and_viewport():
@@ -220,7 +222,7 @@ def declared_in_tests():
         found |= set(re.findall(r'\bstep\(\s*"(J[^"]+)"', content))
         found |= set(re.findall(r'\bcheck\(\s*"(J[^"]+)"', content))
     orchestrator = (ROOT / "scripts/acceptance.py").read_text(encoding="utf-8")
-    found |= set(re.findall(r'^SCAN_STEP = "([^"]+)"', orchestrator, flags=re.MULTILINE))
+    found |= set(re.findall(r'^SCAN_(?:STEP|CHECK) = "([^"]+)"', orchestrator, flags=re.MULTILINE))
     return found
 
 

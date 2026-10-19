@@ -471,7 +471,9 @@ def test_the_scan_records_j9_4_only_when_it_is_enabled(tmp_path, monkeypatch):
     monkeypatch.setattr(acceptance, "JOURNEYS", journeys_map(tmp_path, True))
     acceptance.scan(plan, FakeRecorder())
     (record,) = scan_steps(plan)
-    assert (record["id"], record["status"]) == ("J9.4", "passed")
+    # The storage-key check waits for the editor's account-prefixed storage.
+    assert (record["id"], record["status"]) == ("J9.4", "partial")
+    assert record["skipped_checks"] == [{"check": "J9.4/storage-keys", "missing": ["editor-contracts"]}]
 
 
 def test_studio_steps_without_storage_dumps_fail_j9_4(tmp_path, monkeypatch):
@@ -538,7 +540,7 @@ def test_each_person_a_studio_journey_signed_in_as_needs_a_storage_dump(tmp_path
     assert plan.state["secret_scan"]["browser_storage_entries"] == 1
     (storage / "J9-1440x900-viewer.json").write_text(json.dumps(dump), encoding="utf-8")
     acceptance.scan(plan, FakeRecorder())
-    assert scan_steps(plan)[-1]["status"] == "passed"
+    assert scan_steps(plan)[-1]["status"] == "partial"
     assert plan.state["secret_scan"]["browser_storage_entries"] == 2
 
 
@@ -548,6 +550,8 @@ def test_the_studio_harness_writes_the_people_and_dumps_the_scan_expects():
     assert "dump: signed.dump," in harness
     assert "const base = signed.dump;" in harness and "`${base}.json`" in harness
     assert "dumpOriginProblem(dump.origin, signed.host)" in harness
+    assert f'const AFTER_REMOVAL = "{acceptance.acceptance_evidence.AFTER_REMOVAL}";' in harness
+    assert "`${base}${AFTER_REMOVAL}.json`" in harness
 
 
 def test_a_second_sign_in_of_the_same_person_needs_its_own_dump(tmp_path):
@@ -575,3 +579,36 @@ def test_a_missing_storage_dump_fails_the_scan_in_profiles_without_j9(tmp_path, 
     with pytest.raises(acceptance.StageFailed, match="captured for J4-1440x900-builder"):
         acceptance.scan(plan, FakeRecorder())
     assert scan_steps(plan) == []
+
+
+def test_the_scan_checks_storage_keys_once_the_editor_prefixes_them(tmp_path, monkeypatch):
+    monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+    path = journeys_map(tmp_path, True)
+    path.write_text(
+        path.read_text(encoding="utf-8").replace('"editor-contracts" = false', '"editor-contracts" = true'),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(acceptance, "JOURNEYS", path)
+    plan = journeys_plan(tmp_path / "run")
+    (plan.evidence / "steps.jsonl").write_text(
+        json.dumps({"id": "J9.2", "status": "passed", "viewport": "1440x900"}) + "\n", encoding="utf-8"
+    )
+    (plan.private / acceptance.STUDIO_PEOPLE).write_text(
+        json.dumps({"journey": "J9", "viewport": "1440x900", "person": "viewer", "dump": "J9-1440x900-viewer"}) + "\n",
+        encoding="utf-8",
+    )
+    storage = plan.private / "browser-storage"
+    storage.mkdir()
+    key = (
+        "p0123456789abcdef:fedcba9876543210:11111111-2222-3333-4444-555555555555:66666666-7777-8888-9999-000000000000:x"
+    )
+    before = {"local": {key: "v", "ui:w": "1"}, "session": {}, "indexed_db": []}
+    (storage / "J9-1440x900-viewer.json").write_text(json.dumps(before), encoding="utf-8")
+    (storage / "J9-1440x900-viewer.after-removal.json").write_text(json.dumps(before), encoding="utf-8")
+    with pytest.raises(acceptance.StageFailed, match="1 account key"):
+        acceptance.scan(plan, FakeRecorder())
+    assert scan_steps(plan)[-1]["status"] == "failed"
+    after = {"local": {"ui:w": "1"}, "session": {}, "indexed_db": []}
+    (storage / "J9-1440x900-viewer.after-removal.json").write_text(json.dumps(after), encoding="utf-8")
+    acceptance.scan(plan, FakeRecorder())
+    assert scan_steps(plan)[-1]["status"] == "passed" and "skipped_checks" not in scan_steps(plan)[-1]

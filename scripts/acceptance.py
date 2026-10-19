@@ -75,6 +75,8 @@ CANARY_HANDLES = ("acme-api-key", "order-review-webhook")
 STUDIO_JOURNEYS_CONFIG = "playwright.acceptance.config.ts"
 # The canary scan, including every Studio browser context's storage, is itself a journey step.
 SCAN_STEP = "J9.4"
+# Its check that every Studio storage key carries an account prefix, purged when the platform is removed.
+SCAN_CHECK = "J9.4/storage-keys"
 # private/<STUDIO_PEOPLE>: one {"journey", "viewport", "person", "dump"} line for each Studio sign-in,
 # written at sign-in, so the scan expects that person's browser-storage dump even when the journey failed.
 STUDIO_PEOPLE = "studio-people.jsonl"
@@ -582,7 +584,19 @@ def _scan_step(plan: Plan, hits: int, storage_error: str | None, seconds: float)
     ):
         return
     error = f"The canary scan found a secret in {hits} file(s)" if hits else storage_error
-    entry: dict[str, Any] = {"id": SCAN_STEP, "status": "failed" if error else "passed", "seconds": round(seconds, 1)}
+    skipped: list[dict[str, Any]] = []
+    if not error and SCAN_CHECK in enablement.steps and enablement.applies(SCAN_CHECK, plan.profile):
+        waiting = enablement.missing(SCAN_CHECK)
+        if waiting:
+            skipped.append({"check": SCAN_CHECK, "missing": list(waiting)})
+        else:
+            folder = plan.private / "browser-storage"
+            problems = acceptance_evidence.storage_key_problems(folder, expected=studio_people(plan))
+            error = "; ".join(problems) or None
+    status = "failed" if error else "partial" if skipped else "passed"
+    entry: dict[str, Any] = {"id": SCAN_STEP, "status": status, "seconds": round(seconds, 1)}
+    if skipped:
+        entry["skipped_checks"] = skipped
     if error:
         entry["error"] = error
     with (plan.evidence / "steps.jsonl").open("a", encoding="utf-8") as stream:
