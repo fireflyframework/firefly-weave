@@ -25,7 +25,13 @@ SPDX-License-Identifier: Apache-2.0
 // platform is removed through Studio, which signs out and deletes the sign-in.
 // Sign-ins this run stored are deleted only when the store was read before
 // the run started: without that baseline nothing is deleted.
-import { Browser, BrowserContext, expect, Page, test } from "@playwright/test";
+import { expect, test as base } from "@playwright/test";
+import type {
+  APIRequestContext,
+  Browser,
+  BrowserContext,
+  Page,
+} from "@playwright/test";
 import {
   appendFileSync,
   chmodSync,
@@ -67,6 +73,165 @@ import type { SkippedCheck, StepRecord, StepState } from "./records";
 export { expect, openSidebar };
 
 export const runDir = process.env["WEAVE_ACC_RUN_DIR"]?.trim() ?? "";
+
+/**
+ * Methods a journey's browser context may not use: request interception and
+ * shaping, injected sign-in state, page scripts, browser protocol sessions and
+ * the context's browser. Replaced on the instance, so every spelling of the
+ * call (a computed name, Reflect, call or bind, destructuring) reaches the
+ * replacement.
+ */
+export const DENIED_CONTEXT = [
+  "route",
+  "unroute",
+  "unrouteAll",
+  "routeFromHAR",
+  "routeWebSocket",
+  "setExtraHTTPHeaders",
+  "setHTTPCredentials",
+  "addCookies",
+  "clearCookies",
+  "storageState",
+  "setOffline",
+  "addInitScript",
+  "exposeBinding",
+  "exposeFunction",
+  "newCDPSession",
+  "grantPermissions",
+  "setGeolocation",
+  "browser",
+] as const;
+/** Methods a journey's page may not use, for the same reasons. */
+export const DENIED_PAGE = [
+  "route",
+  "unroute",
+  "unrouteAll",
+  "routeFromHAR",
+  "routeWebSocket",
+  "setExtraHTTPHeaders",
+  "addInitScript",
+  "addScriptTag",
+  "addStyleTag",
+  "setContent",
+  "exposeBinding",
+  "exposeFunction",
+] as const;
+/** The only methods of `page.request` and `context.request`: the host's readiness probe reads with GET. */
+const REQUEST_ALLOWED = new Set(["get", "dispose"]);
+
+function deny(what: string): () => never {
+  return () => {
+    throw Error(`Studio journeys may not use ${what}`);
+  };
+}
+
+function seal(target: object, names: readonly string[], owner: string): void {
+  for (const name of names)
+    Object.defineProperty(target, name, {
+      value: deny(`${owner}.${name}`),
+      writable: false,
+      configurable: false,
+      enumerable: false,
+    });
+}
+
+/** `request` limited to GET: the person's cookies never send anything else. */
+function readOnlyRequest(
+  request: APIRequestContext,
+  owner: string,
+): APIRequestContext {
+  return new Proxy(request, {
+    get(target, key) {
+      if (typeof key === "string" && REQUEST_ALLOWED.has(key)) {
+        const value = target[key as keyof APIRequestContext] as unknown;
+        return typeof value === "function" ? value.bind(target) : value;
+      }
+      if (key === "then") return undefined;
+      throw Error(
+        `Studio journeys may not use ${owner}.request.${String(key)}`,
+      );
+    },
+    set() {
+      throw Error(`Studio journeys may not change ${owner}.request`);
+    },
+  });
+}
+
+const guarded = new WeakSet<object>();
+
+/** A page whose interception, injection and request methods throw. */
+export function guardPage(page: Page): Page {
+  if (guarded.has(page)) return page;
+  guarded.add(page);
+  seal(page, DENIED_PAGE, "page");
+  Object.defineProperty(page, "request", {
+    value: readOnlyRequest(page.request, "page"),
+    writable: false,
+    configurable: false,
+  });
+  return page;
+}
+
+/** A context whose interception, injection and request methods throw, and whose pages do too. */
+export function guardContext(context: BrowserContext): BrowserContext {
+  if (guarded.has(context)) return context;
+  guarded.add(context);
+  seal(context, DENIED_CONTEXT, "context");
+  Object.defineProperty(context, "request", {
+    value: readOnlyRequest(context.request, "context"),
+    writable: false,
+    configurable: false,
+  });
+  context.on("page", guardPage);
+  for (const page of context.pages()) guardPage(page);
+  return context;
+}
+
+/** Stands in for one of Playwright's own fixtures: any use throws. */
+function unavailable<T>(name: string): T {
+  return new Proxy(
+    {},
+    {
+      get(_, key) {
+        if (key === "then") return undefined;
+        throw Error(
+          `Studio journeys get a page only from Journey.signIn; Playwright's ${name} fixture is not available`,
+        );
+      },
+    },
+  ) as T;
+}
+
+/**
+ * Playwright's test with its own browser, context, page and request fixtures
+ * replaced by stand-ins that throw: a journey's pages come from
+ * Journey.signIn, in contexts this harness opens, guards and audits.
+ */
+export const test = base.extend<
+  { context: BrowserContext; page: Page; request: APIRequestContext },
+  { journeyBrowser: Browser; browser: Browser }
+>({
+  journeyBrowser: [
+    async ({ playwright, browserName }, use) => {
+      // As Playwright's own browser fixture: the launch options come from the configuration.
+      const browser = await playwright[browserName].launch();
+      await use(browser);
+      await browser.close();
+    },
+    { scope: "worker" },
+  ],
+  browser: [
+    // eslint-disable-next-line no-empty-pattern
+    async ({}, use) => use(unavailable<Browser>("browser")),
+    { scope: "worker" },
+  ],
+  // eslint-disable-next-line no-empty-pattern
+  context: async ({}, use) => use(unavailable<BrowserContext>("context")),
+  // eslint-disable-next-line no-empty-pattern
+  page: async ({}, use) => use(unavailable<Page>("page")),
+  // eslint-disable-next-line no-empty-pattern
+  request: async ({}, use) => use(unavailable<APIRequestContext>("request")),
+});
 const SERVICE = "firefly-weave";
 // scripts/acceptance.py STUDIO_PEOPLE: the scan expects one storage dump per line.
 const STUDIO_PEOPLE = "studio-people.jsonl";
@@ -237,9 +402,13 @@ export class Journey {
   constructor(
     readonly id: string,
     readonly viewport: string,
-    private readonly browser: Browser,
+    browser: Browser,
     private readonly size: { width: number; height: number },
-  ) {}
+  ) {
+    this.#browser = browser;
+  }
+  /** Private at run time too: a journey cannot reach the browser to open its own context. */
+  readonly #browser: Browser;
 
   /** Runs one journeys.toml step, or records why it did not run. */
   async step(stepId: string, body: () => Promise<void>): Promise<boolean> {
@@ -340,13 +509,15 @@ export class Journey {
 
   /** A new browser context signed in as `name` through the real host and identity provider. */
   async signIn(name: string): Promise<Page> {
-    const context = await this.browser.newContext({
-      viewport: this.size,
-      locale: "en-US",
-      timezoneId: "UTC",
-    });
+    const context = guardContext(
+      await this.#browser.newContext({
+        viewport: this.size,
+        locale: "en-US",
+        timezoneId: "UTC",
+      }),
+    );
     await context.tracing.start({ screenshots: true, snapshots: true });
-    const page = await context.newPage();
+    const page = guardPage(await context.newPage());
     const prefix = `${this.id.toLowerCase()}-${name}`;
     const ordinal =
       this.people.filter((earlier) => earlier.name === name).length + 1;
@@ -581,14 +752,14 @@ export function journey(
   title: string,
   body: (j: Journey) => Promise<void>,
 ): void {
-  test(`${id}: ${title}`, async ({ browser }, info) => {
+  test(`${id}: ${title}`, async ({ journeyBrowser }, info) => {
     const size = info.project.use.viewport ?? null;
     const viewport = viewportName(size);
     test.skip(
       !(enablement().viewports[id] ?? []).includes(viewport),
       `${id} is not recorded at ${viewport} in the ${enablement().profile} profile`,
     );
-    const j = new Journey(id, viewport, browser, size!);
+    const j = new Journey(id, viewport, journeyBrowser, size!);
     active = j;
     await body(j);
     j.finish();
