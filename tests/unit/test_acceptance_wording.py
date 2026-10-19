@@ -14,7 +14,7 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-"""The acceptance code reads as product wording: no review rounds, plan rows or milestones in its comments."""
+"""The acceptance code reads as product wording, without internal planning terms in its comments."""
 
 import re
 from pathlib import Path
