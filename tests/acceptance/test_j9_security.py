@@ -339,8 +339,9 @@ async def await_refusals(
         await asyncio.sleep(pause)
 
 
-# A run that called a refused destination stops at the action: the failed task opens an incident.
-REFUSED_RUN = ("suspended", "WV-TASK-FAILED")
+# A run that called a refused destination stops at the action: its task fails, the runtime retries what is safe to
+# retry, and the spent retries open an incident.
+REFUSED_RUN = ("suspended", "WV-TASK-RETRIES-EXHAUSTED")
 SETTLED = frozenset({"succeeded", "failed", "cancelled", "timed_out"})
 
 

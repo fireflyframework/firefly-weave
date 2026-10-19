@@ -235,7 +235,7 @@ async def test_a_run_settles_when_it_finishes_or_stops_at_an_incident():
         None,
     )
     assert (
-        await security.settle(Runs(("running", None), ("suspended", "WV-TASK-FAILED")), uuid4(), pause=0)
+        await security.settle(Runs(("running", None), ("suspended", "WV-TASK-RETRIES-EXHAUSTED")), uuid4(), pause=0)
         == security.REFUSED_RUN
     )
     with pytest.raises(AssertionError, match="still running"):
@@ -391,3 +391,9 @@ def test_the_api_is_ready_again_after_each_network_change_of_keycloak():
     with security.identity_alias(Run(), ready=lambda: events.append("ready")):
         events.append("body")
     assert events == ["inspect", "disconnect", "connect", "ready", "body", "disconnect", "connect", "ready"]
+
+
+def test_a_refused_run_stops_at_its_action_once_the_task_retries_are_spent():
+    # Seen live: the refused action fails its task, the runtime retries what is safe to retry, and the run stops at
+    # the action with this incident.
+    assert security.REFUSED_RUN == ("suspended", "WV-TASK-RETRIES-EXHAUSTED")
