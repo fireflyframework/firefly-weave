@@ -75,7 +75,7 @@ CANARY_HANDLES = ("acme-api-key", "order-review-webhook")
 STUDIO_JOURNEYS_CONFIG = "playwright.acceptance.config.ts"
 # The canary scan, including every Studio browser context's storage, is itself a journey step.
 SCAN_STEP = "J9.4"
-# private/<STUDIO_PEOPLE>: one {"journey", "viewport", "person"} line for each person a Studio journey signed in as,
+# private/<STUDIO_PEOPLE>: one {"journey", "viewport", "person", "dump"} line for each Studio sign-in,
 # written at sign-in, so the scan expects that person's browser-storage dump even when the journey failed.
 STUDIO_PEOPLE = "studio-people.jsonl"
 # The real-platform journeys move these tests to playwright.acceptance.config.ts; until then the quick-integration
@@ -553,7 +553,10 @@ def studio_people(plan: Plan) -> list[str]:
     if not path.is_file():
         return []
     people = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
-    return sorted({f"{person['journey']}-{person['viewport']}-{person['person']}" for person in people})
+    # A line names its dump; lines without one are a person's first sign-in in that journey and viewport.
+    return sorted(
+        {person.get("dump") or f"{person['journey']}-{person['viewport']}-{person['person']}" for person in people}
+    )
 
 
 def _storage(plan: Plan) -> tuple[int, str | None]:

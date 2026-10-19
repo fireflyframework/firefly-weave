@@ -545,8 +545,22 @@ def test_each_person_a_studio_journey_signed_in_as_needs_a_storage_dump(tmp_path
 def test_the_studio_harness_writes_the_people_and_dumps_the_scan_expects():
     harness = (acceptance.ROOT / "studio/tests/acceptance/harness.ts").read_text(encoding="utf-8")
     assert f'const STUDIO_PEOPLE = "{acceptance.STUDIO_PEOPLE}";' in harness
-    assert '"browser-storage",\n          `${base}.json`' in harness
-    assert "const base = `${this.id}-${this.viewport}-${signed.name}`;" in harness
+    assert "dump: signed.dump," in harness
+    assert "const base = signed.dump;" in harness and "`${base}.json`" in harness
+    assert "dumpOriginProblem(dump.origin, signed.host)" in harness
+
+
+def test_a_second_sign_in_of_the_same_person_needs_its_own_dump(tmp_path):
+    plan = journeys_plan(tmp_path)
+    lines = [
+        {"journey": "J9", "viewport": "1440x900", "person": "viewer", "dump": "J9-1440x900-viewer"},
+        {"journey": "J9", "viewport": "1440x900", "person": "viewer", "dump": "J9-1440x900-viewer-2"},
+        {"journey": "J1", "viewport": "600x500", "person": "builder"},
+    ]
+    (plan.private / acceptance.STUDIO_PEOPLE).write_text(
+        "".join(json.dumps(line) + "\n" for line in lines), encoding="utf-8"
+    )
+    assert acceptance.studio_people(plan) == ["J1-600x500-builder", "J9-1440x900-viewer", "J9-1440x900-viewer-2"]
 
 
 @pytest.mark.parametrize("profile", ["ai", "cluster", "k3d"])

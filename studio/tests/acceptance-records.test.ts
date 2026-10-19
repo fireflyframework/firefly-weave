@@ -18,6 +18,8 @@ SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from "vitest";
 import {
   accountsToDelete,
+  dumpName,
+  dumpOriginProblem,
   errorLine,
   networkProblems,
   redact,
@@ -285,5 +287,31 @@ describe("acceptance step records", () => {
       ],
       problems: [],
     });
+  });
+});
+
+describe("browser storage dumps", () => {
+  it("names one dump per sign-in, so a second sign-in never overwrites the first", () => {
+    expect(dumpName("J9", "1440x900", "viewer", 1)).toBe("J9-1440x900-viewer");
+    expect(dumpName("J9", "1440x900", "viewer", 2)).toBe(
+      "J9-1440x900-viewer-2",
+    );
+    expect(dumpName("J9", "1440x900", "viewer", 3)).not.toBe(
+      dumpName("J9", "1440x900", "viewer", 2),
+    );
+  });
+
+  it("accepts only storage read on the person's Studio host", () => {
+    expect(
+      dumpOriginProblem("http://127.0.0.1:46149", "http://127.0.0.1:46149"),
+    ).toBe("");
+    expect(
+      dumpOriginProblem("http://localhost:8180", "http://127.0.0.1:46149"),
+    ).toBe(
+      "storage was read on http://localhost:8180, not the Studio host http://127.0.0.1:46149",
+    );
+    expect(dumpOriginProblem("http://127.0.0.1:46149", "")).toBe(
+      "storage was read before the Studio host started",
+    );
   });
 });

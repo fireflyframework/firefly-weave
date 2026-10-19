@@ -50,6 +50,8 @@ import {
 import type { Person } from "../browser/real-platform-support";
 import {
   accountsToDelete,
+  dumpName,
+  dumpOriginProblem,
   errorLine,
   networkProblems,
   redact,
@@ -195,6 +197,8 @@ async function dumpStorage(page: Page): Promise<StorageDump> {
 
 interface SignedIn {
   name: string;
+  /** This sign-in's storage dump: `<journey>-<viewport>-<person>[-<n>]`. */
+  dump: string;
   context: BrowserContext;
   page: Page;
   platform: string;
@@ -329,8 +333,11 @@ export class Journey {
     await context.tracing.start({ screenshots: true, snapshots: true });
     const page = await context.newPage();
     const prefix = `${this.id.toLowerCase()}-${name}`;
+    const ordinal =
+      this.people.filter((earlier) => earlier.name === name).length + 1;
     const signed: SignedIn = {
       name,
+      dump: dumpName(this.id, this.viewport, name, ordinal),
       context,
       page,
       platform: uniqueName(prefix),
@@ -348,6 +355,7 @@ export class Journey {
         journey: this.id,
         viewport: this.viewport,
         person: name,
+        dump: signed.dump,
       }),
     );
     context.on("request", (request) => signed.urls.push(request.url()));
@@ -408,9 +416,13 @@ export class Journey {
   async close(failed: boolean): Promise<void> {
     const problems: string[] = [];
     for (const signed of this.people) {
-      const base = `${this.id}-${this.viewport}-${signed.name}`;
+      const base = signed.dump;
       try {
         const dump = await dumpStorage(signed.page);
+        // Storage read on another origin (the identity provider's page, say) is
+        // not this person's Studio storage: no dump, so the scan reports it missing.
+        const wrong = dumpOriginProblem(dump.origin, signed.host);
+        if (wrong) throw Error(wrong);
         keepPrivate(
           "browser-storage",
           `${base}.json`,

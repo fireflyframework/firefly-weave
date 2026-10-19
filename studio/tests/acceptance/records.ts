@@ -203,6 +203,29 @@ export function viewportName(
 }
 
 /**
+ * The browser-storage dump of a person's `ordinal`-th sign-in in one journey
+ * and viewport: `<journey>-<viewport>-<person>` for the first, with `-<n>`
+ * after it for later ones, so no sign-in overwrites another's dump.
+ */
+export function dumpName(
+  journey: string,
+  viewport: string,
+  person: string,
+  ordinal: number,
+): string {
+  const base = `${journey}-${viewport}-${person}`;
+  return ordinal > 1 ? `${base}-${ordinal}` : base;
+}
+
+/** Why a dump is not the person's Studio storage, or "" when it is. */
+export function dumpOriginProblem(origin: string, host: string): string {
+  if (!host) return "storage was read before the Studio host started";
+  return origin === host
+    ? ""
+    : `storage was read on ${origin}, not the Studio host ${host}`;
+}
+
+/**
  * What a journey's network log must not hold: requests to origins other than
  * the Studio host and the identity provider (the sign-in's loopback callback
  * aside), and mascot artwork.
