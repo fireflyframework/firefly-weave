@@ -401,6 +401,39 @@ async def test_a_restart_between_the_call_and_the_child_start_starts_the_child_o
         )
 
 
+async def test_a_cancelled_child_interrupts_a_caller_that_stops_and_a_retry_delivers_only_the_next_generation(
+    platform,
+):
+    leaf = await activate(platform, HOLD)
+    run = await start(platform, await activate(platform, caller("orders", call("hold", "hold@1.0.0")), hold=leaf.id))
+    await scan(platform)
+    [first] = await calls(platform, run.id)
+    async with platform.runtime.definitions.transaction(platform.scope, None) as tx:
+        await platform.runtime.cancel(
+            tx,
+            first["child_run_id"],
+            "stopped by hand",
+            actor=platform.actor,
+            scope=platform.scope,
+            context=AuditContext(),
+        )
+    await scan(platform)
+    result = await state(platform, run.id)
+    assert (result["status"], result["incident"]) == ("suspended", "WV-CALL-INTERRUPTED")
+    await resolve(platform, run.id, "retry_safe")
+    await scan(platform)
+    rows = await calls(platform, run.id)
+    assert [(r["generation"], r["status"]) for r in rows] == [(0, "cancelled"), (1, "started")]
+    await release(platform, rows[1]["child_run_id"])
+    await scan(platform)
+    assert (await state(platform, run.id))["output"] == "c-1"
+    rows = await calls(platform, run.id)
+    assert [(r["generation"], r["status"], r["delivered"]) for r in rows] == [
+        (0, "cancelled", True),
+        (1, "succeeded", True),
+    ]
+
+
 async def test_purge_waits_for_active_children_and_for_undelivered_results(platform, provisioned):
     from firefly_weave.access.models import Grant
     from firefly_weave.contracts.run_lifecycle import RunLifecycleRequest, RunPurgeRequest

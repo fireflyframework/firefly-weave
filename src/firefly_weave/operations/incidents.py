@@ -30,13 +30,14 @@ from firefly_weave.api.transport import encode_cursor, encode_cursor_v2
 from firefly_weave.compiler.api import import_artifact
 from firefly_weave.compiler.canonical import canonical_digest
 from firefly_weave.compiler.expressions import measure_value
-from firefly_weave.compiler.ir import ActionNode
+from firefly_weave.compiler.ir import ActionNode, CallWorkflowNode
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.definitions import ActionDefinition, load_definition
 from firefly_weave.contracts.incident_queries import IncidentQuery
 from firefly_weave.contracts.instance_keys import node_of
 from firefly_weave.contracts.operations import IncidentResolution, IncidentView
 from firefly_weave.contracts.public import UnavailableResource
+from firefly_weave.contracts.values import JsonObject
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.operations.fact_positions import RunPosition
 from firefly_weave.operations.fact_reads import FactReadRepository, incident_of
@@ -145,7 +146,10 @@ class IncidentService:
             step = None if incident["node_id"] is None else node_of(incident["node_id"])
             node = next((n for n in ir.graph.nodes if n.id == step), None)
             task = None
-            if request.kind != "terminate":
+            call = None
+            if request.kind != "terminate" and isinstance(node, CallWorkflowNode):
+                call = await self._call_resolution(repository, ir, node, previous.id, incident, request, previous)
+            elif request.kind != "terminate":
                 if not isinstance(node, ActionNode) or incident["incident_key"] not in previous.state.incidents:
                     raise CatalogError(
                         409, "WV-RUNTIME-RECONCILIATION_REQUIRED", "Unclassified incident can only terminate"
@@ -200,6 +204,18 @@ class IncidentService:
                     "actor_id": str(actor.id),
                 },
             )
+            if call is not None and request.kind == "retry_safe":
+                # The next generation of the call: a new child run, started by the next dispatch scan.
+                await repository.execute(
+                    "INSERT INTO run_calls(tenant_id,project_id,environment_id,id,caller_run_id,node_id,generation,"
+                    "mode,on_failure,workflow_reference,activation_id,input,business_key,depth,trace_context,status,"
+                    "requested_at) SELECT tenant_id,project_id,environment_id,:id,caller_run_id,node_id,generation+1,"
+                    "mode,on_failure,workflow_reference,activation_id,input,business_key,depth,trace_context,"
+                    f"'requested',:at FROM run_calls WHERE {SCOPE} AND id=:prior",
+                    id=uuid4(),
+                    prior=call["id"],
+                    at=event.timestamp,
+                )
             # Revoke through the worker-owned port before exposing a manual retry or accepted result.
             if task is not None:
                 await revoke_attempts(tx, previous.id, [task], control_failure=False)
@@ -278,6 +294,45 @@ class IncidentService:
             if not rows:
                 raise CatalogError(404, "WV-NOT-FOUND", "Incident not found")
             return incident_of(rows[0])
+
+    async def _call_resolution(
+        self,
+        repository: RuntimeRepository,
+        ir: Any,
+        node: CallWorkflowNode,
+        run_id: UUID,
+        incident: dict[str, Any],
+        request: IncidentResolution,
+        previous: Any,
+    ) -> dict[str, Any]:
+        """Check a retry or a reconciled result of a call incident; returns the call's latest generation."""
+        from firefly_weave.compiler.calls import call_output_schema
+        from firefly_weave.runtime.kernel import called_workflow, validate
+
+        if incident["incident_key"] not in previous.state.incidents:
+            raise CatalogError(409, "WV-RUNTIME-RECONCILIATION_REQUIRED", "Unclassified incident can only terminate")
+        calls = await repository.rows(
+            f"SELECT * FROM run_calls WHERE {SCOPE} AND caller_run_id=:run AND node_id=:node "
+            "ORDER BY generation DESC LIMIT 1 FOR UPDATE",
+            run=run_id,
+            node=incident["node_id"],
+        )
+        if not calls:
+            # The call failed before it asked for a child run (for example, invalid input): nothing to retry.
+            raise CatalogError(409, "WV-RUNTIME-RECONCILIATION_REQUIRED", "Unclassified incident can only terminate")
+        if calls[0]["status"] in {"requested", "started"}:
+            raise CatalogError(409, "WV-RUNTIME-STATE", "The call's child run has not ended")
+        if request.kind == "accept_reconciled_result":
+            if not request.evidence_reference or "output" not in request.model_fields_set:
+                raise CatalogError(
+                    409, "WV-RUNTIME-RECONCILIATION_REQUIRED", "Reconciled output and evidence are required"
+                )
+            output = cast(JsonObject, called_workflow(ir, node)[1]["outputSchema"])
+            try:
+                validate(ir, call_output_schema(node.mode, node.on_failure, output), request.output)
+            except ValueError as error:
+                raise CatalogError(422, "WV-RUNTIME-OUTPUT", "Reconciled output violates the pinned schema") from error
+        return calls[0]
 
     async def list_all(
         self,
