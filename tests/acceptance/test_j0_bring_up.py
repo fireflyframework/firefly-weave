@@ -26,6 +26,7 @@ import asyncio
 import json
 import time
 import urllib.request
+from uuid import UUID
 
 import pytest
 
@@ -193,6 +194,7 @@ def test_j0_08_fixtures_on_the_egress_network(run):
     assert ACME_ALIAS in (networks[network].get("Aliases") or [])
     assert run.acme_control("/_control/journal") == {"entries": []}
     run.check("J0.8/catalog", lambda: asyncio.run(_publish_catalog(run)))
+    run.check("J0.8/child-workflow", lambda: asyncio.run(_publish_child_workflow(run)))
 
 
 GRANTED = ["weave-connector-http-read@2.0.0", "weave-connector-http-write@2.0.0"]
@@ -246,6 +248,38 @@ async def _publish_catalog(run) -> None:
         "catalog",
         {"connection_revision_id": str(connection.id), "actions": actions, "decision_table_id": str(table.id)},
     )
+
+
+async def _publish_child_workflow(run) -> None:
+    """As the owner: the callable child workflow notify-customer 1.0.0."""
+    catalog = run.helper("acceptance_catalog")
+    async with run.client("owner") as owner:
+        published = await owner.publish(
+            "workflows", catalog.child_workflow(), "yaml", idempotency_key=f"j0-08-child-{run.run_id}"
+        )
+        listed = await owner.list_definitions("workflows", limit=100)
+    assert (published.kind, published.name, published.version) == ("Workflow", catalog.CHILD_WORKFLOW, "1.0.0")
+    assert published.id in {getattr(item, "id", None) for item in listed.items}
+    run.save_private("child-workflow", {"version_id": str(published.id), "artifact_digest": published.digest})
+
+
+@pytest.mark.journey_step("J0.9")
+async def test_j0_09_the_child_workflow_is_active_and_callable_in_the_demo_environment(run):
+    from firefly_weave.contracts.catalog import ActivationRequest
+
+    child = run.private_record("child-workflow")
+    async with run.client("owner") as owner:
+        request = ActivationRequest(
+            version_id=UUID(child["version_id"]), artifact_digest=child["artifact_digest"], scope=owner.scope
+        )
+        activation = await owner.activate(request, idempotency_key=f"j0-09-child-{run.run_id}")
+        read = await owner.read_activation(activation.id)
+        exported = await owner.export_definition("workflows", request.version_id)
+    name = run.helper("acceptance_catalog").CHILD_WORKFLOW
+    assert (read.name, read.retired, read.request.version_id) == (name, False, request.version_id)
+    assert read.request.scope == owner.scope and read.workflow_call_pins == []
+    assert "callable" in exported.document["spec"] and exported.retired is False
+    run.save_private("child-workflow", {**child, "activation_id": str(activation.id)})
 
 
 @pytest.mark.journey_step("J0.14")

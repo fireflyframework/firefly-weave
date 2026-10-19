@@ -117,6 +117,14 @@ def decision_table() -> str:
     return (FIXTURES / "workflows/risk-tier.yaml").read_text(encoding="utf-8")
 
 
+CHILD_WORKFLOW = "notify-customer"
+
+
+def child_workflow() -> str:
+    """The callable child workflow J0 publishes (J0.8/child-workflow) and activates (J0.9)."""
+    return (FIXTURES / f"workflows/{CHILD_WORKFLOW}.yaml").read_text(encoding="utf-8")
+
+
 async def connector_version(client: Any) -> UUID:
     """The published weave-http@2.0.0 connector version in the demo project."""
     cursor: str | None = None

@@ -27,10 +27,13 @@ import { journey, useJourneys } from "./harness";
 
 useJourneys();
 
-/** Opens the first-run demo workflow, a published version, from Workflows. */
+/**
+ * Opens the first-run demo workflow, a published version, from Workflows. It
+ * is found by name: J0 also publishes the child workflow notify-customer.
+ */
 async function openDemoWorkflow(page: Page): Promise<void> {
   await openSidebar(page, "Workflows");
-  const row = page.locator(".resource-row").first();
+  const row = page.locator(".resource-row").filter({ hasText: "first-run" });
   await expect(row).toContainText(/Published|Active/, { timeout: 30_000 });
   await row.locator(".row-open").click();
   await expect(page.locator(".shell.in-designer")).toBeVisible({

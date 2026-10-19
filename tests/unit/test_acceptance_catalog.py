@@ -84,6 +84,20 @@ def test_the_risk_tier_table_compiles_and_decides_each_fixture_order(order, tier
     assert evaluate_decision_table(table["spec"], item).output == {"tier": tier}
 
 
+def test_the_child_workflow_is_callable_and_compiles_without_pins():
+    from firefly_weave.compiler.api import compile_source
+    from firefly_weave.compiler.catalog import CatalogSnapshot
+
+    source = catalog.child_workflow()
+    compiled = compile_source(source, format="yaml", catalog=CatalogSnapshot.empty(), filename="notify-customer.yaml")
+    assert compiled.ok and [d.code for d in compiled.diagnostics] == []
+    document = yaml.safe_load(source)
+    assert document["metadata"] == {"name": catalog.CHILD_WORKFLOW, "version": "1.0.0"}
+    assert document["spec"]["callable"] == {}
+    # Nothing to pin at activation: no step uses a connection, a connector, a worker or another workflow.
+    assert {step["kind"] for step in document["spec"]["steps"]} == {"transform"}
+
+
 def test_connection_requests_reference_the_secret_handle_never_a_value():
     version = uuid4()
     request = catalog.connection_request(version)
