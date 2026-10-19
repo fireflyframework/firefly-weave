@@ -54,6 +54,15 @@ function spec(code: string): string {
   ].join("\n");
 }
 
+/** The findings in the harness when it holds `code`: page functions live there. */
+function harnessRules(code: string): string[] {
+  return lintTree(scratch(), {
+    "acceptance/harness.ts": `declare const page: any;\n${code}\n`,
+  })
+    .filter((finding) => finding.file === "acceptance/harness.ts")
+    .map((finding) => finding.rule);
+}
+
 function rules(code: string): string[] {
   return lintTree(scratch(), { "acceptance/probe.spec.ts": spec(code) }).map(
     (finding) => finding.rule,
@@ -189,7 +198,6 @@ const LATER_BYPASSES: Record<string, string> = {
 const LEGITIMATE = [
   'await page.keyboard.type("order-review");',
   "await page.getByRole('button', { name: 'Publish…' }).click();",
-  "// read-only audit: the font the page computed\nconst family = await page.evaluate(() => getComputedStyle(document.body).fontFamily);",
   "const first = [1, 2][0];",
 ];
 
@@ -214,21 +222,36 @@ describe("the snippet corpus", () => {
       "const p = (page as any).__proto__;",
       "reflective access in a journey: __proto__",
     ],
+
+    [
+      'await page.goto("https://idp.test/#access_token=abc");',
+      "token or script in a URL",
+    ],
+
+    ['await page.goto("javascript" + ":void(0)");', "token or script in a URL"],
+  ])("one rule alone catches %s", (code, rule) => {
+    expect(rules(code)).toEqual([rule]);
+  });
+
+  it.each([
     [
       "await page.evaluate(() => document.title);",
       "page.evaluate without a read-only audit note",
     ],
     [
-      'await page.goto("https://idp.test/#access_token=abc");',
-      "token or script in a URL",
-    ],
-    [
       "// read-only audit: the form\nawait page.evaluate(() => document.forms[0].submit());",
       "write from the page: submit",
     ],
-    ['await page.goto("javascript" + ":void(0)");', "token or script in a URL"],
-  ])("one rule alone catches %s", (code, rule) => {
-    expect(rules(code)).toEqual([rule]);
+  ])("one page-function rule alone catches %s", (code, rule) => {
+    expect(harnessRules(code)).toEqual([rule]);
+  });
+
+  it("allows read-only page functions with their note in the harness", () => {
+    expect(
+      harnessRules(
+        "// read-only audit: the title\nconst t = await page.evaluate(() => document.title);",
+      ),
+    ).toEqual([]);
   });
 
   it("refuses reflective names when they are destructured", () => {
@@ -237,7 +260,7 @@ describe("the snippet corpus", () => {
     );
   });
 
-  it("allows only language globals in a journey, and page globals only inside page functions", () => {
+  it("allows only language globals in a journey", () => {
     expect(
       rules("const n = Math.max(1, JSON.parse('2'), Number('3'));"),
     ).toEqual([]);
@@ -247,11 +270,6 @@ describe("the snippet corpus", () => {
     expect(rules("navigator.onLine;")).toContain(
       "global outside the journey allowlist: navigator",
     );
-    expect(
-      rules(
-        "// read-only audit: the title\nconst t = await page.evaluate(() => document.title);",
-      ),
-    ).toEqual([]);
   });
 
   it.each(LEGITIMATE)("ordinary code passes: %s", (code) => {
@@ -427,6 +445,51 @@ describe("the structural layouts", () => {
       ).toBe(true);
     },
   );
+});
+
+describe("pages a journey cannot rewrite", () => {
+  it.each([
+    [
+      '// read-only audit: no\nawait page.evaluate(() => window.fetch("/x"));',
+      "page function in a journey",
+    ],
+    [
+      'await page.goto("data:text/html,<h1>FAKE</h1>");',
+      "navigation outside http(s): data:",
+    ],
+    [
+      'await page.goto("blob:" + "http://h/x");',
+      "navigation outside http(s): blob:",
+    ],
+    [
+      'await page.goto("file:///etc/hosts");',
+      "navigation outside http(s): file:",
+    ],
+    ['await page.goto("about:blank");', "navigation outside http(s): about:"],
+  ])("refuses %s", (code, rule) => {
+    expect(rules(code)).toContain(rule);
+  });
+
+  it("keeps http(s) navigation", () => {
+    expect(rules("await page.goto(`${host}/studio`);")).toEqual([]);
+    expect(rules('await page.goto("https://idp.test/realms/weave");')).toEqual(
+      [],
+    );
+  });
+
+  it.each([
+    'await page.evaluate(() => window.fetch("/x"));',
+    'await page.evaluate(() => self.fetch("/x"));',
+    'await page.evaluate(() => { top.location.assign("/x"); });',
+    'await page.evaluate(() => { document.location.replace("/x"); });',
+    'await page.evaluate((el: any) => el.ownerDocument.location.assign("/x"));',
+  ])("refuses in the harness's page functions too: %s", (code) => {
+    expect(
+      harnessRules(`// read-only audit: probe\n${code}`).some((rule) =>
+        /request or code from the page|navigation from the page/.test(rule),
+      ),
+    ).toBe(true);
+  });
 });
 
 describe("a journey's failures stay failures", () => {

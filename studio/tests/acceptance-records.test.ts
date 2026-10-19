@@ -18,6 +18,7 @@ SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from "vitest";
 import {
   accountsToDelete,
+  navigationProblems,
   shotName,
   stepRefusal,
   loginBinding,
@@ -372,6 +373,39 @@ describe("what a journey may record", () => {
     expect(stepRefusal("J9.2", "J8", steps, stages)).toBe(
       "J9.2 is not a step of J8",
     );
+  });
+});
+
+describe("where a person's pages went", () => {
+  it("stays on http(s) pages of the Studio host and the identity provider", () => {
+    const allowed = ["http://127.0.0.1:46149", "http://localhost:18080"];
+    expect(
+      navigationProblems(
+        [
+          "about:blank",
+          "http://127.0.0.1:46149/studio",
+          "http://localhost:18080/realms/weave/protocol/openid-connect/auth?x=1",
+          "http://127.0.0.1:53111/callback?code=x",
+        ],
+        allowed,
+      ),
+    ).toEqual([]);
+    expect(
+      navigationProblems(
+        [
+          "data:text/html,<h1>FAKE</h1>",
+          "blob:http://127.0.0.1:46149/x",
+          "file:///etc/hosts",
+          "https://elsewhere.test/",
+        ],
+        allowed,
+      ),
+    ).toEqual([
+      "navigation to data:",
+      "navigation to blob:",
+      "navigation to file:",
+      "navigation to https://elsewhere.test",
+    ]);
   });
 });
 

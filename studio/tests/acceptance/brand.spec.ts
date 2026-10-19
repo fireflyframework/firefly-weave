@@ -19,7 +19,13 @@ SPDX-License-Identifier: Apache-2.0
 // the Weave AI entry point by name, no "Lumi" in the audited pages, Manrope and
 // the dark color scheme. The harness audits every journey's requests (only the
 // Studio host and the identity provider; no mascot artwork).
-import { expect, journey, openSidebar, useJourneys } from "./harness";
+import {
+  expect,
+  journey,
+  openSidebar,
+  pageStyle,
+  useJourneys,
+} from "./harness";
 
 useJourneys();
 
@@ -37,22 +43,7 @@ journey("J8", "brand and naming", async (j) => {
       await expect(page.getByText(/\bLumi\b/)).toHaveCount(0);
       await j.shot(page, label.toLowerCase());
     }
-    // read-only audit: the font and color scheme the page computed, and
-    // whether a Manrope face actually loaded (check() is also true when the
-    // page declares no Manrope at all)
-    const computed = await page.evaluate(async () => {
-      await document.fonts.ready;
-      return {
-        manrope: document.fonts.check("14px Manrope"),
-        loaded: [...document.fonts].some(
-          (face) =>
-            face.family.replace(/["']/g, "") === "Manrope" &&
-            face.status === "loaded",
-        ),
-        family: getComputedStyle(document.body).fontFamily,
-        scheme: getComputedStyle(document.documentElement).colorScheme,
-      };
-    });
+    const computed = await pageStyle(page);
     expect(computed.manrope).toBe(true);
     expect(computed.loaded).toBe(true);
     expect(computed.family.replace(/["']/g, "")).toMatch(/^Manrope\b/);

@@ -256,6 +256,15 @@ function callsStep(node: ts.Node): boolean {
   return found;
 }
 
+/** The scheme a URL argument starts with, when its start is constant. */
+function urlScheme(node: ts.Expression | undefined): string | undefined {
+  if (!node) return undefined;
+  const text = ts.isTemplateExpression(node)
+    ? node.head.text
+    : constantText(node);
+  return text?.match(/^([a-z][a-z0-9+.-]*):/i)?.[1]?.toLowerCase();
+}
+
 /** The value of a string built only from literals and `+`, or undefined. */
 function constantText(node: ts.Expression): string | undefined {
   if (ts.isParenthesizedExpression(node)) return constantText(node.expression);
@@ -315,25 +324,27 @@ function isFunctionLike(node: ts.Node): node is ts.FunctionLikeDeclaration {
 function pageFunctionProblems(body: ts.Node): string[] {
   const found: string[] = [];
   const visit = (node: ts.Node): void => {
-    if (ts.isIdentifier(node) && PAGE_GLOBALS.has(node.text)) {
-      const parent = node.parent;
-      const isMember =
-        parent && ts.isPropertyAccessExpression(parent) && parent.name === node;
-      if (!isMember) found.push(`request or code from the page: ${node.text}`);
-    }
+    // In any position: window.fetch, self.fetch and globalThis.fetch are fetch.
+    if (ts.isIdentifier(node) && PAGE_GLOBALS.has(node.text))
+      found.push(`request or code from the page: ${node.text}`);
     if (ts.isCallExpression(node)) {
       const name = calleeName(node);
       if (name && PAGE_WRITES.has(name))
         found.push(`write from the page: ${name}`);
       if (name === "open" && node.arguments.length > 1)
         found.push("write from the page: a database upgrade");
+      // location.assign, top.location.assign, el.ownerDocument.location.replace…
       const callee = node.expression;
-      if (
-        ts.isPropertyAccessExpression(callee) &&
-        ts.isIdentifier(callee.expression) &&
-        ["location", "history"].includes(callee.expression.text)
-      )
-        found.push(`navigation from the page: ${callee.expression.text}`);
+      if (ts.isPropertyAccessExpression(callee)) {
+        const receiver = callee.expression;
+        const last = ts.isIdentifier(receiver)
+          ? receiver.text
+          : ts.isPropertyAccessExpression(receiver)
+            ? receiver.name.text
+            : undefined;
+        if (last === "location" || last === "history")
+          found.push(`navigation from the page: ${last}`);
+      }
     }
     if (
       ts.isBinaryExpression(node) &&
@@ -549,6 +560,15 @@ function nodeProblems(
       if (text !== undefined && TOKEN_TEXT.test(text))
         add(node, "token or script in a URL");
     }
+    // Navigation leaves http(s) only through script, so it never does.
+    if (ts.isCallExpression(node) && calleeName(node) === "goto") {
+      const scheme = urlScheme(node.arguments[0]);
+      if (scheme && !["http", "https", "javascript"].includes(scheme))
+        add(node, `navigation outside http(s): ${scheme}:`);
+    }
+    // Journeys read the page through the harness's helpers, never with their own page functions.
+    if (spec && ts.isCallExpression(node) && calleeName(node) === "evaluate")
+      add(node, "page function in a journey");
     // Page functions.
     if (ts.isCallExpression(node) && calleeName(node) === "evaluate") {
       if (!audited(node, file))

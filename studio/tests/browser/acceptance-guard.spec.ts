@@ -115,6 +115,20 @@ test("a guarded context and its pages refuse every denied method", async ({
   for (const [spelling, call] of Object.entries(spellings))
     expect(call, spelling).toThrow();
 
+  // Navigation stays on http(s): data:, blob:, file:, about: and javascript:
+  // pages would replace the page as setContent does.
+  for (const url of [
+    "data:text/html,<h1>FAKE</h1>",
+    "blob:http://127.0.0.1/x",
+    "file:///etc/hosts",
+    "about:blank",
+    "javascript:void(0)",
+  ])
+    await expect(page.goto(url), url).rejects.toThrow(
+      /Studio journeys navigate only to http\(s\) pages/,
+    );
+  expect((await page.goto(baseURL!))?.ok()).toBe(true);
+
   // Requests with the person's cookies: GET only.
   expect((await page.request.get(baseURL!)).ok()).toBe(true);
   for (const method of ["post", "put", "patch", "delete", "head", "fetch"])

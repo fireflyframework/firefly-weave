@@ -335,6 +335,32 @@ export function shotName(ordinal: number, slug: string): string {
   return `${String(ordinal).padStart(2, "0")}-${slug}.png`;
 }
 
+/**
+ * Where a person's pages must not have gone: a page that is not http(s)
+ * (a data:, blob: or file: page replaces Studio as setContent would), or an
+ * origin other than the Studio host and the identity provider (the sign-in's
+ * loopback callback aside). The blank page a new tab starts on is fine.
+ */
+export function navigationProblems(
+  urls: readonly string[],
+  allowedOrigins: readonly string[],
+): string[] {
+  const problems: string[] = [];
+  for (const url of urls) {
+    if (url === "about:blank") continue;
+    const parsed = new URL(url);
+    const callback =
+      parsed.protocol === "http:" &&
+      parsed.hostname === "127.0.0.1" &&
+      parsed.pathname === "/callback";
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:")
+      problems.push(`navigation to ${parsed.protocol}`);
+    else if (!callback && !allowedOrigins.includes(parsed.origin))
+      problems.push(`navigation to ${parsed.origin}`);
+  }
+  return [...new Set(problems)];
+}
+
 /** Why a dump is not the person's Studio storage, or "" when it is. */
 export function dumpOriginProblem(origin: string, host: string): string {
   if (!host) return "storage was read before the Studio host started";

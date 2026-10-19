@@ -62,6 +62,7 @@ import {
   dumpName,
   dumpOriginProblem,
   errorLine,
+  navigationProblems,
   networkProblems,
   platformBinding,
   shotName,
@@ -192,11 +193,37 @@ function readOnlyRequest(
 
 const guarded = new WeakSet<object>();
 
+/**
+ * The page prototype's goto, replaced once by a wrapper that refuses any
+ * non-http(s) URL for guarded pages: a data:, blob:, file:, about: or
+ * javascript: page would replace Studio as setContent does.
+ */
+function restrictNavigation(page: Page): void {
+  const prototype = Object.getPrototypeOf(page) as Record<string, unknown>;
+  const original = prototype["goto"];
+  if (typeof original !== "function" || guards.has(original)) return;
+  const wrapped = function (this: object, ...args: unknown[]): unknown {
+    if (guarded.has(this) && !/^https?:\/\//i.test(String(args[0])))
+      return Promise.reject(
+        Error("Studio journeys navigate only to http(s) pages"),
+      );
+    return (original as (...args: unknown[]) => unknown).apply(this, args);
+  };
+  guards.add(wrapped);
+  Object.defineProperty(prototype, "goto", {
+    value: wrapped,
+    writable: false,
+    configurable: false,
+    enumerable: false,
+  });
+}
+
 /** A page whose interception, injection and request methods throw. */
 export function guardPage(page: Page): Page {
   if (guarded.has(page)) return page;
   guarded.add(page);
   seal(page, DENIED_PAGE, "page");
+  restrictNavigation(page);
   Object.defineProperty(page, "request", {
     value: readOnlyRequest(page.request, "page"),
     writable: false,
@@ -412,6 +439,34 @@ async function dumpStorage(page: Page): Promise<StorageDump> {
   }, listDatabases);
 }
 
+/**
+ * The font and color scheme a page computed, and whether a Manrope face
+ * actually loaded (`check()` is also true when the page declares no Manrope).
+ * Journeys read the page through helpers like this one, never with their own
+ * page functions.
+ */
+export async function pageStyle(page: Page): Promise<{
+  manrope: boolean;
+  loaded: boolean;
+  family: string;
+  scheme: string;
+}> {
+  // read-only audit: the font and color scheme the page computed
+  return page.evaluate(async () => {
+    await document.fonts.ready;
+    return {
+      manrope: document.fonts.check("14px Manrope"),
+      loaded: [...document.fonts].some(
+        (face) =>
+          face.family.replace(/["']/g, "") === "Manrope" &&
+          face.status === "loaded",
+      ),
+      family: getComputedStyle(document.body).fontFamily,
+      scheme: getComputedStyle(document.documentElement).colorScheme,
+    };
+  });
+}
+
 interface SignedIn {
   name: string;
   /** This sign-in's storage dump: `<journey>-<viewport>-<person>[-<n>]`. */
@@ -423,6 +478,8 @@ interface SignedIn {
   /** The Studio host's configuration home: its saved platforms name this sign-in's binding. */
   configHome: string;
   urls: string[];
+  /** Every URL the person's main frame showed. */
+  navigations: string[];
   console: string[];
   signedIn: boolean;
 }
@@ -568,6 +625,7 @@ export class Journey {
       host: "",
       configHome: "",
       urls: [],
+      navigations: [],
       console: [],
       signedIn: false,
     };
@@ -584,6 +642,9 @@ export class Journey {
       }),
     );
     context.on("request", (request) => signed.urls.push(request.url()));
+    page.on("framenavigated", (frame) => {
+      if (frame === page.mainFrame()) signed.navigations.push(frame.url());
+    });
     page.on("console", (message) =>
       signed.console.push(`${message.type()}: ${message.text()}`),
     );
@@ -630,10 +691,11 @@ export class Journey {
     // A step that failed fails the test, even when the journey caught its error.
     if (this.#failed) throw Error(`a step of ${this.id} failed`);
     const allowed = [setup().keycloak];
-    const problems = this.#people.flatMap(({ name, host, urls }) =>
-      networkProblems(urls, [...allowed, host]).map(
-        (problem) => `${name}: ${problem}`,
-      ),
+    const problems = this.#people.flatMap(({ name, host, urls, navigations }) =>
+      [
+        ...networkProblems(urls, [...allowed, host]),
+        ...navigationProblems(navigations, [...allowed, host]),
+      ].map((problem) => `${name}: ${problem}`),
     );
     expect(
       problems,
