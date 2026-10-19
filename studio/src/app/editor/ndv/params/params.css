@@ -1089,7 +1089,8 @@ SPDX-License-Identifier: Apache-2.0
   align-items: baseline;
   gap: var(--space-2);
   min-height: var(--sd-row);
-  padding: var(--space-1) var(--space-3);
+  /* The 16 px label line centered in the row. */
+  padding: calc((var(--sd-row) - 16px) / 2) var(--space-3);
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -1186,6 +1187,7 @@ SPDX-License-Identifier: Apache-2.0
   :is(.step-details, .sd-form-scope) button.add-option-item {
     flex-direction: column;
     align-items: flex-start;
+    padding-block: var(--space-1);
   }
   .add-option-item span {
     white-space: normal;
@@ -2154,10 +2156,11 @@ weave-formula-field > button.formula-expand {
 }
 
 /* The suggestion list, drawn as Studio's other menus (Add option): the
-   raised surface, a 1 px border, the large radius and the menu shadow; rows
-   32 px on desktop and 44 px on touch with 12 px sides; the name in the body
-   font and the type right-aligned in the muted ink. The keyboard's row gets
-   the menu highlight and an amber bar at its edge. CodeMirror puts
+   raised surface, a 1 px border, the large radius and the menu shadow; the
+   menu's rows (32 px on desktop, 44 px on touch, the name over its type at
+   600 px and below), its label and caption type, and its keyboard row: the
+   highlight with the focus ring. The type sits at the right, as n8n's
+   suggestions show it. CodeMirror puts
    .cm-tooltip on the list itself and draws it in <body> above step details;
    the doubled class outranks CodeMirror's own tooltip theme. */
 .cm-tooltip.cm-formula-completions.cm-formula-completions {
@@ -2186,26 +2189,29 @@ weave-formula-field > button.formula-expand {
 }
 .cm-formula-completions [role="option"] {
   display: flex;
-  align-items: center;
-  gap: var(--space-3);
+  align-items: baseline;
+  gap: var(--space-2);
   box-sizing: border-box;
-  height: var(--suggestion-row);
-  padding: 0 var(--space-3);
+  min-height: var(--suggestion-row);
+  /* The 16 px label line centered in the row, as in Add option. */
+  padding: calc((var(--suggestion-row) - 16px) / 2) var(--space-3);
   border-radius: var(--radius-sm);
   cursor: pointer;
 }
 .cm-formula-completions [role="option"]:hover {
   background: var(--hover);
 }
+/* The keyboard's row: the highlight and focus ring of a focused menu item. */
 .cm-formula-completions [aria-selected="true"] {
   background: var(--hover);
-  box-shadow: inset 2px 0 0 var(--focus);
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
 }
 .cm-formula-option-label {
   flex: 1;
   min-width: 0;
   overflow: hidden;
-  font: var(--type-body);
+  font: var(--type-label);
   color: var(--text);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2215,6 +2221,21 @@ weave-formula-field > button.formula-expand {
   margin-inline-start: auto;
   font: var(--type-caption);
   color: var(--muted);
+}
+@media (max-width: 600px) {
+  .cm-formula-completions [role="option"] {
+    flex-direction: column;
+    align-items: flex-start;
+    padding-block: var(--space-1);
+  }
+  .cm-formula-option-label {
+    flex: none;
+    max-width: 100%;
+  }
+  .cm-formula-option-detail {
+    margin-inline-start: 0;
+    white-space: normal;
+  }
 }
 
 /* The Result panel: under the focused field, in the form's flow. */

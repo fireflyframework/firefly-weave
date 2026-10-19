@@ -29,7 +29,7 @@ import {
   setTestInput,
   suggestions,
 } from "./formula-po";
-import { box } from "./step-geometry";
+import { box, showParameters } from "./step-geometry";
 import {
   openStepFixture,
   sizes,
@@ -450,11 +450,97 @@ const frameStyle = (element: Element) => {
   };
 };
 
+/**
+ * What a menu row and a suggestion row must share, read from each row
+ * element: its box, spacing, highlight and the label's and type's fonts,
+ * with the colors as painted (their alpha and every ancestor's opacity
+ * blended into the frame behind them).
+ */
+function rowLooks(rows: Element[]) {
+  const parse = (text: string) => {
+    const parts = text.match(/[\d.]+/g)!.map(Number);
+    return { rgb: parts.slice(0, 3), alpha: parts[3] ?? 1 };
+  };
+  const paint = (element: Element, color: string, behind: string) => {
+    let opacity = 1;
+    for (let node: Element | null = element; node; node = node.parentElement)
+      opacity *= Number(getComputedStyle(node).opacity);
+    const front = parse(color);
+    const back = parse(behind);
+    const alpha = front.alpha * opacity;
+    const mixed = front.rgb.map(
+      (part, i) => part * alpha + back.rgb[i] * (1 - alpha),
+    );
+    return `rgb(${mixed.map((part) => Math.round(part)).join(", ")})`;
+  };
+  const font = (element: Element) => {
+    const look = getComputedStyle(element);
+    return [
+      look.fontFamily,
+      look.fontSize,
+      look.fontWeight,
+      look.lineHeight,
+      look.letterSpacing,
+      look.color,
+    ].join(" | ");
+  };
+  return rows.map((row) => {
+    const style = getComputedStyle(row);
+    const label = row.querySelector("b, .cm-formula-option-label")!;
+    const detail = row.querySelector(
+      "b + span:not(:empty), .cm-formula-option-detail",
+    );
+    const frame = getComputedStyle(row.parentElement!).backgroundColor;
+    const painted = paint(row, style.backgroundColor, frame);
+    const rect = row.getBoundingClientRect();
+    return {
+      selected:
+        row.getAttribute("aria-selected") === "true" ||
+        row === document.activeElement,
+      height: rect.height,
+      padding: [
+        style.paddingTop,
+        style.paddingRight,
+        style.paddingBottom,
+        style.paddingLeft,
+      ].join(" "),
+      radius: style.borderTopLeftRadius,
+      gap: `${style.columnGap} ${style.rowGap}`,
+      direction: style.flexDirection,
+      background: style.backgroundColor,
+      outline: [
+        style.outlineStyle,
+        style.outlineWidth,
+        style.outlineColor,
+        style.outlineOffset,
+      ].join(" "),
+      shadow: style.boxShadow,
+      label: font(label),
+      detail: detail ? font(detail) : null,
+      labelTop: label.getBoundingClientRect().top - rect.top,
+      painted,
+      labelInk: paint(label, getComputedStyle(label).color, painted),
+      detailInk: detail
+        ? paint(detail, getComputedStyle(detail).color, painted)
+        : null,
+      detailRight:
+        !detail ||
+        style.flexDirection === "column" ||
+        Math.abs(
+          detail.getBoundingClientRect().right -
+            (rect.right - parseFloat(style.paddingRight)),
+        ) < 1,
+    };
+  });
+}
+
 // The suggestion list is one of Studio's menus: Add option's frame, rows,
-// highlight and type, readable in every row.
+// keyboard highlight and type, every computed property equal, and readable
+// in every row as painted.
 for (const size of [
-  { tag: "1440x900", width: 1440, height: 900, row: 32 },
-  { tag: "360x740", width: 360, height: 740, row: 44 },
+  { tag: "1440x900", width: 1440, height: 900 },
+  { tag: "600x500", width: 600, height: 500 },
+  { tag: "360x740", width: 360, height: 740 },
 ])
   test.describe(`the suggestion list's look at ${size.tag}`, () => {
     test.use({ viewport: { width: size.width, height: size.height } });
@@ -465,31 +551,37 @@ for (const size of [
       await withLanguageFeatures(page);
       const details = await openStepFixture(page, formulasFixture);
       await details.openWithKeyboard("review");
+      await showParameters(page, details.dialog);
       const add = details.dialog.getByRole("button", { name: "Add option" });
       await add.scrollIntoViewIfNeeded();
-      await add.click();
+      await add.focus();
+      await page.keyboard.press("Enter");
       const menu = details.dialog.getByRole("menu", { name: "Add option" });
-      const item = menu.getByRole("menuitem").first();
-      await item.hover();
-      // Buttons ease into their hover color: read it once it has settled.
+      // The keyboard's item, with a type: the menu's focus ring and highlight.
+      const item = menu
+        .locator('[role="menuitem"]:has(span:not(:empty))')
+        .first();
+      await item.focus();
+      await page.keyboard.press("ArrowDown");
+      await page.keyboard.press("ArrowUp");
+      await expect(item).toBeFocused();
+      // Buttons ease into their highlight: read it once it has settled.
+      let previous = "";
       await expect
-        .poll(() =>
-          item.evaluate((element) => getComputedStyle(element).backgroundColor),
-        )
-        .toMatch(/^rgb\(/);
+        .poll(async () => {
+          const now = JSON.stringify(await item.evaluateAll(rowLooks));
+          const settled = now === previous;
+          previous = now;
+          return settled;
+        })
+        .toBe(true);
+      const [menuItem] = await item.evaluateAll(rowLooks);
       const menuLook = await menu.evaluate(frameStyle);
-      const itemLook = await item.evaluate((element) => {
-        const style = getComputedStyle(element);
-        return {
-          background: style.backgroundColor,
-          paddingLeft: style.paddingLeft,
-          font: getComputedStyle(element.querySelector("b")!).fontFamily,
-        };
-      });
       await page.keyboard.press("Escape");
       await details.close();
 
       await details.openWithKeyboard("flag");
+      await showParameters(page, details.dialog);
       const field = details.field("value");
       await replaceFormula(page, field, "input.");
       const list = suggestions(page);
@@ -498,41 +590,31 @@ for (const size of [
       const active = list.locator('[aria-selected="true"]');
       await expect(active).toHaveCount(1);
       expect(await list.evaluate(frameStyle)).toEqual(menuLook);
-      const rows = await list.evaluate((element) =>
-        [...element.querySelectorAll('[role="option"]')].map((option) => {
-          const label = option.querySelector(".cm-formula-option-label")!;
-          const detail = option.querySelector(".cm-formula-option-detail");
-          const style = getComputedStyle(option);
-          return {
-            selected: option.getAttribute("aria-selected") === "true",
-            height: option.getBoundingClientRect().height,
-            background: style.backgroundColor,
-            paddingLeft: style.paddingLeft,
-            label: getComputedStyle(label).color,
-            labelFont: getComputedStyle(label).fontFamily,
-            detail: detail ? getComputedStyle(detail).color : null,
-            detailRight:
-              detail &&
-              Math.abs(
-                detail.getBoundingClientRect().right -
-                  (option.getBoundingClientRect().right -
-                    parseFloat(style.paddingRight)),
-              ) < 1,
-          };
-        }),
-      );
+      const rows = await list.getByRole("option").evaluateAll(rowLooks);
       expect(rows.length).toBeGreaterThan(2);
+      const shared = (row: typeof menuItem) => ({
+        height: row.height,
+        padding: row.padding,
+        radius: row.radius,
+        gap: row.gap,
+        direction: row.direction,
+        label: row.label,
+        detail: row.detail,
+        labelTop: row.labelTop,
+      });
       for (const row of rows) {
-        expect(row.height).toBe(size.row);
-        expect(row.paddingLeft).toBe(itemLook.paddingLeft);
-        expect(row.labelFont).toBe(itemLook.font);
-        const background = row.selected ? row.background : menuLook.background;
-        if (row.selected) expect(row.background).toBe(itemLook.background);
-        expect(contrast(row.label, background)).toBeGreaterThanOrEqual(4.5);
-        if (row.detail) {
-          expect(contrast(row.detail, background)).toBeGreaterThanOrEqual(4.5);
-          expect(row.detailRight).toBe(true);
+        expect(shared(row)).toEqual(shared(menuItem));
+        if (row.selected) {
+          expect(row.background).toBe(menuItem.background);
+          expect(row.outline).toBe(menuItem.outline);
+          expect(row.shadow).toBe(menuItem.shadow);
         }
+        expect(contrast(row.labelInk, row.painted)).toBeGreaterThanOrEqual(4.5);
+        if (row.detailInk)
+          expect(contrast(row.detailInk, row.painted)).toBeGreaterThanOrEqual(
+            4.5,
+          );
+        expect(row.detailRight).toBe(true);
       }
       // The active row is on top where it is drawn: nothing covers it.
       const center = await box(active);
