@@ -88,7 +88,7 @@ body = { older_than_seconds = 2592000, dry_run = true }
 [controls."definitions.publish"]
 capability = "definition.publish"
 collection = "workflows"
-body = { source = "apiVersion: weave/v1alpha1\nkind: Workflow\nmetadata: {name: authorization-probe-j9, version: 1.0.0}\n", format = "yaml" }
+body = { source = "apiVersion: weave/v1alpha1\nkind: Workflow\nmetadata: {name: authorization-probe-j9, version: 1.0.0}\nspec:\n  inputSchema: {type: object}\n  outputSchema: {type: object}\n  steps:\n    - {id: echo, kind: transform, value: {object: {}}}\n  output: {ref: /steps/echo/output}\n", format = "yaml" }
 
 [controls."activations.create"]
 capability = "release.activate"

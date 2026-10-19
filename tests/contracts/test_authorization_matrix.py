@@ -142,3 +142,14 @@ def test_a_grant_covers_operations_at_its_level_and_below_only():
     assert matrix.holds_at(developer, "catalog.read", roles, environment)
     assert not matrix.holds_at(developer, "catalog.read", roles, tenant)
     assert not matrix.holds_at(viewer, "run.read", roles, environment)
+
+
+def test_the_publish_probe_is_a_workflow_that_compiles():
+    # The live run showed a permitted publish answering 422 WV-COMPILE: the probe must be publishable, so a
+    # permitted person's call succeeds (or meets the version an earlier person published).
+    from firefly_weave.compiler.api import compile_source
+    from firefly_weave.compiler.catalog import CatalogSnapshot
+
+    (row,) = [row for row in ROWS if row.operation == "definitions.publish"]
+    compiled = compile_source(row.body["source"], format=row.body["format"], catalog=CatalogSnapshot.empty())
+    assert compiled.ok, [diagnostic.code for diagnostic in compiled.diagnostics]
