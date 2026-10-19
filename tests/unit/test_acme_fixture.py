@@ -51,12 +51,13 @@ acme = load_fixture()
 
 
 @pytest.fixture
-def servers():
+def servers(monkeypatch):
     api, control, _ = acme.make_servers(
         host="127.0.0.1", api_port=0, control_port=0, key_sha256=hashlib.sha256(KEY.encode()).hexdigest()
     )
     for server in (api, control):
-        server.RequestHandlerClass.timeout = 0.5  # a stalled client gives up its connection quickly
+        # A stalled client gives up its connection quickly here; the service's own timeout is pinned below.
+        monkeypatch.setattr(server.RequestHandlerClass, "timeout", 0.5)
         threading.Thread(target=server.serve_forever, daemon=True).start()
     yield f"http://127.0.0.1:{api.server_address[1]}", f"http://127.0.0.1:{control.server_address[1]}"
     for server in (api, control):
@@ -314,3 +315,28 @@ def test_the_control_api_refuses_a_chunked_body(servers):
     answers = raw_responses(control, request)
     message = "Send the body with one Content-Length; Transfer-Encoding is not supported."
     assert [(status, json.loads(body)) for status, body in answers] == [(400, {"error": message})]
+
+
+def test_a_stalled_client_loses_its_connection_after_ten_seconds():
+    assert acme.ApiHandler.timeout == acme.ControlHandler.timeout == 10.0
+
+
+def test_a_refused_request_keeps_reading_what_the_client_still_sends(servers):
+    # After a refusal the service reads and drops the rest of the input before it closes: closing with unread
+    # input resets the connection, which on Linux can destroy the answer in flight. A reset shows here as a
+    # failed send or read; a drained connection ends cleanly.
+    api, _ = servers
+    url = urllib.parse.urlsplit(api)
+    with socket.create_connection((url.hostname, url.port), timeout=5) as connection:
+        connection.sendall(b"POST /approvals HTTP/1.1\r\nHost: acme\r\nTransfer-Encoding: chunked\r\n\r\n")
+        response = http.client.HTTPResponse(connection)
+        response.begin()
+        body = json.loads(response.read())
+        for _ in range(3 * acme.MAX_BODY // 16384):
+            connection.sendall(b"x" * 16384)
+        connection.shutdown(socket.SHUT_WR)
+        assert connection.recv(16) == b""
+    assert (response.status, body) == (
+        400,
+        {"error": "Send the body with one Content-Length; Transfer-Encoding is not supported."},
+    )
