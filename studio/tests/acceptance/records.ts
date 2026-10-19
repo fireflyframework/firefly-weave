@@ -77,6 +77,11 @@ const SHAPES: readonly [
   (match: string, ...groups: string[]) => string,
 ][] = [
   [
+    // A private key block up to its end marker, or to the end of a cut-short text: SFTP and TLS keys.
+    /(-----BEGIN [A-Z ]*PRIVATE KEY-----)[\s\S]*?(-----END [A-Z ]*PRIVATE KEY-----|$)/g,
+    (_match, begin, end) => `${begin}${REDACTED}${end}`,
+  ],
+  [
     // A name/value pair, as HAR headers and cookies hold them: {"name":"X-Weave-CSRF","value":"…"}.
     new RegExp(
       `(${QUOTE}name${QUOTE}\\s*:\\s*${QUOTE})([A-Za-z0-9_-]+)(${QUOTE}\\s*,\\s*${QUOTE}value${QUOTE}\\s*:\\s*${QUOTE})((?:(?!${QUOTE})[^\\r\\n])*)`,

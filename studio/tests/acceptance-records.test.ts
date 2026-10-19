@@ -129,6 +129,39 @@ describe("acceptance step records", () => {
     `{\\"name\\":\\"accessToken\\",\\"value\\":\\"${S}\\"}`,
   ];
 
+  it("redacts a HAR cookie pair even when its value looks ordinary", () => {
+    for (const name of ["Cookie", "set-cookie"])
+      expect(redact(`{"name":"${name}","value":"opaque"}`, [])).toBe(
+        `{"name":"${name}","value":"[redacted]"}`,
+      );
+    expect(redact(`{"name":"Accept","value":"opaque"}`, [])).toBe(
+      `{"name":"Accept","value":"opaque"}`,
+    );
+  });
+
+  it("redacts a private key block, escaped or cut short, and keeps public keys", () => {
+    const body = "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC";
+    for (const text of [
+      `-----BEGIN PRIVATE KEY-----\n${body}\n-----END PRIVATE KEY-----\nnext`,
+      `{"privateKey":"-----BEGIN RSA PRIVATE KEY-----\\n${body}\\n-----END RSA PRIVATE KEY-----\\n"}`,
+      `Error: bad key -----BEGIN OPENSSH PRIVATE KEY-----\n${body}`,
+    ]) {
+      const result = redact(text, []);
+      expect(result).not.toContain(body);
+      expect(result).toContain("[redacted]");
+    }
+    expect(
+      redact(
+        `-----BEGIN PRIVATE KEY-----\n${body}\n-----END PRIVATE KEY-----\nnext`,
+        [],
+      ),
+    ).toBe(
+      "-----BEGIN PRIVATE KEY-----[redacted]-----END PRIVATE KEY-----\nnext",
+    );
+    const publicKey = `-----BEGIN PUBLIC KEY-----\n${body}\n-----END PUBLIC KEY-----`;
+    expect(redact(publicKey, [])).toBe(publicKey);
+  });
+
   it.each(SHAPED)("redacts a secret by its shape: %s", (text) => {
     const result = redact(text, []);
     expect(result).toContain("[redacted]");
