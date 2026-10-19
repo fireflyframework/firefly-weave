@@ -109,11 +109,7 @@ for (const size of sizes)
       // At 600 px and below a row shows the name over its type, as Add
       // option's items do: 4 + 16 + 8 + 16 + 4.
       const height = size.width <= 600 ? 48 : want.row;
-      for (const row of rows)
-        expect(
-          Math.abs(row.height - height),
-          `row height ${row.height}`,
-        ).toBeLessThanOrEqual(1);
+      for (const row of rows) expect(row.height, "row height").toBe(height);
       expectAligned(
         rows.map((row) => row.x),
         "row left edges",

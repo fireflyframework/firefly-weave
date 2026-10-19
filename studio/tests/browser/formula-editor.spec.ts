@@ -606,6 +606,14 @@ for (const size of [
         detail: row.detail,
         labelTop: row.labelTop,
       });
+      // Exactly the row token: 32 px, 44 px on touch, 48 px with the type
+      // under the name at 600 px and below.
+      const touch = await page.evaluate(
+        () => matchMedia("(max-width: 767px), (pointer: coarse)").matches,
+      );
+      expect(menuItem.height, "Add option row").toBe(
+        size.width <= 600 ? 48 : touch ? 44 : 32,
+      );
       for (const row of rows) {
         expect(shared(row)).toEqual(shared(menuItem));
         if (row.selected) {

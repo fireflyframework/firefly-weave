@@ -1086,11 +1086,12 @@ SPDX-License-Identifier: Apache-2.0
 :is(.step-details, .sd-form-scope) button.add-option-item {
   display: flex;
   justify-content: flex-start;
-  align-items: baseline;
+  /* Centered, not on a baseline: the label and the smaller hint on one
+     baseline make a 17 px line, which would grow the row past its token. */
+  align-items: center;
   gap: var(--space-2);
   min-height: var(--sd-row);
-  /* The 16 px label line centered in the row. */
-  padding: calc((var(--sd-row) - 16px) / 2) var(--space-3);
+  padding: 0 var(--space-3);
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -2189,12 +2190,12 @@ weave-formula-field > button.formula-expand {
 }
 .cm-formula-completions [role="option"] {
   display: flex;
-  align-items: baseline;
+  /* Centered, as in Add option: exactly the row token high. */
+  align-items: center;
   gap: var(--space-2);
   box-sizing: border-box;
   min-height: var(--suggestion-row);
-  /* The 16 px label line centered in the row, as in Add option. */
-  padding: calc((var(--suggestion-row) - 16px) / 2) var(--space-3);
+  padding: 0 var(--space-3);
   border-radius: var(--radius-sm);
   cursor: pointer;
 }
