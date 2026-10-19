@@ -51,6 +51,7 @@ from firefly_weave.contracts.workers import (
     UnavailableCompletionReceipt,
 )
 from firefly_weave.definitions.models import CatalogError
+from firefly_weave.operations.facts import FactRepository
 from firefly_weave.operations.redaction import Omission
 from firefly_weave.persistence.uow import Transaction
 from firefly_weave.runtime.repository import RuntimeRepository
@@ -174,7 +175,8 @@ class _TaskOperation:
                     capability=capability,
                     policy=json.dumps({"side_effect": action["sideEffect"], "retry": action["retry"]}),
                 )
-                await self.runtime.set_task_status(enlisted, identifier, "leased")
+                await self.runtime.set_task_status(enlisted, identifier, "leased", at=now)
+                await FactRepository(enlisted).step_claimed(identifier, generation, worker_id, now)
                 lease = TaskLease(
                     proof=LeaseProof(task_id=identifier, generation=generation, owner=worker_id, token=token),
                     input=payload["input"],
@@ -577,6 +579,9 @@ class TaskService:
         rows = await WorkerRepository(tx).rows(
             f"SELECT task_id FROM task_leases WHERE {SCOPE} AND "
             "((status='active' AND expires_at<=clock_timestamp()) OR status='failed') "
+            "AND EXISTS (SELECT 1 FROM task_intents t WHERE t.id=task_leases.task_id "
+            "AND t.tenant_id=:tenant AND t.project_id=:project AND t.environment_id=:environment "
+            "AND t.status<>'handled') "
             "AND task_id NOT IN (SELECT t.id FROM task_intents t JOIN runtime_capacity_blocks b ON "
             "b.run_id=t.run_id WHERE b.active) "
             f"AND (SELECT {runnable('r')} FROM runs r WHERE r.id="

@@ -19,7 +19,7 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 from urllib.parse import urlsplit
 from uuid import UUID
@@ -56,6 +56,7 @@ from firefly_weave.contracts.human_tasks import (
     TaskGroup,
     TaskGroupRequest,
 )
+from firefly_weave.contracts.incident_queries import IncidentOrder, IncidentQuery
 from firefly_weave.contracts.integration_events import DeliveryAttempt, DeliveryView, Subscription, SubscriptionRequest
 from firefly_weave.contracts.language import LanguageManifest
 from firefly_weave.contracts.lumi import (
@@ -102,6 +103,7 @@ from firefly_weave.contracts.public import (
     catalog_lock,
 )
 from firefly_weave.contracts.run_lifecycle import RunLifecycle, RunLifecycleRequest, RunPurgeRequest
+from firefly_weave.contracts.run_views import RunListOrder, RunListQuery
 from firefly_weave.contracts.runtime import (
     CapacityRunAcknowledgment,
     RunView,
@@ -115,6 +117,13 @@ from firefly_weave.contracts.surface import OPERATIONS
 from firefly_weave.contracts.teams import TeamsReactivateRequest, TeamsReference, TeamsRevokeRequest
 from firefly_weave.contracts.values import JsonObject
 from firefly_weave.contracts.whatsapp import WhatsAppDeliveryState, WhatsAppStatusFact
+from firefly_weave.contracts.worker_queries import (
+    ReleaseUsage,
+    ReleaseUsageQuery,
+    RetireStaleRequest,
+    RetireStaleResult,
+    WorkerListQuery,
+)
 from firefly_weave.contracts.workers import (
     ClaimRequest,
     CompleteRequest,
@@ -134,6 +143,7 @@ from firefly_weave.contracts.workers import (
 )
 from firefly_weave.operations.debug.models import DebugCommand, DebugCreate, DebugSession
 from firefly_weave.sdk.errors import ContractError, PreconditionFailed, TransportError, WeaveError
+from firefly_weave.sdk.worker_registration import negotiate_worker_registration
 from firefly_weave.triggers.models import Trigger, TriggerRequest
 
 if TYPE_CHECKING:
@@ -221,7 +231,7 @@ class WeaveClient:
         body: BaseModel | None = None,
         revision: int | None = None,
         idempotency_key: str | None = None,
-        query: dict[str, str | int] | None = None,
+        query: Mapping[str, str | int | list[str]] | None = None,
         adapter: str | None = None,
     ) -> Any:
         """Typed registry boundary also used by the thin CLI; no arbitrary URL input."""
@@ -540,15 +550,21 @@ class WeaveClient:
         *,
         limit: int = 50,
         cursor: str | None = None,
+        order: IncidentOrder = "opened_desc",
+        query: IncidentQuery | None = None,
     ) -> Page[IncidentView | UnavailableResource]:
+        """One run's incidents with either a typed ``query`` or the keyword arguments; mixing them raises."""
         return cast(
             Page[IncidentView | UnavailableResource],
             await self.invoke(
                 "incidents.run_list",
                 identifier=identifier,
-                query=self._page(limit, cursor),
+                query=self._incident_query(limit, cursor, order, query),
             ),
         )
+
+    async def read_incident(self, identifier: UUID) -> IncidentView | UnavailableResource:
+        return cast(IncidentView | UnavailableResource, await self.invoke("incidents.read", identifier=identifier))
 
     async def resolve_incident(self, identifier: UUID, request: IncidentResolution, *, revision: int) -> IncidentView:
         return cast(
@@ -559,7 +575,13 @@ class WeaveClient:
         return cast(WorkerRelease, await self.invoke("releases.create", body=request))
 
     async def register_worker(self, request: InstanceRequest) -> WorkerInstance:
-        return cast(WorkerInstance, await self.invoke("workers.create", body=request))
+        """Register a worker; a server that predates `identity` gets one retry without it."""
+
+        async def send(include_identity: bool) -> WorkerInstance:
+            value = request if include_identity else request.model_copy(update={"identity": None})
+            return cast(WorkerInstance, await self.invoke("workers.create", body=value))
+
+        return await negotiate_worker_registration(send, has_identity=request.identity is not None)
 
     async def read_release(self, identifier: UUID) -> WorkerRelease:
         return cast(WorkerRelease, await self.invoke("releases.read", identifier=identifier))
@@ -715,29 +737,77 @@ class WeaveClient:
         correlation_key: str | None = None,
         status: str | None = None,
         include_archived: bool = False,
+        order: RunListOrder = "started_desc",
+        query: RunListQuery | None = None,
     ) -> Page[RunView | UnavailableResource]:
+        """List runs with either a typed ``query`` or the keyword filters; mixing them raises ``ValueError``."""
+        values: dict[str, str | int | list[str]]
+        if query is not None:
+            keywords = (limit, cursor, business_key, correlation_key, status, include_archived, order)
+            if keywords != (50, None, None, None, None, False, "started_desc"):
+                raise ValueError("Use either a query or keyword list arguments")
+            values = {
+                key: str(value).lower() if isinstance(value, bool) else value
+                for key, value in query.model_dump(mode="json", exclude_none=True).items()
+                if not isinstance(value, list) or value
+            }
+        else:
+            values = {
+                **self._page(limit, cursor),
+                "order": order,
+                "include_archived": str(include_archived).lower(),
+                **{
+                    key: value
+                    for key, value in {
+                        "business_key": business_key,
+                        "correlation_key": correlation_key,
+                        "status": status,
+                    }.items()
+                    if value is not None
+                },
+            }
         return cast(
             Page[RunView | UnavailableResource],
             await self.invoke(
                 "runs.list",
-                query={
-                    **self._page(limit, cursor),
-                    **{
-                        key: value
-                        for key, value in {
-                            "business_key": business_key,
-                            "correlation_key": correlation_key,
-                            "status": status,
-                        }.items()
-                        if value is not None
-                    },
-                    "include_archived": str(include_archived).lower(),
-                },
+                query=values,
             ),
         )
 
-    async def list_workers(self, *, limit: int = 50, cursor: str | None = None) -> Page[WorkerStatus]:
-        return cast(Page[WorkerStatus], await self.invoke("workers.list", query=self._page(limit, cursor)))
+    async def list_workers(
+        self, *, limit: int = 50, cursor: str | None = None, query: WorkerListQuery | None = None
+    ) -> Page[WorkerStatus]:
+        """Workers with either a typed ``query`` or the page keywords; mixing them raises ``ValueError``.
+
+        Without a query the server lists current workers, most recently seen first.
+        """
+        if query is not None and (limit, cursor) != (50, None):
+            raise ValueError("Use either a query or keyword list arguments")
+        values = self._page(limit, cursor) if query is None else self._query(query)
+        return cast(Page[WorkerStatus], await self.invoke("workers.list", query=values))
+
+    async def retire_stale_workers(self, request: RetireStaleRequest, *, idempotency_key: str) -> RetireStaleResult:
+        """Revoke (or, with ``dry_run``, preview) up to 100 workers offline longer than the threshold."""
+        return cast(
+            RetireStaleResult,
+            await self.invoke("workers.retire_stale", body=request, idempotency_key=idempotency_key),
+        )
+
+    async def release_usage(self, identifier: UUID, *, query: ReleaseUsageQuery | None = None) -> ReleaseUsage:
+        """Worker counts, pinning activations and the readable deployments that run a release."""
+        return cast(
+            ReleaseUsage,
+            await self.invoke("releases.usage", identifier=identifier, query=self._query(query or ReleaseUsageQuery())),
+        )
+
+    @staticmethod
+    def _query(query: BaseModel) -> dict[str, str | int | list[str]]:
+        # Booleans travel as true or false; unset filters and empty lists are left out.
+        return {
+            key: str(value).lower() if isinstance(value, bool) else value
+            for key, value in query.model_dump(mode="json", exclude_none=True).items()
+            if not isinstance(value, list) or value
+        }
 
     async def list_releases(self, *, limit: int = 50, cursor: str | None = None) -> Page[WorkerRelease]:
         return cast(Page[WorkerRelease], await self.invoke("releases.list", query=self._page(limit, cursor)))
@@ -746,12 +816,33 @@ class WeaveClient:
         return cast(Page[Trigger], await self.invoke("triggers.list", query=self._page(limit, cursor)))
 
     async def list_incidents(
-        self, *, limit: int = 50, cursor: str | None = None
+        self,
+        *,
+        limit: int = 50,
+        cursor: str | None = None,
+        order: IncidentOrder = "opened_desc",
+        query: IncidentQuery | None = None,
     ) -> Page[IncidentView | UnavailableResource]:
+        """Incidents with either a typed ``query`` or the keyword arguments; mixing them raises ``ValueError``."""
         return cast(
             Page[IncidentView | UnavailableResource],
-            await self.invoke("incidents.list", query=self._page(limit, cursor)),
+            await self.invoke("incidents.list", query=self._incident_query(limit, cursor, order, query)),
         )
+
+    @classmethod
+    def _incident_query(
+        cls, limit: int, cursor: str | None, order: IncidentOrder, query: IncidentQuery | None
+    ) -> dict[str, str | int | list[str]]:
+        if query is None:
+            return {**cls._page(limit, cursor), "order": order}
+        if (limit, cursor, order) != (50, None, "opened_desc"):
+            raise ValueError("Use either a query or keyword list arguments")
+        # Statuses travel as repeated parameters; empty filters are left out.
+        return {
+            key: str(value).lower() if isinstance(value, bool) else value
+            for key, value in query.model_dump(mode="json", exclude_none=True).items()
+            if not isinstance(value, list) or value
+        }
 
     async def list_schedules(self, *, limit: int = 50, cursor: str | None = None) -> Page[ScheduleView]:
         return cast(Page[ScheduleView], await self.invoke("schedules.list", query=self._page(limit, cursor)))

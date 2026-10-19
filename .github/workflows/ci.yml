@@ -16,7 +16,11 @@
 
 name: Checks
 on:
+  # Branch pushes are covered by their pull request run; main and release tags
+  # still get their own run (release evidence links the main and tag Checks).
   push:
+    branches: [main]
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
     inputs:
@@ -26,6 +30,11 @@ on:
         default: false
 permissions:
   contents: read
+# A new commit on a pull request cancels that pull request's older run. Every
+# other run (main, tags, manual dispatch) gets its own group and is never cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   offline:
     runs-on: ubuntu-24.04
@@ -36,7 +45,8 @@ jobs:
           version: '0.8.22'
           python-version: '3.12'
       - run: uv run --locked --no-editable --reinstall-package firefly-weave --all-extras --group docs python scripts/check.py
-  studio:
+  studio-checks:
+    name: studio checks
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -54,16 +64,73 @@ jobs:
         working-directory: studio
       - run: npm run check && npm run format:check && npm test && npm run build
         working-directory: studio
+  studio-browser:
+    name: studio browser (${{ matrix.shard }}/5)
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.8.22'
+          python-version: '3.12'
+      - run: uv sync --locked --all-extras --group docs
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.15.0'
+          cache: npm
+          cache-dependency-path: studio/package-lock.json
+      - run: npm ci
+        working-directory: studio
+      # The real-host test serves the production bundle from studio/dist.
+      - run: npm run build
+        working-directory: studio
       - run: npx playwright install --with-deps chromium
         working-directory: studio
       - name: Functional browser tests
-        run: npm run test:browser -- --grep-invert @performance
+        run: npm run test:browser -- --grep-invert @performance --shard=${{ matrix.shard }}/5
         working-directory: studio
-      # Frame timing needs an idle test worker: another browser can otherwise
-      # consume the frame budget while running unrelated functional checks.
+  # Frame timing needs an idle runner: another browser can otherwise consume the
+  # frame budget while running unrelated functional checks.
+  studio-performance:
+    name: studio performance
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.8.22'
+          python-version: '3.12'
+      - run: uv sync --locked --all-extras --group docs
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.15.0'
+          cache: npm
+          cache-dependency-path: studio/package-lock.json
+      - run: npm ci
+        working-directory: studio
+      - run: npx playwright install --with-deps chromium
+        working-directory: studio
       - name: Canvas performance measurements
         run: npm run test:browser -- --grep @performance --workers=1 --retries=0 --output=test-results/performance
         working-directory: studio
+  # The single check named "studio" passes only when every Studio job passed.
+  studio:
+    if: always()
+    needs: [studio-checks, studio-browser, studio-performance]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Every Studio job passed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "Studio job results: $RESULTS"
+          for result in $RESULTS; do
+            [ "$result" = success ] || exit 1
+          done
   xplat:
     name: cross-platform (${{ matrix.os }})
     strategy:

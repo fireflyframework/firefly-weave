@@ -50,8 +50,15 @@ an action or clear an incident.
 
 ## Resolve an incident
 
-**In Studio**, open **Operate › Incidents**. It lists active incidents; select
-one to see its code, its step and the run's last engine events. Then select
+**In Studio**, open **Operate › Incidents**. It lists active incidents,
+newest opened first, without test runs. The platform applies the filters
+(status, code, workflow, step, an opening range, **Include test runs** and
+**Order**), and the address keeps them and the incident you open
+(`?incident=ID`), so a link opens that incident even when no loaded page lists
+it. Select one to see its code, its step and full step instance, its workflow,
+the run and its status, when it opened (marked **estimated** when the upgrade
+inferred the time from the run's last recorded event, and **Unknown** when
+nobody knows), and the run's last engine events (their types only). Then select
 **Resolve incident**, choose a decision and give the reason. To accept a
 verified result, also give its evidence reference and the result as JSON.
 Studio sends the incident's revision and a new receipt, and reuses that receipt
@@ -211,6 +218,7 @@ repeated. Platform administration alone grants no execution rights.
 | --- | --- | --- | --- |
 | `GET /runs/{run}/incidents` | `weave runs incidents run-list` | `incident.read` | Incident views, including closed history |
 | `GET /incidents` | `weave runs incidents list` | `incident.read` | Incidents across the environment |
+| `GET /incidents/{incident}` | `weave runs incidents read` | `incident.read` | One incident, with its revision as `ETag` |
 | `POST /incidents/{incident}/resolve` | `weave runs incidents resolve` | `incident.resolve` | An immutable, revision-fenced resolution |
 | `POST /runs/{run}/cancel` | `weave runs cancel` | `run.cancel` | Terminal cancellation with the external-effects flag |
 | `POST /runs/{run}/retry` | `weave runs retry` | `run.retry` and normal start admission | A new run linked by `parent_run_id` |

@@ -42,6 +42,8 @@ from firefly_weave.contracts.file_connectors import (
 )
 from firefly_weave.sdk.transport import WorkerTransport
 from firefly_weave.sdk.worker import Worker
+from firefly_weave.sdk.worker_identity import worker_identity
+from firefly_weave.sdk.worker_registration import register_worker_http
 from pydantic import BaseModel, ConfigDict, Field
 
 from weave_files_worker.handler import FileTaskHandler
@@ -122,11 +124,17 @@ async def main() -> None:
         trust_env=False,
         follow_redirects=False,
     ) as client:
-        response = await client.post(
-            prefix + "/workers",
-            json={"release_id": os.environ["WEAVE_WORKER_RELEASE_ID"], "task_types": CAPABILITIES, "capacity": 1},
+        # A server that predates worker identity gets one retry without it, on this same client.
+        response = await register_worker_http(
+            client,
+            prefix,
+            {
+                "release_id": os.environ["WEAVE_WORKER_RELEASE_ID"],
+                "task_types": [*CAPABILITIES],
+                "capacity": 1,
+                "identity": worker_identity().model_dump(mode="json"),
+            },
         )
-        response.raise_for_status()
         transport = WorkerTransport(client, prefix, UUID(response.json()["id"]))
         handler = FileTaskHandler(transport, policy)
         worker = Worker(transport, {capability: handler for capability in CAPABILITIES}, 1)

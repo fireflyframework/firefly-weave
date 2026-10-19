@@ -275,7 +275,8 @@ Open the assistant in any of these ways:
 - While you work locally, select **Connect to a platform** on **Home**, in the
   platform menu at the top right, in the designer next to "Saving, publishing
   and runs need a platform.", or on the **Connections**, **My tasks**,
-  **Email**, **Runs**, **Incidents**, **Workers**, and **Clusters** pages.
+  **Email**, **Overview**, **Runs**, **Incidents**, **Workers**, and
+  **Clusters** pages.
 - In **Settings → Platforms**, select **Add platform** while you use a platform,
   or **Connect to a platform** while you work locally.
 
@@ -1518,27 +1519,94 @@ Every start creates a new run, even with the same business key; a business key
 groups related runs. Studio remembers the last input for each version in this
 browser, leaving out fields the schema marks as secret.
 
-**Follow and manage runs in Runs.**
+**See the platform at a glance in Overview.** **Operate** opens on
+**Overview**, which needs `status.read`. It reads the environment's summary
+every 15 seconds while the page is visible, and after a failed read it waits
+longer, up to a minute.
 
-- **Find runs** with the filters above the list: type an exact business key in
-  **Search by business key**, choose **All**, **Waiting**, **Failed**, or
-  **Succeeded**, or open **More filters** for an exact **Correlation key** and
-  **Include archived runs**. The list updates as you change a filter. In a
-  narrow window, the filters fold behind a button such as "Filters (2)".
+- **Health** has one tile each for the API, the database, the scheduler, the
+  outbox, compatibility and telemetry export, with a state (**OK**,
+  **Degraded**, **Down** or **Off**) and one figure such as "Latency 4 ms" or
+  "Last success 2 min ago". Each tile's details button lists its facts or its
+  background loops, with each loop's last success and failures in a row.
+- **Load** shows active runs (test runs left out), ready tasks with the oldest
+  wait, waits with how many are overdue, the outbox backlog and the provider
+  backlog.
+- **Workers and clusters** counts online, offline and draining workers, free
+  task slots against ready tasks, runners, busy targets, targets that need
+  reconciliation and plans waiting for approval, and active incidents.
+- **Needs attention** lists up to 20 items, most urgent first: jobs that need
+  reconciliation, plans you may approve, offline workers that still hold work,
+  active incidents, targets without an online runner, a restricted
+  compatibility verdict and runs that failed in the last hour. A job, plan,
+  worker or failed run opens its record; an incident opens **Incidents**, a
+  target without a runner opens **Runners**, and the compatibility verdict has
+  no link.
+
+A section you may not read says which permission it needs, such as "You need
+`incident.read` in this environment.", instead of showing zeros; a section the
+platform could not compute in time says "This section could not be loaded."
+with **Try again**, while the rest of the page stays usable.
+
+**Follow and manage runs in Runs.** The list shows the newest runs first
+(choose another **Order** under **More filters**; the line under the title
+says which order is in use): each run's status (a run that succeeded after handling errors reads "Succeeded
+with errors"), its workflow and version, how it started (**Retry of** and
+**Called by** open the run it came from), when it started, how long it ran
+(counting up while it runs), its active incidents, its business key and its
+short run ID with **Copy**. On a wide screen each run is one line: a long
+workflow name or business key ends in "…", and pointing at it shows the whole
+value, as the run's detail does.
+
+- **Find runs** with the filters above the list: **Time range** (the last 15
+  minutes, hour, 24 hours, 7 days or 30 days, or a custom range; the last 24
+  hours by default), **Workflow** and **Version**, **Origin**, an exact
+  **Business key**, one or more statuses, and **Include test runs**. **More
+  filters** adds an exact **Correlation key**, **Handled errors**, **Order**,
+  **Has active incident**, **Top-level runs only** and **Include archived
+  runs**. The list updates as you change a filter, and **Clear filters** resets
+  them all. The address keeps every filter except the business and correlation
+  keys, so you can share a view without sharing business data. In a narrow
+  window, the filters fold behind a button such as "Filters (2)".
+- **Keep the list current.** With **Auto-refresh** on (the default), the list
+  reads its first page again every 10 seconds while the page is visible; a
+  relative time range then ends at that moment. **Refresh** does the same at
+  once. **Load more runs** continues exactly the list you are reading, so pages
+  never shift under you; while more than the first page is open, or runs are
+  selected, the list waits for **Refresh**. Starting, canceling, retrying,
+  archiving or restoring a run, or deleting its data, from this page reads the
+  first page again at once. While the list shows new runs first (**Newest
+  first** or **Recently updated**), a run you just started shows first, as
+  "Just started", until the list includes it; with **Oldest first** it
+  appears in its place once a page reaches it.
+- **Act on several runs.** Select runs, up to 50, and choose **Cancel runs**
+  (one reason for all) or **Retry runs** (each on its own version with its own
+  input). Studio sends them one at a time and reports the result for each run.
 - **Open a run** to watch it. The **Now** line says what it is doing, such as
   "Waiting for a person at review, assigned to reviewers", and offers **Open
   task** or **Open My tasks** when a person must act
   ([what each reason means](execution-management.md#3-understand-why-a-run-is-waiting)).
   The graph of the version it runs marks the current step **Now** and finished
-  steps with a check. **Timeline** lists the recorded events in plain sentences,
-  each with **View raw event**, and **Technical details** holds the run ID, the
-  correlation key, the artifact, and the run data. The view does not update by
-  itself: select **Refresh** at the bottom of the run's detail.
-- **Pause run** and **Resume run** need their own permissions, ask for a
-  **Reason**, and appear only while the run hasn't finished; only one of them
-  shows at a time. Studio has no controls to cancel or retry a run or to resolve
-  an incident; a blocked run shows "This run stopped at" and the step. Use the
-  CLI or the API, as in [incident operations](../reference/incident-operations.md).
+  steps with a check. **Steps** draws one bar per step: the time it waited in
+  the queue and the time it ran. Loop iterations sit under their step, and a
+  step that called a workflow opens the run it called. **Input/Output** shows a
+  step's recorded output only when you select **Show output**, and says why
+  when an output can't be shown. **Logs** aren't available yet. **Events**
+  lists the recorded events in plain sentences, each with **View raw event**,
+  and **Technical details** holds the run ID, the correlation key, the
+  artifact, and the run data. While the run is still going, Studio reads it and
+  its steps every 2 seconds; **Refresh** at the bottom of the detail reads it at
+  once. Each of those reads takes every page of steps on screen again: after
+  **Load more steps**, which stops at 10 pages (2,000 step instances) and says
+  so, a running run costs up to 10 step requests every 2 seconds, one after
+  another, and a slow platform slows the reads down instead of overlapping them.
+- **Cancel run**, **Retry run**, **Send signal** and **Export history** work as
+  [Manage runs and business cases](execution-management.md#3-understand-why-a-run-is-waiting)
+  describes. **Pause run** and **Resume run** need their own permissions, ask
+  for a **Reason**, and appear only while the run hasn't finished; only one of
+  them shows at a time. A blocked run shows "This run stopped at" and the step;
+  resolve its incident in **Incidents**, or as in
+  [incident operations](../reference/incident-operations.md).
 - **Archive run**, under **Archive**, hides a finished run from the list and
   keeps its history. Open **More filters** and check **Include archived runs** to
   show it again; **Restore run** returns it to the list.
@@ -1676,8 +1744,8 @@ security policy, start preferences, and local validation when the repository
 Python `.venv` is available. Connected API fixtures test request shapes and
 failure handling; they are separate from database/mail transport integration
 evidence. `tests/browser/real-platform.spec.ts` drives the connection, sign-in,
-session expiry and revocation, switch-account, and quick-integration journeys
-against a running local platform and its Keycloak, with the system credential
+session expiry and revocation, switch-account, quick-integration and Runs
+refresh journeys against a running local platform and its Keycloak, with the system credential
 store; it is skipped unless `WEAVE_E2E_PLATFORM_DIR` and
 `WEAVE_E2E_PERSON_FILE` are set, as its header explains. Its quick-integration
 test also needs `WEAVE_E2E_ACME_ORIGIN`, the Acme fixture origin the platform

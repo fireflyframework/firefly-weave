@@ -18,7 +18,13 @@ SPDX-License-Identifier: Apache-2.0
 // Layout geometry across desktop-shell, tablet and browser sizes. 640x360 is
 // the CSS viewport of a 1280x720 window at 200% browser zoom.
 import { test, expect, Page } from "@playwright/test";
-import { command, connected, insertStep, newWorkflow } from "./support";
+import {
+  command,
+  connected,
+  insertStep,
+  newWorkflow,
+  runSummaries,
+} from "./support";
 import { chooseAction } from "./integrations-po";
 
 const sizes = [
@@ -100,6 +106,7 @@ for (const size of sizes) {
     await page.route("**/environments/development/runs?*", (r) =>
       r.fulfill({ json: { items: [run], next_cursor: null } }),
     );
+    await runSummaries(page, [run]);
     await page.route(`**/environments/development/runs/${run.id}`, (r) =>
       r.fulfill({ json: run }),
     );

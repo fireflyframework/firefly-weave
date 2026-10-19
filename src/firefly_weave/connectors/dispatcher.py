@@ -36,6 +36,7 @@ from firefly_weave.contracts.definitions import ContractModel
 from firefly_weave.contracts.workers import InstanceRequest
 from firefly_weave.operations.execution import ReservedSlots
 from firefly_weave.sdk.worker import Worker
+from firefly_weave.sdk.worker_identity import worker_identity
 from firefly_weave.workers.repository import WorkerRepository
 
 LOCAL_BUILD_FORMAT = "weave/local-build-v1"
@@ -147,6 +148,8 @@ class NativeDispatcher:
             raise RuntimeError("Native executors must share one build attestation")
         if self.image_digest is None:
             raise RuntimeError("Native dispatcher requires its operator-provisioned immutable image identity")
+        # Native executors run inside the API process; each registration reports that once.
+        identity = worker_identity(runtime="embedded")
         for entry in self.entries:
             async with self.service.uow.open(entry.scope) as tx:
                 actor = await self.service.access.load_principal(entry.principal_id, tx=tx)
@@ -170,7 +173,12 @@ class NativeDispatcher:
                 instance = await self.service.tasks.workers.register_instance(
                     actor,
                     entry.scope,
-                    InstanceRequest(release_id=entry.release_id, task_types=entry.task_types, capacity=entry.capacity),
+                    InstanceRequest(
+                        release_id=entry.release_id,
+                        task_types=entry.task_types,
+                        capacity=entry.capacity,
+                        identity=identity,
+                    ),
                     context=AuditContext(),
                     tx=tx,
                 )

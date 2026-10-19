@@ -24,6 +24,7 @@ from pydantic import AwareDatetime, Field, model_validator
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.catalog import Digest
 from firefly_weave.contracts.definitions import ContractModel
+from firefly_weave.contracts.workers import WorkerHost
 
 # Names are data identifiers, never paths, shell fragments, or executable arguments.
 type DeploymentName = Annotated[str, Field(pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,99}$")]
@@ -110,6 +111,24 @@ class Deployment(DeploymentRequest):
     created_at: AwareDatetime
 
 
+class ObservedMember(ContractModel):
+    """One container or pod of an observed worker component, as the runner saw it.
+
+    `host` is the hostname the member's worker reports: the container ID prefix for Compose
+    and the pod name for Kubernetes. Members describe placement only; they never identify or
+    authorize a worker.
+    """
+
+    host: WorkerHost
+    ordinal: int | None = Field(ge=0, le=1000000)
+    # The adapter's own lowercase state, such as running, exited, pending or terminating.
+    state: Annotated[str, Field(pattern=r"^[a-z][a-z0-9_-]{0,31}$")]
+    ready: bool
+    started_at: AwareDatetime | None
+    restarts: int = Field(ge=0, le=2147483647)
+    node: WorkerHost | None
+
+
 class ObservedResource(ContractModel):
     name: DeploymentName
     external_identity: ExternalIdentity
@@ -120,6 +139,8 @@ class ObservedResource(ContractModel):
     version: ExternalIdentity
     ownership: Literal["managed", "imported", "unknown"]
     state: Literal["ready", "progressing", "stopped", "failed", "unknown"]
+    # Left out when empty, so observations without members keep their bytes and digests.
+    members: list[ObservedMember] = Field(default_factory=list, max_length=100, exclude_if=lambda v: not v)
 
 
 class ObservationReport(ContractModel):

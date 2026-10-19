@@ -106,6 +106,7 @@ from firefly_weave.contracts.human_tasks import (
     TaskGroupRequest,
 )
 from firefly_weave.contracts.identity import IdentityView
+from firefly_weave.contracts.incident_queries import IncidentQuery
 from firefly_weave.contracts.integration_events import DeliveryAttempt, DeliveryView, Subscription, SubscriptionRequest
 from firefly_weave.contracts.language import LanguageManifest
 from firefly_weave.contracts.lumi import (
@@ -133,6 +134,7 @@ from firefly_weave.contracts.operations import (
     IncidentView,
     ReplayReport,
 )
+from firefly_weave.contracts.operations_summary import OperationsSummary, OperationsTelemetry
 from firefly_weave.contracts.providers import (
     ProviderIngressResponse,
     ProviderReceipt,
@@ -168,6 +170,7 @@ from firefly_weave.contracts.public import (
 )
 from firefly_weave.contracts.run_lifecycle import RunLifecycle, RunLifecycleRequest, RunPurgeRequest
 from firefly_weave.contracts.run_views import (
+    RunListQuery,
     RunLogPage,
     RunLogQuery,
     RunStepQuery,
@@ -187,6 +190,13 @@ from firefly_weave.contracts.schedules import ScheduleOccurrence, ScheduleReques
 from firefly_weave.contracts.teams import TeamsReactivateRequest, TeamsReference, TeamsRevokeRequest
 from firefly_weave.contracts.values import JsonObjectData
 from firefly_weave.contracts.whatsapp import MessageId, WhatsAppDeliveryState, WhatsAppStatusFact
+from firefly_weave.contracts.worker_queries import (
+    ReleaseUsage,
+    ReleaseUsageQuery,
+    RetireStaleRequest,
+    RetireStaleResult,
+    WorkerListQuery,
+)
 from firefly_weave.contracts.workers import (
     ClaimRequest,
     CompleteRequest,
@@ -292,20 +302,6 @@ class Operation:
                         name, "query", _present(field.annotation), required=field.is_required(), **documented
                     )
                 )
-        if self.id == "runs.list":
-            params += [
-                OpenAPIParameter("business_key", "query", Annotated[str, Field(max_length=200)], required=False),
-                OpenAPIParameter("correlation_key", "query", Annotated[str, Field(max_length=200)], required=False),
-                OpenAPIParameter(
-                    "status",
-                    "query",
-                    Literal[
-                        "queued", "running", "waiting", "suspended", "succeeded", "failed", "cancelled", "timed_out"
-                    ],
-                    required=False,
-                ),
-                OpenAPIParameter("include_archived", "query", bool, required=False, default=False),
-            ]
         if self.id == "human_tasks.list":
             params.append(
                 OpenAPIParameter(
@@ -332,7 +328,7 @@ class Operation:
             params.append(OpenAPIParameter("target_id", "query", UUID, required=False))
             if self.id == "deployment_plans.list":
                 params.append(OpenAPIParameter("deployment_id", "query", UUID, required=False))
-        if self.page:
+        if self.page and self.query is None:
             params += [
                 OpenAPIParameter("limit", "query", PageLimit, required=False, default=50),
                 OpenAPIParameter("cursor", "query", str, required=False),
@@ -798,6 +794,12 @@ OPERATIONS = {
             "POST",
             CompatibilityReport,
             "compatibility.check",
+        ),
+        Operation(
+            "operations_summary.read", ENVIRONMENT + "/operations/summary", "GET", OperationsSummary, "status.read"
+        ),
+        Operation(
+            "operations_telemetry.read", PROJECT + "/operations/telemetry", "GET", OperationsTelemetry, "status.read"
         ),
         Operation(
             "retention.plan",
@@ -1427,7 +1429,13 @@ OPERATIONS = {
             "runs.start", ENVIRONMENT + "/runs", "POST", RunView, "run.start", StartRunRequest, (201,), idempotency=True
         ),
         Operation(
-            "runs.list", ENVIRONMENT + "/runs", "GET", Page[RunView | UnavailableResource], "run.read", page=True
+            "runs.list",
+            ENVIRONMENT + "/runs",
+            "GET",
+            Page[RunView | UnavailableResource],
+            "run.read",
+            page=True,
+            query=RunListQuery,
         ),
         Operation("runs.read", ENVIRONMENT + "/runs/{identifier}", "GET", RunView, "run.read"),
         Operation(
@@ -1467,7 +1475,6 @@ OPERATIONS = {
             RunSummaryPage,
             "run.read",
             query=RunSummaryQuery,
-            served=False,
         ),
         Operation(
             "runs.steps",
@@ -1476,7 +1483,6 @@ OPERATIONS = {
             StepFactPage,
             "run.read",
             query=RunStepQuery,
-            served=False,
         ),
         Operation(
             "runs.logs",
@@ -1494,6 +1500,7 @@ OPERATIONS = {
             Page[IncidentView | UnavailableResource],
             "incident.read",
             page=True,
+            query=IncidentQuery,
         ),
         Operation(
             "incidents.list",
@@ -1502,6 +1509,15 @@ OPERATIONS = {
             Page[IncidentView | UnavailableResource],
             "incident.read",
             page=True,
+            query=IncidentQuery,
+        ),
+        Operation(
+            "incidents.read",
+            ENVIRONMENT + "/incidents/{identifier}",
+            "GET",
+            IncidentView | UnavailableResource,
+            "incident.read",
+            etag=True,
         ),
         Operation(
             "incidents.resolve",
@@ -1527,6 +1543,14 @@ OPERATIONS = {
         ),
         Operation("releases.read", ENVIRONMENT + "/worker-releases/{identifier}", "GET", WorkerRelease, "catalog.read"),
         Operation(
+            "releases.usage",
+            ENVIRONMENT + "/worker-releases/{identifier}/usage",
+            "GET",
+            ReleaseUsage,
+            "catalog.read",
+            query=ReleaseUsageQuery,
+        ),
+        Operation(
             "workers.create",
             ENVIRONMENT + "/workers",
             "POST",
@@ -1535,7 +1559,15 @@ OPERATIONS = {
             InstanceRequest,
             (201,),
         ),
-        Operation("workers.list", ENVIRONMENT + "/workers", "GET", Page[WorkerStatus], "status.read", page=True),
+        Operation(
+            "workers.list",
+            ENVIRONMENT + "/workers",
+            "GET",
+            Page[WorkerStatus],
+            "status.read",
+            page=True,
+            query=WorkerListQuery,
+        ),
         Operation("workers.read", ENVIRONMENT + "/workers/{identifier}", "GET", WorkerStatus, "status.read"),
         *(
             Operation(
@@ -1550,6 +1582,15 @@ OPERATIONS = {
             for action in ("drain", "resume")
         ),
         Operation("workers.revoke", ENVIRONMENT + "/workers/{identifier}/revoke", "POST", Revoked, "release.retire"),
+        Operation(
+            "workers.retire_stale",
+            ENVIRONMENT + "/workers/retire-stale",
+            "POST",
+            RetireStaleResult,
+            "release.retire",
+            RetireStaleRequest,
+            idempotency=True,
+        ),
         Operation(
             "workers.grant",
             ENVIRONMENT + "/worker-connection-grants",

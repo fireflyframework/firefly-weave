@@ -23,14 +23,17 @@ import {
   legacyRedirects,
   navEntryVisible,
   operateRoutes,
+  releasesPath,
   viewFromPath,
   viewPath,
+  workersRoute,
 } from "../src/app/operate/operate-routes";
 
 const id = "11111111-1111-4111-8111-111111111111";
 
 describe("Operate routes", () => {
   it("puts the Operate pages under /operate and the rest at the root", () => {
+    expect(viewPath("overview")).toBe("/operate/overview");
     expect(viewPath("runs")).toBe("/operate/runs");
     expect(viewPath("incidents")).toBe("/operate/incidents");
     expect(viewPath("workers", id)).toBe(`/operate/workers/${id}`);
@@ -54,7 +57,16 @@ describe("Operate routes", () => {
       view: "clusters",
       id: "",
     });
-    expect(viewFromPath("/operate")).toEqual({ view: "runs", id: "" });
+    // Overview is where Operate opens.
+    expect(viewFromPath("/operate")).toEqual({ view: "overview", id: "" });
+    expect(viewFromPath("/operate/overview")).toEqual({
+      view: "overview",
+      id: "",
+    });
+    expect(viewFromPath(`/operate/overview/${id}`)).toEqual({
+      view: "overview",
+      id: "",
+    });
     expect(viewFromPath("/operate/metrics")).toBeNull();
     expect(viewFromPath("/tasks")).toEqual({ view: "tasks", id: "" });
     expect(viewFromPath("/")).toBeNull();
@@ -71,7 +83,7 @@ describe("Operate routes", () => {
     expect(
       legacyRedirects.map((route) => [route.path, route.redirectTo]),
     ).toEqual([
-      ["operate", "operate/runs"],
+      ["operate", "operate/overview"],
       ["runs", "operate/runs"],
       ["workers", "operate/workers"],
       ["operations", "operate/clusters"],
@@ -92,11 +104,14 @@ describe("Operate routes", () => {
 
   it("declares a componentless route for every Operate address", () => {
     expect(operateRoutes.map((route) => route.path)).toEqual([
+      "operate/overview",
       "operate/runs",
       "operate/incidents",
       "operate/workers",
       "operate/clusters",
       "operate/runs/:id",
+      "operate/workers/releases",
+      "operate/workers/releases/:id",
       "operate/workers/:id",
       "operate/clusters/targets/:id",
       "operate/clusters/deployments/:id",
@@ -106,6 +121,41 @@ describe("Operate routes", () => {
     expect(operateRoutes.every((route) => route.children?.length === 0)).toBe(
       true,
     );
+  });
+
+  it("reads the Workers fleet or its releases, never a release as a worker", () => {
+    expect(workersRoute("/operate/workers")).toEqual({
+      tab: "fleet",
+      release: "",
+    });
+    expect(workersRoute(`/operate/workers/${id}`)).toEqual({
+      tab: "fleet",
+      release: "",
+    });
+    expect(workersRoute("/operate/workers/releases")).toEqual({
+      tab: "releases",
+      release: "",
+    });
+    expect(
+      workersRoute(`/operate/workers/releases/${id.toUpperCase()}`),
+    ).toEqual({
+      tab: "releases",
+      release: id,
+    });
+    expect(workersRoute("/operate/workers/releases/not-an-id")).toEqual({
+      tab: "releases",
+      release: "",
+    });
+    expect(viewFromPath(`/operate/workers/releases/${id}`)).toEqual({
+      view: "workers",
+      id: "",
+    });
+    expect(viewFromPath("/operate/workers/releases")).toEqual({
+      view: "workers",
+      id: "",
+    });
+    expect(releasesPath()).toBe("/operate/workers/releases");
+    expect(releasesPath(id)).toBe(`/operate/workers/releases/${id}`);
   });
 
   it("reads a Clusters record screen or tab, new and old", () => {
@@ -136,10 +186,20 @@ describe("Operate routes", () => {
   });
 
   it("shows every entry without a known identity, and Operate entries by capability", () => {
-    for (const entry of ["runs", "incidents", "workers", "clusters", "tasks"])
+    for (const entry of [
+      "overview",
+      "runs",
+      "incidents",
+      "workers",
+      "clusters",
+      "tasks",
+    ])
       expect(navEntryVisible(entry, null)).toBe(true);
     const held = new Set(["run.read", "deployment.read"]);
     const holds = (capability: string) => held.has(capability);
+    // Overview needs status.read, the summary's own capability.
+    expect(navEntryVisible("overview", holds)).toBe(false);
+    expect(navEntryVisible("overview", (c) => c === "status.read")).toBe(true);
     expect(navEntryVisible("runs", holds)).toBe(true);
     expect(navEntryVisible("incidents", holds)).toBe(false);
     expect(navEntryVisible("workers", holds)).toBe(false);

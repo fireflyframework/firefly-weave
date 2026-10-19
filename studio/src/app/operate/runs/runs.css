@@ -1,0 +1,731 @@
+/*
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+*/
+/* Operate › Runs and a run's steps, in design tokens only. A fine pointer on
+   a wide screen gets 36 px controls, 32 px rows (controls inside a row stay
+   within it, separator included) and 24/12/4 spacing; a narrow screen or a
+   touch pointer gets 44 px targets and 16/8 spacing. */
+:host {
+  --section-gap: var(--space-6);
+  --group-gap: var(--space-3);
+  --inline-gap: var(--space-1);
+  --row: var(--control-sm);
+  --target: var(--control-md);
+  --cell: calc(var(--row) - var(--space-1));
+  display: block;
+  min-width: 0;
+}
+@media (max-width: 767px), (pointer: coarse) {
+  :host {
+    --section-gap: var(--space-4);
+    --group-gap: var(--space-2);
+    --row: var(--control-touch);
+    --target: var(--control-touch);
+    --cell: var(--control-touch);
+  }
+}
+weave-operate-state {
+  display: block;
+  margin-bottom: var(--group-gap);
+}
+.numeric-cell {
+  text-align: right;
+}
+
+/* Heading actions: freshness, Auto-refresh and Start run on one line. */
+.toggle-field {
+  min-height: var(--target);
+  font: var(--type-small);
+  color: var(--text);
+}
+
+/* Filters: labelled fields in one wrapping row, statuses as toggles, the
+   rest behind More filters. Each change applies at once. */
+.run-filters {
+  display: grid;
+  gap: var(--group-gap);
+  margin-bottom: var(--section-gap);
+  min-width: 0;
+}
+.filter-body {
+  display: grid;
+  gap: var(--group-gap);
+  min-width: 0;
+}
+.filters-toggle {
+  display: none;
+  justify-self: start;
+  min-height: var(--target);
+}
+/* Narrow screens fold the filters behind "Filters (n)"; open, each field
+   spans the pane, so every field shares its left and right edge. */
+@media (max-width: 767px) {
+  .filters-toggle {
+    display: inline-flex;
+  }
+  .run-filters:not(.open) .filter-body {
+    display: none;
+  }
+  .filter-row > .field {
+    flex: 1 1 100%;
+  }
+  .filter-row select,
+  .filter-row input:not([type="checkbox"]),
+  .key-field input {
+    width: 100%;
+  }
+}
+.filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--group-gap);
+  min-width: 0;
+}
+.filter-row .field {
+  gap: var(--inline-gap);
+  min-width: 0;
+}
+.filter-row select,
+.filter-row input:not([type="checkbox"]) {
+  min-height: var(--target);
+  max-width: 100%;
+}
+.key-field input {
+  width: calc(var(--space-12) * 4);
+}
+.status-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--inline-gap);
+  min-width: 0;
+}
+.status-choice {
+  min-height: var(--target);
+  padding-inline: var(--space-3);
+  font: var(--type-small);
+  font-weight: 500;
+  color: var(--muted);
+}
+.status-choice[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--selected);
+  color: var(--text);
+  font-weight: 600;
+}
+.filter-row .checkbox-field {
+  min-height: var(--target);
+  font: var(--type-small);
+  color: var(--text);
+}
+.filter-row > button.tertiary {
+  min-height: var(--target);
+}
+.disclosure-chevron {
+  transform: rotate(90deg);
+  transition: transform var(--dur-fast) var(--ease);
+}
+.disclosure-chevron.open {
+  transform: rotate(-90deg);
+}
+.more-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--group-gap) var(--section-gap);
+  padding: var(--group-gap);
+  border: thin solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+.more-filters .field {
+  gap: var(--inline-gap);
+}
+.more-filters select,
+.more-filters input:not([type="checkbox"]) {
+  min-height: var(--target);
+}
+.more-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--inline-gap) var(--group-gap);
+}
+.more-checks .checkbox-field {
+  min-height: var(--target);
+  font: var(--type-small);
+}
+.filter-chip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  font: var(--type-small);
+  color: var(--muted);
+}
+
+/* Bulk actions on the selected runs, and their result per run. */
+.bulk-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--group-gap);
+  padding: var(--space-2) var(--group-gap);
+  border: thin solid var(--accent);
+  border-radius: var(--radius-md);
+  background: var(--selected);
+}
+.bulk-count {
+  margin-right: auto;
+  font: var(--type-label);
+}
+.bulk-results {
+  display: grid;
+  gap: var(--space-2);
+  margin-bottom: var(--group-gap);
+  padding: var(--group-gap);
+  border: thin solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+.bulk-results-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.bulk-results h2 {
+  margin: 0;
+  font: var(--type-label);
+}
+.bulk-results ul {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.bulk-result {
+  display: grid;
+  grid-template-columns: var(--space-4) auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--row);
+  font: var(--type-small);
+  color: var(--text);
+}
+.bulk-result[data-ok="true"] weave-icon {
+  color: var(--success-ink);
+}
+.bulk-result[data-ok="false"] weave-icon {
+  color: var(--warning-ink);
+}
+
+/* The list and, beside it, the open run. */
+.runs-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: var(--section-gap);
+  min-width: 0;
+}
+@media (min-width: 1025px) {
+  .runs-layout.run-focus {
+    grid-template-columns: calc(var(--space-10) * 6) minmax(0, 1fr);
+    gap: var(--space-4);
+  }
+}
+.runs-list {
+  display: grid;
+  min-width: 0;
+  container: runs / inline-size;
+}
+.run-detail-panel {
+  min-width: 0;
+}
+.list-limit {
+  margin: var(--group-gap) 0 0;
+  font: var(--type-small);
+  color: var(--muted);
+}
+
+/* The table: one 32 px line per run on a wide pane. Every cell is centred on
+   the row, and numbers use tabular figures. */
+.runs-table {
+  --cols: var(--target) minmax(0, 1.2fr) minmax(0, 1.6fr) minmax(0, 1fr)
+    minmax(0, 0.8fr) minmax(0, 0.7fr) minmax(0, 0.6fr) minmax(0, 1fr)
+    minmax(0, 0.9fr);
+}
+.runs-table .table-head,
+.runs-table .resource-row {
+  grid-template-columns: var(--cols);
+  grid-template-areas: "select status workflow origin started duration incidents key run";
+  gap: var(--group-gap);
+  min-height: var(--row);
+  padding: 0 var(--group-gap);
+}
+.runs-table .resource-row {
+  position: relative;
+  cursor: pointer;
+  font: var(--type-small);
+  color: var(--muted);
+}
+.runs-table .resource-row.unavailable {
+  cursor: default;
+}
+.runs-table .table-head {
+  min-height: var(--row);
+}
+.runs-table [role="cell"],
+.runs-table [role="columnheader"] {
+  min-width: 0;
+}
+.cell-select {
+  grid-area: select;
+}
+.cell-status {
+  grid-area: status;
+}
+.cell-workflow {
+  grid-area: workflow;
+}
+.cell-origin {
+  grid-area: origin;
+}
+.cell-started {
+  grid-area: started;
+}
+.cell-duration {
+  grid-area: duration;
+}
+.cell-incidents {
+  grid-area: incidents;
+}
+.cell-key {
+  grid-area: key;
+}
+.cell-run {
+  grid-area: run;
+}
+.cell-meta {
+  grid-area: meta;
+  display: none;
+}
+/* An unavailable run explains itself across the columns it cannot fill. */
+.cell-explain {
+  grid-column: origin-start / key-end;
+}
+.select-box {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--target);
+  height: var(--cell);
+  cursor: pointer;
+}
+.select-box input {
+  width: var(--space-4);
+  height: var(--space-4);
+  margin: 0;
+}
+.cell-status.badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--inline-gap);
+}
+.handled {
+  font: var(--type-caption);
+  color: var(--warning-ink);
+}
+.cell-workflow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--inline-gap) var(--space-2);
+}
+/* On a wide pane every run stays one 32 px line: a long workflow name or
+   business key ends in an ellipsis, with the whole value in its title (and in
+   the run's detail). */
+.runs-table .resource-row .cell-workflow {
+  flex-wrap: nowrap;
+}
+.runs-table .resource-row .row-open,
+.runs-table .resource-row .cell-key {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.runs-table .row-text {
+  font: var(--type-label);
+  color: var(--text);
+}
+/* The workflow name opens the run; its target covers the whole row. */
+.runs-table .row-open {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--text);
+  font: var(--type-label);
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.runs-table .row-open:hover {
+  background: none;
+}
+.runs-table .row-open::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+}
+.runs-table .row-open:focus-visible {
+  outline: none;
+}
+.runs-table .row-open:focus-visible::after {
+  outline: medium solid var(--focus);
+  outline-offset: calc(var(--inline-gap) * -1);
+}
+.version-tag {
+  flex: none;
+}
+.origin-link,
+.copy-id {
+  position: relative;
+  z-index: 1;
+}
+.origin-link {
+  min-height: var(--cell);
+  font: var(--type-small);
+}
+.cell-run {
+  display: flex;
+  align-items: center;
+  gap: var(--inline-gap);
+}
+.cell-run code {
+  font: var(--type-mono);
+  color: var(--text);
+}
+.runs-table .copy-id {
+  width: var(--cell);
+  height: var(--cell);
+  min-height: var(--cell);
+}
+.muted {
+  color: var(--subtle);
+}
+
+/* A narrower pane (a run open beside the list, a small window, a phone):
+   each run reads as two lines, its workflow and status, then the details. */
+@container runs (max-width: 1099px) {
+  .runs-table .table-head,
+  .runs-table .resource-row {
+    grid-template-columns: var(--target) minmax(0, 1fr);
+    grid-template-areas:
+      "select workflow"
+      ". status"
+      ". meta";
+    row-gap: var(--inline-gap);
+    padding-block: var(--space-2);
+  }
+  .runs-table .table-head {
+    grid-template-areas: "select workflow";
+    padding-block: 0;
+  }
+  .runs-table
+    :is(
+      .cell-origin,
+      .cell-started,
+      .cell-duration,
+      .cell-incidents,
+      .cell-key,
+      .cell-run
+    ),
+  .runs-table .table-head .cell-status {
+    display: none;
+  }
+  .runs-table .cell-status:empty {
+    display: none;
+  }
+  .runs-table .cell-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0 var(--group-gap);
+  }
+  .runs-table .table-head .cell-meta {
+    display: none;
+  }
+  /* The shared narrow table rules hide a third column title; here it is the
+     workflow's, which names the list. */
+  .runs-table .table-head .cell-workflow {
+    display: flex;
+  }
+  .meta-key {
+    overflow-wrap: anywhere;
+  }
+  /* Two lines and more: long names wrap instead. */
+  .runs-table .resource-row .cell-workflow {
+    flex-wrap: wrap;
+  }
+  .runs-table .resource-row .row-open {
+    overflow: visible;
+    white-space: normal;
+  }
+}
+/* With a run open beside it, the list is a column of names and statuses; a
+   run without a summary keeps its explanation and ID there instead. */
+@media (min-width: 1025px) {
+  .run-focus .runs-table .resource-row .cell-meta {
+    display: none;
+  }
+  .run-focus .runs-table .resource-row {
+    grid-template-areas:
+      "select workflow"
+      ". status";
+  }
+  .run-focus .runs-table .resource-row.unavailable {
+    grid-template-areas:
+      "select workflow"
+      ". meta";
+  }
+  .run-focus .runs-table .resource-row.started {
+    grid-template-areas:
+      "select workflow"
+      ". status"
+      ". meta";
+  }
+  .run-focus .runs-table .resource-row:is(.unavailable, .started) .cell-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0 var(--group-gap);
+  }
+}
+
+/* A run's steps: bars for queue wait and run time, loop iterations under
+   their step, Input/Output on request, and logs not served yet. */
+.steps {
+  display: grid;
+  gap: var(--group-gap);
+  min-width: 0;
+  margin: var(--section-gap) 0;
+  container: steps / inline-size;
+}
+.steps-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-2) var(--group-gap);
+}
+.steps-head h3 {
+  margin: 0;
+  font: var(--type-title-sm);
+  line-height: var(--target);
+}
+.steps-tabs {
+  margin: 0;
+}
+.steps-tabs button {
+  min-height: var(--target);
+  padding-inline: var(--space-2);
+}
+.steps .status-pill {
+  margin: 0;
+}
+.steps-note {
+  margin: 0;
+  font: var(--type-small);
+  color: var(--muted);
+}
+.steps-loading {
+  display: grid;
+  gap: var(--inline-gap);
+}
+.step-skeleton {
+  display: block;
+  height: var(--row);
+  border-radius: var(--radius-sm);
+  background: var(--skeleton);
+}
+.step-groups,
+.step-rows,
+.step-outputs {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.step-groups {
+  border: thin solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+.step-group {
+  border-bottom: thin solid var(--line);
+}
+.step-group:last-child {
+  border-bottom: 0;
+}
+.step-group-name {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--row);
+  margin: 0;
+  padding: 0 var(--group-gap);
+  font: var(--type-label);
+  color: var(--text);
+}
+.step-group-name .numeric {
+  font: var(--type-caption);
+  color: var(--muted);
+}
+.step-row {
+  display: grid;
+  grid-template-columns:
+    calc(var(--space-12) * 2.5) calc(var(--space-12) * 2) minmax(0, 1fr)
+    calc(var(--space-12) * 1.5) calc(var(--space-12) * 3);
+  grid-template-areas: "name status track time link";
+  align-items: center;
+  gap: var(--group-gap);
+  min-height: var(--row);
+  padding: 0 var(--group-gap);
+}
+/* Iterations indent their names, never their bars: every bar shares one scale. */
+.step-row.nested .step-name {
+  padding-left: var(--space-4);
+}
+.step-name {
+  grid-area: name;
+  min-width: 0;
+  font: var(--type-small);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.step-row > .status-pill {
+  grid-area: status;
+}
+.step-track {
+  grid-area: track;
+  position: relative;
+  height: var(--space-2);
+  border-radius: var(--radius-xs);
+  background: var(--hover);
+}
+.step-wait,
+.step-run {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+}
+.step-wait {
+  background: var(--border-hover);
+  border-radius: var(--radius-xs) 0 0 var(--radius-xs);
+}
+.step-run {
+  background: var(--series-2);
+  border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
+}
+.step-run[data-tone="success"] {
+  background: var(--success);
+}
+.step-run[data-tone="danger"] {
+  background: var(--danger);
+}
+.step-run[data-tone="warning"] {
+  background: var(--warning);
+}
+.step-run.open {
+  background: var(--live);
+}
+.step-time {
+  grid-area: time;
+  font: var(--type-small);
+  color: var(--muted);
+  text-align: right;
+}
+.step-link {
+  grid-area: link;
+}
+.step-link .text-link {
+  min-height: var(--row);
+  font: var(--type-small);
+}
+.step-output {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+  border-bottom: thin solid var(--line);
+}
+.step-output:last-child {
+  border-bottom: 0;
+}
+.step-output-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-height: var(--row);
+}
+.step-output-head .step-label {
+  font: var(--type-small);
+  color: var(--text);
+}
+.step-output-head small {
+  margin-left: var(--space-2);
+  color: var(--muted);
+}
+.step-output-head button {
+  min-height: var(--target);
+}
+.step-output pre {
+  max-height: calc(var(--space-12) * 5);
+  margin: 0;
+  overflow: auto;
+  font: var(--type-mono);
+}
+/* In a narrow detail the bar takes its own line under the step. */
+@container steps (max-width: 559px) {
+  .step-row {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-areas:
+      "name status time"
+      "track track track"
+      "link link link";
+    row-gap: var(--space-1);
+    padding-block: var(--space-2);
+  }
+  .step-link:empty {
+    display: none;
+  }
+}
+
+/* Counts and durations in tabular figures; after every font shorthand above,
+   which would reset them. */
+.numeric,
+.step-time,
+.bulk-count {
+  font-variant-numeric: tabular-nums;
+}

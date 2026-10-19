@@ -29,8 +29,9 @@ from pydantic import ValidationError
 from pyfly.core.config import Config
 
 from firefly_weave.contracts.telemetry import TelemetryOptions
-from firefly_weave.observability import OwnedMeterConfiguration, OwnedTracingConfiguration
+from firefly_weave.observability import OwnedMeterConfiguration, OwnedTracingConfiguration, TelemetryDrops
 from firefly_weave.operations.telemetry import TelemetryService, WeaveMetricsRecorder
+from firefly_weave.settings import Settings
 
 
 def test_options_reject_secret_urls_and_invalid_bounds():
@@ -46,6 +47,41 @@ def test_options_reject_secret_urls_and_invalid_bounds():
         TelemetryOptions(enabled=True)
     with pytest.raises(ValidationError):
         TelemetryOptions(enabled=True, traces_endpoint="http://127.0.0.1:4318/v1/traces", timeout_seconds=6)
+
+
+def test_options_refuse_a_collector_host_name_longer_than_a_dns_name(monkeypatch):
+    label = "a" * 63
+    longest = ".".join([label, label, label, "b" * 61])
+    assert len(longest) == 253
+    options = TelemetryOptions(enabled=True, traces_endpoint=f"https://{longest}:4318/v1/traces")
+    assert options.traces_endpoint is not None
+    for host in (longest + "c", ".".join([label] * 4) + ".example"):
+        with pytest.raises(ValidationError) as error:
+            TelemetryOptions(enabled=True, metrics_endpoint=f"https://{host}/v1/metrics")
+        # The same refusal as every other unusable endpoint, without echoing the value.
+        assert "An explicit TLS collector endpoint or loopback development endpoint is required" in str(error.value)
+        assert host not in str(error.value)
+        monkeypatch.setenv("WEAVE_DATABASE_URL", "postgresql+asyncpg://weave_app:unused@127.0.0.1:65432/weave")
+        monkeypatch.setenv(
+            "WEAVE_TELEMETRY", json.dumps({"enabled": True, "metrics_endpoint": f"https://{host}/v1/metrics"})
+        )
+        with pytest.raises(ValueError, match="Invalid WEAVE_TELEMETRY configuration"):
+            Settings.from_env()
+
+
+def test_drops_remember_when_the_last_one_happened():
+    elapsed = [50.0]
+    drops = TelemetryDrops(monotonic=lambda: elapsed[0])
+    assert (drops.count, drops.dropped_within(90)) == (0, False)
+    drops.add(0)
+    assert (drops.count, drops.dropped_within(90)) == (0, False)
+    drops.add(3)
+    elapsed[0] += 90
+    assert (drops.count, drops.dropped_within(90)) == (3, True)
+    elapsed[0] += 1
+    assert drops.dropped_within(90) is False
+    drops.add(1)
+    assert (drops.count, drops.dropped_within(0.5)) == (4, True)
 
 
 def test_disabled_never_constructs_exporter_from_environment(monkeypatch):

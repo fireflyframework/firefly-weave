@@ -17,7 +17,7 @@
 """Immutable release admission and scoped worker identities."""
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -28,12 +28,23 @@ from firefly_weave.access.authorization import AccessDenied
 from firefly_weave.access.models import Principal
 from firefly_weave.access.repository import load_principal
 from firefly_weave.access.service import audit
+from firefly_weave.api.transport import decode_cursor_v2, encode_cursor_v2
 from firefly_weave.compiler.api import CompiledArtifact
 from firefly_weave.compiler.catalog import CatalogSnapshot
 from firefly_weave.compiler.expressions import measure_value
 from firefly_weave.compiler.ir import executable_node_kinds
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.catalog import ActivationRequest
+from firefly_weave.contracts.worker_queries import (
+    ReleaseDeploymentUsage,
+    ReleaseUsage,
+    ReleaseUsageQuery,
+    ReleaseWorkerCounts,
+    RetireStaleRequest,
+    RetireStaleResult,
+    WorkerListQuery,
+    release_usage_position,
+)
 from firefly_weave.contracts.workers import (
     ConnectorExecutionPin,
     CredentialGrantRequest,
@@ -48,8 +59,11 @@ from firefly_weave.definitions.models import CatalogError
 from firefly_weave.definitions.ports import ConnectionBindingPort, WorkerAdmissionPort
 from firefly_weave.definitions.repository import DefinitionRepository
 from firefly_weave.definitions.service import DefinitionService
+from firefly_weave.operations.fact_positions import RunPosition
+from firefly_weave.operations.permissions import target_permissions
 from firefly_weave.persistence.idempotency import Idempotency, lock
 from firefly_weave.persistence.uow import Transaction
+from firefly_weave.workers.models import fleet_status
 from firefly_weave.workers.repository import SCOPE, WorkerRepository
 
 
@@ -72,6 +86,28 @@ class WorkerService(WorkerAdmissionPort):
             raise AccessDenied()
         for current in (actor, await load_principal(tx.session, actor.id)):
             self.definitions.authorization.require(current, scope, capability, resource=resource, context=context)
+
+    def precheck(
+        self, actor: Principal, scope: Scope, capability: str, context: AuditContext, resource: str | None = None
+    ) -> None:
+        """`capability` on the token principal, before any unit of work opens."""
+        if scope.environment_id is None:
+            raise AccessDenied()
+        self.definitions.authorization.require(actor, scope, capability, resource=resource, context=context)
+
+    async def current(
+        self,
+        actor: Principal,
+        scope: Scope,
+        capability: str,
+        context: AuditContext,
+        tx: Transaction,
+        resource: str | None = None,
+    ) -> Principal:
+        """`capability` on the principal stored now, inside the caller's unit of work; `precheck` runs first."""
+        current = await load_principal(tx.session, actor.id)
+        self.definitions.authorization.require(current, scope, capability, resource=resource, context=context)
+        return current
 
     async def capabilities(self, tx: Transaction, base: CatalogSnapshot) -> CatalogSnapshot:
         rows = await WorkerRepository(tx).rows(
@@ -160,7 +196,8 @@ class WorkerService(WorkerAdmissionPort):
                 raise AccessDenied()
             for capability in request.task_types:
                 await self.require(actor, scope, "worker.register", context, tx, capability)
-            instance = WorkerInstance(id=uuid4(), principal_id=actor.id, **request.model_dump())
+            # The stored instance and the registration answer keep their bytes; identity is a fact.
+            instance = WorkerInstance(id=uuid4(), principal_id=actor.id, **request.model_dump(exclude={"identity"}))
             await repository.execute(
                 "INSERT INTO worker_instances "
                 "(id,tenant_id,project_id,environment_id,release_id,principal_id,payload,revoked) "
@@ -171,6 +208,7 @@ class WorkerService(WorkerAdmissionPort):
                 principal=actor.id,
                 payload=instance.model_dump_json(),
             )
+            await repository.record_registration(instance.id, request.identity)
             await audit(
                 tx.session,
                 actor,
@@ -228,7 +266,7 @@ class WorkerService(WorkerAdmissionPort):
                 return WorkerStatus.model_validate_json(json.dumps(prior))
             repository = WorkerRepository(enlisted)
             rows = await repository.rows(
-                f"SELECT revoked,control_revision FROM worker_instances WHERE {SCOPE} AND id=:id FOR UPDATE",
+                f"SELECT revoked,draining,control_revision FROM worker_instances WHERE {SCOPE} AND id=:id FOR UPDATE",
                 id=identifier,
             )
             if not rows:
@@ -243,6 +281,7 @@ class WorkerService(WorkerAdmissionPort):
                 id=identifier,
                 draining=draining,
             )
+            await repository.record_drain(identifier, draining=draining, was_draining=rows[0]["draining"])
             result = await repository.status(identifier)
             await audit(
                 enlisted.session,
@@ -399,6 +438,113 @@ class WorkerService(WorkerAdmissionPort):
                 context=context,
             )
 
+    async def retire_stale(
+        self,
+        actor: Principal,
+        scope: Scope,
+        request: RetireStaleRequest,
+        idempotency_key: str,
+        *,
+        context: AuditContext,
+        tx: Transaction | None = None,
+    ) -> RetireStaleResult:
+        """Revoke at most one batch of workers without an active lease whose last contact is older than the threshold.
+
+        A dry run selects the same oldest-first batch without revoking it. Both save their answer for replay under
+        the same Idempotency-Key; a worker that was never seen counts from its registration, and one whose
+        registration time is unknown is never retired.
+        """
+        self.precheck(actor, scope, "release.retire", context)
+        async with self.definitions.transaction(scope, tx) as enlisted:
+            await self.current(actor, scope, "release.retire", context, enlisted)
+            replay = Idempotency(
+                enlisted,
+                actor.id,
+                f"workers.retire_stale:{scope.environment_id}",
+                idempotency_key,
+                request.model_dump(mode="json"),
+            )
+            if prior := await replay.replay():
+                return RetireStaleResult.model_validate_json(json.dumps(prior))
+            repository = WorkerRepository(enlisted)
+            now = await repository.now()
+            cutoff = now - timedelta(seconds=request.older_than_seconds)
+            matched = await repository.retirable(cutoff, now)
+            if request.dry_run:
+                result = RetireStaleResult(
+                    matched=matched,
+                    revoked=0,
+                    worker_ids=await repository.retirement_batch(cutoff, now, lock=False),
+                )
+            else:
+                locked = await repository.retirement_batch(cutoff, now, lock=True)
+                revoked = await repository.retire(locked, cutoff, now)
+                result = RetireStaleResult(matched=matched, revoked=len(revoked), worker_ids=revoked)
+            await audit(
+                enlisted.session,
+                actor,
+                "worker.retire_stale",
+                str(scope.environment_id),
+                scope=scope,
+                capability="release.retire",
+                context=context,
+                details={
+                    "dry_run": request.dry_run,
+                    "older_than_seconds": request.older_than_seconds,
+                    **result.model_dump(mode="json"),
+                },
+            )
+            await replay.save(result.model_dump(mode="json"))
+            return result
+
+    async def release_usage(
+        self,
+        actor: Principal,
+        scope: Scope,
+        release_id: UUID,
+        query: ReleaseUsageQuery,
+        *,
+        context: AuditContext,
+    ) -> ReleaseUsage:
+        """Worker counts, pinning activations and a page of the readable deployments that run an admitted release.
+
+        The cursor is bound to the release and to the targets this reader may see, which only the read unit knows.
+        """
+        self.precheck(actor, scope, "catalog.read", context)
+        async with self.definitions.transaction(scope, None, mutation=False) as tx:
+            current = await self.current(actor, scope, "catalog.read", context, tx)
+            repository = WorkerRepository(tx)
+            digest = await repository.release_digest(release_id)
+            targets = target_permissions(
+                self.definitions.authorization, actor, current, scope, "deployment.read", context
+            )
+            collection = query.cursor_collection(release_id, targets)
+            position = release_usage_position(decode_cursor_v2(query.cursor, scope, collection))
+            now = await repository.now()
+            workers = ReleaseWorkerCounts(**await repository.release_workers(release_id, now))
+            activations = await repository.release_activations(release_id)
+            rows = (
+                []
+                if targets == ()
+                else await repository.release_deployments(
+                    release_id, digest, authorized_targets=targets, position=position, limit=query.limit
+                )
+            )
+            visible = rows[: query.limit]
+            cursor = None
+            if len(rows) > query.limit:
+                last = visible[-1]
+                cursor = encode_cursor_v2(scope, collection, last["component"], str(last["deployment_id"]))
+            return ReleaseUsage(
+                workers=workers,
+                deployments=[
+                    ReleaseDeploymentUsage.model_validate_json(json.dumps(row, default=str)) for row in visible
+                ],
+                activations=activations,
+                next_cursor=cursor,
+                deployments_hidden=targets == (),
+            )
+
     async def list(
         self,
         actor: Principal,
@@ -407,24 +553,72 @@ class WorkerService(WorkerAdmissionPort):
         releases: bool = False,
         limit: int = 50,
         cursor: UUID | None = None,
+        query: WorkerListQuery | None = None,
+        position: RunPosition | None = None,
         context: AuditContext,
     ) -> dict[str, Any]:
+        """Releases in ID order, or one page of workers from a single fleet query.
+
+        Workers take a typed query and the decoded position of its cursor; the keyword `limit` selects the first page
+        of current workers.
+        """
+        if not releases:
+            if query is None:
+                if cursor is not None:
+                    raise ValueError("Continue a worker list with its query and position")
+                query = WorkerListQuery(limit=limit)
+            elif cursor is not None or limit != 50:
+                raise ValueError("Use either a query or legacy list arguments")
+            return await self._fleet(actor, scope, query, position, context=context)
+        if query is not None or position is not None:
+            raise ValueError("Release lists take no worker query")
         from firefly_weave.persistence.paging import page_ids
 
-        capability = "catalog.read" if releases else "status.read"
         async with self.definitions.transaction(scope, None, mutation=False) as tx:
-            await self.require(actor, scope, capability, context, tx)
-            ids = await page_ids(tx, "worker_releases" if releases else "worker_instances", limit, cursor)
-            observed_at = await WorkerRepository(tx).now()
+            await self.require(actor, scope, "catalog.read", context, tx)
+            ids = await page_ids(tx, "worker_releases", limit, cursor)
             items = [
-                (
-                    await self.read(
-                        actor, scope, identifier, releases=releases, context=context, tx=tx, observed_at=observed_at
-                    )
-                ).model_dump(mode="json", by_alias=True)
+                (await self.read(actor, scope, identifier, releases=True, context=context, tx=tx)).model_dump(
+                    mode="json", by_alias=True
+                )
                 for identifier in ids[:limit]
             ]
             return {"items": items, "next_cursor": str(ids[limit - 1]) if len(ids) > limit else None}
+
+    async def _fleet(
+        self,
+        actor: Principal,
+        scope: Scope,
+        query: WorkerListQuery,
+        position: RunPosition | None,
+        *,
+        context: AuditContext,
+    ) -> dict[str, Any]:
+        authorization = self.definitions.authorization
+        target = None if query.target_id is None else str(query.target_id)
+        self.precheck(actor, scope, "status.read", context)
+        if target is not None:
+            authorization.require(actor, scope, "deployment.read", resource=target, context=context)
+        async with self.definitions.transaction(scope, None, mutation=False) as tx:
+            current = await self.current(actor, scope, "status.read", context, tx)
+            if target is not None:
+                authorization.require(current, scope, "deployment.read", resource=target, context=context)
+            targets = target_permissions(authorization, actor, current, scope, "deployment.read", context)
+            repository = WorkerRepository(tx)
+            observed_at = await repository.now()
+            rows = await repository.fleet(query, position, observed_at=observed_at, authorized_targets=targets)
+            visible = rows[: query.limit]
+            next_cursor = None
+            if len(rows) > query.limit:
+                last = visible[-1]
+                at = last["last_seen_at"] if query.order == "last_seen_desc" else last["registered_at"]
+                next_cursor = encode_cursor_v2(
+                    scope, query.cursor_collection(), at.isoformat() if at else None, str(last["id"])
+                )
+            return {
+                "items": [fleet_status(row, observed_at).model_dump(mode="json") for row in visible],
+                "next_cursor": next_cursor,
+            }
 
     async def read(
         self,
@@ -437,21 +631,43 @@ class WorkerService(WorkerAdmissionPort):
         tx: Transaction | None = None,
         observed_at: datetime | None = None,
     ) -> WorkerStatus | WorkerRelease:
+        if not releases:
+            return await self._worker(actor, scope, identifier, context=context, tx=tx, observed_at=observed_at)
         async with self.definitions.transaction(scope, tx, mutation=False) as enlisted:
-            await self.require(
-                actor,
-                scope,
-                "catalog.read" if releases else "status.read",
-                context,
-                enlisted,
-                None if releases else str(identifier),
-            )
-            table = "worker_releases" if releases else "worker_instances"
+            await self.require(actor, scope, "catalog.read", context, enlisted)
             rows = await WorkerRepository(enlisted).rows(
-                f"SELECT * FROM {table} WHERE {SCOPE} AND id=:id", id=identifier
+                f"SELECT payload FROM worker_releases WHERE {SCOPE} AND id=:id", id=identifier
             )
             if not rows:
                 raise CatalogError(404, "WV-NOT-FOUND", "Worker resource not found")
-            if releases:
-                return WorkerRelease.model_validate_json(json.dumps(rows[0]["payload"]))
-            return await WorkerRepository(enlisted).status(identifier, observed_at)
+            return WorkerRelease.model_validate_json(json.dumps(rows[0]["payload"]))
+
+    async def _worker(
+        self,
+        actor: Principal,
+        scope: Scope,
+        identifier: UUID,
+        *,
+        context: AuditContext,
+        tx: Transaction | None,
+        observed_at: datetime | None,
+    ) -> WorkerStatus:
+        """One worker through the fleet statement, so a read shows what a list shows, placement included."""
+        self.precheck(actor, scope, "status.read", context, str(identifier))
+        async with self.definitions.transaction(scope, tx, mutation=False) as enlisted:
+            current = await self.current(actor, scope, "status.read", context, enlisted, str(identifier))
+            targets = target_permissions(
+                self.definitions.authorization, actor, current, scope, "deployment.read", context
+            )
+            repository = WorkerRepository(enlisted)
+            now = observed_at or await repository.now()
+            rows = await repository.fleet(
+                WorkerListQuery(state="all", limit=1),
+                None,
+                observed_at=now,
+                authorized_targets=targets,
+                worker_id=identifier,
+            )
+            if not rows:
+                raise CatalogError(404, "WV-NOT-FOUND", "Worker resource not found")
+            return fleet_status(rows[0], now)

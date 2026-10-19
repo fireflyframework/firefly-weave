@@ -280,3 +280,44 @@ async def test_compatibility_refusals_tell_clients_when_a_rescan_can_lift_them()
     compatibility.ready = True
     status, headers, code = await call("POST")
     assert (status, code, headers[b"retry-after"]) == (503, "WV-COMPATIBILITY", b"9")
+
+
+@pytest.mark.parametrize(
+    "status,code,expected",
+    [(501, "WV-UNAVAILABLE", "unavailable"), (501, "WV-OTHER", "failed"), (503, "WV-UNAVAILABLE", "failed")],
+)
+async def test_unserved_operations_are_telemetry_unavailable(status, code, expected):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    from firefly_weave.operations.telemetry import attributes
+    from firefly_weave.operations.transport import BodyBoundary
+
+    records = []
+    telemetry = SimpleNamespace(
+        span=lambda *args, **kwargs: nullcontext(), record=lambda *args, **kwargs: records.append(kwargs)
+    )
+
+    async def downstream(scope, receive, send):
+        await send({"type": "http.response.start", "status": status, "headers": []})
+        await send({"type": "http.response.body", "body": json.dumps({"code": code}).encode()})
+
+    async def receive():
+        return {"type": "http.request", "body": b""}
+
+    async def send(message):
+        pass
+
+    await BodyBoundary(downstream)(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/runs/id/logs",
+            "headers": [],
+            "app": SimpleNamespace(state=SimpleNamespace(telemetry_service=telemetry)),
+        },
+        receive,
+        send,
+    )
+    assert records[0]["status"] == expected
+    assert attributes(status=expected)["status"] == expected

@@ -16,15 +16,17 @@
 
 """Operator requests and immutable incident resolution receipts."""
 
-from typing import Literal
+from typing import Literal, Self
 from uuid import UUID
 
-from pydantic import AwareDatetime, Field, field_validator
+from pydantic import AwareDatetime, Field, field_validator, model_validator
 
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.catalog import Digest
-from firefly_weave.contracts.definitions import ContractModel
+from firefly_weave.contracts.definitions import ContractModel, ResourceName, SemVer
 from firefly_weave.contracts.diagnostics import SourceRange
+from firefly_weave.contracts.instance_keys import InstanceKeyTextOrEmpty
+from firefly_weave.contracts.run_views import RunStatus, _same_step
 from firefly_weave.contracts.values import JsonData
 from firefly_weave.operations.redaction import Omission, SafeProjection
 from firefly_weave.runtime.models import RunState, RuntimeEvent
@@ -45,7 +47,20 @@ class IncidentResolution(ContractModel):
         return value
 
 
+class IncidentWorkflow(ContractModel):
+    name: ResourceName
+    version: SemVer
+
+
 class IncidentView(ContractModel):
+    """An incident. Read from operational facts, `node_id` is the static step ID and `instance_key` the full key.
+
+    An incident on a control step (a branch output or a join) keeps its stored `@` step ID and has no instance key.
+    The fields after `external_effects_may_continue` are additive: each is left out while it is unknown, false or
+    empty, so earlier payloads keep their bytes. `opened_at_estimated` marks an opening time inferred from the run's
+    last recorded event because the incident's own opening event was not retained.
+    """
+
     id: UUID
     run_id: UUID
     incident_key: str
@@ -59,6 +74,23 @@ class IncidentView(ContractModel):
     resolved_at: AwareDatetime | None = None
     resolution: IncidentResolution | None = None
     external_effects_may_continue: bool = False
+    instance_key: InstanceKeyTextOrEmpty = Field(default="", exclude_if=lambda value: not value)
+    opened_at: AwareDatetime | None = Field(default=None, exclude_if=lambda value: value is None)
+    opened_at_estimated: bool = Field(default=False, exclude_if=lambda value: not value)
+    updated_at: AwareDatetime | None = Field(default=None, exclude_if=lambda value: value is None)
+    workflow: IncidentWorkflow | None = Field(default=None, exclude_if=lambda value: value is None)
+    run_status: RunStatus | None = Field(default=None, exclude_if=lambda value: value is None)
+    test: bool = Field(default=False, exclude_if=lambda value: not value)
+
+    @model_validator(mode="after")
+    def coherent(self) -> Self:
+        if self.instance_key:
+            if self.node_id is None:
+                raise ValueError("A run-level incident has no instance_key")
+            _same_step(self.node_id, self.instance_key)
+        if self.opened_at_estimated and self.opened_at is None:
+            raise ValueError("Only a known opening time can be estimated")
+        return self
 
 
 class CancelRunRequest(ContractModel):

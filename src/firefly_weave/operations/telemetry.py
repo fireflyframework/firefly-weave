@@ -60,7 +60,7 @@ OPERATIONS_ALLOWED = frozenset(OPERATIONS) | frozenset(
         "other",
     }
 )
-STATUSES = frozenset({"ok", "rejected", "failed", "cancelled", "blocked", "pending", "unknown", "other"})
+STATUSES = frozenset({"ok", "rejected", "failed", "cancelled", "blocked", "pending", "unknown", "unavailable", "other"})
 ERRORS = frozenset(
     {
         "none",

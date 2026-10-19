@@ -20,7 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 // remembered; a toast offers to open the new run.
 import { selectChoice } from "./support";
 import { test, expect, Page, Request } from "@playwright/test";
-import { allCapabilities, connected } from "./support";
+import { allCapabilities, connected, runSummaries } from "./support";
 
 const versionId = "44444444-4444-4444-8444-444444444444";
 const activation = {
@@ -311,6 +311,7 @@ test("pause and resume are offered only while a run is still in progress", async
   await page.route(`${environment}/runs?*`, (r) =>
     r.fulfill({ json: { items: Object.values(runs), next_cursor: null } }),
   );
+  await runSummaries(page, Object.values(runs));
   for (const [id, run] of Object.entries(runs))
     await page.route(`${environment}/runs/${id}`, (r) =>
       r.fulfill({ json: run }),

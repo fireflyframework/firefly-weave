@@ -183,8 +183,14 @@ async def mutate(client, headers, env_url, task, command, payload, key):
     )
 
 
-async def test_claim_complete_retry_and_conflicting_payload(client, headers, env_url, human_run, access_db, author):
+@pytest.mark.parametrize("historical", [False, True])
+async def test_claim_complete_retry_and_conflicting_payload(
+    client, headers, env_url, human_run, access_db, author, historical
+):
     run, task = human_run
+    if historical:
+        async with access_db[1]() as session, session.begin():
+            await session.execute(text("DELETE FROM step_facts WHERE run_id=:id"), {"id": run})
     claimed = await mutate(client, headers, env_url, task, "claim", {"expected_revision": 1}, "claim")
     assert claimed.status_code == 200, claimed.text
     payload = {"expected_revision": 2, "decision": "reject", "data": {"note": "No"}}
@@ -201,8 +207,26 @@ async def test_claim_complete_retry_and_conflicting_payload(client, headers, env
     assert [entry["action"] for entry in detail.json()["history"]] == ["created", "claim", "complete"]
     async with access_db[1]() as session:
         assert await session.scalar(text("SELECT count(*) FROM human_task_decisions")) == 1
+        fact = (
+            (
+                await session.execute(
+                    text("SELECT kind,status,scheduled_at,started_at,ended_at,attempts FROM step_facts")
+                )
+            )
+            .mappings()
+            .one()
+        )
+        assert fact["kind"] == "humanTask" and fact["status"] == "succeeded"
+        assert fact["ended_at"] is not None and fact["attempts"] == 0
+        if historical:
+            assert fact["scheduled_at"] is None and fact["started_at"] is None
+        else:
+            assert fact["scheduled_at"] == fact["started_at"] <= fact["ended_at"]
         assert await session.scalar(text("SELECT count(*) FROM task_intents")) == 0
         assert await session.scalar(text("SELECT count(*) FROM run_deadlines WHERE NOT consumed")) == 0
+        from operations_support import assert_usage
+
+        await assert_usage(session, {"tenant": author[2].tenant_id, "project": author[2].project_id})
 
 
 async def test_pause_allows_fact_then_resume_continues(client, headers, env_url, human_run):

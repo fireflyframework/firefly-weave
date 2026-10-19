@@ -1,0 +1,1102 @@
+# Copyright 2026 Firefly Software Foundation.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# Author: Firefly Software Foundation
+# SPDX-License-Identifier: Apache-2.0
+
+"""Facts share real accepted runtime, lease and incident transactions."""
+
+from uuid import uuid4
+
+import pytest
+from sqlalchemy import text
+
+from firefly_weave.access.audit import AuditContext
+from firefly_weave.operations.facts import FactRepository
+
+pytestmark = pytest.mark.integration
+
+
+@pytest.fixture
+def worker_runtime_fixture(worker_runtime_fixture):
+    from firefly_weave.compiler.catalog import CatalogSnapshot
+    from firefly_weave.contracts.definitions import load_definition
+
+    action = worker_runtime_fixture["action"].model_dump(by_alias=True)
+    action["spec"]["retry"] = {"maxAttempts": 3, "initialDelaySeconds": 1, "maxDelaySeconds": 2}
+    action = load_definition(action)
+    contract = worker_runtime_fixture["catalog"].resolve("TaskCapability", "echo@1.2.0").definition.value
+    return {
+        **worker_runtime_fixture,
+        "action": action,
+        "catalog": CatalogSnapshot.from_definitions([action], tasks=[contract]),
+    }
+
+
+async def test_start_replay_does_not_add_facts(operations_case):
+    case = operations_case
+    first, second = await case.start("same"), await case.start("same")
+    assert first.id == second.id
+    rows = await case.rows(
+        "SELECT origin,test,handled_errors,last_event_sequence FROM run_facts WHERE run_id=:id", id=first.id
+    )
+    assert rows == [
+        {"origin": "manual", "test": False, "handled_errors": 0, "last_event_sequence": first.state.accepted_sequence}
+    ]
+    steps = await case.rows(
+        "SELECT node_id,instance_key,kind,status,scheduled_at,started_at,attempts FROM step_facts WHERE run_id=:id",
+        id=first.id,
+    )
+    assert len(steps) == 1
+    assert {k: steps[0][k] for k in ("node_id", "instance_key", "kind", "status", "started_at", "attempts")} == dict(
+        node_id="work", instance_key="", kind="action", status="scheduled", started_at=None, attempts=0
+    )
+    assert steps[0]["scheduled_at"] is not None
+
+
+async def test_claim_complete_replay_preserves_first_times(operations_case, task_service, worker_ids):
+    case = operations_case
+    run = await case.start()
+    before = (await case.rows("SELECT * FROM task_facts WHERE run_id=:id", id=run.id))[0]
+    assert before["status"] == "ready" and before["ready_since"] == before["created_at"]
+    async with case.tx() as tx:
+        lease = (await task_service.claim(tx, worker_ids[0], 1))[0]
+    async with case.tx() as tx:
+        await task_service.heartbeat(tx, lease.proof)
+    claimed = (await case.rows("SELECT * FROM step_facts WHERE run_id=:id", id=run.id))[0]
+    assert claimed["status"] == "running" and claimed["attempts"] == 1
+    assert claimed["started_at"] >= claimed["scheduled_at"]
+    completion = uuid4()
+    async with case.tx() as tx:
+        await task_service.complete(tx, lease.proof, completion, 42)
+    snapshot = await case.rows("SELECT * FROM step_facts WHERE run_id=:id", id=run.id)
+    async with case.tx() as tx:
+        await task_service.complete(tx, lease.proof, completion, 42)
+    assert await case.rows("SELECT * FROM step_facts WHERE run_id=:id", id=run.id) == snapshot
+    assert snapshot[0]["status"] == "succeeded" and snapshot[0]["started_at"] == claimed["started_at"]
+    task = (await case.rows("SELECT * FROM task_facts WHERE run_id=:id", id=run.id))[0]
+    assert task["status"] == "completed" and task["ready_since"] is None
+    assert task["first_claimed_at"] == claimed["started_at"]
+    fact = (await case.rows("SELECT * FROM run_facts WHERE run_id=:id", id=run.id))[0]
+    assert fact["status"] == "succeeded" and fact["ended_at"] == snapshot[0]["ended_at"]
+
+
+@pytest.mark.parametrize("point", ["before_projection", "before_outbox"])
+async def test_facts_rollback_with_source(point, operations_case, monkeypatch):
+    from firefly_weave.operations.outbox import OutboxService
+
+    case = operations_case
+    run = await case.start()
+    tables = (
+        "runs",
+        "run_events",
+        "run_facts",
+        "step_facts",
+        "task_facts",
+        "task_intents",
+        "operation_usage",
+        "operation_reservations",
+        "operation_allocations",
+        "event_deliveries",
+        "integration_events",
+        "operation_control_deliveries",
+    )
+    before = {
+        table: await case.rows(f"SELECT to_jsonb(t) AS row FROM {table} t ORDER BY to_jsonb(t)::text")
+        for table in tables
+    }
+
+    async def fail(*args, **kwargs):
+        raise RuntimeError("projection rollback")
+
+    if point == "before_projection":
+        monkeypatch.setattr(FactRepository, "project_run", fail)
+    else:
+        monkeypatch.setattr(OutboxService, "append", fail)
+    with pytest.raises(RuntimeError, match="projection rollback"):
+        async with case.tx() as tx:
+            await case.runtime.cancel(tx, run.id, "stop", actor=case.actor, scope=case.scope, context=AuditContext())
+    after = {
+        table: await case.rows(f"SELECT to_jsonb(t) AS row FROM {table} t ORDER BY to_jsonb(t)::text")
+        for table in tables
+    }
+    assert after == before
+
+
+async def test_handled_hook_is_idempotent_and_does_not_change_authority(operations_case):
+    case = operations_case
+    run = await case.start()
+    async with case.tx() as tx:
+        at = await tx.session.scalar(text("SELECT clock_timestamp()"))
+        facts = FactRepository(tx)
+        for _ in range(2):
+            await facts.handled_failure(run.id, "work[3]", "action", "continue", "ECHO_FAILED", at)
+    rows = await case.rows(
+        "SELECT handled_errors,status,failed_node_id,active_incidents FROM run_facts WHERE run_id=:id", id=run.id
+    )
+    assert rows == [{"handled_errors": 1, "status": run.state.status, "failed_node_id": None, "active_incidents": 0}]
+    assert (await case.rows("SELECT state FROM runs WHERE id=:id", id=run.id))[0]["state"] == run.state.model_dump(
+        mode="json"
+    )
+    task = (await case.rows("SELECT task_id FROM task_facts WHERE run_id=:id", id=run.id))[0]["task_id"]
+    async with case.tx() as tx:
+        with pytest.raises(ValueError):
+            await FactRepository(tx).handled_failure(
+                run.id, "work", "action", "continue", "ECHO_FAILED", at, task_id=task
+            )
+    assert (await case.rows("SELECT status FROM task_intents WHERE id=:id", id=task))[0]["status"] == "ready"
+
+
+async def test_pause_resume_cancel_retry_preserves_trusted_origin(operations_case):
+    from firefly_weave.contracts.human_tasks import ManualControlRequest
+    from firefly_weave.contracts.runtime import StartRunRequest
+
+    case = operations_case
+    run = await case.start()
+    for paused in (True, False):
+        view = await case.runtime.manual_control(
+            case.actor,
+            case.scope,
+            run.id,
+            ManualControlRequest(reason="control", expected_revision=int(not paused)),
+            str(uuid4()),
+            paused=paused,
+            context=AuditContext(),
+        )
+        fact = (
+            await case.rows("SELECT paused,updated_at,last_event_sequence FROM run_facts WHERE run_id=:id", id=run.id)
+        )[0]
+        assert fact["paused"] is paused
+        assert fact["last_event_sequence"] == view.state.accepted_sequence
+    async with case.tx() as tx:
+        await case.runtime.cancel(tx, run.id, "stop", actor=case.actor, scope=case.scope, context=AuditContext())
+    async with case.tx() as tx:
+        retry = await case.runtime.retry_run(
+            tx,
+            run.id,
+            StartRunRequest(activation_id=case.activation.id, input=3),
+            "retry",
+            actor=case.actor,
+            scope=case.scope,
+            context=AuditContext(),
+        )
+    async with case.tx() as tx:
+        duplicate = await case.runtime.retry_run(
+            tx,
+            run.id,
+            StartRunRequest(activation_id=case.activation.id, input=3),
+            "retry",
+            actor=case.actor,
+            scope=case.scope,
+            context=AuditContext(),
+        )
+    assert duplicate.id == retry.id
+    assert await case.rows("SELECT origin,retried_from_run_id FROM run_facts WHERE run_id=:id", id=retry.id) == [
+        {"origin": "retry", "retried_from_run_id": run.id}
+    ]
+
+
+@pytest.mark.parametrize("resolution", ["retry_safe", "accept_reconciled_result"])
+async def test_incident_resolution_updates_fact_times_and_task_status(
+    operations_case, task_service, worker_ids, services, resolution
+):
+    from firefly_weave.contracts.operations import IncidentResolution
+    from firefly_weave.contracts.workers import TaskError
+    from firefly_weave.operations.incidents import IncidentService
+
+    case = operations_case
+    run = await case.start()
+    async with case.tx() as tx:
+        lease = (await task_service.claim(tx, worker_ids[0], 1))[0]
+    async with case.tx() as tx:
+        await task_service.fail(tx, lease.proof, TaskError(completion_id=uuid4(), code="CONNECTION_LOST"))
+    before = (
+        await case.rows(
+            "SELECT i.id,i.revision,f.opened_at,f.updated_at FROM incidents i "
+            "JOIN incident_facts f ON f.incident_id=i.id WHERE i.run_id=:id",
+            id=run.id,
+        )
+    )[0]
+    assert before["opened_at"] == before["updated_at"]
+    assert (await case.rows("SELECT active_incidents FROM run_facts WHERE run_id=:id", id=run.id))[0][
+        "active_incidents"
+    ] == 1
+    request = IncidentResolution(
+        kind=resolution,
+        receipt_id=uuid4(),
+        reason="reviewed",
+        **({"output": 42, "evidence_reference": "case-42"} if resolution == "accept_reconciled_result" else {}),
+    )
+    async with case.tx() as tx:
+        await (
+            services(case.sessions)
+            .resolve(IncidentService)
+            .resolve(
+                tx,
+                before["id"],
+                request,
+                before["revision"],
+                actor=case.actor,
+                scope=case.scope,
+                context=AuditContext(),
+            )
+        )
+    after = (
+        await case.rows(
+            "SELECT f.opened_at,f.updated_at,i.resolved_at,i.status FROM incident_facts f "
+            "JOIN incidents i ON i.id=f.incident_id WHERE i.id=:id",
+            id=before["id"],
+        )
+    )[0]
+    assert after["opened_at"] == before["opened_at"]
+    assert after["updated_at"] == after["resolved_at"] >= before["updated_at"]
+    assert after["status"] == "resolved"
+    task = (
+        await case.rows(
+            "SELECT t.status,f.status AS fact_status,f.ready_since FROM task_intents t "
+            "JOIN task_facts f ON f.task_id=t.id WHERE t.id=:id",
+            id=lease.proof.task_id,
+        )
+    )[0]
+    assert task["status"] == task["fact_status"] == ("ready" if resolution == "retry_safe" else "completed")
+    assert (task["ready_since"] is not None) is (resolution == "retry_safe")
+    assert (await case.rows("SELECT status FROM step_facts WHERE run_id=:id", id=run.id))[0]["status"] == (
+        "scheduled" if resolution == "retry_safe" else "succeeded"
+    )
+    assert (await case.rows("SELECT active_incidents FROM run_facts WHERE run_id=:id", id=run.id))[0][
+        "active_incidents"
+    ] == 0
+
+
+async def test_expired_generation_requeues_at_effective_due_instant(
+    operations_case, task_service, worker_ids, services
+):
+    from firefly_weave.runtime.recovery import RecoveryService
+
+    case = operations_case
+    run = await case.start()
+    async with case.tx() as tx:
+        old = (await task_service.claim(tx, worker_ids[0], 1))[0]
+    first = (await case.rows("SELECT first_claimed_at FROM task_facts WHERE task_id=:id", id=old.proof.task_id))[0][
+        "first_claimed_at"
+    ]
+    async with case.owner.begin() as tx:
+        await tx.execute(text("UPDATE task_leases SET expires_at=clock_timestamp()-interval '1 second'"))
+    report = (
+        await services(case.sessions)
+        .resolve(RecoveryService)
+        .scan(case.scope, 100, actor=case.actor, context=AuditContext())
+    )
+    assert report.resumed == 1
+    row = (
+        await case.rows(
+            "SELECT t.status,t.next_attempt_at,f.status AS fact_status,f.ready_since,f.first_claimed_at "
+            "FROM task_intents t "
+            "JOIN task_facts f ON f.task_id=t.id WHERE t.id=:id",
+            id=old.proof.task_id,
+        )
+    )[0]
+    assert row["status"] == row["fact_status"] == "ready"
+    assert row["ready_since"] == row["next_attempt_at"] and row["first_claimed_at"] == first
+    async with case.owner.begin() as tx:
+        await tx.execute(
+            text("UPDATE task_intents SET next_attempt_at=clock_timestamp()-interval '1 second' WHERE id=:id"),
+            {"id": old.proof.task_id},
+        )
+    async with case.tx() as tx:
+        new = (await task_service.claim(tx, worker_ids[1], 1))[0]
+    assert new.proof.generation == 2
+    assert (await case.rows("SELECT attempts,started_at FROM step_facts WHERE run_id=:id", id=run.id))[0] == {
+        "attempts": 2,
+        "started_at": first,
+    }
+    from firefly_weave.access.authorization import AccessDenied
+    from firefly_weave.definitions.models import CatalogError
+
+    with pytest.raises((AccessDenied, CatalogError)):
+        async with case.tx() as tx:
+            await task_service.complete(tx, old.proof, uuid4(), 7)
+    async with case.tx() as tx:
+        await task_service.complete(tx, new.proof, uuid4(), 42)
+    assert (await case.rows("SELECT attempts FROM step_facts WHERE run_id=:id", id=run.id))[0]["attempts"] == 2
+
+
+async def start_inline(case, steps, output, *, worker_pins=None):
+    import json
+
+    from firefly_weave.contracts.catalog import ActivationRequest
+    from firefly_weave.contracts.runtime import StartRunRequest
+
+    definitions = case.runtime.definitions
+    document = {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {"name": "inline-facts", "version": "1.0.0"},
+        "spec": {"inputSchema": {}, "outputSchema": {}, "timeoutSeconds": 600, "steps": steps, "output": output},
+    }
+    published = await definitions.publish(
+        case.actor, case.scope, "Workflow", json.dumps(document), "json", str(uuid4()), context=AuditContext()
+    )
+    activation = await definitions.activate(
+        case.actor,
+        case.scope,
+        ActivationRequest(
+            scope=case.scope,
+            version_id=published.id,
+            artifact_digest=published.digest,
+            worker_release_ids=worker_pins or {},
+        ),
+        str(uuid4()),
+        context=AuditContext(),
+    )
+    return await case.runtime.start(
+        case.actor,
+        case.scope,
+        StartRunRequest(activation_id=activation.id, input={"origin": "test"}),
+        str(uuid4()),
+        context=AuditContext(),
+    )
+
+
+@pytest.mark.parametrize(
+    "mode,historical",
+    [(mode, False) for mode in ("null", "fail", "wait", "signal", "switch")] + [("wait", True), ("signal", True)],
+)
+async def test_inline_wait_and_terminal_steps_have_honest_times(operations_case, services, mode, historical):
+    case = operations_case
+    step = {"id": "item", "kind": "transform", "value": {"literal": None}}
+    if mode == "fail":
+        step = {"id": "item", "kind": "fail", "code": "DECLINED", "message": "Declined"}
+    elif mode == "wait":
+        step = {"id": "item", "kind": "wait", "durationSeconds": 1}
+    elif mode == "signal":
+        step = {"id": "item", "kind": "signal", "name": "approved", "timeoutSeconds": 300, "payloadSchema": {}}
+    if mode == "switch":
+        step = {
+            "id": "item",
+            "kind": "switch",
+            "cases": [{"when": {"literal": True}, "steps": [], "output": {"literal": None}}],
+            "default": {"steps": [], "output": {"literal": 1}},
+        }
+    run = await start_inline(case, [step], {"literal": None})
+    row = (await case.rows("SELECT * FROM step_facts WHERE run_id=:id", id=run.id))[0]
+    assert row["scheduled_at"] == row["started_at"]
+    assert row["attempts"] == 0
+    if mode in {"wait", "signal"}:
+        assert row["status"] == "waiting" and row["ended_at"] is None
+        if historical:
+            async with case.owner.begin() as owner:
+                await owner.execute(text("DELETE FROM step_facts WHERE run_id=:id"), {"id": run.id})
+        if mode == "signal":
+            from firefly_weave.runtime.signals import SignalService
+
+            async with case.tx() as tx:
+                await (
+                    services(case.sessions)
+                    .resolve(SignalService)
+                    .deliver(
+                        tx,
+                        run.id,
+                        "signal",
+                        "approved",
+                        None,
+                        actor=case.actor,
+                        scope=case.scope,
+                        context=AuditContext(),
+                    )
+                )
+        else:
+            import asyncio
+
+            from firefly_weave.runtime.deadlines import DeadlineService
+
+            await asyncio.sleep(1.05)
+            async with case.tx() as tx:
+                assert await services(case.sessions).resolve(DeadlineService).tick(tx, 100) == 1
+        ended = (await case.rows("SELECT * FROM step_facts WHERE run_id=:id", id=run.id))[0]
+        assert ended["status"] == "succeeded" and ended["ended_at"] >= row["started_at"]
+        if historical:
+            assert ended["scheduled_at"] is None and ended["started_at"] is None
+        else:
+            assert ended["scheduled_at"] == row["scheduled_at"] and ended["started_at"] == row["started_at"]
+    elif mode == "fail":
+        assert row["status"] == "failed" and row["error_code"] == "DECLINED"
+        assert row["ended_at"] == row["started_at"]
+        assert await case.rows(
+            "SELECT status,failed_node_id,failed_error_code FROM run_facts WHERE run_id=:id", id=run.id
+        ) == [{"status": "failed", "failed_node_id": "item", "failed_error_code": "DECLINED"}]
+        assert not await case.rows("SELECT output FROM step_instances WHERE run_id=:id", id=run.id)
+    else:
+        assert row["status"] == "succeeded" and row["ended_at"] == row["started_at"]
+        assert await case.rows("SELECT output FROM step_instances WHERE run_id=:id AND node_id='item'", id=run.id) == [
+            {"output": None}
+        ]
+    assert (await case.rows("SELECT origin,test FROM run_facts WHERE run_id=:id", id=run.id))[0] == {
+        "origin": "manual",
+        "test": False,
+    }
+    from operations_support import assert_usage
+
+    async with case.owner() as owner:
+        await assert_usage(owner, {"tenant": case.scope.tenant_id, "project": case.scope.project_id})
+
+
+async def test_completion_behind_pause_keeps_actual_end_time(operations_case, task_service, worker_ids):
+    from firefly_weave.contracts.human_tasks import ManualControlRequest
+
+    case = operations_case
+    run = await case.start()
+    async with case.tx() as tx:
+        lease = (await task_service.claim(tx, worker_ids[0], 1))[0]
+    await case.runtime.manual_control(
+        case.actor,
+        case.scope,
+        run.id,
+        ManualControlRequest(reason="pause", expected_revision=0),
+        "pause",
+        paused=True,
+        context=AuditContext(),
+    )
+    async with case.tx() as tx:
+        await task_service.complete(tx, lease.proof, uuid4(), 42)
+    before = (await case.rows("SELECT status,started_at,ended_at FROM step_facts WHERE run_id=:id", id=run.id))[0]
+    assert before["status"] == "succeeded" and before["ended_at"] is not None
+    await case.runtime.manual_control(
+        case.actor,
+        case.scope,
+        run.id,
+        ManualControlRequest(reason="resume", expected_revision=1),
+        "resume",
+        paused=False,
+        context=AuditContext(),
+    )
+    assert (await case.rows("SELECT status,started_at,ended_at FROM step_facts WHERE run_id=:id", id=run.id))[
+        0
+    ] == before
+
+
+async def test_handled_task_is_not_resurrected_by_recovery(operations_case, task_service, worker_ids, services):
+    from firefly_weave.runtime.recovery import RecoveryService
+
+    case = operations_case
+    run = await case.start()
+    async with case.tx() as tx:
+        lease = (await task_service.claim(tx, worker_ids[0], 1))[0]
+        # A future language settlement owns this source state; the hook only mirrors it.
+        await tx.session.execute(
+            text("UPDATE task_intents SET status='handled' WHERE id=:id"), {"id": lease.proof.task_id}
+        )
+        at = await tx.session.scalar(text("SELECT clock_timestamp()"))
+        await FactRepository(tx).handled_failure(
+            run.id, "work", "action", "errorOutput", "HANDLED", at, task_id=lease.proof.task_id
+        )
+    from firefly_weave.runtime.repository import RuntimeRepository
+
+    async with case.tx() as tx:
+        for status in ("ready", "failed", "incident", "completed", "cancelled", "leased"):
+            await RuntimeRepository(tx).task_status(lease.proof.task_id, status, at=at)
+            assert (
+                await tx.session.scalar(
+                    text("SELECT status FROM task_intents WHERE id=:id"), {"id": lease.proof.task_id}
+                )
+                == "handled"
+            )
+    async with case.owner.begin() as tx:
+        await tx.execute(text("UPDATE task_leases SET expires_at=clock_timestamp()-interval '1 second'"))
+    async with case.tx() as tx:
+        assert await case.tasks.recovery_candidates(tx, 100) == []
+    await (
+        services(case.sessions).resolve(RecoveryService).scan(case.scope, 100, actor=case.actor, context=AuditContext())
+    )
+    assert await case.rows("SELECT status,ready_since FROM task_facts WHERE task_id=:id", id=lease.proof.task_id) == [
+        {"status": "handled", "ready_since": None}
+    ]
+    async with case.tx() as tx:
+        assert await task_service.claim(tx, worker_ids[1], 1) == []
+
+
+@pytest.mark.parametrize("origin", ["call", "test"])
+async def test_reserved_internal_start_metadata_is_projected(operations_case, origin):
+    from firefly_weave.contracts.run_views import RunSummaryCaller
+    from firefly_weave.contracts.runtime import StartRunRequest
+    from firefly_weave.operations.facts import RunStartFacts
+
+    case = operations_case
+    caller = RunSummaryCaller(run_id=uuid4(), node_id="invoke", instance_key="invoke[3]") if origin == "call" else None
+    run = await case.runtime.start(
+        case.actor,
+        case.scope,
+        StartRunRequest(activation_id=case.activation.id, input=3),
+        "internal",
+        context=AuditContext(),
+        start_facts=RunStartFacts(origin=origin, test=origin == "test", caller=caller),
+    )
+    assert await case.rows(
+        "SELECT origin,test,caller_run_id,caller_node_id,caller_instance_key FROM run_facts WHERE run_id=:id", id=run.id
+    ) == [
+        {
+            "origin": origin,
+            "test": origin == "test",
+            "caller_run_id": caller.run_id if caller else None,
+            "caller_node_id": "invoke" if caller else None,
+            "caller_instance_key": "invoke[3]" if caller else None,
+        }
+    ]
+
+
+async def test_policy_unavailable_control_withholds_metadata_and_closes_steps(operations_case):
+    case = operations_case
+    run = await case.start()
+    async with case.owner.begin() as owner:
+        await owner.execute(text("UPDATE runs SET artifact='{}' WHERE id=:id"), {"id": run.id})
+    async with case.tx() as tx:
+        acknowledgment = await case.runtime.cancel(
+            tx, run.id, "stop", actor=case.actor, scope=case.scope, context=AuditContext()
+        )
+    assert acknowledgment.unavailable
+    fact = (
+        await case.rows(
+            "SELECT status,classification_state,failed_node_id,active_incidents FROM run_facts WHERE run_id=:id",
+            id=run.id,
+        )
+    )[0]
+    assert fact == {
+        "status": "cancelled",
+        "classification_state": "unavailable",
+        "failed_node_id": None,
+        "active_incidents": 0,
+    }
+    assert await case.rows("SELECT status FROM step_facts WHERE run_id=:id", id=run.id) == [{"status": "cancelled"}]
+
+
+async def test_recovery_rechecks_handled_status_after_candidate_selection(
+    operations_case, task_service, worker_ids, services, monkeypatch
+):
+    from firefly_weave.runtime.recovery import RecoveryService
+    from firefly_weave.workers.leases import TaskService
+
+    case = operations_case
+    run = await case.start()
+    async with case.tx() as tx:
+        lease = (await task_service.claim(tx, worker_ids[0], 1))[0]
+    async with case.owner.begin() as tx:
+        await tx.execute(text("UPDATE task_leases SET expires_at=clock_timestamp()-interval '1 second'"))
+    original = TaskService.recovery_candidates
+
+    async def settle_after_selection(self, tx, limit):
+        candidates = await original(self, tx, limit)
+        assert candidates == [lease.proof.task_id]
+        await tx.session.execute(
+            text("UPDATE task_intents SET status='handled' WHERE id=:id"), {"id": lease.proof.task_id}
+        )
+        at = await tx.session.scalar(text("SELECT clock_timestamp()"))
+        await FactRepository(tx).handled_failure(
+            run.id, "work", "action", "continue", "HANDLED", at, task_id=lease.proof.task_id
+        )
+        return candidates
+
+    monkeypatch.setattr(TaskService, "recovery_candidates", settle_after_selection)
+    report = (
+        await services(case.sessions)
+        .resolve(RecoveryService)
+        .scan(case.scope, 100, actor=case.actor, context=AuditContext())
+    )
+    assert report.resumed == report.incidents == 0
+    assert await case.rows("SELECT status FROM task_intents WHERE id=:id", id=lease.proof.task_id) == [
+        {"status": "handled"}
+    ]
+    assert len(await case.rows("SELECT id FROM run_events WHERE run_id=:id", id=run.id)) == 1
+    from operations_support import assert_usage
+
+    async with case.owner() as owner:
+        await assert_usage(owner, {"tenant": case.scope.tenant_id, "project": case.scope.project_id})
+
+
+@pytest.mark.parametrize("after", [False, True])
+async def test_failed_start_fact_insert_rolls_back_source_and_usage(operations_case, monkeypatch, after):
+    case = operations_case
+    before = await case.rows("SELECT to_jsonb(u) AS value FROM operation_usage u ORDER BY to_jsonb(u)::text")
+    original = FactRepository.insert_run
+
+    async def fail(self, *args, **kwargs):
+        if after:
+            await original(self, *args, **kwargs)
+        raise RuntimeError("start fact rollback")
+
+    monkeypatch.setattr(FactRepository, "insert_run", fail)
+    with pytest.raises(RuntimeError, match="start fact rollback"):
+        await case.start()
+    for table in ("runs", "run_events", "run_facts", "task_intents", "task_facts", "step_facts"):
+        assert await case.rows(f"SELECT count(*) AS count FROM {table}") == [{"count": 0}]
+    assert await case.rows("SELECT to_jsonb(u) AS value FROM operation_usage u ORDER BY to_jsonb(u)::text") == before
+
+
+async def test_claim_does_not_fabricate_missing_historical_step(operations_case, task_service, worker_ids):
+    case = operations_case
+    run = await case.start()
+    async with case.owner.begin() as owner:
+        await owner.execute(text("DELETE FROM step_facts WHERE run_id=:id"), {"id": run.id})
+    async with case.tx() as tx:
+        assert len(await task_service.claim(tx, worker_ids[0], 1)) == 1
+    assert await case.rows("SELECT node_id FROM step_facts WHERE run_id=:id", id=run.id) == []
+
+
+async def test_inline_parallel_failure_closes_tasks_scheduled_in_the_same_transition(operations_case):
+    case = operations_case
+    branches = {
+        "a": {
+            "steps": [{"id": "work", "kind": "action", "uses": "echo-action@2.0.0", "with": {"literal": 3}}],
+            "output": {"literal": None},
+        },
+        "b": {
+            "steps": [{"id": "fail", "kind": "fail", "code": "DECLINED", "message": "Declined"}],
+            "output": {"literal": None},
+        },
+    }
+    run = await start_inline(
+        case,
+        [{"id": "fork", "kind": "parallel", "concurrency": 2, "branches": branches}],
+        {"literal": None},
+        worker_pins=case.activation.request.worker_release_ids,
+    )
+    assert run.state.status == "failed"
+    facts = await case.rows("SELECT node_id,status FROM step_facts WHERE run_id=:id ORDER BY node_id", id=run.id)
+    assert facts == [
+        {"node_id": "fail", "status": "failed"},
+        {"node_id": "fork", "status": "cancelled"},
+        {"node_id": "work", "status": "cancelled"},
+    ]
+    assert await case.rows("SELECT status,ready_since FROM task_facts WHERE run_id=:id", id=run.id) == [
+        {"status": "cancelled", "ready_since": None}
+    ]
+
+
+@pytest.mark.parametrize("cache", ["backfilled", "incomplete", "invalid"])
+@pytest.mark.parametrize("missing_step", [False, True])
+async def test_listing_cache_cannot_veto_admitted_completion(
+    operations_case, task_service, worker_ids, cache, missing_step
+):
+    import json
+    import runpy
+    from pathlib import Path
+
+    from operations_support import assert_usage
+
+    from firefly_weave.runtime.admission import admission
+
+    case = operations_case
+    run = await case.start()
+    params = {
+        "tenant": case.scope.tenant_id,
+        "project": case.scope.project_id,
+        "environment": case.scope.environment_id,
+    }
+    async with case.owner.begin() as owner:
+        if cache == "backfilled":
+            for table in ("run_event_evidence", "run_events", "run_facts"):
+                await owner.execute(text(f"DELETE FROM {table} WHERE run_id=:id"), {"id": run.id})
+            # Registration already recorded these workers' facts. The frozen backfill runs once on an
+            # empty worker_facts table during the upgrade, so restore that state before replaying it.
+            await owner.execute(
+                text(
+                    "DELETE FROM worker_facts WHERE tenant_id=:tenant AND project_id=:project "
+                    "AND environment_id=:environment"
+                ),
+                params,
+            )
+            frozen = runpy.run_path(
+                str(Path(__file__).resolve().parents[2] / "migrations/versions/0032_operations_facts.py")
+            )
+            await owner.run_sync(lambda session: frozen["backfill_scope"](session.connection(), params))
+        else:
+            await owner.execute(
+                text("UPDATE run_facts SET node_kinds=cast(:kinds AS jsonb) WHERE run_id=:id"),
+                {
+                    "id": run.id,
+                    "kinds": json.dumps({"other": "transform"} if cache == "incomplete" else {"work": "future"}),
+                },
+            )
+        if missing_step:
+            await owner.execute(text("DELETE FROM step_facts WHERE run_id=:id"), {"id": run.id})
+    before = (await case.rows("SELECT classification_state,node_kinds FROM run_facts WHERE run_id=:id", id=run.id))[0]
+    if cache == "backfilled":
+        assert before == {"classification_state": "unavailable", "node_kinds": {}}
+    source = (await case.rows("SELECT artifact,state,activation,request FROM runs WHERE id=:id", id=run.id))[0]
+    assert admission(source) == "available"
+    async with case.tx() as tx:
+        lease = (await task_service.claim(tx, worker_ids[0], 1))[0]
+    async with case.tx() as tx:
+        await task_service.complete(tx, lease.proof, uuid4(), 42)
+    assert (await case.rows("SELECT state->>'status' AS status FROM runs WHERE id=:id", id=run.id)) == [
+        {"status": "succeeded"}
+    ]
+    assert (await case.rows("SELECT status FROM run_facts WHERE run_id=:id", id=run.id)) == [{"status": "succeeded"}]
+    assert (await case.rows("SELECT classification_state,node_kinds FROM run_facts WHERE run_id=:id", id=run.id))[
+        0
+    ] == before
+    assert await case.rows("SELECT status FROM step_facts WHERE run_id=:id", id=run.id) == (
+        [] if missing_step else [{"status": "succeeded"}]
+    )
+    async with case.owner() as owner:
+        await assert_usage(owner, params)
+
+
+async def test_historical_worker_completion_preserves_unknown_times_and_atomicity(
+    operations_case, task_service, worker_ids, monkeypatch
+):
+    from operations_support import assert_usage
+
+    from firefly_weave.operations.outbox import OutboxService
+
+    case = operations_case
+    run = await case.start()
+    async with case.tx() as tx:
+        lease = (await task_service.claim(tx, worker_ids[0], 1))[0]
+    async with case.owner.begin() as owner:
+        await owner.execute(text("DELETE FROM step_facts WHERE run_id=:id"), {"id": run.id})
+    tables = (
+        "runs",
+        "run_events",
+        "run_facts",
+        "step_facts",
+        "task_facts",
+        "task_intents",
+        "task_leases",
+        "operation_usage",
+        "operation_reservations",
+        "operation_allocations",
+        "event_deliveries",
+        "integration_events",
+        "operation_control_deliveries",
+    )
+    before = {
+        table: await case.rows(f"SELECT to_jsonb(t) AS row FROM {table} t ORDER BY to_jsonb(t)::text")
+        for table in tables
+    }
+
+    async def fail(*args, **kwargs):
+        raise RuntimeError("completion rollback")
+
+    completion = uuid4()
+    with monkeypatch.context() as patch:
+        patch.setattr(OutboxService, "append", fail)
+        with pytest.raises(RuntimeError, match="completion rollback"):
+            async with case.tx() as tx:
+                await task_service.complete(tx, lease.proof, completion, 42)
+    assert {
+        table: await case.rows(f"SELECT to_jsonb(t) AS row FROM {table} t ORDER BY to_jsonb(t)::text")
+        for table in tables
+    } == before
+    async with case.tx() as tx:
+        await task_service.complete(tx, lease.proof, completion, 42)
+    fact = (await case.rows("SELECT * FROM step_facts WHERE run_id=:id", id=run.id))[0]
+    assert fact["status"] == "succeeded" and fact["ended_at"] is not None
+    assert fact["scheduled_at"] is None and fact["started_at"] is None and fact["attempts"] == 0
+    async with case.tx() as tx:
+        await task_service.complete(tx, lease.proof, completion, 42)
+    assert (await case.rows("SELECT * FROM step_facts WHERE run_id=:id", id=run.id))[0] == fact
+    async with case.owner() as owner:
+        await assert_usage(owner, {"tenant": case.scope.tenant_id, "project": case.scope.project_id})
+
+
+@pytest.mark.parametrize("historical", [False, True])
+@pytest.mark.parametrize("late_start", [False, True])
+async def test_join_progress_preserves_first_observed_times(
+    operations_case, task_service, worker_ids, historical, late_start
+):
+    from operations_support import assert_usage
+
+    case = operations_case
+    branches = {
+        name: {
+            "steps": [{"id": name, "kind": "action", "uses": "echo-action@2.0.0", "with": {"literal": 3}}],
+            "output": {"literal": None},
+        }
+        for name in ("first", "second")
+    }
+    steps = [{"id": "fork", "kind": "parallel", "concurrency": 1, "branches": branches}]
+    if late_start:
+        steps.insert(0, {"id": "lead", "kind": "action", "uses": "echo-action@2.0.0", "with": {"literal": 3}})
+    run = await start_inline(
+        case,
+        steps,
+        {"literal": None},
+        worker_pins=case.activation.request.worker_release_ids,
+    )
+    if late_start:
+        async with case.tx() as tx:
+            lease = (await task_service.claim(tx, worker_ids[0], 1))[0]
+        async with case.tx() as tx:
+            await task_service.complete(tx, lease.proof, uuid4(), 42)
+    original = (
+        await case.rows("SELECT scheduled_at,started_at FROM step_facts WHERE run_id=:id AND node_id='fork'", id=run.id)
+    )[0]
+    assert original["scheduled_at"] is not None and original["started_at"] == original["scheduled_at"]
+    if historical:
+        async with case.owner.begin() as owner:
+            await owner.execute(text("DELETE FROM step_facts WHERE run_id=:id AND node_id='fork'"), {"id": run.id})
+    for status in ("running", "succeeded"):
+        async with case.tx() as tx:
+            lease = (await task_service.claim(tx, worker_ids[0], 1))[0]
+        async with case.tx() as tx:
+            await task_service.complete(tx, lease.proof, uuid4(), 42)
+        fact = (
+            await case.rows(
+                "SELECT status,scheduled_at,started_at,ended_at FROM step_facts WHERE run_id=:id AND node_id='fork'",
+                id=run.id,
+            )
+        )[0]
+        assert fact["status"] == status
+        assert {key: fact[key] for key in ("scheduled_at", "started_at")} == (
+            {"scheduled_at": None, "started_at": None} if historical else original
+        )
+        assert (fact["ended_at"] is not None) is (status == "succeeded")
+    async with case.owner() as owner:
+        await assert_usage(owner, {"tenant": case.scope.tenant_id, "project": case.scope.project_id})
+
+
+def worker_identity_value():
+    from firefly_weave.contracts.workers import WorkerIdentity
+
+    return WorkerIdentity(host="worker-1", runtime="process")
+
+
+def registration_request(case, identity):
+    from firefly_weave.contracts.workers import InstanceRequest
+
+    existing = case.instances[0]
+    return InstanceRequest(
+        release_id=existing.release_id, task_types=existing.task_types, capacity=1, identity=identity
+    )
+
+
+WORKER_FACTS = (
+    "SELECT w.payload,f.identity,f.registered_at FROM worker_instances w "
+    "JOIN worker_facts f ON f.worker_id=w.id AND f.tenant_id=w.tenant_id "
+    "AND f.project_id=w.project_id AND f.environment_id=w.environment_id "
+    "WHERE w.tenant_id=:tenant AND w.project_id=:project AND w.environment_id=:environment AND w.id=:id"
+)
+
+
+@pytest.mark.parametrize("identity", [None, "bounded"])
+async def test_worker_registration_facts_match_source(operations_case, identity):
+    case = operations_case
+    identity = worker_identity_value() if identity else None
+    request = registration_request(case, identity)
+    async with case.tx() as tx:
+        before = await tx.session.scalar(text("SELECT clock_timestamp()"))
+    registered = await case.workers.register_instance(case.actor, case.scope, request, context=AuditContext())
+    rows = await case.rows(WORKER_FACTS, id=registered.id)
+    assert len(rows) == 1 and rows[0]["registered_at"] is not None and rows[0]["registered_at"] >= before
+    assert "identity" not in rows[0]["payload"]
+    assert rows[0]["identity"] == ({} if identity is None else identity.model_dump(mode="json", exclude_none=True))
+    # The registration answer keeps its bytes; identity is read from the worker's facts.
+    assert "identity" not in registered.model_dump(mode="json")
+    status = await case.workers.read(case.actor, case.scope, registered.id, context=AuditContext())
+    assert status.identity == identity and status.registered_at == rows[0]["registered_at"]
+    from operations_support import assert_usage
+
+    async with case.owner() as owner:
+        await assert_usage(owner, {"tenant": case.scope.tenant_id, "project": case.scope.project_id})
+
+
+async def test_workers_without_facts_or_identity_read_as_unknown(operations_case):
+    case = operations_case
+    legacy, backfilled = case.instances
+    async with case.owner.begin() as owner:
+        await owner.execute(text("DELETE FROM worker_facts WHERE worker_id=:id"), {"id": legacy.id})
+        await owner.execute(
+            text("UPDATE worker_facts SET registered_at=NULL,identity='{}' WHERE worker_id=:id"), {"id": backfilled.id}
+        )
+    for instance in (legacy, backfilled):
+        status = await case.workers.read(case.actor, case.scope, instance.id, context=AuditContext())
+        assert status.identity is None and status.registered_at is None
+        assert not {"identity", "registered_at"} & set(status.model_dump(mode="json"))
+    page = await case.workers.list(case.actor, case.scope, context=AuditContext())
+    assert all("identity" not in item and "registered_at" not in item for item in page["items"])
+
+
+def boundary_labels(over=False):
+    """Labels that make a process identity exactly 4,096 bytes as jsonb text, or one byte more."""
+    labels = {f"k{index}": "é" * 256 for index in range(7)}
+    labels["k7"] = '"' * (118 if over else 117) + "a" * (138 if over else 139)
+    return labels
+
+
+async def test_identity_at_the_size_limit_fits_its_database_column(operations_case):
+    import json
+
+    from sqlalchemy.exc import DBAPIError
+
+    from firefly_weave.contracts.workers import WorkerIdentity, identity_text_bytes
+
+    case = operations_case
+    identity = WorkerIdentity(runtime="process", labels=boundary_labels())
+    registered = await case.workers.register_instance(
+        case.actor, case.scope, registration_request(case, identity), context=AuditContext()
+    )
+    measured = (
+        await case.rows(
+            "SELECT octet_length(identity::text) AS size FROM worker_facts WHERE worker_id=:id", id=registered.id
+        )
+    )[0]["size"]
+    assert measured == identity_text_bytes(identity.model_dump(mode="json")) == 4096
+    over = {"runtime": "process", "platform_hint": "none", "labels": boundary_labels(over=True)}
+    async with case.owner.begin() as owner:
+        assert (
+            await owner.scalar(text("SELECT octet_length(cast(:value AS jsonb)::text)"), {"value": json.dumps(over)})
+            == 4097
+        )
+        with pytest.raises(DBAPIError) as caught:
+            async with owner.begin_nested():
+                await owner.execute(
+                    text("UPDATE worker_facts SET identity=cast(:value AS jsonb) WHERE worker_id=:id"),
+                    {"value": json.dumps(over), "id": registered.id},
+                )
+        assert caught.value.orig.sqlstate == "23514"
+
+
+async def worker_rows(case):
+    async with case.owner() as owner:
+        return {
+            table: (await owner.execute(text(f"SELECT to_jsonb(t)::text AS row FROM {table} t ORDER BY 1")))
+            .scalars()
+            .all()
+            for table in ("worker_instances", "worker_facts", "operation_usage", "access_audit")
+        }
+
+
+@pytest.mark.parametrize("after", [False, True])
+async def test_failed_worker_fact_insert_rolls_back_the_registration(operations_case, monkeypatch, after):
+    from firefly_weave.workers.repository import WorkerRepository
+
+    case = operations_case
+    before = await worker_rows(case)
+    original = WorkerRepository.record_registration
+    reached = []
+
+    async def fail(self, *args, **kwargs):
+        reached.append(
+            await self.tx.session.scalar(text("SELECT count(*) FROM worker_instances WHERE id=:id"), {"id": args[0]})
+        )
+        if after:
+            await original(self, *args, **kwargs)
+        raise RuntimeError("worker fact rollback")
+
+    monkeypatch.setattr(WorkerRepository, "record_registration", fail)
+    with pytest.raises(RuntimeError, match="worker fact rollback"):
+        await case.workers.register_instance(
+            case.actor, case.scope, registration_request(case, worker_identity_value()), context=AuditContext()
+        )
+    assert reached == [1]
+    assert await worker_rows(case) == before
+
+
+@pytest.mark.parametrize("refused", ["before_registration", "at_fact_insert"])
+async def test_worker_registration_facts_roll_back_at_quota(operations_case, monkeypatch, refused):
+    from firefly_weave.definitions.models import CatalogError
+    from firefly_weave.workers.repository import WorkerRepository
+
+    case = operations_case
+    saturate = text(
+        "UPDATE operation_policy SET limits=jsonb_set(limits,'{ordinary_bytes}',to_jsonb((SELECT value FROM "
+        "operation_usage WHERE tenant_id=:tenant AND project_id=:project "
+        "AND environment_id='00000000-0000-0000-0000-000000000000' AND metric='ordinary_bytes')))"
+    )
+    scope = {"tenant": case.scope.tenant_id, "project": case.scope.project_id}
+    reached = []
+    if refused == "before_registration":
+        async with case.owner.begin() as owner:
+            await owner.execute(saturate, scope)
+    else:
+        original = WorkerRepository.record_registration
+
+        async def saturate_then_record(self, *args, **kwargs):
+            # The source row is already charged in this transaction; the limit now equals the
+            # committed usage, so only the fact insert can exceed it.
+            reached.append(args[0])
+            async with case.owner.begin() as owner:
+                await owner.execute(saturate, scope)
+            await original(self, *args, **kwargs)
+
+        monkeypatch.setattr(WorkerRepository, "record_registration", saturate_then_record)
+    before = await worker_rows(case)
+    with pytest.raises(CatalogError) as caught:
+        await case.workers.register_instance(
+            case.actor, case.scope, registration_request(case, worker_identity_value()), context=AuditContext()
+        )
+    assert (caught.value.status, caught.value.code) == (429, "WV-OPERATION-CAPACITY")
+    assert len(reached) == (0 if refused == "before_registration" else 1)
+    assert await worker_rows(case) == before
+    from operations_support import assert_usage
+
+    async with case.owner() as owner:
+        await assert_usage(owner, scope)
+
+
+async def test_registration_over_http_reports_identity_and_refuses_forged_fields(
+    client, access_db, provisioned, headers, env_url, worker_runtime_fixture
+):
+    from firefly_weave.access.models import Grant
+    from firefly_weave.sdk.worker_registration import register_worker_http
+
+    sessions, owner, access, _ = access_db
+    scope = provisioned[1][0]
+    async with sessions() as tx:
+        principal = await tx.scalar(text("SELECT principal_id FROM identity_links WHERE subject='0'"))
+    for role in ("deployer", "operator", "worker"):
+        await access.grant(provisioned[0], principal, Grant(role=role, scope=scope))
+    contract = next(
+        v.definition.value for k, v in worker_runtime_fixture["catalog"].resources.items() if k[0] == "TaskCapability"
+    )
+    release = await client.post(
+        env_url + "/worker-releases",
+        headers=headers,
+        json={"image_digest": "sha256:" + "c" * 64, "capabilities": [contract]},
+    )
+    assert release.status_code == 201, release.text
+    body = {"release_id": release.json()["id"], "task_types": ["echo@1.2.0"], "capacity": 1}
+    identity = {"host": "worker-1", "runtime": "container", "platform_hint": "docker", "labels": {"team": "a"}}
+    placement = {"target_id": str(uuid4()), "target_name": "t", "deployment_id": str(uuid4()), "component": "w"}
+    for forged in (
+        {**body, "placement": placement},
+        {**body, "identity": {**identity, "placement": placement}},
+        {**body, "identity": {**identity, "labels": {"api_token": "x"}}},
+        {**body, "identity": {"runtime": "process", "labels": boundary_labels(over=True)}},
+        {**body, "registered_at": "2026-10-01T00:00:00Z"},
+    ):
+        refused = await client.post(env_url + "/workers", headers=headers, json=forged)
+        assert (refused.status_code, refused.json()["code"]) == (422, "WV-VALIDATION"), refused.text
+    sent = []
+
+    async def count(request):
+        sent.append(request)
+
+    hooks = list(client.event_hooks["request"])
+    client.event_hooks = {**client.event_hooks, "request": [*hooks, count]}
+    client.headers.update(headers)
+    try:
+        # A server that knows worker identity accepts it on the first request.
+        response = await register_worker_http(client, env_url, {**body, "identity": identity})
+    finally:
+        client.event_hooks = {**client.event_hooks, "request": hooks}
+    assert response.status_code == 201 and len(sent) == 1
+    assert set(response.json()) == {"release_id", "task_types", "capacity", "id", "principal_id", "revoked"}
+    read = await client.get(env_url + "/workers/" + response.json()["id"], headers=headers)
+    assert read.status_code == 200, read.text
+    assert read.json()["identity"] == identity and read.json()["registered_at"]
+    async with owner() as tx:
+        stored = (
+            await tx.execute(text("SELECT payload FROM worker_instances WHERE id=:id"), {"id": response.json()["id"]})
+        ).scalar_one()
+    assert "identity" not in stored
