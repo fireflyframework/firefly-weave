@@ -41,7 +41,10 @@ SPDX-License-Identifier: Apache-2.0
   reached its caller (`WV-RUN-PURGE-BLOCKED`). Upgrade CLIs and SDKs together
   with the server: older clients reject the new `call_completed` event type and
   `caller` field when they validate history and runs.
-
+- Publish… and Simulate show why they stopped (for example, an account that
+  can't publish actions) as soon as Studio has loaded the code that publishes
+  the workflow's own actions, instead of waiting for another change on the
+  page.
 - Simulations and debug sessions address loop iterations. A mock under
   `node:send[2]` answers iteration 2 of `send` only and wins over `node:send`,
   which wins over `action:` mocks; a breakpoint on `send[2]` stops before that
