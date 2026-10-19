@@ -23,6 +23,7 @@ import click
 
 from firefly_weave.cli import LocalError, emit_result, error_result, read_bounded
 from firefly_weave.compiler.api import import_artifact
+from firefly_weave.compiler.ir import UnsupportedIR
 from firefly_weave.operations.debug.models import DebugCommand, DebugCreate, DebugError, DebugLimits
 from firefly_weave.operations.debug.simulator import Simulator
 
@@ -59,6 +60,10 @@ def simulate(request_file: Path, commands: Path | None, output: str) -> None:
             view = simulator.inspect()
             for value in values:
                 view = simulator.command(DebugCommand.model_validate_json(json.dumps(value)))
+    except UnsupportedIR:
+        message = "This version does not run the IR version or language features of this workflow."
+        emit_result(error_result("WV-IR-UNSUPPORTED", message), output)
+        raise SystemExit(1) from None
     except (ValueError, LocalError) as error:
         code = error.code if isinstance(error, DebugError) else "WV-DEBUG-REQUEST"
         emit_result(error_result(code, "Invalid or over-budget simulation request."), output)
@@ -69,6 +74,11 @@ def simulate(request_file: Path, commands: Path | None, output: str) -> None:
         click.echo(f"Simulation {view.status}; {len(view.events)} accepted facts; {len(view.boundaries)} boundaries.")
         if view.selected_node:
             click.echo(f"Ready: {view.selected_node}")
+        for loop in view.loops:
+            click.echo(
+                f"Loop {loop.instance_key or loop.node_id}: {loop.completed} of {loop.count} items finished, "
+                f"{loop.running} running."
+            )
         for diagnostic in view.diagnostics:
             click.echo(f"{diagnostic.code}: {diagnostic.message}")
     if view.status in {"failed", "suspended", "timed_out"}:

@@ -28,8 +28,9 @@ from firefly_weave.access.models import Principal
 from firefly_weave.access.service import AccessService
 from firefly_weave.compiler.api import import_artifact
 from firefly_weave.compiler.canonical import canonical_bytes
+from firefly_weave.compiler.ir import UnsupportedIR
 from firefly_weave.contracts.access import Scope
-from firefly_weave.definitions.models import CatalogError
+from firefly_weave.definitions.models import CatalogError, ir_unsupported
 from firefly_weave.definitions.service import DefinitionService
 from firefly_weave.operations.debug.models import DebugCommand, DebugCreate, DebugSession
 from firefly_weave.operations.debug.simulator import Simulator
@@ -65,6 +66,13 @@ class DebugRepository:
             raise CatalogError(410, "WV-DEBUG-EXPIRED", "Debug session expired")
 
 
+async def restored(row: dict[str, Any]) -> Simulator:
+    try:
+        return await execute_pure(lambda: Simulator.restore(canonical_bytes(row["state"]).decode()))
+    except UnsupportedIR as error:
+        raise ir_unsupported(error.missing) from None
+
+
 def view(row: dict[str, Any], simulator: Simulator) -> DebugSession:
     return DebugSession(
         id=row["id"],
@@ -93,11 +101,15 @@ class DebugService:
         self.definitions.require(actor, scope, "simulate", context)
         async with self.definitions.transaction(scope, tx) as enlisted:
             await self._authorize(enlisted, actor, scope, context)
-            simulator = await execute_pure(
-                lambda: Simulator(
-                    import_artifact(request.artifact), mocks=request.mocks, input=request.input, now=request.now
+            try:
+                simulator = await execute_pure(
+                    lambda: Simulator(
+                        import_artifact(request.artifact), mocks=request.mocks, input=request.input, now=request.now
+                    )
                 )
-            )
+            except UnsupportedIR as error:
+                # The same answer as publishing or importing an artifact this platform does not run.
+                raise ir_unsupported(error.missing) from None
             serialized = await execute_pure(simulator.serialize)
             await self._authorize(enlisted, actor, scope, context)
             row = (
@@ -123,7 +135,7 @@ class DebugService:
             if row["creator_id"] != actor.id:
                 raise AccessDenied()
             await repository.unexpired(identifier)
-            simulator = await execute_pure(lambda: Simulator.restore(canonical_bytes(row["state"]).decode()))
+            simulator = await restored(row)
             await repository.unexpired(identifier)
             return await execute_pure(lambda: view(row, simulator))
 
@@ -149,7 +161,7 @@ class DebugService:
             await repository.unexpired(identifier)
             if row["revision"] != expected_revision:
                 raise CatalogError(409, "WV-DEBUG-REVISION", "Debug session revision changed")
-            simulator = await execute_pure(lambda: Simulator.restore(canonical_bytes(row["state"]).decode()))
+            simulator = await restored(row)
             await execute_pure(lambda: simulator.command(command))
             serialized = await execute_pure(simulator.serialize)
             await self._authorize(enlisted, actor, scope, context)
