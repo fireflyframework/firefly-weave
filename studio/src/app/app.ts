@@ -7336,6 +7336,9 @@ export class App implements CanvasHost {
       purpose,
       check,
     );
+    // The code may arrive after the click was drawn: show what it decided
+    // (a refusal in the banner, say) without waiting for another change.
+    this.cdr.markForCheck();
     if (published) {
       // The project catalog changed: compiles cached before it are stale.
       this.validation?.invalidate();
