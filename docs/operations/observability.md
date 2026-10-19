@@ -167,7 +167,7 @@ seconds.
 
 | Type | Instruments |
 | --- | --- |
-| Counters | `weave.requests`, `weave.transitions`, `weave.recoveries`, `weave.provider_events`, `weave.outbox_deliveries`, `weave.secret_capacity`, `weave.compatibility`, `weave.retention`, `weave.loop_iterations`, `weave.loop_yields`, `weave.telemetry_dropped`, `weave.queue_unknown` |
+| Counters | `weave.requests`, `weave.transitions`, `weave.recoveries`, `weave.provider_events`, `weave.outbox_deliveries`, `weave.secret_capacity`, `weave.compatibility`, `weave.retention`, `weave.loop_iterations`, `weave.loop_yields`, `weave.calls`, `weave.telemetry_dropped`, `weave.queue_unknown` |
 | Histograms | `weave.duration`, `weave.queue_age` |
 | Gauges | `weave.inventory`, `weave.inventory_freshness` |
 
@@ -179,6 +179,16 @@ timed out, through ordinary terminal control or the reduced terminal control of
 an unavailable or oversized run. The failure itself is counted once, as the
 run's outcome. `weave.loop_yields` counts the times a loop paused to continue
 in a later event.
+
+**Workflow calls.** `weave.calls` counts each call's outcome once, with
+`operation: call.wait` or `call.detach` and `status: ok`, `failed`,
+`cancelled`, `timed_out`, or `rejected` (a child that could not start). A
+result its caller can no longer use, because the caller already ended, counts
+as `cancelled`. `weave.queue_age` gains two operations: `call.dispatch`, the
+time from a call's request to its child's start, and `call.delivery`, the time
+from the child's end to the caller's receipt of its result. A growing
+`call.dispatch` age is the sign of a call backlog; there is no separate gauge
+of pending calls.
 
 **Only three attributes.** Metrics carry `operation`, `status`, and
 `error_code`. Operations come from the public operation manifest plus a few fixed

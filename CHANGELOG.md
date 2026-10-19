@@ -36,8 +36,11 @@ SPDX-License-Identifier: Apache-2.0
   `GET …/runs/{id}/calls` (`weave runs calls`, `run_calls()` in the SDK),
   `weave definitions activations create --pin-current-calls`, the `weave.calls`
   counter with `call.dispatch` and `call.delivery` queue ages, and the "Call
-  another workflow" guide. Migration `0033_language_workflow_calls` adds empty
-  tables only. A run cannot be purged while its calls run or before its result
+  another workflow" guide. Migration `0033_language_workflow_calls` adds two empty
+  tables and changes no existing row; it adds the call rules to run purging and
+  charges call rows to each run's reserved control capacity, so cancelling or
+  timing out a run that takes part in a call still works at a full byte quota,
+  as for any other run. A run cannot be purged while its calls run or before its result
   reached its caller (`WV-RUN-PURGE-BLOCKED`). Upgrade CLIs and SDKs together
   with the server: older clients reject the new `call_completed` event type and
   `caller` field when they validate history and runs.
