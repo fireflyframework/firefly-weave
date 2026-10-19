@@ -34,6 +34,7 @@ import asyncio
 import hashlib
 import ipaddress
 import json
+import random
 import time
 import tomllib
 from collections.abc import Iterator
@@ -270,6 +271,31 @@ def platform_logs(run, since: str) -> str:
     return "\n".join(texts)
 
 
+def destinations(identity_ip: str, acme_ip: str, rng: random.Random) -> dict[str, str]:
+    """J9.3's private destinations. Each one by address gets a port of this run, so its refusal record (which names
+    the origin) can only come from this run's call; the approved alias must stay the exact approved origin."""
+    ports = rng.sample(range(20000, 30000), 3)
+    return {
+        "identity-provider-j9": f"http://{identity_ip}:{ports[0]}",
+        "identity-alias-j9": f"http://{IDENTITY_ALIAS}:8080",
+        "acme-address-j9": f"http://{acme_ip}:{ports[1]}",
+        "metadata-j9": f"http://169.254.169.254:{ports[2]}",
+    }
+
+
+async def await_refusals(
+    read: Any, origins: dict[str, str], *, timeout: float = 10, pause: float = 0.5
+) -> dict[str, list[str]]:
+    """The refusal reasons per destination, read again until each has a record or ``timeout`` passes: Docker
+    copies container logs asynchronously."""
+    deadline = time.monotonic() + timeout
+    while True:
+        reasons = refusal_reasons(refusal_records(read()), origins)
+        if all(reasons.values()) or time.monotonic() >= deadline:
+            return reasons
+        await asyncio.sleep(pause)
+
+
 # A run that called a refused destination stops at the action: the failed task opens an incident.
 REFUSED_RUN = ("suspended", "WV-TASK-FAILED")
 SETTLED = frozenset({"succeeded", "failed", "cancelled", "timed_out"})
@@ -343,14 +369,7 @@ async def test_j9_03_connections_reach_only_the_approved_private_origin(run):
     key = hashlib.sha256(run.canary("acme-api-key").encode()).hexdigest()
     approved_connection = UUID(run.private_record("catalog")["connection_revision_id"])
     releases = {UUID(version): UUID(release) for version, release in run.status()["connector_release_ids"].items()}
-    # A minute of slack for the Docker host's clock; the origins below are this run's addresses.
-    since = (datetime.now(UTC) - timedelta(minutes=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    destinations = {
-        "identity-provider-j9": f"http://{identity_ip}:8080",
-        "identity-alias-j9": f"http://{IDENTITY_ALIAS}:8080",
-        "acme-address-j9": f"http://{acme_ip}:8080",
-        "metadata-j9": "http://169.254.169.254",
-    }
+    targets = destinations(identity_ip, acme_ip, random.SystemRandom())
     async with run.client("owner") as owner:
         reader = await owner.invoke(
             "definitions.publish",
@@ -367,8 +386,10 @@ async def test_j9_03_connections_reach_only_the_approved_private_origin(run):
             name: (
                 await owner.invoke("connections.create", body=catalog.open_connection_request(name, url, version))
             ).id
-            for name, url in destinations.items()
+            for name, url in targets.items()
         }
+        # Taken just before the refused calls, with a few seconds of slack for the Docker host's clock.
+        since = (datetime.now(UTC) - timedelta(seconds=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
         refused_from = len(run.acme_control("/_control/journal")["entries"])
         with identity_alias(run):
             runs = {
@@ -376,8 +397,8 @@ async def test_j9_03_connections_reach_only_the_approved_private_origin(run):
                 for name, connection in connections.items()
             }
         after = run.acme_control("/_control/journal")["entries"][refused_from:]
-    origins = {name: canonical_origin(url, "http-connector") for name, url in destinations.items()}
-    reasons = refusal_reasons(refusal_records(platform_logs(run, since)), origins)
+    origins = {name: canonical_origin(url, "http-connector") for name, url in targets.items()}
+    reasons = await await_refusals(lambda: platform_logs(run, since), origins)
     (run.evidence / "private-origins-j9.json").write_text(
         json.dumps(
             {"approved": approved, "runs": runs, "origins": origins, "reasons": reasons, "acme_after": len(after)},
@@ -390,10 +411,8 @@ async def test_j9_03_connections_reach_only_the_approved_private_origin(run):
     # The approved origin: the run succeeds over plain HTTP and Acme sees exactly the canary key's hash.
     assert approved == ("succeeded", None)
     assert reached and {entry["key_sha256"] for entry in reached} == {key}
-    # Every private destination: the policy's own record with the rule that refused it, the run stopped at the
-    # action, and nothing reached Acme.
-    assert {name: sorted(set(found)) for name, found in reasons.items()} == {
-        name: [reason] for name, reason in REFUSALS.items()
-    }
-    assert runs == dict.fromkeys(destinations, REFUSED_RUN)
+    # Every private destination: exactly one record of the policy, with the rule that refused it, the run stopped
+    # at the action, and nothing reached Acme.
+    assert reasons == {name: [reason] for name, reason in REFUSALS.items()}
+    assert runs == dict.fromkeys(targets, REFUSED_RUN)
     assert after == []

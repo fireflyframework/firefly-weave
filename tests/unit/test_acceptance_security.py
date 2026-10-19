@@ -301,3 +301,28 @@ async def test_each_run_through_activates_the_reader_again_on_its_current_revisi
             None,
         )
     assert revisions == [None, 1, 2]
+
+
+def test_each_refused_destination_names_a_port_of_this_run_except_the_approved_alias():
+    import random
+
+    first = security.destinations("10.0.0.2", "10.0.0.3", random.Random(1))
+    second = security.destinations("10.0.0.2", "10.0.0.3", random.Random(2))
+    assert first["identity-alias-j9"] == second["identity-alias-j9"] == "http://identity.acceptance.test:8080"
+    ports = [int(url.rsplit(":", 1)[1]) for name, url in first.items() if name != "identity-alias-j9"]
+    assert len(set(ports)) == 3 and all(20000 <= port < 30000 for port in ports)
+    assert first["metadata-j9"].startswith("http://169.254.169.254:") and first != second
+    assert set(first) == set(security.REFUSALS)
+
+
+async def test_refusals_are_read_until_each_destination_has_its_record():
+    logs = iter(
+        [
+            "",
+            '{"action":"private_origins.refused","origin":"http://a:1","purpose":"http-connector","reason":"no-entry"}',
+        ]
+    )
+    reasons = await security.await_refusals(lambda: next(logs), {"a": "http://a:1"}, timeout=5, pause=0)
+    assert reasons == {"a": ["no-entry"]}
+    silent = await security.await_refusals(lambda: "", {"a": "http://a:1"}, timeout=0, pause=0)
+    assert silent == {"a": []}
