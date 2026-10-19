@@ -294,7 +294,10 @@ export class FormulaField implements OnInit {
   private seq = 0;
   private readonly lifetime = inject(DestroyRef);
   private readonly injector = inject(Injector);
-  private readonly element = inject<ElementRef<HTMLElement>>(ElementRef);
+  // Optional: unit tests create the field outside a view.
+  private readonly element = inject<ElementRef<HTMLElement>>(ElementRef, {
+    optional: true,
+  });
   private pendingRef = "";
   private localOwner: {
     session: FormSession;
@@ -560,7 +563,7 @@ export class FormulaField implements OnInit {
     if (opening && !this.inDialog())
       afterNextRender(
         () =>
-          this.element.nativeElement
+          this.element?.nativeElement
             .querySelector(".formula-result")
             ?.scrollIntoView({ block: "nearest" }),
         { injector: this.injector },
