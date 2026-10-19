@@ -25,6 +25,7 @@ import {
   redact,
   secretsOf,
   stepOutcome,
+  storageAccountKeys,
   storageKeyCheckOn,
   viewportName,
 } from "./acceptance/records";
@@ -333,6 +334,32 @@ describe("browser storage dumps", () => {
     expect(dumpName("J9", "1440x900", "viewer", 3)).not.toBe(
       dumpName("J9", "1440x900", "viewer", 2),
     );
+  });
+
+  it("counts the account keys a dump still holds, in Web Storage and IndexedDB", () => {
+    const account =
+      "p0123456789abcdef:fedcba9876543210:11111111-2222-3333-4444-555555555555:66666666-7777-8888-9999-000000000000:";
+    const empty = { local: {}, session: {}, indexed_db: [] };
+    expect(storageAccountKeys(empty)).toBe(0);
+    expect(
+      storageAccountKeys({
+        local: { [account + "drafts"]: "v", "local:draft": "v" },
+        session: { [account + "run"]: "v", "ui:panes": "v" },
+        indexed_db: [
+          { database: "weave", key: JSON.stringify(account + "x") },
+          { database: "weave", key: JSON.stringify(7) },
+          { database: account + "db", key: JSON.stringify("plain") },
+        ],
+        indexed_db_databases: [{ name: account + "db" }, { name: "weave" }],
+      }),
+    ).toBe(4);
+    // A profile prefix alone is not an account key.
+    expect(
+      storageAccountKeys({
+        ...empty,
+        local: { "p0123456789abcdef:settings": "v" },
+      }),
+    ).toBe(0);
   });
 
   it("lists IndexedDB databases only while the storage-key check runs", () => {

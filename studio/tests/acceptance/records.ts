@@ -236,6 +236,32 @@ export function storageKeyCheckOn(
   return state !== undefined && state.applies && state.missing.length === 0;
 }
 
+// scripts/acceptance_evidence.py ACCOUNT_KEY: <profileId>:<subjectHash>:<tenantId>:<projectId>:
+const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+export const ACCOUNT_KEY = new RegExp(
+  `^p[0-9a-f]{16}:[0-9a-f]{16}:${UUID}:${UUID}:`,
+  "i",
+);
+
+/** The account keys a storage dump still holds: Web Storage keys, IndexedDB database names and record keys. */
+export function storageAccountKeys(dump: {
+  local: Record<string, string>;
+  session: Record<string, string>;
+  indexed_db: { database: string; key: string }[];
+  indexed_db_databases?: { name: string }[];
+}): number {
+  const recordKey = (key: string): string => {
+    const value: unknown = JSON.parse(key);
+    return typeof value === "string" ? value : "";
+  };
+  return [
+    ...Object.keys(dump.local),
+    ...Object.keys(dump.session),
+    ...(dump.indexed_db_databases ?? []).map((database) => database.name),
+    ...dump.indexed_db.map((record) => recordKey(record.key)),
+  ].filter((key) => ACCOUNT_KEY.test(key)).length;
+}
+
 /** Why a dump is not the person's Studio storage, or "" when it is. */
 export function dumpOriginProblem(origin: string, host: string): string {
   if (!host) return "storage was read before the Studio host started";

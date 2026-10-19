@@ -65,6 +65,7 @@ import {
   secretsOf,
   stepOutcome,
   storageKeyCheckOn,
+  storageAccountKeys,
   viewportName,
 } from "./records";
 import type { SkippedCheck, StepRecord, StepState } from "./records";
@@ -647,9 +648,17 @@ export class Journey {
           `removing ${signed.name}'s platform: ${errorLine(error, secrets())}`,
         );
       }
-      // Removing the platform purges its account keys: a second dump shows what is left.
+      // Removing the platform purges its account keys: a second dump shows what
+      // is left, once the purge has finished or 10 s have passed.
       if (removed)
         try {
+          await expect
+            .poll(
+              async () => storageAccountKeys(await dumpStorage(signed.page)),
+              { timeout: 10_000 },
+            )
+            .toBe(0)
+            .catch(() => undefined);
           const dump = await dumpStorage(signed.page);
           const wrong = dumpOriginProblem(dump.origin, signed.host);
           if (wrong) throw Error(wrong);
