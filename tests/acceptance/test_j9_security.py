@@ -271,6 +271,23 @@ def platform_logs(run, since: str) -> str:
     return "\n".join(texts)
 
 
+def refusal_problems(reasons: dict[str, list[str]], expected: dict[str, str]) -> list[str]:
+    """Why the records do not prove each refusal: every destination needs at least one record, one per task attempt
+    (the executor may retry), and every record must name the destination's rule."""
+    problems = []
+    for name, reason in expected.items():
+        found = reasons.get(name, [])
+        if not found:
+            problems.append(f"{name}: no refusal record")
+        problems += [f"{name}: refused by {other}, expected {reason}" for other in sorted(set(found) - {reason})]
+    return problems
+
+
+def refusal_attempts(reasons: dict[str, list[str]]) -> dict[str, int]:
+    """How many task attempts each destination's refusal records show."""
+    return {name: len(found) for name, found in reasons.items()}
+
+
 def destinations(identity_ip: str, acme_ip: str, rng: random.Random) -> dict[str, str]:
     """J9.3's private destinations. Each one by address gets a port of this run, so its refusal record (which names
     the origin) can only come from this run's call; the approved alias must stay the exact approved origin."""
@@ -401,7 +418,14 @@ async def test_j9_03_connections_reach_only_the_approved_private_origin(run):
     reasons = await await_refusals(lambda: platform_logs(run, since), origins)
     (run.evidence / "private-origins-j9.json").write_text(
         json.dumps(
-            {"approved": approved, "runs": runs, "origins": origins, "reasons": reasons, "acme_after": len(after)},
+            {
+                "approved": approved,
+                "runs": runs,
+                "origins": origins,
+                "reasons": reasons,
+                "attempts": refusal_attempts(reasons),
+                "acme_after": len(after),
+            },
             indent=2,
             sort_keys=True,
         )
@@ -411,8 +435,8 @@ async def test_j9_03_connections_reach_only_the_approved_private_origin(run):
     # The approved origin: the run succeeds over plain HTTP and Acme sees exactly the canary key's hash.
     assert approved == ("succeeded", None)
     assert reached and {entry["key_sha256"] for entry in reached} == {key}
-    # Every private destination: exactly one record of the policy, with the rule that refused it, the run stopped
-    # at the action, and nothing reached Acme.
-    assert reasons == {name: [reason] for name, reason in REFUSALS.items()}
+    # Every private destination: the policy's records, one per task attempt, each with the rule that refused it;
+    # the run stopped at the action, and nothing reached Acme.
+    assert refusal_problems(reasons, REFUSALS) == []
     assert runs == dict.fromkeys(targets, REFUSED_RUN)
     assert after == []

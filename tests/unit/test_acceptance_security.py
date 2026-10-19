@@ -326,3 +326,14 @@ async def test_refusals_are_read_until_each_destination_has_its_record():
     assert reasons == {"a": ["no-entry"]}
     silent = await security.await_refusals(lambda: "", {"a": "http://a:1"}, timeout=0, pause=0)
     assert silent == {"a": []}
+
+
+def test_each_destination_needs_records_of_its_own_rule_one_per_task_attempt():
+    expected = {"a": "no-entry", "b": "always-refused"}
+    # Two attempts at "a" (the executor retried the task), one at "b": accepted, and the attempts are counted.
+    assert security.refusal_problems({"a": ["no-entry", "no-entry"], "b": ["always-refused"]}, expected) == []
+    assert security.refusal_attempts({"a": ["no-entry", "no-entry"], "b": ["always-refused"]}) == {"a": 2, "b": 1}
+    assert security.refusal_problems({"a": [], "b": ["always-refused"]}, expected) == ["a: no refusal record"]
+    assert security.refusal_problems({"a": ["no-entry", "control-plane"], "b": ["always-refused"]}, expected) == [
+        "a: refused by control-plane, expected no-entry"
+    ]
