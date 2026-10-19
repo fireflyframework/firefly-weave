@@ -81,6 +81,32 @@ def holds(roles: Iterable[str], capability: str, role_capabilities: Mapping[str,
     return any(option in role_capabilities.get(role, frozenset()) for role in roles for option in options)
 
 
+def level(path: str) -> str:
+    """The scope an operation path names: tenant, project or environment."""
+    if "{environment}" in path:
+        return "environment"
+    return "project" if "{project}" in path else "tenant"
+
+
+def holds_at(
+    grants: Iterable[Mapping[str, Any]],
+    capability: str,
+    role_capabilities: Mapping[str, frozenset[str]],
+    path: str,
+) -> bool:
+    """True when a grant at the operation's scope level or above holds the capability: an environment grant does
+    not reach a project's or tenant's operations, and a project grant does not reach the tenant's."""
+    needed = level(path)
+    reaching = [
+        grant["role"]
+        for grant in grants
+        if needed == "environment"
+        or (needed == "project" and "environment_id" not in grant["scope"])
+        or (needed == "tenant" and "project_id" not in grant["scope"])
+    ]
+    return holds(reaching, capability, role_capabilities)
+
+
 def materialize(value: Any, *, scope: Mapping[str, str] | None = None) -> Any:
     """The value with every "random" replaced by a new UUID string and "demo-scope" by ``scope``."""
     if value == RANDOM:

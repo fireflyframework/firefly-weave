@@ -121,3 +121,24 @@ def test_activate_is_sent_as_each_person_on_the_demo_environment():
     body = matrix.materialize(dict(row.body), scope=scope)
     assert body["scope"] == scope and UUID(body["version_id"])
     assert set(matrix.materialize(dict(row.body))["scope"]) == set(scope)
+
+
+def grant(role, *levels):
+    ids = {"tenant_id": "t", "project_id": "p", "environment_id": "e"}
+    return {"role": role, "scope": {key: ids[key] for key in ("tenant_id", *levels)}}
+
+
+def test_a_grant_covers_operations_at_its_level_and_below_only():
+    # The live run showed it: a viewer's environment grant does not read the project's language or telemetry.
+    roles = {"viewer": frozenset({"catalog.read"}), "developer": frozenset({"catalog.read"})}
+    environment = "/tenants/{tenant}/projects/{project}/environments/{environment}/x"
+    project = "/tenants/{tenant}/projects/{project}/language"
+    tenant = "/tenants/{tenant}/members"
+    viewer = [grant("viewer", "project_id", "environment_id")]
+    developer = [grant("developer", "project_id")]
+    assert matrix.holds_at(viewer, "catalog.read", roles, environment)
+    assert not matrix.holds_at(viewer, "catalog.read", roles, project)
+    assert matrix.holds_at(developer, "catalog.read", roles, project)
+    assert matrix.holds_at(developer, "catalog.read", roles, environment)
+    assert not matrix.holds_at(developer, "catalog.read", roles, tenant)
+    assert not matrix.holds_at(viewer, "run.read", roles, environment)

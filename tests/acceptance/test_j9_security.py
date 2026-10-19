@@ -17,12 +17,14 @@
 """J9: security and negative paths through the API, signed in as each acceptance person.
 
 J9.1 sends every operation added since 0.1.0a14 (and the operations behind Studio controls) as the
-owner, builder, approver, operator and viewer: exactly 403 WV-FORBIDDEN where the person's roles
-lack the capability, and elsewhere the operation's own answer, never an authentication or authorization
-refusal or a server error; then a revoked person loses access, in the open session and after signing in again.
+owner, builder, approver, operator and viewer: exactly 403 WV-FORBIDDEN where the person's grants at
+the operation's scope lack the capability, and elsewhere the operation's own answer, never an
+authentication or authorization refusal or a server error; then a revoked person loses access, in the
+open session and after signing in again.
 J9.3 shows the private-origin policy on connections: the approved Acme origin works over plain HTTP
 with its key; the identity provider by address and under its approved alias, the Acme service by
-address and a metadata address are refused before any request reaches them, each by its own rule. Runs only through scripts/acceptance.py (the run stage).
+address and a metadata address are refused before any request reaches them, each by its own rule.
+Runs only through scripts/acceptance.py (the run stage).
 """
 
 from __future__ import annotations
@@ -111,11 +113,13 @@ async def test_j9_01_every_new_operation_answers_by_role_and_revocation_takes_ef
 
     outcomes = []
     for name in PEOPLE:
-        roles = run.roles(name)
+        grants = run.person(name)["grants"]
         async with run.client(name) as client:
             for row in rows:
                 status, code = await probe(client, row, materialize)
-                permitted = matrix.holds(roles, row.capability, ROLE_CAPABILITIES)
+                # Roles count at their grant's scope: an environment grant does not reach project operations.
+                path = OPERATIONS[row.operation].path
+                permitted = matrix.holds_at(grants, row.capability, ROLE_CAPABILITIES, path)
                 outcomes.append(
                     {
                         "person": name,
