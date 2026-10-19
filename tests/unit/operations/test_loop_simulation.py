@@ -23,7 +23,7 @@ import pytest
 
 from firefly_weave.compiler.api import compile_source
 from firefly_weave.compiler.catalog import CatalogSnapshot
-from firefly_weave.operations.debug.models import DebugError, LoopView
+from firefly_weave.operations.debug.models import DebugError, DebugLimits, LoopView
 from firefly_weave.operations.debug.simulator import Simulator, first_instance
 from firefly_weave.runtime.kernel import workflow
 
@@ -270,3 +270,60 @@ def test_a_loop_cut_after_its_target_still_runs_the_target_on_every_item():
     simulator.set_breakpoints({"pick[2]"})
     assert simulator.continue_until_breakpoint().selected_scope.item == 6
     assert simulator.continue_until_breakpoint().status == "succeeded"
+
+
+def test_a_long_loop_checks_the_session_size_every_sixty_four_boundaries(monkeypatch):
+    loop = {
+        "id": "each",
+        "kind": "forEach",
+        "items": {"ref": "/input"},
+        "maxItems": 1000,
+        "body": {"steps": [], "output": {"ref": "/item"}},
+    }
+    simulator = Simulator(compiled([loop], {"ref": "/steps/each/output"}), mocks={}, input=list(range(1000)), now=NOW)
+    serialized = []
+    original = Simulator.serialize
+    monkeypatch.setattr(Simulator, "serialize", lambda self: serialized.append(1) or original(self))
+    view = simulator.continue_until_breakpoint()
+    assert view.status == "succeeded" and view.variables["output"] == list(range(1000))
+    assert len(serialized) <= len(view.boundaries) // 64 + 2
+
+
+def test_large_new_output_checks_the_session_size_before_sixty_four_boundaries(monkeypatch):
+    copy = {"id": "copy", "kind": "transform", "value": {"ref": "/item"}}
+    again = {"id": "again", "kind": "transform", "value": {"ref": "/steps/copy/output"}}
+    loop = {
+        "id": "each",
+        "kind": "forEach",
+        "items": {"ref": "/input"},
+        "body": {"steps": [copy, again], "output": {"literal": None}},
+    }
+    artifact = compiled([loop], {"literal": None}, input_schema={"type": "array", "items": {"type": "string"}})
+    simulator = Simulator(artifact, mocks={}, input=["x" * 300_000] * 3, now=NOW)
+    serialized = []
+    original = Simulator.serialize
+    monkeypatch.setattr(Simulator, "serialize", lambda self: serialized.append(1) or original(self))
+    view = simulator.continue_until_breakpoint()
+    assert view.status == "succeeded" and len(view.boundaries) < 64
+    # One check once a megabyte of copies had accumulated, and the command's final check.
+    assert len(serialized) >= 2
+
+
+def test_a_session_over_its_size_limit_refuses_the_command_and_keeps_its_state():
+    copy = {"id": "copy", "kind": "transform", "value": {"ref": "/item"}}
+    loop = {
+        "id": "each",
+        "kind": "forEach",
+        "items": {"ref": "/input"},
+        "body": {"steps": [copy], "output": {"ref": "/steps/copy/output"}},
+    }
+    artifact = compiled(
+        [loop], {"ref": "/steps/each/output"}, input_schema={"type": "array", "items": {"type": "string"}}
+    )
+    started = Simulator(artifact, mocks={}, input=["x" * 100_000] * 8, now=NOW)
+    limits = DebugLimits(session_bytes=len(started.serialize().encode()) + 400_000)
+    simulator = Simulator.restore(started.serialize(), limits=limits)
+    before = simulator.serialize()
+    with pytest.raises(DebugError, match="WV-DEBUG-LIMIT"):
+        simulator.continue_until_breakpoint()
+    assert simulator.serialize() == before

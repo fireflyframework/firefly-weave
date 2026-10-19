@@ -40,6 +40,7 @@ from firefly_weave.operations.debug.models import (
     SelectedScope,
     SignalReceipt,
 )
+from firefly_weave.runtime.capacity import ADMISSION_OUTPUT_BYTES, ADMISSION_REDUCTIONS, TRANSITION_BYTES, logical_size
 from firefly_weave.runtime.control import loop_scope
 from firefly_weave.runtime.kernel import (
     _advance_owned,
@@ -87,6 +88,7 @@ class Simulator:
         self.artifact = import_artifact(json.loads(artifact.to_bytes()))
         self._prepared = prepare(self.artifact)
         self.ir = self._prepared.ir
+        self._unchecked = self._unchecked_bytes = 0
         if now.tzinfo is None or now.utcoffset() is None:
             raise DebugError("WV-DEBUG-TIME")
         validate(self.ir, self.ir.schemas[self.ir.input_schema], input)
@@ -152,6 +154,7 @@ class Simulator:
         result.artifact = import_artifact(data.artifact)
         result._prepared = prepare(result.artifact)
         result.ir = result._prepared.ir
+        result._unchecked = result._unchecked_bytes = 0
         result._validate_mocks(data.mocks)
         result.data = data
         result._bounded()
@@ -161,6 +164,7 @@ class Simulator:
         return canonical_bytes(self.data.model_dump(mode="json")).decode()
 
     def _bounded(self) -> None:
+        self._unchecked = self._unchecked_bytes = 0
         d, limits = self.data, self.limits
         if (
             d.node_count > limits.node_reductions
@@ -288,10 +292,21 @@ class Simulator:
                 skip = None
                 if not self._step():
                     return
-                self._bounded()
+                self._checkpoint()
             # The command work ceiling pauses without undoing useful bounded progress.
 
         return self._mutate(run)
+
+    def _checkpoint(self) -> None:
+        """Check the session limits while a command continues, like run admission: every 64 boundaries, or sooner
+        once 1 MiB of new step output and accepted facts has accumulated. Every command still ends with a full check.
+        """
+        self._unchecked += 1
+        if self._unchecked >= ADMISSION_REDUCTIONS or self._unchecked_bytes >= ADMISSION_OUTPUT_BYTES:
+            self._bounded()
+
+    def _grown(self, value: object) -> None:
+        self._unchecked_bytes += logical_size(value, TRANSITION_BYTES)
 
     def _step(self) -> bool:
         d = self.data
@@ -313,7 +328,11 @@ class Simulator:
         else:
             boundary = Boundary(kind="event", event_type=cursor.event.type)
             d.events.append(cursor.event)
+            self._grown(cursor.event.data)
+        changed = len(cursor.result.steps)
         d.cursor = _advance_owned(cursor, self._prepared)
+        for change in d.cursor.result.steps[changed:]:
+            self._grown(change.output)
         d.boundaries.append(boundary)
         if d.cursor.done:
             result = d.cursor.result
@@ -347,6 +366,7 @@ class Simulator:
                     d.pending.append(
                         self._event("task_completed", {"node_id": command.node_id, "output": d.mocks[key]})
                     )
+                    self._grown(d.mocks[key])
         return True
 
     def _eligible(self) -> RuntimeEvent | None:
