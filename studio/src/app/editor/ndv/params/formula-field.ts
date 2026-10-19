@@ -189,6 +189,7 @@ export class RefPill {
               [readOnly]="!!readOnly()"
               [invalid]="!!heldText()"
               [text]="shownText()"
+              [revision]="edits()"
               [error]="editorError()"
               [pills]="look"
               [completions]="completions"
@@ -214,6 +215,7 @@ export class RefPill {
               [readOnly]="!!readOnly()"
               [invalid]="!!heldText()"
               [text]="shownText()"
+              [revision]="edits()"
               [error]="editorError()"
               [pills]="look"
               [completions]="completions"
@@ -278,6 +280,8 @@ export class FormulaField implements OnInit {
   readonly picking = signal(false);
   /** Text being typed, while it is the person's and not yet shown in canonical form. */
   readonly editingText = signal<string | null>(null);
+  /** How many texts the editor sent: what the field shows next replaces the typed text even when it reads the same as before. */
+  readonly edits = signal(0);
   readonly request = signal<EditorRequest | null>(null);
   /** The editor has focus: the Result panel is open. */
   readonly focusedIn = signal(false);
@@ -508,6 +512,7 @@ export class FormulaField implements OnInit {
   }
 
   typed(text: string) {
+    this.edits.update((count) => count + 1);
     this.reconcile();
     if (!this.canEdit()) return;
     if (!this.ownsEdit()) this.beginEdit();

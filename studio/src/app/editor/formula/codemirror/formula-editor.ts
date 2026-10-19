@@ -18,7 +18,10 @@ SPDX-License-Identifier: Apache-2.0
 // A formula or template field: CodeMirror with Studio's colors, pills and
 // keys. Loaded with the first formula field (@defer), so CodeMirror stays out
 // of the first page. The text input is what to show; while the person types,
-// their text stays until the field sends something else (Undo, blur).
+// their text stays until the field sends something else (Undo, blur). The
+// field counts what it was sent in `revision`: a key can arrive before the
+// page draws the typed text, and the field may then answer with the very
+// text the editor was last given, which must still replace what's typed.
 import {
   ChangeDetectionStrategy,
   Component,
@@ -92,6 +95,8 @@ export class FormulaEditor {
   required = input(false);
   invalid = input(false);
   text = input.required<string>();
+  /** A new number after each text the editor sends: `text` is read again even when it is the same. */
+  revision = input(0);
   error = input<{ from: number; to: number } | null>(null);
   pills = input.required<(pointer: string) => PillLook>();
   request = input<EditorRequest | null>(null);
@@ -132,6 +137,7 @@ export class FormulaEditor {
     inject(DestroyRef).onDestroy(() => this.view?.destroy());
     effect(() => {
       const text = this.text();
+      this.revision();
       untracked(() => this.sync(text));
     });
     effect(() => {

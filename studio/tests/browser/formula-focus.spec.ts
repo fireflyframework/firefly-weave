@@ -55,6 +55,48 @@ const activeTag = (page: Page) =>
 const RECORD = {
   parameters: { object: { customerId: { ref: "/input/customerId" } } },
 };
+/**
+ * Types text into the focused formula and, in the same task, presses Undo or
+ * Escape or leaves the field: a key that arrives before the page draws the
+ * typed text, as from a fast typist on a busy machine.
+ */
+async function typeThen(
+  page: Page,
+  text: string,
+  then: "undo" | "escape" | "leave",
+) {
+  await page.evaluate(
+    async ({ text, then }) => {
+      const editor = document.activeElement as HTMLElement;
+      document.execCommand("insertText", false, text);
+      // The editor reads the typed text when the DOM change is delivered.
+      await Promise.resolve();
+      if (then === "leave") return editor.blur();
+      const mac = /Mac/.test(navigator.platform);
+      editor.dispatchEvent(
+        new KeyboardEvent(
+          "keydown",
+          then === "undo"
+            ? {
+                key: "z",
+                code: "KeyZ",
+                metaKey: mac,
+                ctrlKey: !mac,
+                bubbles: true,
+                cancelable: true,
+              }
+            : {
+                key: "Escape",
+                code: "Escape",
+                bubbles: true,
+                cancelable: true,
+              },
+        ),
+      );
+    },
+    { text, then },
+  );
+}
 
 for (const size of sizes)
   test.describe(`a formula being typed at ${size.tag}`, () => {
@@ -196,6 +238,49 @@ for (const size of sizes)
       await expect(formulaText(field)).toBeFocused();
       await page.keyboard.press("Escape");
       await expect(formulaText(field)).not.toBeFocused();
+      await details.close();
+      expect(await sourceText(page)).toBe(before);
+    });
+
+    test("a key pressed before the typed text is drawn still leaves the field showing what the workflow holds", async ({
+      page,
+    }) => {
+      const details = await openStepFixture(page, formulasFixture);
+      const before = await sourceText(page);
+      await details.openWithKeyboard("flag");
+      const field = details.field("value");
+      const select = async () => {
+        await formulaText(field).click();
+        await page.keyboard.press("ControlOrMeta+a");
+      };
+      // Undo takes back the formula just written, and the field shows it.
+      await select();
+      await typeThen(page, "input.amount > 5", "undo");
+      await expect(formulaBox(field)).toHaveAttribute(
+        "data-text",
+        "input.amount > 1000",
+      );
+      await expect(formulaText(field)).toBeFocused();
+      // Escape takes back text that doesn't apply, and a literal waiting for
+      // the field to be left.
+      await typeThen(page, " )", "escape");
+      await expect(formulaBox(field)).toHaveAttribute(
+        "data-text",
+        "input.amount > 1000",
+      );
+      await select();
+      await typeThen(page, '"hello"', "escape");
+      await expect(formulaBox(field)).toHaveAttribute(
+        "data-text",
+        "input.amount > 1000",
+      );
+      // Leaving shows the formula in its standard form.
+      await select();
+      await typeThen(page, "input.amount>1000", "leave");
+      await expect(formulaBox(field)).toHaveAttribute(
+        "data-text",
+        "input.amount > 1000",
+      );
       await details.close();
       expect(await sourceText(page)).toBe(before);
     });
