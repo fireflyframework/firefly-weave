@@ -132,10 +132,75 @@ def test_the_policy_refuses_the_service_by_address_and_the_metadata_address_by_t
             ),
         ),
     )
+    policy = policy.with_entries(
+        (
+            PrivateOrigin(
+                origin="http://identity.acceptance.test:8080",
+                purpose="http-connector",
+                networks=("10.246.49.0/24",),
+                credentials="bridge",
+            ),
+        )
+    )
+    keycloak = "10.246.49.3"
     for name, url, address in (
+        ("identity-provider-j9", f"http://{keycloak}:8080", keycloak),
+        ("identity-alias-j9", "http://identity.acceptance.test:8080", keycloak),
         ("acme-address-j9", "http://10.246.49.4:8080", "10.246.49.4"),
         ("metadata-j9", "http://169.254.169.254", "169.254.169.254"),
     ):
         with pytest.raises(PrivateOriginDenied) as refused:
-            policy.check("http-connector", url, [address], local=lambda ip: False)
-        assert refused.value.reason == security.REFUSALS[name]
+            # The API shares Keycloak's network namespace: Keycloak's address is the API's own.
+            policy.check("http-connector", url, [address], local=lambda ip: str(ip) == keycloak)
+        assert refused.value.reason == security.REFUSALS[name], name
+
+
+def test_both_identity_provider_rules_are_expected():
+    assert security.REFUSALS == {
+        "identity-provider-j9": "no-entry",
+        "identity-alias-j9": "control-plane",
+        "acme-address-j9": "no-entry",
+        "metadata-j9": "always-refused",
+    }
+
+
+def test_the_identity_alias_is_added_at_keycloaks_address_and_taken_away_afterwards():
+    import json
+    import subprocess
+
+    calls = []
+
+    class Run:
+        def platform_state(self):
+            return {"private_origins": {"network": "weave-local-p-egress"}}
+
+        def docker(self, *args, **_):
+            calls.append(list(args))
+            stdout = ""
+            if args[:2] == ("network", "inspect"):
+                containers = {"abc": {"Name": "weave-local-p-keycloak-1", "IPv4Address": "10.246.50.3/24"}}
+                stdout = json.dumps([{"Containers": containers}])
+            return subprocess.CompletedProcess(args, 0, stdout=stdout, stderr="")
+
+        def require(self, result):
+            return result
+
+    with security.identity_alias(Run()):
+        during = list(calls)
+    assert during[1:] == [
+        ["network", "disconnect", "weave-local-p-egress", "weave-local-p-keycloak-1"],
+        [
+            "network",
+            "connect",
+            "--ip",
+            "10.246.50.3",
+            "--alias",
+            "identity.acceptance.test",
+            "weave-local-p-egress",
+            "weave-local-p-keycloak-1",
+        ],
+    ]
+    assert calls[len(during) :] == [
+        ["network", "disconnect", "weave-local-p-egress", "weave-local-p-keycloak-1"],
+        ["network", "connect", "--ip", "10.246.50.3", "weave-local-p-egress", "weave-local-p-keycloak-1"],
+    ]

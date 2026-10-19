@@ -67,6 +67,10 @@ ALWAYS = frozenset({"collect", "scan", "down"})
 FIXED_MINUTES = {"prepare": 30, "up": 25, "collect": 5, "scan": 5, "down": 10}
 RUN_MINUTES = {"pr": 35, "ai": 45, "cluster": 45, "k3d": 45, "nightly": 90, "release": 90, "docs-shots": 35}
 FIXTURE_ORIGIN = "http://acme.acceptance.test:8080"
+# Approved too, and answered by Keycloak (whose network namespace the API shares) only while J9.3 gives it this alias:
+# the control-plane rule must refuse it although its entry exists.
+IDENTITY_ORIGIN = "http://identity.acceptance.test:8080"
+FIXTURE_ORIGINS = (FIXTURE_ORIGIN, IDENTITY_ORIGIN)
 ACME_IMAGE = "weave-acc/acme-api:local"
 # J0.14 compares image content, not image IDs: with the containerd image store an ID is the
 # manifest-index digest, and BuildKit's provenance attestation gives each cache-hit rebuild a new one.
@@ -372,7 +376,7 @@ def prepare(plan: Plan, recorder: Recorder) -> None:
     )
     plan.state.update(
         subnet=choose_subnet(_docker_subnets(recorder, docker), plan.subnet),
-        origins=[FIXTURE_ORIGIN],
+        origins=list(FIXTURE_ORIGINS),
         acme_image=ACME_IMAGE,
         acme_control_port=_free_port(),
         inventory=inventory,

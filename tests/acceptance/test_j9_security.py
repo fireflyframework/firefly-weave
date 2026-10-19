@@ -21,8 +21,8 @@ owner, builder, approver, operator and viewer: exactly 403 WV-FORBIDDEN where th
 lack the capability, and elsewhere the operation's own answer, never an authentication or authorization
 refusal or a server error; then a revoked person loses access, in the open session and after signing in again.
 J9.3 shows the private-origin policy on connections: the approved Acme origin works over plain HTTP
-with its key, and the identity provider, the Acme service by address and a metadata address are
-refused before any request reaches them. Runs only through scripts/acceptance.py (the run stage).
+with its key; the identity provider by address and under its approved alias, the Acme service by
+address and a metadata address are refused before any request reaches them, each by its own rule. Runs only through scripts/acceptance.py (the run stage).
 """
 
 from __future__ import annotations
@@ -32,6 +32,8 @@ import hashlib
 import ipaddress
 import json
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
@@ -180,14 +182,39 @@ def egress_address(run, fragment: str) -> str:
 
 
 REFUSED = '{"action":"private_origins.refused"'
+IDENTITY_ALIAS = "identity.acceptance.test"
 # The rule each refused destination must meet (spec: private origins). The identity provider is the control plane
-# the API shares its network namespace with; the Acme service by address has no exact entry; the metadata address is
-# always refused.
+# the API shares its network namespace with: by address it has no exact entry, and under its approved alias the
+# control-plane rule refuses it although the entry exists. The Acme service by address has no exact entry; the
+# metadata address is always refused.
 REFUSALS = {
-    "identity-provider-j9": "control-plane",
+    "identity-provider-j9": "no-entry",
+    "identity-alias-j9": "control-plane",
     "acme-address-j9": "no-entry",
     "metadata-j9": "always-refused",
 }
+
+
+@contextmanager
+def identity_alias(run) -> Iterator[None]:
+    """Keycloak answers to the approved identity alias on the egress network, at its own address, until exit.
+
+    Docker adds an alias only when a container joins a network, so Keycloak leaves and rejoins at the same address.
+    """
+    network = run.platform_state()["private_origins"]["network"]
+    inspected = json.loads(run.require(run.docker("network", "inspect", network)).stdout)[0]
+    (name, address), *_ = [
+        (container["Name"], str(container["IPv4Address"]).split("/")[0])
+        for container in (inspected.get("Containers") or {}).values()
+        if "keycloak" in container["Name"]
+    ]
+    run.require(run.docker("network", "disconnect", network, name))
+    run.require(run.docker("network", "connect", "--ip", address, "--alias", IDENTITY_ALIAS, network, name))
+    try:
+        yield
+    finally:
+        run.require(run.docker("network", "disconnect", network, name))
+        run.require(run.docker("network", "connect", "--ip", address, network, name))
 
 
 def refusal_records(text: str) -> list[dict[str, Any]]:
@@ -260,6 +287,7 @@ async def test_j9_03_connections_reach_only_the_approved_private_origin(run):
     since = (datetime.now(UTC) - timedelta(minutes=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
     destinations = {
         "identity-provider-j9": f"http://{identity_ip}:8080",
+        "identity-alias-j9": f"http://{IDENTITY_ALIAS}:8080",
         "acme-address-j9": f"http://{acme_ip}:8080",
         "metadata-j9": "http://169.254.169.254",
     }
@@ -267,9 +295,10 @@ async def test_j9_03_connections_reach_only_the_approved_private_origin(run):
         approved = await owner.invoke("connections.test", identifier=revision, body=RetirementRequest())
         reached = run.acme_control("/_control/journal")["entries"][before:]
         version = await catalog.connector_version(owner)
-        refused = {
-            name: await _test_connection(owner, catalog, version, name, url) for name, url in destinations.items()
-        }
+        with identity_alias(run):
+            refused = {
+                name: await _test_connection(owner, catalog, version, name, url) for name, url in destinations.items()
+            }
     origins = {name: canonical_origin(url, "http-connector") for name, url in destinations.items()}
     reasons = refusal_reasons(refusal_records(api_logs(run, since)), origins)
     (run.evidence / "private-origins-j9.json").write_text(
