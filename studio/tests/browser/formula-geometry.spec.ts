@@ -1,0 +1,215 @@
+/*
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+*/
+// The formula editor measured: one height and one pair of edges with the
+// other fields, ⤢ centered inside the box, pills inside the line, list rows
+// at the pane's density, the Result panel on the field's edges and on screen,
+// and Edit formula's columns side by side without overlap or sideways scroll.
+// Desktop with a fine pointer: fields 36 px, rows 32 px; touch and below
+// 768 px: 44 px.
+import { expect, test } from "@playwright/test";
+import {
+  formulaBox,
+  formulaText,
+  formulasFixture,
+  replaceFormula,
+  setTestInput,
+  suggestions,
+} from "./formula-po";
+import {
+  box,
+  boxes,
+  clippedText,
+  density,
+  expectAligned,
+  intersects,
+  showParameters,
+} from "./step-geometry";
+import { openStepFixture, withLanguageFeatures } from "./step-details-po";
+
+const sizes = [
+  { tag: "1440x900", width: 1440, height: 900 },
+  { tag: "1280x720", width: 1280, height: 720 },
+  { tag: "768x1024", width: 768, height: 1024 },
+  { tag: "600x500", width: 600, height: 500 },
+  { tag: "360x640", width: 360, height: 640 },
+];
+
+for (const size of sizes)
+  test.describe(`formula geometry at ${size.tag}`, () => {
+    test.use({ viewport: { width: size.width, height: size.height } });
+    test.beforeEach(async ({ page }) => {
+      await withLanguageFeatures(page);
+    });
+
+    test("the formula box has a field's height and edges, with ⤢ centered inside it", async ({
+      page,
+    }) => {
+      const details = await openStepFixture(page, formulasFixture);
+      await details.openWithKeyboard("review");
+      await showParameters(page, details.dialog);
+      const want = await density(page);
+      const title = details.field("title");
+      const editor = await box(formulaBox(title));
+      const expand = await box(
+        title.getByRole("button", { name: "Edit formula" }),
+      );
+      const assign = await box(
+        details.field("assignment").locator(".param-input").first(),
+      );
+      expect(
+        Math.abs(editor.height - want.control),
+        `box height ${editor.height}`,
+      ).toBeLessThanOrEqual(1);
+      expectAligned([editor.x, assign.x], "left edges");
+      expectAligned([editor.right, assign.right], "right edges");
+      expect(expand.width).toBeGreaterThanOrEqual(want.target);
+      expect(expand.height).toBeGreaterThanOrEqual(want.target);
+      expect(expand.right).toBeLessThanOrEqual(editor.right);
+      expectAligned([expand.middle, editor.middle], "⤢ centered");
+      const pills = await boxes(title.locator(".cm-formula-pill"));
+      expect(pills.length).toBeGreaterThan(0);
+      for (const pill of pills) {
+        expect(pill.y, "pill top").toBeGreaterThanOrEqual(editor.y);
+        expect(pill.bottom, "pill bottom").toBeLessThanOrEqual(editor.bottom);
+        expect(pill.right, "pill clear of ⤢").toBeLessThanOrEqual(expand.x);
+        expectAligned([pill.middle, editor.middle], "pill centered");
+      }
+      expect(await clippedText(details.dialog)).toEqual([]);
+    });
+
+    test("suggestion rows follow the pane's density and stay on screen", async ({
+      page,
+    }) => {
+      const details = await openStepFixture(page, formulasFixture);
+      await details.openWithKeyboard("flag");
+      await showParameters(page, details.dialog);
+      const want = await density(page);
+      await replaceFormula(page, details.field("value"), "input.");
+      const list = suggestions(page);
+      await expect(list).toBeVisible();
+      const rows = await boxes(list.getByRole("option"));
+      expect(rows.length).toBeGreaterThan(2);
+      for (const row of rows)
+        expect(
+          Math.abs(row.height - want.row),
+          `row height ${row.height}`,
+        ).toBeLessThanOrEqual(1);
+      expectAligned(
+        rows.map((row) => row.x),
+        "row left edges",
+      );
+      expectAligned(
+        rows.map((row) => row.right),
+        "row right edges",
+      );
+      const outer = await box(list);
+      expect(outer.x).toBeGreaterThanOrEqual(0);
+      expect(outer.right).toBeLessThanOrEqual(size.width);
+      expect(outer.y).toBeGreaterThanOrEqual(0);
+      expect(outer.bottom).toBeLessThanOrEqual(size.height);
+      expect(await clippedText(list, "")).toEqual([]);
+    });
+
+    test("the Result panel sits on the field's edges, 8 px under it, on screen and above the next field", async ({
+      page,
+    }) => {
+      const details = await openStepFixture(page, formulasFixture);
+      await setTestInput(page, details, {
+        "Customer ID": "c-1042",
+        Amount: "1500",
+      });
+      await details.openWithKeyboard("review");
+      await showParameters(page, details.dialog);
+      const title = details.field("title");
+      await formulaText(title).click();
+      const region = title.getByRole("region", { name: "Result of Title" });
+      await expect(region).toContainText("1500");
+      // Opening it scrolls the form so all of it shows.
+      await expect
+        .poll(async () => (await box(region)).bottom)
+        .toBeLessThanOrEqual(size.height);
+      const panel = await box(region);
+      const editor = await box(formulaBox(title));
+      const next = await box(details.field("answers"));
+      expectAligned([panel.x, editor.x], "left edges");
+      expectAligned([panel.right, editor.right], "right edges");
+      expect(
+        Math.abs(panel.y - editor.bottom - 8),
+        "gap under the box",
+      ).toBeLessThanOrEqual(1);
+      expect(editor.y, "the field stays on screen").toBeGreaterThanOrEqual(0);
+      expect(intersects(panel, next)).toBe(false);
+      expect(await clippedText(region, "")).toEqual([]);
+    });
+
+    test("Edit formula lays out its parts without overlap or sideways scroll", async ({
+      page,
+    }) => {
+      const details = await openStepFixture(page, formulasFixture);
+      await details.openWithKeyboard("flag");
+      await showParameters(page, details.dialog);
+      await details
+        .field("value")
+        .getByRole("button", { name: "Edit formula" })
+        .click();
+      const dialog = page.getByRole("dialog", { name: "Edit formula: Fields" });
+      await expect(dialog).toBeVisible();
+      const column = dialog.locator("weave-input-pane");
+      const input = await box(column);
+      const editor = await box(formulaBox(dialog));
+      const result = await box(
+        dialog.getByRole("region", { name: "Result of Fields" }),
+      );
+      expect(intersects(input, editor), "Input and formula").toBe(false);
+      expect(intersects(editor, result), "formula and Result").toBe(false);
+      expect(intersects(input, result), "Input and Result").toBe(false);
+      const panel = await box(dialog);
+      for (const part of [input, editor, result]) {
+        expect(part.x).toBeGreaterThanOrEqual(panel.x);
+        expect(part.right).toBeLessThanOrEqual(panel.right + 0.5);
+      }
+      if (size.width >= 768) {
+        // Side by side: the fields on the left, one top edge.
+        expect(input.right).toBeLessThanOrEqual(editor.x);
+        expectAligned([input.y, editor.y], "column tops", 24);
+      } else {
+        // Stacked: the formula and its Result first, then the fields.
+        expect(result.y).toBeGreaterThanOrEqual(editor.bottom);
+        expect(input.y).toBeGreaterThanOrEqual(result.bottom);
+        expect(input.height, "the fields keep room").toBeGreaterThan(40);
+      }
+      // Nothing in the Input column scrolls sideways or is cut.
+      expect(
+        await column.evaluate((element) =>
+          [element, ...element.querySelectorAll<HTMLElement>("*")]
+            .filter(
+              (child) =>
+                child.scrollWidth > child.clientWidth + 1 &&
+                /(auto|scroll)/.test(getComputedStyle(child).overflowX),
+            )
+            .map((child) => child.className),
+        ),
+      ).toEqual([]);
+      expect(await clippedText(dialog, "")).toEqual([]);
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= window.innerWidth,
+        ),
+      ).toBe(true);
+    });
+  });

@@ -2128,19 +2128,23 @@ weave-param-field.is-conditions > .param > .param-line {
 }
 .formula-box .cm-formula-pill {
   height: 20px;
-  vertical-align: middle;
+  /* As tall as the line, from its top: centered on the text, and the line
+     stays 20 px. */
+  vertical-align: top;
   font: var(--type-caption);
   cursor: default;
 }
 weave-formula-field {
   position: relative;
 }
-.formula-expand {
+/* Over button.icon-button's 36 px: one target size, centered in the box. */
+weave-formula-field > button.formula-expand {
   position: absolute;
   inset-inline-end: 2px;
   top: calc((var(--sd-control) - var(--sd-target)) / 2);
   width: var(--sd-target);
   height: var(--sd-target);
+  min-height: var(--sd-target);
 }
 .param-formula-loading {
   display: flex;
