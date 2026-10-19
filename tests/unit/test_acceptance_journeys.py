@@ -179,6 +179,9 @@ def test_resolved_enablement_lists_each_step_and_viewport():
     assert resolved["steps"]["J0.12"] == {"applies": False, "missing": list(enablement.missing("J0.12"))}
     assert resolved["viewports"]["J1"] == ["1440x900", "600x500"] and resolved["viewports"]["J0"] == ["cli"]
     assert set(resolved["viewports"]) == set(enablement.profiles["pr"])
+    # The Studio harness records only steps of the run stage; the scan records J9.4.
+    assert resolved["stages"]["J9.4"] == "scan" and resolved["stages"]["J9.2"] == "run"
+    assert resolved["stages"]["J0.5"] == "up" and set(resolved["stages"]) == set(enablement.steps)
 
 
 @pytest.mark.parametrize(("journey", "first"), [("J1", 3), ("J3", 2)])

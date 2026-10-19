@@ -240,6 +240,22 @@ function propertyKey(name: ts.PropertyName): string | undefined {
   return undefined;
 }
 
+/** Whether `node` calls a journey's step or check. */
+function callsStep(node: ts.Node): boolean {
+  let found = false;
+  const visit = (child: ts.Node): void => {
+    if (
+      ts.isCallExpression(child) &&
+      ts.isPropertyAccessExpression(child.expression) &&
+      ["step", "check"].includes(child.expression.name.text)
+    )
+      found = true;
+    if (!found) ts.forEachChild(child, visit);
+  };
+  visit(node);
+  return found;
+}
+
 /** The value of a string built only from literals and `+`, or undefined. */
 function constantText(node: ts.Expression): string | undefined {
   if (ts.isParenthesizedExpression(node)) return constantText(node.expression);
@@ -498,6 +514,20 @@ function nodeProblems(
           add(node, `global outside the journey allowlist: ${node.text}`);
       }
     }
+    // A step's failure fails its journey: no try around a step or check, and no
+    // .catch (or a rejection handler) on one.
+    if (spec && ts.isTryStatement(node) && callsStep(node.tryBlock))
+      add(node, "caught step failure: a step or check inside try or .catch");
+    if (
+      spec &&
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      (node.expression.name.text === "catch" ||
+        (node.expression.name.text === "then" && node.arguments.length > 1)) &&
+      ts.isCallExpression(node.expression.expression) &&
+      ["step", "check"].includes(calleeName(node.expression.expression) ?? "")
+    )
+      add(node, "caught step failure: a step or check inside try or .catch");
     if (ts.isMetaProperty(node) && spec)
       add(node, "module metadata: import.meta");
     if (
@@ -797,6 +827,31 @@ export function analyzeJourneys(options: LintOptions): Analysis {
         );
     }
   }
+  // Each journey is declared once: a second declaration's records would
+  // replace the first one's.
+  const declared = new Map<string, ts.Node[]>();
+  for (const path of files) {
+    const file = program.getSourceFile(path);
+    if (!file || kindOf(file) !== "spec") continue;
+    const visit = (node: ts.Node): void => {
+      if (
+        ts.isCallExpression(node) &&
+        ts.isIdentifier(node.expression) &&
+        node.expression.text === "journey" &&
+        node.arguments[0] &&
+        ts.isStringLiteralLike(node.arguments[0])
+      ) {
+        const id = node.arguments[0].text;
+        declared.set(id, [...(declared.get(id) ?? []), node]);
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(file);
+  }
+  for (const [id, nodes] of declared)
+    if (nodes.length > 1)
+      for (const node of nodes)
+        record(node, `journey ${id} is declared more than once`);
   for (const path of files) {
     const file = program.getSourceFile(path);
     if (file && kindOf(file) === "spec")

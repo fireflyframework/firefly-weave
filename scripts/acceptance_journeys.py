@@ -232,6 +232,7 @@ class Enablement:
                 key: {"applies": self.applies(key, profile), "missing": list(self.missing(key))} for key in self.steps
             },
             "viewports": {journey: list(self.viewports(profile, journey)) for journey in self.profiles[profile]},
+            "stages": {key: step_stage(key) for key in self.steps},
         }
 
 

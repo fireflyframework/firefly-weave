@@ -631,7 +631,7 @@ def test_the_studio_harness_registers_each_person_before_signing_in():
     body = harness[harness.index("  async signIn(name: string)") :]
     body = body[: body.index("\n  }\n")]
     order = [
-        body.index("this.people.push(signed);"),
+        body.index("this.#people.push(signed);"),
         body.index("appendPrivate(\n      STUDIO_PEOPLE,"),
         body.index("await session(page)"),
         body.index("await pair(page"),

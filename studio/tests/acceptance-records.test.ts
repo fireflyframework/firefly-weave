@@ -18,6 +18,7 @@ SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from "vitest";
 import {
   accountsToDelete,
+  stepRefusal,
   loginBinding,
   platformBinding,
   dumpName,
@@ -349,6 +350,27 @@ describe("acceptance step records", () => {
       ],
       problems: [],
     });
+  });
+});
+
+describe("what a journey may record", () => {
+  const steps = {
+    "J9.2": { applies: true, missing: [] },
+    "J9.4": { applies: true, missing: [] },
+  };
+  const stages = { "J9.2": "run", "J9.4": "scan" };
+
+  it("records only its own steps of the run stage", () => {
+    expect(stepRefusal("J9.2", "J9", steps, stages)).toBe("");
+    expect(stepRefusal("J9.4", "J9", steps, stages)).toBe(
+      "J9.4 is recorded by the scan stage, not by a journey",
+    );
+    expect(stepRefusal("J9.9", "J9", steps, stages)).toBe(
+      "J9.9 is not declared in tests/acceptance/journeys.toml",
+    );
+    expect(stepRefusal("J9.2", "J8", steps, stages)).toBe(
+      "J9.2 is not a step of J8",
+    );
   });
 });
 

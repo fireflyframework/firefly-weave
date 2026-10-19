@@ -429,6 +429,39 @@ describe("the structural layouts", () => {
   );
 });
 
+describe("a journey's failures stay failures", () => {
+  it.each([
+    [
+      'try { await j.step("J9.1", async () => { throw Error("x"); }); } catch {}',
+      "caught step failure",
+    ],
+    [
+      'await j.step("J9.1", async () => {}).catch(() => false);',
+      "caught step failure",
+    ],
+    [
+      'try { await j.check("J9.2/x", async () => {}); } finally {}',
+      "caught step failure",
+    ],
+  ])("refuses %s", (code, rule) => {
+    expect(rules(code)).toContain(
+      `${rule}: a step or check inside try or .catch`,
+    );
+  });
+
+  it("refuses a journey declared twice in the tree", () => {
+    const body =
+      'import { journey } from "./harness";\njourney("J9", "x", async () => {});\n';
+    const findings = lintTree(scratch(), {
+      "acceptance/a.spec.ts": body,
+      "acceptance/nested/b.spec.ts": body.replace("./harness", "../harness"),
+    });
+    expect(findings.map((f) => f.rule)).toContain(
+      "journey J9 is declared more than once",
+    );
+  });
+});
+
 describe("module load", () => {
   it("reads the top-level code of every module the reached code imports", () => {
     const findings = lintTree(scratch(), {

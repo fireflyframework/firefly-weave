@@ -64,6 +64,7 @@ import {
   errorLine,
   networkProblems,
   platformBinding,
+  stepRefusal,
   redact,
   secretsOf,
   stepOutcome,
@@ -275,6 +276,8 @@ interface Enablement {
   profile: string;
   steps: Record<string, StepState>;
   viewports: Record<string, string[]>;
+  /** The stage that records each step (scripts/acceptance_journeys.py step_stage). */
+  stages: Record<string, string>;
 }
 
 let resolved: Enablement | null = null;
@@ -424,15 +427,17 @@ interface SignedIn {
 }
 
 export class Journey {
-  private failed = false;
-  private shots = 0;
-  private current: {
+  // Private at run time too, so a journey can neither reset a failure nor
+  // edit the running step's record.
+  #failed = false;
+  #shots = 0;
+  #current: {
     id: string;
     ran: Set<string>;
     skipped: SkippedCheck[];
     screenshot?: string;
   } | null = null;
-  private readonly people: SignedIn[] = [];
+  readonly #people: SignedIn[] = [];
 
   constructor(
     readonly id: string,
@@ -447,13 +452,10 @@ export class Journey {
 
   /** Runs one journeys.toml step, or records why it did not run. */
   async step(stepId: string, body: () => Promise<void>): Promise<boolean> {
-    const state = enablement().steps[stepId];
-    if (!state)
-      throw Error(
-        `${stepId} is not declared in tests/acceptance/journeys.toml`,
-      );
-    if (!stepId.startsWith(`${this.id}.`) || stepId.includes("/"))
-      throw Error(`${stepId} is not a step of ${this.id}`);
+    const map = enablement();
+    const refusal = stepRefusal(stepId, this.id, map.steps, map.stages);
+    if (refusal) throw Error(refusal);
+    const state = map.steps[stepId]!;
     if (!state.applies) return false;
     if (state.missing.length) {
       record({
@@ -464,7 +466,7 @@ export class Journey {
       });
       return false;
     }
-    if (this.failed) {
+    if (this.#failed) {
       record({
         id: stepId,
         status: "not_run",
@@ -480,7 +482,7 @@ export class Journey {
       skipped: SkippedCheck[];
       screenshot?: string;
     } = { id: stepId, ran: new Set<string>(), skipped: [] };
-    this.current = current;
+    this.#current = current;
     const seconds = () => Math.round((Date.now() - started) / 100) / 10;
     const shot = () =>
       current.screenshot ? { screenshot: current.screenshot } : {};
@@ -505,7 +507,7 @@ export class Journey {
       });
       return true;
     } catch (error) {
-      this.failed = true;
+      this.#failed = true;
       const line = errorLine(error, secrets());
       record({
         id: stepId,
@@ -518,13 +520,13 @@ export class Journey {
       // Never the original error: a Playwright message can quote a value the step typed.
       throw new Error(`${stepId} failed: ${line}`);
     } finally {
-      this.current = null;
+      this.#current = null;
     }
   }
 
   /** Runs one check of the running step, or records it as waiting for capabilities. */
   async check(checkId: string, body: () => Promise<void>): Promise<boolean> {
-    const step = this.current;
+    const step = this.#current;
     if (!step || !checkId.startsWith(`${step.id}/`))
       throw Error(`${checkId} is not a check of the running step`);
     const state = enablement().steps[checkId];
@@ -555,7 +557,7 @@ export class Journey {
     const page = guardPage(await context.newPage());
     const prefix = `${this.id.toLowerCase()}-${name}`;
     const ordinal =
-      this.people.filter((earlier) => earlier.name === name).length + 1;
+      this.#people.filter((earlier) => earlier.name === name).length + 1;
     const signed: SignedIn = {
       name,
       dump: dumpName(this.id, this.viewport, name, ordinal),
@@ -570,7 +572,7 @@ export class Journey {
     };
     // Registered before anything can fail: close() keeps this context's storage
     // and the scan expects a dump for every person a journey signed in as.
-    this.people.push(signed);
+    this.#people.push(signed);
     appendPrivate(
       STUDIO_PEOPLE,
       JSON.stringify({
@@ -602,7 +604,7 @@ export class Journey {
   }
 
   platformName(name: string): string {
-    const found = this.people.find(
+    const found = this.#people.find(
       (signed) => signed.name === name && signed.signedIn,
     );
     if (!found) throw Error(`${name} has not signed in in ${this.id}`);
@@ -611,21 +613,23 @@ export class Journey {
 
   /** A step screenshot in evidence/screens/<journey>/<viewport>/<nn>-<slug>.png. */
   async shot(page: Page, slug: string): Promise<void> {
-    this.shots += 1;
-    const file = `${String(this.shots).padStart(2, "0")}-${slug}.png`;
+    this.#shots += 1;
+    const file = `${String(this.#shots).padStart(2, "0")}-${slug}.png`;
     const folder = join(runDir, "evidence", "screens", this.id, this.viewport);
     mkdirSync(folder, { recursive: true });
     await page.screenshot({ path: join(folder, file) });
-    if (this.current)
-      this.current.screenshot = ["screens", this.id, this.viewport, file].join(
+    if (this.#current)
+      this.#current.screenshot = ["screens", this.id, this.viewport, file].join(
         "/",
       );
   }
 
   /** Every person's requests stayed on the Studio host and the identity provider; no mascot artwork. */
   finish(): void {
+    // A step that failed fails the test, even when the journey caught its error.
+    if (this.#failed) throw Error(`a step of ${this.id} failed`);
     const allowed = [setup().keycloak];
-    const problems = this.people.flatMap(({ name, host, urls }) =>
+    const problems = this.#people.flatMap(({ name, host, urls }) =>
       networkProblems(urls, [...allowed, host]).map(
         (problem) => `${name}: ${problem}`,
       ),
@@ -639,7 +643,7 @@ export class Journey {
   /** Keeps storage and requests for the scan, removes each platform through Studio, closes the contexts. */
   async close(failed: boolean): Promise<void> {
     const problems: string[] = [];
-    for (const signed of this.people) {
+    for (const signed of this.#people) {
       const base = signed.dump;
       try {
         const dump = await dumpStorage(signed.page);

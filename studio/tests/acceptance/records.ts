@@ -308,6 +308,26 @@ export function deepFreeze<T>(value: T): T {
   return value;
 }
 
+/**
+ * Why a journey may not record `stepId`, or "" when it may: the step is
+ * declared, belongs to the journey and is recorded in the run stage (the scan
+ * records its own step).
+ */
+export function stepRefusal(
+  stepId: string,
+  journeyId: string,
+  steps: Readonly<Record<string, StepState>>,
+  stages: Readonly<Record<string, string>>,
+): string {
+  if (!Object.hasOwn(steps, stepId))
+    return `${stepId} is not declared in tests/acceptance/journeys.toml`;
+  if (!stepId.startsWith(`${journeyId}.`) || stepId.includes("/"))
+    return `${stepId} is not a step of ${journeyId}`;
+  if (stages[stepId] !== "run")
+    return `${stepId} is recorded by the ${stages[stepId] ?? "unknown"} stage, not by a journey`;
+  return "";
+}
+
 /** Why a dump is not the person's Studio storage, or "" when it is. */
 export function dumpOriginProblem(origin: string, host: string): string {
   if (!host) return "storage was read before the Studio host started";
