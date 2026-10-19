@@ -226,6 +226,7 @@ describe("the snippet corpus", () => {
       "// read-only audit: the form\nawait page.evaluate(() => document.forms[0].submit());",
       "write from the page: submit",
     ],
+    ['await page.goto("javascript" + ":void(0)");', "token or script in a URL"],
   ])("one rule alone catches %s", (code, rule) => {
     expect(rules(code)).toEqual([rule]);
   });

@@ -235,6 +235,21 @@ function propertyKey(name: ts.PropertyName): string | undefined {
   return undefined;
 }
 
+/** The value of a string built only from literals and `+`, or undefined. */
+function constantText(node: ts.Expression): string | undefined {
+  if (ts.isParenthesizedExpression(node)) return constantText(node.expression);
+  if (ts.isStringLiteralLike(node)) return node.text;
+  if (
+    ts.isBinaryExpression(node) &&
+    node.operatorToken.kind === ts.SyntaxKind.PlusToken
+  ) {
+    const left = constantText(node.left);
+    const right = constantText(node.right);
+    return left === undefined || right === undefined ? undefined : left + right;
+  }
+  return undefined;
+}
+
 function calleeName(call: ts.CallExpression): string | undefined {
   const callee = call.expression;
   if (ts.isIdentifier(callee)) return callee.text;
@@ -485,6 +500,20 @@ function nodeProblems(
       TOKEN_TEXT.test(node.getText(file))
     )
       add(node, "token or script in a URL");
+    // Text built from constant pieces ("javascript" + ":…") is read as the
+    // whole string, once, at the outermost concatenation.
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.PlusToken &&
+      !(
+        ts.isBinaryExpression(node.parent) &&
+        node.parent.operatorToken.kind === ts.SyntaxKind.PlusToken
+      )
+    ) {
+      const text = constantText(node);
+      if (text !== undefined && TOKEN_TEXT.test(text))
+        add(node, "token or script in a URL");
+    }
     // Page functions.
     if (ts.isCallExpression(node) && calleeName(node) === "evaluate") {
       if (!audited(node, file))
