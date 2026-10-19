@@ -486,6 +486,32 @@ describe("imports in a journey spec", () => {
 
 describe("the Playwright configuration", () => {
   it.each([
+    [
+      'testDir: "tests", testMatch: "*.spec.ts"',
+      "configuration runs other files: testDir",
+    ],
+    [
+      'testDir: "tests/acceptance", testMatch: "**/*.ts"',
+      "configuration runs other files: testMatch",
+    ],
+    ['testMatch: "*.spec.ts"', "configuration runs other files: testDir"],
+  ])("pins the folder and pattern the lint reads: %s", (option, rule) => {
+    const folder = scratch();
+    lintTree(folder, {});
+    const config = join(folder, "playwright.acceptance.config.ts");
+    lintTree(folder, {
+      "playwright.acceptance.config.ts": `export default { ${option} };\n`,
+    });
+    expect(
+      lintJourneys({
+        journeys: join(folder, "acceptance"),
+        config,
+        root: folder,
+      }).map((f) => f.rule),
+    ).toContain(rule);
+  });
+
+  it.each([
     ["storageState", 'use: { storageState: "signed-in.json" }'],
     ["proxy", 'use: { proxy: { server: "http://127.0.0.1:1" } }'],
     ["globalSetup", 'globalSetup: "./setup.ts"'],

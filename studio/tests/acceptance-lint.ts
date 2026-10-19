@@ -112,6 +112,11 @@ const CONFIG_OPTIONS: Record<string, string> = {
   ignoreDefaultArgs: "browser arguments",
   connectOptions: "remote browser",
 };
+/** What the acceptance configuration must run: exactly the files this lint reads whole. */
+const PINNED_CONFIG: Record<string, string> = {
+  testDir: "tests/acceptance",
+  testMatch: "*.spec.ts",
+};
 /** Only the harness opens browsers, contexts and pages. */
 const HARNESS_MEMBERS: Record<string, string> = {
   newContext: "browser context outside Journey.signIn",
@@ -767,6 +772,31 @@ export function analyzeJourneys(options: LintOptions): Analysis {
       rule,
     });
   };
+  // The configuration must run exactly the files this lint reads.
+  const configFile = config ? program.getSourceFile(config) : undefined;
+  if (configFile) {
+    const found = new Map<string, ts.Node>();
+    const collect = (node: ts.Node): void => {
+      if (ts.isPropertyAssignment(node)) {
+        const key = propertyKey(node.name);
+        if (key && Object.hasOwn(PINNED_CONFIG, key)) found.set(key, node);
+      }
+      ts.forEachChild(node, collect);
+    };
+    collect(configFile);
+    for (const [key, value] of Object.entries(PINNED_CONFIG)) {
+      const node = found.get(key) as ts.PropertyAssignment | undefined;
+      if (
+        !node ||
+        !ts.isStringLiteralLike(node.initializer) ||
+        node.initializer.text !== value
+      )
+        record(
+          node ?? configFile.statements[0] ?? configFile,
+          `configuration runs other files: ${key}`,
+        );
+    }
+  }
   for (const path of files) {
     const file = program.getSourceFile(path);
     if (file && kindOf(file) === "spec")
