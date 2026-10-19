@@ -16,6 +16,7 @@
 
 """Debug sessions address loop iterations: instance mocks and breakpoints, loop progress and the item in scope."""
 
+import asyncio
 import json
 from datetime import UTC, datetime
 
@@ -23,8 +24,12 @@ import pytest
 
 from firefly_weave.compiler.api import compile_source
 from firefly_weave.compiler.catalog import CatalogSnapshot
+from firefly_weave.contracts import language_features
+from firefly_weave.contracts.definitions import load_definition
+from firefly_weave.definitions.models import CatalogError
 from firefly_weave.operations.debug.models import DebugError, DebugLimits, LoopView
 from firefly_weave.operations.debug.simulator import Simulator, first_instance
+from firefly_weave.operations.debug.store import restored
 from firefly_weave.runtime.kernel import workflow
 
 NOW = datetime(2026, 10, 13, tzinfo=UTC)
@@ -308,6 +313,20 @@ def test_loops_are_listed_in_definition_order_with_step_positions_compared_as_nu
     assert [view.node_id for view in paused.loops] == ["zeta", "alpha"]
 
 
+def test_a_stored_session_this_platform_no_longer_runs_is_refused_by_name(monkeypatch):
+    # Reading a session and sending it a command both restore the stored state first.
+    stored = {"state": json.loads(Simulator(grid(), mocks={}, input=[[1]], now=NOW).serialize())}
+    assert asyncio.run(restored(stored)).inspect().status == "queued"
+    monkeypatch.setattr(language_features, "ADVERTISED_FEATURES", ("text.concat", "text.join"))
+    with pytest.raises(CatalogError) as refused:
+        asyncio.run(restored(stored))
+    assert (refused.value.status, refused.value.code, refused.value.result) == (
+        422,
+        "WV-IR-UNSUPPORTED",
+        {"reason": "ir_unsupported", "missing_features": ["flow.forEach"]},
+    )
+
+
 def test_views_of_workflows_without_loops_keep_their_shape(worker_runtime_fixture):
     view = Simulator(worker_runtime_fixture["artifact"], mocks={"node:work": 9}, input=3, now=NOW).inspect()
     dumped = view.model_dump(mode="json")
@@ -338,12 +357,15 @@ def test_a_long_loop_checks_the_session_size_every_sixty_four_boundaries(monkeyp
         "body": {"steps": [], "output": {"ref": "/item"}},
     }
     simulator = Simulator(compiled([loop], {"ref": "/steps/each/output"}), mocks={}, input=list(range(1000)), now=NOW)
-    serialized = []
+    checked_at = []
     original = Simulator.serialize
-    monkeypatch.setattr(Simulator, "serialize", lambda self: serialized.append(1) or original(self))
+    monkeypatch.setattr(
+        Simulator, "serialize", lambda self: checked_at.append(len(self.data.boundaries)) or original(self)
+    )
     view = simulator.continue_until_breakpoint()
     assert view.status == "succeeded" and view.variables["output"] == list(range(1000))
-    assert len(serialized) <= len(view.boundaries) // 64 + 2
+    # A check after every 64th boundary, then the command's final check.
+    assert checked_at == [*range(64, len(view.boundaries), 64), len(view.boundaries)]
 
 
 def test_large_new_output_checks_the_session_size_before_sixty_four_boundaries(monkeypatch):
@@ -364,6 +386,49 @@ def test_large_new_output_checks_the_session_size_before_sixty_four_boundaries(m
     assert view.status == "succeeded" and len(view.boundaries) < 64
     # One check once a megabyte of copies had accumulated, and the command's final check.
     assert len(serialized) >= 2
+
+
+def test_queued_mock_results_and_accepted_event_data_count_toward_the_size_check(monkeypatch):
+    contract = {
+        "taskType": "label",
+        "taskVersion": "1.0.0",
+        "inputSchema": {},
+        "outputSchema": {"type": "string"},
+        "sideEffect": "read_only",
+        "timeoutSeconds": 30,
+    }
+    action = load_definition(
+        {
+            "apiVersion": "weave/v1alpha1",
+            "kind": "Action",
+            "metadata": {"name": "label-action", "version": "1.0.0"},
+            "spec": {
+                "implementation": {"kind": "worker", "taskType": "label", "taskVersion": "1.0.0"},
+                "inputSchema": {},
+                "outputSchema": {"type": "string"},
+                "sideEffect": "read_only",
+                "timeoutSeconds": 30,
+            },
+        }
+    )
+    catalog = CatalogSnapshot.from_definitions([action], tasks=[contract])
+    step = {"id": "label", "kind": "action", "uses": "label-action@1.0.0", "with": {"ref": "/input"}}
+    artifact = compiled([step], {"ref": "/steps/label/output"}, catalog)
+    # 400 KB counted three times (the queued mock, the accepted event, the step output) passes 1 MiB; twice does not.
+    simulator = Simulator(artifact, mocks={"node:label": "x" * 400_000}, input=[1], now=NOW)
+    checked_at = []
+    original = Simulator.serialize
+    monkeypatch.setattr(
+        Simulator, "serialize", lambda self: checked_at.append(len(self.data.boundaries)) or original(self)
+    )
+    view = simulator.continue_until_breakpoint()
+    assert view.status == "succeeded"
+    accepted = [
+        position
+        for position, boundary in enumerate(view.boundaries, 1)
+        if boundary.kind == "event" and boundary.event_type == "task_completed"
+    ]
+    assert checked_at == [*accepted, len(view.boundaries)]
 
 
 def test_a_session_over_its_size_limit_refuses_the_command_and_keeps_its_state():

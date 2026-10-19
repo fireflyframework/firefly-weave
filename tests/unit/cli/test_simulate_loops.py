@@ -94,3 +94,43 @@ def test_a_workflow_using_features_this_version_lacks_is_refused_by_name(request
     assert result.exit_code == 1
     (diagnostic,) = json.loads(result.output)["diagnostics"]
     assert diagnostic["code"] == "WV-IR-UNSUPPORTED"
+    assert diagnostic["message"].endswith("Missing language features: flow.forEach.")
+    text = CliRunner().invoke(cli, ["workflow", "simulate", str(request_file)])
+    assert text.exit_code == 1
+    assert "WV-IR-UNSUPPORTED" in text.output and "Missing language features: flow.forEach." in text.output
+
+
+def test_text_output_names_each_inner_loop_by_its_instance(tmp_path):
+    cell = {"id": "cell", "kind": "transform", "value": {"ref": "/item"}}
+    cells = {
+        "id": "cells",
+        "kind": "forEach",
+        "items": {"ref": "/item"},
+        "maxItems": 5,
+        "body": {"steps": [cell], "output": {"ref": "/steps/cell/output"}},
+    }
+    rows = {
+        "id": "rows",
+        "kind": "forEach",
+        "items": {"ref": "/input"},
+        "maxItems": 5,
+        "body": {"steps": [cells], "output": {"ref": "/steps/cells/output"}},
+    }
+    document = json.loads(json.dumps(LOOP))
+    document["spec"].update(
+        inputSchema={"type": "array", "items": {"type": "array", "items": {"type": "string"}}},
+        steps=[rows],
+        output={"ref": "/steps/rows/output"},
+    )
+    compiled = compile_source(document, format="object", catalog=CatalogSnapshot.empty())
+    assert compiled.ok, compiled.to_bytes()
+    request = tmp_path / "request.json"
+    artifact = json.loads(compiled.artifact.to_bytes())
+    request.write_text(json.dumps({"artifact": artifact, "input": [["a"], ["b", "c"]], "now": "2026-10-13T00:00:00Z"}))
+    commands = tmp_path / "commands.json"
+    commands.write_text(json.dumps([{"kind": "breakpoints", "node_ids": ["cell[1][1]"]}, {"kind": "continue"}]))
+    result = CliRunner().invoke(cli, ["workflow", "simulate", str(request), "--commands", str(commands)])
+    assert result.exit_code == 0, result.output
+    assert "Ready: cell[1][1]" in result.output
+    assert "Loop rows: 1 of 2 items finished, 1 running." in result.output
+    assert "Loop cells[1]: 1 of 2 items finished, 1 running." in result.output

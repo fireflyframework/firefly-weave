@@ -120,11 +120,19 @@ async def test_a_session_for_features_this_platform_does_not_run_is_refused_by_n
     from firefly_weave.contracts import language_features
 
     artifact = loop_artifact(worker_runtime_fixture["catalog"])
+    stored = await author[0].post(project_url + "/debug/sessions", headers=headers, json=create_body(artifact))
+    assert stored.status_code == 201, stored.text
+    url = project_url + "/debug/sessions/" + stored.json()["id"]
     # A platform rolled back to a release that does not run loops.
     monkeypatch.setattr(language_features, "ADVERTISED_FEATURES", ("text.concat", "text.join"))
-    refused = await author[0].post(project_url + "/debug/sessions", headers=headers, json=create_body(artifact))
-    assert refused.status_code == 422, refused.text
-    assert (refused.json()["code"], refused.json()["result"]) == (
-        "WV-IR-UNSUPPORTED",
-        {"reason": "ir_unsupported", "missing_features": ["flow.forEach"]},
-    )
+    refusals = [
+        await author[0].post(project_url + "/debug/sessions", headers=headers, json=create_body(artifact)),
+        await author[0].get(url, headers=headers),
+        await author[0].post(url + "/commands", headers={**headers, "If-Match": "1"}, json={"kind": "continue"}),
+    ]
+    for refused in refusals:
+        assert refused.status_code == 422, refused.text
+        assert (refused.json()["code"], refused.json()["result"]) == (
+            "WV-IR-UNSUPPORTED",
+            {"reason": "ir_unsupported", "missing_features": ["flow.forEach"]},
+        )

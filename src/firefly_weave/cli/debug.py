@@ -60,8 +60,10 @@ def simulate(request_file: Path, commands: Path | None, output: str) -> None:
             view = simulator.inspect()
             for value in values:
                 view = simulator.command(DebugCommand.model_validate_json(json.dumps(value)))
-    except UnsupportedIR:
+    except UnsupportedIR as error:
         message = "This version does not run the IR version or language features of this workflow."
+        if error.missing:
+            message += " Missing language features: " + ", ".join(error.missing) + "."
         emit_result(error_result("WV-IR-UNSUPPORTED", message), output)
         raise SystemExit(1) from None
     except (ValueError, LocalError) as error:

@@ -34,8 +34,10 @@ SPDX-License-Identifier: Apache-2.0
   every 64 boundaries or 1 MiB of new output instead of after every boundary, so
   a 2,000-element loop simulates in seconds instead of a minute. A debug session
   or `weave workflow simulate` for a workflow whose language features this
-  version does not run now answers `WV-IR-UNSUPPORTED` with the missing features,
-  as publishing does, instead of a generic validation error. Upgrade the SDK
+  version does not run now answers `WV-IR-UNSUPPORTED` naming the missing
+  features, as publishing does, instead of a generic validation error: a server
+  lists them in `result.missing_features` when a session is created, read or
+  sent a command, and the CLI lists them in its message. Upgrade the SDK
   together with the server to read debug views of workflows with loops.
 - The compiler checks and compiles **Call a workflow** (`callWorkflow`) against
   the exact published version it calls: that version must opt in with

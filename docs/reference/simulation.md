@@ -454,7 +454,7 @@ fingerprints.
 | `WV-DEBUG-COMMAND` | The command file is not a JSON array, or a command lacks the field its kind needs, such as a `signal` without `name` | Check each command against the [command reference](#command-reference) |
 | `WV-DEBUG-MISSING_MOCK`, status `failed` | An action has no mock (in Studio, **Skip this action** was selected) | Add a mock under one of the keys in the diagnostic's hint |
 | `WV-DEBUG-MOCK-KEY` | A mock key names no action node in this artifact, or no iteration of it | Use `action:EXACT_REFERENCE`, `node:NODE_ID` or `node:INSTANCE_KEY` with one position per enclosing loop, below its `maxItems` |
-| `WV-IR-UNSUPPORTED` (HTTP 422 on a server) | The workflow uses a language feature this version does not run; `result.missing_features` names it | Upgrade the platform or CLI, or simulate on one that runs the feature |
+| `WV-IR-UNSUPPORTED` (HTTP 422 on a server) | The workflow uses a language feature this version does not run; a server names it in `result.missing_features`, and `weave workflow simulate` in its message (`Missing language features: flow.forEach.`) | Upgrade the platform or CLI, or simulate on one that runs the feature |
 | `WV-DEBUG-MOCK-OUTPUT` | The mock does not match the action's output schema | Fix the mocked result |
 | Status `waiting` | The run waits for time, a signal, or a person | Send the signal or decision, or advance time, then continue |
 | `WV-DEBUG-SIGNAL` | No step waits for a signal with that name | Use the `name` declared on the **Wait for signal** step |
