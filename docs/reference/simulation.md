@@ -198,7 +198,7 @@ implementation.
 
 | Command | Fields | Effect |
 | --- | --- | --- |
-| `breakpoints` | `node_ids`: complete node IDs | Replace the breakpoint set; use IDs from `weave workflow explain`, including synthetic ones such as `@join:ID` |
+| `breakpoints` | `node_ids`: complete node IDs or instance keys | Replace the breakpoint set; use IDs from `weave workflow explain`, including synthetic ones such as `@join:ID`. Inside a loop, a step ID stops every iteration and an instance key such as `send[2]` stops one |
 | `next` | — | Process one boundary: one admitted event or one node |
 | `continue` | — | Run until a breakpoint, a wait, a suspension, the end, or the command's work ceiling |
 | `signal` | `name`, `payload` | Validate the payload against the signal's schema and queue it at virtual now |
@@ -211,11 +211,15 @@ lists every command except `human_decision`, which works the same way.
 
 **Mock keys.** Use `action:EXACT_REFERENCE`, such as
 `action:onboarding.check-customer@1.0.0`, for every call to that action, or
-`node:NODE_ID` for one action node. A node mock wins over an action mock. Unknown
-keys and results that violate the pinned action or implementation output schema
-are rejected before the simulation starts. A JSON list is one ordinary result.
-There is no scripting of retry outcomes and no live fallback: an action without a
-mock stops the simulation with `WV-DEBUG-MISSING_MOCK`.
+`node:NODE_ID` for one action node. Inside a loop, `node:NODE_ID` answers every
+iteration of the step, and `node:INSTANCE_KEY`, such as `node:send[2]`, answers
+one iteration (see [Simulate loops](#simulate-loops)). The most specific key
+wins: `node:INSTANCE_KEY`, then `node:NODE_ID`, then `action:EXACT_REFERENCE`.
+Unknown keys and results that violate the pinned action or implementation output
+schema are rejected before the simulation starts. A JSON list is one ordinary
+result. There is no scripting of retry outcomes and no live fallback: an action
+without a mock stops the simulation with `WV-DEBUG-MISSING_MOCK`, whose hint
+lists the keys that would answer it.
 
 ## Read the debugger view
 
@@ -232,9 +236,63 @@ Every command returns a view:
 | `events` | Accepted facts, such as `started`, `task_completed`, or `signal_received` |
 | `boundary`, `boundaries` | The last boundary processed, and all of them in order |
 | `now` | Virtual time; waiting in your shell does not change it |
+| `loops` | Workflows with loops only: one entry per loop instance (see [Simulate loops](#simulate-loops)) |
+| `selected_scope` | Inside a loop body only: the `item`, `index` and `loops` values the selected step reads |
 
-To continue from a wait, send the expected signal or decision, or advance virtual
-time, then continue. An unknown breakpoint ID is rejected.
+Node IDs in `selected_node`, `active_nodes`, `current_nodes`, boundaries and
+events are [instance keys](compiler.md#instance-keys): the step ID outside loops,
+`send[2]` for iteration 2 of `send`. To continue from a wait, send the expected
+signal or decision, or advance virtual time, then continue. An unknown breakpoint
+ID is rejected.
+
+## Simulate loops
+
+A **Loop over items** (`forEach`) step runs its body once per element. A
+simulation runs it exactly as a real run does: each iteration's steps have their
+own instance keys (`send[0]`, `send[1]`), at most `concurrency` iterations run at
+a time, and the results are collected in element order.
+
+- **Mocks per iteration.** `node:send` answers every iteration of `send`;
+  `node:send[1]` answers iteration 1 only and wins over `node:send` and over
+  `action:` mocks. A key must give one position per enclosing loop, each below
+  that loop's `maxItems`: `node:send[1][0]` for a step in one loop, or
+  `node:send[10]` in a loop with `maxItems: 10`, is rejected with
+  `WV-DEBUG-MOCK-KEY`.
+- **Breakpoints per iteration.** A breakpoint on `send` stops before every
+  iteration of `send`; a breakpoint on `send[1]` stops before iteration 1 only.
+  The same position rules apply (`WV-DEBUG-BREAKPOINT`).
+- **Loop progress.** `loops` lists every loop instance in definition order, an
+  outer loop before the loops in its body:
+
+    | Field | Meaning |
+    | --- | --- |
+    | `node_id` | The loop's step ID |
+    | `instance_key` | The loop's instance key inside an outer loop (`cells[1]`), or `""` |
+    | `count` | Elements in this run of the loop |
+    | `completed` | Iterations whose results are collected |
+    | `running` | Iterations started and not yet collected |
+    | `next_index` | The position of the next iteration to start |
+    | `status` | `running`, `joined` (all results collected), or `terminated` |
+
+    An inner loop's entry disappears when its outer iteration finishes.
+- **The item in scope.** When the selected step is inside a loop body,
+  `selected_scope` holds what its expressions read: `item` and `index` of the
+  innermost loop, and `loops` with `{item, index}` for every enclosing loop by its
+  step ID.
+
+For example, this request mocks every iteration of `send` with `7` and the second
+one with `70`, and the commands stop before the second iteration:
+
+```json
+{"mocks": {"node:send": 7, "node:send[1]": 70},
+ "commands": [{"kind": "breakpoints", "node_ids": ["send[1]"]}, {"kind": "continue"}]}
+```
+
+The view then shows `"selected_node": "send[1]"`,
+`"selected_scope": {"item": 20, "index": 1, "loops": {"each": {"item": 20, "index": 1}}}`
+for the input `[10, 20, 30]`, and a `loops` entry with `"completed": 1`. In
+text output, the CLI prints one line per loop, such as
+`Loop each: 1 of 3 items finished, 1 running.`
 
 ## Use the Python library
 
@@ -321,8 +379,9 @@ automatically.
 - **Actions.** Reducing an action node prepares an isolated task. The mocked
   completion is a later event, released only after that event's node queue has
   drained.
-- **Breakpoints** use complete node IDs, including synthetic ones, and stop before
-  effects. Continuing from a breakpoint consumes that stop once.
+- **Breakpoints** use complete node IDs, including synthetic ones, or instance
+  keys, and stop before effects. Continuing from a breakpoint consumes that stop
+  once.
 - **What is saved.** Ordered ready queues, event IDs, virtual timestamps, and
   boundary history survive serialization. Server IDs and wall-clock metadata are
   outside the comparable `view`.
@@ -357,6 +416,12 @@ Source, compiler, and payload limits still apply. Authors cannot change these
 limits through the workflow or a request; local embedding can pass its own
 `DebugLimits`.
 
+Every command ends with a full check of these limits. While `continue` runs, the
+serialized size is checked every 64 boundaries, or sooner once 1 MiB of new step
+output and accepted facts has accumulated, so long loops simulate in time
+proportional to their length. A command over a limit is refused as a whole and
+keeps its starting state.
+
 **Simulation can need more room than a real run.** A valid workflow can exceed
 the session budget: in a measured case, 80 transforms copying a 900,002-byte
 input reached 65,767,814 serialized bytes after 37 boundaries, and the next
@@ -387,14 +452,15 @@ fingerprints.
 | --- | --- | --- |
 | `WV-DEBUG-REQUEST` from the CLI | The request file is not valid JSON, misses a field, or its input or mocks violate a schema | Check `artifact`, `mocks`, `input`, and a `now` with a time zone |
 | `WV-DEBUG-COMMAND` | The command file is not a JSON array, or a command lacks the field its kind needs, such as a `signal` without `name` | Check each command against the [command reference](#command-reference) |
-| `WV-DEBUG-MISSING_MOCK`, status `failed` | An action has no mock (in Studio, **Skip this action** was selected) | Add an `action:` or `node:` mock with a valid result |
-| `WV-DEBUG-MOCK-KEY` | A mock key names no action node in this artifact | Use `action:EXACT_REFERENCE` or `node:NODE_ID` from `weave workflow explain` |
+| `WV-DEBUG-MISSING_MOCK`, status `failed` | An action has no mock (in Studio, **Skip this action** was selected) | Add a mock under one of the keys in the diagnostic's hint |
+| `WV-DEBUG-MOCK-KEY` | A mock key names no action node in this artifact, or no iteration of it | Use `action:EXACT_REFERENCE`, `node:NODE_ID` or `node:INSTANCE_KEY` with one position per enclosing loop, below its `maxItems` |
+| `WV-IR-UNSUPPORTED` (HTTP 422 on a server) | The workflow uses a language feature this version does not run; `result.missing_features` names it | Upgrade the platform or CLI, or simulate on one that runs the feature |
 | `WV-DEBUG-MOCK-OUTPUT` | The mock does not match the action's output schema | Fix the mocked result |
 | Status `waiting` | The run waits for time, a signal, or a person | Send the signal or decision, or advance time, then continue |
 | `WV-DEBUG-SIGNAL` | No step waits for a signal with that name | Use the `name` declared on the **Wait for signal** step |
 | `WV-DEBUG-HUMAN-TASK` | That human task is not waiting for a decision now | Continue until it is active, and use its step ID as `name` |
 | `WV-DEBUG-STATE` | The simulated run already finished | Start a new simulation |
-| `WV-DEBUG-BREAKPOINT` | A breakpoint names a node that does not exist | Use complete IDs from `weave workflow explain` |
+| `WV-DEBUG-BREAKPOINT` | A breakpoint names a node that does not exist, or no iteration of it | Use complete IDs from `weave workflow explain`, or instance keys with one position per enclosing loop |
 | `WV-DEBUG-TIME` | `advance_time` was negative or not a whole number | Use whole seconds, zero or more |
 | `WV-DEBUG-LIMIT` | A simulation limit was reached | Use a smaller input, or advance time in smaller amounts |
 | HTTP 409 `WV-DEBUG-REVISION` | The session changed in another window or request | Read it again and send the current revision |

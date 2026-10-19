@@ -20,6 +20,23 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+- Simulations and debug sessions address loop iterations. A mock under
+  `node:send[2]` answers iteration 2 of `send` only and wins over `node:send`,
+  which wins over `action:` mocks; a breakpoint on `send[2]` stops before that
+  iteration only, while `send` still stops every iteration. Keys must give one
+  position per enclosing loop, below its `maxItems` (`WV-DEBUG-MOCK-KEY`,
+  `WV-DEBUG-BREAKPOINT`). The debugger view adds `loops` (each loop instance's
+  `count`, `completed`, `running`, `next_index`, and `status`) and
+  `selected_scope` (the `item`, `index`, and `loops` values the selected step
+  reads); both are omitted for workflows without loops. `WV-DEBUG-MISSING_MOCK`
+  now hints at the keys that would answer the step, and `weave workflow simulate`
+  prints one progress line per loop. A long simulation checks its session size
+  every 64 boundaries or 1 MiB of new output instead of after every boundary, so
+  a 2,000-element loop simulates in seconds instead of a minute. A debug session
+  or `weave workflow simulate` for a workflow whose language features this
+  version does not run now answers `WV-IR-UNSUPPORTED` with the missing features,
+  as publishing does, instead of a generic validation error. Upgrade the SDK
+  together with the server to read debug views of workflows with loops.
 - The compiler checks and compiles **Call a workflow** (`callWorkflow`) against
   the exact published version it calls: that version must opt in with
   `spec.callable` (any workflow, or only `allowedCallers`), `with` is checked
