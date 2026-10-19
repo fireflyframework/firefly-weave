@@ -837,6 +837,47 @@ test.describe("when the publishing code can't load", () => {
     });
 });
 
+// The publishing code may arrive after the click has been drawn: what it
+// decides still shows at once, with nothing else on the page changing.
+for (const size of [
+  { tag: "1440x900", width: 1440, height: 900 },
+  { tag: "600x500", width: 600, height: 500 },
+])
+  test.describe(`when the publishing code loads late at ${size.tag}`, () => {
+    test.use({ viewport: { width: size.width, height: size.height } });
+
+    test("Simulate's refusal shows as soon as the code arrives", async ({
+      page,
+    }) => {
+      const { platform } = await withOwnedSteps(page, {
+        capabilities: [
+          ...allCapabilities.filter(
+            (capability) => capability !== "definition.publish",
+          ),
+          "compile",
+        ],
+      });
+      let delayed = 0;
+      await page.route(/\.m?js(\?.*)?$/, async (route) => {
+        const response = await route.fetch();
+        const body = await response.text();
+        if (body.includes("Turn on Try the new editor in Settings")) {
+          delayed++;
+          await new Promise((done) => setTimeout(done, 1500));
+        }
+        return route.fulfill({ response, body });
+      });
+      await command(page, "Simulate");
+      await expect(
+        page.getByText(
+          "Simulating this workflow publishes the actions of its Call an API, email and file steps first, and your account can't publish actions in this workspace.",
+        ),
+      ).toBeVisible({ timeout: 5000 });
+      expect(delayed).toBeGreaterThan(0);
+      expect(platform.calls).toEqual([]);
+    });
+  });
+
 // Publishing records into the last undo step. A workflow opened again has
 // none: the record then adds no undo step of its own, which would change
 // nothing a person sees.

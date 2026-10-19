@@ -33,6 +33,10 @@ SPDX-License-Identifier: Apache-2.0
   nothing. **Call an API** shows the full address of its request. Studio now
   includes CodeMirror (`@codemirror/state`, `@codemirror/view`, MIT), loaded
   with the first formula field. See `docs/reference/formulas.md`.
+- Publish… and Simulate show why they stopped (for example, an account that
+  can't publish actions) as soon as Studio has loaded the code that publishes
+  the workflow's own actions, instead of waiting for another change on the
+  page.
 - Simulations and debug sessions address loop iterations. A mock under
   `node:send[2]` answers iteration 2 of `send` only and wins over `node:send`,
   which wins over `action:` mocks; a breakpoint on `send[2]` stops before that
