@@ -387,7 +387,14 @@ interface StorageDump {
 }
 
 async function dumpStorage(page: Page): Promise<StorageDump> {
-  const listDatabases = storageKeyCheckOn(enablement().steps, KEY_CHECK);
+  return readStorage(page, storageKeyCheckOn(enablement().steps, KEY_CHECK));
+}
+
+/** A page's Web Storage and IndexedDB, read without changing them; with `listDatabases`, every database too. */
+export async function readStorage(
+  page: Page,
+  listDatabases: boolean,
+): Promise<StorageDump> {
   // read-only audit: lists localStorage, sessionStorage and every IndexedDB database and record without changing them
   return page.evaluate(async (listDatabases) => {
     const take = (storage: Storage) =>
@@ -401,11 +408,19 @@ async function dumpStorage(page: Page): Promise<StorageDump> {
     for (const info of await indexedDB.databases()) {
       if (!info.name) continue;
       const name = info.name;
-      const database = await new Promise<IDBDatabase>((done, fail) => {
+      // A database deleted since it was listed would be created by open():
+      // aborting the upgrade that creation needs leaves it uncreated, and skipped.
+      const database = await new Promise<IDBDatabase | null>((done, fail) => {
         const opening = indexedDB.open(name);
+        let creating = false;
+        opening.onupgradeneeded = () => {
+          creating = true;
+          opening.transaction?.abort();
+        };
         opening.onsuccess = () => done(opening.result);
-        opening.onerror = () => fail(opening.error);
+        opening.onerror = () => (creating ? done(null) : fail(opening.error));
       });
+      if (!database) continue;
       databases.push({ name, stores: Array.from(database.objectStoreNames) });
       for (const store of Array.from(database.objectStoreNames)) {
         await new Promise<void>((done, fail) => {

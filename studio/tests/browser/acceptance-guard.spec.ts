@@ -20,7 +20,12 @@ SPDX-License-Identifier: Apache-2.0
 // guarded context and its pages refuse interception, injected state and
 // requests other than GET, however the call is spelled.
 import { expect } from "@playwright/test";
-import { guardContext, guardPage, test } from "../acceptance/harness";
+import {
+  guardContext,
+  guardPage,
+  readStorage,
+  test,
+} from "../acceptance/harness";
 
 // Listed here, not read from the harness, so a shortened deny list fails.
 const DENIED_CONTEXT = [
@@ -175,4 +180,35 @@ test("pages the harness never guarded keep their own methods", async ({
   await context.route("**/never", (route) => route.abort());
   await context.close();
   await guarded.close();
+});
+
+test("the storage dump never creates a database it lists", async ({
+  journeyBrowser,
+  baseURL,
+}) => {
+  const context = await journeyBrowser.newContext();
+  const page = await context.newPage();
+  await page.goto(baseURL!);
+  // A database that is listed but deleted before the dump opens it, as the
+  // platform's removal can do while the dump runs.
+  // read-only audit: test setup outside any journey
+  await page.evaluate(() => {
+    const listed = indexedDB.databases.bind(indexedDB);
+    indexedDB.databases = async () => [
+      ...(await listed()),
+      { name: "gone-before-open", version: 1 },
+    ];
+  });
+  const dump = await readStorage(page, true);
+  expect(dump.indexed_db_databases?.map((d) => d.name)).not.toContain(
+    "gone-before-open",
+  );
+  // read-only audit: test check outside any journey
+  const names = await page.evaluate(async () => {
+    const original = Object.getPrototypeOf(indexedDB)
+      .databases as () => Promise<IDBDatabaseInfo[]>;
+    return (await original.call(indexedDB)).map((d) => d.name);
+  });
+  expect(names).not.toContain("gone-before-open");
+  await context.close();
 });
