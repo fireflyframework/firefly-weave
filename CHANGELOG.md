@@ -20,6 +20,10 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+- Publish… and Simulate show why they stopped (for example, an account that
+  can't publish actions) as soon as Studio has loaded the code that publishes
+  the workflow's own actions, instead of waiting for another change on the
+  page.
 - Serve bounded run summaries and classified step timelines with fresh scoped
   authorization. Timeline output remains optional; legacy timings stay unknown.
   Logs remain unavailable with HTTP 501.
