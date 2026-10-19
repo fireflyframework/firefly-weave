@@ -18,7 +18,8 @@ SPDX-License-Identifier: Apache-2.0
 // J9: what each person can use in Studio. The builder can publish and activate
 // the demo workflow; the viewer, in a separate browser context, cannot: the
 // primary command is disabled with its reason, and the menu names why Publish…
-// can't run. The server refuses the same commands regardless:
+// can't run. A blocked menu item is checked by its reason only, whether or not
+// it is also disabled. The server refuses the same commands regardless:
 // tests/acceptance/test_j9_security.py sends them as the viewer.
 import { expect, Locator, Page } from "@playwright/test";
 import { openSidebar } from "../browser/real-platform-support";
@@ -46,6 +47,11 @@ function lifecycle(page: Page): { primary: Locator; more: Locator } {
   };
 }
 
+/** The reason a menu item shows under its label; empty when it can run. */
+function reason(item: Locator): Locator {
+  return item.locator("small");
+}
+
 /** The Publish… item of the open More menu. */
 async function publishItem(page: Page): Promise<Locator> {
   const { more } = lifecycle(page);
@@ -63,8 +69,7 @@ journey("J9", "security and negative paths", async (j) => {
     await expect(own.primary).toHaveText("Activate…");
     await expect(own.primary).toBeEnabled();
     const publish = await publishItem(builder);
-    await expect(publish).toBeEnabled();
-    await expect(publish).not.toContainText("can't");
+    await expect(reason(publish)).toHaveCount(0);
     await j.shot(builder, "builder-can-publish");
     await builder.keyboard.press("Escape");
 
@@ -76,7 +81,7 @@ journey("J9", "security and negative paths", async (j) => {
     await expect(viewer.locator("#primary-blocked")).toHaveText(
       "Your account can't activate versions in this workspace.",
     );
-    await expect(await publishItem(viewer)).toContainText(
+    await expect(reason(await publishItem(viewer))).toHaveText(
       "Your account can't publish workflows in this workspace.",
     );
     await j.shot(viewer, "viewer-cannot-publish");
