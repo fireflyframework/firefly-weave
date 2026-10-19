@@ -40,6 +40,9 @@ MASCOT = "lu" + "mi"
 MASCOT_FILES = {f"{MASCOT}.{suffix}" for suffix in ("png", "svg", "webp")}
 TAKEAWAY = f"{MASCOT}-takeaway"
 VISIBLE_NAME = re.compile(r"\bLumi\b")
+# The changelog keeps every release entry as it shipped, old names included, so it is
+# the one page of the built site the visible-name rule does not read.
+HISTORY_PAGE = "project/changelog/index.html"
 HOSTED_FONTS = ("fonts.googleapis.com", "fonts.gstatic.com")
 DRAWING = re.compile("[─-▟⠀-⣿]")
 
@@ -80,13 +83,21 @@ def test_j8_03_the_docs_site_carries_manrope_and_no_mascot(run):
             if path.suffix in {".html", ".svg", ".css"}
         }
         assert [name for name, text in texts.items() if TAKEAWAY in text] == []
-        assert [
-            name for name, text in texts.items() if name.endswith((".html", ".svg")) and VISIBLE_NAME.search(text)
-        ] == []
+        assert pages_with_the_old_name(texts) == []
         assert [name for name, text in texts.items() if any(host in text for host in HOSTED_FONTS)] == []
         assert (site / "assets/fonts/manrope/manrope-latin-wght-normal.woff2").is_file()
     finally:
         shutil.rmtree(site, ignore_errors=True)
+
+
+def pages_with_the_old_name(texts: dict[str, str]) -> list[str]:
+    """The built pages and drawings that show the old name, other than the changelog's history."""
+    assert HISTORY_PAGE in texts, f"the changelog page moved from {HISTORY_PAGE}"
+    return [
+        name
+        for name, text in texts.items()
+        if name != HISTORY_PAGE and name.endswith((".html", ".svg")) and VISIBLE_NAME.search(text)
+    ]
 
 
 @pytest.mark.journey_step("J8.5")
