@@ -1009,9 +1009,12 @@ it shows once you tap into the field, so a tap near a value never switches it,
 and the same goes for a field's ⋯ menu:
 
 - **Fixed** is a value you type.
-- **Mapped** reads data from earlier in the workflow and shows it as a pill.
-  Choose the data with **Use data…**, type `=` in an empty field, or drag a field
-  from **Input** onto the field.
+- **Mapped** is a formula, such as `input.amount > 1000`, with suggestions as
+  you type and the data it reads shown as pills. Type `=` in an empty field, or
+  `{{` in a text field, choose data with **Use data…**, or drag a field from
+  **Input** onto the field. `= value` under the field shows what it gives with
+  the trigger's test input, and **Result** opens under it while you type; ⤢
+  opens **Edit formula**. See [Formulas in Studio](../reference/formulas.md).
 - Text fields such as a message can mix both: data you drop into the text is
   kept where you dropped it, between the words you typed.
 
@@ -1105,10 +1108,12 @@ controls grow to touch size.
 | /, in **Input** or **Output** | Search the pane |
 | Enter, on a field in **Input** | Choose a field to map it to (**Map … to**) |
 | =, in an empty Fixed field | Switch the field to Mapped |
+| {{, in a text field | Start a template placeholder, with suggestions |
+| Ctrl+Space, in a formula | Show suggestions; ↑ ↓ move, Enter or Tab accepts |
 | Alt+↑ and Alt+↓, on a row | Move the row up or down |
 | Ctrl+Enter or Command-Enter | Say why **Execute step** isn't available yet |
 | Ctrl+Z or Command-Z, with Shift to redo | Undo and redo |
-| Escape | One thing per press: cancel a drag or a rename, leave a text box, then close step details; an open list or menu takes Escape first |
+| Escape | One thing per press: close suggestions or a menu, cancel a drag or a rename, bring back the last formula that applied, leave a text box, then close step details |
 
 ### Choose where each value comes from
 

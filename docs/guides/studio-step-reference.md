@@ -398,6 +398,9 @@ POST, PUT and PATCH. **Add option** offers **Query parameters**, **Headers**,
 **Response sample** (so later steps can map the answer before the first call),
 **Accepted status codes** and **Description**.
 
+Once every value computes from the test input, the line under **URL** shows
+the full address, such as `= Connection address/customers/c-1042/orders`.
+
 Studio keeps the request as an action this workflow owns, named after the
 workflow and the step, and renames it with the step until the action is
 published. **Settings** has **Retry on
@@ -723,6 +726,11 @@ built-in HTTP connector, what a described request may contain, OpenAPI import
 rules, and the operator's one-time setup.
 
 ## Decide where a value comes from
+
+With **Try the new editor** on, step details use **Fixed** and **Mapped**
+instead of these modes: a Mapped value is a formula, described in
+[Formulas in Studio](../reference/formulas.md). The modes below are the
+classic editor's.
 
 Expression fields such as **Value**, **Title**, **Context**, **Input**, and
 outputs have a keyboard-operable mode switch beside their label. Typed action
