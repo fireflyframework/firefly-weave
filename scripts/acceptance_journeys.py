@@ -75,6 +75,7 @@ CAPABILITIES = (
     "workflow-call-simulation",
     "workflow-call-fast-path",
     "language-docs",
+    "step-error-handling",
     # AI
     "ai-gateway",
     "ai-setup",
@@ -221,6 +222,17 @@ class Enablement:
 
     def viewports(self, profile: str, journey: str) -> tuple[str, ...]:
         return journey_viewports(profile, journey)
+
+    def resolved(self, profile: str) -> dict[str, Any]:
+        """Each step's applicability and missing capabilities in a profile, and each journey's viewports
+        (the Studio harness reads this as RUN_DIR/enablement.json)."""
+        return {
+            "profile": profile,
+            "steps": {
+                key: {"applies": self.applies(key, profile), "missing": list(self.missing(key))} for key in self.steps
+            },
+            "viewports": {journey: list(self.viewports(profile, journey)) for journey in self.profiles[profile]},
+        }
 
 
 def journey_viewports(profile: str, journey: str) -> tuple[str, ...]:

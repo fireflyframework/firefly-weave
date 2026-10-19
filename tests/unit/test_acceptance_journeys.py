@@ -145,8 +145,37 @@ def test_the_committed_map_is_valid():
     assert enablement.criteria["J3"] == ("SC1", "SC3", "SC7")
     assert enablement.applies("J0.12", "ai") and not enablement.applies("J0.12", "pr")
     assert enablement.missing("J0.3/owner-roles") == ()
-    assert enablement.journey_steps("J5") == ("J5.1",) and enablement.missing("J5.1") == ()
+    assert enablement.missing("J5.1") == ()
     assert enablement.applies("J5.1", "pr") and not enablement.applies("J5.1", "ai")
+    assert enablement.journey_steps("J1") == tuple(f"J1.{n}" for n in range(1, 11))
+    assert enablement.journey_steps("J2") == tuple(f"J2.{n}" for n in range(1, 10))
+    assert enablement.journey_steps("J3") == tuple(f"J3.{n}" for n in range(1, 13))
+    assert enablement.journey_steps("J5") == tuple(f"J5.{n}" for n in range(1, 8))
+    assert enablement.journey_steps("J8") == tuple(f"J8.{n}" for n in range(1, 6))
+    assert enablement.journey_steps("J9") == tuple(f"J9.{n}" for n in range(1, 6))
+    assert enablement.applies("J8.4", "nightly") and not enablement.applies("J8.4", "pr")
+    assert "step-error-handling" in enablement.missing("J3.10")
+    assert enablement.checks("J9.2") == ("J9.2/execute-in-local", "J9.2/operations-controls")
+
+
+def test_resolved_enablement_lists_each_step_and_viewport():
+    enablement = journeys.Enablement.load(ROOT / "tests/acceptance/journeys.toml")
+    resolved = enablement.resolved("pr")
+    assert resolved["profile"] == "pr" and set(resolved["steps"]) == set(enablement.steps)
+    assert resolved["steps"]["J0.12"] == {"applies": False, "missing": list(enablement.missing("J0.12"))}
+    assert resolved["viewports"]["J1"] == ["1440x900", "600x500"] and resolved["viewports"]["J0"] == ["cli"]
+    assert set(resolved["viewports"]) == set(enablement.profiles["pr"])
+
+
+@pytest.mark.parametrize(("journey", "first"), [("J1", 3), ("J3", 2)])
+def test_journey_steps_build_on_the_steps_before_them(journey, first):
+    # A step that uses an earlier step's result must wait for everything that step waits for.
+    enablement = journeys.Enablement.load(ROOT / "tests/acceptance/journeys.toml")
+    steps = enablement.journey_steps(journey)
+    for previous, current in zip(steps[first - 2 :], steps[first - 1 :], strict=False):
+        if current in {"J3.10", "J3.11", "J3.12"} and previous == "J3.9":
+            continue
+        assert set(enablement.steps[previous]) <= set(enablement.steps[current]), current
 
 
 def test_versions_toml_pins_match_the_files_that_use_them():
@@ -187,7 +216,11 @@ def declared_in_tests():
         found |= set(re.findall(r'\.check\(\s*"([^"]+)"', content))
     specs = ROOT / "studio/tests/acceptance"
     for path in sorted(specs.rglob("*.spec.ts")) if specs.is_dir() else []:
-        found |= set(re.findall(r'\bstep\(\s*"(J[^"]+)"', path.read_text(encoding="utf-8")))
+        content = path.read_text(encoding="utf-8")
+        found |= set(re.findall(r'\bstep\(\s*"(J[^"]+)"', content))
+        found |= set(re.findall(r'\bcheck\(\s*"(J[^"]+)"', content))
+    orchestrator = (ROOT / "scripts/acceptance.py").read_text(encoding="utf-8")
+    found |= set(re.findall(r'^SCAN_STEP = "([^"]+)"', orchestrator, flags=re.MULTILINE))
     return found
 
 

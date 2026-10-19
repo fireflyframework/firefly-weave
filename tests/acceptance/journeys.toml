@@ -50,6 +50,7 @@
 "workflow-call-simulation" = false
 "workflow-call-fast-path" = false
 "language-docs" = false
+"step-error-handling" = false
 "ai-gateway" = true
 "ai-setup" = false
 "ai-models-screen" = true
@@ -130,6 +131,67 @@ J15 = ["SC1", "SC7"]
 "J0.14" = ["acceptance-foundations"]
 # J5 platform administration.
 "J5.1" = ["run-views"]
+# J1 build the reference workflow in Studio (builder). From J1.3 on, each step waits for
+# everything the step before it waits for.
+"J1.1" = ["real-platform-journeys", "studio-brand", "brand-assets"]
+"J1.2" = ["real-platform-journeys", "editor-canvas", "add-step-panel", "step-details"]
+"J1.3" = ["real-platform-journeys", "editor-canvas", "add-step-panel", "step-details", "step-tests"]
+"J1.4" = ["real-platform-journeys", "editor-canvas", "add-step-panel", "step-details", "step-tests"]
+"J1.5" = ["real-platform-journeys", "editor-canvas", "add-step-panel", "step-details", "step-tests"]
+"J1.6" = ["real-platform-journeys", "editor-canvas", "add-step-panel", "step-details", "step-tests", "loops", "loop-compiler", "decision-table-editor", "text-templates"]
+"J1.7" = ["real-platform-journeys", "editor-canvas", "add-step-panel", "step-details", "step-tests", "loops", "loop-compiler", "decision-table-editor", "text-templates"]
+"J1.8" = ["real-platform-journeys", "editor-canvas", "add-step-panel", "step-details", "step-tests", "loops", "loop-compiler", "decision-table-editor", "text-templates", "sub-workflows", "workflow-call-compiler"]
+"J1.9" = ["real-platform-journeys", "editor-canvas", "add-step-panel", "step-details", "step-tests", "loops", "loop-compiler", "decision-table-editor", "text-templates", "sub-workflows", "workflow-call-compiler"]
+"J1.10" = ["real-platform-journeys", "editor-canvas", "add-step-panel", "step-details", "step-tests", "loops", "loop-compiler", "decision-table-editor", "text-templates", "sub-workflows", "workflow-call-compiler"]
+# J2 data at every step (builder). Setup imports and activates the reference workflow, so every
+# step waits for its loop and call compilers.
+"J2.1" = ["real-platform-journeys", "editor-canvas", "step-details", "loop-compiler", "workflow-call-compiler"]
+"J2.1/execute-offer" = ["step-execution"]
+"J2.2" = ["real-platform-journeys", "editor-canvas", "step-details", "loop-compiler", "workflow-call-compiler", "step-execution", "step-tests"]
+"J2.3" = ["real-platform-journeys", "editor-canvas", "step-details", "loop-compiler", "workflow-call-compiler", "formula-editor", "loops"]
+"J2.4" = ["real-platform-journeys", "editor-canvas", "step-details", "loop-compiler", "workflow-call-compiler", "formula-editor"]
+"J2.5" = ["real-platform-journeys", "editor-canvas", "step-details", "loop-compiler", "workflow-call-compiler", "step-execution", "decision-table-editor"]
+"J2.6" = ["real-platform-journeys", "editor-canvas", "step-details", "loop-compiler", "workflow-call-compiler", "test-data"]
+"J2.7" = ["real-platform-journeys", "editor-canvas", "step-details", "loop-compiler", "workflow-call-compiler", "test-data"]
+"J2.8" = ["real-platform-journeys", "editor-canvas", "step-details", "loop-compiler", "workflow-call-compiler", "step-execution", "step-tests"]
+"J2.9" = ["real-platform-journeys", "editor-canvas", "step-details", "loop-compiler", "workflow-call-compiler", "editor-runs", "run-views", "loop-runtime", "workflow-call-runtime"]
+# J3 publish, activate, run, follow and resolve (builder, approver).
+"J3.1" = ["real-platform-journeys", "loop-compiler", "loop-runtime", "workflow-call-compiler", "workflow-call-runtime", "activation-dialog", "run-views"]
+"J3.2" = ["real-platform-journeys", "loop-compiler", "loop-runtime", "workflow-call-compiler", "workflow-call-runtime", "activation-dialog", "run-views"]
+"J3.3" = ["real-platform-journeys", "loop-compiler", "loop-runtime", "workflow-call-compiler", "workflow-call-runtime", "activation-dialog", "run-views"]
+"J3.4" = ["real-platform-journeys", "loop-compiler", "loop-runtime", "workflow-call-compiler", "workflow-call-runtime", "activation-dialog", "run-views"]
+"J3.5" = ["real-platform-journeys", "loop-compiler", "loop-runtime", "workflow-call-compiler", "workflow-call-runtime", "activation-dialog", "run-views"]
+"J3.6" = ["real-platform-journeys", "loop-compiler", "loop-runtime", "workflow-call-compiler", "workflow-call-runtime", "activation-dialog", "run-views"]
+"J3.7" = ["real-platform-journeys", "loop-compiler", "loop-runtime", "workflow-call-compiler", "workflow-call-runtime", "activation-dialog", "run-views"]
+"J3.8" = ["real-platform-journeys", "loop-compiler", "loop-runtime", "workflow-call-compiler", "workflow-call-runtime", "activation-dialog", "run-views"]
+"J3.9" = ["real-platform-journeys", "loop-compiler", "loop-runtime", "workflow-call-compiler", "workflow-call-runtime", "activation-dialog", "run-views"]
+# Step error handling: On error Continue ends "Succeeded with errors" with no incident; an error
+# path runs on an injected fault; a write with an unknown outcome still opens an incident.
+"J3.10" = ["real-platform-journeys", "loop-compiler", "loop-runtime", "workflow-call-compiler", "workflow-call-runtime", "activation-dialog", "run-views", "step-error-handling"]
+"J3.11" = ["real-platform-journeys", "loop-compiler", "loop-runtime", "workflow-call-compiler", "workflow-call-runtime", "activation-dialog", "run-views", "step-error-handling"]
+"J3.12" = ["real-platform-journeys", "loop-compiler", "loop-runtime", "workflow-call-compiler", "workflow-call-runtime", "activation-dialog", "run-views", "step-error-handling"]
+# J5 platform administration (operator); J5.1 belongs to the operations reads above.
+"J5.2" = ["real-platform-journeys", "run-views", "compose-operations"]
+"J5.3" = ["real-platform-journeys", "run-views", "compose-operations"]
+"J5.4" = ["real-platform-journeys", "run-views", "compose-operations", "metrics"]
+"J5.5" = ["real-platform-journeys", "run-views", "compose-operations", "logs"]
+"J5.6" = ["real-platform-journeys", "run-views", "compose-operations", "metrics", "alerts"]
+"J5.7" = ["real-platform-journeys", "run-views", "compose-operations", "metrics"]
+# J8 brand and naming: Studio, CLI, docs site, desktop icons, repository.
+"J8.1" = ["real-platform-journeys", "studio-brand", "brand-assets"]
+"J8.2" = ["real-platform-journeys", "brand-assets"]
+"J8.3" = ["real-platform-journeys", "docs-brand"]
+"J8.4" = ["release-verification"]
+"J8.5" = ["real-platform-journeys", "studio-brand", "brand-assets"]
+# J9 security and negative paths. J9.4 is recorded by the scan stage.
+"J9.1" = ["real-platform-journeys"]
+"J9.2" = ["real-platform-journeys"]
+"J9.2/execute-in-local" = ["step-execution", "step-tests"]
+"J9.2/operations-controls" = ["compose-operations"]
+"J9.3" = ["real-platform-journeys"]
+"J9.3/model-origins" = ["ai-and-cluster-profiles"]
+"J9.4" = ["real-platform-journeys"]
+"J9.5" = ["real-platform-journeys", "editor-hardening"]
 
 [step_profiles]
 "J0.2/cluster-tools" = ["cluster", "k3d", "nightly", "release"]
@@ -138,3 +200,4 @@ J15 = ["SC1", "SC7"]
 "J0.12" = ["ai", "nightly", "release"]
 "J0.13" = ["cluster", "k3d", "nightly", "release"]
 "J5.1" = ["pr", "nightly", "release"]
+"J8.4" = ["nightly", "release"]
