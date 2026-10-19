@@ -353,7 +353,7 @@ def test_keycloak_rejoins_the_egress_network_when_the_alias_cannot_be_added():
             calls.append(list(args))
             stdout = ""
             if args[:2] == ("network", "inspect"):
-                stdout = json.dumps([{"Containers": {"k": {"Name": "kc", "IPv4Address": "10.0.0.3/24"}}}])
+                stdout = json.dumps([{"Containers": {"k": {"Name": "p-keycloak-1", "IPv4Address": "10.0.0.3/24"}}}])
             return subprocess.CompletedProcess(args, 0, stdout=stdout, stderr="")
 
         def require(self, result):
@@ -363,5 +363,5 @@ def test_keycloak_rejoins_the_egress_network_when_the_alias_cannot_be_added():
 
     with pytest.raises(AssertionError, match="address in use"), security.identity_alias(Run()):
         pass
-    assert calls[-1] == ["network", "connect", "--ip", "10.0.0.3", "net", "kc"]
-    assert ["network", "disconnect", "net", "kc"] in calls[:-1]
+    assert calls[-1] == ["network", "connect", "--ip", "10.0.0.3", "net", "p-keycloak-1"]
+    assert calls.count(["network", "disconnect", "net", "p-keycloak-1"]) == 1
