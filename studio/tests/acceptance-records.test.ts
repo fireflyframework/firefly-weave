@@ -120,6 +120,11 @@ describe("acceptance step records", () => {
     `{"codeVerifier":"${S}"}`,
     `sent Bearer ${S} upstream`,
     `{"sessionToken":"${S}","expires":1}`,
+    `Error: request failed: "{\\"accessToken\\":\\"${S}\\"}"`,
+    `body: "{\\"csrfToken\\":\\"${S}\\"}"`,
+    `{"name":"x-weave-csrf","value":"${S}"}`,
+    `{"name": "Cookie", "value": "KEYCLOAK_SESSION=${S}"}`,
+    `{\\"name\\":\\"accessToken\\",\\"value\\":\\"${S}\\"}`,
   ];
 
   it.each(SHAPED)("redacts a secret by its shape: %s", (text) => {
@@ -139,6 +144,26 @@ describe("acceptance step records", () => {
     `{"token_type":"bearer","expires_in":300}`,
     "Timeout 5000ms exceeded waiting for getByRole('button')",
   ])("keeps an ordinary phrase: %s", (text) => {
+    expect(redact(text, [])).toBe(text);
+  });
+
+  // The ordinary-value exemption stops at 12 lowercase letters and 5 digits.
+  it.each([
+    "token=abcdefghijklm",
+    "password=correcthorses",
+    "pairing_code=123456",
+    "code=123456",
+    `{"name":"x-weave-csrf","value":"abcdefghijklm"}`,
+  ])("redacts a value just past the ordinary bounds: %s", (text) => {
+    expect(redact(text, [])).toContain("[redacted]");
+  });
+
+  it.each([
+    "token=abcdefghijkl",
+    "pairing_code=12345",
+    `{"name":"x-weave-csrf","value":"missing"}`,
+    `{"name":"Accept","value":"application/json"}`,
+  ])("keeps a value within the ordinary bounds: %s", (text) => {
     expect(redact(text, [])).toBe(text);
   });
 

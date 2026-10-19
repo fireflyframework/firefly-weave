@@ -48,6 +48,13 @@ export interface StepRecord {
  * small number or a WV- error code) is kept, so "token: expired" and
  * "code=WV-RUN" stay readable.
  */
+// The exemptions are deliberately narrow; do not widen them. A hand-chosen
+// secret that is a lowercase word of at most 12 letters, a number of at most
+// 5 digits or a literal WV- code survives the shape layer (password=letmein),
+// but no secret this stack generates has those shapes: pairing codes, CSRF
+// tokens, platform passwords and identity-provider values are long random
+// strings, and canaries are wv-canary-<hex>. Known secrets are replaced
+// before the shapes, whatever their form.
 const ORDINARY = /^(?:[a-z]{1,12}|\d{1,5}|WV-[A-Z0-9-]+)$/;
 // An authorization or pairing code can be a plain word: only error codes and numbers are ordinary.
 const ORDINARY_CODE = /^(?:\d{1,5}|WV-[A-Z0-9-]+)$/;
@@ -55,6 +62,9 @@ const SCHEME = /^(?:bearer|basic|digest|dpop|negotiate|token)\s+/i;
 const KEY =
   "(?<![A-Za-z0-9_-])((?:proxy-)?authorization|code|[A-Za-z0-9_-]*?(?:token|secret|password|passwd|api[_-]?key|csrf|code[_-]?verifier|pairing[_-]?code)[A-Za-z0-9_-]*)";
 const SEPARATOR = "([\"']?\\s*(?:[:=]|%3[ADad])\\s*)";
+// A quote inside a JSON string is escaped: \" or \'.
+const QUOTE = "\\\\?[\"']";
+const SECRET_NAME = new RegExp(`^(?:${KEY}|(?:set-)?cookie)$`, "i");
 
 function secretValue(value: string, key = ""): boolean {
   const credential = value.replace(SCHEME, "").trim();
@@ -66,6 +76,27 @@ const SHAPES: readonly [
   RegExp,
   (match: string, ...groups: string[]) => string,
 ][] = [
+  [
+    // A name/value pair, as HAR headers and cookies hold them: {"name":"X-Weave-CSRF","value":"…"}.
+    new RegExp(
+      `(${QUOTE}name${QUOTE}\\s*:\\s*${QUOTE})([A-Za-z0-9_-]+)(${QUOTE}\\s*,\\s*${QUOTE}value${QUOTE}\\s*:\\s*${QUOTE})((?:(?!${QUOTE})[^\\r\\n])*)`,
+      "gi",
+    ),
+    (match, open, name, separator, value) =>
+      SECRET_NAME.test(name) &&
+      (/cookie$/i.test(name) || secretValue(value, name))
+        ? `${open}${name}${separator}${REDACTED}`
+        : match,
+  ],
+  [
+    // A credential field of JSON escaped inside a string: {\"accessToken\":\"…\"}.
+    new RegExp(
+      `${KEY}(\\\\["']\\s*:\\s*\\\\["'])((?:(?!\\\\["'])[^\\r\\n])*)`,
+      "gi",
+    ),
+    (match, name, separator, value) =>
+      secretValue(value, name) ? `${name}${separator}${REDACTED}` : match,
+  ],
   [
     // A credential header up to the end of its line: Digest and other schemes carry several parameters.
     /\b((?:proxy-)?authorization)(\s*[:=]\s*)(?!["'])([^\r\n]*)/gi,
