@@ -138,6 +138,84 @@ for (const size of sizes)
       );
     });
 
+    test("suggestions in Edit formula are drawn above the dialog in every row", async ({
+      page,
+    }) => {
+      const details = await openStepFixture(page, formulasFixture);
+      await details.openWithKeyboard("flag");
+      await details
+        .field("value")
+        .getByRole("button", { name: "Edit formula" })
+        .click();
+      const dialog = page.getByRole("dialog", { name: "Edit formula: Fields" });
+      await replaceFormula(page, dialog, "input.");
+      const list = suggestions(page);
+      await expect(list).toBeVisible();
+      // The list's layer stacks above the dialog's backdrop, and every row
+      // that shows is what the pointer hits.
+      await expect
+        .poll(() =>
+          list.evaluate((element) => {
+            const rows = [
+              ...element.querySelectorAll<HTMLElement>('[role="option"]'),
+            ].filter((row) => {
+              const box = row.getBoundingClientRect();
+              const frame = element.getBoundingClientRect();
+              return box.top >= frame.top && box.bottom <= frame.bottom;
+            });
+            return (
+              rows.length > 0 &&
+              rows.every((row) => {
+                const box = row.getBoundingClientRect();
+                return (
+                  document
+                    .elementFromPoint(
+                      box.x + box.width / 2,
+                      box.y + box.height / 2,
+                    )
+                    ?.closest('[role="option"]') === row
+                );
+              })
+            );
+          }),
+        )
+        .toBe(true);
+      // It stacks above every layer Studio draws in <body> over the page (the
+      // side sheets' scrim and panel, and the dialogs' backdrop) and below
+      // the skip link, which must stay reachable over everything.
+      const layers = await list.evaluate((element) => {
+        const probe = document.createElement("div");
+        probe.style.visibility = "hidden";
+        document.body.append(probe);
+        const zOf = (name: string) => {
+          const layer = document.createElement("div");
+          layer.className = name;
+          probe.append(layer);
+          return Number(getComputedStyle(layer).zIndex);
+        };
+        const skip = zOf("skip-link");
+        const others = ["sheet-scrim", "sheet-modal", "modal-backdrop"].map(
+          (name) => {
+            const layer = document.createElement("div");
+            layer.className = name;
+            probe.append(layer);
+            return Number(getComputedStyle(layer).zIndex);
+          },
+        );
+        probe.remove();
+        return {
+          list: Number(getComputedStyle(element).zIndex),
+          inBody: element.closest("body > .formula-suggestions") !== null,
+          others,
+          skip,
+        };
+      });
+      expect(layers.inBody).toBe(true);
+      for (const other of layers.others)
+        expect(layers.list).toBeGreaterThan(other);
+      expect(layers.list).toBeLessThan(layers.skip);
+    });
+
     test("Escape in Edit formula closes the list, then the dialog", async ({
       page,
     }) => {

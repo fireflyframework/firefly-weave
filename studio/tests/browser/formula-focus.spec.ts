@@ -324,6 +324,17 @@ for (const size of sizes)
           .getByRole("button", { name: /^reference check/ }),
       );
       expect(pill.height).toBe(control);
+      // Whatever the pill holds (a larger text size, say), the field keeps
+      // its height.
+      const button = details
+        .field("context")
+        .getByRole("button", { name: /^reference check/ });
+      await button.evaluate((element) => {
+        const tall = document.createElement("span");
+        tall.style.cssText = "display:inline-block;height:80px;width:1px";
+        element.querySelector(".ref-pill")?.after(tall);
+      });
+      expect((await box(button)).height).toBe(control);
       const title = await box(formulaBox(details.field("title")));
       expect(title.height).toBe(control);
     });

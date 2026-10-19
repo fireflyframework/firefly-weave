@@ -475,7 +475,11 @@ function rowLooks(rows: Element[]) {
   };
   const font = (element: Element) => {
     const look = getComputedStyle(element);
+    let opacity = 1;
+    for (let node: Element | null = element; node; node = node.parentElement)
+      opacity *= Number(getComputedStyle(node).opacity);
     return [
+      `opacity ${opacity}`,
       look.fontFamily,
       look.fontSize,
       look.fontWeight,
