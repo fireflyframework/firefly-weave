@@ -144,6 +144,32 @@ describe("the full address of Call an API", () => {
       address: `Connection address/a/${fits}`,
     });
   });
+  it("counts characters as the connector does, by code point", () => {
+    const text = "a".repeat(4000) + "😀".repeat(50); // 4,100 UTF-16 units
+    expect(urlPreview("/a/{b}", new Map([["b", ok(text)]]), [])).toEqual({
+      address: `Connection address/a/${encodeSegment(text)}`,
+    });
+    expect(
+      urlPreview("/a/{b}", new Map([["b", ok("😀".repeat(4097))]]), []),
+    ).toEqual({ refused: "{b} is longer than 4,096 characters" });
+  });
+  it("refuses DEL as a control character", () => {
+    expect(urlPreview("/a/{b}", new Map([["b", ok("a\u007fb")]]), [])).toEqual({
+      refused: "{b} has a control character",
+    });
+  });
+  it("measures the 16,384 bytes on the path and query, without the connection's address", () => {
+    // "/" + 2,730 × "é" (6 bytes encoded) + m × "a": 16,381 + m bytes.
+    const value = (m: number) => "é".repeat(2730) + "a".repeat(m);
+    const at = (m: number) =>
+      urlPreview("/{b}", new Map([["b", ok(value(m))]]), []);
+    expect(at(3)).toEqual({
+      address: `Connection address/${encodeSegment(value(3))}`,
+    });
+    expect(at(4)).toEqual({
+      refused: "the address is longer than 16,384 bytes",
+    });
+  });
   it("shows nothing until every value computes", () => {
     expect(
       urlPreview("/customers/{id}", new Map([["id", waiting]]), []),

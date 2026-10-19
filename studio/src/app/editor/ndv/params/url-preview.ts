@@ -73,7 +73,8 @@ function scalar(value: Json, parameter: UrlParameter, label: string): string {
       `${label} must be ${TYPE_WORDS[parameter.type]}, not ${kind}`,
     );
   if (typeof value === "string") {
-    if (value.length > 4096)
+    // Characters as Python counts them: code points, not UTF-16 units.
+    if ([...value].length > 4096)
       throw new Refused(`${label} is longer than 4,096 characters`);
     if (/[\u0000-\u001f\u007f]/.test(value))
       throw new Refused(`${label} has a control character`);
