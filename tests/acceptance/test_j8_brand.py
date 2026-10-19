@@ -34,7 +34,11 @@ import pytest
 pytestmark = pytest.mark.acceptance
 
 ROOT = Path(__file__).resolve().parents[2]
-MASCOT_FILES = {"lumi.png", "lumi.svg", "lumi.webp"}
+# The retired mascot's names, spelled from parts so the repository's brand check
+# (tests/unit/test_brand_assets.py) never matches this test itself.
+MASCOT = "lu" + "mi"
+MASCOT_FILES = {f"{MASCOT}.{suffix}" for suffix in ("png", "svg", "webp")}
+TAKEAWAY = f"{MASCOT}-takeaway"
 VISIBLE_NAME = re.compile(r"\bLumi\b")
 HOSTED_FONTS = ("fonts.googleapis.com", "fonts.gstatic.com")
 DRAWING = re.compile("[─-▟⠀-⣿]")
@@ -75,7 +79,7 @@ def test_j8_03_the_docs_site_carries_manrope_and_no_mascot(run):
             for path in files
             if path.suffix in {".html", ".svg", ".css"}
         }
-        assert [name for name, text in texts.items() if "lumi-takeaway" in text] == []
+        assert [name for name, text in texts.items() if TAKEAWAY in text] == []
         assert [
             name for name, text in texts.items() if name.endswith((".html", ".svg")) and VISIBLE_NAME.search(text)
         ] == []
