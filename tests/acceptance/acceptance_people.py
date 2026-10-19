@@ -154,8 +154,8 @@ def api_origin(state: Mapping[str, Any]) -> str:
 
 
 @asynccontextmanager
-async def person_client(run: Any, name: str) -> AsyncIterator[WeaveClient]:
-    """A WeaveClient signed in as ``name`` on the demo environment (local), through a fresh sign-in.
+async def _signed_in(run: Any, name: str, label: str) -> AsyncIterator[tuple[LoginConfig, Any, OAuthSession]]:
+    """``name`` signed in through the identity provider's pages into a token file of its own, removed on exit.
 
     Every call signs in again, whatever the private store holds: a failed sign-in leaves a
     logged_out record, a failed refresh leaves a token-free refreshing fence, and the identity
@@ -164,20 +164,19 @@ async def person_client(run: Any, name: str) -> AsyncIterator[WeaveClient]:
     """
     person = run.person(name)
     state = run.platform_state()
-    api = api_origin(state)
     issuer_origin = f"http://localhost:{state['ports']['keycloak']}"
     config = LoginConfig(
         provider_id="local-keycloak",
         issuer=issuer_origin + "/realms/weave",
         client_id=CLIENT_ID,
-        target=api,
+        target=api_origin(state),
         account=person["username"],
         scopes=("openid",),
         allow_loopback_http=True,
     )
-    # Each client has its own token file, removed when the client closes: a sign-in marks the record
-    # authenticating, and a second client sharing the file would fail every request of the first meanwhile.
-    store = session_store(run.private, f"{name}-{uuid4().hex}")
+    # Each sign-in has its own token file: a sign-in marks the record authenticating, and a second
+    # client sharing the file would fail every request of the first meanwhile.
+    store = session_store(run.private, f"{name}-{label}{uuid4().hex}")
     session = OAuthSession(config, store)
 
     async def browser(url: str) -> None:
@@ -185,10 +184,100 @@ async def person_client(run: Any, name: str) -> AsyncIterator[WeaveClient]:
 
     try:
         await session.login(flow="pkce", browser=browser)
-        async with WeaveClient(api, session, scope_of(run.demo_scope())) as client:
-            yield client
+        yield config, store, session
     finally:
         store.path.unlink(missing_ok=True)
+
+
+@asynccontextmanager
+async def person_client(run: Any, name: str) -> AsyncIterator[WeaveClient]:
+    """A WeaveClient signed in as ``name`` on the demo environment (local), through a fresh sign-in."""
+    async with (
+        _signed_in(run, name, "") as (config, _, session),
+        WeaveClient(config.target, session, scope_of(run.demo_scope())) as client,
+    ):
+        yield client
+
+
+class PersonCli:
+    """Typed ``weave`` commands run as one person: explicit API origin and demo scope, and the
+    person's private token file (--credential-store file), never the system credential store."""
+
+    def __init__(self, run: Any, config_path: Path, credential_file: Path, api: str, scope: Mapping[str, str]):
+        self.run = run
+        self.config_path = config_path
+        self.credential_file = credential_file
+        self.api = api
+        self.scope = dict(scope)
+        self.requests = config_path.parent / f"{config_path.stem}-requests"
+
+    def arguments(self, *args: str, request: Path | None = None) -> list[str]:
+        return [
+            *args,
+            *(["--request", str(request)] if request is not None else []),
+            "--base-url",
+            self.api,
+            "--tenant",
+            self.scope["tenant_id"],
+            "--project",
+            self.scope["project_id"],
+            "--environment",
+            self.scope["environment_id"],
+            "--auth-config",
+            str(self.config_path),
+            "--credential-store",
+            "file",
+            "--credential-file",
+            str(self.credential_file),
+        ]
+
+    def _request(self, request: Mapping[str, Any] | None) -> Path | None:
+        """A request body as a 0600 file under the person's private folder."""
+        if request is None:
+            return None
+        self.requests.mkdir(mode=0o700, exist_ok=True)
+        path = self.requests / f"{uuid4().hex}.json"
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            json.dump(dict(request), stream)
+        return path
+
+    def _run(self, args: tuple[str, ...], request: Mapping[str, Any] | None) -> Any:
+        path = self._request(request)
+        try:
+            return self.run.weave(*self.arguments(*args, request=path))
+        finally:
+            if path is not None:
+                path.unlink(missing_ok=True)
+
+    def __call__(self, *args: str, request: Mapping[str, Any] | None = None) -> Any:
+        """Run one command; its JSON result."""
+        return json.loads(self.run.require(self._run(args, request)).stdout)
+
+    def refused(self, *args: str, request: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        """Run one command that must fail; the problem it printed (status and code)."""
+        result = self._run(args, request)
+        assert result.returncode != 0, f"weave {' '.join(args[:2])} succeeded"
+        return dict(json.loads(result.stdout))
+
+
+@asynccontextmanager
+async def person_cli(run: Any, name: str) -> AsyncIterator[PersonCli]:
+    """``async with person_cli(run, "owner") as weave:`` then ``weave("human-groups", "put", request=…)``."""
+    async with _signed_in(run, name, "cli-") as (config, store, _):
+        config_path = store.path.with_suffix(".config.json")
+        descriptor = os.open(config_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            stream.write(config.model_dump_json())
+        cli = PersonCli(run, config_path, store.path, config.target, run.demo_scope())
+        try:
+            yield cli
+        finally:
+            config_path.unlink(missing_ok=True)
+            if cli.requests.is_dir():
+                for leftover in cli.requests.iterdir():
+                    leftover.unlink()
+                cli.requests.rmdir()
 
 
 def read_json(path: Path) -> dict[str, Any]:

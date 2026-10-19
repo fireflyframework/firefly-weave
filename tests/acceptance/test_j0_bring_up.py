@@ -26,12 +26,10 @@ import asyncio
 import json
 import time
 import urllib.request
-from uuid import UUID
 
 import pytest
 
 from firefly_weave import __version__
-from firefly_weave.contracts.surface import OPERATIONS
 from firefly_weave.sdk.platform import LOCAL_OWNER_ROLES, PERSON_ROLES
 
 pytestmark = pytest.mark.acceptance
@@ -130,29 +128,31 @@ def test_j0_04_people(run):
 
 @pytest.mark.journey_step("J0.5")
 async def test_j0_05_approvers_group_bound_in_the_demo_environment(run):
-    group_request = OPERATIONS["human_groups.put"].request
-    binding_request = OPERATIONS["human_assignments.put"].request
     async with run.client("approver") as approver:
-        identity = await approver.invoke("identity.read")
-        group = await approver.invoke(
-            "human_groups.put",
-            body=group_request.model_validate_json(
-                json.dumps({"name": "approvers", "member_ids": [str(identity.principal_id)]})
-            ),
-            idempotency_key=f"j0-05-group-{run.run_id}",
+        principal = str((await approver.invoke("identity.read")).principal_id)
+    members = {"name": "approvers", "member_ids": [principal]}
+    async with run.cli("approver") as weave:
+        group = weave("human-groups", "put", "--idempotency-key", f"j0-05-group-{run.run_id}", request=members)
+        binding = weave(
+            "human-assignments",
+            "put",
+            "--idempotency-key",
+            f"j0-05-binding-{run.run_id}",
+            request={"name": "approvers", "group_ids": [group["id"]]},
         )
-        binding = await approver.invoke(
-            "human_assignments.put",
-            body=binding_request.model_validate_json(json.dumps({"name": "approvers", "group_ids": [str(group.id)]})),
-            idempotency_key=f"j0-05-binding-{run.run_id}",
-        )
-        listed = await approver.invoke("human_assignments.list")
-    assert group.name == "approvers" and group.member_ids == [identity.principal_id]
+        listed = weave("human-assignments", "list")
+        # Read back: no operation lists groups, but the server holds this one at revision 1, so creating it
+        # again (expected revision 0) is refused.
+        again = weave.refused("human-groups", "put", "--idempotency-key", f"j0-05-again-{run.run_id}", request=members)
+    assert (group["name"], group["member_ids"], group["revision"]) == ("approvers", [principal], 1)
+    assert (again["status"], again["code"]) == (409, "WV-GROUP-REVISION")
     found = [
-        (item.name, item.group_ids, item.enabled) for item in listed.items if item.binding_id == binding.binding_id
+        (item["name"], item["group_ids"], item["enabled"])
+        for item in listed["items"]
+        if item["binding_id"] == binding["binding_id"]
     ]
-    assert found == [("approvers", [group.id], True)]
-    run.save_private("human", {"group_id": str(group.id), "binding_id": str(binding.binding_id)})
+    assert found == [("approvers", [group["id"]], True)]
+    run.save_private("human", {"group_id": group["id"], "binding_id": binding["binding_id"]})
 
 
 @pytest.mark.journey_step("J0.6")
@@ -201,40 +201,39 @@ GRANTED = ["weave-connector-http-read@2.0.0", "weave-connector-http-write@2.0.0"
 
 
 async def _publish_catalog(run) -> None:
-    """As the owner: connection acme-local, the five acme-* actions and risk-tier, then the release grant."""
-    from firefly_weave.contracts.catalog import PublicationRequest
-
+    """As the owner, through the CLI: connection acme-local, the five acme-* actions and risk-tier, then the grant."""
     catalog = run.helper("acceptance_catalog")
     async with run.client("owner") as owner:
         version = await catalog.connector_version(owner)
-        connection = await owner.invoke("connections.create", body=catalog.connection_request(version))
+    async with run.cli("owner") as weave:
+        connection = weave(
+            "connections",
+            "create",
+            request=json.loads(catalog.connection_request(version).model_dump_json(by_alias=True)),
+        )
         actions = {}
         for name, document in catalog.actions().items():
-            published = await owner.invoke(
-                "definitions.publish",
-                collection="actions",
-                body=PublicationRequest(source=json.dumps(document), format="json"),
-                idempotency_key=f"j0-08-{name}-{run.run_id}",
+            published = weave(
+                *("definitions", "publish", "--collection", "actions"),
+                *("--idempotency-key", f"j0-08-{name}-{run.run_id}"),
+                request={"source": json.dumps(document), "format": "json"},
             )
-            actions[name] = str(published.id)
-        table = await owner.invoke(
-            "definitions.publish",
-            collection="decision-tables",
-            body=PublicationRequest(source=catalog.decision_table(), format="yaml"),
-            idempotency_key=f"j0-08-risk-tier-{run.run_id}",
+            actions[name] = published["id"]
+        table = weave(
+            *("definitions", "publish", "--collection", "decision-tables"),
+            *("--idempotency-key", f"j0-08-risk-tier-{run.run_id}"),
+            request={"source": catalog.decision_table(), "format": "yaml"},
         )
-        listed = await owner.invoke("definitions.list", collection="actions", query={"limit": 100})
-        tables = await owner.invoke("definitions.list", collection="decision-tables", query={"limit": 100})
-    assert set(catalog.ACTION_NAMES) <= {getattr(item, "name", None) for item in listed.items}
-    assert ("risk-tier", "1.0.0") in {
-        (getattr(item, "name", None), getattr(item, "version", None)) for item in tables.items
-    }
+        listed = weave("definitions", "list", "--collection", "actions", "--limit", "100")
+        tables = weave("definitions", "list", "--collection", "decision-tables", "--limit", "100")
+    assert set(catalog.ACTION_NAMES) <= {item.get("name") for item in listed["items"]}
+    assert ("risk-tier", "1.0.0") in {(item.get("name"), item.get("version")) for item in tables["items"]}
     granted = run.require(
         run.platform(
             "integrations",
             "grant",
             "--connection",
-            str(connection.id),
+            connection["id"],
             "--access",
             "read",
             "--access",
@@ -246,40 +245,46 @@ async def _publish_catalog(run) -> None:
     assert sorted(json.loads(granted.stdout)["capabilities"]) == GRANTED
     run.save_private(
         "catalog",
-        {"connection_revision_id": str(connection.id), "actions": actions, "decision_table_id": str(table.id)},
+        {"connection_revision_id": connection["id"], "actions": actions, "decision_table_id": table["id"]},
     )
 
 
 async def _publish_child_workflow(run) -> None:
-    """As the owner: the callable child workflow notify-customer 1.0.0."""
+    """As the owner, through the CLI: the callable child workflow notify-customer 1.0.0."""
     catalog = run.helper("acceptance_catalog")
-    async with run.client("owner") as owner:
-        published = await owner.publish(
-            "workflows", catalog.child_workflow(), "yaml", idempotency_key=f"j0-08-child-{run.run_id}"
+    async with run.cli("owner") as weave:
+        published = weave(
+            *("definitions", "publish", "--collection", "workflows"),
+            *("--idempotency-key", f"j0-08-child-{run.run_id}"),
+            request={"source": catalog.child_workflow(), "format": "yaml"},
         )
-        listed = await owner.list_definitions("workflows", limit=100)
-    assert (published.kind, published.name, published.version) == ("Workflow", catalog.CHILD_WORKFLOW, "1.0.0")
-    assert published.id in {getattr(item, "id", None) for item in listed.items}
-    run.save_private("child-workflow", {"version_id": str(published.id), "artifact_digest": published.digest})
+        listed = weave("definitions", "list", "--collection", "workflows", "--limit", "100")
+    assert (published["kind"], published["name"], published["version"]) == ("Workflow", catalog.CHILD_WORKFLOW, "1.0.0")
+    assert published["id"] in {item.get("id") for item in listed["items"]}
+    run.save_private("child-workflow", {"version_id": published["id"], "artifact_digest": published["digest"]})
 
 
 @pytest.mark.journey_step("J0.9")
 async def test_j0_09_the_child_workflow_is_active_and_callable_in_the_demo_environment(run):
-    from firefly_weave.contracts.catalog import ActivationRequest
-
+    catalog = run.helper("acceptance_catalog")
     child = run.private_record("child-workflow")
-    async with run.client("owner") as owner:
-        request = ActivationRequest(
-            version_id=UUID(child["version_id"]), artifact_digest=child["artifact_digest"], scope=owner.scope
+    async with run.cli("owner") as weave:
+        activation = weave(
+            *("definitions", "activations", "create", "--idempotency-key", f"j0-09-child-{run.run_id}"),
+            request={
+                "version_id": child["version_id"],
+                "artifact_digest": child["artifact_digest"],
+                "scope": weave.scope,
+            },
         )
-        activation = await owner.activate(request, idempotency_key=f"j0-09-child-{run.run_id}")
-        read = await owner.read_activation(activation.id)
-        exported = await owner.export_definition("workflows", request.version_id)
-    name = run.helper("acceptance_catalog").CHILD_WORKFLOW
-    assert (read.name, read.retired, read.request.version_id) == (name, False, request.version_id)
-    assert read.request.scope == owner.scope and read.workflow_call_pins == []
-    assert "callable" in exported.document["spec"] and exported.retired is False
-    run.save_private("child-workflow", {**child, "activation_id": str(activation.id)})
+        read = weave("definitions", "activations", "read", activation["id"])
+        exported = weave("definitions", "export", "--collection", "workflows", child["version_id"])
+    assert (read["name"], read.get("retired", False)) == (catalog.CHILD_WORKFLOW, False)
+    scope = {key: read["request"]["scope"].get(key) for key in weave.scope}
+    assert read["request"]["version_id"] == child["version_id"] and scope == weave.scope
+    assert not read.get("workflow_call_pins")
+    assert "callable" in exported["document"]["spec"] and exported.get("retired", False) is False
+    run.save_private("child-workflow", {**child, "activation_id": activation["id"]})
 
 
 @pytest.mark.journey_step("J0.14")

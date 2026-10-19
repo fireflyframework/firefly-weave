@@ -383,3 +383,50 @@ async def test_concurrent_clients_for_one_person_keep_separate_sessions(tmp_path
         assert first.session.store.path.name.startswith("builder-")
     assert seen == [[], ["active"]]
     assert list((tmp_path / "private" / "sessions").iterdir()) == []
+
+
+async def test_typed_cli_commands_run_as_the_person_with_a_private_token_file_and_leave_nothing(tmp_path, monkeypatch):
+    import subprocess
+
+    from firefly_weave.sdk.credentials import CredentialRecord
+
+    async def login(session, *, flow, browser):
+        binding = session.config.binding
+        session.store.save(binding, CredentialRecord(binding=binding, state="active", access_token="t", expires_at=9e9))
+        return {}
+
+    monkeypatch.setattr(people.OAuthSession, "login", login)
+    calls, seen = [], []
+
+    class CliRun(SignedInRun):
+        def weave(self, *args, **_):
+            calls.append(list(args))
+            for flag in ("--auth-config", "--credential-file", "--request"):
+                if flag in args:
+                    path = Path(args[args.index(flag) + 1])
+                    seen.append((flag, path.stat().st_mode & 0o777, path.read_text(encoding="utf-8")))
+            failing = "again" in args
+            stdout = '{"code":"WV-GROUP-REVISION","status":409}' if failing else '{"id":"g1"}'
+            return subprocess.CompletedProcess(args, 1 if failing else 0, stdout=stdout, stderr="")
+
+        def require(self, result):
+            assert result.returncode == 0
+            return result
+
+    run = CliRun(tmp_path / "private")
+    run.private.mkdir()
+    async with people.person_cli(run, "approver") as weave:
+        assert weave("human-groups", "put", "--idempotency-key", "k", request={"name": "approvers"}) == {"id": "g1"}
+        assert weave.refused("human-groups", "put", "again") == {"code": "WV-GROUP-REVISION", "status": 409}
+    arguments = calls[0]
+    assert arguments[:4] == ["human-groups", "put", "--idempotency-key", "k"]
+    assert arguments[arguments.index("--credential-store") + 1] == "file"
+    assert arguments[arguments.index("--base-url") + 1] == "http://127.0.0.1:18000"
+    for flag in ("--tenant", "--project", "--environment"):
+        assert flag in arguments
+    assert {flag for flag, _, _ in seen} == {"--auth-config", "--credential-file", "--request"}
+    assert {mode for _, mode, _ in seen} == {0o600}
+    assert ("--request", 0o600, '{"name": "approvers"}') in seen
+    assert all(PASSWORD not in " ".join(call) for call in calls)
+    # The token file, the sign-in configuration and the request files are gone.
+    assert [path for path in (run.private / "sessions").rglob("*") if path.is_file()] == []

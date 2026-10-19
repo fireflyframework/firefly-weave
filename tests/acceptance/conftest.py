@@ -219,6 +219,10 @@ class Run:
         """``async with run.client("owner") as owner:`` a WeaveClient signed in as that person."""
         return _helper("acceptance_people").person_client(self, name)
 
+    def cli(self, name: str) -> Any:
+        """``async with run.cli("owner") as weave:`` typed weave commands signed in as that person."""
+        return _helper("acceptance_people").person_cli(self, name)
+
     def save_person(self, name: str, value: Mapping[str, Any]) -> Path:
         """Keep a person's sign-in in a 0600 file under private/; never print it."""
         people = self.private / "people"
