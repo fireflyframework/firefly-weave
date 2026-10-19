@@ -46,3 +46,9 @@ def test_acceptance_files_use_no_planning_vocabulary():
         if PLANNING.search(line)
     ]
     assert found == []
+
+
+def test_the_readme_states_the_authorization_rule_the_security_journey_applies():
+    # J9.1 counts a role only from a grant at the operation's level or above (acceptance_authorization.holds_at).
+    readme = " ".join((ROOT / "tests/acceptance/README.md").read_text(encoding="utf-8").split())
+    assert "where the person's grants at the operation's level or above lack the capability" in readme

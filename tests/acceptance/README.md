@@ -137,7 +137,8 @@ a pytest step counts for every viewport of its journey. Step screenshots go to
 0.1.0a14 release with the capability it needs and one request that is safe to
 send as anyone. `tests/contracts/test_authorization_matrix.py` fails when a new
 operation has no row. Journey step J9.1 sends every row as each person and
-expects exactly `403 WV-FORBIDDEN` where the person's roles lack the capability.
+expects exactly `403 WV-FORBIDDEN` where the person's grants at the operation's level
+or above lack the capability.
 
 ## Fixtures
 
