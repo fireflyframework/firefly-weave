@@ -23,6 +23,12 @@ SPDX-License-Identifier: Apache-2.0
 // Linux and Cmd on macOS.
 
 export type KeyPlatform = "mac" | "other";
+/** The platform Studio runs on, which decides what `Mod` is. */
+export const KEY_PLATFORM: KeyPlatform =
+  typeof navigator !== "undefined" &&
+  /Mac|iPhone|iPad|iPod/i.test(navigator.platform)
+    ? "mac"
+    : "other";
 /** Where focus is, from the most specific: a Fixed field or the formula editor sit inside step details. */
 export type KeymapSurface =
   | "canvas"

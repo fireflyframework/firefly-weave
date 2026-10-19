@@ -62,8 +62,8 @@ import {
   commandFor,
   eventCombo,
   formatCombo,
+  KEY_PLATFORM,
   type KeymapCommand,
-  type KeyPlatform,
 } from "../state/keymap";
 import { docsUrl, headerSubtitle } from "./header";
 import { adjacent, breadcrumb, neighbors } from "./navigation";
@@ -108,11 +108,6 @@ interface MapMenu {
   left: number;
 }
 
-export const KEY_PLATFORM: KeyPlatform =
-  typeof navigator !== "undefined" &&
-  /Mac|iPhone|iPad|iPod/i.test(navigator.platform)
-    ? "mac"
-    : "other";
 export const EXECUTE_REASON =
   "Executing a single step isn't available yet. Simulate the workflow runs every step.";
 

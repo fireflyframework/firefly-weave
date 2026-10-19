@@ -282,3 +282,63 @@ describe("the formula editor's pill keys", () => {
     expect(ranges).toEqual(["4-16", "21-39"]);
   });
 });
+
+/**
+ * Undo and Redo go to the workflow, never to the editor's own text. Chromium
+ * on Linux can report Ctrl+Shift+Z with a lowercase "z" (Caps Lock, or an
+ * automated key press); that is still Redo, not Undo.
+ */
+describe("the formula editor's undo and redo keys", () => {
+  function keyed(platform: "mac" | "other") {
+    const calls: string[] = [];
+    const state = EditorState.create({
+      doc: "First {{ input.email }}",
+      extensions: [
+        formulaKeys({
+          multiline: true,
+          platform,
+          undo: () => calls.push("undo"),
+          redo: () => calls.push("redo"),
+          escape: () => false,
+        }),
+      ],
+    });
+    const view = { state, dispatch: () => undefined };
+    const press = (
+      key: string,
+      modifiers: { ctrl?: boolean; meta?: boolean; shift?: boolean },
+    ) =>
+      runScopeHandlers(
+        view as unknown as EditorView,
+        {
+          type: "keydown",
+          key,
+          code: `Key${key.toUpperCase()}`,
+          keyCode: key.toUpperCase().charCodeAt(0),
+          altKey: false,
+          ctrlKey: !!modifiers.ctrl,
+          metaKey: !!modifiers.meta,
+          shiftKey: !!modifiers.shift,
+        } as KeyboardEvent,
+        "editor",
+      );
+    return { calls, press };
+  }
+
+  it("redoes with Ctrl+Shift+Z off macOS, whatever case the key reports", () => {
+    const { calls, press } = keyed("other");
+    expect(press("z", { ctrl: true })).toBe(true);
+    expect(press("z", { ctrl: true, shift: true })).toBe(true);
+    expect(press("Z", { ctrl: true, shift: true })).toBe(true);
+    expect(press("y", { ctrl: true })).toBe(true);
+    expect(calls).toEqual(["undo", "redo", "redo", "redo"]);
+  });
+  it("redoes with Cmd+Shift+Z on macOS, and leaves Ctrl+Z to the system", () => {
+    const { calls, press } = keyed("mac");
+    expect(press("z", { meta: true })).toBe(true);
+    expect(press("z", { meta: true, shift: true })).toBe(true);
+    expect(press("Z", { meta: true, shift: true })).toBe(true);
+    expect(press("z", { ctrl: true })).toBe(false);
+    expect(calls).toEqual(["undo", "redo", "redo"]);
+  });
+});

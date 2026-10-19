@@ -25,6 +25,7 @@ import {
   type Extension,
 } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
+import { eventCombo, KEY_PLATFORM, type KeyPlatform } from "../../state/keymap";
 import { formulaState } from "./decorations";
 
 export interface KeyConfig {
@@ -33,6 +34,8 @@ export interface KeyConfig {
   redo(): void;
   /** True when the field used the key (an unapplied formula reverted). */
   escape(event: KeyboardEvent): boolean;
+  /** Which modifier is Mod; the platform Studio runs on unless a test says. */
+  platform?: KeyPlatform;
 }
 
 function removePill(view: EditorView, direction: -1 | 1): boolean {
@@ -78,11 +81,21 @@ export function formulaKeys(config: KeyConfig): Extension {
     if (config.multiline) view.dispatch(view.state.replaceSelection("\n"));
     return true;
   };
+  const platform = config.platform ?? KEY_PLATFORM;
+  const history = (event: KeyboardEvent): boolean => {
+    const combo = eventCombo(event, platform);
+    if (combo === "Mod+Z") config.undo();
+    else if (combo === "Mod+Shift+Z" || combo === "Mod+Y") config.redo();
+    else return false;
+    return true;
+  };
   return [
     keymap.of([
-      { key: "Mod-z", run: () => (config.undo(), true) },
-      { key: "Mod-Shift-z", run: () => (config.redo(), true) },
-      { key: "Mod-y", run: () => (config.redo(), true) },
+      {
+        // Read from the key, not CodeMirror's names: Chromium off macOS can
+        // report Ctrl+Shift+Z as a lowercase "z", which "Mod-z" would take.
+        any: (_view, event) => history(event),
+      },
       {
         // Shift+Enter too: left to the browser it would break the line.
         key: "Enter",
