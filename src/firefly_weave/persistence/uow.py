@@ -16,7 +16,7 @@
 
 """Explicit transaction ownership. Repositories are constructed for each session."""
 
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypeVar
@@ -59,6 +59,44 @@ class Transaction:
             return False
         pending.append(callback)
         return True
+
+
+def refused_for_now(error: BaseException) -> bool:
+    """A write refused because a byte quota is spent or the project's operation lock is busy right now."""
+    from sqlalchemy.exc import DBAPIError
+
+    from firefly_weave.definitions.models import capacity_rejected
+
+    if isinstance(error, DBAPIError):
+        return getattr(error.orig, "sqlstate", None) in {"WQ001", "55P03"}
+    return capacity_rejected(error)
+
+
+async def isolated(tx: Transaction, work: Callable[[], Awaitable[object]]) -> bool:
+    """Run one item of a scan in a savepoint; False, with its writes and effects undone, when it is refused for now.
+
+    A refusal of one run's write (its quota, its reserve, a busy lock) never ends the scan for every other run.
+    Any other failure still ends the transaction.
+    """
+    from firefly_weave.runtime.capacity import capacity_failures
+
+    session = tx.session
+    callbacks = len(session.info.get("weave_after_commit", []))
+    candidate = session.info.get("weave_runtime_candidate")
+    failures = capacity_failures.get()
+    marked = list(failures) if failures is not None else None
+    try:
+        async with session.begin_nested():
+            await work()
+    except Exception as error:
+        if not refused_for_now(error):
+            raise
+        del session.info.get("weave_after_commit", [])[callbacks:]
+        session.info["weave_runtime_candidate"] = candidate
+        if failures is not None and marked is not None:
+            failures[:] = marked
+        return False
+    return True
 
 
 class UnitOfWork:

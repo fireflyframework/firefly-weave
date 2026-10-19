@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, Any, cast
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from opentelemetry.trace import get_current_span
+from sqlalchemy.exc import DBAPIError
 
 from firefly_weave.access.audit import AuditContext
 from firefly_weave.access.authorization import AccessDenied
@@ -40,7 +41,7 @@ from firefly_weave.contracts.instance_keys import instance_view, node_of
 from firefly_weave.contracts.language_features import MAX_CALL_DEPTH
 from firefly_weave.contracts.values import JsonObject, JsonValue
 from firefly_weave.definitions.models import CatalogError, capacity_rejected
-from firefly_weave.persistence.uow import Transaction
+from firefly_weave.persistence.uow import Transaction, isolated, refused_for_now
 from firefly_weave.runtime.models import CallIntent, RuntimeEvent, Transition
 from firefly_weave.runtime.repository import SCOPE, RuntimeRepository
 
@@ -320,7 +321,7 @@ class CallService:
             limit=limit,
         )
         for candidate in candidates:
-            caller = await repository.locked_run(candidate["caller_run_id"])
+            caller = await self._locked_caller(repository, candidate["caller_run_id"])
             if caller is None:
                 continue
             rows = await repository.rows(
@@ -332,6 +333,25 @@ class CallService:
             if outcome is not None:
                 return outcome
         return 0, 0
+
+    async def _locked_caller(self, repository: RuntimeRepository, identifier: UUID) -> dict[str, Any] | None:
+        """The caller's run row, locked; None when another transaction holds it or it is past the fetch budget.
+
+        A caller past the fetch budget is left like a busy one: its own control and scans handle its size, and the
+        calls behind it still start.
+        """
+        from firefly_weave.runtime.capacity import RuntimeCapacityError, capacity_failures
+
+        failures = capacity_failures.get()
+        marked = list(failures) if failures is not None else None
+        candidate = repository.tx.session.info.get("weave_runtime_candidate")
+        try:
+            return await repository.locked_run(identifier)
+        except RuntimeCapacityError:
+            if failures is not None and marked is not None:
+                failures[:] = marked
+            repository.tx.session.info["weave_runtime_candidate"] = candidate
+            return None
 
     async def _dispatch(
         self, repository: RuntimeRepository, row: dict[str, Any], caller: dict[str, Any]
@@ -348,7 +368,7 @@ class CallService:
                 at=now,
             )
             count(repository, "wait", "cancelled")
-            return 0, 0
+            return None
         if row["depth"] > MAX_CALL_DEPTH:
             return 0, await self._reject(repository, row, caller, "WV-CALL-DEPTH", now)
         child = ChildStart(
@@ -359,9 +379,18 @@ class CallService:
         failures = capacity_failures.get()
         marked = list(failures) if failures is not None else None
         candidate = tx.session.info.get("weave_runtime_candidate")
+        callbacks = len(tx.session.info.get("weave_after_commit", []))
         try:
             async with tx.session.begin_nested():
                 view = await self.start_child(tx, row, caller, child)
+                await self._started(repository, row, view)
+        except DBAPIError as error:
+            if not refused_for_now(error):
+                raise
+            # A spent quota or a busy lock: the call stays requested, and the calls behind it are tried.
+            del tx.session.info.get("weave_after_commit", [])[callbacks:]
+            tx.session.info["weave_runtime_candidate"] = candidate
+            return None
         except (AccessDenied, AuthenticationFailed):
             return 0, await self._reject(repository, row, caller, "WV-CALL-START", now)
         except RuntimeCapacityError:
@@ -377,6 +406,10 @@ class CallService:
             if capacity_rejected(error) or error.code in TRANSIENT_CODES or error.status in {429, 503}:
                 return None
             return 0, await self._reject(repository, row, caller, "WV-CALL-START", now)
+        return 1, 0
+
+    async def _started(self, repository: RuntimeRepository, row: dict[str, Any], view: "RunView") -> None:
+        """Record a started child on its call row and on the caller's step facts."""
         started = await repository.now()
         await repository.execute(
             "UPDATE run_calls SET child_run_id=:child,started_at=:at,"
@@ -398,7 +431,6 @@ class CallService:
             at=started,
         )
         queue_age(repository, "call.dispatch", row["requested_at"], started)
-        return 1, 0
 
     async def start_child(
         self, tx: Transaction, row: dict[str, Any], caller: dict[str, Any], child: ChildStart
@@ -500,8 +532,11 @@ class CallService:
                 continue
             if child["state"]["status"] in TERMINAL:
                 continue
-            await self.runtime.cancel_child(tx, candidate["child_run_id"], candidate["caller_run_id"])
-            return 1
+            # A child whose stop is refused for now is left for a later scan; the next one is tried.
+            if await isolated(
+                tx, partial(self.runtime.cancel_child, tx, candidate["child_run_id"], candidate["caller_run_id"])
+            ):
+                return 1
         return 0
 
 

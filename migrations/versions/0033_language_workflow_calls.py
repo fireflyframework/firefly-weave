@@ -102,11 +102,67 @@ def purge() -> None:
     connection.exec_driver_sql(body.replace(PURGE_ANCHOR, PURGE_RULES + PURGE_ANCHOR))
 
 
+def patch_function(signature: str, anchor: str, replacement: str) -> None:
+    connection = op.get_bind()
+    body = connection.scalar(
+        sa.text("SELECT pg_get_functiondef(cast(:signature AS regprocedure))"), {"signature": signature}
+    )
+    if not isinstance(body, str) or body.count(anchor) != 1:
+        raise RuntimeError(f"Unexpected definition of {signature}; reconcile the workflow call migration")
+    # CREATE OR REPLACE keeps the owner, the grants and the SET options of the function.
+    connection.exec_driver_sql(body.replace(anchor, replacement))
+
+
+def control_accounting() -> None:
+    """Stopping a run spends its own control reserve on the call rows it ends, like on its other rows.
+
+    A call row belongs to the caller while the caller is under control in this transaction (its terminal write ends
+    its requested calls and abandons undelivered results), and otherwise to the child it started (the child's
+    terminal write records its outcome there), or to the caller when no child exists yet. Each run's reserve holds
+    room for every call row its stop can still change: its undelivered calls, and its own call row as a child.
+    """
+    anchor = "IF relation_name='runs' THEN RETURN (item->>'id')::uuid; END IF;"
+    patch_function(
+        "public.weave_control_target(text,jsonb)",
+        anchor,
+        """
+      IF relation_name='run_calls' THEN
+        IF EXISTS(SELECT 1 FROM public.operation_control_context WHERE transaction_id=txid_current()
+          AND kind='run' AND resource_id=(item->>'caller_run_id')::uuid) THEN
+          RETURN (item->>'caller_run_id')::uuid;
+        END IF;
+        RETURN coalesce((item->>'child_run_id')::uuid,(item->>'caller_run_id')::uuid);
+      END IF;
+      IF relation_name='run_call_links' THEN RETURN (item->>'run_id')::uuid; END IF;
+      """
+        + anchor,
+    )
+    anchor = "+576*affected"
+    predicate = "tenant_id=tenant AND project_id=project AND environment_id=(item->>'environment_id')::uuid"
+    patch_function(
+        "public.weave_reserve_refresh(text,uuid,boolean)",
+        anchor,
+        anchor
+        + f"""
+            +1024*((SELECT count(*) FROM public.run_calls WHERE {predicate} AND caller_run_id=identifier
+              AND NOT delivered)
+              +(SELECT count(*) FROM public.run_call_links WHERE {predicate} AND run_id=identifier))""",
+    )
+    # A new call row or child link changes what its run's reserve must hold.
+    anchor = "'run_facts','step_facts','task_facts','incident_facts') THEN"
+    patch_function(
+        "public.weave_reservation_touch(text,jsonb)",
+        anchor,
+        "'run_facts','step_facts','task_facts','incident_facts','run_calls','run_call_links') THEN",
+    )
+
+
 def upgrade() -> None:
     tables()
     indexes()
     secure("run_calls", "id")
     secure("run_call_links", "run_id")
+    control_accounting()
     op.execute(
         "GRANT UPDATE(status,child_run_id,result,code,started_at,ended_at,delivered,cancel_requested) "
         "ON run_calls TO weave_app"
