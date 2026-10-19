@@ -102,11 +102,16 @@ for (const size of sizes)
       await replaceFormula(page, details.field("value"), "input.");
       const list = suggestions(page);
       await expect(list).toBeVisible();
+      await expect
+        .poll(async () => (await boxes(list.getByRole("option"))).length)
+        .toBeGreaterThan(2);
       const rows = await boxes(list.getByRole("option"));
-      expect(rows.length).toBeGreaterThan(2);
+      // At 600 px and below a row shows the name over its type, as Add
+      // option's items do: 4 + 16 + 8 + 16 + 4.
+      const height = size.width <= 600 ? 48 : want.row;
       for (const row of rows)
         expect(
-          Math.abs(row.height - want.row),
+          Math.abs(row.height - height),
           `row height ${row.height}`,
         ).toBeLessThanOrEqual(1);
       expectAligned(
@@ -211,5 +216,86 @@ for (const size of sizes)
           () => document.documentElement.scrollWidth <= window.innerWidth,
         ),
       ).toBe(true);
+    });
+
+    test("Edit formula's fields show at once, under a search and source that nothing covers", async ({
+      page,
+    }) => {
+      const details = await openStepFixture(page, formulasFixture);
+      await details.openWithKeyboard("flag");
+      await showParameters(page, details.dialog);
+      await details
+        .field("value")
+        .getByRole("button", { name: "Edit formula" })
+        .click();
+      const dialog = page.getByRole("dialog", { name: "Edit formula: Fields" });
+      const column = dialog.locator("weave-input-pane");
+      const search = await box(
+        column.getByRole("textbox", { name: "Search fields of earlier steps" }),
+      );
+      const source = await box(
+        column.getByRole("combobox", { name: "Input source" }),
+      );
+      expect(intersects(search, source), "search and source").toBe(false);
+      // On the column's edges, which are the formula's when stacked.
+      const edges = await box(column);
+      const editor = await box(formulaBox(dialog));
+      expectAligned([search.x, edges.x], "search on the column's left edge");
+      const count = await box(column.locator(".pane-count"));
+      expectAligned([count.right, edges.right], "count on the right edge");
+      if (size.width < 768) {
+        expectAligned([edges.x, editor.x], "column and formula left edges");
+        expectAligned(
+          [edges.right, editor.right],
+          "column and formula right edges",
+        );
+      }
+      if (size.width >= 600)
+        expectAligned(
+          [search.middle, source.middle],
+          "search and source on one row",
+        );
+      else
+        expect(source.y, "source under the search").toBeGreaterThanOrEqual(
+          search.bottom,
+        );
+      // Every control of the column, and the field rows, without scrolling:
+      // on screen inside the column and hit where they are drawn.
+      const report = await column.evaluate((element) => {
+        const frame = element.getBoundingClientRect();
+        const scroller = element.querySelector(".sd-pane-body")!;
+        const parts = [
+          ...element.querySelectorAll<HTMLElement>(
+            "input, select, button, .data-tree > li",
+          ),
+        ].map((part) => {
+          const r = part.getBoundingClientRect();
+          const inside =
+            r.top >= frame.top - 0.5 &&
+            r.bottom <= Math.min(frame.bottom, innerHeight) + 0.5;
+          const hit = document.elementFromPoint(
+            r.x + r.width / 2,
+            r.y + r.height / 2,
+          );
+          return {
+            name:
+              part.getAttribute("aria-label") ??
+              part.textContent?.trim().slice(0, 24) ??
+              part.tagName,
+            row: part.matches(".data-tree > li"),
+            head: !part.closest(".sd-pane-body"),
+            inside,
+            hit: !!hit && (hit === part || part.contains(hit)),
+          };
+        });
+        return { scrolled: scroller.scrollTop, parts };
+      });
+      expect(report.scrolled).toBe(0);
+      const rows = report.parts.filter((part) => part.row && part.inside);
+      expect(rows.length, "field rows shown at once").toBeGreaterThan(0);
+      for (const part of report.parts.filter((part) => part.inside))
+        expect(part.hit, `${part.name} is drawn on top`).toBe(true);
+      for (const part of report.parts.filter((part) => part.head))
+        expect(part.inside, `${part.name} inside the column`).toBe(true);
     });
   });

@@ -51,6 +51,7 @@ let sequence = 0;
         [session]="session()"
         searchLabel="Search fields of earlier steps"
         [openSearch]="true"
+        [compact]="true"
       />
       <div class="edit-formula-main">
         <span class="sr-only" [id]="controlId + '-label'">{{

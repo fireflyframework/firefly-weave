@@ -362,3 +362,31 @@ weave-input-pane .pane-count {
   padding-right: calc(var(--sd-control) + var(--space-2));
   margin-block: -1px;
 }
+
+/* Compact (Edit formula's column): the search and the source share one row
+   above the fields, on the column's own edges (the dialog has its padding);
+   a narrow column stacks them. */
+weave-input-pane.is-compact {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+weave-input-pane.is-compact > :is(.pane-search-row, .pane-sub, .sd-pane-body) {
+  padding-inline: 0;
+}
+weave-input-pane.is-compact > .pane-search-row {
+  padding-inline-end: var(--space-2);
+}
+weave-input-pane.is-compact > .sd-pane-body {
+  grid-column: 1 / -1;
+  padding-top: var(--space-2);
+}
+@container dialog (max-width: 480px) {
+  weave-input-pane.is-compact {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto minmax(0, 1fr);
+  }
+  weave-input-pane.is-compact > .pane-search-row {
+    padding-inline-end: 0;
+  }
+}
