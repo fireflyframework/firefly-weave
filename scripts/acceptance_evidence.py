@@ -171,33 +171,65 @@ _UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 # kept on this computer, ui: for preferences without workflow data.
 ACCOUNT_KEY = re.compile(rf"p[0-9a-f]{{16}}:[0-9a-f]{{16}}:{_UUID}:{_UUID}:", re.IGNORECASE)
 OWN_KEY = re.compile(rf"{ACCOUNT_KEY.pattern}|local:|ui:", re.IGNORECASE)
+# The dump field listing every IndexedDB database and its stores, empty ones included (Studio harness, KEY_CHECK).
+DATABASES = "indexed_db_databases"
 
 
 def storage_key_problems(folder: Path, *, expected: Iterable[str]) -> list[str]:
-    """Why the dumps of ``expected`` break Studio's storage rules: a localStorage or sessionStorage key without an
-    account, local: or ui: prefix, or an account key left after the platform was removed. Problems count keys and
-    never name them."""
+    """Why the dumps of ``expected`` break Studio's storage rules: a localStorage or sessionStorage key, or an
+    IndexedDB record, without an account, local: or ui: prefix, or account storage left after the platform was
+    removed. An IndexedDB record carries the prefix in its key or in its database's name; the dumps list every
+    database (DATABASES) while this check runs. Problems count keys and never name them."""
     problems: list[str] = []
     for name in sorted(set(expected)):
         before, after = folder / f"{name}.json", folder / f"{name}{AFTER_REMOVAL}.json"
         if not before.is_file():
             problems.append(f"{name}: no storage was captured")
             continue
-        keys = _keys(before)
-        unprefixed = sum(1 for key in keys if not OWN_KEY.match(key))
-        if not after.is_file():
+        first = _dump(before)
+        last = _dump(after) if after.is_file() else None
+        if last is None:
             problems.append(f"{name}: no storage was captured after its platform was removed")
+        if any(DATABASES not in dump for dump in (first, last) if dump is not None):
+            problems.append(f"{name}: a dump does not list its IndexedDB databases")
+        unprefixed = sum(1 for key in _web_keys(first) if not OWN_KEY.match(key))
         if unprefixed:
             problems.append(f"{name}: {unprefixed} storage key(s) without an account, local: or ui: prefix")
-        left = sum(1 for key in _keys(after) if ACCOUNT_KEY.match(key)) if after.is_file() else 0
-        if left:
-            problems.append(f"{name}: {left} account key(s) left after its platform was removed")
+        records = sum(1 for database, key in _records(first) if not (OWN_KEY.match(database) or OWN_KEY.match(key)))
+        if records:
+            problems.append(f"{name}: {records} IndexedDB record(s) without an account, local: or ui: prefix")
+        if last is not None:
+            left = sum(1 for key in _web_keys(last) if ACCOUNT_KEY.match(key))
+            if left:
+                problems.append(f"{name}: {left} account key(s) left after its platform was removed")
+            databases = sum(1 for database in last.get(DATABASES, ()) if ACCOUNT_KEY.match(database["name"]))
+            kept = sum(
+                1 for database, key in _records(last) if ACCOUNT_KEY.match(key) and not ACCOUNT_KEY.match(database)
+            )
+            if databases or kept:
+                problems.append(
+                    f"{name}: {databases} IndexedDB account database(s) and {kept} account record(s) left after "
+                    "its platform was removed"
+                )
     return problems
 
 
-def _keys(path: Path) -> list[str]:
-    dump = json.loads(path.read_text(encoding="utf-8"))
+def _dump(path: Path) -> dict[str, Any]:
+    value: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+    return value
+
+
+def _web_keys(dump: Mapping[str, Any]) -> list[str]:
     return [*dump["local"], *dump["session"]]
+
+
+def _records(dump: Mapping[str, Any]) -> list[tuple[str, str]]:
+    """Each IndexedDB record as (database name, key); a key that is not a string never carries a prefix."""
+    records = []
+    for record in dump.get("indexed_db", ()):
+        key = json.loads(record["key"])
+        records.append((record["database"], key if isinstance(key, str) else ""))
+    return records
 
 
 def artifacts(evidence: Path) -> list[dict[str, str]]:

@@ -297,8 +297,19 @@ CONNECTED = (
 )
 
 
-def dump(local=(), session=()):
-    return json.dumps({"local": dict.fromkeys(local, "v"), "session": dict.fromkeys(session, "v"), "indexed_db": []})
+def dump(local=(), session=(), records=(), databases=()):
+    """A dump taken while the storage-key check runs: ``records`` are (database, key) pairs, ``databases`` names."""
+    return json.dumps(
+        {
+            "local": dict.fromkeys(local, "v"),
+            "session": dict.fromkeys(session, "v"),
+            "indexed_db": [
+                {"database": database, "store": "s", "key": json.dumps(key), "value": '"v"'}
+                for database, key in records
+            ],
+            "indexed_db_databases": [{"name": name, "stores": ["s"]} for name in databases],
+        }
+    )
 
 
 def test_every_studio_storage_key_carries_an_account_prefix_and_removal_purges_them(tmp_path):
@@ -328,3 +339,59 @@ def test_unprefixed_keys_and_keys_left_after_removal_are_reported_without_naming
         "J9-1440x900-viewer: 1 account key(s) left after its platform was removed",
     ]
     assert not any("weave.localDrafts" in problem for problem in problems)
+
+
+def test_indexed_db_records_carry_the_prefix_in_their_key_or_their_database_name(tmp_path):
+    (tmp_path / "J9-1440x900-viewer.json").write_text(
+        dump(
+            records=[
+                (CONNECTED + "drafts", "d1"),
+                ("weave", CONNECTED + "run.1"),
+                ("weave", "local:draft.2"),
+                ("weave", "ui:panes"),
+                ("weave", "drafts.3"),
+                ("weave", 7),
+                ("thirdparty-cache", "entry"),
+            ],
+            databases=[CONNECTED + "drafts", "weave", "thirdparty-cache"],
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "J9-1440x900-viewer.after-removal.json").write_text(
+        dump(records=[("weave", "local:draft.2")], databases=["weave"]), encoding="utf-8"
+    )
+    assert evidence.storage_key_problems(tmp_path, expected=["J9-1440x900-viewer"]) == [
+        "J9-1440x900-viewer: 3 IndexedDB record(s) without an account, local: or ui: prefix"
+    ]
+
+
+def test_account_databases_and_records_left_in_indexed_db_after_removal_are_reported(tmp_path):
+    before = dump(records=[("weave", CONNECTED + "run.1")], databases=[CONNECTED + "drafts", "weave"])
+    for person in ("builder", "viewer"):
+        (tmp_path / f"J9-1440x900-{person}.json").write_text(before, encoding="utf-8")
+    # The builder's account record stays in a shared database; the viewer's account database stays, empty, which
+    # still names the account.
+    (tmp_path / "J9-1440x900-builder.after-removal.json").write_text(
+        dump(records=[("weave", CONNECTED + "run.1")], databases=["weave"]), encoding="utf-8"
+    )
+    (tmp_path / "J9-1440x900-viewer.after-removal.json").write_text(
+        dump(databases=[CONNECTED + "drafts", "weave"]), encoding="utf-8"
+    )
+    problems = evidence.storage_key_problems(tmp_path, expected=["J9-1440x900-builder", "J9-1440x900-viewer"])
+    assert problems == [
+        "J9-1440x900-builder: 0 IndexedDB account database(s) and 1 account record(s) left after its platform was "
+        "removed",
+        "J9-1440x900-viewer: 1 IndexedDB account database(s) and 0 account record(s) left after its platform was "
+        "removed",
+    ]
+    assert not any("run.1" in problem or "drafts" in problem for problem in problems)
+
+
+def test_a_dump_without_its_indexed_db_database_list_fails_the_key_check(tmp_path):
+    # Taken while the check was off: it cannot show an empty account database, so it never passes the check.
+    legacy = json.dumps({"local": {}, "session": {}, "indexed_db": []})
+    (tmp_path / "J9-1440x900-viewer.json").write_text(legacy, encoding="utf-8")
+    (tmp_path / "J9-1440x900-viewer.after-removal.json").write_text(dump(), encoding="utf-8")
+    assert evidence.storage_key_problems(tmp_path, expected=["J9-1440x900-viewer"]) == [
+        "J9-1440x900-viewer: a dump does not list its IndexedDB databases"
+    ]

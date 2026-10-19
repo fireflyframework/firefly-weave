@@ -57,6 +57,7 @@ import {
   redact,
   secretsOf,
   stepOutcome,
+  storageKeyCheckOn,
   viewportName,
 } from "./records";
 import type { SkippedCheck, StepRecord, StepState } from "./records";
@@ -67,6 +68,8 @@ const SERVICE = "firefly-weave";
 const STUDIO_PEOPLE = "studio-people.jsonl";
 // scripts/acceptance_evidence.py AFTER_REMOVAL: the dump taken after the platform was removed.
 const AFTER_REMOVAL = ".after-removal";
+// scripts/acceptance.py SCAN_CHECK: the scan's storage-key check.
+const KEY_CHECK = "J9.4/storage-keys";
 
 interface Enablement {
   profile: string;
@@ -146,11 +149,14 @@ interface StorageDump {
   local: Record<string, string>;
   session: Record<string, string>;
   indexed_db: { database: string; store: string; key: string; value: string }[];
+  /** Every IndexedDB database and its stores; only while the storage-key check runs. */
+  indexed_db_databases?: { name: string; stores: string[] }[];
 }
 
 async function dumpStorage(page: Page): Promise<StorageDump> {
-  // read-only audit: lists localStorage, sessionStorage and every IndexedDB record without changing them
-  return page.evaluate(async () => {
+  const listDatabases = storageKeyCheckOn(enablement().steps, KEY_CHECK);
+  // read-only audit: lists localStorage, sessionStorage and every IndexedDB database and record without changing them
+  return page.evaluate(async (listDatabases) => {
     const take = (storage: Storage) =>
       Object.fromEntries(
         Array.from({ length: storage.length }, (_, index) => storage.key(index))
@@ -158,6 +164,7 @@ async function dumpStorage(page: Page): Promise<StorageDump> {
           .map((key) => [key, storage.getItem(key) ?? ""]),
       );
     const indexed: StorageDump["indexed_db"] = [];
+    const databases: { name: string; stores: string[] }[] = [];
     for (const info of await indexedDB.databases()) {
       if (!info.name) continue;
       const name = info.name;
@@ -166,6 +173,7 @@ async function dumpStorage(page: Page): Promise<StorageDump> {
         opening.onsuccess = () => done(opening.result);
         opening.onerror = () => fail(opening.error);
       });
+      databases.push({ name, stores: Array.from(database.objectStoreNames) });
       for (const store of Array.from(database.objectStoreNames)) {
         await new Promise<void>((done, fail) => {
           const cursor = database
@@ -193,8 +201,9 @@ async function dumpStorage(page: Page): Promise<StorageDump> {
       local: take(localStorage),
       session: take(sessionStorage),
       indexed_db: indexed,
+      ...(listDatabases ? { indexed_db_databases: databases } : {}),
     };
-  });
+  }, listDatabases);
 }
 
 interface SignedIn {

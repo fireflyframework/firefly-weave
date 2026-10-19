@@ -25,6 +25,7 @@ import {
   redact,
   secretsOf,
   stepOutcome,
+  storageKeyCheckOn,
   viewportName,
 } from "./acceptance/records";
 
@@ -332,6 +333,23 @@ describe("browser storage dumps", () => {
     expect(dumpName("J9", "1440x900", "viewer", 3)).not.toBe(
       dumpName("J9", "1440x900", "viewer", 2),
     );
+  });
+
+  it("lists IndexedDB databases only while the storage-key check runs", () => {
+    const check = "J9.4/storage-keys";
+    expect(
+      storageKeyCheckOn({ [check]: { applies: true, missing: [] } }, check),
+    ).toBe(true);
+    expect(
+      storageKeyCheckOn(
+        { [check]: { applies: true, missing: ["editor-contracts"] } },
+        check,
+      ),
+    ).toBe(false);
+    expect(
+      storageKeyCheckOn({ [check]: { applies: false, missing: [] } }, check),
+    ).toBe(false);
+    expect(storageKeyCheckOn({}, check)).toBe(false);
   });
 
   it("accepts only storage read on the person's Studio host", () => {

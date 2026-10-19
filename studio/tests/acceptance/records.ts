@@ -222,6 +222,20 @@ export function dumpName(
   return ordinal > 1 ? `${base}-${ordinal}` : base;
 }
 
+/**
+ * Whether the scan checks Studio's storage keys in this run (`check` applies
+ * and none of its capabilities is missing). Only then does each dump also list
+ * every IndexedDB database with its stores, empty ones included, so the check
+ * covers IndexedDB as well as localStorage and sessionStorage.
+ */
+export function storageKeyCheckOn(
+  steps: Readonly<Record<string, StepState>>,
+  check: string,
+): boolean {
+  const state = steps[check];
+  return state !== undefined && state.applies && state.missing.length === 0;
+}
+
 /** Why a dump is not the person's Studio storage, or "" when it is. */
 export function dumpOriginProblem(origin: string, host: string): string {
   if (!host) return "storage was read before the Studio host started";

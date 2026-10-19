@@ -552,6 +552,10 @@ def test_the_studio_harness_writes_the_people_and_dumps_the_scan_expects():
     assert "dumpOriginProblem(dump.origin, signed.host)" in harness
     assert f'const AFTER_REMOVAL = "{acceptance.acceptance_evidence.AFTER_REMOVAL}";' in harness
     assert "`${base}${AFTER_REMOVAL}.json`" in harness
+    # Each dump lists IndexedDB databases exactly while the scan checks storage keys.
+    assert f'const KEY_CHECK = "{acceptance.SCAN_CHECK}";' in harness
+    assert "storageKeyCheckOn(enablement().steps, KEY_CHECK)" in harness
+    assert f"{acceptance.acceptance_evidence.DATABASES}: databases" in harness
 
 
 def test_a_second_sign_in_of_the_same_person_needs_its_own_dump(tmp_path):
@@ -602,13 +606,13 @@ def test_the_scan_checks_storage_keys_once_the_editor_prefixes_them(tmp_path, mo
     key = (
         "p0123456789abcdef:fedcba9876543210:11111111-2222-3333-4444-555555555555:66666666-7777-8888-9999-000000000000:x"
     )
-    before = {"local": {key: "v", "ui:w": "1"}, "session": {}, "indexed_db": []}
+    before = {"local": {key: "v", "ui:w": "1"}, "session": {}, "indexed_db": [], "indexed_db_databases": []}
     (storage / "J9-1440x900-viewer.json").write_text(json.dumps(before), encoding="utf-8")
     (storage / "J9-1440x900-viewer.after-removal.json").write_text(json.dumps(before), encoding="utf-8")
     with pytest.raises(acceptance.StageFailed, match="1 account key"):
         acceptance.scan(plan, FakeRecorder())
     assert scan_steps(plan)[-1]["status"] == "failed"
-    after = {"local": {"ui:w": "1"}, "session": {}, "indexed_db": []}
+    after = {"local": {"ui:w": "1"}, "session": {}, "indexed_db": [], "indexed_db_databases": []}
     (storage / "J9-1440x900-viewer.after-removal.json").write_text(json.dumps(after), encoding="utf-8")
     acceptance.scan(plan, FakeRecorder())
     assert scan_steps(plan)[-1]["status"] == "passed" and "skipped_checks" not in scan_steps(plan)[-1]
