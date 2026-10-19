@@ -21,7 +21,6 @@ SPDX-License-Identifier: Apache-2.0
 // references, their text, and what typed text means.
 import {
   isReference,
-  parseFormula,
   parseTemplate,
   type ParseOptions,
 } from "../../formula/grammar";
@@ -61,14 +60,6 @@ export function templateParts(expression: unknown): TemplatePart[] | null {
 /** A reference as formula text: a dotted path, brackets for other keys, or ref("…"). */
 export function refToPath(ref: string): string {
   return printRef(ref);
-}
-
-/** The pointer a reference's formula text names, or null when the text is anything else. */
-export function pathToRef(path: string): string | null {
-  const result = parseFormula(path, { features: [], loops: [] });
-  return result.kind === "ok" && isReference(result.expression)
-    ? result.expression.ref
-    : null;
 }
 
 export function partsToText(parts: TemplatePart[]): string {

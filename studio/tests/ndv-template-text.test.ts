@@ -18,7 +18,6 @@ SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from "vitest";
 import {
   partsToText,
-  pathToRef,
   refToPath,
   templateParts,
   textToExpression,
@@ -97,7 +96,7 @@ describe("template text", () => {
       ).toEqual([{ text: "Value: " }, { ref }]);
     }
   });
-  it("writes every reference as formula text and reads paths back", () => {
+  it("writes every reference as formula text", () => {
     expect(refToPath("/input/customerId")).toBe("input.customerId");
     expect(refToPath("/steps/check.v2/output/amount")).toBe(
       'steps["check.v2"].output.amount',
@@ -105,12 +104,6 @@ describe("template text", () => {
     expect(refToPath("/input/with space")).toBe('input["with space"]');
     expect(refToPath("/input/with~1slash")).toBe('input["with/slash"]');
     expect(refToPath("/custom")).toBe('ref("/custom")');
-    expect(pathToRef('steps["check.v2"].output.amount')).toBe(
-      "/steps/check.v2/output/amount",
-    );
-    expect(pathToRef("input")).toBe("/input");
-    expect(pathToRef("nope.x")).toBeNull();
-    expect(pathToRef("input.a > 1")).toBeNull();
   });
   it("turns typed text into a literal, a reference or a concat", () => {
     expect(textToExpression("plain")).toEqual({
