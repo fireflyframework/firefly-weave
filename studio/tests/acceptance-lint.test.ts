@@ -209,6 +209,27 @@ describe("the snippet corpus", () => {
     },
   );
 
+  it.each([
+    [
+      "const p = (page as any).__proto__;",
+      "reflective access in a journey: __proto__",
+    ],
+    [
+      "await page.evaluate(() => document.title);",
+      "page.evaluate without a read-only audit note",
+    ],
+    [
+      'await page.goto("https://idp.test/#access_token=abc");',
+      "token or script in a URL",
+    ],
+    [
+      "// read-only audit: the form\nawait page.evaluate(() => document.forms[0].submit());",
+      "write from the page: submit",
+    ],
+  ])("one rule alone catches %s", (code, rule) => {
+    expect(rules(code)).toEqual([rule]);
+  });
+
   it("refuses reflective names when they are destructured", () => {
     expect(rules("const { getPrototypeOf: gp } = Object; gp(page);")).toContain(
       "reflective access in a journey: getPrototypeOf",
