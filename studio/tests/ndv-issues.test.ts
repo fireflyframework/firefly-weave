@@ -833,10 +833,11 @@ describe("unapplied template text", () => {
     } as unknown as MutableHost;
     const controller = new StepDetailsController(host);
     await controller.loadFeatures();
+    const announced: string[] = [];
     const open = () =>
       new FormSession(host, controller, openRequest("summarize"), {
         confirm: async () => true,
-        announce: () => undefined,
+        announce: (text: string) => void announced.push(text),
       });
     const field = (session: FormSession) => {
       const injector = Injector.create({ providers: [] });
@@ -852,9 +853,23 @@ describe("unapplied template text", () => {
       component.controlId = signal("prompt-control") as never;
       return { component, spec, injector };
     };
-    return { model, host, controller, open, field };
+    return { model, host, controller, open, field, announced };
   }
   const type = (field: FormulaField, value: string) => field.typed(value);
+  it("drops into the editor only data the field can read", async () => {
+    const t = await templateHarness();
+    const session = t.open();
+    const { component, spec } = t.field(session);
+    const before = JSON.stringify(t.model.definition);
+    component.beginEdit();
+    component.dropText({ ref: "/steps/nowhere/output/name", pos: 0 });
+    expect(JSON.stringify(t.model.definition)).toBe(before);
+    expect(t.announced).toEqual(["This field cannot read that data."]);
+    const readable = session.scope(spec)[0];
+    expect(readable).toBeDefined();
+    component.dropText({ ref: readable.ref, pos: 0 });
+    expect(JSON.stringify(t.model.definition)).not.toBe(before);
+  });
   it("keeps the text across close and reopen, Not applied, with the last valid value saved", async () => {
     const t = await templateHarness();
     const before = JSON.stringify(t.model.definition);

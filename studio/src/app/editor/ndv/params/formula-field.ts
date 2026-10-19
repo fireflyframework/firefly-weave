@@ -63,6 +63,7 @@ import { FormulaResult } from "./formula-result";
 import { isMappedText } from "../pending-entries";
 import type { ParamSpec } from "../registry";
 import type { FormSession } from "./form-session";
+import type { DragRef } from "./drop";
 
 /** "Input › customerId" → its words for a screen reader. */
 const words = (breadcrumb: string) =>
@@ -636,6 +637,15 @@ export class FormulaField implements OnInit {
   dropText(drop: { ref: string; pos: number }) {
     this.reconcile();
     if (!this.canEdit()) return;
+    // Only data this field can read, as every other drop checks.
+    const session = this.session();
+    const spec = this.spec();
+    const drag = { ref: drop.ref } as DragRef;
+    const readable =
+      spec.type === "conditions"
+        ? !("reason" in session.conditionDrop(spec, drag))
+        : session.dragReference(spec, drag) !== null;
+    if (!readable) return session.announce("This field cannot read that data.");
     const path = printRef(drop.ref);
     const text = this.shownText();
     const pos = Math.max(0, Math.min(drop.pos, text.length));
