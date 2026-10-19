@@ -1016,6 +1016,226 @@ async def test_a_stale_call_of_an_ended_caller_never_ends_the_dispatch_scan(plat
     assert [row["status"] for row in await calls(platform, ended.id)] == ["cancelled"]
 
 
+async def test_waiting_calls_are_delivered_in_the_order_their_children_ended(platform):
+    loop = {
+        "id": "each",
+        "kind": "forEach",
+        "items": {"literal": ["c-1", "c-2"]},
+        "concurrency": 2,
+        "body": {
+            "steps": [call("notify", "notify@1.0.0", **{"with": {"object": {"customerId": {"ref": "/item"}}}})],
+            "output": {"ref": "/steps/notify/output/customerId"},
+        },
+    }
+    leaf = await activate(platform, NOTIFY)
+    run = await start(platform, await activate(platform, caller("orders", loop), notify=leaf.id))
+    await scan(platform, 1)
+    rows = {row["node_id"]: row for row in await calls(platform, run.id)}
+    assert {row["status"] for row in rows.values()} == {"succeeded"}
+    assert not any(row["delivered"] for row in rows.values())
+    # The second iteration's child ended first.
+    async with platform.access_db[1]() as session, session.begin():
+        await session.execute(
+            text("UPDATE run_calls SET ended_at=clock_timestamp()-interval '1 minute' WHERE id=:id"),
+            {"id": rows["notify[1]"]["id"]},
+        )
+    await scan(platform)
+    async with platform.access_db[1]() as session:
+        order = list(
+            (
+                await session.execute(
+                    text(
+                        "SELECT data->>'node_id' FROM run_events WHERE run_id=:id AND type='call_completed' "
+                        "ORDER BY sequence"
+                    ),
+                    {"id": run.id},
+                )
+            ).scalars()
+        )
+    assert order == ["notify[1]", "notify[0]"]
+    assert (await state(platform, run.id))["output"] == ["c-1", "c-2"]
+
+
+async def test_a_child_result_left_by_an_ended_caller_is_abandoned_and_the_child_can_be_purged(platform, provisioned):
+    from firefly_weave.access.models import Grant
+    from firefly_weave.contracts.run_lifecycle import RunLifecycleRequest, RunPurgeRequest
+    from firefly_weave.runtime.lifecycle import RunLifecycleService
+
+    leaf = await activate(platform, HOLD)
+    run = await start(platform, await activate(platform, caller("orders", call("hold", "hold@1.0.0")), hold=leaf.id))
+    await scan(platform)
+    [row] = await calls(platform, run.id)
+    await cancel(platform, row["child_run_id"])
+    # The child ended; before any scan delivers it, its caller ends too.
+    await cancel(platform, run.id)
+    [row] = await calls(platform, run.id)
+    assert (row["status"], row["delivered"]) == ("abandoned", False)
+    await platform.access_db[2].grant(
+        provisioned[0], platform.actor.id, Grant(role="execution_manager", scope=platform.scope)
+    )
+    lifecycle = RunLifecycleService(platform.runtime)
+    archived = await lifecycle.command(
+        platform.actor,
+        platform.scope,
+        row["child_run_id"],
+        RunLifecycleRequest(expected_revision=0, reason="archive"),
+        str(uuid4()),
+        action="archive",
+        context=AuditContext(),
+    )
+    await lifecycle.command(
+        platform.actor,
+        platform.scope,
+        row["child_run_id"],
+        RunPurgeRequest(expected_revision=archived.revision, reason="purge", confirm_run_id=row["child_run_id"]),
+        str(uuid4()),
+        action="purge",
+        context=AuditContext(),
+    )
+    async with platform.access_db[1]() as session:
+        assert not await session.scalar(text("SELECT count(*) FROM runs WHERE id=:id"), {"id": row["child_run_id"]})
+
+
+async def test_files_pass_into_a_child_with_its_input_and_back_to_the_caller_with_its_output(platform, provisioned):
+    import base64
+    import hashlib
+
+    from firefly_weave.access.models import Grant
+    from firefly_weave.contracts.files import FileChunk, FileCreate
+    from firefly_weave.files.service import FileService
+
+    await platform.access_db[2].grant(
+        provisioned[0], platform.actor.id, Grant(role="file_manager", scope=platform.scope)
+    )
+    actor = await platform.access_db[2].load_principal(platform.actor.id)
+    service = FileService(platform.definitions)
+    authority = dict(actor=actor, scope=platform.scope, context=AuditContext())
+
+    async def upload(name: str) -> dict:
+        content = name.encode()
+        request = FileCreate(
+            filename=name + ".pdf",
+            contentType="application/pdf",
+            sizeBytes=len(content),
+            sha256=hashlib.sha256(content).hexdigest(),
+        )
+        created = await service.create(request=request, idempotency_key=name, **authority)
+        chunk = FileChunk(index=0, contentBase64=base64.b64encode(content).decode())
+        await service.put_chunk(identifier=created.file.id, chunk=chunk, **authority)
+        ready = await service.finish(identifier=created.file.id, **authority)
+        return ready.file.model_dump(mode="json", by_alias=True)
+
+    sent, returned = await upload("order"), await upload("receipt")
+    keeper = {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {"name": "keeper", "version": "1.0.0"},
+        "spec": {
+            "callable": {},
+            "inputSchema": {},
+            "outputSchema": {},
+            "steps": [
+                {"id": "release", "kind": "signal", "name": "release", "timeoutSeconds": 3600, "payloadSchema": {}}
+            ],
+            "output": {"ref": "/steps/release/output"},
+        },
+    }
+    flow = {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {"name": "filing", "version": "1.0.0"},
+        "spec": {
+            "inputSchema": {},
+            "outputSchema": {},
+            "steps": [{"id": "keep", "kind": "callWorkflow", "uses": "keeper@1.0.0", "with": {"ref": "/input"}}],
+            "output": {"ref": "/steps/keep/output"},
+        },
+    }
+    from firefly_weave.contracts.runtime import StartRunRequest
+
+    leaf = await activate(platform, keeper)
+    run = await platform.runtime.start(
+        actor,
+        platform.scope,
+        StartRunRequest(activation_id=(await activate(platform, flow, keeper=leaf.id)).id, input={"doc": sent}),
+        str(uuid4()),
+        context=AuditContext(),
+    )
+    await scan(platform)
+    [row] = await calls(platform, run.id)
+
+    async def linked(run_id) -> set:
+        async with platform.access_db[1]() as session:
+            return set(
+                (
+                    await session.execute(text("SELECT file_id FROM weave_run_files WHERE run_id=:id"), {"id": run_id})
+                ).scalars()
+            )
+
+    assert str(UUID(sent["id"])) in {str(f) for f in await linked(row["child_run_id"])}
+    async with platform.runtime.definitions.transaction(platform.scope, None) as tx:
+        await platform.signals.deliver(
+            tx,
+            row["child_run_id"],
+            str(uuid4()),
+            "release",
+            {"doc": returned},
+            actor=actor,
+            scope=platform.scope,
+            context=AuditContext(),
+        )
+    await scan(platform)
+    assert (await state(platform, run.id))["output"] == {"doc": returned}
+    assert str(UUID(returned["id"])) in {str(f) for f in await linked(run.id)}
+
+
+async def test_a_child_inherits_the_correlation_key_the_test_flag_and_the_evaluated_business_key(platform):
+    from firefly_weave.contracts.runtime import StartRunRequest
+    from firefly_weave.operations.facts import RunStartFacts
+
+    leaf = await activate(platform, NOTIFY)
+    flow = await activate(
+        platform,
+        caller("orders", call("notify", "notify@1.0.0", businessKey={"ref": "/input/customerId"})),
+        notify=leaf.id,
+    )
+    run = await platform.runtime.start(
+        platform.actor,
+        platform.scope,
+        StartRunRequest(activation_id=flow.id, input={"customerId": "c-7"}, correlation_key="order-7"),
+        str(uuid4()),
+        context=AuditContext(),
+        start_facts=RunStartFacts(origin="test", test=True),
+    )
+    await scan(platform)
+    [row] = await calls(platform, run.id)
+    child = await platform.runtime.read(platform.actor, platform.scope, row["child_run_id"], context=AuditContext())
+    assert (child.correlation_key, child.business_key) == ("order-7", "c-7")
+    async with platform.access_db[1]() as session:
+        assert (
+            await session.scalar(text("SELECT test FROM run_facts WHERE run_id=:id"), {"id": row["child_run_id"]})
+            is True
+        )
+
+
+async def test_a_busy_caller_never_holds_back_the_calls_of_others(platform):
+    leaf = await activate(platform, NOTIFY)
+    flow = await activate(platform, caller("orders", call("notify", "notify@1.0.0", mode="detach")), notify=leaf.id)
+    busy, free = sorted([await start(platform, flow, "c-1"), await start(platform, flow, "c-2")], key=lambda r: r.id)
+    async with platform.access_db[1]() as session, session.begin():
+        await session.execute(
+            text("UPDATE run_calls SET requested_at=requested_at-interval '1 hour' WHERE caller_run_id=:id"),
+            {"id": busy.id},
+        )
+    async with platform.access_db[1]() as holder, holder.begin():
+        # Another transaction holds the busy caller's run row for the whole scan.
+        await holder.execute(text("SELECT id FROM runs WHERE id=:id FOR UPDATE"), {"id": busy.id})
+        await scan(platform, 1)
+        [held] = await calls(platform, busy.id)
+        [started] = await calls(platform, free.id)
+    assert (held["status"], started["status"]) == ("requested", "succeeded")
+
+
 async def test_a_child_whose_stop_is_refused_never_holds_back_the_cancellation_of_others(platform):
     loop = {
         "id": "each",
