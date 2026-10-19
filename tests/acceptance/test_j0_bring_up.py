@@ -22,6 +22,7 @@ step; the checks that later capabilities add run inside their step through run.c
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 import urllib.request
@@ -29,6 +30,7 @@ import urllib.request
 import pytest
 
 from firefly_weave import __version__
+from firefly_weave.contracts.surface import OPERATIONS
 from firefly_weave.sdk.platform import LOCAL_OWNER_ROLES, PERSON_ROLES
 
 pytestmark = pytest.mark.acceptance
@@ -125,6 +127,33 @@ def test_j0_04_people(run):
         assert len(run.keycloak_users(name)) == 1, name
 
 
+@pytest.mark.journey_step("J0.5")
+async def test_j0_05_approvers_group_bound_in_the_demo_environment(run):
+    group_request = OPERATIONS["human_groups.put"].request
+    binding_request = OPERATIONS["human_assignments.put"].request
+    async with run.client("approver") as approver:
+        identity = await approver.invoke("identity.read")
+        group = await approver.invoke(
+            "human_groups.put",
+            body=group_request.model_validate_json(
+                json.dumps({"name": "approvers", "member_ids": [str(identity.principal_id)]})
+            ),
+            idempotency_key=f"j0-05-group-{run.run_id}",
+        )
+        binding = await approver.invoke(
+            "human_assignments.put",
+            body=binding_request.model_validate_json(json.dumps({"name": "approvers", "group_ids": [str(group.id)]})),
+            idempotency_key=f"j0-05-binding-{run.run_id}",
+        )
+        listed = await approver.invoke("human_assignments.list")
+    assert group.name == "approvers" and group.member_ids == [identity.principal_id]
+    found = [
+        (item.name, item.group_ids, item.enabled) for item in listed.items if item.binding_id == binding.binding_id
+    ]
+    assert found == [("approvers", [group.id], True)]
+    run.save_private("human", {"group_id": str(group.id), "binding_id": str(binding.binding_id)})
+
+
 @pytest.mark.journey_step("J0.6")
 def test_j0_06_integrations(run):
     value = json.loads(run.require(run.platform("integrations", "enable", "--output", "json")).stdout)
@@ -163,6 +192,60 @@ def test_j0_08_fixtures_on_the_egress_network(run):
     assert list(networks) == [network]
     assert ACME_ALIAS in (networks[network].get("Aliases") or [])
     assert run.acme_control("/_control/journal") == {"entries": []}
+    run.check("J0.8/catalog", lambda: asyncio.run(_publish_catalog(run)))
+
+
+GRANTED = ["weave-connector-http-read@2.0.0", "weave-connector-http-write@2.0.0"]
+
+
+async def _publish_catalog(run) -> None:
+    """As the owner: connection acme-local, the five acme-* actions and risk-tier, then the release grant."""
+    from firefly_weave.contracts.catalog import PublicationRequest
+
+    catalog = run.helper("acceptance_catalog")
+    async with run.client("owner") as owner:
+        version = await catalog.connector_version(owner)
+        connection = await owner.invoke("connections.create", body=catalog.connection_request(version))
+        actions = {}
+        for name, document in catalog.actions().items():
+            published = await owner.invoke(
+                "definitions.publish",
+                collection="actions",
+                body=PublicationRequest(source=json.dumps(document), format="json"),
+                idempotency_key=f"j0-08-{name}-{run.run_id}",
+            )
+            actions[name] = str(published.id)
+        table = await owner.invoke(
+            "definitions.publish",
+            collection="decision-tables",
+            body=PublicationRequest(source=catalog.decision_table(), format="yaml"),
+            idempotency_key=f"j0-08-risk-tier-{run.run_id}",
+        )
+        listed = await owner.invoke("definitions.list", collection="actions", query={"limit": 100})
+        tables = await owner.invoke("definitions.list", collection="decision-tables", query={"limit": 100})
+    assert set(catalog.ACTION_NAMES) <= {getattr(item, "name", None) for item in listed.items}
+    assert ("risk-tier", "1.0.0") in {
+        (getattr(item, "name", None), getattr(item, "version", None)) for item in tables.items
+    }
+    granted = run.require(
+        run.platform(
+            "integrations",
+            "grant",
+            "--connection",
+            str(connection.id),
+            "--access",
+            "read",
+            "--access",
+            "write",
+            "--output",
+            "json",
+        )
+    )
+    assert sorted(json.loads(granted.stdout)["capabilities"]) == GRANTED
+    run.save_private(
+        "catalog",
+        {"connection_revision_id": str(connection.id), "actions": actions, "decision_table_id": str(table.id)},
+    )
 
 
 @pytest.mark.journey_step("J0.14")
