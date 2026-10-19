@@ -22,6 +22,7 @@ import { afterAll, describe, expect, it, vi } from "vitest";
 const listeners = vi.hoisted(() => {
   const added = new Set<unknown>();
   vi.stubGlobal("document", {
+    documentElement: { style: {} },
     addEventListener: (_type: string, listener: unknown) =>
       void added.add(listener),
     removeEventListener: (_type: string, listener: unknown) =>

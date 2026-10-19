@@ -20,7 +20,13 @@ SPDX-License-Identifier: Apache-2.0
 // with its own check that the workflow, account and view are the same.
 import "@angular/compiler";
 import { afterAll, describe, expect, it, vi } from "vitest";
-vi.hoisted(() => vi.stubGlobal("document", { addEventListener: vi.fn() }));
+vi.hoisted(() =>
+  vi.stubGlobal("document", {
+    addEventListener: vi.fn(),
+    // The formula editor reads this when step details load.
+    documentElement: { style: {} },
+  }),
+);
 const captured = vi.hoisted(() => ({
   host: null as null | Record<string, (...args: never[]) => unknown>,
   here: null as null | (() => boolean),

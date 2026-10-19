@@ -470,6 +470,15 @@ author = "Firefly Software Foundation"
 license = "Apache-2.0"
 
 [[exceptions]]
+path = "studio/tests/fixtures/expression-corpus.json"
+kind = "generated"
+source = "scripts/studio_expression_corpus.py"
+reason = "Strict JSON expression cases and the Python evaluator's results that Studio's formula previews must match; regenerate with the generator, which also checks freshness."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
 path = "studio/tests/fixtures/language/instance-keys.json"
 kind = "generated"
 source = "scripts/language_fixtures.py"

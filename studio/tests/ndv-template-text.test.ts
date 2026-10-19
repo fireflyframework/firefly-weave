@@ -18,14 +18,28 @@ SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from "vitest";
 import {
   partsToText,
-  pathToRef,
   refToPath,
   templateParts,
   textToExpression,
 } from "../src/app/editor/ndv/params/template-text";
 
 describe("template text", () => {
-  it("keeps formulas with mixed or extended parts out of editable template text", () => {
+  it("reads adjacent text pieces as one part, as the text shows them", () => {
+    expect(
+      templateParts({
+        op: {
+          name: "concat",
+          args: [
+            { literal: "a" },
+            { literal: "" },
+            { literal: "b" },
+            { ref: "/input/x" },
+          ],
+        },
+      }),
+    ).toEqual([{ text: "ab" }, { ref: "/input/x" }]);
+  });
+  it("keeps formulas with mixed or extended parts out of editable template parts", () => {
     expect(templateParts({ literal: "Hello", ref: "/input/name" })).toBeNull();
     expect(
       templateParts({
@@ -72,35 +86,24 @@ describe("template text", () => {
     ).toBeNull();
     expect(templateParts({ ref: "/input/name", literal: "hidden" })).toBeNull();
   });
-  it("writes references as dotted paths and back", () => {
-    expect(refToPath("/input/customerId")).toBe("input.customerId");
-    expect(refToPath("/steps/check.v2/output/amount")).toBe(
-      "steps.check.v2.output.amount",
-    );
-    expect(refToPath("/input/with space")).toBeNull();
-    expect(pathToRef("steps.check.v2.output.amount")).toBe(
-      "/steps/check.v2/output/amount",
-    );
-    expect(pathToRef("input")).toBe("/input");
-    expect(pathToRef("nope.x")).toBeNull();
-  });
-  it("rejects ambiguous step paths and unrepresentable keys without losing the original parts", () => {
-    for (const ref of [
-      "/steps/check.output/output/amount",
-      "/steps/check/output/with.dot",
-      "/input/with~1slash",
-      "/input/with~0tilde",
-      "/input/",
-      "input/name",
-      "/input/bad~2escape",
-    ]) {
-      expect(refToPath(ref)).toBeNull();
+  it("keeps references Studio can't write as paths in a template's parts", () => {
+    for (const ref of ["input/name", "/input/bad~2escape"]) {
+      expect(refToPath(ref)).toBe(`ref(${JSON.stringify(ref)})`);
       expect(
         templateParts({
           op: { name: "concat", args: [{ literal: "Value: " }, { ref }] },
         }),
       ).toEqual([{ text: "Value: " }, { ref }]);
     }
+  });
+  it("writes every reference as formula text", () => {
+    expect(refToPath("/input/customerId")).toBe("input.customerId");
+    expect(refToPath("/steps/check.v2/output/amount")).toBe(
+      'steps["check.v2"].output.amount',
+    );
+    expect(refToPath("/input/with space")).toBe('input["with space"]');
+    expect(refToPath("/input/with~1slash")).toBe('input["with/slash"]');
+    expect(refToPath("/custom")).toBe('ref("/custom")');
   });
   it("turns typed text into a literal, a reference or a concat", () => {
     expect(textToExpression("plain")).toEqual({
@@ -135,16 +138,21 @@ describe("template text", () => {
     });
     expect(textToExpression("Hi {{ input.name ")).toEqual({
       ok: false,
-      message: "Close the braces: {{ input.field }}.",
+      message: "The formula ends too early. Close the placeholder with `}}`.",
     });
     expect(textToExpression("Hi {{ 1 + 2 }}")).toEqual({
       ok: false,
-      message:
-        "Between the braces, name a field such as input.name or steps.check.output.amount.",
+      message: "Unexpected `+` at column 9.",
     });
     expect(textToExpression("Keep \\{{ braces }}")).toEqual({
       ok: true,
       value: { mode: "fixed", value: "Keep {{ braces }}" },
+    });
+    expect(
+      textToExpression("Total {{ coalesce(input.total, 0) }}"),
+    ).toMatchObject({
+      ok: true,
+      value: { mode: "mapped" },
     });
   });
 });

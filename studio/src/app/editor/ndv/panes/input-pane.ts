@@ -18,7 +18,9 @@ SPDX-License-Identifier: Apache-2.0
 // The Input pane: what the step can read. The source selector lists the
 // earlier steps the step can see, nearest first, then the workflow input;
 // Schema shows that source's fields (draggable), with the other sources as
-// "Also available". Table and JSON wait for data.
+// "Also available". Table and JSON wait for data. Compact (Edit formula's
+// column): the fields to drag, with the search and the source on one row,
+// and no header or empty-state text.
 import {
   ChangeDetectionStrategy,
   Component,
@@ -27,6 +29,7 @@ import {
   inject,
   input,
   signal,
+  type OnInit,
 } from "@angular/core";
 import { Icon } from "../../../icon";
 import {
@@ -55,49 +58,52 @@ import { ndvRegistry, type Json } from "../registry";
   standalone: true,
   changeDetection: ChangeDetectionStrategy.Eager,
   imports: [Icon, DataTree],
+  host: { "[class.is-compact]": "compact()" },
   template: `@let sources = this.sources();
     @let chosen = selectedSource();
     @let all = rows(chosen);
     @let shown = filter(all);
-    <header class="sd-pane-head">
-      <h3 class="sd-pane-title">Input</h3>
-      <div
-        class="pane-views"
-        role="radiogroup"
-        aria-label="Input view"
-        (keydown)="radioKey($event)"
-      >
-        @for (choice of views; track choice.id) {
-          <button
-            type="button"
-            role="radio"
-            [attr.aria-checked]="view() === choice.id"
-            [attr.tabindex]="view() === choice.id ? 0 : -1"
-            (click)="setView(choice.id)"
-          >
-            <weave-icon [name]="choice.icon" [size]="16" />{{ choice.label }}
-          </button>
-        }
-      </div>
-      <button
-        type="button"
-        class="icon-button pane-search-toggle"
-        aria-label="Search fields"
-        [attr.aria-expanded]="searching()"
-        (click)="toggleSearch()"
-      >
-        <weave-icon name="search" [size]="16" />
-      </button>
-    </header>
-    @if (searching()) {
+    @if (!compact()) {
+      <header class="sd-pane-head">
+        <h3 class="sd-pane-title">Input</h3>
+        <div
+          class="pane-views"
+          role="radiogroup"
+          aria-label="Input view"
+          (keydown)="radioKey($event)"
+        >
+          @for (choice of views; track choice.id) {
+            <button
+              type="button"
+              role="radio"
+              [attr.aria-checked]="view() === choice.id"
+              [attr.tabindex]="view() === choice.id ? 0 : -1"
+              (click)="setView(choice.id)"
+            >
+              <weave-icon [name]="choice.icon" [size]="16" />{{ choice.label }}
+            </button>
+          }
+        </div>
+        <button
+          type="button"
+          class="icon-button pane-search-toggle"
+          aria-label="Search fields"
+          [attr.aria-expanded]="searching()"
+          (click)="toggleSearch()"
+        >
+          <weave-icon name="search" [size]="16" />
+        </button>
+      </header>
+    }
+    @if (searching() || compact()) {
       <div class="pane-search-row">
         <input
           class="param-input pane-search"
-          aria-label="Search fields"
-          placeholder="Search fields"
+          [attr.aria-label]="searchLabel()"
+          [placeholder]="searchLabel()"
           [value]="query()"
           (input)="query.set($any($event.target).value)"
-          (keydown.escape)="closeSearch($event)"
+          (keydown.escape)="searchEscape($event)"
         />
       </div>
     }
@@ -133,8 +139,8 @@ import { ndvRegistry, type Json } from "../registry";
       <div class="pane-content">
         @if (!sources.length) {
           <p class="pane-empty-text">This step doesn't read data.</p>
-        } @else if (value() !== undefined && view() !== "schema") {
-          @if (view() === "table") {
+        } @else if (value() !== undefined && shownView() !== "schema") {
+          @if (shownView() === "table") {
             <p class="pane-empty-text">
               Table view isn't available for this sample yet.
             </p>
@@ -145,18 +151,22 @@ import { ndvRegistry, type Json } from "../registry";
             }}</pre>
           }
         } @else {
-          <div class="pane-empty">
-            <span class="pane-empty-icon" aria-hidden="true"
-              ><weave-icon name="play" [size]="20"
-            /></span>
-            <h4>No input data yet</h4>
-            <p>
-              Fields below show what this step can read. Executing previous
-              steps isn’t available yet.
-            </p>
-          </div>
-          @if (view() === "schema") {
-            <h4 class="pane-caption">Fields this step can read</h4>
+          @if (!compact()) {
+            <div class="pane-empty">
+              <span class="pane-empty-icon" aria-hidden="true"
+                ><weave-icon name="play" [size]="20"
+              /></span>
+              <h4>No input data yet</h4>
+              <p>
+                Fields below show what this step can read. Executing previous
+                steps isn’t available yet.
+              </p>
+            </div>
+          }
+          @if (shownView() === "schema") {
+            @if (!compact()) {
+              <h4 class="pane-caption">Fields this step can read</h4>
+            }
             <weave-data-tree
               [rows]="shown"
               label="Fields this step can read"
@@ -189,12 +199,22 @@ import { ndvRegistry, type Json } from "../registry";
       </div>
     </div>`,
 })
-export class InputPane {
+export class InputPane implements OnInit {
   session = input.required<FormSession>();
   /** The data the step received, once test data or a simulation provides it. */
   value = input<Json | undefined>(undefined);
   /** References already mapped in this step. */
   mapped = input<string[]>([]);
+  /** The search field's name and placeholder. */
+  searchLabel = input("Search fields");
+  /** Start with the search field open (the Edit formula dialog). */
+  openSearch = input(false);
+  /** Edit formula's column: fields only, the search always shown. */
+  compact = input(false);
+  /** The Edit formula dialog opens with the search field shown. */
+  ngOnInit() {
+    if (this.openSearch()) this.searching.set(true);
+  }
   readonly source = signal<string | null>(null);
   readonly view = signal<DataView>(savedView("input") ?? "schema");
   readonly searching = signal(false);
@@ -276,6 +296,18 @@ export class InputPane {
   }
   json(value: Json | undefined): string {
     return JSON.stringify(value, null, 2);
+  }
+  /** Compact shows the fields to drag, whatever view the pane last had. */
+  shownView(): DataView {
+    return this.compact() ? "schema" : this.view();
+  }
+  /** Escape in the search: clears it; compact keeps it shown and lets an empty one pass Escape on. */
+  searchEscape(event: Event) {
+    if (!this.compact()) return this.closeSearch(event);
+    if (!this.query()) return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.query.set("");
   }
   setView(view: DataView) {
     this.view.set(view);

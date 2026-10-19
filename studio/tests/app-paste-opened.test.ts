@@ -19,7 +19,13 @@ SPDX-License-Identifier: Apache-2.0
 // workflow opened meanwhile, even one whose opening count matches.
 import "@angular/compiler";
 import { afterAll, describe, expect, it, vi } from "vitest";
-vi.hoisted(() => vi.stubGlobal("document", { addEventListener: vi.fn() }));
+vi.hoisted(() =>
+  vi.stubGlobal("document", {
+    addEventListener: vi.fn(),
+    // The formula editor reads this when step details load.
+    documentElement: { style: {} },
+  }),
+);
 import { App } from "../src/app/app";
 import { readClipboard } from "../src/app/editor/state/clipboard";
 import { StructuredCanvasAdapter } from "../src/app/model";

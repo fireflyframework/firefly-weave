@@ -31,8 +31,10 @@ import type { DialogField, DialogOptions } from "../../../dialog";
 import {
   referenceScope,
   WORKFLOW,
+  type ReferenceScope,
   type Schema,
   type ScopeEntry,
+  type VisibleStep,
 } from "../../../forms/core/scope";
 import { decode, get } from "../../../forms/core/binding";
 import {
@@ -54,6 +56,8 @@ import type {
   PendingKind,
   PendingOwner,
 } from "../pending-entries";
+import { urlPreview, type UrlPreview } from "./url-preview";
+import { isMappedText } from "../pending-entries";
 import { retryProblem, retryShown } from "../settings/settings-rules";
 import {
   formState,
@@ -101,6 +105,7 @@ import {
   type FormSpec,
   type ParamSpec,
   type Path,
+  type PreviewResult,
 } from "../registry";
 import { connectorOf } from "../kinds/forms/action-forms";
 import { pathPlaceholders, recipeOf } from "../owned/owned-actions";
@@ -127,6 +132,16 @@ import {
   type HeldFact,
   type StepDetailsRequest,
 } from "../step-details-service";
+import { previewText, sourceLabel } from "../../formula/preview";
+import { checkFormula, type CheckScope } from "../../formula/check";
+import type { EditorRequest } from "../../formula/codemirror/formula-editor";
+import type { CompletionScope } from "../../formula/complete";
+import type { ParseOptions } from "../../formula/grammar";
+import {
+  enclosingLoops,
+  stepPointerOf,
+  type HostScopeEntry,
+} from "../../formula/loops";
 
 export type FormName = "parameters" | "settings";
 export interface SessionHooks {
@@ -159,6 +174,16 @@ const WHOLE_PATH =
 export class FormSession {
   /** Fields switched to Mapped that hold no mapping yet (the data picker is open). */
   private drafts = new Map<string, Path>();
+  /** Where a field's editor puts the caret when it next appears (`{{` typed in a Fixed field). */
+  private editorRequests = new Map<string, Omit<EditorRequest, "seq">>();
+  /**
+   * The formula field that has focus. While it has, the form keeps showing
+   * it even when what it writes would show another field at its path (a
+   * transform's Fields becoming Text), and the step's subtitle waits.
+   */
+  private focusedFormula: { spec: ParamSpec; top: boolean } | null = null;
+  /** Conditions the person chose to see as a formula. */
+  private formulaViews = new Set<string>();
 
   private readonly model;
   private readonly opened;
@@ -237,7 +262,60 @@ export class FormSession {
       : this.controller.parameters(this.target);
   }
   state(name: FormName): FormState {
-    return formState(this.form(name), this.controller.env(this.target));
+    const state = formState(this.form(name), this.controller.env(this.target));
+    const focused = this.focusedFormula;
+    if (!focused?.top) return state;
+    const kept = focused.spec;
+    if (state.fields.some((entry) => entry.spec.id === kept.id)) return state;
+    // Fields at its path, inside it or around it stand in for it while it
+    // has focus (Fields that would show as Text, a whole Input as rows).
+    const overlaps = (path: Path) => {
+      if (!path.length || !kept.path.length) return false;
+      const length = Math.min(path.length, kept.path.length);
+      return samePath(path.slice(0, length), kept.path.slice(0, length));
+    };
+    const replaced = state.fields.filter(
+      (entry) =>
+        overlaps(entry.spec.path) &&
+        (entry.spec.scope ?? "step") === (kept.scope ?? "step"),
+    );
+    if (!replaced.length) return state;
+    const fields: FieldEntry[] = [];
+    for (const entry of state.fields)
+      if (entry === replaced[0])
+        fields.push({ ...this.childEntry(kept), option: entry.option });
+      else if (!replaced.includes(entry)) fields.push(entry);
+    return { ...state, fields };
+  }
+  /** A formula field took focus: keep it on screen until it is left. */
+  focusFormula(spec: ParamSpec): void {
+    const descriptor = canonicalJson(spec);
+    const top = (["parameters", "settings"] as const).some((name) =>
+      this.state(name).fields.some(
+        (entry) =>
+          entry.spec.id === spec.id && canonicalJson(entry.spec) === descriptor,
+      ),
+    );
+    this.focusedFormula = { spec, top };
+  }
+  /** The formula field was left: the form shows what its value now reads as. */
+  private isFocusedFormula(spec: ParamSpec): boolean {
+    const focused = this.focusedFormula?.spec;
+    return (
+      !!focused &&
+      focused.id === spec.id &&
+      samePath(focused.path, spec.path) &&
+      (focused.scope ?? "step") === (spec.scope ?? "step")
+    );
+  }
+  leaveFormula(spec: ParamSpec, refresh = true): void {
+    if (!this.isFocusedFormula(spec)) return;
+    this.focusedFormula = null;
+    if (refresh) this.host.refreshView();
+  }
+  /** A formula field has focus (the step's subtitle waits for it). */
+  formulaFocused(): boolean {
+    return this.focusedFormula !== null;
   }
   subject(): FormSubject {
     return this.controller.subject(this.target);
@@ -385,12 +463,15 @@ export class FormSession {
     )
       return "mapped";
     const structured = ["fields", "keyValue", "list"].includes(spec.type);
+    // A formula being typed stays a formula until it is left, even when what
+    // it writes reads as rows (a record typed over a whole Input).
+    if (structured && this.isFocusedFormula(spec)) return "mapped";
     const mapped =
       (structured
         ? this.wholeMapping(spec)
         : this.read(spec).mode === "mapped") ||
       this.drafts.has(this.key(spec)) ||
-      this.held(spec)?.kind === "template";
+      isMappedText(this.held(spec)?.kind);
     return mapped ? "mapped" : spec.mapping === "both" ? "fixed" : null;
   }
 
@@ -411,7 +492,7 @@ export class FormSession {
     if (current.mode !== "mapped") {
       // Back to the fixed value: template text that didn't apply goes; a
       // number or JSON typed in the Fixed box shows again.
-      if (this.heldEntry(spec)?.kind === "template") this.release(spec);
+      if (isMappedText(this.heldEntry(spec)?.kind)) this.release(spec);
       this.drafts.delete(this.key(spec));
       return this.host.refreshView();
     }
@@ -561,6 +642,7 @@ export class FormSession {
         caret: null,
         templates: this.templates(spec),
         mode: this.mode(spec),
+        parse: this.formulaOptions(spec),
       });
       if (plan.kind === "refuse")
         return { fit: "refused" as const, text: plan.reason };
@@ -588,6 +670,25 @@ export class FormSession {
       if (rows) return rows(drop.entry);
       this.announce("Open the path's conditions to map data into them.");
       return false;
+    }
+    // Rows mapped as a whole by one reference show it as a pill: a drop on
+    // it replaces the reference, as on any other lone reference.
+    if (
+      (spec.type === "keyValue" || spec.type === "list") &&
+      this.wholeMapping(spec) &&
+      this.loneReference(spec)
+    ) {
+      const reference = this.dragReference(spec, drag);
+      if (!reference) {
+        this.announce("This field cannot read that data.");
+        return false;
+      }
+      const ok = this.write(spec, {
+        mode: "mapped",
+        expression: { ref: reference.ref },
+      });
+      if (ok) this.mapped(spec, reference);
+      return ok;
     }
     const reason = this.mappingReason(spec);
     if (reason) {
@@ -619,6 +720,7 @@ export class FormSession {
       caret: options.caret,
       templates: this.templates(spec),
       mode: this.mode(spec),
+      parse: this.formulaOptions(spec),
     });
     if (plan.kind === "refuse") {
       this.announce(plan.reason);
@@ -646,6 +748,17 @@ export class FormSession {
       );
     } else this.tipOnce();
     return true;
+  }
+  /** The value is exactly one reference. */
+  private loneReference(spec: ParamSpec): boolean {
+    const value = this.read(spec);
+    return (
+      value.mode === "mapped" &&
+      typeof value.expression === "object" &&
+      value.expression !== null &&
+      Object.keys(value.expression).length === 1 &&
+      typeof (value.expression as { ref?: unknown }).ref === "string"
+    );
   }
   private mapped(spec: ParamSpec, drag: DragRef) {
     const fit = dropFit(
@@ -959,6 +1072,187 @@ export class FormSession {
       this.controller.scopeOptions(),
     ).entries;
   }
+  /** What a formula at this field may use: the target's features and the loops around the step. */
+  formulaOptions(spec: ParamSpec): ParseOptions {
+    void spec;
+    return {
+      features: this.controller.features(),
+      loops: enclosingLoops(this.host.model.definition, this.target),
+    };
+  }
+  /** The host's entries for a field in a loop body; null outside loops or while loading. */
+  private hostEntries(spec: ParamSpec): HostScopeEntry[] | null {
+    const definition = this.host.model.definition;
+    if (!enclosingLoops(definition, this.target).length) return null;
+    const step = stepPointerOf(definition, this.target);
+    if (!step) return null;
+    const { field } = this.rootPointer(spec);
+    return (
+      this.controller.loopScopes.entries(definition, `${step}${field}`) ?? []
+    );
+  }
+  /** What the field can read: the host's answer inside a loop body, the offline scope elsewhere. */
+  formulaScope(spec: ParamSpec): ReferenceScope {
+    const hosted = this.hostEntries(spec);
+    if (!hosted) {
+      const { stepId, field } = this.rootPointer(spec);
+      return referenceScope(
+        this.host.model.definition,
+        stepId,
+        field,
+        this.controller.scopeOptions(),
+      );
+    }
+    const entries = hosted.filter(
+      (entry) => entry.source === "input" || entry.source === "step",
+    ) as unknown as ScopeEntry[];
+    const steps: VisibleStep[] = hosted
+      .filter((entry) => entry.source === "step" && entry.path.length === 0)
+      .map((entry) => {
+        const id = entry.ref
+          .split("/")[2]
+          .replace(/~1/g, "/")
+          .replace(/~0/g, "~");
+        return { id, kind: this.kindOf(id), schema: entry.schema };
+      });
+    return { found: true, evaluated: true, steps, entries, truncated: false };
+  }
+  private kindOf(id: string): string {
+    let kind = "action";
+    const visit = (node: unknown): void => {
+      if (Array.isArray(node)) node.forEach(visit);
+      else if (node && typeof node === "object") {
+        const record = node as Record<string, unknown>;
+        if (record["id"] === id && typeof record["kind"] === "string")
+          kind = record["kind"];
+        else Object.values(record).forEach(visit);
+      }
+    };
+    visit((this.host.model.definition as { spec?: unknown }).spec);
+    return kind;
+  }
+  /** The loop roots' entries (item, index, loops.<id>), inside loop bodies. */
+  loopEntries(spec: ParamSpec): HostScopeEntry[] {
+    return (this.hostEntries(spec) ?? []).filter(
+      (entry) => entry.source === "item" || entry.source === "index",
+    );
+  }
+  completionScope(spec: ParamSpec): CompletionScope {
+    const scope = this.formulaScope(spec);
+    const options = this.formulaOptions(spec);
+    return {
+      entries: scope.entries,
+      steps: scope.steps,
+      loops: options.loops,
+      loopEntries: this.loopEntries(spec),
+      features: options.features,
+      inputSchema: ((
+        this.host.model.definition.spec as Record<string, unknown>
+      )["inputSchema"] ?? {}) as Schema,
+    };
+  }
+  checkScope(spec: ParamSpec): CheckScope {
+    const ids = new Set<string>();
+    const visit = (node: unknown): void => {
+      if (Array.isArray(node)) node.forEach(visit);
+      else if (node && typeof node === "object") {
+        const record = node as Record<string, unknown>;
+        if (
+          typeof record["id"] === "string" &&
+          typeof record["kind"] === "string"
+        )
+          ids.add(record["id"]);
+        Object.values(record).forEach(visit);
+      }
+    };
+    visit(
+      (this.host.model.definition as { spec?: { steps?: unknown } }).spec
+        ?.steps,
+    );
+    return {
+      scope: this.formulaScope(spec),
+      stepIds: ids,
+      inputSchema: ((
+        this.host.model.definition.spec as Record<string, unknown>
+      )["inputSchema"] ?? {}) as Schema,
+      loopEntries: this.loopEntries(spec),
+    };
+  }
+  requestEditor(spec: ParamSpec, request: Omit<EditorRequest, "seq">): void {
+    this.editorRequests.set(this.key(spec), request);
+  }
+  takeEditorRequest(spec: ParamSpec): Omit<EditorRequest, "seq"> | null {
+    const key = this.key(spec);
+    const request = this.editorRequests.get(key) ?? null;
+    this.editorRequests.delete(key);
+    return request;
+  }
+  formulaView(spec: ParamSpec): boolean {
+    return this.formulaViews.has(this.key(spec));
+  }
+  setFormulaView(spec: ParamSpec, on: boolean): void {
+    if (on) this.formulaViews.add(this.key(spec));
+    else this.formulaViews.delete(this.key(spec));
+  }
+  /** The first warning the formula at this field gets from the schemas around it. */
+  formulaWarning(spec: ParamSpec): string | null {
+    const value = this.read(spec);
+    if (value.mode !== "mapped") return null;
+    return (
+      checkFormula(value.expression, this.checkScope(spec))[0]?.message ?? null
+    );
+  }
+  /** What a value resolves to at this field: a Fixed value as it is, a formula through the preview. */
+  previewOf(spec: ParamSpec, value: ParamValue): PreviewResult | null {
+    if (value.mode === "absent") return null;
+    if (value.mode === "fixed") return { ok: true, value: value.value };
+    return this.controller
+      .ndvContext(this.target)
+      .evaluate(value.expression, spec.path);
+  }
+  /** Where a value's data comes from, for the Result panel. */
+  previewSource(spec: ParamSpec, value: ParamValue): string {
+    void spec;
+    return value.mode === "mapped"
+      ? sourceLabel(value.expression, this.controller.previewData())
+      : "";
+  }
+
+  /**
+   * The full address a Call an API step calls, or why the connector would
+   * refuse it, once every value in it computes.
+   */
+  urlAddress(spec: ParamSpec): UrlPreview | null {
+    const path = this.urlPath(spec);
+    if (spec.type !== "urlTemplate" || !path) return null;
+    const values = new Map(
+      this.urlParts(spec).map((part) => [
+        String(part.path[2]),
+        this.previewOf(part, this.read(part)),
+      ]),
+    );
+    const entries = this.entries({
+      id: "probe",
+      path: ["with", "query"],
+      type: "keyValue",
+      label: "",
+    });
+    const query =
+      entries.kind === "object"
+        ? entries.keys.map((name) => {
+            const row: ParamSpec = {
+              id: `query.${name}`,
+              path: ["with", "query", name],
+              type: "text",
+              label: name,
+              mapping: "both",
+            };
+            return { name, preview: this.previewOf(row, this.read(row)) };
+          })
+        : [];
+    return urlPreview(path, values, query);
+  }
+
   /** The schema a field's value must fit, when the step's contract says. */
   expected(spec: ParamSpec): Schema | null {
     const subject = this.subject();
@@ -1034,16 +1328,27 @@ export class FormSession {
     );
     if (issue)
       return this.withFix({ kind: issue.severity, text: issue.message }, issue);
+    const warning = this.formulaWarning(spec);
+    if (warning) return { kind: "warning", text: warning };
+    const address = spec.type === "urlTemplate" ? this.urlAddress(spec) : null;
+    if (address && "refused" in address)
+      return {
+        kind: "warning",
+        text: `The connection would refuse this address: ${address.refused}.`,
+      };
+    if (address) return { kind: "preview", text: `= ${address.address}` };
     const value = this.read(spec);
     if (value.mode === "mapped") {
       const preview = this.controller
         .ndvContext(this.target)
         .evaluate(value.expression, spec.path);
-      if (preview?.ok)
+      if (preview?.ok) {
+        const shown = previewText(preview.value ?? null);
         return {
           kind: "preview",
-          text: `= ${JSON.stringify(preview.value)}`.slice(0, 200),
+          text: `= ${shown.text.replace(/\s*\n\s*/g, " ")}${shown.truncated ? "…" : ""}`,
         };
+      }
     }
     if (reason) return { kind: "reason", text: reason };
     if (spec.type === "connection")

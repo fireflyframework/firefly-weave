@@ -623,6 +623,8 @@ SPDX-License-Identifier: Apache-2.0
 :is(.step-details, .sd-form-scope) button.ref-pill-button {
   width: 100%;
   justify-content: flex-start;
+  /* Exactly a field's height: the pill inside never grows it. */
+  height: var(--sd-control);
   min-height: var(--sd-control);
   padding: 0 var(--space-2);
   background: var(--sunken);
@@ -1084,10 +1086,12 @@ SPDX-License-Identifier: Apache-2.0
 :is(.step-details, .sd-form-scope) button.add-option-item {
   display: flex;
   justify-content: flex-start;
-  align-items: baseline;
+  /* Centered, not on a baseline: the label and the smaller hint on one
+     baseline make a 17 px line, which would grow the row past its token. */
+  align-items: center;
   gap: var(--space-2);
   min-height: var(--sd-row);
-  padding: var(--space-1) var(--space-3);
+  padding: 0 var(--space-3);
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -1137,6 +1141,14 @@ SPDX-License-Identifier: Apache-2.0
   min-height: var(--sd-target);
 }
 /* A row's key and value controls are the row height. */
+:is(.step-details, .sd-form-scope)
+  .param-row-value
+  > .param
+  > .param-control
+  > weave-formula-field
+  > button.ref-pill-button {
+  height: var(--sd-row);
+}
 .param-kv-name,
 .param-row-value > .param > .param-control > .param-input,
 .param-row-value > .param > .param-control > weave-formula-field > .param-input,
@@ -1176,6 +1188,7 @@ SPDX-License-Identifier: Apache-2.0
   :is(.step-details, .sd-form-scope) button.add-option-item {
     flex-direction: column;
     align-items: flex-start;
+    padding-block: var(--space-1);
   }
   .add-option-item span {
     white-space: normal;
@@ -2015,4 +2028,334 @@ weave-param-field.is-conditions > .param > .param-line {
   min-width: var(--sd-target);
   height: var(--sd-target);
   min-height: var(--sd-target);
+}
+
+/* The formula editor: one box like the other inputs (36 px on desktop,
+   44 px on touch), the mono font for formulas, the body font for templates,
+   and room on the right for Edit formula. */
+.formula-control {
+  position: relative;
+  min-width: 0;
+}
+.formula-box {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  min-height: var(--sd-control);
+  padding-block: 0;
+  padding-inline: var(--space-3) calc(var(--space-3) + var(--sd-target));
+  font: var(--type-mono);
+  color: var(--text);
+  background: var(--sunken);
+  border: 1px solid var(--field-border);
+  border-radius: var(--radius-sm);
+}
+.formula-box.is-template {
+  font: var(--type-body);
+}
+/* The whole box is the text's target: the editor fills it edge to edge and
+   its one line sits in the middle (mono lines are 18 px, body lines 20 px). */
+.formula-box:not(.is-multiline) {
+  align-items: stretch;
+}
+.formula-box:not(.is-multiline) > .cm-editor {
+  margin-block: -1px;
+}
+.formula-box:not(.is-multiline) .cm-content {
+  /* The box's height whatever the line holds: a 20 px pill never grows it. */
+  box-sizing: border-box;
+  height: var(--sd-control);
+  padding-block: calc((var(--sd-control) - 18px) / 2);
+}
+.formula-box.is-template:not(.is-multiline) .cm-content {
+  padding-block: calc((var(--sd-control) - 20px) / 2);
+}
+/* In a key-value row the editor is the row's height, inside the row's own
+   box, as the data picker is. */
+:is(.step-details, .sd-form-scope)
+  .param-row-value
+  > .param
+  > .param-control
+  > weave-formula-field
+  .formula-box {
+  min-height: var(--sd-row);
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+:is(.step-details, .sd-form-scope)
+  .param-row-value
+  > .param
+  > .param-control
+  > weave-formula-field
+  .formula-box:not(.is-multiline)
+  .cm-content {
+  height: var(--sd-row);
+  padding-block: calc((var(--sd-row) - 18px) / 2);
+}
+:is(.step-details, .sd-form-scope)
+  .param-row-value
+  > .param
+  > .param-control
+  > weave-formula-field
+  .formula-box.is-template:not(.is-multiline)
+  .cm-content {
+  padding-block: calc((var(--sd-row) - 20px) / 2);
+}
+.formula-box:hover {
+  border-color: var(--field-border-hover);
+}
+.formula-box:focus-within {
+  border-color: var(--focus);
+  box-shadow: 0 0 0 1px var(--focus);
+}
+/* Invalid as Studio's inputs are: the danger border and a bar at the box's
+   own left edge (not on the text box inside, past the padding). */
+.formula-box.is-invalid,
+.param.has-error .formula-box {
+  border-color: var(--danger);
+  box-shadow: inset 3px 0 0 var(--danger);
+}
+.formula-box .cm-content[aria-invalid="true"] {
+  box-shadow: none;
+}
+.formula-box.is-readonly {
+  border-color: transparent;
+}
+.formula-box.is-multiline {
+  align-items: stretch;
+  padding-block: var(--space-3);
+  min-height: calc(3 * 20px + 2 * var(--space-3));
+  max-height: calc(12 * 20px + 2 * var(--space-3));
+  overflow-y: auto;
+}
+.formula-box .cm-formula-pill {
+  height: 20px;
+  /* As tall as the line, from its top: centered on the text, and the line
+     stays 20 px. */
+  vertical-align: top;
+  font: var(--type-caption);
+  cursor: default;
+}
+weave-formula-field {
+  position: relative;
+}
+/* Over button.icon-button's 36 px: one target size, centered in the box. */
+weave-formula-field > button.formula-expand {
+  position: absolute;
+  inset-inline-end: 2px;
+  top: calc((var(--sd-control) - var(--sd-target)) / 2);
+  width: var(--sd-target);
+  height: var(--sd-target);
+  min-height: var(--sd-target);
+}
+.param-formula-loading {
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+/* The suggestion list, drawn as Studio's other menus (Add option): the
+   raised surface, a 1 px border, the large radius and the menu shadow; the
+   menu's rows (32 px on desktop, 44 px on touch, the name over its type at
+   600 px and below), its label and caption type, and its keyboard row: the
+   highlight with the focus ring. The type sits at the right, as n8n's
+   suggestions show it. CodeMirror puts
+   .cm-tooltip on the list itself and draws it in <body> above step details;
+   the doubled class outranks CodeMirror's own tooltip theme. */
+.cm-tooltip.cm-formula-completions.cm-formula-completions {
+  --suggestion-row: var(--control-sm);
+  z-index: 30;
+  box-sizing: border-box;
+  max-height: min(320px, 50vh);
+  min-width: 240px;
+  /* The window less both gutters. */
+  max-width: min(420px, calc(100vw - 2 * var(--space-4)));
+  margin: 0;
+  padding: var(--space-1);
+  overflow-y: auto;
+  list-style: none;
+  font: var(--type-body);
+  color: var(--text);
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-2);
+}
+@media (max-width: 767px), (pointer: coarse) {
+  .cm-tooltip.cm-formula-completions.cm-formula-completions {
+    --suggestion-row: var(--control-touch);
+  }
+}
+.cm-formula-completions [role="option"] {
+  display: flex;
+  /* Centered, as in Add option: exactly the row token high. */
+  align-items: center;
+  gap: var(--space-2);
+  box-sizing: border-box;
+  min-height: var(--suggestion-row);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.cm-formula-completions [role="option"]:hover {
+  background: var(--hover);
+}
+/* The keyboard's row: the highlight and focus ring of a focused menu item. */
+.cm-formula-completions [aria-selected="true"] {
+  background: var(--hover);
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.cm-formula-option-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font: var(--type-label);
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cm-formula-option-detail {
+  flex: none;
+  margin-inline-start: auto;
+  font: var(--type-caption);
+  color: var(--muted);
+}
+@media (max-width: 600px) {
+  .cm-formula-completions [role="option"] {
+    flex-direction: column;
+    align-items: flex-start;
+    padding-block: var(--space-1);
+  }
+  .cm-formula-option-label {
+    flex: none;
+    max-width: 100%;
+  }
+  .cm-formula-option-detail {
+    margin-inline-start: 0;
+    white-space: normal;
+  }
+}
+
+/* The Result panel: under the focused field, in the form's flow. */
+.formula-result {
+  display: grid;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+  /* Scrolled into view when it opens, clear of the form's bottom edge. */
+  scroll-margin-block-end: var(--space-4);
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.formula-result-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+  font: var(--type-caption);
+  color: var(--muted);
+}
+.formula-result-title {
+  color: var(--text);
+  text-transform: uppercase;
+}
+.formula-result-value {
+  max-height: 160px;
+  margin: 0;
+  overflow: auto;
+  font: var(--type-mono);
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.formula-result-message,
+.formula-result-tip {
+  margin: 0;
+  font: var(--type-small);
+  color: var(--muted);
+}
+.formula-result-message[data-tone="danger"] {
+  color: var(--danger-ink);
+}
+.formula-result-more {
+  justify-self: start;
+}
+
+/* Edit formula: Input | formula | Result; one column below 768 px. The
+   Input column scrolls on its own, so the formula stays in view while a
+   field is dragged into it. */
+.modal-panel:has(> .edit-formula) {
+  display: flex;
+  flex-direction: column;
+}
+.edit-formula {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(0, 2fr);
+  gap: var(--space-4);
+  flex: 1 1 min(480px, 60vh);
+  min-height: 0;
+}
+.edit-formula-input {
+  min-height: 0;
+  overflow: auto;
+}
+.edit-formula-main weave-formula-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(200px, 1fr);
+  align-items: start;
+  gap: var(--space-3);
+}
+.edit-formula-main .formula-box.is-multiline {
+  min-height: min(360px, 50vh);
+  max-height: min(480px, 60vh);
+  /* No Edit formula button inside the dialog. */
+  padding-inline-end: var(--space-3);
+}
+.edit-formula-main .formula-result {
+  margin-top: 0;
+}
+/* Three columns (fields, formula, Result) while the dialog's content box
+   is wider than 760 px: it is 844 px at most (a 900 px panel less its
+   28 px sides), so every window of 1024 px and wider gets three. Narrower,
+   the fields and the formula share the width, with the Result under the
+   formula. */
+@container dialog (max-width: 760px) {
+  .edit-formula {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+  .edit-formula-main weave-formula-field {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+/* Narrow windows: the formula and its Result first, at their own height,
+   then the fields to drag up into it. */
+@media (max-width: 767px) and (min-height: 481px) {
+  .edit-formula,
+  .edit-formula-main weave-formula-field {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .edit-formula {
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .edit-formula-input {
+    order: 1;
+  }
+  .edit-formula-main .formula-box.is-multiline {
+    min-height: calc(3 * 20px + 2 * var(--space-3));
+  }
+}
+/* Short windows (a phone on its side, 200 % zoom): stacking would push the
+   fields out of sight, so they stay beside a two-line formula, both in
+   view for a drag. */
+@media (max-height: 480px) {
+  .edit-formula + .dialog-actions {
+    margin-top: var(--space-3);
+  }
+  .edit-formula-main .formula-box.is-multiline {
+    min-height: calc(2 * 20px + 2 * var(--space-3));
+  }
 }

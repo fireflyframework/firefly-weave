@@ -41,6 +41,7 @@ import {
   withNewEditor,
   yamlFile,
 } from "./step-details-po";
+import { formulaBox, formulaText, setTestInput } from "./formula-po";
 import { box, density, expectAligned } from "./step-geometry";
 import { connected, newWorkflow, offline, sourceText } from "./support";
 
@@ -461,7 +462,7 @@ for (const size of sizes)
       await expect(file).not.toContainText("Map a value.");
       await expect(fieldsWithProblems(details)).toHaveCount(0);
       // Entered and left empty, File asks for its value.
-      await file.getByRole("combobox", { name: "File" }).focus();
+      await formulaText(file).focus();
       await page.keyboard.press("Tab");
       await expect(file).toContainText("Map a value.");
     });
@@ -728,6 +729,27 @@ for (const size of allSizes)
       const destination = details.field("destination").locator(".param-input");
       const connection = details.field("connection").locator(".choice-field");
       await file.scrollIntoViewIfNeeded();
+      // An empty Mapped field is the formula editor: the same box as the
+      // fields around it, and its text box fills it as one full target.
+      const editor = await box(formulaBox(file));
+      expectAligned(
+        [editor.height, (await box(connection)).height, sizes.control],
+        "editor height",
+      );
+      const beside = await box(destination);
+      expectAligned([editor.x, beside.x], "editor left");
+      expectAligned([editor.right, beside.right], "editor right");
+      const textBox = await box(formulaText(file));
+      expect(textBox.height).toBeGreaterThanOrEqual(sizes.target - 0.5);
+      expect(textBox.width).toBeGreaterThanOrEqual(sizes.target - 0.5);
+      expect(textBox.y).toBeGreaterThanOrEqual(editor.y - 0.5);
+      expect(textBox.bottom).toBeLessThanOrEqual(editor.bottom + 0.5);
+      // Use data… opens the data picker, which looks like the other fields too.
+      await file
+        .getByRole("button", { name: "Field menu for File", exact: true })
+        .click();
+      await page.getByRole("menuitem", { name: /Use data…/ }).click();
+      await expect(picker.locator("input")).toBeFocused();
       const field = await box(picker);
       // The same box as the fields around it, at the density's height.
       expectAligned(
@@ -753,7 +775,6 @@ for (const size of allSizes)
         expect(target.y).toBeGreaterThanOrEqual(field.y - 0.5);
         expect(target.bottom).toBeLessThanOrEqual(field.bottom + 0.5);
       }
-      // A field switched to Mapped while empty shows the same picker.
       await details.close();
       await addCommonStep(page, "Send email");
       await expect(details.dialogFor("send-email")).toBeVisible();
@@ -764,10 +785,25 @@ for (const size of allSizes)
         .getByRole("radiogroup", { name: "Value mode for Message" })
         .getByRole("radio", { name: "Mapped" })
         .click();
-      const mapped = message.locator(".ref-combo-field");
-      await expect(mapped.locator("input")).toBeFocused();
+      // A field switched to Mapped while empty puts the caret in the editor.
+      const mapped = formulaBox(message);
+      await expect(formulaText(message)).toBeFocused();
       expectAligned([(await box(mapped)).height, sizes.control], "Message");
-      expect(await fontSize(mapped.locator("input"))).toBe(bodySize);
+      // A formula is written in the mono font (templates use the body font).
+      expect(
+        await mapped.evaluate((element) => {
+          const probe = document.createElement("span");
+          probe.style.font = "var(--type-mono)";
+          element.append(probe);
+          const font = getComputedStyle(probe).font;
+          probe.remove();
+          // The text itself: CodeMirror's content, not the host around it.
+          return (
+            getComputedStyle(element.querySelector(".cm-content")!).font ===
+            font
+          );
+        }),
+      ).toBe(true);
       // In a key-value row, the picker is the row's height.
       await details.close();
       await addCommonStep(page, "Call an API");
@@ -784,8 +820,8 @@ for (const size of allSizes)
         .getByRole("radiogroup", { name: "Value mode for Value" })
         .getByRole("radio", { name: "Mapped" })
         .click();
-      const inRow = row.locator(".ref-combo-field");
-      await expect(inRow.locator("input")).toBeFocused();
+      const inRow = formulaBox(row);
+      await expect(formulaText(row)).toBeFocused();
       expectAligned(
         [
           (await box(inRow)).height,
@@ -799,5 +835,63 @@ for (const size of allSizes)
           () => document.documentElement.scrollWidth <= window.innerWidth + 1,
         ),
       ).toBe(true);
+    });
+  });
+
+for (const size of sizes)
+  test.describe(`the URL's full address at ${size.tag}`, () => {
+    test.use({ viewport: { width: size.width, height: size.height } });
+
+    test("the URL shows the full address once its values compute", async ({
+      page,
+    }) => {
+      await withLanguageFeatures(page);
+      const details = await openStepFixture(page, stepFixture, authoring);
+      await addCommonStep(page, "Call an API");
+      const url = details.field("url");
+      await url
+        .getByRole("textbox", { name: "URL" })
+        .fill("/customers/{id}/orders");
+      const id = details.dialog
+        .locator('[data-param="url.path.id"]')
+        .getByRole("textbox")
+        .first();
+      await id.fill("c 1042");
+      await id.press("Tab");
+      await expect(url.locator(":scope > .param > .param-line")).toHaveText(
+        "= Connection address/customers/c%201042/orders",
+      );
+    });
+
+    test("the URL says when the connection would refuse a value instead of showing an address", async ({
+      page,
+    }) => {
+      await withLanguageFeatures(page);
+      const details = await openStepFixture(page, stepFixture, authoring);
+      await setTestInput(page, details, {
+        "Customer ID": "c-1042",
+        Email: "ada@example.com",
+        Amount: "1500",
+      });
+      await addCommonStep(page, "Call an API");
+      const url = details.field("url");
+      await url
+        .getByRole("textbox", { name: "URL" })
+        .fill("/customers/{id}/orders");
+      const id = details.dialog
+        .locator('[data-param="url.path.id"]')
+        .getByRole("textbox")
+        .first();
+      // The amount is a number: the action sends {id} as text.
+      await id.press("=");
+      const row = details.dialog.locator('[data-param="url.path.id"]');
+      await expect(formulaText(row)).toBeFocused();
+      await page.keyboard.insertText("input.amount");
+      await page.keyboard.press("Tab");
+      const line = url.locator(":scope > .param > .param-line");
+      await expect(line).toHaveText(
+        "The connection would refuse this address: {id} must be text, not a whole number.",
+      );
+      await expect(line).not.toContainText("= Connection address");
     });
   });

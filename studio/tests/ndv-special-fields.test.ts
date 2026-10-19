@@ -27,6 +27,8 @@ import { StructuredCanvasAdapter, type Workflow } from "../src/app/model";
 import { loadKindRegistrations } from "../src/app/editor/ndv/kinds";
 import { withOwnedAction } from "../src/app/editor/ndv/owned/owned-store";
 import { FormSession } from "../src/app/editor/ndv/params/form-session";
+import { FormulaField } from "../src/app/editor/ndv/params/formula-field";
+import { Injector, runInInjectionContext, signal } from "@angular/core";
 import { StepDetailsController } from "../src/app/editor/ndv/step-details-controller";
 import { openRequest } from "../src/app/editor/ndv/step-details-service";
 import type { StepDetailsHost } from "../src/app/editor/ndv/step-details-host";
@@ -36,6 +38,13 @@ import {
   STALE_EXAMPLE,
 } from "../src/app/editor/ndv/params/schema-field";
 
+vi.hoisted(() =>
+  vi.stubGlobal("document", {
+    addEventListener: vi.fn(),
+    // The formula editor reads this when it loads.
+    documentElement: { style: {} },
+  }),
+);
 beforeAll(() => loadKindRegistrations());
 afterAll(() => vi.unstubAllGlobals());
 
@@ -339,6 +348,22 @@ describe("a decision's conditions", () => {
     expect(f.form.mapTargets().some((spec) => spec.id === "case.when")).toBe(
       true,
     );
+  });
+
+  it("take into their formula only dropped data the path can read", () => {
+    const f = conditions();
+    const injector = Injector.create({ providers: [] });
+    const field = runInInjectionContext(injector, () => new FormulaField());
+    field.session = signal(f.form) as never;
+    field.spec = signal(f.when) as never;
+    field.controlId = signal("when-control") as never;
+    const before = JSON.stringify(f.model.definition);
+    field.dropText({ ref: "/steps/route-by-value/output", pos: 0 });
+    expect(JSON.stringify(f.model.definition)).toBe(before);
+    expect(f.announcements).toEqual(["This field cannot read that data."]);
+    field.dropText({ ref: "/input/amount", pos: 0 });
+    expect(JSON.stringify(f.model.definition)).not.toBe(before);
+    injector.destroy();
   });
 
   it("place mapped data through the rows on screen, which hold unfinished conditions", () => {

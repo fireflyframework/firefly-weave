@@ -24,7 +24,10 @@ SPDX-License-Identifier: Apache-2.0
 // field, described as it was, over the value it was typed on: when either
 // changes, the entry goes. Nothing here is stored anywhere else.
 
-export type PendingKind = "number" | "json" | "template" | "note";
+export type PendingKind = "number" | "json" | "template" | "formula" | "note";
+/** Template or formula text that doesn't parse: the field stays Mapped while it waits. */
+export const isMappedText = (kind: PendingKind | undefined): boolean =>
+  kind === "template" || kind === "formula";
 export interface PendingEntry {
   kind: PendingKind;
   /** What is on screen. */

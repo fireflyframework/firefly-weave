@@ -26,6 +26,7 @@ import {
   withNewEditor,
   yamlFile,
 } from "./step-details-po";
+import { formulaBox, formulaText, suggestions } from "./formula-po";
 import { connected, lookupAction, sourceText } from "./support";
 import { hasPython, stopLocalAuthoring } from "./local-authoring";
 import { openHttpStep } from "./step-http";
@@ -543,12 +544,16 @@ for (const size of sizes)
           .getByRole("radio", { name: "Mapped", exact: true }),
       ).toBeChecked();
       // Choosing the current input is an explicit replacement of the rows.
-      await value
-        .getByRole("combobox", { name: "Fields", exact: true })
-        .fill("/input");
-      await value
-        .getByRole("combobox", { name: "Fields", exact: true })
-        .press("Enter");
+      await expect(formulaText(value)).toBeFocused();
+      // The editor shows the rows as one formula; typing over it replaces them.
+      await page.keyboard.press("ControlOrMeta+a");
+      await page.keyboard.type("input");
+      await expect(formulaBox(value)).toHaveAttribute("data-text", "input");
+      // The root is offered while it is typed; Escape closes the list.
+      await expect(suggestions(page)).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(suggestions(page)).toHaveCount(0);
+      await page.keyboard.press("Tab");
       await value
         .getByRole("button", { name: "Field menu for Fields", exact: true })
         .click();
