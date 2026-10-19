@@ -320,6 +320,47 @@ test.describe("the formula editor's keys", () => {
     await withLanguageFeatures(page);
   });
 
+  test("Backspace after a reference pill removes the whole reference", async ({
+    page,
+  }) => {
+    const details = await openStepFixture(page, formulasFixture);
+    await details.openWithKeyboard("flag");
+    const field = details.field("value");
+    await replaceFormula(page, field, "1 < input.amount");
+    // The caret is right after the pill: one Backspace takes it all.
+    await page.keyboard.press("Backspace");
+    await expect(formulaBox(field)).toHaveAttribute("data-text", "1 < ");
+    // Escape (after closing any suggestions) brings back the formula the
+    // workflow kept.
+    if (await suggestions(page).count()) await page.keyboard.press("Escape");
+    await expect(suggestions(page)).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await expect(formulaBox(field)).toHaveAttribute(
+      "data-text",
+      "1 < input.amount",
+    );
+  });
+
+  test("Delete on a lone reference pill clears the field, and one Undo brings it back", async ({
+    page,
+  }) => {
+    const details = await openStepFixture(page, formulasFixture);
+    await details.openWithKeyboard("review");
+    const context = details.field("context");
+    const pill = context.getByRole("button", { name: /^reference check/ });
+    await pill.focus();
+    await page.keyboard.press("Delete");
+    await expect(pill).toHaveCount(0);
+    await page.keyboard.press("ControlOrMeta+z");
+    await expect(pill).toBeVisible();
+    await details.close();
+    expect(
+      parse(await sourceText(page)).spec.steps.find(
+        (step: { id: string }) => step.id === "review",
+      ).context,
+    ).toEqual({ ref: "/steps/check/output" });
+  });
+
   test("Ctrl or Cmd+Z in a formula runs exactly one workflow Undo", async ({
     page,
   }) => {
