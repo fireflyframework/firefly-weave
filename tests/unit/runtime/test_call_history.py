@@ -121,3 +121,64 @@ def test_exports_keep_a_call_output_only_when_the_called_workflow_schema_classif
     extra = event.model_copy(update={"data": {**DONE[1], "input": {"customerId": "c-1"}}})
     projected = safe_event(extra, flow)
     assert "input" not in projected.data and projected.data["output"] == {"tier": "gold"}
+
+
+def test_a_receipt_that_names_another_call_row_is_inconsistent():
+    flow = compiled([call()], {"ref": "/steps/enrich/output"})
+    events = list(recorded(flow, [("started", {"admission_policy": "classified-v1"}), DONE]))
+    evidence = dict(events[1].evidence or {})
+    receipt = dict(evidence["call_receipt"])
+    receipt["call"] = {**receipt["call"], "call_id": str(uuid4())}
+    evidence["call_receipt"] = receipt
+    events[1] = events[1].model_copy(update={"evidence": evidence})
+    report = replay(flow, tuple(events))
+    assert (report.status, [d.code for d in report.diagnostics]) == ("inconsistent", ["WV-REPLAY-CALL"])
+
+
+def test_a_call_row_issued_twice_is_inconsistent():
+    flow = compiled([call(), call("again")], {"ref": "/steps/again/output"})
+    events = list(recorded(flow, [("started", {"admission_policy": "classified-v1"}), DONE]))
+    first = (events[0].evidence or {})["issued_calls"][0]
+    evidence = dict(events[1].evidence or {})
+    [second] = evidence["issued_calls"]
+    assert second["node_id"] == "again"
+    evidence["issued_calls"] = [{**second, "call_id": first["call_id"]}]
+    events[1] = events[1].model_copy(update={"evidence": evidence})
+    report = replay(flow, tuple(events))
+    assert (report.status, [d.code for d in report.diagnostics]) == ("inconsistent", ["WV-REPLAY-CALL-ISSUANCE"])
+
+
+def test_exports_withhold_a_call_output_the_called_workflow_marks_write_only():
+    import json
+
+    from test_call_kernel import CALLEE
+
+    from firefly_weave.compiler.api import compile_source
+    from firefly_weave.compiler.catalog import CatalogSnapshot
+    from firefly_weave.contracts.definitions import load_definition
+
+    callee = json.loads(json.dumps(CALLEE))
+    callee["spec"]["outputSchema"]["properties"]["token"] = {"type": "string", "writeOnly": True}
+    document = {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {"name": "orders", "version": "1.0.0"},
+        "spec": {
+            "inputSchema": {"type": "object", "properties": {"customerId": {"type": "string"}}},
+            "outputSchema": {},
+            "steps": [call()],
+            "output": {"literal": None},
+        },
+    }
+    result = compile_source(
+        json.dumps(document), format="json", catalog=CatalogSnapshot.from_definitions([load_definition(callee)])
+    )
+    assert result.ok, result.to_bytes()
+    output = {"tier": "gold", "token": "t-123"}
+    event = RuntimeEvent(
+        id=uuid4(), type="call_completed", timestamp=NOW, sequence=2, data={**DONE[1], "output": output}
+    )
+    projected = safe_event(event, result.artifact)
+    # The called workflow's own output schema classifies the value: a write-only property withholds the output.
+    assert "output" not in projected.data and "t-123" not in json.dumps(projected.model_dump(mode="json"))
+    assert projected.data == {key: value for key, value in DONE[1].items() if key != "output"}
