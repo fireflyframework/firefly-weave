@@ -216,6 +216,31 @@ for (const size of sizes)
       expect(layers.list).toBeLessThan(layers.skip);
     });
 
+    test("Escape in Edit formula's search clears it, then closes the dialog", async ({
+      page,
+    }) => {
+      const details = await openStepFixture(page, formulasFixture);
+      await details.openWithKeyboard("flag");
+      await details
+        .field("value")
+        .getByRole("button", { name: "Edit formula" })
+        .click();
+      const dialog = page.getByRole("dialog", { name: "Edit formula: Fields" });
+      const search = dialog.getByRole("textbox", {
+        name: "Search fields of earlier steps",
+      });
+      await search.fill("cust");
+      await expect(dialog.locator(".data-tree > li")).toHaveCount(1);
+      await page.keyboard.press("Escape");
+      await expect(search).toHaveValue("");
+      await expect(search).toBeFocused();
+      await expect(dialog).toBeVisible();
+      await expect(dialog.locator(".data-tree > li")).toHaveCount(2);
+      await page.keyboard.press("Escape");
+      await expect(dialog).toHaveCount(0);
+      await expect(details.dialog).toBeVisible();
+    });
+
     test("Escape in Edit formula closes the list, then the dialog", async ({
       page,
     }) => {

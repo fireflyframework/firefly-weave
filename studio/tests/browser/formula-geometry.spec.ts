@@ -35,6 +35,8 @@ import {
   boxes,
   clippedText,
   density,
+  formScroller,
+  visibleArea,
   expectAligned,
   intersects,
   showParameters,
@@ -77,8 +79,9 @@ for (const size of sizes)
       ).toBeLessThanOrEqual(1);
       expectAligned([editor.x, assign.x], "left edges");
       expectAligned([editor.right, assign.right], "right edges");
-      expect(expand.width).toBeGreaterThanOrEqual(want.target);
-      expect(expand.height).toBeGreaterThanOrEqual(want.target);
+      // 32 px on desktop, 44 px on touch: the icon buttons' size.
+      expect(expand.width, "⤢ width").toBe(want.row);
+      expect(expand.height, "⤢ height").toBe(want.row);
       expect(expand.right).toBeLessThanOrEqual(editor.right);
       expectAligned([expand.middle, editor.middle], "⤢ centered");
       const pills = await boxes(title.locator(".cm-formula-pill"));
@@ -140,10 +143,12 @@ for (const size of sizes)
       await formulaText(title).click();
       const region = title.getByRole("region", { name: "Result of Title" });
       await expect(region).toContainText("1500");
-      // Opening it scrolls the form so all of it shows.
+      // Opening it scrolls the form so all of it shows, 16 px clear of the
+      // form's visible bottom.
+      const form = await visibleArea(formScroller(page, details.dialog));
       await expect
         .poll(async () => (await box(region)).bottom)
-        .toBeLessThanOrEqual(size.height);
+        .toBeLessThanOrEqual(Math.min(size.height, form.bottom) - 16 + 0.5);
       const panel = await box(region);
       const editor = await box(formulaBox(title));
       const next = await box(details.field("answers"));
