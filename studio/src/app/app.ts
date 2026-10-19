@@ -452,6 +452,27 @@ export class App implements CanvasHost {
   platformBusy = "";
   // Fences platform checks and status reads against later platform changes.
   private platformGeneration = 0;
+  /** Checks of who is signed in that have not answered yet. */
+  private identityChecks?: Set<Promise<unknown>>;
+  /**
+   * True while Studio is still finding out who is signed in: until it
+   * answers, the person a command would be sent for is not known.
+   */
+  get checkingIdentity() {
+    return !!this.identityChecks?.size;
+  }
+  /** Resolves once no check of who is signed in is still out. */
+  async identitySettled() {
+    while (this.identityChecks?.size)
+      await Promise.allSettled([...this.identityChecks]);
+  }
+  private trackIdentity<T>(check: Promise<T>): Promise<T> {
+    const checks = (this.identityChecks ??= new Set());
+    checks.add(check);
+    const done = () => checks.delete(check);
+    check.then(done, done);
+    return check;
+  }
   private stepDataGeneration = 0;
   private stepDataPrincipal = "";
   /** Samples follow account invalidation, while routine same-account checks retain them. */
@@ -7580,7 +7601,10 @@ export class App implements CanvasHost {
   pretty(value: unknown) {
     return JSON.stringify(value, null, 2);
   }
-  async loadIdentity() {
+  loadIdentity() {
+    return this.trackIdentity(this.readIdentity());
+  }
+  private async readIdentity() {
     if (!this.profile) return;
     const sampleScope = this.stepDataScope;
     try {
@@ -7694,7 +7718,10 @@ export class App implements CanvasHost {
    * Reads the host's platform connection and checks the active platform
    * silently. Failures become a non-blocking notice; local work never waits.
    */
-  async verifyPlatform(startup = false) {
+  verifyPlatform(startup = false) {
+    return this.trackIdentity(this.readPlatform(startup));
+  }
+  private async readPlatform(startup: boolean) {
     const generation = ++this.platformGeneration;
     const status = await this.connection.status().catch(() => null);
     if (generation !== this.platformGeneration || !this.paired) return;
@@ -7719,7 +7746,10 @@ export class App implements CanvasHost {
     }
     await this.checkPlatform(generation);
   }
-  private async checkPlatform(generation = ++this.platformGeneration) {
+  private checkPlatform(generation = ++this.platformGeneration) {
+    return this.trackIdentity(this.testPlatform(generation));
+  }
+  private async testPlatform(generation: number) {
     const sampleScope = this.stepDataScope;
     const name = this.profile?.name ?? "";
     try {

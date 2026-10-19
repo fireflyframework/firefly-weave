@@ -1521,6 +1521,69 @@ test.describe("another person on the same environment", () => {
     ).toHaveCount(0);
   });
 
+  test("a bulk action waits for the sign-in check before its next send", async ({
+    page,
+  }) => {
+    const people = await janeThenJohn(page);
+    const sent: { person: string; path: string }[] = [];
+    let releaseDrain: () => void = () => undefined;
+    const drainHeld = new Promise<void>((resolve) => (releaseDrain = resolve));
+    let reached: () => void = () => undefined;
+    const out = new Promise<void>((resolve) => (reached = resolve));
+    await page.route("**/workers/*/drain", async (r) => {
+      sent.push({
+        person: people.person(),
+        path: new URL(r.request().url()).pathname
+          .split("/")
+          .slice(-2)
+          .join("/"),
+      });
+      if (sent.length === 1) {
+        reached();
+        await drainHeld;
+      }
+      await r.fulfill({ json: { revoked: false } }).catch(() => undefined);
+    });
+    // The check of who is signed in stays out until the first drain's
+    // answer is on screen, however fast or slow this machine is.
+    let answerCheck: () => void = () => undefined;
+    const checkHeld = new Promise<void>((resolve) => (answerCheck = resolve));
+    let checking: () => void = () => undefined;
+    const checkOut = new Promise<void>((resolve) => (checking = resolve));
+    await page.route("**/studio/connection/test", async (r) => {
+      if (people.person() === "john") {
+        checking();
+        await checkHeld;
+      }
+      await r.fallback();
+    });
+    await page.getByLabel("Select every worker on this list, up to 50").check();
+    await page
+      .getByRole("region", { name: "Selected workers" })
+      .getByRole("button", { name: "Drain" })
+      .click();
+    await page
+      .getByRole("dialog", { name: "Drain 3 workers?" })
+      .getByRole("button", { name: "Drain" })
+      .click();
+    await out;
+    await people.switch();
+    await checkOut;
+    releaseDrain();
+    const results = page.getByRole("region", { name: "Drain workers" });
+    await expect(results).toContainText("Draining.");
+    // Nothing else goes out while Studio doesn't know who is signed in.
+    await page.waitForTimeout(300);
+    expect(sent).toEqual([{ person: "jane", path: `${online}/drain` }]);
+    answerCheck();
+    await expect
+      .poll(() => people.lists.filter((item) => item.person === "john").length)
+      .toBeGreaterThan(0);
+    await page.waitForTimeout(300);
+    expect(sent).toEqual([{ person: "jane", path: `${online}/drain` }]);
+    await expect(results).toHaveCount(0);
+  });
+
   test("a bulk action confirmed after the person changes sends nothing", async ({
     page,
   }) => {

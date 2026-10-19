@@ -1783,6 +1783,10 @@ export class RunsPage implements DoCheck, OnInit, OnDestroy {
           : {};
         if (typeof activation["id"] !== "string")
           return { ok: false, text: "Not retried: its version can't be read." };
+        // The person may have changed while the run was read.
+        if (this.host.checkingIdentity) await this.host.identitySettled();
+        if (key !== scopeKeyOf(this.host))
+          return { ok: false, text: "Not sent: the workspace changed." };
         const created = await this.host.safeMutation<Json>(
           `${base}/retry`,
           "POST",
@@ -1831,6 +1835,10 @@ export class RunsPage implements DoCheck, OnInit, OnDestroy {
     let stopped = "";
     try {
       for (const [index, id] of ids.slice(0, BULK_LIMIT).entries()) {
+        // Who is signed in is read right before each send, once a check of
+        // it still out has answered: another person may be signed in.
+        if (!stopped && this.host.checkingIdentity)
+          await this.host.identitySettled();
         if (key !== scopeKeyOf(this.host))
           stopped = "Not sent: the workspace changed.";
         const run = runs.get(id);

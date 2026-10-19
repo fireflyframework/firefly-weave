@@ -1312,7 +1312,11 @@ export class WorkersPage implements DoCheck, OnInit, OnDestroy {
       for (const [index, id] of ids.entries()) {
         const worker = rows.get(id);
         let result: { ok: boolean; text: string };
-        if (key !== this.scopeKey)
+        // Who is signed in is read from the shell right before each send,
+        // once a check of it still out has answered, and never from the
+        // copy change detection keeps: another person may be signed in.
+        if (this.host.checkingIdentity) await this.host.identitySettled();
+        if (key !== scopeKeyOf(this.host))
           result = { ok: false, text: "Not sent: the workspace changed." };
         else if (!worker)
           result = { ok: false, text: "Not sent: it is no longer listed." };
