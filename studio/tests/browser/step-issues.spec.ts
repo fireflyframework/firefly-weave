@@ -44,6 +44,7 @@ import {
   textBox,
 } from "./step-geometry";
 import { httpWorkflow, openHttpStep } from "./step-http";
+import { caretToEnd, formulaBox, suggestions } from "./formula-po";
 import { hasPython, stopLocalAuthoring } from "./local-authoring";
 import { command, sourceText, tokenColor } from "./support";
 
@@ -598,8 +599,11 @@ for (const size of sizes)
       await page.getByRole("tab", { name: "Designer", exact: true }).click();
       await details.openWithKeyboard("summarize");
       // Read-only: the text that applied, nothing marked or listed.
-      await expect(text).toHaveValue("Hello {{ input.email }}");
-      await expect(text).toHaveAttribute("readonly", "");
+      await expect(formulaBox(details.field("prompt"))).toHaveAttribute(
+        "data-text",
+        "Hello {{ input.email }}",
+      );
+      await expect(text).toHaveAttribute("aria-readonly", "true");
       await expect(prompt.locator(".param-status")).toHaveCount(0);
       expect(
         (await issueEntries(page, details)).filter((entry) =>
@@ -615,7 +619,10 @@ for (const size of sizes)
         .click();
       await page.getByRole("tab", { name: "Designer", exact: true }).click();
       await details.openWithKeyboard("summarize");
-      await expect(text).toHaveValue("Dear {{ input.customerId");
+      await expect(formulaBox(details.field("prompt"))).toHaveAttribute(
+        "data-text",
+        "Dear {{ input.customerId",
+      );
       await expect(lineOf(prompt)).toContainText("Not applied");
     });
   });
@@ -759,17 +766,20 @@ test.describe("template text that doesn't apply yet", () => {
         await details.openWithKeyboard("summarize");
         const prompt = details.field("prompt");
         const text = prompt.getByRole("textbox", { name: "Prompt" });
-        await expect(text).toHaveValue("Hello {{ input.email }}");
+        await expect(formulaBox(details.field("prompt"))).toHaveAttribute(
+          "data-text",
+          "Hello {{ input.email }}",
+        );
         await text.focus();
         await text.press("ControlOrMeta+a");
         await page.keyboard.type("Dear {{ input.customerId", { delay: 5 });
         await expect(lineOf(prompt)).toContainText("Not applied");
         await expect(lineOf(prompt)).toContainText(
-          "Close the braces: {{ input.field }}.",
+          "The formula ends too early. Close the placeholder with `}}`.",
         );
         await expect(text).toHaveAttribute("aria-invalid", "true");
         expect(await issueEntries(page, details)).toContain(
-          "Prompt Not applied Close the braces: {{ input.field }}.",
+          "Prompt Not applied The formula ends too early. Close the placeholder with `}}`.",
         );
         // Closing keeps it; the workflow keeps the last text that applied.
         await details.close();
@@ -780,7 +790,10 @@ test.describe("template text that doesn't apply yet", () => {
         expect(saved).toContain("Hello ");
         expect(saved).not.toContain("Dear ");
         await details.openWithKeyboard("summarize");
-        await expect(text).toHaveValue("Dear {{ input.customerId");
+        await expect(formulaBox(details.field("prompt"))).toHaveAttribute(
+          "data-text",
+          "Dear {{ input.customerId",
+        );
         await expect(
           prompt.getByRole("radio", { name: "Mapped", exact: true }),
         ).toBeChecked();
@@ -794,10 +807,13 @@ test.describe("template text that doesn't apply yet", () => {
           .getByRole("button", { name: "Previous step", exact: true })
           .click();
         await expect(details.dialogFor("summarize")).toBeVisible();
-        await expect(text).toHaveValue("Dear {{ input.customerId");
+        await expect(formulaBox(details.field("prompt"))).toHaveAttribute(
+          "data-text",
+          "Dear {{ input.customerId",
+        );
         // Finishing it applies it.
         await text.focus();
-        await text.press("End");
+        await caretToEnd(page);
         await page.keyboard.type(" }}", { delay: 5 });
         await expect(lineOf(prompt)).not.toContainText("Not applied");
         expect(
@@ -806,12 +822,21 @@ test.describe("template text that doesn't apply yet", () => {
           ),
         ).toEqual([]);
         await text.focus();
-        await text.press("End");
-        // Escape takes back what doesn't apply, then blurs, then closes.
+        await caretToEnd(page);
+        // Escape closes the suggestions, takes back what doesn't apply, then
+        // blurs, then closes.
         await page.keyboard.insertText(" {{ input");
         await expect(lineOf(prompt)).toContainText("Not applied");
+        // The suggestions close first.
+        await expect(suggestions(page)).toBeVisible();
         await page.keyboard.press("Escape");
-        await expect(text).toHaveValue("Dear {{ input.customerId }}");
+        await expect(suggestions(page)).toHaveCount(0);
+        await expect(lineOf(prompt)).toContainText("Not applied");
+        await page.keyboard.press("Escape");
+        await expect(formulaBox(details.field("prompt"))).toHaveAttribute(
+          "data-text",
+          "Dear {{ input.customerId }}",
+        );
         await expect(text).toBeFocused();
         await expect(lineOf(prompt)).not.toContainText("Not applied");
         await page.keyboard.press("Escape");
@@ -841,13 +866,19 @@ test.describe("template text that doesn't apply yet", () => {
         await name.fill("summary");
         await page.keyboard.press("Enter");
         await expect(details.dialogFor("summary")).toBeVisible();
-        await expect(text).toHaveValue("Dear {{ input.customerId");
+        await expect(formulaBox(details.field("prompt"))).toHaveAttribute(
+          "data-text",
+          "Dear {{ input.customerId",
+        );
         await details.dialog
           .getByRole("button", { name: "Rename summary" })
           .focus();
         await page.keyboard.press("ControlOrMeta+z");
         await expect(details.dialogFor("summarize")).toBeVisible();
-        await expect(text).toHaveValue("Dear {{ input.customerId");
+        await expect(formulaBox(details.field("prompt"))).toHaveAttribute(
+          "data-text",
+          "Dear {{ input.customerId",
+        );
         await details.close();
         // The same file opened again is another workflow session.
         await goHome(page);
@@ -856,7 +887,10 @@ test.describe("template text that doesn't apply yet", () => {
           .setInputFiles(templateWorkflow() as never);
         await expect(page.locator(".editor-bar")).toBeVisible();
         await details.openWithKeyboard("summarize");
-        await expect(text).toHaveValue("Hello {{ input.email }}");
+        await expect(formulaBox(details.field("prompt"))).toHaveAttribute(
+          "data-text",
+          "Hello {{ input.email }}",
+        );
         await expect(
           details.field("prompt").locator(".param-status"),
         ).toHaveCount(0);
@@ -1275,7 +1309,10 @@ test.describe("entries not applied yet, on the canvas and after an Undo", () => 
         await expect(details.node("summarize")).toHaveCount(1);
         await details.openWithKeyboard("summarize");
         await showParameters(page, details.dialog);
-        await expect(text).toHaveValue("Dear {{ input.customerId");
+        await expect(formulaBox(details.field("prompt"))).toHaveAttribute(
+          "data-text",
+          "Dear {{ input.customerId",
+        );
         await expect(lineOf(details.field("prompt"))).toContainText(
           "Not applied",
         );
@@ -1283,7 +1320,10 @@ test.describe("entries not applied yet, on the canvas and after an Undo", () => 
         await command(page, "Redo");
         await details.openWithKeyboard("summary");
         await showParameters(page, details.dialog);
-        await expect(text).toHaveValue("Dear {{ input.customerId");
+        await expect(formulaBox(details.field("prompt"))).toHaveAttribute(
+          "data-text",
+          "Dear {{ input.customerId",
+        );
       });
 
       test("Escape takes back a note that isn't saved, and closing says it is kept until it fits", async ({

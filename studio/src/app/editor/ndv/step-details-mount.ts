@@ -46,6 +46,7 @@ import {
 } from "./step-details-service";
 import { loadKindRegistrations } from "./kinds";
 import { WorkflowSettingsDialog } from "./workflow-settings-dialog";
+import { formulaPreviews } from "../formula/preview";
 
 const NONE_HELD: ReadonlyMap<string, readonly HeldFact[]> = new Map();
 
@@ -169,7 +170,11 @@ export class StepDetailsMount {
     const host = this.host();
     const opened = host.model.opened;
     if (!this.made || this.made.host !== host || this.made.opened !== opened) {
-      const controller = new StepDetailsController(host);
+      const controller: StepDetailsController = new StepDetailsController(
+        host,
+        () => Date.now(),
+        formulaPreviews(() => controller.previewData()),
+      );
       controller.ownedProblems = () => this.documentsFor(host).problems();
       this.made = { host, opened, controller };
     }

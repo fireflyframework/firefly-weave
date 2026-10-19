@@ -18,6 +18,8 @@ SPDX-License-Identifier: Apache-2.0
 import { test, expect, type Page } from "@playwright/test";
 import { cpus, platform, arch } from "node:os";
 import { useNewEditor } from "./canvas-po";
+import { openStepFixture, withLanguageFeatures } from "./step-details-po";
+import { formulaText, formulasFixture, setTestInput } from "./formula-po";
 
 /** One frame at 60 Hz, in milliseconds. */
 const FRAME_BUDGET_MS = 16.7;
@@ -367,5 +369,89 @@ test(
     });
     console.log(JSON.stringify({ steps: 50, pasteMs }));
     expect(pasteMs, "paste 50 steps").toBeLessThanOrEqual(300);
+  },
+);
+
+test(
+  "previews a formula within 50 ms of a keystroke",
+  { tag: "@performance" },
+  async ({ page }, info) => {
+    test.setTimeout(120_000);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await withLanguageFeatures(page);
+    const details = await openStepFixture(page, formulasFixture);
+    await setTestInput(page, details, {
+      "Customer ID": "c-1042",
+      Amount: "1500",
+    });
+    await details.openWithKeyboard("review");
+    const title = details.field("title");
+    await formulaText(title).click();
+    await page.keyboard.press("End");
+    const result = title.getByRole("region", { name: "Result of Title" });
+    await expect(result).toContainText("Review order of 1500");
+    // From the keydown to the frame that shows the new value: the timer
+    // stops once the Result reads the expected text, after the next
+    // animation frame and the task that follows it (when the frame paints).
+    await page.evaluate(() => {
+      const w = window as unknown as {
+        previewMs: number[];
+        pressedAt: number;
+        typed: string;
+      };
+      w.previewMs = [];
+      w.pressedAt = 0;
+      w.typed = "";
+      document.addEventListener(
+        "keydown",
+        (event) => {
+          w.typed += event.key;
+          w.pressedAt = performance.now();
+        },
+        { capture: true },
+      );
+      const region = document.querySelector('[aria-label="Result of Title"]')!;
+      const painted = new MessageChannel();
+      let started = 0;
+      painted.port1.onmessage = () => {
+        w.previewMs.push(performance.now() - started);
+        w.pressedAt = 0;
+      };
+      new MutationObserver(() => {
+        if (w.pressedAt <= 0) return;
+        const value = region.querySelector(".formula-result-value");
+        if (value?.textContent !== `Review order of 1500${w.typed}`) return;
+        started = w.pressedAt;
+        w.pressedAt = -1;
+        requestAnimationFrame(() => painted.port2.postMessage(null));
+      }).observe(region, {
+        subtree: true,
+        childList: true,
+        characterData: true,
+      });
+    });
+    for (const key of "abcdefghijklmnopqrst") {
+      await page.keyboard.press(key);
+      await page.waitForFunction(
+        () => (window as unknown as { pressedAt: number }).pressedAt === 0,
+      );
+    }
+    const samples = await page.evaluate(
+      () => (window as unknown as { previewMs: number[] }).previewMs,
+    );
+    const sorted = [...samples].sort((a, b) => a - b);
+    const p95 = sorted[Math.ceil(sorted.length * 0.95) - 1];
+    const measurement = {
+      keystrokes: samples.length,
+      p95Ms: Math.round(p95 * 10) / 10,
+      maxMs: Math.round(sorted[sorted.length - 1] * 10) / 10,
+    };
+    await info.attach("formula-preview-measurement", {
+      body: JSON.stringify(measurement),
+      contentType: "application/json",
+    });
+    console.log(JSON.stringify(measurement));
+    expect(samples).toHaveLength(20);
+    expect(p95, "keystroke to preview, p95").toBeLessThanOrEqual(50);
   },
 );

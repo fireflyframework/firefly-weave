@@ -165,6 +165,31 @@ describe("drag-to-map", () => {
       ref: amount.ref,
     });
   });
+  it("adds a placeholder to a template in a loop body, which reads the loop's item", () => {
+    const current = {
+      mode: "mapped" as const,
+      expression: {
+        op: {
+          name: "concat",
+          args: [{ literal: "Hi " }, { ref: "/item/name" }],
+        },
+      },
+    };
+    const plan = planDrop(field("text"), current, email, {
+      caret: null,
+      templates: true,
+      mode: "mapped",
+      parse: { features: ["text.concat"], loops: ["each"] },
+    });
+    if (plan.kind !== "write" || plan.next.mode !== "mapped")
+      throw new Error(`expected a mapping: ${JSON.stringify(plan)}`);
+    expect(plan.next.expression).toEqual({
+      op: {
+        name: "concat",
+        args: [{ literal: "Hi " }, { ref: "/item/name" }, { ref: email.ref }],
+      },
+    });
+  });
   it("replaces an exact reference leaf in a non-template field while preserving opaque formulas", () => {
     const options = { caret: null, templates: false, mode: "mapped" as const };
     expect(
@@ -319,31 +344,16 @@ describe("mapping transport and preserved values", () => {
   });
   it("refuses text or formulas that the text editor cannot represent without data loss", () => {
     const options = { caret: null, templates: true, mode: "mapped" as const };
-    for (const current of [
-      {
-        mode: "mapped" as const,
-        expression: {
-          op: { name: "add", args: [{ literal: 1 }, { literal: 2 }] },
-        },
-      },
-      {
-        mode: "mapped" as const,
-        expression: {
-          op: {
-            name: "concat",
-            args: [{ literal: "Keep " }, { ref: "/input/a~1b" }],
-          },
-        },
-      },
-    ])
-      expect(planDrop(field("text"), current, email, options).kind).toBe(
-        "refuse",
-      );
     expect(
       planDrop(
         field("text"),
-        { mode: "fixed", value: "Keep me" },
-        { ...email, ref: "/input/a~1b" },
+        {
+          mode: "mapped" as const,
+          expression: {
+            op: { name: "add", args: [{ literal: 1 }, { literal: 2 }] },
+          },
+        },
+        email,
         options,
       ).kind,
     ).toBe("refuse");
@@ -353,6 +363,151 @@ describe("mapping transport and preserved values", () => {
         templates: false,
       }).kind,
     ).toBe("refuse");
+  });
+  it("says how to map into a formula without a caret, and refuses only trees the editor can't show", () => {
+    const options = { caret: null, templates: false, mode: "mapped" as const };
+    expect(
+      planDrop(
+        field("text"),
+        {
+          mode: "mapped",
+          expression: {
+            op: { name: "gt", args: [{ ref: "/input/a" }, { literal: 1 }] },
+          },
+        },
+        email,
+        options,
+      ),
+    ).toEqual({
+      kind: "refuse",
+      reason:
+        "Type the field's path in the formula, or drag it to a place in the text.",
+    });
+    expect(
+      planDrop(
+        field("text"),
+        { mode: "mapped", expression: { op: { name: "add", args: [] } } },
+        email,
+        options,
+      ),
+    ).toEqual({
+      kind: "refuse",
+      reason:
+        "This formula uses parts the editor can't show. Edit it with Edit as YAML in the More menu.",
+    });
+  });
+  it("keeps backslashes before a dropped placeholder as text", () => {
+    const options = (caret: number | null) => ({
+      caret,
+      templates: true,
+      mode: "mapped" as const,
+    });
+    const concat = (...args: unknown[]) => ({
+      mode: "mapped" as const,
+      expression: { op: { name: "concat", args } },
+    });
+    const y = { ref: "/input/y" };
+    // `{{ input.y }}C:\` with the field dropped at the end.
+    expect(
+      planDrop(
+        field("text"),
+        concat(y, { literal: "C:\\" }),
+        email,
+        options(null),
+      ),
+    ).toEqual({
+      kind: "write",
+      next: concat(y, { literal: "C:\\" }, { ref: "/input/email" }),
+      replaced: null,
+    });
+    // `C:\\{{ input.y }}` (one backslash, then a placeholder), dropped
+    // after the backslashes.
+    expect(
+      planDrop(
+        field("text"),
+        concat({ literal: "C:\\" }, y),
+        email,
+        options(4),
+      ),
+    ).toEqual({
+      kind: "write",
+      next: concat({ literal: "C:\\" }, { ref: "/input/email" }, y),
+      replaced: null,
+    });
+    // `a\{{b{{ input.y }}` (literal braces), dropped inside the escape: the
+    // placeholder goes before it.
+    expect(
+      planDrop(
+        field("text"),
+        concat({ literal: "a{{b" }, y),
+        email,
+        options(2),
+      ),
+    ).toEqual({
+      kind: "write",
+      next: concat(
+        { literal: "a" },
+        { ref: "/input/email" },
+        { literal: "{{b" },
+        y,
+      ),
+      replaced: null,
+    });
+  });
+  it("writes references whose keys need brackets into template text", () => {
+    const options = { caret: null, templates: true, mode: "mapped" as const };
+    expect(
+      planDrop(
+        field("text"),
+        {
+          mode: "mapped" as const,
+          expression: {
+            op: {
+              name: "concat",
+              args: [{ literal: "Keep " }, { ref: "/input/a~1b" }],
+            },
+          },
+        },
+        email,
+        options,
+      ),
+    ).toEqual({
+      kind: "write",
+      next: {
+        mode: "mapped",
+        expression: {
+          op: {
+            name: "concat",
+            args: [
+              { literal: "Keep " },
+              { ref: "/input/a~1b" },
+              { ref: "/input/email" },
+            ],
+          },
+        },
+      },
+      replaced: null,
+    });
+    expect(
+      planDrop(
+        field("text"),
+        { mode: "fixed", value: "Keep me" },
+        { ...email, ref: "/input/a~1b" },
+        options,
+      ),
+    ).toEqual({
+      kind: "write",
+      next: {
+        mode: "mapped",
+        expression: {
+          op: {
+            name: "concat",
+            args: [{ literal: "Keep me" }, { ref: "/input/a~1b" }],
+          },
+        },
+      },
+      replaced: null,
+    });
   });
   it("never reads references from literal payloads or unrelated properties", () => {
     expect(

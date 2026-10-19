@@ -28,6 +28,7 @@ import {
   ElementRef,
   inject,
   input,
+  signal,
   viewChild,
 } from "@angular/core";
 import {
@@ -48,10 +49,15 @@ import { FieldsField } from "./fields-field";
 import { ResourceField } from "./resource-field";
 import { ConnectionField } from "./connection-field";
 import { ConditionsField } from "./conditions-field";
+import { parseCondition } from "../../../designer/conditions";
+import { EditFormulaDialog } from "./edit-formula-dialog";
 import { UrlField } from "./url-field";
 import { SchemaField } from "./schema-field";
 import { slotsOf } from "./slots";
 import { FormulaField } from "./formula-field";
+import { parseTemplate } from "../../formula/grammar";
+import { printFormula } from "../../formula/printer";
+import { escapeTemplateText } from "../../formula/template";
 import type { FormSession } from "./form-session";
 import { normalizeIdentifier } from "./identifiers";
 import { Toggletip } from "./toggletip";
@@ -98,6 +104,7 @@ const UNIT_CODE: Record<string, string> = {
     ConditionsField,
     UrlField,
     SchemaField,
+    EditFormulaDialog,
   ],
   templateUrl: "./param-field.html",
   host: {
@@ -125,6 +132,8 @@ export class ParamField {
    * is for assistive technology only, and its hint opens the card's body.
    */
   card = input(false);
+  /** Edit formula is open for this field. */
+  readonly formulaDialog = signal(false);
   /** Add actions of the group around this field, shown on its own add line (a path's options after Add condition). */
   actions = input<readonly { label: string; run: () => void }[]>([]);
   /**
@@ -283,6 +292,13 @@ export class ParamField {
       this.conditions()?.drop(drag, x, y);
       return;
     }
+    // Text in the formula editor: the path goes in at the drop point, as typing would
+    // (its own unapplied text is what the drop extends).
+    const formula = this.formula();
+    if (this.mode() === "mapped" && formula?.view() === "editor") {
+      formula.dropAt(drag.ref, x, y);
+      return;
+    }
     if (!canMapFields(this.element.nativeElement, this.session())) return;
     const control = this.element.nativeElement.querySelector(
       ".param-control input:not([type=checkbox]), .param-control textarea",
@@ -377,6 +393,11 @@ export class ParamField {
         kind: "hint" as const,
         text: "Nothing to choose from yet. Use By name.",
       };
+    // While the Result panel is open under the field, the "=" line would repeat it.
+    if (line.kind === "preview" && this.formula()?.focusedIn())
+      return this.spec().hint
+        ? { kind: "hint" as const, text: this.spec().hint! }
+        : { kind: "none" as const, text: "" };
     return line;
   }
   /** An unfinished condition row, once the rows were left. */
@@ -406,15 +427,22 @@ export class ParamField {
       items.push({
         label: "Use data…",
         disabled: locked,
-        run: () => this.setMode("mapped"),
+        run: () => this.setMode("mapped", true),
       });
-    if (this.mode() === "mapped")
+    if (this.mode() === "mapped") {
+      // A tree the formula printer can't write stays as it is (Edit as YAML).
+      const value = session.read(spec);
+      const opaque =
+        value.mode === "mapped" && printFormula(value.expression) === null;
       items.push({
         label: "Edit formula",
-        detail: "Formulas are edited with Edit as YAML in the More menu.",
-        disabled: true,
-        run: () => undefined,
+        detail: opaque
+          ? "This formula uses parts the editor can't show."
+          : undefined,
+        disabled: locked || opaque,
+        run: () => this.formulaDialog.set(true),
       });
+    }
     if (
       ["list", "keyValue", "fields"].includes(spec.type) &&
       spec.mapping !== "fixed" &&
@@ -455,13 +483,37 @@ export class ParamField {
           run: () => void session.renameSlot(spec),
         },
       );
-    if (spec.type === "conditions")
-      items.push({
-        label: "Edit as formula",
-        detail: "Formulas are edited with Edit as YAML in the More menu.",
-        disabled: true,
-        run: () => undefined,
-      });
+    if (spec.type === "conditions") {
+      const value = session.read(spec);
+      const when =
+        value.mode === "mapped"
+          ? value.expression
+          : value.mode === "fixed"
+            ? value.value
+            : undefined;
+      const rows = parseCondition(when) !== null;
+      items.push(
+        session.formulaView(spec) || !rows
+          ? {
+              label: "Edit as rows",
+              detail: rows ? undefined : "This condition doesn't fit in rows.",
+              disabled: locked || !rows,
+              run: () => {
+                session.setFormulaView(spec, false);
+                session.host.refreshView();
+              },
+            }
+          : {
+              label: "Edit as formula",
+              disabled: locked,
+              run: () => {
+                session.setFormulaView(spec, true);
+                session.requestEditor(spec, { caret: "end" });
+                session.host.refreshView();
+              },
+            },
+      );
+    }
     items.push({ label: "Copy value", run: () => void this.copyValue() });
     if (this.entry().option && !spec.required)
       items.push({
@@ -526,8 +578,22 @@ export class ParamField {
           return;
         }
         const control = this.element.nativeElement.querySelector<HTMLElement>(
-          ".param-control :is(input, textarea, select, button, [tabindex='0'])",
+          ".param-control :is(input, textarea, select, button, [tabindex='0'], [contenteditable='true'])",
         );
+        // A drop that made the text a template: the caret goes after the
+        // placeholder in the formula editor (which may still be loading).
+        const formula = this.formula();
+        if (
+          caret !== undefined &&
+          formula &&
+          !(
+            control instanceof HTMLInputElement ||
+            control instanceof HTMLTextAreaElement
+          )
+        ) {
+          formula.focusEditor(caret);
+          return;
+        }
         control?.focus();
         if (
           caret !== undefined &&
@@ -540,7 +606,7 @@ export class ParamField {
   }
 
   // ------------------------------------------------------------ modes
-  setMode(mode: "fixed" | "mapped") {
+  setMode(mode: "fixed" | "mapped", pick = false) {
     if (this.resource()?.hasDraft()) {
       this.session().announce(
         "Finish or clear the unapplied value before mapping data.",
@@ -558,6 +624,11 @@ export class ParamField {
         this.readOnly()
       )
         return;
+      if (mode === "mapped" && !pick) {
+        // Typing comes first, as in n8n: the editor takes focus; Use data… opens the picker.
+        setTimeout(() => this.formula()?.focusEditor("end"));
+        return;
+      }
       this.focusControl(session, spec, mode === "mapped");
     });
   }
@@ -581,6 +652,7 @@ export class ParamField {
    */
   controlKey(event: KeyboardEvent) {
     if (this.discardHeld(event)) return;
+    if (this.openTemplate(event)) return;
     if (event.key !== "=" || event.ctrlKey || event.metaKey || event.altKey)
       return;
     if (this.mode() !== "fixed") return;
@@ -589,6 +661,42 @@ export class ParamField {
     event.preventDefault();
     event.stopPropagation();
     this.setMode("mapped");
+  }
+  /**
+   * `{{` in a Fixed text field that takes templates switches it to Mapped,
+   * keeps the text, closes the braces and opens suggestions between them.
+   */
+  private openTemplate(event: KeyboardEvent): boolean {
+    const spec = this.spec();
+    if (event.key !== "{" || event.ctrlKey || event.metaKey || event.altKey)
+      return false;
+    if (this.mode() !== "fixed" || !["text", "multiline"].includes(spec.type))
+      return false;
+    const session = this.session();
+    if (!session.templates(spec) || this.readOnly()) return false;
+    const target = event.target as HTMLInputElement | HTMLTextAreaElement;
+    const start = target.selectionStart ?? target.value.length;
+    const end = target.selectionEnd ?? start;
+    if (start === 0 || target.value[start - 1] !== "{") return false;
+    event.preventDefault();
+    event.stopPropagation();
+    const before = escapeTemplateText(
+      target.value.slice(0, start - 1),
+      "placeholder",
+    );
+    const text = `${before}{{  }}${escapeTemplateText(target.value.slice(end), "end")}`;
+    const parsed = parseTemplate(text, session.formulaOptions(spec));
+    session.hold(
+      spec,
+      "template",
+      text,
+      parsed.kind === "error"
+        ? parsed.error.message
+        : "The formula ends too early. Add a value inside the braces.",
+    );
+    session.requestEditor(spec, { caret: before.length + 3, complete: true });
+    session.host.refreshView();
+    return true;
   }
 
   // ---------------------------------------------------------- writing

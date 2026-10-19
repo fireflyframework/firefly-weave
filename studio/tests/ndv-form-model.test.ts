@@ -33,6 +33,7 @@ import type {
   KindContext,
   ParamSpec,
 } from "../src/app/editor/ndv/registry";
+import { transformForm } from "../src/app/editor/ndv/kinds/forms/data-forms";
 import { freshWorkflow, type Step } from "../src/app/model";
 
 const http = (method: string): Step => ({
@@ -178,6 +179,58 @@ describe("form model", () => {
         afterEnv,
         new Set(),
       ).changes,
+    ).toEqual([]);
+  });
+  it("leaves a value that another field of the new form shows", () => {
+    // A transform's fields become its Text when a formula makes the value
+    // text: the value is the one just written, not a field to clear.
+    const before: Step = {
+      id: "flag",
+      kind: "transform",
+      value: { op: { name: "gt", args: [{ literal: 2 }, { literal: 1 }] } },
+    };
+    const after: Step = {
+      ...before,
+      value: {
+        op: { name: "concat", args: [{ literal: "a" }, { literal: "b" }] },
+      },
+    };
+    const form = (step: Step): FormSpec => transformForm(step);
+    const afterEnv = {
+      ...env(after),
+      subject: { ...env(after).subject, roots: [["value"]] },
+    };
+    const cleared = hiddenChanges(
+      formState(form(before), {
+        ...env(before),
+        subject: { ...env(before).subject, roots: [["value"]] },
+      }),
+      formState(form(after), afterEnv),
+      afterEnv,
+      new Set(),
+    );
+    expect(form(before).fields[0].id).toBe("value");
+    expect(form(after).fields[0].id).toBe("value-text");
+    expect(cleared).toEqual({ changes: [], labels: [], reasons: [] });
+  });
+  it("leaves a value whose part, or whose whole, another field of the new form shows", () => {
+    // A record typed over a whole Input turns it into rows inside it; rows
+    // mapped as a whole become one field around them.
+    const step = http("GET");
+    const whole = param("input", { path: ["with"], type: "fields" });
+    const row = param("body", { type: "fields" });
+    const entry = (spec: ParamSpec) => ({
+      spec,
+      option: false,
+      readOnly: null,
+      disabled: null,
+    });
+    const state = (spec: ParamSpec) => ({ fields: [entry(spec)], addable: [] });
+    expect(
+      hiddenChanges(state(whole), state(row), env(step), new Set()).changes,
+    ).toEqual([]);
+    expect(
+      hiddenChanges(state(row), state(whole), env(step), new Set()).changes,
     ).toEqual([]);
   });
   it("treats a value-less group as default when all its children are, and resets each child", () => {

@@ -47,8 +47,28 @@ describe("the repository's Python interpreter", () => {
     expect(repository).toBe(repositoryRoot());
     expect(python).toBe(pythonPath(repository));
   });
+  it("says which suites it skips locally when the interpreter is missing", () => {
+    const said: string[] = [];
+    const missing = {
+      path: "/nowhere/python",
+      exists: () => false,
+      env: {},
+      warn: (message: string) => said.push(message),
+    };
+    expect(pythonAvailable(missing)).toBe(false);
+    expect(said).toHaveLength(1);
+    expect(said[0]).toMatch(/Skipping the Python-backed suites/);
+    expect(said[0]).toMatch(/\/nowhere\/python/);
+    expect(said[0]).toMatch(/uv sync/);
+    expect(pythonAvailable({ ...missing, exists: () => true })).toBe(true);
+    expect(said).toHaveLength(1);
+  });
   it("skips locally but fails on CI when the interpreter is missing", () => {
-    const missing = { path: "/nowhere/python", exists: () => false };
+    const missing = {
+      path: "/nowhere/python",
+      exists: () => false,
+      warn: () => undefined,
+    };
     expect(pythonAvailable({ ...missing, env: {} })).toBe(false);
     expect(pythonAvailable({ ...missing, env: { CI: "false" } })).toBe(false);
     expect(() => pythonAvailable({ ...missing, env: { CI: "true" } })).toThrow(

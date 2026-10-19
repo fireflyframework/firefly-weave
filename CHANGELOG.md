@@ -20,6 +20,19 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+- With the new editor, Mapped values in step details are **formulas** such as
+  `input.amount > 1000 and exists(input.email)`: suggestions from the data the
+  field can read, references as pills, plain-word messages that never block
+  typing (text that doesn't parse shows **Not applied** and keeps the last
+  formula), a standard form on blur, **Edit formula** beside the input's
+  fields, and drops at the pointer. Templates take any formula between
+  `{{ }}`. Under a Mapped field, `= value` and the **Result** panel show what it
+  gives with the trigger's test input, computed in the browser with the
+  platform's rules (held to them by `scripts/studio_expression_corpus.py`);
+  formulas reading secret values are never previewed, and previews send
+  nothing. **Call an API** shows the full address of its request. Studio now
+  includes CodeMirror (`@codemirror/state`, `@codemirror/view`, MIT), loaded
+  with the first formula field. See `docs/reference/formulas.md`.
 - Publish… and Simulate show why they stopped (for example, an account that
   can't publish actions) as soon as Studio has loaded the code that publishes
   the workflow's own actions, instead of waiting for another change on the

@@ -17,7 +17,13 @@ SPDX-License-Identifier: Apache-2.0
 */
 import "@angular/compiler";
 import { afterAll, describe, expect, it, vi } from "vitest";
-vi.hoisted(() => vi.stubGlobal("document", { addEventListener: vi.fn() }));
+vi.hoisted(() =>
+  vi.stubGlobal("document", {
+    addEventListener: vi.fn(),
+    // The formula editor reads this when step details load.
+    documentElement: { style: {} },
+  }),
+);
 import { stringify } from "yaml";
 import { App } from "../src/app/app";
 import { StructuredCanvasAdapter } from "../src/app/model";

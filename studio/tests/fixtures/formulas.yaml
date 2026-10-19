@@ -1,0 +1,58 @@
+# Copyright 2026 Firefly Software Foundation.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# Author: Firefly Software Foundation
+# SPDX-License-Identifier: Apache-2.0
+apiVersion: weave/v1alpha1
+kind: Workflow
+metadata: {name: order-review, version: 1.0.0}
+spec:
+  inputSchema:
+    type: object
+    required: [customerId, amount]
+    properties:
+      customerId: {type: string, title: Customer ID}
+      email: {type: string, title: Email}
+      amount: {type: number, title: Amount}
+      status: {type: string, title: Status, enum: [open, closed]}
+      tags: {type: array, title: Tags, items: {type: string}}
+      password: {type: string, title: Password, x-secret: true}
+  outputSchema: {type: object}
+  steps:
+    - id: check
+      kind: transform
+      value: {object: {large: {literal: false}, customer: {ref: /input/customerId}}}
+    - id: flag
+      kind: transform
+      value: {op: {name: gt, args: [{ref: /input/amount}, {literal: 1000}]}}
+    - id: opaque
+      kind: transform
+      value: {ref: /input/amount, literal: hidden}
+    - id: note
+      kind: transform
+      value: {literal: Ready}
+    - id: review
+      kind: humanTask
+      assignment: reviewers
+      title: {op: {name: concat, args: [{literal: "Review order of "}, {ref: /input/amount}]}}
+      context: {ref: /steps/check/output}
+      formSchema: {type: object, properties: {}}
+      decisions: [approve, reject]
+    - id: route
+      kind: switch
+      cases:
+        - when: {op: {name: or, args: [{op: {name: gt, args: [{ref: /input/amount}, {literal: 1000}]}}, {op: {name: not, args: [{op: {name: exists, args: [{ref: /input/email}]}}]}}]}}
+          steps: []
+          output: {literal: {}}
+      default: {steps: [], output: {literal: {}}}
+  output: {literal: {}}

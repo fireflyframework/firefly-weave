@@ -17,8 +17,8 @@ SPDX-License-Identifier: Apache-2.0
 */
 // A decision path's conditions as rows (data, test, value). Unfinished rows
 // stay here until they are complete; data dropped or mapped into the field
-// lands in a row. Conditions the rows can't show stay a formula, read-only
-// here and edited as YAML.
+// lands in a row. Conditions the rows can't show, or that the person chose
+// to edit as a formula, show in the formula editor.
 import {
   ChangeDetectionStrategy,
   Component,
@@ -37,17 +37,19 @@ import {
 import type { Expression, ParamSpec } from "../registry";
 import type { DragRef } from "./drop";
 import type { FormSession } from "./form-session";
+import { FormulaField } from "./formula-field";
 import { ABSENT } from "./value-io";
 
-const FORMULA =
-  "This condition is a formula. Edit it with Edit as YAML in the More menu.";
+/** Said when data is dropped while the conditions show as a formula without rows. */
+const NO_ROWS =
+  "Type the field's path in the formula, or drag it to a place in the text.";
 
 @Component({
   selector: "weave-conditions-field",
   standalone: true,
   changeDetection: ChangeDetectionStrategy.Eager,
-  imports: [ConditionEditor, Icon],
-  template: `@if (rowsCanShow()) {
+  imports: [ConditionEditor, Icon, FormulaField],
+  template: `@if (rowsCanShow() && !session().formulaView(spec())) {
       <weave-condition-editor
         [value]="when()"
         [label]="spec().label"
@@ -60,13 +62,14 @@ const FORMULA =
         (valueChange)="changed($event)"
       />
     } @else {
-      <p class="param-deferred">{{ formula }}</p>
-      <pre
-        class="param-viewer"
-        tabindex="0"
-        [attr.aria-labelledby]="labelId()"
-        >{{ json() }}</pre
-      >
+      <weave-formula-field
+        [session]="session()"
+        [spec]="spec()"
+        [controlId]="controlId()"
+        [describedBy]="errorId()"
+        [readOnly]="readOnly()"
+        [expandable]="false"
+      />
       @if (actions().length) {
         <div class="param-group-add">
           @for (action of actions(); track action.label) {
@@ -91,8 +94,10 @@ export class ConditionsField {
   errorId = input("");
   /** The path's own add actions, on the Add condition line. */
   actions = input<readonly { label: string; run: () => void }[]>([]);
-  readonly formula = FORMULA;
+  /** The formula editor's id: the label's id without "-label". */
+  readonly controlId = () => this.labelId().replace(/-label$/, "");
   private readonly editor = viewChild(ConditionEditor);
+  private readonly formula = viewChild(FormulaField);
   private readonly element = inject<ElementRef<HTMLElement>>(ElementRef);
 
   constructor() {
@@ -117,9 +122,6 @@ export class ConditionsField {
   }
   rowsCanShow(): boolean {
     return parseCondition(this.when()) !== null;
-  }
-  json(): string {
-    return JSON.stringify(this.when(), null, 2);
   }
   references() {
     return this.session().scope(this.spec());
@@ -149,6 +151,12 @@ export class ConditionsField {
    */
   drop(drag: DragRef, x: number | null, y: number | null): boolean {
     const session = this.session();
+    // Shown as a formula: the path goes in at the drop point.
+    const formula = this.formula();
+    if (formula && formula.view() === "editor" && x !== null && y !== null) {
+      formula.dropAt(drag.ref, x, y);
+      return true;
+    }
     const decision = session.conditionDrop(this.spec(), drag);
     if ("reason" in decision) {
       session.announce(decision.reason);
@@ -197,7 +205,7 @@ export class ConditionsField {
     const editor = this.editor();
     if (editor?.dropRef(ref, index, into)) return true;
     this.session().announce(
-      editor ? "This field cannot read that data." : FORMULA,
+      editor ? "This field cannot read that data." : NO_ROWS,
     );
     return false;
   }
