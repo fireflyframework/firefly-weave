@@ -15,6 +15,7 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
+import { createHash } from "node:crypto";
 // Pure helpers of the Studio journey harness: step outcomes, redaction, the
 // credential-store guard and the network rules. harness.ts does the I/O.
 
@@ -189,16 +190,52 @@ export function secretsOf(
 }
 
 /**
- * The credential-store bindings this run may delete. Without a baseline
- * nothing can tell this run's sign-ins from the person's own, so nothing is
- * deleted.
+ * The credential-store bindings to delete: the ones this run can prove are
+ * its own (`own`, computed from each platform it added) that are still
+ * stored. Any other binding, including one another process stores during
+ * the run, is never deleted.
  */
 export function accountsToDelete(
-  before: ReadonlySet<string> | undefined,
+  own: ReadonlySet<string>,
   now: ReadonlySet<string>,
 ): string[] {
-  if (!before) return [];
-  return [...now].filter((account) => !before.has(account)).sort();
+  return [...now].filter((account) => own.has(account)).sort();
+}
+
+/** The login fields a sign-in's credential-store binding is derived from. */
+export interface Login {
+  provider_id: string;
+  issuer: string;
+  client_id: string;
+  target: string;
+  account: string;
+}
+
+/** A sign-in's binding, as `firefly_weave.sdk.auth.LoginConfig.binding` computes it. */
+export function loginBinding(login: Login): string {
+  const material = [
+    login.provider_id,
+    login.issuer,
+    login.client_id,
+    login.target,
+    login.account,
+  ];
+  return createHash("sha256").update(JSON.stringify(material)).digest("hex");
+}
+
+/** The binding of `platform` in a host's saved platforms (`profiles.json`), if it is there. */
+export function platformBinding(
+  document: unknown,
+  platform: string,
+): string | undefined {
+  const profiles = (
+    document as { profiles?: Record<string, { login?: Login }> }
+  )?.profiles;
+  const login =
+    profiles && Object.hasOwn(profiles, platform)
+      ? profiles[platform]?.login
+      : undefined;
+  return login ? loginBinding(login) : undefined;
 }
 
 export function viewportName(

@@ -23,8 +23,9 @@ SPDX-License-Identifier: Apache-2.0
 // in their own browser context. When the journey ends, every context's
 // storage is kept for the canary scan, its requests are audited, and its
 // platform is removed through Studio, which signs out and deletes the sign-in.
-// Sign-ins this run stored are deleted only when the store was read before
-// the run started: without that baseline nothing is deleted.
+// Only sign-ins this run can prove are its own are deleted: their bindings
+// are computed from the platforms the run added to its own Studio hosts. A
+// binding any other process stores meanwhile is reported, never deleted.
 import { expect, test as base } from "@playwright/test";
 import type {
   APIRequestContext,
@@ -62,6 +63,7 @@ import {
   dumpOriginProblem,
   errorLine,
   networkProblems,
+  platformBinding,
   redact,
   secretsOf,
   stepOutcome,
@@ -414,6 +416,8 @@ interface SignedIn {
   page: Page;
   platform: string;
   host: string;
+  /** The Studio host's configuration home: its saved platforms name this sign-in's binding. */
+  configHome: string;
   urls: string[];
   console: string[];
   signedIn: boolean;
@@ -559,6 +563,7 @@ export class Journey {
       page,
       platform: uniqueName(prefix),
       host: "",
+      configHome: "",
       urls: [],
       console: [],
       signedIn: false,
@@ -582,6 +587,7 @@ export class Journey {
     const started = await session(page);
     const host = started.host!;
     signed.host = host.origin;
+    signed.configHome = started.configHome;
     await expect
       .poll(() => host.output().match(/Pairing code: (\S+)/)?.[1], {
         timeout: 30_000,
@@ -590,6 +596,7 @@ export class Journey {
     pairingCodes.add(host.output().match(/Pairing code: (\S+)/)![1]!);
     await pair(page, host, `${prefix}-pairing`);
     await connectAndSignIn(page, signed.platform, person(name));
+    recordBinding(signed);
     signed.signedIn = true;
     return page;
   }
@@ -667,6 +674,8 @@ export class Journey {
           .map((line) => JSON.stringify({ line: redact(line, secrets()) }))
           .join("\n"),
       );
+      // A sign-in that failed half-way may still have stored its binding.
+      recordBinding(signed);
       let removed = false;
       try {
         if (signed.signedIn) {
@@ -728,7 +737,24 @@ export class Journey {
 
 let active: Journey | null = null;
 let baseline: Set<string> | undefined;
-let before: Set<string> | undefined;
+/** Credential-store bindings of the platforms this run added; the only ones it may delete. */
+const ownBindings = new Set<string>();
+
+/** Adds the binding of `signed`'s platform, read from its Studio host's saved platforms. */
+function recordBinding(signed: { configHome: string; platform: string }): void {
+  if (!signed.configHome) return;
+  const path = join(signed.configHome, "profiles.json");
+  if (!existsSync(path)) return;
+  try {
+    const binding = platformBinding(
+      JSON.parse(readFileSync(path, "utf8")),
+      signed.platform,
+    );
+    if (binding) ownBindings.add(binding);
+  } catch {
+    // An unreadable file names no binding; nothing of it is deleted.
+  }
+}
 
 /** Registers the suite hooks: credential-store baseline and cleanup. Call once per spec file. */
 export function useJourneys(): void {
@@ -739,10 +765,6 @@ export function useJourneys(): void {
   test.beforeAll(() => {
     baseline = undefined;
     baseline = credentialAccounts(SERVICE);
-  });
-  test.beforeEach(() => {
-    before = undefined;
-    before = credentialAccounts(SERVICE);
   });
   test.afterEach(async ({}, info) => {
     const failed = info.status !== info.expectedStatus;
@@ -772,15 +794,25 @@ export function useJourneys(): void {
     }
     if (failed || closing)
       for (const account of accountsToDelete(
-        before,
+        ownBindings,
         credentialAccounts(SERVICE),
       ))
         deleteCredential(SERVICE, account);
     if (closing) throw closing;
   });
   test.afterAll(() => {
-    const left = accountsToDelete(baseline, credentialAccounts(SERVICE));
+    const now = credentialAccounts(SERVICE);
+    const left = accountsToDelete(ownBindings, now);
     for (const account of left) deleteCredential(SERVICE, account);
+    // Another process (the person's own Studio, another suite) may sign in
+    // meanwhile: its bindings are reported and kept.
+    const unknown = baseline
+      ? [...now].filter((a) => !baseline!.has(a) && !ownBindings.has(a))
+      : [];
+    if (unknown.length)
+      console.warn(
+        `${unknown.length} credential(s) another process stored during the run were left in place`,
+      );
     expect(left, "credentials this run left in the system store").toEqual([]);
   });
 }

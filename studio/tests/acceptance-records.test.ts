@@ -18,6 +18,8 @@ SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from "vitest";
 import {
   accountsToDelete,
+  loginBinding,
+  platformBinding,
   dumpName,
   dumpOriginProblem,
   errorLine,
@@ -220,19 +222,43 @@ describe("acceptance step records", () => {
     ]);
   });
 
-  it("deletes nothing when the baseline is unknown", () => {
-    expect(accountsToDelete(undefined, new Set(["mine", "theirs"]))).toEqual(
-      [],
-    );
+  it("names a sign-in's binding as the Python client does", () => {
+    // firefly_weave.sdk.auth.LoginConfig.binding for the same login.
+    expect(
+      loginBinding({
+        provider_id: "local-keycloak",
+        issuer: "http://localhost:18080/realms/weave",
+        client_id: "weave-studio",
+        target: "http://127.0.0.1:18000",
+        account: "j9-viewer-ab12",
+      }),
+    ).toBe("39dc870812851bb96cf4d9373fe4588f34c8981942a968170207e6400e6bac82");
   });
 
-  it("deletes only the sign-ins created after the baseline", () => {
-    expect(
-      accountsToDelete(
-        new Set(["person-own"]),
-        new Set(["person-own", "run-b", "run-a"]),
-      ),
-    ).toEqual(["run-a", "run-b"]);
+  it("finds a platform's binding in the host's saved platforms, and nothing for others", () => {
+    const login = {
+      provider_id: "local-keycloak",
+      issuer: "http://localhost:18080/realms/weave",
+      client_id: "weave-studio",
+      target: "http://127.0.0.1:18000",
+      account: "j9-viewer-ab12",
+    };
+    const document = {
+      profiles: { "j9-viewer-ab12": { name: "j9-viewer-ab12", login } },
+    };
+    expect(platformBinding(document, "j9-viewer-ab12")).toBe(
+      loginBinding(login),
+    );
+    expect(platformBinding(document, "someone-else")).toBeUndefined();
+    expect(platformBinding({}, "j9-viewer-ab12")).toBeUndefined();
+  });
+
+  it("deletes only this run's own bindings: one another process stores meanwhile survives", () => {
+    const own = new Set(["run-a", "run-b"]);
+    // The person's own sign-in from before, and one another process stored during the run.
+    const now = new Set(["person-own", "run-b", "run-a", "foreign-mid-run"]);
+    expect(accountsToDelete(own, now)).toEqual(["run-a", "run-b"]);
+    expect(accountsToDelete(new Set(), now)).toEqual([]);
   });
 
   it("names viewports by size", () => {
