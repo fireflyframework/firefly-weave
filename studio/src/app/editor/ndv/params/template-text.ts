@@ -16,142 +16,80 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 // Mapped text fields as text: "Hello {{ input.name }}" is a concat of text
-// and references. Between the braces, a field is named by a dotted path
-// (input.name, steps.check.output.amount); other formulas are edited as
-// YAML until the formula editor arrives. \{{ keeps literal braces.
-import { parsePointer, formatPointer } from "../../../forms/core/json";
+// and placeholders written in the formula language. These helpers keep the
+// names step details used before the formula editor: parts of text and
+// references, their text, and what typed text means.
+import {
+  isReference,
+  parseTemplate,
+  type ParseOptions,
+} from "../../formula/grammar";
+import { printRef } from "../../formula/printer";
+import {
+  mergeTextSegments,
+  printTemplate,
+  templateSegments,
+} from "../../formula/template";
 import type { Expression } from "../registry";
 import type { ParamValue } from "./value-io";
 
 export type TemplatePart = { text: string } | { ref: string };
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  !!value && typeof value === "object" && !Array.isArray(value);
-const SEGMENT = /^[A-Za-z0-9_-]+$/;
-const STEP_ID = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
+/** A template field exists only on platforms with text.concat. */
+const TEMPLATE_FIELD: ParseOptions = { features: ["text.concat"], loops: [] };
 
-function part(expression: unknown): TemplatePart | null {
-  if (!isRecord(expression) || Object.keys(expression).length !== 1)
-    return null;
-  if (typeof expression["literal"] === "string")
-    return { text: expression["literal"] };
-  if (typeof expression["ref"] === "string") return { ref: expression["ref"] };
-  return null;
-}
-
+/** Text and references of a template, or null when a placeholder is any other formula. */
 export function templateParts(expression: unknown): TemplatePart[] | null {
-  const single = part(expression);
-  if (single) return [single];
-  const op =
-    isRecord(expression) &&
-    Object.keys(expression).length === 1 &&
-    isRecord(expression["op"])
-      ? expression["op"]
-      : null;
-  if (
-    !op ||
-    Object.keys(op).length !== 2 ||
-    op["name"] !== "concat" ||
-    !Array.isArray(op["args"])
-  )
-    return null;
-  const parts = op["args"].map(part);
-  return parts.every((p): p is TemplatePart => !!p) ? parts : null;
-}
-
-export function refToPath(ref: string): string | null {
-  const segments = parsePointer(ref);
-  if (!segments) return null;
-  const input =
-    segments[0] === "input" && segments.slice(1).every((s) => SEGMENT.test(s));
-  const step =
-    segments[0] === "steps" &&
-    STEP_ID.test(segments[1] ?? "") &&
-    segments[2] === "output" &&
-    segments.slice(3).every((s) => SEGMENT.test(s));
-  if (!input && !step) return null;
-  const path = segments.join(".");
-  // A dotted step ID can contain the output delimiter; only lossless paths are editable.
-  return pathToRef(path) === ref ? path : null;
-}
-
-export function pathToRef(path: string): string | null {
-  const text = path.trim();
-  if (text === "input" || text.startsWith("input.")) {
-    const rest = text === "input" ? [] : text.slice(6).split(".");
-    return rest.every((s) => SEGMENT.test(s))
-      ? formatPointer(["input", ...rest])
-      : null;
+  const found =
+    typeof (expression as { literal?: unknown } | null)?.literal === "string" &&
+    Object.keys(expression as object).length === 1
+      ? [{ text: (expression as { literal: string }).literal }]
+      : templateSegments(expression, true);
+  if (!found) return null;
+  // Text as the reader gives it back, so a drop's caret matches the text shown.
+  const segments = found.length === 1 ? found : mergeTextSegments(found);
+  const parts: TemplatePart[] = [];
+  for (const segment of segments) {
+    if ("text" in segment) parts.push({ text: segment.text });
+    else if (isReference(segment.node)) parts.push({ ref: segment.node.ref });
+    else return null;
   }
-  const match = /^steps\.(.+?)\.output((?:\.[A-Za-z0-9_-]+)*)$/.exec(text);
-  if (!match || !STEP_ID.test(match[1])) return null;
-  const rest = match[2] ? match[2].slice(1).split(".") : [];
-  return formatPointer(["steps", match[1], "output", ...rest]);
+  return parts;
+}
+
+/** A reference as formula text: a dotted path, brackets for other keys, or ref("…"). */
+export function refToPath(ref: string): string {
+  return printRef(ref);
 }
 
 export function partsToText(parts: TemplatePart[]): string {
-  return parts
-    .map((p) =>
-      "text" in p
-        ? p.text.replace(/\{\{/g, "\\{{")
-        : `{{ ${refToPath(p.ref) ?? p.ref} }}`,
-    )
-    .join("");
+  const args: Expression[] = parts.map((part) =>
+    "text" in part ? { literal: part.text } : { ref: part.ref },
+  );
+  const text = printTemplate(
+    args.length === 1 && "ref" in args[0]
+      ? args[0]
+      : { op: { name: "concat", args } },
+  );
+  return text ?? "";
 }
 
 export function textToExpression(
   text: string,
+  options: ParseOptions = TEMPLATE_FIELD,
 ): { ok: true; value: ParamValue } | { ok: false; message: string } {
-  const parts: TemplatePart[] = [];
-  let buffer = "";
-  for (let i = 0; i < text.length; ) {
-    if (text.startsWith("\\{{", i)) {
-      buffer += "{{";
-      i += 3;
-      continue;
-    }
-    if (text.startsWith("{{", i)) {
-      const end = text.indexOf("}}", i + 2);
-      if (end < 0)
-        return { ok: false, message: "Close the braces: {{ input.field }}." };
-      const ref = pathToRef(text.slice(i + 2, end));
-      if (!ref)
-        return {
-          ok: false,
-          message:
-            "Between the braces, name a field such as input.name or steps.check.output.amount.",
-        };
-      if (buffer) parts.push({ text: buffer });
-      buffer = "";
-      parts.push({ ref });
-      i = end + 2;
-      continue;
-    }
-    buffer += text[i++];
-  }
-  if (buffer) parts.push({ text: buffer });
-  const refs = parts.filter((p) => "ref" in p);
-  if (!refs.length)
-    return {
-      ok: true,
-      value: {
-        mode: "fixed",
-        value: parts.map((p) => ("text" in p ? p.text : "")).join(""),
-      },
-    };
-  if (parts.length === 1)
-    return {
-      ok: true,
-      value: {
-        mode: "mapped",
-        expression: { ref: (parts[0] as { ref: string }).ref },
-      },
-    };
-  const args: Expression[] = parts.map((p) =>
-    "text" in p ? { literal: p.text } : { ref: p.ref },
-  );
-  return {
-    ok: true,
-    value: { mode: "mapped", expression: { op: { name: "concat", args } } },
-  };
+  const result = parseTemplate(text, options);
+  if (result.kind === "error")
+    return { ok: false, message: result.error.message };
+  const expression = result.kind === "ok" ? result.expression : { literal: "" };
+  return typeof (expression as { literal?: unknown }).literal === "string" &&
+    Object.keys(expression).length === 1
+    ? {
+        ok: true,
+        value: {
+          mode: "fixed",
+          value: (expression as { literal: string }).literal,
+        },
+      }
+    : { ok: true, value: { mode: "mapped", expression } };
 }

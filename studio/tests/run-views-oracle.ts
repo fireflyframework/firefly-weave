@@ -17,10 +17,11 @@ SPDX-License-Identifier: Apache-2.0
 */
 // Validates run view pages with the Python models in
 // src/firefly_weave/contracts/run_views.py and returns their vocabularies.
-// CI installs the repository environment; without it, callers skip.
-import { existsSync } from "node:fs";
+// CI installs the repository environment; without it, callers skip and
+// say so.
 import { execFileSync } from "node:child_process";
 import { delimiter, resolve } from "node:path";
+import { pythonAvailable as pythonFound } from "./python-path";
 
 const root = resolve(import.meta.dirname, "../..");
 const python = resolve(
@@ -29,7 +30,7 @@ const python = resolve(
     ? ".venv/Scripts/python.exe"
     : ".venv/bin/python",
 );
-export const pythonAvailable = existsSync(python);
+export const pythonAvailable = pythonFound({ path: python });
 export interface RunViewPages {
   summaries: unknown[];
   steps: unknown[];

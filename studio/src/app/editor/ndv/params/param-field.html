@@ -85,7 +85,15 @@ SPDX-License-Identifier: Apache-2.0
         [controlId]="ids.control"
         [describedBy]="describedBy()"
         [readOnly]="reason"
+        (expand)="formulaDialog.set(true)"
       />
+      @if (formulaDialog()) {
+        <weave-edit-formula-dialog
+          [session]="session()"
+          [spec]="spec"
+          (closed)="formulaDialog.set(false)"
+        />
+      }
     } @else if (
       isGroup() &&
       spec.type !== "conditions" &&

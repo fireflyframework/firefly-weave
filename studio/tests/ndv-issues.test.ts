@@ -56,7 +56,13 @@ import {
 import { StructuredCanvasAdapter } from "../src/app/model";
 import { lookupAction } from "./browser/support";
 
-vi.hoisted(() => vi.stubGlobal("document", { addEventListener: vi.fn() }));
+vi.hoisted(() =>
+  vi.stubGlobal("document", {
+    addEventListener: vi.fn(),
+    // The formula editor reads this when step details load.
+    documentElement: { style: {} },
+  }),
+);
 afterAll(() => vi.unstubAllGlobals());
 beforeAll(() => loadKindRegistrations());
 
@@ -827,10 +833,11 @@ describe("unapplied template text", () => {
     } as unknown as MutableHost;
     const controller = new StepDetailsController(host);
     await controller.loadFeatures();
+    const announced: string[] = [];
     const open = () =>
       new FormSession(host, controller, openRequest("summarize"), {
         confirm: async () => true,
-        announce: () => undefined,
+        announce: (text: string) => void announced.push(text),
       });
     const field = (session: FormSession) => {
       const injector = Injector.create({ providers: [] });
@@ -846,10 +853,23 @@ describe("unapplied template text", () => {
       component.controlId = signal("prompt-control") as never;
       return { component, spec, injector };
     };
-    return { model, host, controller, open, field };
+    return { model, host, controller, open, field, announced };
   }
-  const type = (field: FormulaField, value: string) =>
-    field.typed({ target: { value } } as unknown as Event);
+  const type = (field: FormulaField, value: string) => field.typed(value);
+  it("drops into the editor only data the field can read", async () => {
+    const t = await templateHarness();
+    const session = t.open();
+    const { component, spec } = t.field(session);
+    const before = JSON.stringify(t.model.definition);
+    component.beginEdit();
+    component.dropText({ ref: "/steps/nowhere/output/name", pos: 0 });
+    expect(JSON.stringify(t.model.definition)).toBe(before);
+    expect(t.announced).toEqual(["This field cannot read that data."]);
+    const readable = session.scope(spec)[0];
+    expect(readable).toBeDefined();
+    component.dropText({ ref: readable.ref, pos: 0 });
+    expect(JSON.stringify(t.model.definition)).not.toBe(before);
+  });
   it("keeps the text across close and reopen, Not applied, with the last valid value saved", async () => {
     const t = await templateHarness();
     const before = JSON.stringify(t.model.definition);
@@ -862,10 +882,11 @@ describe("unapplied template text", () => {
     const session = t.open();
     const again = t.field(session);
     expect(session.mode(again.spec)).toBe("mapped");
-    expect(again.component.view()).toBe("template");
-    expect(again.component.templateText()).toBe("Dear {{ input.name");
+    expect(again.component.view()).toBe("editor");
+    expect(again.component.templateMode()).toBe(true);
+    expect(again.component.shownText()).toBe("Dear {{ input.name");
     expect(again.component.templateError()).toBe(
-      "Close the braces: {{ input.field }}.",
+      "The formula ends too early. Close the placeholder with `}}`.",
     );
     expect(session.issues()[0]).toMatchObject({
       status: "Not applied",
@@ -883,23 +904,21 @@ describe("unapplied template text", () => {
     first.component.beginEdit();
     type(first.component, "Dear {{ input.name");
     const escape = {
-      key: "Escape",
-      preventDefault: vi.fn(),
-      stopPropagation: vi.fn(),
-    } as unknown as KeyboardEvent;
-    first.component.key(escape);
-    expect(escape.preventDefault).toHaveBeenCalled();
-    expect(first.component.templateText()).toBe("Hello {{ input.name }}");
+      event: { key: "Escape" } as KeyboardEvent,
+      handled: false,
+    };
+    first.component.escape(escape);
+    expect(escape.handled).toBe(true);
+    expect(first.component.shownText()).toBe("Hello {{ input.name }}");
     first.component.leave();
     expect(t.open().held(first.spec)).toBeNull();
     // Nothing held, Escape is left to step details.
     const again = {
-      key: "Escape",
-      preventDefault: vi.fn(),
-      stopPropagation: vi.fn(),
-    } as unknown as KeyboardEvent;
-    first.component.key(again);
-    expect(again.preventDefault).not.toHaveBeenCalled();
+      event: { key: "Escape" } as KeyboardEvent,
+      handled: false,
+    };
+    first.component.escape(again);
+    expect(again.handled).toBe(false);
   });
   it("lets go of held template text when a Mapped draft goes back to Fixed", async () => {
     const t = await templateHarness();

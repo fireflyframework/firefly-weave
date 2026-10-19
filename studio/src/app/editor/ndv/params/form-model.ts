@@ -118,7 +118,8 @@ export function formState(form: FormSpec, env: FormEnv): FormState {
 /**
  * The writes that clear fields a change just hid (clear-on-hide), with
  * their labels and reasons for the Undo toast. Fields that keep their
- * value, fields at their default and options removed on purpose are left.
+ * value, fields at their default, fields whose value another field now
+ * shows and options removed on purpose are left.
  */
 export function hiddenChanges(
   before: FormState,
@@ -127,6 +128,20 @@ export function hiddenChanges(
   removed: ReadonlySet<string>,
 ): { changes: FormChange[]; labels: string[]; reasons: string[] } {
   const still = new Set(after.fields.map((field) => field.spec.id));
+  // Another field of the new form shows the same value, or a part of it, or
+  // the value it is part of (a transform's Fields become its Text, a whole
+  // Input becomes its rows): that value isn't hidden.
+  const shownPaths = after.fields
+    .map((field) => field.spec.path)
+    .filter((path) => path.length);
+  const overlaps = (path: readonly (string | number)[]) =>
+    path.length > 0 &&
+    shownPaths.some((shown) => {
+      const length = Math.min(shown.length, path.length);
+      for (let i = 0; i < length; i++)
+        if (String(shown[i]) !== String(path[i])) return false;
+      return true;
+    });
   const reasons = new Map(
     after.addable.map((option) => [option.spec.id, option.disabled]),
   );
@@ -137,6 +152,7 @@ export function hiddenChanges(
   for (const { spec } of before.fields) {
     if (
       still.has(spec.id) ||
+      overlaps(spec.path) ||
       removed.has(spec.id) ||
       spec.whenHidden === "keep"
     )

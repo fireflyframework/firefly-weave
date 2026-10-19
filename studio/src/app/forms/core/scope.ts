@@ -214,6 +214,123 @@ function resolveRef(schema: Schema, root: Schema): Schema {
   return current;
 }
 
+/**
+ * The schema of one key or array index below `schema`, or why there is none:
+ * `absent` only when an object schema closes its properties.
+ */
+export function schemaChild(
+  schema: Schema,
+  root: Schema,
+  segment: string,
+):
+  | { kind: "found"; schema: Schema }
+  | { kind: "absent" }
+  | { kind: "unknown" } {
+  const resolved = resolveRef(schema, root);
+  const items = resolved["items"];
+  if (/^(?:0|[1-9][0-9]*)$/.test(segment) && isObject(items))
+    return { kind: "found", schema: items };
+  const properties = objectProperties(resolved, root);
+  const property = properties?.get(segment);
+  if (property) return { kind: "found", schema: property.schema };
+  return properties !== null && resolved["additionalProperties"] === false
+    ? { kind: "absent" }
+    : { kind: "unknown" };
+}
+
+/** Every schema that may describe a value: the schema, its $ref target and each anyOf, oneOf and allOf part. */
+function describing(schemas: readonly Schema[], root: Schema): Schema[] {
+  const out: Schema[] = [];
+  const seen = new Set<unknown>();
+  const queue = [...schemas];
+  while (queue.length && out.length < 256) {
+    const schema = queue.shift()!;
+    if (seen.has(schema)) continue;
+    seen.add(schema);
+    out.push(schema);
+    const resolved = resolveRef(schema, root);
+    if (resolved !== schema) queue.push(resolved);
+    for (const word of ["anyOf", "oneOf", "allOf"]) {
+      const parts = schema[word];
+      if (Array.isArray(parts))
+        for (const part of parts) if (isObject(part)) queue.push(part);
+    }
+  }
+  return out;
+}
+
+const own = (record: Record<string, unknown>, key: string) =>
+  Object.prototype.hasOwnProperty.call(record, key);
+
+/** Every schema that may describe one key or array index of a value `schema` describes. */
+function childSchemas(schema: Schema, segment: string): Schema[] {
+  const out: Schema[] = [];
+  const properties = isObject(schema["properties"]) ? schema["properties"] : {};
+  const named = own(properties, segment);
+  if (named && isObject(properties[segment])) out.push(properties[segment]);
+  let patterned = false;
+  if (isObject(schema["patternProperties"]))
+    for (const [pattern, child] of Object.entries(
+      schema["patternProperties"],
+    )) {
+      let matches = false;
+      try {
+        matches = new RegExp(pattern, "u").test(segment);
+      } catch {
+        // A pattern JavaScript can't read may still match: count it.
+        matches = true;
+      }
+      if (matches && isObject(child)) {
+        out.push(child);
+        patterned = true;
+      }
+    }
+  if (!named && !patterned && isObject(schema["additionalProperties"]))
+    out.push(schema["additionalProperties"]);
+  if (/^(?:0|[1-9][0-9]*)$/.test(segment)) {
+    const index = Number(segment);
+    const prefix = Array.isArray(schema["prefixItems"])
+      ? schema["prefixItems"]
+      : Array.isArray(schema["items"])
+        ? schema["items"]
+        : [];
+    if (index < prefix.length) {
+      if (isObject(prefix[index])) out.push(prefix[index]);
+    } else {
+      if (isObject(schema["items"])) out.push(schema["items"]);
+      if (isObject(schema["additionalItems"]))
+        out.push(schema["additionalItems"]);
+    }
+  }
+  return out;
+}
+
+/**
+ * True when the value at `segments` below `schema`, or a value around it, is
+ * marked secret by any schema that may describe it: through $ref, every
+ * anyOf, oneOf and allOf part, additionalProperties, patternProperties,
+ * prefixItems and items.
+ */
+export function secretAt(
+  schema: Schema,
+  root: Schema,
+  segments: readonly string[],
+): boolean {
+  let level: Schema[] = [schema];
+  for (let i = 0; ; i++) {
+    const all = describing(level, root);
+    if (
+      all.some(
+        (node) => node["x-secret"] === true || node["writeOnly"] === true,
+      )
+    )
+      return true;
+    if (i === segments.length) return false;
+    level = all.flatMap((node) => childSchemas(node, segments[i]));
+    if (!level.length) return false;
+  }
+}
+
 /** JSON types a schema admits; empty when unknown. */
 export function schemaTypes(schema: Schema, root: Schema = schema): string[] {
   const resolved = resolveRef(schema, root);

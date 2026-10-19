@@ -39,6 +39,7 @@ import {
   credentialExists as stored,
   deleteCredential,
 } from "../credential-store";
+import { keptAnswer } from "./platform-answer";
 import { selectChoice } from "./support";
 import { python, pythonAvailable, repository } from "../python-path";
 
@@ -574,12 +575,21 @@ export function demoRun() {
   ).run_id;
 }
 
-/** The platform's next answer to Operate › Runs' list (run_summaries.list). */
+/**
+ * The platform's next answer to Operate › Runs' list (run_summaries.list) that
+ * Studio keeps: capacity refusals it sends again are skipped.
+ */
 export function runSummaries(page: Page) {
+  return platformAnswer(page, "/run-summaries");
+}
+
+/** The platform's next kept answer to a GET whose path ends with `suffix`. */
+export function platformAnswer(page: Page, suffix: string) {
   return page.waitForResponse(
-    (r) =>
+    async (r) =>
       r.request().method() === "GET" &&
-      new URL(r.url()).pathname.endsWith("/run-summaries"),
+      new URL(r.url()).pathname.endsWith(suffix) &&
+      (await keptAnswer(r)),
     { timeout: 30_000 },
   );
 }

@@ -18,7 +18,8 @@ SPDX-License-Identifier: Apache-2.0
 // The repository's Python interpreter for vitest and Playwright, per
 // operating system: .venv/bin/python on macOS and Linux, and
 // .venv\Scripts\python.exe on Windows. Locally a missing environment skips
-// the Python parity suites; on CI it is an error, so no suite skips silently.
+// the Python parity suites and says so; on CI it is an error, so no suite
+// skips silently.
 import { existsSync } from "node:fs";
 import { dirname, join, posix, resolve, win32 } from "node:path";
 
@@ -53,21 +54,26 @@ export const python = pythonPath(repository);
 
 /**
  * True when the interpreter exists. On CI a missing interpreter throws, so a
- * Python-backed suite fails instead of skipping.
+ * Python-backed suite fails instead of skipping; locally it warns.
  */
 export function pythonAvailable(
   options: {
     path?: string;
     env?: NodeJS.ProcessEnv;
     exists?: (path: string) => boolean;
+    warn?: (message: string) => void;
   } = {},
 ): boolean {
   const path = options.path ?? python;
   if ((options.exists ?? existsSync)(path)) return true;
   const ci = (options.env ?? process.env)["CI"];
+  const setup = `Run "uv sync --locked --all-extras --group docs" in the repository first.`;
   if (ci && ci !== "false" && ci !== "0")
     throw new Error(
-      `The repository's Python environment is missing at ${path}. Run "uv sync --locked --all-extras --group docs" in the repository first.`,
+      `The repository's Python environment is missing at ${path}. ${setup}`,
     );
+  (options.warn ?? ((message) => process.stderr.write(`${message}\n`)))(
+    `Skipping the Python-backed suites: no Python environment at ${path}. ${setup}`,
+  );
   return false;
 }

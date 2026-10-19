@@ -19,7 +19,13 @@ SPDX-License-Identifier: Apache-2.0
 // editing is paused, so it says that instead of "the workflow changed since".
 import "@angular/compiler";
 import { afterAll, describe, expect, it, vi } from "vitest";
-vi.hoisted(() => vi.stubGlobal("document", { addEventListener: vi.fn() }));
+vi.hoisted(() =>
+  vi.stubGlobal("document", {
+    addEventListener: vi.fn(),
+    // The formula editor reads this when step details load.
+    documentElement: { style: {} },
+  }),
+);
 import { App } from "../src/app/app";
 import { StructuredCanvasAdapter } from "../src/app/model";
 import type { ToastAction } from "../src/app/toast";

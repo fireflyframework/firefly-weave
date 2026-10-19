@@ -62,6 +62,7 @@ export const keepUsable = [
   '[role="alert"]',
   ".modal-backdrop",
   ".toast-region",
+  ".formula-suggestions",
   "weave-modal",
   "weave-dialog-host",
   "weave-step-picker",

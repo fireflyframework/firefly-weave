@@ -165,6 +165,7 @@ nav:
       - History and replay: reference/history-and-replay.md
       - Local runtime: reference/local-runtime.md
       - Studio editor contracts: reference/studio-editor-contracts.md
+      - Formulas in Studio: reference/formulas.md
   - Project:
       - Project overview: project/overview.md
       - Architecture: architecture.md
