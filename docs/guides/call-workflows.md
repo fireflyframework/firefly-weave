@@ -52,9 +52,13 @@ workflow continues at once.
   with:
     object:
       customerId: {ref: /input/customerId}
-      message: {literal: Order received}
+      message:
+        op:
+          name: concat
+          args: [{literal: "Order "}, {ref: /input/orderId}, {literal: " received"}]
   mode: wait
   onFailure: continue
+  businessKey: {ref: /input/orderId}
 ```
 
 Without `onFailure: continue`, the step returns the called workflow's output, and
