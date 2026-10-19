@@ -158,6 +158,10 @@ def test_the_committed_map_is_valid():
     assert "step-error-handling" in enablement.missing("J3.10")
     assert enablement.checks("J9.2") == ("J9.2/execute-in-local", "J9.2/operations-controls")
     assert enablement.checks("J9.4") == ("J9.4/storage-keys",)
+    # A connection's Test is no step test, and the Incidents inbox reads no metrics.
+    assert [step for step in enablement.journey_steps("J1") if "step-tests" in enablement.steps[step]] == []
+    assert "metrics" not in enablement.steps["J5.7"]
+    assert set(enablement.steps["J5.7"]) == {"real-platform-journeys", "run-views", "compose-operations"}
     assert "editor-contracts" in enablement.missing("J9.4/storage-keys")
 
 
