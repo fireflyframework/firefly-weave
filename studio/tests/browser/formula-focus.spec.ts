@@ -285,6 +285,25 @@ for (const size of sizes)
       expect(await sourceText(page)).toBe(before);
     });
 
+    test("Undo pressed before a template's typed text is drawn leaves the template showing what the workflow holds", async ({
+      page,
+    }) => {
+      const details = await openStepFixture(page, formulasFixture);
+      const before = await sourceText(page);
+      await details.openWithKeyboard("review");
+      const title = details.field("title");
+      await formulaText(title).click();
+      await page.keyboard.press("ControlOrMeta+a");
+      await typeThen(page, "Changed {{ input.customerId }}", "undo");
+      await expect(formulaBox(title)).toHaveAttribute(
+        "data-text",
+        "Review order of {{ input.amount }}",
+      );
+      await expect(formulaText(title)).toBeFocused();
+      await details.close();
+      expect(await sourceText(page)).toBe(before);
+    });
+
     test("a keystroke that leaves the value as it was writes nothing", async ({
       page,
     }) => {
