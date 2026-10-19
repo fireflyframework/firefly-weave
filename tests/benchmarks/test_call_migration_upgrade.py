@@ -134,20 +134,23 @@ async def test_the_call_migration_takes_constant_time_keeps_usage_exact_and_scan
                 ).all()
                 assert {(environment, metric): value for environment, metric, value in actual} == expected
                 plans = {}
-                for name, query in (
+                for name, index, query in (
                     (
                         "dispatch",
+                        "run_calls_requested",
                         "SELECT id FROM run_calls WHERE tenant_id=:tenant AND project_id=:project "
                         "AND environment_id=:environment AND status='requested' ORDER BY requested_at,id LIMIT 10",
                     ),
                     (
                         "cancel",
+                        "run_calls_cancelling",
                         "SELECT id FROM run_calls WHERE tenant_id=:tenant AND project_id=:project "
                         "AND environment_id=:environment AND cancel_requested AND status='started' "
                         "ORDER BY requested_at,id LIMIT 10",
                     ),
                     (
                         "deliver",
+                        "run_calls_undelivered",
                         "SELECT count(*) FROM runs WHERE EXISTS (SELECT 1 FROM run_calls c WHERE "
                         "c.caller_run_id=runs.id AND c.mode='wait' AND NOT c.delivered "
                         "AND c.status IN ('succeeded','failed','cancelled','timed_out'))",
@@ -155,7 +158,8 @@ async def test_the_call_migration_takes_constant_time_keeps_usage_exact_and_scan
                 ):
                     plan = await connection.scalar(text("EXPLAIN (FORMAT JSON) " + query), ids)
                     plans[name] = json.dumps(plan)
-                    assert "run_calls_" in plans[name], (name, plans[name])
+                    # The partial index meant for this lookup, not merely some index of the table.
+                    assert f'"Index Name": "{index}"' in plans[name], (name, plans[name])
         # Empty tables, indexes, grants and one function patch: no work grows with retained runs.
         assert elapsed < 5.0, f"0033 upgrade on {count} runs took {elapsed:.2f}s"
     finally:

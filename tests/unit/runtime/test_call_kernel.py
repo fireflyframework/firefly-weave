@@ -23,7 +23,9 @@ from uuid import uuid4
 import pytest
 
 from firefly_weave.compiler.api import CompiledArtifact, compile_source
+from firefly_weave.compiler.canonical import canonical_bytes, canonical_digest
 from firefly_weave.compiler.catalog import CatalogSnapshot
+from firefly_weave.compiler.ir import WorkflowIR
 from firefly_weave.contracts.definitions import load_definition
 from firefly_weave.runtime.kernel import transition
 from firefly_weave.runtime.models import CallIntent, ControlCommand, RunState, RuntimeEvent, Transition
@@ -215,15 +217,39 @@ def test_a_detached_call_issues_its_intent_and_continues_with_null():
     assert (run.state.status, run.state.output, run.state.active) == ("succeeded", None, [])
 
 
+def without_call_guards(flow: CompiledArtifact) -> CompiledArtifact:
+    """The same artifact without its call guards, as an artifact compiled before they existed carries none.
+
+    The guards hold the called workflow's own schemas, so no value passes a guard and fails the called schema: only
+    an artifact without them shows that the kernel checks the called workflow's schemas itself.
+    """
+    value = json.loads(flow.to_bytes())
+    guards = value["executable"]["guards"]
+    value["executable"]["guards"] = [g for g in guards if g["purpose"] not in {"call_input", "call_output"}]
+    assert len(value["executable"]["guards"]) < len(guards)
+    value["digest"] = canonical_digest(WorkflowIR.model_validate(value["executable"]).model_dump(by_alias=True))
+    return CompiledArtifact(canonical_bytes(value))
+
+
 def test_input_that_breaks_the_called_workflow_schema_opens_an_incident_before_any_intent():
     flow = compiled(
         [call(**{"with": {"object": {"customerId": {"ref": "/input/customerId"}}}})],
         {"ref": "/steps/enrich/output"},
         input_schema={"type": "object", "properties": {"customerId": {}}},
     )
-    result = Run(flow, {"customerId": 5}).send("started")
+    result = Run(without_call_guards(flow), {"customerId": 5}).send("started")
     assert intents(result) == [] and result.state.status == "suspended"
     assert [item.code for item in result.state.incidents.values()] == ["WV-SCHEMA-INVALID_INSTANCE"]
+
+
+def test_a_child_output_that_breaks_the_called_workflow_schema_opens_an_incident_without_the_guard():
+    run = Run(without_call_guards(compiled([call()], {"ref": "/steps/enrich/output"})), {"customerId": "c-1"})
+    run.send("started")
+    run.finish("enrich", "succeeded", {"tier": 7})
+    assert run.state.status == "suspended"
+    assert [(item.node_id, item.code) for item in run.state.incidents.values()] == [
+        ("enrich", "WV-SCHEMA-INVALID_INSTANCE")
+    ]
 
 
 def test_calls_inside_a_loop_issue_one_intent_per_iteration_under_its_instance_key():
@@ -302,6 +328,79 @@ def test_a_failed_child_delivered_behind_a_pause_fails_the_run_on_resume():
     assert (run.state.status, len(run.state.deferred_results)) == ("waiting", 1)
     run.send("resumed", actor_id=str(uuid4()), reason="go", control_revision=2)
     assert (run.state.status, run.state.incident) == ("failed", "NO_CUSTOMER")
+
+
+@pytest.mark.parametrize("release", ["resumed", "incident_resolved"])
+def test_deferred_results_stop_at_the_first_that_ends_the_run(release):
+    loop = {
+        "id": "each",
+        "kind": "forEach",
+        "items": {"ref": "/input/customers"},
+        "concurrency": 2,
+        "body": {
+            "steps": [call(**{"with": {"object": {"customerId": {"ref": "/item"}}}})],
+            "output": {"ref": "/steps/enrich/output/tier"},
+        },
+    }
+    flow = compiled(
+        [loop],
+        {"ref": "/steps/each/output"},
+        input_schema={
+            "type": "object",
+            "properties": {"customers": {"type": "array", "items": {"type": "string"}}},
+            "required": ["customers"],
+        },
+    )
+    run = Run(flow, {"customers": ["a", "b"]})
+    run.send("started")
+    if release == "resumed":
+        run.send("paused", actor_id=str(uuid4()), reason="hold", control_revision=1)
+        run.finish("enrich[0]", "failed", {"code": "NO_CUSTOMER", "message": "Unknown customer."})
+        run.finish("enrich[1]", "succeeded", {"tier": "gold"})
+        assert len(run.state.deferred_results) == 2
+        result = run.send("resumed", actor_id=str(uuid4()), reason="go", control_revision=2)
+    else:
+        run.send("incident_opened", node_id="enrich[1]", generation=0, code="WV-CALL-START")
+        run.finish("enrich[0]", "failed", {"code": "NO_CUSTOMER", "message": "Unknown customer."})
+        assert len(run.state.deferred_results) == 1
+        result = run.send(
+            "incident_resolved",
+            incident_key="enrich[1]:0",
+            node_id="enrich[1]",
+            generation=0,
+            kind="accept_reconciled_result",
+            output={"tier": "gold"},
+        )
+    # The first result fails the run; the second is never applied to a run that already ended.
+    assert (run.state.status, run.state.incident, run.state.output) == (
+        "failed",
+        "NO_CUSTOMER",
+        {"code": "NO_CUSTOMER", "message": "Unknown customer."},
+    )
+    assert "enrich[1]" not in [change.node_id for change in result.steps if change.status == "succeeded"]
+
+
+def test_call_intents_count_against_the_intents_one_transition_may_issue():
+    from firefly_weave.runtime.capacity import MAX_INTENTS, RuntimeCapacityError, admit_transition
+
+    def calls(amount: int) -> Transition:
+        return Transition(
+            state=RunState(input=None),
+            commands=[
+                CallIntent(
+                    node_id=f"enrich[{index}]",
+                    workflow_digest="sha256:" + "0" * 64,
+                    workflow_reference="enrich@1.0.0",
+                    input={"customerId": "c-1"},
+                    mode="detach",
+                )
+                for index in range(amount)
+            ],
+        )
+
+    admit_transition(calls(MAX_INTENTS))
+    with pytest.raises(RuntimeCapacityError):
+        admit_transition(calls(MAX_INTENTS + 1))
 
 
 def test_an_existing_event_type_keeps_its_bytes_and_an_empty_transition_keeps_no_call_field():

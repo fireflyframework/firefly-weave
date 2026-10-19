@@ -715,3 +715,79 @@ async def test_a_public_start_with_a_call_key_never_becomes_the_child_of_that_ca
         )
     assert linked == [row["child_run_id"]]
 
+
+async def test_a_child_cancelled_past_the_fetch_budget_still_reports_to_its_caller(platform, monkeypatch):
+    import firefly_weave.runtime.repository as repository
+
+    leaf = await activate(platform, HOLD)
+    run = await start(
+        platform,
+        await activate(platform, caller("orders", call("hold", "hold@1.0.0", onFailure="continue")), hold=leaf.id),
+    )
+    await scan(platform)
+    [row] = await calls(platform, run.id)
+    budget = repository.RUN_FETCH_BYTES
+    # Every run is now over the fetch budget, so the child's cancel takes the bounded SQL path.
+    monkeypatch.setattr(repository, "RUN_FETCH_BYTES", 1)
+    async with platform.runtime.definitions.transaction(platform.scope, None) as tx:
+        acknowledged = await platform.runtime.cancel(
+            tx, row["child_run_id"], "stop", actor=platform.actor, scope=platform.scope, context=AuditContext()
+        )
+    assert acknowledged.capacity_limited
+    [row] = await calls(platform, run.id)
+    assert (row["status"], row["code"]) == ("cancelled", "WV-RUN-CANCELLED")
+    monkeypatch.setattr(repository, "RUN_FETCH_BYTES", budget)
+    await scan(platform)
+    assert (await state(platform, run.id))["output"] == {
+        "status": "cancelled",
+        "runId": str(row["child_run_id"]),
+        "error": {"code": "WV-RUN-CANCELLED", "message": "The called run was cancelled."},
+    }
+
+
+async def test_a_caller_that_ends_cancels_its_requested_waiting_calls_in_the_same_transaction(platform):
+    leaf = await activate(platform, NOTIFY)
+    run = await start(
+        platform, await activate(platform, caller("orders", call("notify", "notify@1.0.0")), notify=leaf.id)
+    )
+    async with platform.runtime.definitions.transaction(platform.scope, None) as tx:
+        await platform.runtime.cancel(
+            tx, run.id, "no longer needed", actor=platform.actor, scope=platform.scope, context=AuditContext()
+        )
+    # No scan ran: the caller's own terminal transaction ended the call.
+    [row] = await calls(platform, run.id)
+    assert (row["status"], row["code"], row["delivered"], row["child_run_id"]) == (
+        "cancelled",
+        "WV-RUN-CANCELLED",
+        True,
+        None,
+    )
+
+
+async def test_the_dispatcher_never_starts_a_waiting_call_of_a_caller_that_already_ended(platform):
+    leaf = await activate(platform, NOTIFY)
+    run = await start(
+        platform, await activate(platform, caller("orders", call("notify", "notify@1.0.0")), notify=leaf.id)
+    )
+    async with platform.runtime.definitions.transaction(platform.scope, None) as tx:
+        await platform.runtime.cancel(
+            tx, run.id, "no longer needed", actor=platform.actor, scope=platform.scope, context=AuditContext()
+        )
+    # A requested row the caller's terminal transaction did not end: the dispatcher must end it instead.
+    async with platform.access_db[1]() as session, session.begin():
+        await session.execute(
+            text(
+                "UPDATE run_calls SET status='requested',code=NULL,ended_at=NULL,delivered=false "
+                "WHERE caller_run_id=:id"
+            ),
+            {"id": run.id},
+        )
+    await scan(platform)
+    [row] = await calls(platform, run.id)
+    assert (row["status"], row["code"], row["delivered"], row["child_run_id"]) == (
+        "cancelled",
+        "WV-RUN-CANCELLED",
+        True,
+        None,
+    )
+    assert await runs_of(platform, leaf.id) == []
