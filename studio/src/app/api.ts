@@ -68,6 +68,9 @@ const capacityCodes = new Set([
   "WV-REQUEST-CAPACITY",
   "WV-STUDIO-BUSY",
 ]);
+/** An admission refusal: nothing ran, and Studio sends a safe request again. */
+export const capacityRefusal = (status: number, code: string) =>
+  status === 429 && capacityCodes.has(code);
 const capacityAttempts = 4;
 /** The longest pause, in seconds, before a rejected request is sent again. */
 const longestPause = 5;
@@ -84,7 +87,7 @@ const retryDelay = (header: string | null) => {
  * check falls within one pause; a longer restriction fails at once.
  */
 const replayable = (status: number, code: string, retryAfter: string | null) =>
-  (status === 429 && capacityCodes.has(code)) ||
+  capacityRefusal(status, code) ||
   (status === 503 &&
     code === "WV-COMPATIBILITY" &&
     !(Number(retryAfter) > longestPause));

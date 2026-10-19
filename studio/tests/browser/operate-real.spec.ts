@@ -35,6 +35,7 @@ import {
   expectNoCredentialsLeft,
   openSidebar,
   pair,
+  platformAnswer,
   removePlatform,
   runSummaries,
   session,
@@ -275,12 +276,7 @@ test("a viewer sees the sections they may not read as needing access", async ({
   const name = uniqueName("e2e-viewer");
   await pair(page, s.host!, "viewer-pairing");
   await connectAndSignIn(page, name, viewer);
-  const answered = page.waitForResponse(
-    (r) =>
-      r.request().method() === "GET" &&
-      new URL(r.url()).pathname.endsWith("/operations/summary"),
-    { timeout: 30_000 },
-  );
+  const answered = platformAnswer(page, "/operations/summary");
   await page.getByRole("button", { name: "Overview", exact: true }).click();
   const response = await answered;
   expect(response.status(), "the platform's summary").toBe(200);
