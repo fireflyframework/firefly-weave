@@ -16,7 +16,11 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 import { EditorState } from "@codemirror/state";
-import { EditorView, type DecorationSet } from "@codemirror/view";
+import {
+  EditorView,
+  runScopeHandlers,
+  type DecorationSet,
+} from "@codemirror/view";
 import { describe, expect, it } from "vitest";
 import {
   decorationConfig,
@@ -28,7 +32,10 @@ import {
   completionOpen,
   formulaCompletion,
 } from "../src/app/editor/formula/codemirror/completion";
-import { singleLine } from "../src/app/editor/formula/codemirror/keys";
+import {
+  formulaKeys,
+  singleLine,
+} from "../src/app/editor/formula/codemirror/keys";
 import type { CompletionList } from "../src/app/editor/formula/complete";
 
 const look = (pointer: string): PillLook => ({
@@ -195,5 +202,83 @@ describe("the suggestions' state", () => {
       userEvent: "input.paste",
     }).state;
     expect(completionOpen(pasted)).toBe(false);
+  });
+});
+
+/**
+ * Backspace and Delete through the editor's own keymap, with no browser:
+ * engines that don't delete a non-editable pill whole on their own (WebKit
+ * in the desktop app) rely on these keys and on the pills being atomic.
+ */
+describe("the formula editor's pill keys", () => {
+  function keyed(doc: string, caret: number) {
+    const base = EditorState.create({
+      doc,
+      selection: { anchor: caret },
+      extensions: [
+        decorationConfig.of({
+          mode: "formula",
+          look,
+          pick: () => undefined,
+          error: () => null,
+        }),
+        formulaState,
+        formulaKeys({
+          multiline: false,
+          undo: () => undefined,
+          redo: () => undefined,
+          escape: () => false,
+        }),
+      ],
+    });
+    // The keymap and the pill commands read the state and dispatch.
+    const view = {
+      state: base,
+      dispatch(spec: Parameters<EditorState["update"]>[0]) {
+        view.state = view.state.update(spec).state;
+      },
+    };
+    const press = (key: "Backspace" | "Delete") =>
+      runScopeHandlers(
+        view as unknown as EditorView,
+        {
+          type: "keydown",
+          key,
+          keyCode: key === "Backspace" ? 8 : 46,
+          altKey: false,
+          ctrlKey: false,
+          metaKey: false,
+          shiftKey: false,
+        } as KeyboardEvent,
+        "editor",
+      );
+    return { view, press };
+  }
+
+  it("removes a whole reference with Backspace at its end", () => {
+    const { view, press } = keyed("input.amount > 1", 12);
+    expect(press("Backspace")).toBe(true);
+    expect(view.state.doc.toString()).toBe(" > 1");
+    expect(view.state.selection.main.head).toBe(0);
+  });
+  it("removes a whole reference with Delete just before it, inside a formula", () => {
+    const { view, press } = keyed("1 < input.amount and true", 4);
+    expect(press("Delete")).toBe(true);
+    expect(view.state.doc.toString()).toBe("1 <  and true");
+    expect(view.state.selection.main.head).toBe(4);
+  });
+  it("leaves other characters to the browser", () => {
+    const { view, press } = keyed("input.amount > 1", 16);
+    expect(press("Backspace")).toBe(false);
+    expect(view.state.doc.toString()).toBe("input.amount > 1");
+  });
+  it("makes every reference atomic, so the caret steps over it whole", () => {
+    const { view } = keyed("1 < input.amount and steps.check.output", 0);
+    const ranges: string[] = [];
+    for (const atomic of view.state.facet(EditorView.atomicRanges))
+      atomic(view as unknown as EditorView).between(0, 1e9, (from, to) => {
+        ranges.push(`${from}-${to}`);
+      });
+    expect(ranges).toEqual(["4-16", "21-39"]);
   });
 });
