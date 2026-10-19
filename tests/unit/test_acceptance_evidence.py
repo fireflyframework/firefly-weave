@@ -393,7 +393,8 @@ def test_a_dump_without_its_indexed_db_database_list_fails_the_key_check(tmp_pat
     (tmp_path / "J9-1440x900-viewer.json").write_text(legacy, encoding="utf-8")
     (tmp_path / "J9-1440x900-viewer.after-removal.json").write_text(dump(), encoding="utf-8")
     assert evidence.storage_key_problems(tmp_path, expected=["J9-1440x900-viewer"]) == [
-        "J9-1440x900-viewer: a dump does not list its IndexedDB databases"
+        "J9-1440x900-viewer: a dump does not list its IndexedDB databases",
+        "J9-1440x900-viewer: no storage entry with an account, local: or ui: prefix",
     ]
 
 
@@ -405,6 +406,20 @@ def test_a_profile_prefix_alone_is_not_an_account_key(tmp_path):
     (tmp_path / "J9-1440x900-viewer.json").write_text(dump([profile_only, subject_only]), encoding="utf-8")
     (tmp_path / "J9-1440x900-viewer.after-removal.json").write_text(dump([profile_only]), encoding="utf-8")
     assert evidence.storage_key_problems(tmp_path, expected=["J9-1440x900-viewer"]) == [
-        "J9-1440x900-viewer: 2 storage key(s) without an account, local: or ui: prefix"
+        "J9-1440x900-viewer: no storage entry with an account, local: or ui: prefix",
+        "J9-1440x900-viewer: 2 storage key(s) without an account, local: or ui: prefix",
     ]
     assert evidence.ACCOUNT_KEY.match(CONNECTED) and not evidence.ACCOUNT_KEY.match(profile_only + ":")
+
+
+def test_each_signed_in_person_keeps_at_least_one_prefixed_entry(tmp_path):
+    # Once the editor prefixes its keys, an empty dump proves nothing: each sign-in must show its prefixed storage.
+    (tmp_path / "J9-1440x900-viewer.json").write_text(dump(), encoding="utf-8")
+    (tmp_path / "J9-1440x900-viewer.after-removal.json").write_text(dump(), encoding="utf-8")
+    (tmp_path / "J9-1440x900-builder.json").write_text(
+        dump(records=[("weave", CONNECTED + "run.1")], databases=["weave"]), encoding="utf-8"
+    )
+    (tmp_path / "J9-1440x900-builder.after-removal.json").write_text(dump(databases=["weave"]), encoding="utf-8")
+    assert evidence.storage_key_problems(tmp_path, expected=["J9-1440x900-builder", "J9-1440x900-viewer"]) == [
+        "J9-1440x900-viewer: no storage entry with an account, local: or ui: prefix"
+    ]

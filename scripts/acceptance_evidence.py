@@ -177,9 +177,10 @@ DATABASES = "indexed_db_databases"
 
 def storage_key_problems(folder: Path, *, expected: Iterable[str]) -> list[str]:
     """Why the dumps of ``expected`` break Studio's storage rules: a localStorage or sessionStorage key, or an
-    IndexedDB record, without an account, local: or ui: prefix, or account storage left after the platform was
-    removed. An IndexedDB record carries the prefix in its key or in its database's name; the dumps list every
-    database (DATABASES) while this check runs. Problems count keys and never name them."""
+    IndexedDB record, without an account, local: or ui: prefix; account storage left after the platform was
+    removed; or a sign-in that kept no prefixed entry at all. An IndexedDB record carries the prefix in its key or
+    in its database's name; the dumps list every database (DATABASES) while this check runs. Problems count keys
+    and never name them."""
     problems: list[str] = []
     for name in sorted(set(expected)):
         before, after = folder / f"{name}.json", folder / f"{name}{AFTER_REMOVAL}.json"
@@ -192,6 +193,11 @@ def storage_key_problems(folder: Path, *, expected: Iterable[str]) -> list[str]:
             problems.append(f"{name}: no storage was captured after its platform was removed")
         if any(DATABASES not in dump for dump in (first, last) if dump is not None):
             problems.append(f"{name}: a dump does not list its IndexedDB databases")
+        prefixed = sum(1 for key in _web_keys(first) if OWN_KEY.match(key)) + sum(
+            1 for database, key in _records(first) if OWN_KEY.match(database) or OWN_KEY.match(key)
+        )
+        if not prefixed:
+            problems.append(f"{name}: no storage entry with an account, local: or ui: prefix")
         unprefixed = sum(1 for key in _web_keys(first) if not OWN_KEY.match(key))
         if unprefixed:
             problems.append(f"{name}: {unprefixed} storage key(s) without an account, local: or ui: prefix")
