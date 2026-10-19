@@ -142,6 +142,19 @@ duplicate accepted receipt identities; invalid event envelopes; invalid signal
 arbitration; or a transition that differs from the recorded one. A run suspended
 by a legitimate kernel incident remains an inspectable, verified prefix.
 
+## Calls in a history
+
+A run that calls another workflow records a `call_completed` event when the call's
+child run ends, with `node_id` (the call's instance key), `generation`,
+`child_run_id`, `status`, and `output` (the child's output, or a `code` and
+`message`). Its evidence names the call row the outcome came from
+(`call_receipt`), and the event that issued the call lists the row in
+`issued_calls`. Replaying the caller needs only its own history and artifact: the
+child's events stay in the child's history, which replays on its own. A call
+outcome that does not match its call evidence makes the report `inconsistent`
+(`WV-REPLAY-CALL` or `WV-REPLAY-CALL-ISSUANCE`); missing call evidence makes it
+`incomplete` (`WV-REPLAY-CALL-PROVENANCE`).
+
 ## Routes, pagination, and limits
 
 All routes are under
