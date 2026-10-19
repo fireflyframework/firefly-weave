@@ -66,9 +66,14 @@ def test_activation_accepts_a_workflow_with_a_loop():
     assert admit(executable) == []
 
 
-def test_activation_refuses_a_node_kind_this_platform_does_not_execute():
+def test_activation_refuses_a_node_kind_this_platform_does_not_execute(monkeypatch):
     executable = loop_executable()
     executable["graph"] = {**executable["graph"], "nodes": [*executable["graph"]["nodes"], {"kind": "callWorkflow"}]}
+    monkeypatch.setattr(
+        language_features,
+        "ADVERTISED_FEATURES",
+        tuple(name for name in language_features.ADVERTISED_FEATURES if name != "flow.callWorkflow"),
+    )
     with pytest.raises(CatalogError) as refused:
         admit(executable)
     assert refused.value.code == "WV-READINESS"

@@ -15,7 +15,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 
-"""A platform publishes a workflow that calls another only once it runs workflow calls."""
+"""A platform that runs workflow calls publishes a workflow that calls another; one that does not refuses it."""
 
 import json
 from pathlib import Path
@@ -25,6 +25,7 @@ from sqlalchemy import text
 
 from firefly_weave.access.audit import AuditContext
 from firefly_weave.compiler.parser import parse_source
+from firefly_weave.contracts import language_features
 
 pytestmark = pytest.mark.integration
 
@@ -35,12 +36,31 @@ def source(name):
     return json.dumps(parse_source((EXAMPLES / name).read_text(), format="yaml").value)
 
 
+async def test_this_platform_publishes_a_workflow_that_calls_another(worker_setup, services, access_db):
+    from firefly_weave.definitions.service import DefinitionService
+
+    actor, scope = worker_setup[3:5]
+    definitions = services(access_db[0]).resolve(DefinitionService)
+    await definitions.publish(
+        actor, scope, "Workflow", source("notify-customer.workflow.yaml"), "json", "callee", context=AuditContext()
+    )
+    caller = await definitions.publish(
+        actor, scope, "Workflow", source("order-intake.workflow.yaml"), "json", "caller", context=AuditContext()
+    )
+    assert caller.name == "order-intake"
+
+
 async def test_a_platform_that_does_not_run_calls_refuses_to_publish_a_workflow_that_calls(
-    worker_setup, services, access_db
+    worker_setup, services, access_db, monkeypatch
 ):
     from firefly_weave.definitions.models import CatalogError
     from firefly_weave.definitions.service import DefinitionService
 
+    monkeypatch.setattr(
+        language_features,
+        "ADVERTISED_FEATURES",
+        tuple(name for name in language_features.ADVERTISED_FEATURES if name != "flow.callWorkflow"),
+    )
     actor, scope = worker_setup[3:5]
     definitions = services(access_db[0]).resolve(DefinitionService)
     callee = await definitions.publish(

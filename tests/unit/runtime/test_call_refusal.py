@@ -14,8 +14,7 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-
-"""A platform that does not list the call feature refuses a compiled call at import."""
+"""This platform imports a workflow that calls another; a platform without the call feature refuses it."""
 
 from pathlib import Path
 
@@ -42,9 +41,11 @@ def artifact():
     return result.artifact
 
 
-def test_import_refuses_a_call_while_the_platform_does_not_list_the_call_feature(artifact):
+def test_this_platform_imports_a_workflow_that_calls_another(artifact):
+    assert import_artifact(artifact.to_bytes()).digest == artifact.digest
+
+
+def test_a_platform_without_the_call_feature_refuses_the_import(artifact):
     with pytest.raises(UnsupportedIR) as refused:
-        import_artifact(artifact.to_bytes())
+        import_artifact(artifact.to_bytes(), features=["flow.forEach", "text.concat", "text.join"])
     assert refused.value.missing == ("flow.callWorkflow",)
-    features = ["flow.callWorkflow", "text.concat", "text.join"]
-    assert import_artifact(artifact.to_bytes(), features=features).digest == artifact.digest

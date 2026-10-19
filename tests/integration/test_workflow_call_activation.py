@@ -25,13 +25,11 @@ from sqlalchemy import text
 
 from firefly_weave.access.audit import AuditContext
 from firefly_weave.compiler.parser import parse_source
-from firefly_weave.contracts import language_features
 from firefly_weave.contracts.catalog import Activation, ActivationRequest
 
 pytestmark = pytest.mark.integration
 
 EXAMPLES = Path("examples/language")
-CALLS = ("flow.callWorkflow", "text.concat", "text.join")
 
 
 def source(name):
@@ -60,12 +58,11 @@ def platform(worker_setup, services, access_db):
     return services(access_db[0]).resolve(DefinitionService), actor, scope
 
 
-async def test_activation_pins_one_live_activation_of_each_called_workflow(platform, access_db, monkeypatch):
+async def test_activation_pins_one_live_activation_of_each_called_workflow(platform, access_db):
     from firefly_weave.definitions.calls import call_tree_side_effect, pinned_call_tree
     from firefly_weave.definitions.models import CatalogError
     from firefly_weave.definitions.repository import DefinitionRepository
 
-    monkeypatch.setattr(language_features, "ADVERTISED_FEATURES", CALLS)
     definitions, actor, scope = platform
     _, callee_request = await publish_and_activate(definitions, actor, scope, "notify-customer.workflow.yaml", "callee")
     callee = await definitions.activate(actor, scope, callee_request, "callee", context=AuditContext())

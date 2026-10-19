@@ -84,8 +84,7 @@ HOLD = workflow(
 
 
 @pytest.fixture
-def platform(worker_setup, services, access_db, monkeypatch):
-    from firefly_weave.contracts import language_features
+def platform(worker_setup, services, access_db):
     from firefly_weave.definitions.service import DefinitionService
     from firefly_weave.operations.history import HistoryService
     from firefly_weave.operations.incidents import IncidentService
@@ -93,10 +92,6 @@ def platform(worker_setup, services, access_db, monkeypatch):
     from firefly_weave.runtime.service import RuntimeService
     from firefly_weave.runtime.signals import SignalService
 
-    # Until the platform lists the call feature, these tests turn it on.
-    monkeypatch.setattr(
-        language_features, "ADVERTISED_FEATURES", ("flow.callWorkflow", *language_features.ADVERTISED_FEATURES)
-    )
     graph = services(access_db[0])
     return SimpleNamespace(
         definitions=graph.resolve(DefinitionService),

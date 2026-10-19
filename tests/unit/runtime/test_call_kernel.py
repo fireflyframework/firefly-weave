@@ -307,3 +307,22 @@ def test_a_failed_child_delivered_behind_a_pause_fails_the_run_on_resume():
 def test_an_existing_event_type_keeps_its_bytes_and_an_empty_transition_keeps_no_call_field():
     result = Run(compiled([], {"literal": None}, input_schema={}), None).send("started")
     assert "call" not in json.dumps(result.model_dump(mode="json"))
+
+
+def test_a_debug_session_reports_a_waiting_call_and_simulates_past_a_detached_one():
+    from firefly_weave.operations.debug.simulator import Simulator
+
+    waiting = Simulator(
+        compiled([call()], {"ref": "/steps/enrich/output"}), mocks={}, input={"customerId": "c-1"}, now=NOW
+    )
+    view = waiting.continue_until_breakpoint()
+    assert [(d.code, d.message) for d in view.diagnostics] == [
+        (
+            "WV-DEBUG-MISSING_MOCK",
+            "A step that waits for another workflow cannot be simulated yet; simulate the called workflow on its own.",
+        )
+    ]
+    detached = Simulator(
+        compiled([call(mode="detach")], {"literal": "sent"}), mocks={}, input={"customerId": "c-1"}, now=NOW
+    )
+    assert detached.continue_until_breakpoint().status == "succeeded"

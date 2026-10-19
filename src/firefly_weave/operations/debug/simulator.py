@@ -47,7 +47,7 @@ from firefly_weave.runtime.kernel import (
     validate,
     validate_action,
 )
-from firefly_weave.runtime.models import Deadline, RunState, RuntimeEvent, TaskIntent
+from firefly_weave.runtime.models import CallIntent, Deadline, RunState, RuntimeEvent, TaskIntent
 
 _DEFAULT_LIMITS = DebugLimits()
 
@@ -238,6 +238,19 @@ class Simulator:
             for command in result.commands:
                 if isinstance(command, Deadline):
                     d.deadlines.append(command)
+                elif isinstance(command, CallIntent) and command.mode == "wait":
+                    # Debug sessions do not start child runs; a detached call is simply not simulated.
+                    d.diagnostics = [
+                        Diagnostic(
+                            code="WV-DEBUG-MISSING_MOCK",
+                            severity="error",
+                            stage="evaluation",
+                            path="",
+                            message="A step that waits for another workflow cannot be simulated yet; "
+                            "simulate the called workflow on its own.",
+                        )
+                    ]
+                    return True
                 elif isinstance(command, TaskIntent):
                     # A step mock applies to every instance of the step.
                     key = "node:" + command.node_id
