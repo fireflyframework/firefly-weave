@@ -312,6 +312,28 @@ class RuntimeService:
         async with self.definitions.transaction(scope, tx, mutation=False) as enlisted:
             return view_of(await RuntimeRepository(enlisted, self.definitions.outbox).run(identifier))
 
+    async def calls(
+        self,
+        actor: Principal,
+        scope: Scope,
+        identifier: UUID,
+        *,
+        limit: int = 50,
+        cursor: UUID | None = None,
+        context: AuditContext,
+    ) -> dict[str, Any]:
+        """The calls a run made; each names its child run and never carries input or output."""
+        if not 1 <= limit <= 100:
+            raise CatalogError(422, "WV-PAGE", "A bounded page is required")
+        self.require(actor, scope, "run.read", context)
+        async with self.definitions.transaction(scope, None, mutation=False) as tx:
+            self.require(await load_principal(tx.session, actor.id), scope, "run.read", context)
+            repository = RuntimeRepository(tx, self.definitions.outbox)
+            view_of(await repository.run(identifier))
+            from firefly_weave.runtime.calls import call_page
+
+            return await call_page(repository, identifier, limit, cursor)
+
     async def apply(
         self,
         actor: Principal,

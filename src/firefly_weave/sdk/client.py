@@ -106,6 +106,7 @@ from firefly_weave.contracts.run_lifecycle import RunLifecycle, RunLifecycleRequ
 from firefly_weave.contracts.run_views import RunListOrder, RunListQuery
 from firefly_weave.contracts.runtime import (
     CapacityRunAcknowledgment,
+    RunCallView,
     RunView,
     SignalReceipt,
     SignalRequest,
@@ -543,6 +544,12 @@ class WeaveClient:
 
     async def replay(self, identifier: UUID, *, limit: int = 1000) -> ReplayReport:
         return cast(ReplayReport, await self.invoke("runs.replay", identifier=identifier, query={"limit": limit}))
+
+    async def run_calls(self, identifier: UUID, *, limit: int = 50, cursor: str | None = None) -> Page[RunCallView]:
+        """The calls a run made, with each child run's ID and status; read a child run for its input and output."""
+        return cast(
+            Page[RunCallView], await self.invoke("runs.calls", identifier=identifier, query=self._page(limit, cursor))
+        )
 
     async def run_incidents(
         self,

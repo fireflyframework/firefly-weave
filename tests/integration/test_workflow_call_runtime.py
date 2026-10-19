@@ -523,3 +523,19 @@ async def test_the_history_of_a_caller_and_of_its_child_replay_consistently_and_
     events = list(parent.events)
     events[1] = events[1].model_copy(update={"data": {**events[1].data, "child_run_id": str(uuid4())}})
     assert replay(artifact, tuple(events)).status == "inconsistent"
+
+
+async def test_a_run_lists_its_calls_with_each_child_run_and_never_their_data(platform):
+    leaf = await activate(platform, NOTIFY)
+    flow = caller("orders", call("notify", "notify@1.0.0"), call("audit", "notify@1.0.0", mode="detach"))
+    run = await start(platform, await activate(platform, flow, notify=leaf.id))
+    await scan(platform)
+    rows = {row["node_id"]: row for row in await calls(platform, run.id)}
+    page = await platform.runtime.calls(platform.actor, platform.scope, run.id, context=AuditContext())
+    assert sorted((item["node_id"], item["mode"], item["status"], item["child_run_id"]) for item in page["items"]) == [
+        ("audit", "detach", "succeeded", str(rows["audit"]["child_run_id"])),
+        ("notify", "wait", "succeeded", str(rows["notify"]["child_run_id"])),
+    ]
+    assert all("input" not in item and "result" not in item for item in page["items"])
+    first = await platform.runtime.calls(platform.actor, platform.scope, run.id, limit=1, context=AuditContext())
+    assert len(first["items"]) == 1 and first["next_cursor"] == first["items"][0]["id"]

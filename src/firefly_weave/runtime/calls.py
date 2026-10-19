@@ -474,3 +474,38 @@ class CallService:
             await self.runtime.cancel_child(tx, candidate["child_run_id"], candidate["caller_run_id"])
             return 1
         return 0
+
+
+async def call_page(repository: RuntimeRepository, run_id: UUID, limit: int, after: UUID | None) -> dict[str, Any]:
+    """One page of the calls a run made, by call ID, as ``RunCallView`` items."""
+    from firefly_weave.contracts.runtime import RunCallView
+
+    rows = await repository.rows(
+        "SELECT id,node_id,generation,mode,workflow_reference,activation_id,status,child_run_id,code,"
+        f"requested_at,started_at,ended_at FROM run_calls WHERE {SCOPE} AND caller_run_id=:run "
+        "AND (cast(:after AS uuid) IS NULL OR id>:after) ORDER BY id LIMIT :limit",
+        run=run_id,
+        after=after,
+        limit=limit + 1,
+    )
+    items = []
+    for row in rows[:limit]:
+        key = instance_view(row["node_id"])
+        view = RunCallView(
+            id=row["id"],
+            node_id=key.node_id,
+            instance_key=key.instance_key,
+            iteration=key.iteration,
+            generation=row["generation"],
+            mode=row["mode"],
+            workflow=row["workflow_reference"],
+            activation_id=row["activation_id"],
+            status=row["status"],
+            child_run_id=row["child_run_id"],
+            code=row["code"],
+            requested_at=row["requested_at"],
+            started_at=row["started_at"],
+            ended_at=row["ended_at"],
+        )
+        items.append(view.model_dump(mode="json"))
+    return {"items": items, "next_cursor": str(rows[limit - 1]["id"]) if len(rows) > limit else None}

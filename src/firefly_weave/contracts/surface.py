@@ -180,6 +180,7 @@ from firefly_weave.contracts.run_views import (
 )
 from firefly_weave.contracts.runtime import (
     CapacityRunAcknowledgment,
+    RunCallView,
     RunView,
     SignalReceipt,
     SignalRequest,
@@ -1468,6 +1469,9 @@ OPERATIONS = {
         Operation("runs.history", ENVIRONMENT + "/runs/{identifier}/history", "GET", EventPage, "run.read"),
         Operation("runs.export", ENVIRONMENT + "/runs/{identifier}/export", "GET", HistoryExport, "run.read"),
         Operation("runs.replay", ENVIRONMENT + "/runs/{identifier}/replay", "GET", ReplayReport, "run.read"),
+        Operation(
+            "runs.calls", ENVIRONMENT + "/runs/{identifier}/calls", "GET", Page[RunCallView], "run.read", page=True
+        ),
         Operation(
             "run_summaries.list",
             ENVIRONMENT + "/run-summaries",
