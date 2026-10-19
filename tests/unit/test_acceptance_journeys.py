@@ -152,7 +152,8 @@ def test_the_committed_map_is_valid():
     assert enablement.journey_steps("J3") == tuple(f"J3.{n}" for n in range(1, 13))
     assert enablement.journey_steps("J5") == tuple(f"J5.{n}" for n in range(1, 8))
     assert enablement.journey_steps("J8") == tuple(f"J8.{n}" for n in range(1, 6))
-    assert enablement.journey_steps("J9") == tuple(f"J9.{n}" for n in range(1, 6))
+    # J9: authorization (J9.1, J9.2), private origins (J9.3) and the canary scan (J9.4); cluster hardening is J6.1.
+    assert enablement.journey_steps("J9") == tuple(f"J9.{n}" for n in range(1, 5))
     assert enablement.applies("J8.4", "nightly") and not enablement.applies("J8.4", "pr")
     assert "step-error-handling" in enablement.missing("J3.10")
     assert enablement.checks("J9.2") == ("J9.2/execute-in-local", "J9.2/operations-controls")

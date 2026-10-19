@@ -192,7 +192,6 @@ J15 = ["SC1", "SC7"]
 "J9.3/model-origins" = ["ai-and-cluster-profiles"]
 "J9.4" = ["real-platform-journeys"]
 "J9.4/storage-keys" = ["editor-contracts"]
-"J9.5" = ["real-platform-journeys", "editor-hardening"]
 
 [step_profiles]
 "J0.2/cluster-tools" = ["cluster", "k3d", "nightly", "release"]
