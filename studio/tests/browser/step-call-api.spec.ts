@@ -837,3 +837,29 @@ for (const size of allSizes)
       ).toBe(true);
     });
   });
+
+for (const size of sizes)
+  test.describe(`the URL's full address at ${size.tag}`, () => {
+    test.use({ viewport: { width: size.width, height: size.height } });
+
+    test("the URL shows the full address once its values compute", async ({
+      page,
+    }) => {
+      await withLanguageFeatures(page);
+      const details = await openStepFixture(page, stepFixture, authoring);
+      await addCommonStep(page, "Call an API");
+      const url = details.field("url");
+      await url
+        .getByRole("textbox", { name: "URL" })
+        .fill("/customers/{id}/orders");
+      const id = details.dialog
+        .locator('[data-param="url.path.id"]')
+        .getByRole("textbox")
+        .first();
+      await id.fill("c 1042");
+      await id.press("Tab");
+      await expect(url.locator(":scope > .param > .param-line")).toHaveText(
+        "= Connection address/customers/c%201042/orders",
+      );
+    });
+  });

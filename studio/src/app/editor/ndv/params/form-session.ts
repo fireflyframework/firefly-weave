@@ -56,6 +56,7 @@ import type {
   PendingKind,
   PendingOwner,
 } from "../pending-entries";
+import { urlPreview } from "./url-preview";
 import { isMappedText } from "../pending-entries";
 import { retryProblem, retryShown } from "../settings/settings-rules";
 import {
@@ -1200,7 +1201,8 @@ export class FormSession {
     return (
       checkFormula(value.expression, this.checkScope(spec))[0]?.message ?? null
     );
-  } /** What a value resolves to at this field: a Fixed value as it is, a formula through the preview. */
+  }
+  /** What a value resolves to at this field: a Fixed value as it is, a formula through the preview. */
   previewOf(spec: ParamSpec, value: ParamValue): PreviewResult | null {
     if (value.mode === "absent") return null;
     if (value.mode === "fixed") return { ok: true, value: value.value };
@@ -1214,6 +1216,38 @@ export class FormSession {
     return value.mode === "mapped"
       ? sourceLabel(value.expression, this.controller.previewData())
       : "";
+  }
+
+  /** The full address a Call an API step calls, when every value in it computes. */
+  urlAddress(spec: ParamSpec): string | null {
+    const path = this.urlPath(spec);
+    if (spec.type !== "urlTemplate" || !path) return null;
+    const values = new Map(
+      this.urlParts(spec).map((part) => [
+        String(part.path[2]),
+        this.previewOf(part, this.read(part)),
+      ]),
+    );
+    const entries = this.entries({
+      id: "probe",
+      path: ["with", "query"],
+      type: "keyValue",
+      label: "",
+    });
+    const query =
+      entries.kind === "object"
+        ? entries.keys.map((name) => {
+            const row: ParamSpec = {
+              id: `query.${name}`,
+              path: ["with", "query", name],
+              type: "text",
+              label: name,
+              mapping: "both",
+            };
+            return { name, preview: this.previewOf(row, this.read(row)) };
+          })
+        : [];
+    return urlPreview(path, values, query);
   }
 
   /** The schema a field's value must fit, when the step's contract says. */
@@ -1293,6 +1327,8 @@ export class FormSession {
       return this.withFix({ kind: issue.severity, text: issue.message }, issue);
     const warning = this.formulaWarning(spec);
     if (warning) return { kind: "warning", text: warning };
+    const address = spec.type === "urlTemplate" ? this.urlAddress(spec) : null;
+    if (address) return { kind: "preview", text: `= ${address}` };
     const value = this.read(spec);
     if (value.mode === "mapped") {
       const preview = this.controller
