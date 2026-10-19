@@ -256,7 +256,9 @@ for (const size of sizes)
           "column and formula right edges",
         );
       }
-      if (size.width >= 600)
+      // One row only where the column has the dialog's width (the
+      // formula-first layout of a narrow window); otherwise stacked.
+      if (size.width >= 600 && size.width < 768)
         expectAligned(
           [search.middle, source.middle],
           "search and source on one row",
@@ -303,5 +305,95 @@ for (const size of sizes)
         expect(part.hit, `${part.name} is drawn on top`).toBe(true);
       for (const part of report.parts.filter((part) => part.head))
         expect(part.inside, `${part.name} inside the column`).toBe(true);
+    });
+  });
+
+// Edit formula's layout by the room it has: three columns (fields, formula,
+// Result) when the dialog is wide, the Result under the formula beside the
+// fields in a tablet's window, the formula first on a narrow window, and
+// side by side again on a short one (a phone on its side, 200 % zoom), where
+// stacking would push the fields out of sight.
+const layouts = [
+  { tag: "1920x1080", width: 1920, height: 1080, layout: "three" },
+  { tag: "1440x900", width: 1440, height: 900, layout: "three" },
+  { tag: "1280x720", width: 1280, height: 720, layout: "three" },
+  { tag: "768x1024", width: 768, height: 1024, layout: "two" },
+  { tag: "600x500", width: 600, height: 500, layout: "stacked" },
+  { tag: "360x640", width: 360, height: 640, layout: "stacked" },
+  { tag: "640x360", width: 640, height: 360, layout: "two" },
+] as const;
+for (const size of layouts)
+  test.describe(`Edit formula's layout at ${size.tag}`, () => {
+    test.use({ viewport: { width: size.width, height: size.height } });
+
+    test(`Edit formula lays out ${size.layout === "three" ? "three columns" : size.layout === "two" ? "the fields beside the formula" : "the formula over the fields"}, with a field row and the search in view`, async ({
+      page,
+    }) => {
+      await withLanguageFeatures(page);
+      const details = await openStepFixture(page, formulasFixture);
+      await details.openWithKeyboard("flag");
+      await showParameters(page, details.dialog);
+      await details
+        .field("value")
+        .getByRole("button", { name: "Edit formula" })
+        .click();
+      const dialog = page.getByRole("dialog", { name: "Edit formula: Fields" });
+      await expect(dialog).toBeVisible();
+      const column = dialog.locator("weave-input-pane");
+      const input = await box(column);
+      const editor = await box(formulaBox(dialog));
+      const result = await box(
+        dialog.getByRole("region", { name: "Result of Fields" }),
+      );
+      const search = await box(
+        column.getByRole("textbox", { name: "Search fields of earlier steps" }),
+      );
+      const source = await box(
+        column.getByRole("combobox", { name: "Input source" }),
+      );
+      const footer = await box(dialog.locator(".dialog-actions"));
+      if (size.layout === "three") {
+        expect(input.right, "fields left of the formula").toBeLessThanOrEqual(
+          editor.x,
+        );
+        expect(editor.right, "Result right of the formula").toBeLessThanOrEqual(
+          result.x,
+        );
+        expectAligned([input.y, editor.y, result.y], "column tops");
+      } else if (size.layout === "two") {
+        expect(input.right, "fields left of the formula").toBeLessThanOrEqual(
+          editor.x,
+        );
+        expectAligned([input.y, editor.y], "column tops");
+        expectAligned([result.x, editor.x], "Result under the formula");
+        expect(result.y).toBeGreaterThanOrEqual(editor.bottom);
+      } else {
+        expect(result.y).toBeGreaterThanOrEqual(editor.bottom);
+        expect(input.y).toBeGreaterThanOrEqual(result.bottom);
+      }
+      // The source's face is as tall as the search box.
+      const face = await column
+        .locator(".pane-source-field")
+        .evaluate((element) => {
+          const style = getComputedStyle(element, "::before");
+          const box = element.getBoundingClientRect();
+          return box.height - parseFloat(style.top) - parseFloat(style.bottom);
+        });
+      expect(face, "source face height").toBe(search.height);
+      // The search keeps a usable width, and the source never squeezes it.
+      expect(search.width, "search width").toBeGreaterThanOrEqual(160);
+      expect(intersects(search, source)).toBe(false);
+      // Without scrolling: the search above the footer, and a field row in
+      // the column, above the footer too.
+      expect(search.bottom, "search above the footer").toBeLessThanOrEqual(
+        footer.y,
+      );
+      const rows = await boxes(column.locator(".data-tree > li"));
+      const shown = rows.filter(
+        (row) =>
+          row.y >= input.y - 0.5 &&
+          row.bottom <= Math.min(input.bottom, footer.y) + 0.5,
+      );
+      expect(shown.length, "field rows in view").toBeGreaterThan(0);
     });
   });

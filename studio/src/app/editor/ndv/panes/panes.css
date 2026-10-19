@@ -363,13 +363,14 @@ weave-input-pane .pane-count {
   margin-block: -1px;
 }
 
-/* Compact (Edit formula's column): the search and the source share one row
-   above the fields, on the column's own edges (the dialog has its padding);
-   a narrow column stacks them. */
+/* Compact (Edit formula's column): the search over the source, above the
+   fields, on the column's own edges (the dialog has its padding). The
+   formula-first layout of a narrow window gives the column the dialog's
+   width, so the search and the source share one row there. */
 weave-input-pane.is-compact {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
 }
 weave-input-pane.is-compact > :is(.pane-search-row, .pane-sub, .sd-pane-body) {
   padding-inline: 0;
@@ -379,19 +380,25 @@ weave-input-pane.is-compact > :is(.pane-search-row, .pane-sub) {
   min-height: 0;
   padding-block: 0 var(--space-2);
 }
-weave-input-pane.is-compact > .pane-search-row {
-  padding-inline-end: var(--space-2);
-}
 weave-input-pane.is-compact > .sd-pane-body {
   grid-column: 1 / -1;
   padding-top: var(--space-2);
 }
-@container dialog (max-width: 480px) {
-  weave-input-pane.is-compact {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto auto minmax(0, 1fr);
-  }
-  weave-input-pane.is-compact > .pane-search-row {
-    padding-inline-end: 0;
+/* The source drawn as tall as the search beside or above it. */
+.step-details weave-input-pane.is-compact .pane-source {
+  min-height: var(--sd-control);
+}
+weave-input-pane.is-compact .pane-source-field::before {
+  inset: 0;
+}
+@media (max-width: 767px) and (min-height: 481px) {
+  @container dialog (min-width: 481px) {
+    weave-input-pane.is-compact {
+      grid-template-columns: minmax(0, 1fr) auto;
+      grid-template-rows: auto minmax(0, 1fr);
+    }
+    weave-input-pane.is-compact > .pane-search-row {
+      padding-inline-end: var(--space-2);
+    }
   }
 }
