@@ -185,7 +185,7 @@ def test_the_identity_alias_is_added_at_keycloaks_address_and_taken_away_afterwa
         def require(self, result):
             return result
 
-    with security.identity_alias(Run()):
+    with security.identity_alias(Run(), ready=lambda: None):
         during = list(calls)
     assert during[1:] == [
         ["network", "disconnect", "weave-local-p-egress", "weave-local-p-keycloak-1"],
@@ -361,7 +361,33 @@ def test_keycloak_rejoins_the_egress_network_when_the_alias_cannot_be_added():
                 raise AssertionError("address in use")
             return result
 
-    with pytest.raises(AssertionError, match="address in use"), security.identity_alias(Run()):
+    with pytest.raises(AssertionError, match="address in use"), security.identity_alias(Run(), ready=lambda: None):
         pass
     assert calls[-1] == ["network", "connect", "--ip", "10.0.0.3", "net", "p-keycloak-1"]
     assert calls.count(["network", "disconnect", "net", "p-keycloak-1"]) == 1
+
+
+def test_the_api_is_ready_again_after_each_network_change_of_keycloak():
+    # Seen live: the API, in Keycloak's network namespace, answered 503 right after Keycloak rejoined the network.
+    import json
+    import subprocess
+
+    events = []
+
+    class Run:
+        def platform_state(self):
+            return {"private_origins": {"network": "net"}}
+
+        def docker(self, *args, **_):
+            events.append(args[1] if args[0] == "network" else args[0])
+            stdout = ""
+            if args[:2] == ("network", "inspect"):
+                stdout = json.dumps([{"Containers": {"k": {"Name": "p-keycloak-1", "IPv4Address": "10.0.0.3/24"}}}])
+            return subprocess.CompletedProcess(args, 0, stdout=stdout, stderr="")
+
+        def require(self, result):
+            return result
+
+    with security.identity_alias(Run(), ready=lambda: events.append("ready")):
+        events.append("body")
+    assert events == ["inspect", "disconnect", "connect", "ready", "body", "disconnect", "connect", "ready"]

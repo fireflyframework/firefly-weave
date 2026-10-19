@@ -206,12 +206,32 @@ REFUSALS = {
 }
 
 
+def api_ready(run, timeout: float = 60) -> None:
+    """Wait until the API answers /health/ready again; it shares Keycloak's network namespace, so a network change
+    of Keycloak interrupts it briefly."""
+    import urllib.request
+
+    url = run.helper("acceptance_people").api_origin(run.platform_state()) + "/health/ready"
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            with opener.open(url, timeout=2) as response:
+                if response.status == 200:
+                    return
+        except OSError:
+            pass
+        assert time.monotonic() < deadline, f"the API was not ready within {timeout:.0f} seconds"
+        time.sleep(1)
+
+
 @contextmanager
-def identity_alias(run) -> Iterator[None]:
+def identity_alias(run, ready: Any = None) -> Iterator[None]:
     """Keycloak answers to the approved identity alias on the egress network, at its own address, until exit.
 
     Docker adds an alias only when a container joins a network, so Keycloak leaves and rejoins at the same address.
     """
+    wait = ready if ready is not None else (lambda: api_ready(run))
     network = run.platform_state()["private_origins"]["network"]
     inspected = json.loads(run.require(run.docker("network", "inspect", network)).stdout)[0]
     (name, address), *_ = [
@@ -224,12 +244,14 @@ def identity_alias(run) -> Iterator[None]:
     try:
         run.require(run.docker("network", "connect", "--ip", address, "--alias", IDENTITY_ALIAS, network, name))
         aliased = True
+        wait()
         yield
     finally:
         # Keycloak rejoins without the alias whatever happened, so later steps meet the same platform.
         if aliased:
             run.require(run.docker("network", "disconnect", network, name))
         run.require(run.docker("network", "connect", "--ip", address, network, name))
+        wait()
 
 
 def refusal_records(text: str) -> list[dict[str, Any]]:
