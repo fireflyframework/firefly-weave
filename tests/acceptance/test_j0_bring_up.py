@@ -112,8 +112,15 @@ def test_j0_03_up_with_the_fixture_origin(run):
     )
 
 
+# Roles a person also needs on the demo project. An environment grant does not cover project operations
+# (access/authorization.py contains()), and the workflow catalog is a project resource, so a viewer granted only on
+# the environment sees no workflows; weave platform user grants every role but developer and tenant_admin there.
+PROJECT_ROLES = {"viewer": ("viewer",)}
+
+
 @pytest.mark.journey_step("J0.4")
-def test_j0_04_people(run):
+async def test_j0_04_people(run):
+    principals = {}
     for name, roles in PEOPLE.items():
         granted = [role for role in roles if role in PERSON_ROLES]
         arguments = ["user", "--username", name]
@@ -121,9 +128,23 @@ def test_j0_04_people(run):
             arguments += ["--role", role]
         value = json.loads(run.require(run.platform(*arguments, "--output", "json")).stdout)
         run.save_person(name, value)
+        principals[name] = value["principal_id"]
         assert sorted({grant["role"] for grant in value["grants"]}) == sorted(granted)
     for name in ("owner", *PEOPLE):
         assert len(run.keycloak_users(name)) == 1, name
+    scope = run.demo_scope()
+    project = {"tenant_id": scope["tenant_id"], "project_id": scope["project_id"]}
+    async with run.cli("owner") as weave:
+        for name, roles in PROJECT_ROLES.items():
+            added = []
+            for role in roles:
+                binding = weave(
+                    *("remote", "access", "members", "grant"),
+                    request={"principal_id": principals[name], "role": role, "project_id": scope["project_id"]},
+                )
+                assert binding["role"] == role and binding["scope"].get("environment_id") is None
+                added.append({"role": role, "scope": project})
+            run.add_grants(name, added)
 
 
 @pytest.mark.journey_step("J0.5")

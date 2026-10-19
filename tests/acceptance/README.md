@@ -109,7 +109,12 @@ its `request` only reads with GET.
 ## People and API sessions
 
 `J0` creates the owner, builder, approver, operator and viewer with generated
-passwords in `private/people/` (0600). pytest journeys call the API as a person
+passwords in `private/people/` (0600). `weave platform user` grants every role
+but `developer` and `tenant_admin` on the demo environment, and an environment
+grant does not cover project operations such as reading the workflow catalog,
+so J0.4 also grants the viewer its `viewer` role on the demo project
+(`PROJECT_ROLES` in `test_j0_bring_up.py`). A person whose roles must reach
+project resources needs the same. pytest journeys call the API as a person
 with `async with run.client("builder") as client:`, which signs in through the
 identity provider's pages with PKCE every time it is called. Each client keeps
 its tokens in its own file under `private/sessions/`, removed when the client

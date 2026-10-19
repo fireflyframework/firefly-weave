@@ -430,3 +430,18 @@ async def test_typed_cli_commands_run_as_the_person_with_a_private_token_file_an
     assert all(PASSWORD not in " ".join(call) for call in calls)
     # The token file, the sign-in configuration and the request files are gone.
     assert [path for path in (run.private / "sessions").rglob("*") if path.is_file()] == []
+
+
+def test_project_grants_are_added_to_a_person_file_that_stays_private(tmp_path):
+    people_dir = tmp_path / "people"
+    people_dir.mkdir(mode=0o700)
+    path = people_dir / "viewer.json"
+    record = {"username": "viewer", "password": PASSWORD, "subject": "s", "grants": [{"role": "viewer", "scope": {}}]}
+    path.write_text(__import__("json").dumps(record), encoding="utf-8")
+    path.chmod(0o600)
+    added = {"role": "viewer", "scope": {"tenant_id": "t", "project_id": "p"}}
+    people.add_grants(path, [added])
+    saved = __import__("json").loads(path.read_text(encoding="utf-8"))
+    assert saved["grants"] == [*record["grants"], added] and saved["password"] == PASSWORD
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert [entry.name for entry in people_dir.iterdir()] == ["viewer.json"]

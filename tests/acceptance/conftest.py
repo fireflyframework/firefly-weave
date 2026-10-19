@@ -233,6 +233,10 @@ class Run:
             json.dump(record, stream, indent=2, sort_keys=True)
         return path
 
+    def add_grants(self, name: str, grants: list[dict[str, Any]]) -> None:
+        """Record grants given after a person was saved, in the same 0600 file."""
+        _helper("acceptance_people").add_grants(self.private / "people" / f"{name}.json", grants)
+
     def fixtures(self, *args: str, timeout: float = 300) -> subprocess.CompletedProcess[str]:
         """docker compose for this run's fixture project on the installation's egress network."""
         env = {

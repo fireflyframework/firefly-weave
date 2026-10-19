@@ -280,5 +280,16 @@ async def person_cli(run: Any, name: str) -> AsyncIterator[PersonCli]:
                 cli.requests.rmdir()
 
 
+def add_grants(path: Path, grants: list[dict[str, Any]]) -> None:
+    """Append grants to a person file, replaced atomically and kept 0600."""
+    record = read_json(path)
+    record["grants"] = [*record["grants"], *grants]
+    temporary = path.with_name(f".{path.name}.{uuid4().hex}")
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+        json.dump(record, stream, indent=2, sort_keys=True)
+    os.replace(temporary, path)
+
+
 def read_json(path: Path) -> dict[str, Any]:
     return dict(json.loads(path.read_text(encoding="utf-8")))
