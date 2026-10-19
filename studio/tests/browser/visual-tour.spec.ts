@@ -57,8 +57,16 @@ import {
   openStepFixture,
   settingsGear,
   stepFixture,
+  withLanguageFeatures,
   yamlFile,
 } from "./step-details-po";
+import {
+  formulaText,
+  formulasFixture,
+  replaceFormula,
+  setTestInput,
+  suggestions,
+} from "./formula-po";
 import { showParameters } from "./step-geometry";
 import {
   AI_CAPABILITIES,
@@ -127,7 +135,7 @@ const versionId = "11111111-1111-4111-8111-111111111111";
 
 /** Floating surfaces that cover the page on purpose while they are open. */
 const overlays =
-  '[aria-modal="true"], .modal-backdrop, [role="dialog"], [role="menu"], [role="listbox"], .platform-menu, .inspector, .record-detail, .palette.popover-visible, .sim-panel, .toast, .canvas-v2 f-minimap, .canvas-v2 .selection-toolbar, .canvas-v2 .tile-toolbar, .add-step-panel';
+  '[aria-modal="true"], .modal-backdrop, [role="dialog"], [role="menu"], [role="listbox"], .platform-menu, .inspector, .record-detail, .palette.popover-visible, .sim-panel, .toast, .canvas-v2 f-minimap, .canvas-v2 .selection-toolbar, .canvas-v2 .tile-toolbar, .add-step-panel, .formula-suggestions';
 
 test.describe.configure({ mode: "parallel" });
 test.afterAll(() => stopLocalAuthoring());
@@ -1611,6 +1619,100 @@ const scenes: Record<string, Scene> = {
     await details.dialog.getByRole("button", { name: "Add option" }).click();
     await expect(page.getByRole("menu", { name: "Add option" })).toBeVisible();
     await shot("91-step-details-add-option", { tabs: 0 });
+  },
+  // The formula editor with its suggestions open.
+  async "formula-suggestions"({ page, shot }) {
+    await withLanguageFeatures(page);
+    const details = await openStepFixture(page, formulasFixture);
+    await details.openWithKeyboard("flag");
+    await showParameters(page, details.dialog);
+    await replaceFormula(page, details.field("value"), "input.");
+    await expect(suggestions(page)).toBeVisible();
+    await shot("140-formula-suggestions", { tabs: 0 });
+  },
+  // A formula that doesn't parse yet: Not applied, the reason, the underline.
+  async "formula-error"({ page, shot }) {
+    await withLanguageFeatures(page);
+    const details = await openStepFixture(page, formulasFixture);
+    await details.openWithKeyboard("flag");
+    await showParameters(page, details.dialog);
+    await replaceFormula(page, details.field("value"), "input.amount >");
+    await expect(details.field("value").locator(".param-line")).toContainText(
+      "Not applied",
+    );
+    await shot("141-formula-error", { tabs: 0 });
+  },
+  // The Result panel under a focused template, from the test input.
+  async "formula-result"({ page, shot }) {
+    await withLanguageFeatures(page);
+    const details = await openStepFixture(page, formulasFixture);
+    await setTestInput(page, details, {
+      "Customer ID": "c-1042",
+      Amount: "1500",
+    });
+    await details.openWithKeyboard("review");
+    await showParameters(page, details.dialog);
+    await formulaText(details.field("title")).click();
+    await expect(
+      details.field("title").getByRole("region", { name: "Result of Title" }),
+    ).toContainText("1500");
+    await shot("142-formula-result", { tabs: 0 });
+  },
+  async "formula-edit-dialog"({ page, shot }) {
+    await withLanguageFeatures(page);
+    const details = await openStepFixture(page, formulasFixture);
+    await setTestInput(page, details, {
+      "Customer ID": "c-1042",
+      Amount: "1500",
+    });
+    await details.openWithKeyboard("flag");
+    await showParameters(page, details.dialog);
+    await details
+      .field("value")
+      .getByRole("button", { name: "Edit formula" })
+      .click();
+    await expect(
+      page.getByRole("dialog", { name: "Edit formula: Fields" }),
+    ).toBeVisible();
+    await shot("143-formula-edit-dialog", { end: ".modal-panel", tabs: 0 });
+  },
+  // `{{` typed in a Fixed prompt: Mapped, braces closed, suggestions open.
+  async "formula-template"({ page, shot }) {
+    await withLanguageFeatures(page);
+    const details = await openStepFixture(page);
+    await details.openWithKeyboard("summarize");
+    await showParameters(page, details.dialog);
+    const text = details
+      .field("prompt")
+      .getByRole("textbox", { name: "Prompt" });
+    await text.focus();
+    await page.keyboard.press("End");
+    await page.keyboard.type(" for {{");
+    await expect(suggestions(page)).toBeVisible();
+    await shot("144-formula-template", { tabs: 0 });
+  },
+  // Call an API with the full address under its URL.
+  async "formula-url-address"({ page, shot }) {
+    const details = await openStepFixture(page, stepFixture, apiAuthoring);
+    await addCommonStep(page, "Call an API");
+    await showParameters(page, details.dialog);
+    await details
+      .field("url")
+      .getByRole("textbox", { name: "URL" })
+      .fill("/customers/{id}/orders");
+    const id = details.dialog
+      .locator('[data-param="url.path.id"]')
+      .getByRole("textbox")
+      .first();
+    await id.fill("c-1042");
+    await id.press("Tab");
+    await expect(
+      details.field("url").locator(":scope > .param > .param-line"),
+    ).toContainText("Connection address/customers/c-1042/orders");
+    await shot("145-formula-url-address", {
+      end: ".sd-tabpanel:not([hidden])",
+      tabs: 0,
+    });
   },
   async "step-details-decision"({ page, shot }) {
     const details = await openStepFixture(page);
