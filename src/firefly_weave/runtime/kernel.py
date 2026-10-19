@@ -50,7 +50,7 @@ from firefly_weave.compiler.ir import (
 )
 from firefly_weave.compiler.schemas import validate_payload
 from firefly_weave.contracts.definitions import ActionDefinition, ContractModel, WorkerImplementation, load_definition
-from firefly_weave.contracts.instance_keys import node_of, split_instance
+from firefly_weave.contracts.instance_keys import node_of
 from firefly_weave.contracts.limits import Limits
 from firefly_weave.contracts.values import JsonObject, JsonValue
 from firefly_weave.runtime.capacity import (
@@ -79,6 +79,7 @@ from firefly_weave.runtime.control import (
     frame_suffix,
     iteration_suffix,
     joined_output,
+    loop_scope,
     loop_suffix,
 )
 from firefly_weave.runtime.models import (
@@ -456,17 +457,9 @@ def _advance_owned(
     def mapping(node: Node, key: str, expression: JsonObject) -> JsonValue:
         context: JsonObject = {"input": current_state.input, "steps": bindings(current_state, node, key)}
         # Inside loop bodies: /item and /index of the innermost loop, and /loops/<id> for every enclosing loop.
-        owners = [owner for owner in node.scope[::2] if isinstance(nodes[owner], ForEachNode)]
-        if owners:
-            indexes = split_instance(key).indexes
-            scopes: JsonObject = {}
-            innermost: JsonObject = {}
-            for depth, owner in enumerate(owners):
-                index = indexes[depth]
-                loop = current_state.loops[owner + "".join(f"[{i}]" for i in indexes[:depth])]
-                innermost = {"item": loop.items[index], "index": index}
-                scopes[owner] = innermost
-            context.update(innermost, loops=scopes)
+        scope = loop_scope(nodes, current_state, node, key)
+        if scope:
+            context.update(scope)
             prepared.contexts.check(context)
             return evaluate(expression, context, measured=True)
         return evaluate(expression, context)
