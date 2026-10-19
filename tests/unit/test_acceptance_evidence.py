@@ -395,3 +395,16 @@ def test_a_dump_without_its_indexed_db_database_list_fails_the_key_check(tmp_pat
     assert evidence.storage_key_problems(tmp_path, expected=["J9-1440x900-viewer"]) == [
         "J9-1440x900-viewer: a dump does not list its IndexedDB databases"
     ]
+
+
+def test_a_profile_prefix_alone_is_not_an_account_key(tmp_path):
+    # An account key names the profile, the subject, the tenant and the project; "p<16 hex>:settings" names none
+    # of the account, so it is an unprefixed key, and left after removal it is not an account key.
+    profile_only = "p0123456789abcdef:settings"
+    subject_only = "p0123456789abcdef:fedcba9876543210:drafts"
+    (tmp_path / "J9-1440x900-viewer.json").write_text(dump([profile_only, subject_only]), encoding="utf-8")
+    (tmp_path / "J9-1440x900-viewer.after-removal.json").write_text(dump([profile_only]), encoding="utf-8")
+    assert evidence.storage_key_problems(tmp_path, expected=["J9-1440x900-viewer"]) == [
+        "J9-1440x900-viewer: 2 storage key(s) without an account, local: or ui: prefix"
+    ]
+    assert evidence.ACCOUNT_KEY.match(CONNECTED) and not evidence.ACCOUNT_KEY.match(profile_only + ":")
