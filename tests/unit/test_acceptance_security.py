@@ -263,3 +263,41 @@ def test_refusals_are_read_from_every_container_of_the_platform():
     text = security.platform_logs(Run(), "2026-10-19T00:00:00Z")
     assert calls[0] == ["ps", "--quiet", "--filter", "label=com.docker.compose.project=weave-local-p1"]
     assert all(f"{kind} {name}" in text for kind in ("out", "err") for name in ("api1", "worker1"))
+
+
+async def test_each_run_through_activates_the_reader_again_on_its_current_revision():
+    # Seen live: the reader has one activation per environment, so activating it again names the revision it
+    # replaces (WV-ETAG otherwise).
+    from types import SimpleNamespace
+    from uuid import uuid4
+
+    revisions = []
+
+    from firefly_weave.contracts.access import Scope
+
+    class Client:
+        scope = Scope(tenant_id=uuid4(), project_id=uuid4(), environment_id=uuid4())
+
+        async def invoke(self, operation, **kwargs):
+            if operation == "activations.create":
+                revisions.append(kwargs.get("revision"))
+                return SimpleNamespace(id=uuid4(), revision=len(revisions))
+            if operation == "runs.start":
+                return SimpleNamespace(id=uuid4())
+            return SimpleNamespace(state=SimpleNamespace(status="succeeded", incident=None))
+
+    class Run:
+        run_id = "r1"
+
+        @staticmethod
+        def helper(name):
+            return SimpleNamespace(READER_SLOT="acme")
+
+    reader = SimpleNamespace(id=uuid4(), digest="a" * 64)
+    activations = security.ReaderActivations()
+    for name in ("approved", "one", "two"):
+        assert await security.run_through(Client(), Run(), reader, uuid4(), {}, name, activations) == (
+            "succeeded",
+            None,
+        )
+    assert revisions == [None, 1, 2]

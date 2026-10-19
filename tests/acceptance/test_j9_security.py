@@ -287,8 +287,21 @@ async def settle(client: Any, run_id: UUID, *, timeout: float = 180, pause: floa
         await asyncio.sleep(pause)
 
 
+class ReaderActivations:
+    """The reader's activation revision in the demo environment: each activation replaces the one before."""
+
+    def __init__(self) -> None:
+        self.revision: int | None = None
+
+
 async def run_through(
-    client: Any, run, reader: Any, connection_id: UUID, releases: dict[UUID, UUID], name: str
+    client: Any,
+    run,
+    reader: Any,
+    connection_id: UUID,
+    releases: dict[UUID, UUID],
+    name: str,
+    activations: ReaderActivations,
 ) -> tuple[str, str | None]:
     """Activate the reader workflow with ``connection_id`` in its slot, start one run and wait for it."""
     from firefly_weave.contracts.catalog import ActivationRequest
@@ -305,7 +318,9 @@ async def run_through(
             connector_release_ids=releases,
         ),
         idempotency_key=f"j9-03-activate-{name}-{run.run_id}",
+        revision=activations.revision,
     )
+    activations.revision = activation.revision
     started = await client.invoke(
         "runs.start",
         body=StartRunRequest(activation_id=activation.id, input={}),
@@ -344,7 +359,8 @@ async def test_j9_03_connections_reach_only_the_approved_private_origin(run):
             idempotency_key=f"j9-03-reader-{run.run_id}",
         )
         before = len(run.acme_control("/_control/journal")["entries"])
-        approved = await run_through(owner, run, reader, approved_connection, releases, "approved")
+        activations = ReaderActivations()
+        approved = await run_through(owner, run, reader, approved_connection, releases, "approved", activations)
         reached = run.acme_control("/_control/journal")["entries"][before:]
         version = await catalog.connector_version(owner)
         connections = {
@@ -356,7 +372,7 @@ async def test_j9_03_connections_reach_only_the_approved_private_origin(run):
         refused_from = len(run.acme_control("/_control/journal")["entries"])
         with identity_alias(run):
             runs = {
-                name: await run_through(owner, run, reader, connection, releases, name)
+                name: await run_through(owner, run, reader, connection, releases, name, activations)
                 for name, connection in connections.items()
             }
         after = run.acme_control("/_control/journal")["entries"][refused_from:]
