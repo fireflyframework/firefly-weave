@@ -54,13 +54,14 @@ FRAGMENT = 4
 
 
 def known_secrets(root: Path) -> list[str]:
-    """The run's canary values and people passwords, longest first."""
+    """The run's canary values, people passwords and the identity provider's admin secret, longest first."""
     private = root / "private"
     found: list[str] = []
     if (private / "canaries.json").is_file():
         found += json.loads((private / "canaries.json").read_text(encoding="utf-8")).values()
     for person in sorted((private / "people").glob("*.json")):
         found.append(json.loads(person.read_text(encoding="utf-8")).get("password"))
+    found.append(_script("acceptance_evidence").admin_secret(private / ".local" / "platform"))
     return sorted({value for value in found if isinstance(value, str) and value}, key=len, reverse=True)
 
 

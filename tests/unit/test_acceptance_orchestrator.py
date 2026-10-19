@@ -650,3 +650,25 @@ def test_platform_up_approves_the_acme_service_and_the_identity_alias():
     assert acceptance.FIXTURE_ORIGINS == (acceptance.FIXTURE_ORIGIN, acceptance.IDENTITY_ORIGIN)
     assert acceptance.IDENTITY_ORIGIN == "http://identity.acceptance.test:8080"
     assert [fixture_origin(origin) for origin in acceptance.FIXTURE_ORIGINS] == list(acceptance.FIXTURE_ORIGINS)
+
+
+def test_scan_finds_the_identity_providers_admin_secret_outside_its_own_file(tmp_path, monkeypatch):
+    monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+    plan = journeys_plan(tmp_path / "run")
+    monkeypatch.setattr(acceptance, "JOURNEYS", journeys_map(tmp_path, False))
+    plan.platform_dir.mkdir(parents=True)
+    admin = "kc-admin-" + "e" * 32
+    (plan.platform_dir / "identity.env").write_text(f"WEAVE_KC_ADMIN_SECRET={admin}\n", encoding="utf-8")
+    # Its own file is where it belongs; anywhere else is a leak.
+    acceptance.scan(plan, FakeRecorder())
+    assert plan.state["secret_scan"]["hits"] == 0
+    (plan.evidence / "log.txt").write_text(f"token request with {admin}\n", encoding="utf-8")
+    with pytest.raises(acceptance.StageFailed, match="found a secret"):
+        acceptance.scan(plan, FakeRecorder())
+
+
+def test_the_studio_harness_redacts_the_identity_providers_admin_secret():
+    harness = (acceptance.ROOT / "studio/tests/acceptance/harness.ts").read_text(encoding="utf-8")
+    body = harness[harness.index("function secrets(): string[] {") :]
+    body = body[: body.index("\n}\n")]
+    assert "adminSecret()" in body

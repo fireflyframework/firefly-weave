@@ -309,3 +309,15 @@ def test_pytest_exit_in_teardown_fails_a_step_whose_body_passed(pytester, monkey
             "error": "teardown: pytest.exit: operator stop",
         }
     ]
+
+
+def test_the_identity_providers_admin_secret_is_redacted_too(tmp_path):
+    spec = importlib.util.spec_from_file_location("harness_for_admin", HARNESS_PATH)
+    harness = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(harness)
+    root = prepared_run(tmp_path)
+    platform = root / "private" / ".local" / "platform"
+    platform.mkdir(parents=True)
+    admin = "kc-admin-" + "f" * 32
+    (platform / "identity.env").write_text(f"WEAVE_KC_REALM=weave\nWEAVE_KC_ADMIN_SECRET='{admin}'\n", encoding="utf-8")
+    assert admin in harness.known_secrets(root)

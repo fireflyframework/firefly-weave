@@ -617,10 +617,15 @@ def scan(plan: Plan, recorder: Recorder) -> None:
     for person in sorted((plan.private / "people").glob("*.json")):
         canaries.append(json.loads(person.read_text(encoding="utf-8"))["password"])
     platform = plan.platform_dir
+    # The identity provider's admin secret belongs only in its own file.
+    admin = acceptance_evidence.admin_secret(platform)
+    if admin:
+        canaries.append(admin)
     found = acceptance_evidence.scan_tree(
         [plan.evidence, plan.private],
         canaries,
         exclude=[
+            platform / acceptance_evidence.IDENTITY_ENV,
             plan.private / "canaries.json",
             plan.private / "people",
             plan.private / "playwright",

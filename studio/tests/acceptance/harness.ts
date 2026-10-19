@@ -349,9 +349,22 @@ function secrets(): string[] {
         )
     : [];
   return [
-    ...secretsOf(canaries, passwords, Object.keys(canaries)),
+    ...secretsOf(
+      canaries,
+      [...passwords, adminSecret()],
+      Object.keys(canaries),
+    ),
     ...pairingCodes,
   ];
+}
+
+/** The identity provider's admin client secret, once the platform exists; redacted like any secret. */
+function adminSecret(): string | undefined {
+  try {
+    return setup().adminSecret;
+  } catch {
+    return undefined;
+  }
 }
 
 function record(entry: StepRecord): void {

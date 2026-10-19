@@ -40,6 +40,21 @@ SUMMARY = "acceptance.json"
 CHUNK = 1 << 20
 
 
+IDENTITY_ENV = "identity.env"
+
+
+def admin_secret(platform_dir: Path) -> str | None:
+    """The identity provider's admin client secret from the platform's identity.env, if the platform exists."""
+    path = platform_dir / IDENTITY_ENV
+    if not path.is_file():
+        return None
+    for line in path.read_text(encoding="utf-8").splitlines():
+        name, separator, value = line.removeprefix("export ").strip().partition("=")
+        if separator and name == "WEAVE_KC_ADMIN_SECRET":
+            return value.strip().strip("'\"") or None
+    return None
+
+
 @dataclass(frozen=True)
 class Scan:
     files: int
