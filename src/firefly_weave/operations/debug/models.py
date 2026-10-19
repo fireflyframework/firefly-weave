@@ -92,6 +92,31 @@ class DebugState(ContractModel):
     virtual_seconds: int = Field(default=0, ge=0)
 
 
+class LoopView(ContractModel):
+    """Progress of one loop instance: ``node_id`` is the loop's step ID, ``instance_key`` its key ('' when equal)."""
+
+    node_id: str
+    instance_key: str
+    count: int = Field(ge=0)
+    completed: int = Field(ge=0)
+    running: int = Field(ge=0)
+    next_index: int = Field(ge=0)
+    status: Literal["running", "joined", "terminated"]
+
+
+class LoopPosition(ContractModel):
+    item: JsonData
+    index: int = Field(ge=0)
+
+
+class SelectedScope(ContractModel):
+    """What the selected instance reads as /item and /index (innermost loop) and /loops/<id> (every enclosing loop)."""
+
+    item: JsonData
+    index: int = Field(ge=0)
+    loops: dict[str, LoopPosition]
+
+
 class DebugView(ContractModel):
     status: str
     selected_node: str | None
@@ -103,6 +128,9 @@ class DebugView(ContractModel):
     boundary: Boundary | None
     boundaries: list[Boundary]
     now: AwareDatetime
+    # Omitted for workflows without loops, so their views keep their shape.
+    loops: list[LoopView] = Field(default_factory=list, exclude_if=lambda v: not v)
+    selected_scope: SelectedScope | None = Field(default=None, exclude_if=lambda v: v is None)
 
 
 class DebugCreate(ContractModel):
