@@ -48,6 +48,7 @@ import {
   uniqueName,
 } from "../browser/real-platform-support";
 import type { Person } from "../browser/real-platform-support";
+import { openSidebar } from "../browser/real-platform-support";
 import {
   accountsToDelete,
   dumpName,
@@ -61,6 +62,9 @@ import {
   viewportName,
 } from "./records";
 import type { SkippedCheck, StepRecord, StepState } from "./records";
+
+// Journeys import everything they use from this file (tests/acceptance-lint.ts).
+export { expect, openSidebar };
 
 export const runDir = process.env["WEAVE_ACC_RUN_DIR"]?.trim() ?? "";
 const SERVICE = "firefly-weave";

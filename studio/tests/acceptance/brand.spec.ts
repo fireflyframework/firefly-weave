@@ -19,9 +19,7 @@ SPDX-License-Identifier: Apache-2.0
 // the Weave AI entry point by name, no "Lumi" in the audited pages, Manrope and
 // the dark color scheme. The harness audits every journey's requests (only the
 // Studio host and the identity provider; no mascot artwork).
-import { expect } from "@playwright/test";
-import { openSidebar } from "../browser/real-platform-support";
-import { journey, useJourneys } from "./harness";
+import { expect, journey, openSidebar, useJourneys } from "./harness";
 
 useJourneys();
 

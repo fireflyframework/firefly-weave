@@ -19,8 +19,7 @@ SPDX-License-Identifier: Apache-2.0
 // through the real host and identity provider and checks the brand lockup at
 // each size; the later steps wait for the editor and language capabilities
 // (journeys.toml), and the change that enables them adds their bodies here.
-import { expect } from "@playwright/test";
-import { journey, useJourneys } from "./harness";
+import { expect, journey, useJourneys } from "./harness";
 
 useJourneys();
 

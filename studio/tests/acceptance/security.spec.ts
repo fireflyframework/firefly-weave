@@ -21,9 +21,8 @@ SPDX-License-Identifier: Apache-2.0
 // can't run. A blocked menu item is checked by its reason only, whether or not
 // it is also disabled. The server refuses the same commands regardless:
 // tests/acceptance/test_j9_security.py sends them as the viewer.
-import { expect, Locator, Page } from "@playwright/test";
-import { openSidebar } from "../browser/real-platform-support";
-import { journey, useJourneys } from "./harness";
+import type { Locator, Page } from "@playwright/test";
+import { expect, journey, openSidebar, useJourneys } from "./harness";
 
 useJourneys();
 

@@ -93,9 +93,18 @@ platform through Studio, which signs out and deletes the stored sign-in.
 Sign-ins left by a failed test are deleted only when the credential store was
 read before the run started; otherwise nothing is deleted.
 
-Journey code may not intercept requests, control the clock, force clicks or
-dispatch synthetic events, and every `page.evaluate` is a read-only audit with a
-note on the line before it (`tests/unit/test_acceptance_lint.py`).
+A journey spec imports only named values from `harness.ts` (which re-exports
+`expect` and the helpers journeys use) and types from `@playwright/test`. Journey
+code, and every declaration it reaches in other files, may not intercept
+requests, inject sign-in state, control the clock, force clicks, dispatch
+synthetic events or open its own browser, context or page, and every
+`page.evaluate` is a read-only audit with a note before it
+(`studio/tests/acceptance-lint.ts`, which parses the code with the TypeScript
+compiler). At run time the harness backs this up: Playwright's own `browser`,
+`context`, `page` and `request` fixtures throw when used, and every context the
+harness opens refuses request interception, injected headers, credentials and
+cookies, stored state, offline mode, page scripts and browser protocol sessions;
+its `request` only reads with GET.
 
 ## People and API sessions
 
