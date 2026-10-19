@@ -133,8 +133,11 @@ def test_the_committed_map_is_valid():
         "text-operators",
         "instance-keys",
         "loop-compiler",
+        "loop-runtime",
+        "workflow-call-compiler",
         "ai-gateway",
         "ai-models-screen",
+        "run-views",
         "acceptance-foundations",
     ]
     assert enablement.journey_steps("J0") == tuple(f"J0.{n}" for n in range(1, 15))
@@ -142,6 +145,8 @@ def test_the_committed_map_is_valid():
     assert enablement.criteria["J3"] == ("SC1", "SC3", "SC7")
     assert enablement.applies("J0.12", "ai") and not enablement.applies("J0.12", "pr")
     assert enablement.missing("J0.3/owner-roles") == ()
+    assert enablement.journey_steps("J5") == ("J5.1",) and enablement.missing("J5.1") == ()
+    assert enablement.applies("J5.1", "pr") and not enablement.applies("J5.1", "ai")
 
 
 def test_versions_toml_pins_match_the_files_that_use_them():

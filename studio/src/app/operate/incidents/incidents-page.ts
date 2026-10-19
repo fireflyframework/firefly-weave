@@ -15,10 +15,13 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-// Operate › Incidents: active incidents first, filters kept in the address,
-// a drawer with what happened, and the Resolve incident dialog. The server
-// checks incident.resolve, the revision and the receipt on every decision.
-// Reloads every 15 s while visible, except while a decision is being made.
+// Operate › Incidents: active incidents, newest opened first, filtered by the
+// platform; the address keeps the filters and the open incident
+// ("?incident=ID"), which opens from incidents.read even when no loaded page
+// lists it. A drawer says what happened, and the Resolve incident dialog
+// decides on the revision the person looked at. The server checks
+// incident.resolve, the revision and the receipt on every decision. Reloads
+// every 15 s while visible, except while a decision is being made.
 import {
   ChangeDetectionStrategy,
   ChangeDetectorRef,
@@ -38,11 +41,11 @@ import { Icon } from "../../icon";
 import { ModalSheet, sheetWhen } from "../../modal-sheet";
 import { toneAttribute } from "../../status-labels";
 import { MAX_PAGES } from "../operate-limits";
+import type { Page } from "../../operations/deployment-contracts";
 import {
   ListReads,
   environmentOf,
   listFailure,
-  readPages,
   scopeKeyOf,
 } from "../operate-list";
 import { OperateState } from "../operate-state";
@@ -50,13 +53,16 @@ import { viewFromPath, viewPath } from "../operate-routes";
 import { Poller, browserEnvironment } from "../operate-store";
 import { RefreshStatus } from "../refresh-status";
 import { IncidentDrawer, type RecentEvents } from "./incident-drawer";
+import { timeAbsolute, timeIso, timeRelative } from "../operate-time";
 import {
   defaultIncidentFilters,
-  filterIncidents,
-  incidentCodes,
+  incidentFilterCount,
   incidentFiltersFromQuery,
   incidentFiltersToQuery,
+  incidentFromQuery,
+  incidentQuery,
   incidentStatusLabel,
+  incidentSuggestions,
   incidentTone,
   isUnavailableIncident,
   lastEvents,
@@ -67,6 +73,8 @@ import {
 } from "./incidents-model";
 import { ResolveIncidentDialog } from "./resolve-incident-dialog";
 
+/** The longest opening range the platform accepts: 400 days. */
+const MAX_RANGE_MS = 400 * 86_400_000;
 /** A run's events are read 100 at a time, at most 1,000. */
 const EVENT_PAGES = 10;
 const noEvents: RecentEvents = {
@@ -134,7 +142,23 @@ const noEvents: RecentEvents = {
     } @else if (!loaded) {
       <weave-operate-state kind="loading" noun="incidents" />
     } @else {
-      <div class="operate-filters" role="search" aria-label="Filter incidents">
+      @let hints = suggestions();
+      <button
+        type="button"
+        class="filters-toggle"
+        aria-controls="incident-filter-body"
+        [attr.aria-expanded]="filtersOpen"
+        (click)="filtersOpen = !filtersOpen"
+      >
+        <weave-icon name="search" [size]="16" />Filters ({{ filterCount() }})
+      </button>
+      <div
+        class="operate-filters"
+        id="incident-filter-body"
+        role="search"
+        aria-label="Filter incidents"
+        [class.open]="filtersOpen"
+      >
         <div class="field">
           <label for="incident-status">Status</label>
           <select
@@ -153,20 +177,113 @@ const noEvents: RecentEvents = {
         </div>
         <div class="field">
           <label for="incident-code">Code</label>
-          <select
+          <input
             id="incident-code"
-            (change)="setFilters({ code: value($event) })"
+            list="incident-code-options"
+            autocomplete="off"
+            spellcheck="false"
+            [value]="filters.code"
+            (change)="setFilters({ code: text($event) })"
+          />
+          <datalist id="incident-code-options">
+            @for (code of hints.codes; track code) {
+              <option [value]="code"></option>
+            }
+          </datalist>
+        </div>
+        <div class="field">
+          <label for="incident-workflow">Workflow</label>
+          <input
+            id="incident-workflow"
+            list="incident-workflow-options"
+            autocomplete="off"
+            spellcheck="false"
+            [value]="filters.workflow"
+            (change)="setFilters({ workflow: text($event) })"
+          />
+          <datalist id="incident-workflow-options">
+            @for (name of hints.workflows; track name) {
+              <option [value]="name"></option>
+            }
+          </datalist>
+        </div>
+        <div class="field">
+          <label for="incident-step">Step</label>
+          <input
+            id="incident-step"
+            list="incident-step-options"
+            autocomplete="off"
+            spellcheck="false"
+            [value]="filters.nodeId"
+            (change)="setFilters({ nodeId: text($event) })"
+          />
+          <datalist id="incident-step-options">
+            @for (step of hints.steps; track step) {
+              <option [value]="step"></option>
+            }
+          </datalist>
+        </div>
+        <div class="field">
+          <label for="incident-opened-after">Opened after</label>
+          <input
+            id="incident-opened-after"
+            type="datetime-local"
+            [value]="localTime(filters.openedAfter)"
+            [attr.aria-invalid]="rangeProblem ? 'true' : null"
+            [attr.aria-describedby]="
+              rangeProblem ? 'incident-range-problem' : null
+            "
+            (change)="setOpened('openedAfter', value($event))"
+          />
+        </div>
+        <div class="field">
+          <label for="incident-opened-before">Opened before</label>
+          <input
+            id="incident-opened-before"
+            type="datetime-local"
+            [value]="localTime(filters.openedBefore)"
+            [attr.aria-invalid]="rangeProblem ? 'true' : null"
+            [attr.aria-describedby]="
+              rangeProblem ? 'incident-range-problem' : null
+            "
+            (change)="setOpened('openedBefore', value($event))"
+          />
+        </div>
+        <div class="field">
+          <label for="incident-order">Order</label>
+          <select
+            id="incident-order"
+            (change)="setFilters({ order: value($event) })"
           >
-            <option value="" [selected]="!filters.code">Any code</option>
-            @for (code of codes(); track code) {
-              <option [value]="code" [selected]="filters.code === code">
-                {{ code }}
+            @for (option of orderOptions; track option[0]) {
+              <option
+                [value]="option[0]"
+                [selected]="filters.order === option[0]"
+              >
+                {{ option[1] }}
               </option>
             }
           </select>
         </div>
+        <label class="checkbox-field"
+          ><input
+            type="checkbox"
+            [checked]="filters.includeTest"
+            (change)="setFilters({ includeTest: checked($event) })"
+          />Include test runs</label
+        >
         <span class="operate-count" role="status">{{ countText() }}</span>
+        @if (filterCount()) {
+          <button type="button" class="tertiary" (click)="setFilters(defaults)">
+            Clear filters ({{ filterCount() }})
+          </button>
+        }
       </div>
+      @if (rangeProblem) {
+        <p class="field-error" id="incident-range-problem" role="alert">
+          {{ rangeProblem }}
+        </p>
+      }
       @if (error) {
         <weave-operate-state
           kind="partial"
@@ -175,40 +292,42 @@ const noEvents: RecentEvents = {
           (retry)="poller.refresh()"
         />
       }
+      @if (detailProblem; as failed) {
+        @if (failed.status === 403) {
+          <weave-operate-state
+            kind="access"
+            heading="You don't have access to this incident"
+            capability="incident.read"
+          />
+        } @else if (failed.status === 404) {
+          <weave-operate-state
+            kind="empty"
+            heading="This incident can't be found"
+            text="It may belong to another environment, or its run's data was deleted."
+          />
+        } @else {
+          <weave-operate-state
+            kind="error"
+            [message]="failed.message"
+            [code]="failed.code"
+            (retry)="openFromAddress()"
+          />
+        }
+      }
       <div class="resource-layout" [class.has-detail]="!!selected">
         <div class="incident-list">
-          @if (!visible().length) {
-            @if (filters.status === "active" && !filters.code) {
+          @if (!incidents.length) {
+            @if (!filterCount()) {
               <weave-operate-state
                 kind="empty"
-                [heading]="
-                  nextCursor
-                    ? 'No active incidents among loaded incidents'
-                    : 'No active incidents'
-                "
-                [text]="
-                  nextCursor
-                    ? canLoadMore
-                      ? 'More incidents may match on later pages. Load more to check.'
-                      : 'More active incidents may exist beyond the page limit.'
-                    : 'Runs that stop on an uncertain step show here until someone decides what happens next.'
-                "
+                heading="No active incidents"
+                text="Runs that stop on an uncertain step show here until someone decides what happens next."
               />
             } @else {
               <weave-operate-state
                 kind="empty"
-                [heading]="
-                  nextCursor
-                    ? 'No loaded incidents match these filters'
-                    : 'No incidents match these filters'
-                "
-                [text]="
-                  nextCursor
-                    ? canLoadMore
-                      ? 'More incidents may match on later pages. Load more or change the filters.'
-                      : 'More incidents may match beyond the page limit. Change the filters to check the loaded records.'
-                    : 'Change the filters to see more incidents.'
-                "
+                heading="No incidents match these filters"
+                text="Change the filters to see more incidents."
               >
                 <button type="button" (click)="setFilters(defaults)">
                   Show active incidents
@@ -225,12 +344,14 @@ const noEvents: RecentEvents = {
                 <div class="table-head" role="row">
                   <span role="columnheader">Incident</span
                   ><span role="columnheader">Status</span
+                  ><span role="columnheader" data-wide>Workflow</span
                   ><span role="columnheader" data-wide>Step</span
-                  ><span role="columnheader" data-wide>Run</span>
+                  ><span role="columnheader" data-wide>Opened</span
+                  ><span role="columnheader" data-wider>Run</span>
                 </div>
               </div>
               <div role="rowgroup">
-                @for (item of visible(); track item.id) {
+                @for (item of incidents; track item.id) {
                   @if (unavailable(item)) {
                     <div class="resource-row" role="row">
                       <span role="cell" class="row-text"
@@ -238,7 +359,13 @@ const noEvents: RecentEvents = {
                         ><small>Studio can't show this incident.</small></span
                       ><span role="cell"></span
                       ><span role="cell" data-wide></span
-                      ><span role="cell" data-wide></span>
+                      ><span role="cell" data-wide></span
+                      ><span role="cell" data-wide></span
+                      ><span role="cell" data-wider
+                        ><code [attr.title]="item.id">{{
+                          short(item.id)
+                        }}</code></span
+                      >
                     </div>
                   } @else {
                     @let i = view(item);
@@ -271,6 +398,9 @@ const noEvents: RecentEvents = {
                         ><span class="status-pill" [attr.data-tone]="tone(i)">{{
                           label(i)
                         }}</span>
+                        @if (i.test) {
+                          <span class="tag">Test</span>
+                        }
                         @if (i.external_effects_may_continue) {
                           <span class="effects" title="Effects may continue"
                             ><weave-icon name="warning" [size]="16" /><span
@@ -279,8 +409,39 @@ const noEvents: RecentEvents = {
                             ></span
                           >
                         }</span
-                      ><span role="cell" data-wide>{{ stepOf(i) }}</span
-                      ><span role="cell" data-wide
+                      ><span
+                        role="cell"
+                        data-wide
+                        class="row-text"
+                        [attr.title]="workflowText(i)"
+                        ><span
+                          class="cell-line"
+                          [attr.title]="i.workflow?.name ?? null"
+                          >{{ i.workflow?.name ?? "Unknown" }}</span
+                        >
+                        @if (i.workflow) {
+                          <small>{{ i.workflow.version }}</small>
+                        }</span
+                      ><span
+                        role="cell"
+                        data-wide
+                        class="cell-line"
+                        [attr.title]="stepOf(i)"
+                        >{{ stepOf(i) }}</span
+                      ><span role="cell" data-wide>
+                        @if (i.opened_at) {
+                          <time
+                            [attr.datetime]="iso(i.opened_at)"
+                            [attr.title]="absolute(i.opened_at)"
+                            >{{ relative(i.opened_at) }}</time
+                          >
+                          @if (i.opened_at_estimated) {
+                            <small class="estimated">estimated</small>
+                          }
+                        } @else {
+                          Unknown
+                        }</span
+                      ><span role="cell" data-wider
                         ><code [attr.title]="i.run_id">{{
                           short(i.run_id)
                         }}</code></span
@@ -301,8 +462,8 @@ const noEvents: RecentEvents = {
               Load more incidents
             </button>
           } @else if (nextCursor) {
-            <p role="status">
-              Showing up to 500 incidents. More incidents may exist.
+            <p class="list-limit" role="status">
+              Showing the first 500 incidents. Narrow the filters to see others.
             </p>
           }
         </div>
@@ -349,8 +510,17 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
     if (event instanceof NavigationEnd) this.addressChanged();
   });
   readonly sheetWhen = sheetWhen;
+  /** Narrow screens fold the filters behind "Filters (n)". */
+  filtersOpen = false;
   readonly short = shortId;
+  readonly iso = timeIso;
+  readonly absolute = timeAbsolute;
   readonly defaults = defaultIncidentFilters;
+  readonly orderOptions: [IncidentFilters["order"], string][] = [
+    ["opened_desc", "Newest opened"],
+    ["opened_asc", "Oldest opened"],
+    ["id", "Incident ID"],
+  ];
   readonly statusOptions: [IncidentFilters["status"], string][] = [
     ["active", "Active"],
     ["resolved", "Resolved"],
@@ -374,6 +544,9 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
   error: PlainError | null = null;
   filters: IncidentFilters = defaultIncidentFilters;
   selected: IncidentView | null = null;
+  /** Why the incident the address names could not be opened. */
+  detailProblem: PlainError | null = null;
+  rangeProblem = "";
   events: RecentEvents = noEvents;
   resolving = false;
   /** The incidents whose decision is on its way; one never blocks another. */
@@ -394,7 +567,12 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
     return !!this.nextCursor && this.pages < MAX_PAGES;
   }
   private scopeKey = "";
+  /** Bumped when the platform, environment or person changes. */
   private generation = 0;
+  /** Bumped when the filters change: an answer for older filters is dropped. */
+  private listGeneration = 0;
+  /** The incident the latest direct read is for. */
+  private opening = "";
   private alive = true;
 
   get readable() {
@@ -417,48 +595,69 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
     if (key === this.scopeKey) return;
     this.scopeKey = key;
     this.generation++;
+    this.listGeneration++;
     this.incidents = [];
     this.nextCursor = null;
     this.loaded = false;
     this.forbidden = false;
     this.error = null;
     this.selected = null;
+    this.detailProblem = null;
+    this.opening = "";
     this.events = noEvents;
     this.resolving = false;
     this.failure = null;
     this.pending.clear();
     this.pages = 1;
     this.appending = false;
+    this.rangeProblem = "";
     this.filters = incidentFiltersFromQuery(location.search);
-    if (this.scope && this.host.identity && this.readable)
+    if (this.scope && this.host.identity && this.readable) {
       void this.poller.refresh();
+      void this.openFromAddress();
+    }
   }
   @HostListener("window:popstate") locationChanged() {
-    if (viewFromPath(location.pathname)?.view === "incidents")
-      this.filters = incidentFiltersFromQuery(location.search);
+    this.addressChanged();
   }
-  /** The Incidents entry or a link moved the address: the filters follow it. */
+  /** The address moved (a link, Back, Forward): filters and the open incident follow. */
   private addressChanged() {
     if (viewFromPath(location.pathname)?.view !== "incidents") return;
     const filters = incidentFiltersFromQuery(location.search);
     if (
       incidentFiltersToQuery(filters) !== incidentFiltersToQuery(this.filters)
-    )
+    ) {
       this.filters = filters;
+      this.changed();
+    }
+    const id = incidentFromQuery(location.search);
+    if (!id) {
+      if (this.selected && !this.resolving) this.close(false);
+    } else if (this.selected?.id !== id) void this.openFromAddress();
   }
+  /** Reads as many pages as are on screen, with the filters' query. */
   private async load() {
     const scope = this.scope;
     if (!scope || !this.host.identity || !this.readable) return false;
     const generation = this.generation;
+    const listGeneration = this.listGeneration;
+    const filters = this.filters;
+    const current = () =>
+      generation === this.generation && listGeneration === this.listGeneration;
     return this.listReads.run(async () => {
-      if (generation !== this.generation) return false;
+      if (!current()) return false;
       try {
-        const { items, cursor } = await readPages<IncidentRecord>((query) => {
-          if (generation !== this.generation)
-            throw Error("List scope changed.");
-          return this.host.api.request(`${scope}/incidents?${query}`);
-        }, this.pages);
-        if (generation !== this.generation) return false;
+        const items: IncidentRecord[] = [];
+        let cursor: string | null = null;
+        let read = 0;
+        do {
+          const page: Page<IncidentRecord> = await this.host.api.request(
+            `${scope}/incidents?${incidentQuery(filters, cursor)}`,
+          );
+          if (!current()) return false;
+          items.push(...page.items);
+          cursor = page.next_cursor;
+        } while (cursor && ++read < this.pages);
         this.incidents = items;
         this.nextCursor = cursor;
         this.loaded = true;
@@ -471,7 +670,7 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
           this.selected = fresh;
         return true;
       } catch (error) {
-        if (generation !== this.generation) return false;
+        if (!current()) return false;
         ({ error: this.error, forbidden: this.forbidden } = listFailure(error));
         throw error;
       } finally {
@@ -479,6 +678,7 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
       }
     });
   }
+  /** Continues the list with the same filters. */
   async loadMore() {
     const scope = this.scope;
     if (
@@ -490,56 +690,157 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
     )
       return;
     const generation = this.generation;
+    const listGeneration = this.listGeneration;
+    const filters = this.filters;
+    const current = () =>
+      generation === this.generation && listGeneration === this.listGeneration;
     this.appending = true;
     try {
       await this.listReads.run(async () => {
-        if (generation !== this.generation || !this.canLoadMore) return;
-        const page = await readPages<IncidentRecord>(
-          (query) => this.host.api.request(`${scope}/incidents?${query}`),
-          1,
-          this.nextCursor,
+        if (!current() || !this.canLoadMore) return;
+        const page: Page<IncidentRecord> = await this.host.api.request(
+          `${scope}/incidents?${incidentQuery(filters, this.nextCursor)}`,
         );
-        if (generation !== this.generation) return;
-        this.incidents = [...this.incidents, ...page.items];
-        this.nextCursor = page.cursor;
+        if (!current()) return;
+        const seen = new Set(this.incidents.map((item) => item.id));
+        this.incidents = [
+          ...this.incidents,
+          ...page.items.filter((item) => !seen.has(item.id)),
+        ];
+        this.nextCursor = page.next_cursor;
         this.pages++;
         this.forbidden = false;
         this.error = null;
       });
     } catch (error) {
-      if (generation === this.generation)
+      if (current())
         ({ error: this.error, forbidden: this.forbidden } = listFailure(error));
     } finally {
-      if (generation === this.generation) this.appending = false;
+      if (current()) this.appending = false;
       if (this.alive) this.cdr.markForCheck();
     }
   }
-  visible() {
-    return filterIncidents(this.incidents, this.filters);
+  suggestions() {
+    return incidentSuggestions(this.incidents);
   }
-  codes() {
-    return incidentCodes(this.incidents);
+  filterCount() {
+    return incidentFilterCount(this.filters);
   }
+  /** "3 incidents", or "50 incidents loaded" while more follow. */
   countText() {
-    const count = this.visible().length;
-    return `${count} ${count === 1 ? "incident" : "incidents"}`;
+    const count = this.incidents.length;
+    const noun = count === 1 ? "incident" : "incidents";
+    return this.nextCursor ? `${count} ${noun} loaded` : `${count} ${noun}`;
   }
   setFilters(change: Partial<IncidentFilters>) {
-    this.filters = { ...this.filters, ...change } as IncidentFilters;
-    const path = viewPath("incidents") + incidentFiltersToQuery(this.filters);
+    const next = { ...this.filters, ...change } as IncidentFilters;
+    next.code = next.code.trim();
+    next.workflow = next.workflow.trim();
+    next.nodeId = next.nodeId.trim();
+    if (change === this.defaults) this.rangeProblem = "";
+    if (incidentFiltersToQuery(next) === incidentFiltersToQuery(this.filters))
+      return;
+    this.filters = next;
+    this.syncAddress();
+    this.changed();
+  }
+  /** A bound of the opening range, from a datetime-local field. */
+  setOpened(edge: "openedAfter" | "openedBefore", value: string) {
+    const date = value ? new Date(value) : null;
+    const instant =
+      date && Number.isFinite(date.getTime()) ? date.toISOString() : "";
+    const next = { ...this.filters, [edge]: instant };
+    const after = next.openedAfter ? Date.parse(next.openedAfter) : null;
+    const before = next.openedBefore ? Date.parse(next.openedBefore) : null;
+    if (after !== null && before !== null && after >= before) {
+      this.rangeProblem = "Choose a start before the end.";
+      return;
+    }
+    if (after !== null && before !== null && before - after > MAX_RANGE_MS) {
+      this.rangeProblem = "Choose a range of 400 days or less.";
+      return;
+    }
+    this.rangeProblem = "";
+    this.setFilters({ [edge]: instant });
+  }
+  /** "2026-10-07T12:30" in this computer's time zone, for a datetime-local field. */
+  localTime(value: string) {
+    const date = new Date(value);
+    if (!value || !Number.isFinite(date.getTime())) return "";
+    const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+    return local.toISOString().slice(0, 16);
+  }
+  /** New filters: the first page again; Load more pages and older answers go. */
+  private changed() {
+    this.listGeneration++;
+    this.pages = 1;
+    this.nextCursor = null;
+    this.appending = false;
+    if (this.scope && this.host.identity && this.readable)
+      void this.poller.refresh();
+  }
+  /** Puts the filters and the open incident in the address. */
+  private syncAddress() {
+    const path =
+      viewPath("incidents") +
+      incidentFiltersToQuery(this.filters, this.selected?.id ?? "");
     if (location.pathname + location.search !== path)
       void this.router.navigateByUrl(path, { replaceUrl: true });
   }
   open(incident: IncidentView) {
     this.selected = incident;
+    this.detailProblem = null;
+    this.opening = "";
     this.resolving = false;
     this.failure = null;
+    this.syncAddress();
     void this.loadEvents(incident);
   }
-  close() {
+  close(sync = true) {
     this.selected = null;
+    this.opening = "";
     this.resolving = false;
     this.failure = null;
+    if (sync) this.syncAddress();
+  }
+  /**
+   * Opens the incident the address names from incidents.read, whether or not
+   * a loaded page lists it. A refusal or a missing incident is explained
+   * above the list.
+   */
+  async openFromAddress() {
+    const scope = this.scope;
+    const id = incidentFromQuery(location.search);
+    if (!scope || !id || !this.host.identity || !this.readable) return;
+    const generation = this.generation;
+    this.opening = id;
+    this.detailProblem = null;
+    try {
+      const incident = await this.host.api.request<IncidentRecord>(
+        `${scope}/incidents/${encodeURIComponent(id)}`,
+      );
+      if (generation !== this.generation || this.opening !== id) return;
+      this.opening = "";
+      if (isUnavailableIncident(incident)) {
+        this.detailProblem = {
+          message:
+            "Studio can't show this incident: its run can't be shown here.",
+          code: "",
+          status: 0,
+        };
+        return;
+      }
+      this.selected = incident;
+      this.resolving = false;
+      this.failure = null;
+      void this.loadEvents(incident);
+    } catch (error) {
+      if (generation !== this.generation || this.opening !== id) return;
+      this.opening = "";
+      this.detailProblem = describeError(error);
+    } finally {
+      if (this.alive) this.cdr.markForCheck();
+    }
   }
   openRun(incident: IncidentView) {
     void this.host.viewRun({ id: incident.run_id });
@@ -633,8 +934,13 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
         this.host.notify(`Incident ${where} is resolved.`);
         if (!samePage()) return;
       }
-      this.incidents = this.incidents.map((item) =>
-        item.id === resolved.id ? resolved : item,
+      // A decided incident the status filter no longer matches leaves the
+      // list at once, as the platform's next page would leave it out.
+      const listed =
+        this.filters.status === "all" ||
+        resolved.status === this.filters.status;
+      this.incidents = this.incidents.flatMap((item) =>
+        item.id !== resolved.id ? [item] : listed ? [resolved] : [],
       );
       // Not while the person decides on another incident: reading the list
       // would change the revision that decision is sent with.
@@ -672,28 +978,61 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
     }
   }
   /**
-   * Refresh incident: reads the incidents again so the dialog decides on the
-   * current revision. A read that fails, or no longer finds the incident,
-   * says so in the dialog instead of leaving the old revision to fail again.
+   * Refresh incident: reads the incident again (incidents.read) so the dialog
+   * decides on its current revision, whether or not a loaded page lists it.
+   * A read that fails, or finds it gone, says so in the dialog instead of
+   * leaving the old revision to fail again.
    */
   async reloadIncident() {
     const incident = this.selected;
-    if (!incident) return;
+    const scope = this.scope;
+    if (!incident || !scope) return;
+    const generation = this.generation;
     this.failure = null;
-    await this.poller.refresh();
-    if (!this.alive || this.selected?.id !== incident.id || !this.resolving)
-      return;
-    const fresh = this.incidents.find((item) => item.id === incident.id);
-    if (this.error) this.failure = this.error;
-    else if (!fresh)
-      this.failure = {
-        message:
-          "Studio couldn't find this incident when it read the list again. Close this dialog and look for it in the list.",
-        code: "",
-        status: 404,
-      };
-    else if (!isUnavailableIncident(fresh)) this.selected = fresh;
-    this.cdr.markForCheck();
+    try {
+      const fresh = await this.host.api.request<IncidentRecord>(
+        `${scope}/incidents/${encodeURIComponent(incident.id)}`,
+      );
+      if (
+        !this.alive ||
+        generation !== this.generation ||
+        this.selected?.id !== incident.id ||
+        !this.resolving
+      )
+        return;
+      if (isUnavailableIncident(fresh))
+        this.failure = {
+          message:
+            "Studio can't show this incident any more. Close this dialog and look for it in the list.",
+          code: "",
+          status: 0,
+        };
+      else {
+        this.selected = fresh;
+        this.incidents = this.incidents.map((item) =>
+          item.id === fresh.id ? fresh : item,
+        );
+      }
+    } catch (error) {
+      if (
+        !this.alive ||
+        generation !== this.generation ||
+        this.selected?.id !== incident.id ||
+        !this.resolving
+      )
+        return;
+      const plain = describeError(error);
+      this.failure =
+        plain.status === 404
+          ? {
+              ...plain,
+              message:
+                "Studio couldn't find this incident when it read it again. Close this dialog and look for it in the list.",
+            }
+          : plain;
+    } finally {
+      this.cdr.markForCheck();
+    }
   }
   unavailable(item: IncidentRecord) {
     return isUnavailableIncident(item);
@@ -710,7 +1049,22 @@ export class IncidentsPage implements DoCheck, OnInit, OnDestroy {
   tone(incident: IncidentView) {
     return toneAttribute(incidentTone(incident.status));
   }
+  workflowText(incident: IncidentView) {
+    return incident.workflow
+      ? `${incident.workflow.name} ${incident.workflow.version}`
+      : "Unknown workflow";
+  }
+  /** A relative time, or nothing for a value that isn't a date. */
+  relative(value: string) {
+    return timeRelative(value, "");
+  }
   value(event: Event) {
     return (event.target as HTMLSelectElement).value as never;
+  }
+  text(event: Event) {
+    return (event.target as HTMLInputElement).value;
+  }
+  checked(event: Event) {
+    return (event.target as HTMLInputElement).checked;
   }
 }

@@ -10,6 +10,7 @@
       "weave/ir-v1alpha4"
     ],
     "features": [
+      "flow.forEach",
       "text.concat",
       "text.join"
     ],

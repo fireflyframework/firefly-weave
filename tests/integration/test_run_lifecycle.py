@@ -87,10 +87,23 @@ async def test_archive_restore_purge_and_no_resurrection(
     )
     assert replay.status_code == 410, replay.text
     async with access_db[1]() as observer:
-        for table in ("runs", "run_events", "run_event_evidence", "step_instances", "runtime_capacity_blocks"):
+        for table in (
+            "runs",
+            "run_events",
+            "run_event_evidence",
+            "step_instances",
+            "runtime_capacity_blocks",
+            "run_facts",
+            "step_facts",
+            "task_facts",
+            "incident_facts",
+        ):
             assert await observer.scalar(text(f"SELECT count(*) FROM {table}")) == 0
         assert await observer.scalar(text("SELECT count(*) FROM access_audit WHERE action='run.purge'")) == 1
         assert not await observer.scalar(text("SELECT has_table_privilege('weave_app','runs','DELETE')"))
+        from operations_support import assert_usage
+
+        await assert_usage(observer, {"tenant": author[2].tenant_id, "project": author[2].project_id})
 
 
 async def test_purge_reference_failure_is_atomic(

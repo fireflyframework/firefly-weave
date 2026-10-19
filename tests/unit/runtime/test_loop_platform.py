@@ -14,7 +14,7 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-"""A runtime that does not run loops refuses a compiled loop; it never skips the step."""
+"""This platform runs loops; a platform that does not list the loop feature still refuses them."""
 
 from datetime import UTC, datetime
 from uuid import uuid4
@@ -24,6 +24,7 @@ import pytest
 from firefly_weave.compiler.api import compile_source, import_artifact
 from firefly_weave.compiler.catalog import CatalogSnapshot
 from firefly_weave.compiler.ir import UnsupportedIR
+from firefly_weave.contracts.language import language_manifest, supported_step_kinds
 from firefly_weave.runtime.kernel import transition
 from firefly_weave.runtime.models import RunState, RuntimeEvent
 
@@ -54,16 +55,20 @@ def artifact():
     return result.artifact
 
 
-def test_import_refuses_a_loop_while_the_platform_does_not_list_the_loop_feature(artifact):
+def test_this_platform_lists_the_loop_feature_and_the_loop_step(artifact):
+    assert "flow.forEach" in language_manifest().features
+    assert "forEach" in supported_step_kinds()
+    assert import_artifact(artifact.to_bytes()).digest == artifact.digest
+
+
+def test_a_platform_without_the_loop_feature_still_refuses_a_loop(artifact):
     with pytest.raises(UnsupportedIR) as refused:
-        import_artifact(artifact.to_bytes())
+        import_artifact(artifact.to_bytes(), features=["text.concat", "text.join"])
     assert refused.value.missing == ("flow.forEach",)
-    assert import_artifact(artifact.to_bytes(), features=["flow.forEach"]).digest == artifact.digest
 
 
-def test_the_kernel_opens_an_incident_at_a_loop_it_cannot_run(artifact):
+def test_the_kernel_runs_a_loop(artifact):
     started = RuntimeEvent(id=uuid4(), type="started", timestamp=datetime(2026, 10, 13, tzinfo=UTC), sequence=1)
     result = transition(RunState(input=["a", "b"]), started, artifact)
-    assert result.state.status == "suspended"
-    assert [(item.node_id, item.code) for item in result.state.incidents.values()] == [("label", "WV-RUNTIME-ARTIFACT")]
-    assert result.steps == []
+    assert (result.state.status, result.state.output) == ("succeeded", ["a", "b"])
+    assert result.state.incidents == {}

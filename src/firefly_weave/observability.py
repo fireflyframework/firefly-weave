@@ -21,6 +21,8 @@ or automatic exception events are used. Each provider generation has one owner.
 """
 
 import threading
+import time
+from collections.abc import Callable
 
 from opentelemetry.metrics import MeterProvider as MeterProviderAPI
 from opentelemetry.sdk.metrics import AlwaysOffExemplarFilter, MeterProvider
@@ -47,11 +49,16 @@ from firefly_weave.operations.telemetry_export import (
 
 
 class TelemetryDrops:
-    """A saturating diagnostic counter remains bounded even when no exporter is available."""
+    """A saturating diagnostic counter remains bounded even when no exporter is available.
 
-    def __init__(self) -> None:
+    It also keeps the monotonic time of the last drop, so export health can be judged by recent drops.
+    """
+
+    def __init__(self, *, monotonic: Callable[[], float] = time.monotonic) -> None:
         self.count = 0
         self._lock = threading.Lock()
+        self._monotonic = monotonic
+        self._last: float | None = None
         self.provider: MeterProviderAPI | None = None
 
     def add(self, count: int) -> None:
@@ -59,11 +66,18 @@ class TelemetryDrops:
             return
         with self._lock:
             self.count = min((1 << 63) - 1, self.count + count)
+            self._last = self._monotonic()
             provider = self.provider
         if provider is not None:
             provider.get_meter(SCOPE).create_counter("weave.telemetry_dropped").add(
                 count, attributes("other", "rejected")
             )
+
+    def dropped_within(self, seconds: float) -> bool:
+        """Whether anything was dropped in the last `seconds`."""
+        with self._lock:
+            last = self._last
+        return last is not None and self._monotonic() - last <= seconds
 
 
 @configuration

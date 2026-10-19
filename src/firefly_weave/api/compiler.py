@@ -121,7 +121,13 @@ class CompilerController:
             DEBUG_SLOTS,
             TransportPolicy,
         )
-        from firefly_weave.runtime.capacity import MAX_INTENTS, MAX_REDUCTIONS, STATE_BYTES, TRANSITION_BYTES
+        from firefly_weave.runtime.capacity import (
+            LOOP_TURN_UNITS,
+            MAX_INTENTS,
+            MAX_REDUCTIONS,
+            STATE_BYTES,
+            TRANSITION_BYTES,
+        )
 
         await self.service.catalog(request.state.principal, request_scope(request), context=request.state.audit_context)
         result = Capabilities(
@@ -140,6 +146,7 @@ class CompilerController:
                         transition_bytes=TRANSITION_BYTES,
                         reductions_per_turn=MAX_REDUCTIONS,
                         intents_per_turn=MAX_INTENTS,
+                        loop_units_per_turn=LOOP_TURN_UNITS,
                     ),
                     process=ProcessCapabilities(
                         work_slots=WORK_SLOTS,

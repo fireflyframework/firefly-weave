@@ -191,6 +191,7 @@ export const runViewsFixture: RunViewsFixture = {
         status: "succeeded",
         origin: "retry",
         retried_from_run_id: fixtureIds.failed,
+        handled_errors: 1,
         started_at: "2026-10-07T11:00:00Z",
         ended_at: "2026-10-07T11:00:50Z",
         duration_ms: 50000,

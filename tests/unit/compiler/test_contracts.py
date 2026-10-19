@@ -63,6 +63,7 @@ def test_definition_budget_cannot_coerce_strings():
         "max_loop_items": 10_000,
         "max_loop_depth": 3,
         "max_run_iterations": 100_000,
+        "max_call_depth": 8,
     }
 
 

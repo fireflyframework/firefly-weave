@@ -280,14 +280,14 @@ test("API failures read as plain language with a support code", async ({
   page,
 }) => {
   await connected(page);
-  await page.route("**/environments/development/runs?*", (r) =>
+  await page.route("**/environments/development/run-summaries?*", (r) =>
     r.fulfill({
       status: 500,
       json: { code: "WV-INTERNAL", message: '{"trace":"x"}' },
     }),
   );
   await page.getByRole("button", { name: "Runs", exact: true }).click();
-  const banner = page.locator(".error-banner");
+  const banner = page.locator(".operate-problem");
   await expect(banner).toContainText(
     "The platform could not complete this request.",
   );

@@ -89,6 +89,24 @@ export interface ObservedResource {
   version: string;
   ownership: "managed" | "imported" | "unknown";
   state: "ready" | "progressing" | "stopped" | "failed" | "unknown";
+  /**
+   * The containers or pods of a worker component (100 or fewer), as the
+   * runner saw them; left out when empty. Placement only: never identity or
+   * authority.
+   */
+  members?: ObservedMember[];
+}
+/** One container or pod of an observed worker component. */
+export interface ObservedMember {
+  /** The hostname its worker reports: a container ID prefix or a pod name. */
+  host: string;
+  ordinal: number | null;
+  /** The runner's own lowercase state, such as running or pending. */
+  state: string;
+  ready: boolean;
+  started_at: string | null;
+  restarts: number;
+  node: string | null;
 }
 export interface Observation {
   id: string;

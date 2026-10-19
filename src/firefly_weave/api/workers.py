@@ -26,7 +26,8 @@ from starlette.responses import JSONResponse
 
 from firefly_weave.api.access import request_scope
 from firefly_weave.api.surface import operation
-from firefly_weave.api.transport import page_request, page_response
+from firefly_weave.api.transport import decode_cursor_v2, page_request, page_response, parse_query
+from firefly_weave.contracts.worker_queries import ReleaseUsageQuery, RetireStaleRequest, WorkerListQuery
 from firefly_weave.contracts.workers import (
     ClaimRequest,
     CompleteRequest,
@@ -38,6 +39,7 @@ from firefly_weave.contracts.workers import (
     ReleaseRequest,
     WorkerControlRequest,
 )
+from firefly_weave.operations.fact_positions import run_position
 from firefly_weave.workers.leases import TaskService
 from firefly_weave.workers.service import WorkerService
 
@@ -86,6 +88,17 @@ class WorkerController:
             context=request.state.audit_context,
         )
         return JSONResponse({"revoked": True})
+
+    @operation("workers.retire_stale")
+    async def retire_stale(self, request: Request) -> JSONResponse:
+        result = await self.service.retire_stale(
+            request.state.principal,
+            request_scope(request, environment=True),
+            RetireStaleRequest.model_validate_json(await request.body()),
+            request.headers.get("Idempotency-Key", ""),
+            context=request.state.audit_context,
+        )
+        return JSONResponse(result.model_dump(mode="json"), headers={"Cache-Control": "no-store"})
 
     @operation("workers.drain")
     async def drain(self, request: Request) -> JSONResponse:
@@ -171,11 +184,12 @@ class WorkerController:
     @operation("workers.list")
     async def discover(self, request: Request) -> JSONResponse:
         scope = request_scope(request, environment=True)
-        limit, cursor = page_request(request, scope, "workers")
+        query = parse_query(request.query_params, WorkerListQuery)
+        position = run_position(decode_cursor_v2(query.cursor, scope, query.cursor_collection()))
         result = await self.service.list(
-            request.state.principal, scope, limit=limit, cursor=cursor, context=request.state.audit_context
+            request.state.principal, scope, query=query, position=position, context=request.state.audit_context
         )
-        return JSONResponse(page_response(result, scope, "workers", request.url.path))
+        return JSONResponse(result)
 
     @operation("releases.list")
     async def releases(self, request: Request) -> JSONResponse:
@@ -190,6 +204,17 @@ class WorkerController:
             context=request.state.audit_context,
         )
         return JSONResponse(page_response(result, scope, "worker-releases", request.url.path))
+
+    @operation("releases.usage")
+    async def release_usage(self, request: Request) -> JSONResponse:
+        result = await self.service.release_usage(
+            request.state.principal,
+            request_scope(request, environment=True),
+            UUID(request.path_params["identifier"]),
+            parse_query(request.query_params, ReleaseUsageQuery),
+            context=request.state.audit_context,
+        )
+        return JSONResponse(result.model_dump(mode="json"))
 
     @operation("workers.read")
     async def read(self, request: Request) -> JSONResponse:

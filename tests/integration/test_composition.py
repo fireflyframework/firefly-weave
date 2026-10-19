@@ -459,7 +459,7 @@ async def test_compatible_refresh_retries_partial_effect_start_and_closes_indepe
 
     kinds = ["OutboxLoop", "NativeDispatcher", "KafkaLoop", "ProviderLoop"]
     for kind in kinds:
-        monkeypatch.setattr(application, kind, lambda *args, kind=kind: Loop(kind, *args))
+        monkeypatch.setattr(application, kind, lambda *args, kind=kind, **options: Loop(kind, *args))
 
     class Engine:
         @asynccontextmanager

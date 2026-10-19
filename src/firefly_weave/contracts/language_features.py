@@ -29,7 +29,7 @@ type LanguageFeature = Literal["ai.agent", "ai.memory", "flow.callWorkflow", "fl
 LANGUAGE_FEATURES: Final[tuple[LanguageFeature, ...]] = tuple(sorted(get_args(LanguageFeature.__value__)))
 
 # Features whose runtime support has shipped. Capabilities.language_features and the manifest serve these.
-ADVERTISED_FEATURES: Final[tuple[LanguageFeature, ...]] = ("text.concat", "text.join")
+ADVERTISED_FEATURES: Final[tuple[LanguageFeature, ...]] = ("flow.forEach", "text.concat", "text.join")
 
 # Step kinds, operators and workflow fields that need a feature. AI steps add "agent": "ai.agent" with AgentStep.
 KIND_FEATURES: Final[Mapping[str, LanguageFeature]] = MappingProxyType(
@@ -40,8 +40,8 @@ OPERATOR_FEATURES: Final[Mapping[str, LanguageFeature]] = MappingProxyType(
 )
 WORKFLOW_FIELD_FEATURES: Final[Mapping[str, LanguageFeature]] = MappingProxyType({"callable": "flow.callWorkflow"})
 
-# Language limits the manifest publishes. Limits uses the loop limits as defaults and the compiler enforces them;
-# workflow calls enforce the call depth in a later release.
+# Language limits the manifest publishes. Limits uses them as defaults; the compiler enforces the loop limits and the
+# call depth, and activation enforces the call depth again through the pinned workflows.
 DEFAULT_LOOP_MAX_ITEMS: Final = 1000
 MAX_LOOP_ITEMS: Final = 10_000
 MAX_LOOP_DEPTH: Final = 3

@@ -54,10 +54,13 @@ async def versions(access_db):
         return await session.scalar(text("SELECT count(*) FROM definition_versions WHERE name='label-items'"))
 
 
-async def test_a_platform_that_does_not_run_loops_refuses_to_publish_one(worker_setup, services, access_db):
+async def test_a_platform_that_does_not_run_loops_refuses_to_publish_one(
+    worker_setup, services, access_db, monkeypatch
+):
     from firefly_weave.definitions.models import CatalogError
     from firefly_weave.definitions.service import DefinitionService
 
+    monkeypatch.setattr(language_features, "ADVERTISED_FEATURES", ("text.concat", "text.join"))
     actor, scope = worker_setup[3:5]
     definitions = services(access_db[0]).resolve(DefinitionService)
     with pytest.raises(CatalogError) as refused:
@@ -67,12 +70,9 @@ async def test_a_platform_that_does_not_run_loops_refuses_to_publish_one(worker_
     assert await versions(access_db) == 0
 
 
-async def test_a_platform_that_runs_loops_publishes_one_and_reads_it_back(
-    worker_setup, services, access_db, monkeypatch
-):
+async def test_this_platform_publishes_a_loop_and_reads_it_back(worker_setup, services, access_db):
     from firefly_weave.definitions.service import DefinitionService
 
-    monkeypatch.setattr(language_features, "ADVERTISED_FEATURES", ("flow.forEach", "text.concat", "text.join"))
     actor, scope = worker_setup[3:5]
     definitions = services(access_db[0]).resolve(DefinitionService)
     published = await definitions.publish(
@@ -82,3 +82,26 @@ async def test_a_platform_that_runs_loops_publishes_one_and_reads_it_back(
     assert read["digest"] == published.digest
     assert read["artifact"]["executable"]["features"] == ["flow.forEach", "text.concat"]
     assert await versions(access_db) == 1
+
+
+async def test_this_platform_activates_and_runs_a_loop(worker_setup, services, access_db):
+    from firefly_weave.contracts.catalog import ActivationRequest
+    from firefly_weave.contracts.runtime import StartRunRequest
+    from firefly_weave.definitions.service import DefinitionService
+
+    actor, scope = worker_setup[3:5]
+    definitions = services(access_db[0]).resolve(DefinitionService)
+    published = await definitions.publish(
+        actor, scope, "Workflow", json.dumps(LOOP), "json", "loop", context=AuditContext()
+    )
+    activation = await definitions.activate(
+        actor,
+        scope,
+        ActivationRequest(scope=scope, version_id=published.id, artifact_digest=published.digest),
+        "loop-activation",
+        context=AuditContext(),
+    )
+    run = await worker_setup[1].start(
+        actor, scope, StartRunRequest(activation_id=activation.id, input=["a", "b"]), "loop-run", context=AuditContext()
+    )
+    assert run.state.status == "succeeded" and run.state.output == ["#a", "#b"]

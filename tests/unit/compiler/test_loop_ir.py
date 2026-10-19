@@ -232,12 +232,13 @@ def test_the_workflow_validator_requires_the_loop_feature():
         WorkflowIR.model_validate({**executable, "features": ["text.concat"]})
 
 
-def test_the_dependency_closure_follows_steps_inside_loop_bodies():
+def test_a_workflow_dependency_is_an_interface_even_when_its_loop_bodies_use_actions():
     workflow = {
         "apiVersion": "weave/v1alpha1",
         "kind": "Workflow",
         "metadata": {"name": "outer", "version": "1.0.0"},
         "spec": {
+            "callable": {},
             "inputSchema": {},
             "outputSchema": {},
             "steps": [
@@ -261,8 +262,8 @@ def test_the_dependency_closure_follows_steps_inside_loop_bodies():
         "digest": resource.digest,
         "document": resource.definition.value,
     }
-    with pytest.raises(ValidationError, match="Unresolved executable dependency"):
-        WorkflowIR.model_validate({**EXECUTABLE, "dependencies": [dependency]})
+    # A called workflow's steps run in its own child run, so the caller never needs the actions they use.
+    assert WorkflowIR.model_validate({**EXECUTABLE, "dependencies": [dependency]}).dependencies[0].kind == "Workflow"
 
 
 def test_loop_limits_are_operator_budgets_with_the_published_defaults():

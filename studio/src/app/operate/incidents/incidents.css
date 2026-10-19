@@ -26,7 +26,8 @@ weave-operate-state {
   margin-bottom: var(--space-4);
 }
 .incident-table {
-  --cols: minmax(200px, 1fr) 150px minmax(120px, 1fr) 110px;
+  --cols: minmax(180px, 1.2fr) 150px minmax(120px, 1fr) minmax(110px, 1fr) 120px
+    96px;
 }
 .incident-table .table-head,
 .incident-table .resource-row {
@@ -50,6 +51,17 @@ weave-operate-state {
   white-space: normal;
   overflow-wrap: anywhere;
 }
+/* Workflow and step names stay on one line, with the whole name in a title. */
+.incident-table .cell-line {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.incident-table .estimated {
+  display: block;
+  color: var(--subtle);
+}
 .incident-table .badges {
   align-items: center;
 }
@@ -57,20 +69,49 @@ weave-operate-state {
   display: inline-flex;
   color: var(--warning-ink);
 }
-/* The four columns need about 680 px; the shared table rules that hide a
-   column title on smaller screens don't apply while all four fit. */
-@container incidents (min-width: 680px) {
+.operate-filters input:not([type="checkbox"]),
+.operate-filters select {
+  min-height: var(--control-md);
+}
+.operate-filters input:not([type="checkbox"], [type="datetime-local"]) {
+  width: 16ch;
+}
+@media (max-width: 767px), (pointer: coarse) {
+  .operate-filters input:not([type="checkbox"]),
+  .operate-filters select {
+    min-height: var(--control-touch);
+  }
+}
+/* Every column fits from about 900 px; the shared table rules that hide a
+   column title on smaller screens don't apply while they fit. */
+@container incidents (min-width: 900px) {
   .incident-table .table-head > [role="columnheader"] {
     display: block;
   }
 }
-/* Narrower (an incident open beside the list, or a small screen) rows keep
-   the incident and its status. */
-@container incidents (max-width: 679px) {
+/* Narrower: the run moves to the drawer. */
+@container incidents (min-width: 680px) and (max-width: 899px) {
   .incident-table {
-    --cols: minmax(0, 1fr) auto;
+    --cols: minmax(160px, 1.2fr) 140px minmax(110px, 1fr) minmax(100px, 1fr)
+      110px;
   }
-  .incident-table [data-wide] {
+  .incident-table [data-wider] {
+    display: none;
+  }
+  .incident-table .table-head > [role="columnheader"]:not([data-wider]) {
+    display: block;
+  }
+}
+/* Narrower still (an incident open beside the list, or a small screen):
+   rows keep the incident and its status. */
+@container incidents (max-width: 679px) {
+  /* A fixed status column: every row's grid is its own, so an auto width
+     would put each row's status somewhere else. */
+  .incident-table {
+    --cols: minmax(0, 1fr) 150px;
+  }
+  .incident-table [data-wide],
+  .incident-table [data-wider] {
     display: none;
   }
   .incident-table .table-head > [role="columnheader"]:nth-child(2) {
@@ -82,6 +123,30 @@ weave-operate-state {
   .incident-table .table-head {
     display: none;
   }
+}
+.list-limit {
+  margin: var(--space-3) 0 0;
+  font: var(--type-small);
+  color: var(--muted);
+}
+.run-fact {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+/* The run's status pill shares the Run button's center. */
+.run-fact .status-pill {
+  margin-bottom: 0;
+}
+@media (max-width: 767px), (pointer: coarse) {
+  .run-fact button.sm {
+    min-height: var(--control-touch);
+  }
+}
+.opened small {
+  display: block;
+  margin-top: var(--space-1);
 }
 
 /* The drawer: the run's last engine events. */

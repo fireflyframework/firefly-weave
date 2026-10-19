@@ -45,11 +45,9 @@ export const fakeEnvironment =
 type Kind = "string" | "boolean" | "integer" | "array";
 type Values = Record<string, string | string[] | boolean | number | undefined>;
 // Never looser than the server: whatever the server refuses, the fake refuses.
-// It is stricter on some forms the server accepts: epoch-number timestamps,
-// "_" or a space instead of "T", no seconds, a comma fraction, offsets without
-// a colon, UUIDs written as urn:uuid:, without hyphens or in braces, and
-// names, versions or keys over 200 characters (counted in UTF-16 units, so
-// keys of 101 to 200 characters outside the BMP also fail here).
+// It is stricter on UUIDs written as urn:uuid:, without hyphens or in braces,
+// and names, versions or keys over 200 characters (counted in UTF-16 units,
+// so keys of 101 to 200 characters outside the BMP also fail here).
 const name = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // Mirrors SEMVER_PATTERN in src/firefly_weave/contracts/definitions.py.
@@ -103,6 +101,7 @@ const summaryParameters: Record<string, Kind> = {
   business_key: "string",
   correlation_key: "string",
   has_active_incident: "boolean",
+  has_handled_errors: "boolean",
   include_archived: "boolean",
   activation_id: "string",
   order: "string",
@@ -224,7 +223,7 @@ function instantMicros(value: string): bigint {
   return utc;
 }
 function timeOf(values: Values, key: string): bigint | undefined {
-  const value = text(values, key, instant);
+  const value = text(values, key, instant, 64);
   return value === undefined ? undefined : instantMicros(value);
 }
 /** Run timestamps come from the fixture, which has whole-millisecond precision. */
@@ -317,6 +316,7 @@ function summaries(params: URLSearchParams, data: RunViewsFixture): FakeAnswer {
     business_key: text(values, "business_key"),
     correlation_key: text(values, "correlation_key"),
     has_active_incident: values["has_active_incident"] as boolean | undefined,
+    has_handled_errors: values["has_handled_errors"] as boolean | undefined,
     include_archived: values["include_archived"] === true,
     activation_id: uuidOf(values, "activation_id"),
   };
@@ -373,6 +373,8 @@ function summaries(params: URLSearchParams, data: RunViewsFixture): FakeAnswer {
       run.correlation_key === filters.correlation_key) &&
     (filters.has_active_incident === undefined ||
       run.active_incidents > 0 === filters.has_active_incident) &&
+    (filters.has_handled_errors === undefined ||
+      (run.handled_errors ?? 0) > 0 === filters.has_handled_errors) &&
     (filters.activation_id === undefined ||
       run.activation_id === filters.activation_id);
   const field = order === "updated_desc" ? "updated_at" : "started_at";

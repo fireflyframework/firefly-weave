@@ -22,7 +22,7 @@ from uuid import UUID
 from pydantic import Field, model_validator
 
 from firefly_weave.contracts.access import Scope
-from firefly_weave.contracts.definitions import ContractModel, ResourceName, SemVer
+from firefly_weave.contracts.definitions import ContractModel, ResourceName, SemVer, VersionedReference
 from firefly_weave.contracts.human_tasks import AssignmentPin
 from firefly_weave.contracts.values import JsonObjectData
 from firefly_weave.contracts.workers import ConnectorExecutionPin
@@ -67,12 +67,25 @@ class ActivationRequest(ContractModel):
     connection_revision_ids: dict[ResourceName, UUID] = Field(default_factory=dict)
     connector_release_ids: dict[UUID, UUID] = Field(default_factory=dict, exclude_if=lambda v: not v)
     worker_release_ids: dict[ResourceName, UUID] = Field(default_factory=dict)
+    # One activation of each workflow version this workflow calls, in this environment.
+    workflow_activation_ids: dict[VersionedReference, UUID] = Field(default_factory=dict, exclude_if=lambda v: not v)
 
     @model_validator(mode="after")
     def environment_required(self) -> "ActivationRequest":
         if self.scope.environment_id is None:
             raise ValueError("Activation requires an environment scope")
         return self
+
+
+class WorkflowCallPin(ContractModel):
+    """The activation a call to ``reference`` starts its child runs with, fixed when the caller is activated."""
+
+    reference: VersionedReference
+    activation_id: UUID
+    activation_revision: int = Field(ge=1)
+    version_id: UUID
+    artifact_digest: Digest
+    definition_digest: Digest
 
 
 class Activation(ContractModel):
@@ -83,3 +96,6 @@ class Activation(ContractModel):
     name: ResourceName
     request: ActivationRequest
     retired: bool = False
+    # The called workflows' activations, by reference, and the longest chain of calls this activation can start.
+    workflow_call_pins: list[WorkflowCallPin] = Field(default_factory=list, exclude_if=lambda v: not v)
+    call_depth: int = Field(default=0, ge=0, exclude_if=lambda v: v == 0)

@@ -33,13 +33,232 @@ SPDX-License-Identifier: Apache-2.0
   nothing. **Call an API** shows the full address of its request. Studio now
   includes CodeMirror (`@codemirror/state`, `@codemirror/view`, MIT), loaded
   with the first formula field. See `docs/reference/formulas.md`.
+- Serve bounded run summaries and classified step timelines with fresh scoped
+  authorization. Timeline output remains optional; legacy timings stay unknown.
+  Logs remain unavailable with HTTP 501.
+- Change `runs.list` to newest-started-first order. Existing v1 cursors remain
+  supported with explicit `order=id`; chronological orders use v2 cursors.
+  Update-time pagination is a live view and may require a refresh after changes.
+  Restored executions reappear in every order.
+- `runs.list` accepts the run summary filters and leaves out test runs unless
+  `include_test=true`. It rejects unknown query parameters, and an out-of-range
+  `limit` answers `WV-VALIDATION` instead of `WV-PAGE`. Pages stay limited to
+  8 MiB of retained run data.
+- Step timeline outputs are limited to 8 MiB per page (`429 WV-PAGE-LIMIT`).
+  Outputs of agent, tool or yield instance keys stay withheld until they have
+  their own schemas. A run waiting for a platform that runs it answers
+  `422 WV-IR-UNSUPPORTED` as `runs.read` does.
+- The scheduler re-checks stored run listing decisions in the background: runs
+  recorded while this platform could not run them, which it now runs, and
+  available or unsupported decisions recorded under an earlier classification
+  policy. Unavailable decisions stay unavailable. Each minute it visits up to 16
+  tenants and gives one environment of each up to one second of database work
+  and at most 100 runs. Until a run is re-checked, run summaries, step timelines
+  and incident lists keep withholding it, even when `runs.read` serves it again:
+  its timeline answers `422 WV-IR-UNSUPPORTED` when this platform runs it again,
+  and `409 WV-LEGACY-UNAVAILABLE` when it was recorded under an earlier policy.
+  A retained run larger than 128 MiB is recorded as unavailable without being
+  read.
+- The Python SDK's `list_runs` rejects a `query` combined with keyword filters.
+- Request telemetry records authorized `501 WV-UNAVAILABLE` answers with the
+  status `unavailable` instead of `failed`.
+- A new run's `started` history event records how the run started as `origin`,
+  the value run summaries report. History pages and exports include it, and
+  replay accepts it.
+- Serve incident lists from incident facts without loading runs, newest opened
+  first. They filter by status, code, workflow, step, opening time, and test
+  runs (left out unless `include_test=true`). Explicit `order=id` continues
+  earlier cursors. Unknown query parameters are rejected, and an out-of-range
+  `limit` answers `WV-VALIDATION` instead of `WV-PAGE`.
+- New operation `incidents.read` (`weave runs incidents read`, SDK
+  `read_incident`) serves direct incident links and sends the revision as `ETag`.
+- Incident views add optional `opened_at`, `opened_at_estimated`, `updated_at`,
+  `workflow`, `run_status`, `test`, and `instance_key`; for a repeated step
+  instance, `node_id` is the static step ID. Upgrade CLIs and SDKs with the
+  server: earlier releases reject the new fields and fail with `502 WV-WIRE` on
+  incident lists. Resolution receipts, `incidents.resolve` answers, and the
+  earlier plain array of a run's incidents keep their bytes. A resolve answer is
+  the incident as stored, so read it again with `incidents.read`.
+- An incident on a switch or parallel branch output or a join keeps its
+  control-step `node_id` in incident lists and reads. An incident whose step
+  does not match its incident facts is withheld as unavailable.
+- The Python SDK's `list_incidents` and `run_incidents` accept a typed `query`
+  and reject one combined with keyword arguments.
+- Workers report where they run when they register: an optional, bounded
+  `identity` with host, runtime, versions, platform, Kubernetes namespace and
+  node, and up to 8 labels from `WEAVE_WORKER_LABELS`
+  (`WEAVE_WORKER_REPORT_HOST=false` leaves out the host). The Agentic and Files
+  workers and the SDK's `register_worker` send it and retry once without it when
+  an older server answers `422 WV-VALIDATION`; native executors send it inside
+  the API process. With native executors configured, an invalid
+  `WEAVE_WORKER_LABELS` stops the API from starting. New SDK helpers:
+  `worker_identity` and `register_worker_http`.
+- Worker reads, lists, and drain or resume answers add optional `identity` and
+  `registered_at`. Upgrade CLIs and SDKs with the server: earlier releases fail
+  with `502 WV-WIRE` on workers registered after the upgrade. The registration
+  answer and stored worker records keep their bytes, and a worker cannot report
+  a placement.
+- Deployment observations list up to 100 live `members` of each worker
+  component: running or starting Compose containers and Kubernetes pods, with
+  host, ordinal, state, readiness, start time, restarts and node. Stopped,
+  terminating, finished, failed and evicted ones are left out. With more than 100
+  live members, or when the runner cannot list them all, `members` is left out
+  (placement unknown) and the observation still succeeds. Kubernetes runners
+  read members through the deployment's selector, including set-based
+  `matchExpressions`, and need `list` on the namespace's pods. Observations
+  without members keep their bytes and digests.
+- Upgrade the server before its deployment runners: an older server refuses the
+  `members` an upgraded runner reports, so observe jobs fail and applies end
+  `reconciliation_required`. Earlier CLIs and SDKs fail with `502 WV-WIRE` on
+  observation reads and lists that carry members.
+- `workers.list` reads each page with one query and lists current workers by
+  default: not revoked, and seen (or, never seen, registered) in the last hour;
+  `state=all` lists every worker. It filters by `presence`, `draining`,
+  `release_id`, `task_type`, `target_id` and `host_prefix` (a literal,
+  case-sensitive prefix) and orders by `last_seen_desc` (default) or
+  `registered_desc`, unknown times last. Cursors issued before the upgrade are
+  refused, unknown query parameters are rejected, and an out-of-range `limit`
+  answers `WV-VALIDATION` instead of `WV-PAGE`. Pages stay limited to 8 MiB.
+- Studio's Workers page asks the platform for current workers, last contact
+  first, and for every worker with **Show retired workers**. Earlier Studio
+  hosts and desktop apps get the
+  reduced default list from an upgraded server, because the Studio bridge
+  forwards answers unchanged: their Workers page lists only current workers, and
+  **Show revoked workers** shows none. Upgrade Studio and the desktop app with
+  the server.
+- Worker reads and lists add optional `placement` (target, deployment and
+  component), matched from the latest complete, unexpired observation of the
+  targets the reader may read, and `drained_at`, when the worker started
+  draining; drain and resume answers add `drained_at`. Upgrade CLIs and SDKs
+  with the server: earlier releases fail with `502 WV-WIRE` on placed workers
+  and on workers drained since the upgrade.
+- New operation `workers.retire_stale` (`weave workers retire-stale`, SDK
+  `retire_stale_workers`) revokes up to 100 workers per command that hold no
+  active lease and were last seen, or registered if never seen, longer ago than
+  `older_than_seconds` (one hour to 30 days), oldest first. `dry_run` previews
+  the same batch, and `matched` counts every eligible worker.
+- New operation `releases.usage` (`weave workers releases usage`, SDK
+  `release_usage`) counts a release's online, offline, draining and revoked
+  workers and the activations that pin it, and pages the deployment components
+  that run it on targets the reader may read; `deployments_hidden: true` says the
+  reader may read no target.
+- The Python SDK's `list_workers` accepts a typed `query` and rejects one
+  combined with keyword arguments.
+- Kubernetes runners no longer read a pod's free-text status reason, and a pod
+  whose readiness is unknown is listed as a member that is not ready.
+- New operation `operations_summary.read` (`weave operations summary`) answers
+  an environment's health, load, workers, targets, incidents and up to 20 items
+  that need attention, in one read that reloads the caller's grants. Each
+  section and item needs its own capability; one the caller may not read is
+  `{"state": "forbidden"}` without running its queries or recording a denial,
+  and one whose queries use up its two seconds of database time between them
+  is `{"state": "unavailable"}` while the rest are still served. Run figures
+  leave out test runs, and opening times the upgrade estimated are not counted.
+  Telemetry export health is degraded while exports are being dropped.
+- New operation `operations_telemetry.read` (`weave operations telemetry`)
+  answers whether telemetry export is on, the collector host names, the
+  metrics interval and how many items were dropped, never endpoint paths,
+  credentials or headers. It needs `status.read` for the project.
+  `WEAVE_TELEMETRY` now refuses a collector host name longer than 253
+  characters.
+- Background loop health, which the summary reports, ages successes with a
+  monotonic clock, counts a cycle still within its loop's budget as on time,
+  and reads degraded after 3 failed cycles in a row or among the last 20. An
+  outbox cycle that cannot start a delivery, because the platform is not ready
+  or no delivery slot is free, is neither a success nor a failure.
+- Studio's host bridge forwards the environment summary, the telemetry
+  settings and `releases.usage`.
+- Studio's Operate area opens on a new Overview page. It shows the health of
+  the API, the database, the scheduler, the outbox, compatibility and
+  telemetry export, each with its details; the current load; workers,
+  clusters and incidents; and up to 20 items that need attention, most of
+  them linking to their record. It reads the summary every 15 seconds while
+  visible. A section you may not read names the permission it needs instead
+  of showing zeros.
+- Operate › Runs reads run summaries, newest first, with time range, workflow,
+  version, origin, status, test, handled-error, incident, top-level and
+  archive filters. The address keeps every filter except the business and
+  correlation keys. Load more continues the same list, Auto-refresh reads the
+  first page every 10 seconds, and up to 50 selected runs can be canceled or
+  retried together. A run's detail draws its steps with queue wait and run
+  time, groups loop iterations, links to called runs, shows a step's output
+  on request and follows a running run every 2 seconds. Starting, canceling,
+  retrying, archiving or restoring a run, or deleting its data, from the page
+  reads the list again at once, and a run started there shows first while
+  the list puts new runs first (with Oldest first it waits for its place).
+  The line under the title names the order in use.
+- Operate › Incidents filters on the platform by status, code, workflow,
+  step, opening range and test runs, with a choice of order, so a match
+  beyond the loaded pages shows. The address keeps the filters and the open
+  incident (`?incident=ID`), which opens from `incidents.read` even when no
+  loaded page lists it. The drawer shows the workflow, the full step instance,
+  the run's status and when the incident opened, marked estimated when the
+  upgrade inferred it and Unknown when it isn't known; Refresh incident reads
+  the incident itself.
+- Operate › Workers has Fleet and Releases tabs. Fleet filters on the platform
+  by status, draining, release, task type, target and host prefix (kept on the
+  page, never in the address) with a choice of order, shows each worker's
+  host, placement, versions and registration time, drains, resumes or revokes
+  up to 50 selected workers one by one, and **Retire offline workers…**
+  previews and then revokes offline workers that hold no work, 100 at a time.
+  Releases lists the admitted releases and, for one, its workers by state, the
+  activations that pin it and the deployments on targets you may read; it shows
+  the CLI command that admits a release and never admits one itself. On a narrow
+  screen both pages fold their filters behind **Filters (n)**, and every filter
+  checkbox is a 36 px target with a mouse and 44 px on touch.
+  A retirement whose answer arrives after its dialog closed, or after the
+  workspace or person changed, says what happened in a notice; a bulk action
+  stops sending when the person changes, and the host prefix is cleared for the
+  next person.
+
+- The compiler checks and compiles **Call a workflow** (`callWorkflow`) against
+  the exact published version it calls: that version must opt in with
+  `spec.callable` (any workflow, or only `allowedCallers`), `with` is checked
+  against its input schema, a `businessKey` must be text of 1 to 200 characters,
+  and the step returns the called workflow's output, a `{status, runId, output,
+  error}` envelope with `onFailure: continue`, or `null` with `mode: detach`. New
+  diagnostics `WV-COMP-UNKNOWN_WORKFLOW`, `CALL_NOT_CALLABLE`, `CALL_RECURSION`,
+  `CALL_DEPTH` (more than 8 calls deep, the new compiler limit
+  `max_call_depth`), and `CALL_MODE` point at the field to fix. The called
+  version is locked as an interface dependency: the caller's artifact carries
+  that version's definition, so its digest matches the published one, but
+  compiling, importing, and activating the caller read only its input and output
+  schemas. Activation takes `workflow_activation_ids`, one live
+  activation of each called version in the same environment, and refuses wrong
+  or missing pins with `422 WV-READINESS-CALL`. This platform does not start child
+  runs yet, so it refuses to publish, import, or activate a workflow that calls
+  another with `WV-IR-UNSUPPORTED`; workflows without calls compile to the same
+  bytes as before. `weave workflow explain` and `weave workflow graph` show calls,
+  and the SDK's `WorkflowBuilder.with_callable()` writes `spec.callable`.
+- Loops run. A **Loop over items** (`forEach`) step runs its body once per
+  element, `concurrency` at a time, in one run, and its output lists one result
+  per element in element order, whatever order the iterations finish in. Each
+  iteration's steps, tasks, human tasks, waits, and incidents use their own
+  instance key (`send[2]`); a task incident in one iteration suspends the run, a
+  `fail` step in one fails it, and canceling ends every iteration. Finished
+  iterations are removed from the run state. An `items` value that is not a list,
+  more elements than `maxItems`, or results over the 1 MiB payload limit open
+  `WV-RUNTIME-LOOP-ITEMS`, `WV-RUNTIME-LOOP-LIMIT`, or `WV-RUNTIME-LOOP-OUTPUT`.
+  A long loop yields after 4,000 units of work in one event and continues about
+  one scanner poll later; the capabilities response reports the budget as
+  `operations.runtime.loop_units_per_turn`. The platform now lists
+  `flow.forEach` and `forEach` in its language manifest and capabilities, so it
+  publishes, imports, and activates workflows with loops. Debug sessions run
+  loops with the same reducer. New counters `weave.loop_iterations` (`status:
+  ok` for each collected result, `cancelled` for each iteration still running
+  when its run ends) and `weave.loop_yields`. Upgrade the CLI and SDK together with the server: older
+  clients do not know the human task `instance_key` and `iteration` fields or
+  the new capability fields.
+- Evaluating an expression inside a loop body and admitting a long event no
+  longer walk data that has not changed since the event started, so a loop's
+  cost grows linearly with its number of elements.
 - The compiler checks and compiles **Loop over items** (`forEach`): `/item`,
   `/index`, and `/loops/<id>/…` inside a loop body, a typed list of results after
   it, `WV-COMP-LOOP_*` diagnostics for wrong items, scope, nesting, limits, and
   signals in a body (with a suggested `maxItems` for a loop budget that is too
   high), and an IR `forEach` node with an `each` edge and an `each` join that
-  requires the `flow.forEach` feature. This platform does not run loops yet, so
-  it refuses to publish, import, or activate such a workflow with
+  requires the `flow.forEach` feature. A platform that does not list the
+  feature refuses to publish, import, or activate such a workflow with
   `WV-IR-UNSUPPORTED`; workflows without loops compile to the same bytes as
   before. The compiler limits add `max_loop_items`, `max_loop_depth`, and
   `max_run_iterations`. Studio's local host answers `POST /studio/local/scope`

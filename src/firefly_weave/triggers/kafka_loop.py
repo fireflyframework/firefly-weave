@@ -28,6 +28,7 @@ from firefly_weave.access.scheduler import next_scope
 from firefly_weave.connectors.broker import BrokerConnectionConfig
 from firefly_weave.connectors.kafka_transport import BrokerClients, BrokerOwner
 from firefly_weave.operations.execution import ReservedSlots
+from firefly_weave.operations.loop_health import TRAVERSAL_SECONDS, LoopHealth, track
 from firefly_weave.persistence.migrations import check_schema
 from firefly_weave.persistence.uow import UnitOfWork
 from firefly_weave.settings import Settings
@@ -39,11 +40,22 @@ TURN_EXECUTION = ReservedSlots(8)
 
 
 class KafkaLoop:
-    def __init__(self, settings: Settings, uow: UnitOfWork, triggers: KafkaTrigger, clients: BrokerClients) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        uow: UnitOfWork,
+        triggers: KafkaTrigger,
+        clients: BrokerClients,
+        *,
+        health: LoopHealth | None = None,
+    ) -> None:
         self.settings, self.uow, self.triggers, self.clients = settings, uow, triggers, clients
+        self.health = health if health is not None else LoopHealth()
         self.engine: AsyncEngine | None = None
         self.task: asyncio.Task[None] | None = None
         self.turns: set[asyncio.Task[None]] = set()
+        # A running consumer task does not prove a connected source: a failed turn fails the next cycle.
+        self.turn_failed = False
 
     async def open(self) -> None:
         if not self.settings.broker.enabled or not self.settings.kafka_consumer_enabled:
@@ -73,16 +85,19 @@ class KafkaLoop:
             # A request can open this loop. An empty context keeps the request's execution
             # lease and identity, which end with its response, out of the long-lived task.
             self.task = asyncio.create_task(self.poll(), name="weave-broker-traversal", context=Context())
+            track(self.health, self.task, "kafka_loop")
         except BaseException:
             await self.close()
             raise
 
-    async def cycle(self) -> None:
+    async def cycle(self) -> bool:
+        """One bounded traversal turn; False when a consumer turn failed since the previous cycle."""
+        healthy, self.turn_failed = not self.turn_failed, False
         if (
             len(self.turns) >= self.settings.broker.max_clients - 1
             or len(self.clients.owners) >= self.settings.broker.max_clients - 1
         ):
-            return
+            return healthy
         assert self.engine is not None
         async with asyncio.timeout(5):
             async with self.engine.begin() as connection:
@@ -90,15 +105,16 @@ class KafkaLoop:
                 await connection.execute(text("SET LOCAL lock_timeout='1000ms'"))
                 tenant = await connection.scalar(text("SELECT weave_broker_tenants(1)"))
             if tenant is None:
-                return
+                return healthy
             authority = await next_scope(self.uow, tenant, broker=True)
             if authority is None:
-                return
+                return healthy
             source = await self.triggers.scheduled_claim(authority)
         if source is not None:
             task = asyncio.create_task(self.turn(source), name="weave-kafka-consumer")
             self.turns.add(task)
             task.add_done_callback(self.turns.discard)
+        return healthy
 
     async def turn(self, source: KafkaSource) -> None:
         owner: BrokerOwner | None = None
@@ -149,6 +165,7 @@ class KafkaLoop:
         except asyncio.CancelledError:
             raise
         except Exception:
+            self.turn_failed = True
             logging.getLogger(__name__).error(
                 "Broker consumer turn failed; source authority and replay remain required"
             )
@@ -163,11 +180,17 @@ class KafkaLoop:
 
     async def poll(self) -> None:
         while True:
+            self.health.started("kafka_loop")
             try:
-                await self.cycle()
+                healthy = await self.cycle()
             except Exception:
                 logging.getLogger(__name__).error("Broker traversal failed; retrying bounded turn")
-            await asyncio.sleep(1)
+                healthy = False
+            if healthy:
+                self.health.succeeded("kafka_loop")
+            else:
+                self.health.failed("kafka_loop")
+            await asyncio.sleep(TRAVERSAL_SECONDS)
 
     async def close(self) -> None:
         if self.task:
@@ -175,6 +198,7 @@ class KafkaLoop:
             with suppress(asyncio.CancelledError):
                 await self.task
             self.task = None
+        self.health.running("kafka_loop", False)
         turns = tuple(self.turns)
         for task in turns:
             task.cancel()

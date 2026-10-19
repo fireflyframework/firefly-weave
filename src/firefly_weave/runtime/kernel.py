@@ -27,10 +27,11 @@ from pydantic import Field
 
 from firefly_weave.compiler.api import CompiledArtifact
 from firefly_weave.compiler.decision_tables import DecisionFailure, evaluate_decision_table
-from firefly_weave.compiler.expressions import ExpressionFailure, evaluate, measure_value
+from firefly_weave.compiler.expressions import DEFAULT_LIMITS, ExpressionFailure, evaluate, measure_value, value_shape
 from firefly_weave.compiler.ir import (
     ActionNode,
     BranchOutputNode,
+    CallWorkflowNode,
     DecisionTableNode,
     EndNode,
     FailNode,
@@ -49,26 +50,34 @@ from firefly_weave.compiler.ir import (
 )
 from firefly_weave.compiler.schemas import validate_payload
 from firefly_weave.contracts.definitions import ActionDefinition, ContractModel, WorkerImplementation, load_definition
-from firefly_weave.contracts.instance_keys import node_of
+from firefly_weave.contracts.instance_keys import node_of, split_instance
+from firefly_weave.contracts.limits import Limits
 from firefly_weave.contracts.values import JsonObject, JsonValue
 from firefly_weave.runtime.capacity import (
     ADMISSION_OUTPUT_BYTES,
     ADMISSION_REDUCTIONS,
+    LOOP_TURN_UNITS,
+    MAX_INTENTS,
     MAX_REDUCTIONS,
     STATE_BYTES,
     TERMINAL_STATE_BYTES,
     TRANSITION_BYTES,
+    GrowingContainers,
     RuntimeCapacityError,
     admit_transition,
     capacity_failures,
+    growing_containers,
     logical_size,
 )
 from firefly_weave.runtime.control import (
     available,
     bindings,
     branch_key,
+    enclosing_suffix,
     frame,
     frame_key,
+    frame_suffix,
+    iteration_suffix,
     joined_output,
     loop_suffix,
 )
@@ -79,6 +88,7 @@ from firefly_weave.runtime.models import (
     HumanTaskIntent,
     IncidentState,
     JoinState,
+    LoopState,
     RunState,
     RuntimeEvent,
     StepChange,
@@ -89,6 +99,10 @@ from firefly_weave.runtime.models import (
 
 class KernelError(ValueError):
     pass
+
+
+# Loop outputs are collected under the default payload budget, like every evaluated value.
+LOOP_OUTPUT_BYTES = DEFAULT_LIMITS.max_payload_bytes
 
 
 def checked_deadline(timestamp: datetime, duration_seconds: int) -> datetime:
@@ -106,9 +120,65 @@ def deadline_order(node_id: str, due: datetime, duration_nodes: set[str]) -> tup
     return (0 if node_id == "@run" else 2 if node_of(node_id) in duration_nodes else 1, due, node_id)
 
 
+def duration_steps(ir: WorkflowIR) -> set[str]:
+    """Steps whose deadlines elapse and continue the run: duration waits, and loops resuming after a yield."""
+    return {node.id for node in ir.graph.nodes if isinstance(node, (WaitNode, ForEachNode))}
+
+
 def workflow(artifact: CompiledArtifact) -> WorkflowIR:
     ir = WorkflowIR.model_validate(artifact.executable)
     return ir
+
+
+class ContextShapes:
+    """Shapes of context parts that repeat across a loop's iterations (the input, values visible at the loop).
+
+    Each part is measured once per transition instead of once per evaluation, which keeps loop work linear in the
+    number of elements. Entries keep their part alive, so an identity is never reused while it is cached.
+    """
+
+    def __init__(self, limits: Limits = DEFAULT_LIMITS) -> None:
+        self.limits = limits
+        self.parts: dict[int, tuple[object, tuple[int, int]]] = {}
+
+    def shape(self, value: object) -> tuple[int, int]:
+        cached = self.parts.get(id(value))
+        if cached is not None and cached[0] is value:
+            return cached[1]
+        shape = value_shape(value, limits=self.limits)
+        if len(self.parts) >= 4096:
+            self.parts.clear()
+        self.parts[id(value)] = (value, shape)
+        return shape
+
+    def check(self, context: JsonObject) -> None:
+        """Apply the node and depth budgets of measuring the whole context, from the shapes of its parts."""
+        limits = self.limits
+        total = 1
+
+        def add(value: object, depth: int) -> None:
+            nonlocal total
+            nodes, height = self.shape(value)
+            if height and depth + height > limits.max_depth:
+                raise ExpressionFailure("RESOURCE_LIMIT")
+            total += nodes
+
+        for name, value in context.items():
+            if name in {"steps", "loops"}:
+                # The steps and loops objects nest to depth 2 and each loop scope to depth 3, even when empty.
+                if limits.max_depth < 2 or (name == "loops" and value and limits.max_depth < 3):
+                    raise ExpressionFailure("RESOURCE_LIMIT")
+                total += 1
+                for child in cast(JsonObject, value).values():
+                    if name == "steps":
+                        add(child, 2)
+                    else:
+                        total += 2
+                        add(cast(JsonObject, child)["item"], 3)
+            else:
+                add(value, 1)
+        if total > limits.max_document_nodes:
+            raise ExpressionFailure("RESOURCE_LIMIT")
 
 
 @dataclass(frozen=True)
@@ -118,14 +188,42 @@ class PreparedWorkflow:
     ir: WorkflowIR
     nodes: Mapping[str, IRNode]
     successors: Mapping[str, str]
+    # Per loop: the nodes inside its body, the intents its body can issue in one event, and whether the body
+    # holds blocks of its own.
+    body_sizes: Mapping[str, int]
+    body_intents: Mapping[str, int]
+    nested_blocks: frozenset[str]
+    contexts: ContextShapes
 
 
 def prepare(artifact: CompiledArtifact) -> PreparedWorkflow:
     ir = workflow(artifact)
+    sizes: dict[str, int] = {}
+    intents: dict[str, int] = {}
+    nested: set[str] = set()
+    for loop in ir.graph.nodes:
+        if isinstance(loop, ForEachNode):
+            inner = [*loop.scope, loop.id, "body"]
+            body = [node for node in ir.graph.nodes if node.scope[: len(inner)] == inner]
+            sizes[loop.id] = len(body)
+            # A task, a deadline, or a human task and its expiry deadline; and the yield deadline of each nested
+            # loop. A nested loop instance starts at most one iteration and one yield past the event's budget, and
+            # its enclosing iteration's reservation covers both.
+            intents[loop.id] = sum(
+                2 if isinstance(node, HumanTaskNode) else 1
+                for node in body
+                if isinstance(node, (ActionNode, WaitNode, SignalNode, HumanTaskNode, ForEachNode))
+            )
+            if any(isinstance(node, (SwitchNode, ParallelNode, ForEachNode)) for node in body):
+                nested.add(loop.id)
     return PreparedWorkflow(
         ir=ir,
         nodes=MappingProxyType({node.id: node for node in ir.graph.nodes}),
         successors=MappingProxyType({edge.source: edge.target for edge in ir.graph.edges if edge.kind == "next"}),
+        body_sizes=MappingProxyType(sizes),
+        body_intents=MappingProxyType(intents),
+        nested_blocks=frozenset(nested),
+        contexts=ContextShapes(),
     )
 
 
@@ -184,6 +282,10 @@ class KernelCursor(ContractModel):
     admitted: bool = False
     done: bool = False
     current: str | None = None
+    # Loop work this event has started (LOOP_TURN_UNITS), and the intents the iterations it started may issue
+    # (at most MAX_INTENTS // 2); both reset per event.
+    turn_units: int = Field(default=0, ge=0, exclude_if=lambda v: not v)
+    turn_intents: int = Field(default=0, ge=0, exclude_if=lambda v: not v)
 
 
 def begin(state: RunState, event: RuntimeEvent, artifact: CompiledArtifact | None) -> KernelCursor:
@@ -214,7 +316,7 @@ def transition(state: RunState, event: RuntimeEvent, artifact: CompiledArtifact 
                 )
             ):
                 raise KernelError("WV-RUNTIME-TERMINAL")
-            logical_size(cursor.result, size + 32768 + 3 * (len(state.branches) + len(state.joins)))
+            logical_size(cursor.result, size + 32768 + 3 * (len(state.branches) + len(state.joins) + len(state.loops)))
             return cursor.result
         finally:
             capacity_failures.reset(token)
@@ -222,21 +324,33 @@ def transition(state: RunState, event: RuntimeEvent, artifact: CompiledArtifact 
     cursor = begin(state, event, artifact)
     reductions = unadmitted = output_bytes = measured = 0
     prepared = prepare(artifact) if artifact is not None and not state.unavailable else None
-    while not cursor.done:
-        reductions += 1
-        if reductions > MAX_REDUCTIONS:
-            raise RuntimeCapacityError()
-        cursor = _advance_owned(cursor, prepared, operational=True)
-        # Admission walks the whole transition, so it is amortized: at the final checkpoint, and earlier once
-        # enough reductions or new step output have accumulated. Only where a capacity error surfaces can move.
-        unadmitted += 1
-        changes = cursor.result.steps
-        for change in changes[measured:]:
-            output_bytes += logical_size(change.output, TRANSITION_BYTES)
-        measured = len(changes)
-        if cursor.done or unadmitted >= ADMISSION_REDUCTIONS or output_bytes >= ADMISSION_OUTPUT_BYTES:
-            admit_transition(cursor.result)
-            unadmitted = output_bytes = 0
+    # The event's steps and commands, and each loop's elements and outputs, only grow while it is reduced.
+    growing = GrowingContainers()
+    for container in (cursor.result.steps, cursor.result.commands, cursor.result.state.input):
+        if isinstance(container, (list, dict)):
+            growing.add(container)
+    for loop in cursor.result.state.loops.values():
+        growing.add(loop.items)
+        growing.add(loop.outputs)
+    tracking = growing_containers.set(growing)
+    try:
+        while not cursor.done:
+            reductions += 1
+            if reductions > MAX_REDUCTIONS:
+                raise RuntimeCapacityError()
+            cursor = _advance_owned(cursor, prepared, operational=True)
+            # Admission walks the whole transition, so it is amortized: at the final checkpoint, and earlier once
+            # enough reductions or new step output have accumulated. Only where a capacity error surfaces can move.
+            unadmitted += 1
+            changes = cursor.result.steps
+            for change in changes[measured:]:
+                output_bytes += logical_size(change.output, TRANSITION_BYTES)
+            measured = len(changes)
+            if cursor.done or unadmitted >= ADMISSION_REDUCTIONS or output_bytes >= ADMISSION_OUTPUT_BYTES:
+                admit_transition(cursor.result)
+                unadmitted = output_bytes = 0
+    finally:
+        growing_containers.reset(tracking)
     return cursor.result
 
 
@@ -304,6 +418,7 @@ def _advance_owned(
     nodes, successors = prepared.nodes, prepared.successors
     queue = list(cursor.ready)
     current = cursor.current or str(event.data.get("node_id", ir.graph.entry))
+    units, reserved = cursor.turn_units, cursor.turn_intents
 
     def checkpoint(value: Transition, *, done: bool = True) -> KernelCursor:
         return cursor.model_copy(
@@ -314,6 +429,8 @@ def _advance_owned(
                 "admitted": True,
                 "done": done,
                 "current": current,
+                "turn_units": 0 if done else units,
+                "turn_intents": 0 if done else reserved,
             }
         )
 
@@ -337,7 +454,22 @@ def _advance_owned(
         result.steps.append(StepChange(node_id=key, status="completed", output=value, decision=decision))
 
     def mapping(node: Node, key: str, expression: JsonObject) -> JsonValue:
-        return evaluate(expression, {"input": current_state.input, "steps": bindings(current_state, node, key)})
+        context: JsonObject = {"input": current_state.input, "steps": bindings(current_state, node, key)}
+        # Inside loop bodies: /item and /index of the innermost loop, and /loops/<id> for every enclosing loop.
+        owners = [owner for owner in node.scope[::2] if isinstance(nodes[owner], ForEachNode)]
+        if owners:
+            indexes = split_instance(key).indexes
+            scopes: JsonObject = {}
+            innermost: JsonObject = {}
+            for depth, owner in enumerate(owners):
+                index = indexes[depth]
+                loop = current_state.loops[owner + "".join(f"[{i}]" for i in indexes[:depth])]
+                innermost = {"item": loop.items[index], "index": index}
+                scopes[owner] = innermost
+            context.update(innermost, loops=scopes)
+            prepared.contexts.check(context)
+            return evaluate(expression, context, measured=True)
+        return evaluate(expression, context)
 
     def guard(path: str, purpose: str, value: JsonValue) -> None:
         for item in ir.guards:
@@ -361,6 +493,77 @@ def _advance_owned(
             result.commands.append(ControlCommand(kind="spawn_branch", node_id=join.owner, branch=branch.name))
             queue.append(branch.target + suffix)
 
+    def started(key: str) -> bool:
+        return any(
+            isinstance(command, ControlCommand) and command.kind == "spawn_branch" and command.node_id == key
+            for command in result.commands
+        )
+
+    def pending_yield(loop: LoopState) -> bool:
+        return bool(loop.yields) and f"{loop.owner}~{loop.yields}" in current_state.active
+
+    def pause(key: str) -> None:
+        # A yield: a zero-duration wait under its own key resumes the loop in a later event.
+        loop = current_state.loops[key]
+        loop = loop.model_copy(update={"yields": loop.yields + 1})
+        current_state.loops[key] = loop
+        wake = f"{key}~{loop.yields}"
+        current_state.active.append(wake)
+        current_state.waits[wake] = event.timestamp
+        result.commands.append(Deadline(node_id=wake, deadline=event.timestamp))
+
+    def start_iterations(key: str) -> None:
+        """Start iterations in element order while the loop's concurrency and this event's budget allow."""
+        nonlocal units, reserved
+        loop = current_state.loops[key]
+        if loop.status != "running" or pending_yield(loop):
+            return
+        node = cast(ForEachNode, nodes[node_of(key)])
+        suffix = loop_suffix(key)
+        cost, intents = 1 + prepared.body_sizes[node.id], prepared.body_intents[node.id]
+        parent = frame_key(node, key)
+        while len(loop.running) < loop.concurrency and loop.next_index < loop.count:
+            # The first iteration a loop starts in an event is always allowed, so every loop progresses.
+            if (units + cost > LOOP_TURN_UNITS or reserved + intents > MAX_INTENTS // 2) and started(key):
+                pause(key)
+                return
+            index = loop.next_index
+            within = iteration_suffix(suffix, index)
+            current_state.branches[branch_key(node.id, "body", within)] = BranchState(
+                owner=node.id, name="body", index=index, target=node.target, parent=parent, status="running"
+            )
+            loop.running.append(index)
+            loop = loop.model_copy(update={"next_index": index + 1})
+            current_state.loops[key] = loop
+            units += cost
+            reserved += intents
+            result.commands.append(ControlCommand(kind="spawn_branch", node_id=key, branch="body", index=index))
+            queue.append(node.target + within)
+
+    def release(node: ForEachNode, key: str, index: int) -> None:
+        """Delete an iteration's frame and every frame, join and loop that its body created."""
+        within = iteration_suffix(loop_suffix(key), index)
+        del current_state.branches[branch_key(node.id, "body", within)]
+        if node.id not in prepared.nested_blocks:
+            return
+        inner = [*node.scope, node.id, "body"]
+
+        def inside(owner: str, suffix: str) -> bool:
+            # Only blocks lexically inside this body and of this iteration; sibling blocks keep theirs.
+            return nodes[owner].scope[: len(inner)] == inner and suffix.startswith(within)
+
+        for name, branch in list(current_state.branches.items()):
+            if inside(branch.owner, frame_suffix(name, branch)):
+                del current_state.branches[name]
+        for name in [name for name in current_state.joins if inside(node_of(name), loop_suffix(name))]:
+            del current_state.joins[name]
+        growing = growing_containers.get()
+        for name in [name for name in current_state.loops if inside(node_of(name), loop_suffix(name))]:
+            if growing is not None:
+                growing.discard(current_state.loops[name].items)
+                growing.discard(current_state.loops[name].outputs)
+            del current_state.loops[name]
+
     def terminate(status: str, code: str | None = None) -> None:
         nonlocal current_state
         current_state = current_state.model_copy(
@@ -379,6 +582,9 @@ def _advance_owned(
         for key, join in current_state.joins.items():
             if join.status == "waiting":
                 current_state.joins[key] = join.model_copy(update={"status": "terminated"})
+        for key, loop in current_state.loops.items():
+            if loop.status == "running":
+                current_state.loops[key] = loop.model_copy(update={"status": "terminated"})
         result.commands.append(ControlCommand(kind="revoke_leases", node_id=current))
         result.commands.append(ControlCommand(kind="terminate", node_id=current))
         queue.clear()
@@ -388,6 +594,14 @@ def _advance_owned(
         if not isinstance(identifier, str) or identifier not in current_state.active:
             raise KernelError("WV-RUNTIME-EVENT")
         node = nodes[node_of(identifier)]
+        if isinstance(node, ForEachNode) and completion.type == "wait_elapsed" and "~" in identifier:
+            due = current_state.waits.get(identifier)
+            if due is None or completion.data.get("deadline") != due.isoformat() or completion.timestamp < due:
+                raise KernelError("WV-RUNTIME-EARLY-WAKEUP")
+            current_state.active.remove(identifier)
+            current_state.waits.pop(identifier)
+            start_iterations(identifier.partition("~")[0])
+            return
         if isinstance(node, WaitNode) and completion.type == "wait_elapsed":
             due = current_state.waits.get(identifier)
             if due is None or completion.data.get("deadline") != due.isoformat() or completion.timestamp < due:
@@ -487,7 +701,7 @@ def _advance_owned(
                     raise KernelError("WV-RUNTIME-EARLY-TIMEOUT")
                 terminate("timed_out")
                 # Retain historical sequential timeout transition shape.
-                if not state.branches:
+                if not state.branches and not state.loops:
                     result.commands.clear()
                 return checkpoint(result.model_copy(update={"state": current_state}))
             elif event.type in {"task_failed", "incident_opened", "recovery_scheduled"}:
@@ -600,6 +814,10 @@ def _advance_owned(
                     update={"output": {"code": node.code, "message": node.message}}
                 )
                 return checkpoint(result.model_copy(update={"state": current_state}))
+            elif isinstance(node, CallWorkflowNode):
+                # This runtime does not start child runs: import refuses workflows that call others, and a call
+                # that still arrives here stops behind an incident instead of being skipped.
+                raise KernelError("WV-RUNTIME-ARTIFACT")
             elif isinstance(node, (SwitchNode, ParallelNode)):
                 if current in current_state.joins:
                     raise KernelError("WV-RUNTIME-ACTIVATION")
@@ -642,6 +860,35 @@ def _advance_owned(
                 )
                 current_state.joins[current] = join
                 spawn(join)
+            elif isinstance(node, BranchOutputNode) and isinstance(nodes[node.owner], ForEachNode):
+                # One iteration's result: collect it at its element position, then release the iteration.
+                branch = frame(current_state, node, current)
+                assert branch is not None and branch.index is not None
+                if branch.status != "running":
+                    raise KernelError("WV-RUNTIME-ACTIVATION")
+                value = mapping(node, current, cast(JsonObject, node.output.model_dump(by_alias=True)))
+                guard(node.path, "branch_output", value)
+                size = measure_value(value)
+                loop_node = cast(ForEachNode, nodes[node.owner])
+                owner = node.owner + enclosing_suffix(current)
+                loop = current_state.loops[owner]
+                collected = not (loop_node.collect == "nonNull" and value is None)
+                output_bytes = loop.output_bytes + (size + int(loop.output_bytes > 0) if collected else 0)
+                if 2 + output_bytes > LOOP_OUTPUT_BYTES:
+                    raise KernelError("WV-RUNTIME-LOOP-OUTPUT")
+                loop.outputs[str(branch.index)] = value
+                loop.running.remove(branch.index)
+                loop = loop.model_copy(update={"completed": loop.completed + 1, "output_bytes": output_bytes})
+                current_state.loops[owner] = loop
+                result.steps.append(StepChange(node_id=current, status="completed", output=value))
+                result.commands.append(
+                    ControlCommand(kind="accept_output", node_id=current, branch=node.branch, index=branch.index)
+                )
+                release(loop_node, owner, branch.index)
+                if loop.completed == loop.count:
+                    queue.append(loop.join)
+                else:
+                    start_iterations(owner)
             elif isinstance(node, BranchOutputNode):
                 branch = frame(current_state, node, current)
                 assert branch is not None
@@ -665,6 +912,26 @@ def _advance_owned(
                     queue.append(join.node_id)
                 else:
                     spawn(join)
+            elif isinstance(node, JoinNode) and node.mode == "each":
+                owner = node.owner + suffix
+                loop_node = cast(ForEachNode, nodes[node.owner])
+                loop = current_state.loops[owner]
+                if loop.status != "running" or loop.running or loop.completed != loop.count:
+                    raise KernelError("WV-RUNTIME-JOIN")
+                value = [loop.outputs[str(index)] for index in range(loop.count)]
+                if loop_node.collect == "nonNull":
+                    value = [item for item in value if item is not None]
+                measure_value(value)
+                complete(loop_node, owner, value)
+                result.steps.append(StepChange(node_id=current, status="completed", output=value))
+                result.commands.append(ControlCommand(kind="join", node_id=current))
+                current_state.loops[owner] = loop.model_copy(
+                    update={"status": "joined", "items": [], "outputs": {}, "visible": {}}
+                )
+                if (growing := growing_containers.get()) is not None:
+                    growing.discard(loop.items)
+                    growing.discard(loop.outputs)
+                queue.append(successor(current))
             elif isinstance(node, JoinNode):
                 owner = node.owner + suffix
                 join = current_state.joins[owner]
@@ -678,9 +945,30 @@ def _advance_owned(
                 current_state.joins[owner] = join.model_copy(update={"status": "joined"})
                 queue.append(successor(current))
             elif isinstance(node, ForEachNode):
-                # This runtime does not run loops: import refuses their artifacts, and a loop that still
-                # arrives here stops behind an incident instead of being skipped.
-                raise KernelError("WV-RUNTIME-ARTIFACT")
+                if current in current_state.loops:
+                    raise KernelError("WV-RUNTIME-ACTIVATION")
+                items = mapping(node, current, cast(JsonObject, node.items.model_dump(by_alias=True)))
+                if not isinstance(items, list):
+                    raise KernelError("WV-RUNTIME-LOOP-ITEMS")
+                guard(node.path + "/items", "loop_items", items)
+                if len(items) > node.max_items:
+                    raise KernelError("WV-RUNTIME-LOOP-LIMIT")
+                loop = LoopState(
+                    owner=current,
+                    join=node.join + suffix,
+                    count=len(items),
+                    concurrency=node.concurrency,
+                    items=items,
+                    visible=deepcopy(bindings(current_state, node, current)),
+                )
+                current_state.loops[current] = loop
+                if (growing := growing_containers.get()) is not None:
+                    growing.add(loop.items)
+                    growing.add(loop.outputs)
+                if items:
+                    start_iterations(current)
+                else:
+                    queue.append(node.join + suffix)
             elif isinstance(node, (ActionNode, SignalNode, WaitNode, HumanTaskNode)):
                 if current in current_state.active:
                     raise KernelError("WV-RUNTIME-ACTIVATION")

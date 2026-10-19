@@ -234,3 +234,156 @@ def test_worker_token_mode_remains_available(tmp_path, monkeypatch):
     monkeypatch.delenv("WEAVE_WORKER_OAUTH_CONFIG_FILE", raising=False)
     monkeypatch.setenv("WEAVE_WORKER_TOKEN_FILE", str(tmp_path / "token"))
     assert isinstance(main.worker_auth("https://weave.example"), TokenFileAuth)
+
+
+IDENTITY_SETTINGS = (
+    "WEAVE_WORKER_REPORT_HOST",
+    "WEAVE_WORKER_LABELS",
+    "WEAVE_POD_NAMESPACE",
+    "WEAVE_NODE_NAME",
+    "KUBERNETES_SERVICE_HOST",
+)
+VALIDATION = {"status": 422, "code": "WV-VALIDATION", "message": "Invalid request contract"}
+
+
+def registration_environment(tmp_path, monkeypatch):
+    boot_environment(tmp_path, monkeypatch, "http://api.weave.test:8080")
+    for name in IDENTITY_SETTINGS:
+        monkeypatch.delenv(name, raising=False)
+
+
+async def test_main_retries_identity_validation_once_on_the_pinned_client(tmp_path, monkeypatch):
+    import json
+
+    import weave_agentic_worker.main as main
+
+    registration_environment(tmp_path, monkeypatch)
+    requests = []
+
+    async def receive(request):
+        requests.append(request)
+        return httpx.Response(422, json={"code": "WV-VALIDATION"}) if len(requests) == 1 else httpx.Response(503)
+
+    pinned = []
+
+    def transport(url, purpose, *, max_connections):
+        pinned.append((url, purpose, max_connections))
+        return httpx.MockTransport(receive)
+
+    monkeypatch.setattr(main, "private_transport", transport)
+    with po.installed(po.PrivateOrigins.empty()), pytest.raises(httpx.HTTPStatusError):
+        await main.main()
+    assert pinned == [("http://api.weave.test:8080", "platform-api", 4)]
+    assert len(requests) == 2
+    bodies = [json.loads(request.content) for request in requests]
+    assert bodies[0]["identity"] and "identity" not in bodies[1]
+    assert {k: v for k, v in bodies[0].items() if k != "identity"} == bodies[1]
+    assert bodies[1]["capacity"] == 2
+    assert [request.headers["authorization"] for request in requests] == ["Bearer worker-token"] * 2
+    assert [str(request.url) for request in requests] == ["http://api.weave.test:8080/environment/workers"] * 2
+
+
+def agentic_registration(monkeypatch, responses):
+    import weave_agentic_worker.main as main
+
+    requests = []
+
+    async def receive(request):
+        requests.append(request)
+        result = responses[len(requests) - 1]
+        if isinstance(result, BaseException):
+            raise result
+        return result
+
+    def transport(url, purpose, *, max_connections):
+        return httpx.MockTransport(receive)
+
+    monkeypatch.setattr(main, "private_transport", transport)
+    return main, requests
+
+
+@pytest.mark.parametrize("first", ["accepted", "old server"])
+async def test_main_serves_with_the_registered_id_after_at_most_one_fallback(tmp_path, monkeypatch, first):
+    import asyncio
+    import json
+    from uuid import uuid4
+
+    from firefly_weave.sdk.transport import WorkerTransport
+
+    registration_environment(tmp_path, monkeypatch)
+    worker_id = uuid4()
+    accepted = httpx.Response(201, json={"id": str(worker_id)})
+    responses = [accepted] if first == "accepted" else [httpx.Response(422, json=VALIDATION), accepted]
+    main, requests = agentic_registration(monkeypatch, responses)
+    served = []
+
+    async def run(self):
+        served.append(self)
+
+    monkeypatch.setattr(main.Worker, "run", run)
+    monkeypatch.setattr(type(asyncio.get_running_loop()), "add_signal_handler", lambda *args: None)
+    with po.installed(po.PrivateOrigins.empty()):
+        await main.main()
+    assert len(requests) == len(responses)
+    assert "identity" in json.loads(requests[0].content)
+    assert len(served) == 1 and type(served[0].client) is WorkerTransport
+    assert served[0].client.worker_id == worker_id and served[0].concurrency == 2
+
+
+@pytest.mark.parametrize(
+    "first,raised",
+    [
+        (httpx.Response(401, json={"status": 401, "code": "WV-UNAUTHENTICATED"}), httpx.HTTPStatusError),
+        (httpx.Response(403, json={"status": 403, "code": "WV-FORBIDDEN"}), httpx.HTTPStatusError),
+        (httpx.Response(409, json={"status": 409, "code": "WV-CONFLICT"}), httpx.HTTPStatusError),
+        (httpx.Response(500, json={"status": 500, "code": "WV-INTERNAL"}), httpx.HTTPStatusError),
+        (httpx.Response(422, json={"status": 422, "code": "WV-PAGE"}), httpx.HTTPStatusError),
+        (httpx.Response(422, content=b"not json"), httpx.HTTPStatusError),
+        (httpx.ConnectError("refused"), httpx.ConnectError),
+        ("cancelled", BaseException),
+    ],
+)
+async def test_main_registers_once_on_any_other_failure(tmp_path, monkeypatch, first, raised):
+    import asyncio
+
+    registration_environment(tmp_path, monkeypatch)
+    failure = asyncio.CancelledError() if first == "cancelled" else first
+    main, requests = agentic_registration(monkeypatch, [failure, httpx.Response(201, json={"id": "unused"})])
+    with po.installed(po.PrivateOrigins.empty()), pytest.raises(raised) as caught:
+        await main.main()
+    if first == "cancelled":
+        assert isinstance(caught.value, asyncio.CancelledError)
+    assert len(requests) == 1
+
+
+async def test_main_stops_after_a_second_identity_refusal(tmp_path, monkeypatch):
+    registration_environment(tmp_path, monkeypatch)
+    main, requests = agentic_registration(
+        monkeypatch, [httpx.Response(422, json=VALIDATION), httpx.Response(422, json=VALIDATION)]
+    )
+    with po.installed(po.PrivateOrigins.empty()), pytest.raises(httpx.HTTPStatusError):
+        await main.main()
+    assert len(requests) == 2
+
+
+async def test_main_reports_its_bounded_identity(tmp_path, monkeypatch):
+    import json
+
+    registration_environment(tmp_path, monkeypatch)
+    monkeypatch.setenv("WEAVE_WORKER_LABELS", "team=payments")
+    monkeypatch.setenv("WEAVE_WORKER_REPORT_HOST", "false")
+    main, requests = agentic_registration(monkeypatch, [httpx.Response(503)])
+    with po.installed(po.PrivateOrigins.empty()), pytest.raises(httpx.HTTPStatusError):
+        await main.main()
+    identity = json.loads(requests[0].content)["identity"]
+    assert "host" not in identity and identity["labels"] == {"team": "payments"}
+    assert identity["runtime"] == "process" and identity["platform_hint"] == "none"
+
+
+async def test_main_refuses_invalid_labels_before_any_request(tmp_path, monkeypatch):
+    registration_environment(tmp_path, monkeypatch)
+    monkeypatch.setenv("WEAVE_WORKER_LABELS", "api_token=hunter2")
+    main, requests = agentic_registration(monkeypatch, [httpx.Response(201, json={"id": "unused"})])
+    with po.installed(po.PrivateOrigins.empty()), pytest.raises(ValueError, match="WEAVE_WORKER_LABELS") as caught:
+        await main.main()
+    assert requests == [] and "hunter2" not in str(caught.value)
