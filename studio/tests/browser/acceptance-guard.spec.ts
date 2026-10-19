@@ -20,13 +20,43 @@ SPDX-License-Identifier: Apache-2.0
 // guarded context and its pages refuse interception, injected state and
 // requests other than GET, however the call is spelled.
 import { expect } from "@playwright/test";
-import {
-  DENIED_CONTEXT,
-  DENIED_PAGE,
-  guardContext,
-  guardPage,
-  test,
-} from "../acceptance/harness";
+import { guardContext, guardPage, test } from "../acceptance/harness";
+
+// Listed here, not read from the harness, so a shortened deny list fails.
+const DENIED_CONTEXT = [
+  "route",
+  "unroute",
+  "unrouteAll",
+  "routeFromHAR",
+  "routeWebSocket",
+  "setExtraHTTPHeaders",
+  "setHTTPCredentials",
+  "addCookies",
+  "clearCookies",
+  "storageState",
+  "setOffline",
+  "addInitScript",
+  "exposeBinding",
+  "exposeFunction",
+  "newCDPSession",
+  "grantPermissions",
+  "setGeolocation",
+  "browser",
+];
+const DENIED_PAGE = [
+  "route",
+  "unroute",
+  "unrouteAll",
+  "routeFromHAR",
+  "routeWebSocket",
+  "setExtraHTTPHeaders",
+  "addInitScript",
+  "addScriptTag",
+  "addStyleTag",
+  "setContent",
+  "exposeBinding",
+  "exposeFunction",
+];
 
 type Loose = Record<string, (...args: unknown[]) => unknown>;
 const handler = () => undefined;
@@ -94,16 +124,41 @@ test("a guarded context and its pages refuse every denied method", async ({
         method,
       ).toThrow(/may not use (page|context)\.request\./);
 
-  // The class keeps its methods: a prototype descriptor still reaches the
-  // original, which only the static rule refuses in a journey.
-  const original = Object.getOwnPropertyDescriptor(
-    Object.getPrototypeOf(page),
-    "route",
-  )?.value as unknown;
-  expect(typeof original).toBe("function");
-  expect(original).not.toBe(page.route);
+  // The prototypes hold guards too: the batch-5 review's bypass reaches the
+  // class's own route through its descriptors, and still throws for this page.
+  const { getPrototypeOf: gp, getOwnPropertyDescriptors: gd } = Object;
+  for (const target of [page, context]) {
+    const [, descriptor] = Object.entries(gd(gp(target))).find(
+      ([key]) => key === name,
+    ) as [string, PropertyDescriptor];
+    expect(() =>
+      (descriptor.value as Loose[string]).call(target, "**/*", handler),
+    ).toThrow(/Studio journeys may not use (page|context)\.route/);
+  }
+
+  // The deny lists cannot be reached to shorten them.
+  const harness = (await import("../acceptance/harness")) as Record<
+    string,
+    unknown
+  >;
+  expect(harness["DENIED_PAGE"]).toBeUndefined();
+  expect(harness["DENIED_CONTEXT"]).toBeUndefined();
 
   // Closing still works: the trace stops and the context disposes its request through the guard.
   await context.tracing.stop();
   await context.close();
+});
+
+test("pages the harness never guarded keep their own methods", async ({
+  journeyBrowser,
+}) => {
+  const guarded = guardContext(await journeyBrowser.newContext());
+  guardPage(await guarded.newPage());
+  // Mocked suites can share this worker: their contexts still route.
+  const context = await journeyBrowser.newContext();
+  const page = await context.newPage();
+  await page.route("**/never", (route) => route.abort());
+  await context.route("**/never", (route) => route.abort());
+  await context.close();
+  await guarded.close();
 });

@@ -82,7 +82,7 @@ export const runDir = process.env["WEAVE_ACC_RUN_DIR"]?.trim() ?? "";
  * call (a computed name, Reflect, call or bind, destructuring) reaches the
  * replacement.
  */
-export const DENIED_CONTEXT = [
+const DENIED_CONTEXT: readonly string[] = Object.freeze([
   "route",
   "unroute",
   "unrouteAll",
@@ -101,9 +101,9 @@ export const DENIED_CONTEXT = [
   "grantPermissions",
   "setGeolocation",
   "browser",
-] as const;
+]);
 /** Methods a journey's page may not use, for the same reasons. */
-export const DENIED_PAGE = [
+const DENIED_PAGE: readonly string[] = Object.freeze([
   "route",
   "unroute",
   "unrouteAll",
@@ -116,7 +116,7 @@ export const DENIED_PAGE = [
   "setContent",
   "exposeBinding",
   "exposeFunction",
-] as const;
+]);
 /** The only methods of `page.request` and `context.request`: the host's readiness probe reads with GET. */
 const REQUEST_ALLOWED = new Set(["get", "dispose"]);
 
@@ -126,14 +126,41 @@ function deny(what: string): () => never {
   };
 }
 
+/** Prototype methods already replaced by a guard that refuses guarded instances. */
+const guards = new WeakSet<object>();
+
+/**
+ * Replaces each method on the instance, and on its prototype with a wrapper
+ * that refuses guarded instances and serves every other one as before (mocked
+ * suites may share the worker). Both are non-writable and non-configurable, so
+ * neither the instance nor the class's descriptors lead back to the original.
+ */
 function seal(target: object, names: readonly string[], owner: string): void {
-  for (const name of names)
+  const prototype = Object.getPrototypeOf(target) as Record<string, unknown>;
+  for (const name of names) {
+    const original = prototype[name];
+    if (typeof original === "function" && !guards.has(original)) {
+      const wrapped = function (this: object, ...args: unknown[]): unknown {
+        if (guarded.has(this)) deny(`${owner}.${name}`)();
+        return (original as (...args: unknown[]) => unknown).apply(this, args);
+      };
+      guards.add(wrapped);
+      Object.defineProperty(prototype, name, {
+        value: wrapped,
+        writable: false,
+        configurable: false,
+        enumerable: false,
+      });
+    }
+    if (!guards.has(prototype[name] as object))
+      throw Error(`The ${owner} prototype's ${name} is not guarded`);
     Object.defineProperty(target, name, {
       value: deny(`${owner}.${name}`),
       writable: false,
       configurable: false,
       enumerable: false,
     });
+  }
 }
 
 /** `request` limited to GET: the person's cookies never send anything else. */
