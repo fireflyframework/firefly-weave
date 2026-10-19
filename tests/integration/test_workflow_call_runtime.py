@@ -861,3 +861,200 @@ async def test_a_child_start_refused_the_same_way_every_time_rejects_the_call(pl
     [row] = await calls(platform, run.id)
     assert (row["status"], row["code"], row["delivered"]) == ("rejected", "WV-CALL-START", True)
     assert (await state(platform, run.id))["incident"] == "WV-CALL-START"
+
+
+async def exhaust_quota(platform) -> None:
+    """Spend the project's whole ordinary byte quota, as a project at its limit has."""
+    async with platform.access_db[1].begin() as owner:
+        await owner.execute(
+            text(
+                "UPDATE operation_policy SET limits=jsonb_set(jsonb_set(limits,'{ordinary_bytes}',to_jsonb((SELECT "
+                "sum(value) FROM operation_usage WHERE metric='ordinary_bytes' AND project_id=:p)::bigint)),"
+                "'{control_bytes}',to_jsonb((SELECT sum(value) FROM operation_usage WHERE metric IN "
+                "('control_bytes','control_reserved') AND project_id=:p)::bigint))"
+            ),
+            {"p": platform.scope.project_id},
+        )
+
+
+async def cancel(platform, run_id):
+    async with platform.runtime.definitions.transaction(platform.scope, None) as tx:
+        return await platform.runtime.cancel(
+            tx, run_id, "stop", actor=platform.actor, scope=platform.scope, context=AuditContext()
+        )
+
+
+async def make_due(platform, *run_ids) -> None:
+    async with platform.access_db[1].begin() as owner:
+        await owner.execute(
+            text("UPDATE run_deadlines SET deadline=clock_timestamp()-interval '1 second' WHERE run_id=ANY(:ids)"),
+            {"ids": list(run_ids)},
+        )
+
+
+@pytest.mark.parametrize("path", ["fetched", "past-the-fetch-budget"])
+async def test_an_operator_cancels_a_child_at_full_quota(platform, monkeypatch, path):
+    import firefly_weave.runtime.repository as repository
+
+    leaf = await activate(platform, HOLD)
+    run = await start(platform, await activate(platform, caller("orders", call("hold", "hold@1.0.0")), hold=leaf.id))
+    await scan(platform)
+    [row] = await calls(platform, run.id)
+    await exhaust_quota(platform)
+    if path == "past-the-fetch-budget":
+        monkeypatch.setattr(repository, "RUN_FETCH_BYTES", 1)
+    await cancel(platform, row["child_run_id"])
+    monkeypatch.undo()
+    assert (await state(platform, row["child_run_id"]))["status"] == "cancelled"
+    [row] = await calls(platform, run.id)
+    assert (row["status"], row["code"]) == ("cancelled", "WV-RUN-CANCELLED")
+
+
+async def test_a_child_times_out_at_full_quota(platform):
+    leaf = await activate(platform, HOLD)
+    run = await start(platform, await activate(platform, caller("orders", call("hold", "hold@1.0.0")), hold=leaf.id))
+    await scan(platform)
+    [row] = await calls(platform, run.id)
+    await make_due(platform, row["child_run_id"])
+    await exhaust_quota(platform)
+    await scan(platform, 1)
+    assert (await state(platform, row["child_run_id"]))["status"] == "timed_out"
+    [row] = await calls(platform, run.id)
+    assert (row["status"], row["code"]) == ("timed_out", "WV-RUN-TIMED_OUT")
+
+
+async def test_a_caller_with_a_requested_call_is_cancelled_at_full_quota(platform):
+    leaf = await activate(platform, HOLD)
+    run = await start(platform, await activate(platform, caller("orders", call("hold", "hold@1.0.0")), hold=leaf.id))
+    await exhaust_quota(platform)
+    await cancel(platform, run.id)
+    assert (await state(platform, run.id))["status"] == "cancelled"
+    [row] = await calls(platform, run.id)
+    assert (row["status"], row["code"], row["delivered"]) == ("cancelled", "WV-RUN-CANCELLED", True)
+
+
+async def test_cancelling_a_caller_at_full_quota_still_cancels_its_waiting_child(platform):
+    leaf = await activate(platform, HOLD)
+    run = await start(platform, await activate(platform, caller("orders", call("hold", "hold@1.0.0")), hold=leaf.id))
+    await scan(platform)
+    [row] = await calls(platform, run.id)
+    await exhaust_quota(platform)
+    await cancel(platform, run.id)
+    await scan(platform, 1)
+    assert (await state(platform, row["child_run_id"]))["status"] == "cancelled"
+    [row] = await calls(platform, run.id)
+    assert (row["status"], row["cancel_requested"]) == ("abandoned", True)
+
+
+async def test_a_run_whose_stop_is_refused_never_holds_back_another_runs_due_timeout(platform):
+    leaf = await activate(platform, HOLD)
+    run = await start(platform, await activate(platform, caller("orders", call("hold", "hold@1.0.0")), hold=leaf.id))
+    await scan(platform)
+    [row] = await calls(platform, run.id)
+    plain = await start(platform, leaf, "plain")
+    # The first run in scan order cannot afford its stop: its control reserve is almost gone.
+    refused, other = sorted([row["child_run_id"], plain.id])
+    await make_due(platform, refused, other)
+    await exhaust_quota(platform)
+    async with platform.access_db[1].begin() as owner:
+        await owner.execute(
+            text("UPDATE operation_reservations SET amount=1 WHERE kind='run' AND resource_id=:id"), {"id": refused}
+        )
+    await scan(platform, 1)
+    assert (await state(platform, other))["status"] == "timed_out"
+    assert (await state(platform, refused))["status"] == "waiting"
+
+
+async def test_a_requested_call_whose_caller_is_past_the_fetch_budget_never_holds_back_later_calls(
+    platform, monkeypatch
+):
+    from firefly_weave.runtime.capacity import RuntimeCapacityError
+    from firefly_weave.runtime.repository import RuntimeRepository
+
+    leaf = await activate(platform, NOTIFY)
+    flow = await activate(platform, caller("orders", call("notify", "notify@1.0.0", mode="detach")), notify=leaf.id)
+    oversized = await start(platform, flow, "old")
+    later = await start(platform, flow, "new")
+    original = RuntimeRepository._bounded_run
+
+    async def bounded(self, identifier):
+        # What the fetch budget answers for a retained run over it, inside an admission transaction.
+        if identifier == oversized.id and self.tx.session.info.get("weave_admission"):
+            self.tx.session.info["weave_runtime_candidate"] = identifier
+            raise RuntimeCapacityError()
+        await original(self, identifier)
+
+    monkeypatch.setattr(RuntimeRepository, "_bounded_run", bounded)
+    await scan(platform, 1)
+    [held] = await calls(platform, oversized.id)
+    [started] = await calls(platform, later.id)
+    assert (held["status"], started["status"]) == ("requested", "succeeded")
+    async with platform.access_db[1]() as session:
+        assert not await session.scalar(
+            text("SELECT count(*) FROM runtime_capacity_blocks WHERE active AND run_id=:id"), {"id": oversized.id}
+        )
+
+
+async def test_a_stale_call_of_an_ended_caller_never_ends_the_dispatch_scan(platform):
+    leaf = await activate(platform, NOTIFY)
+    flow = await activate(platform, caller("orders", call("notify", "notify@1.0.0")), notify=leaf.id)
+    ended, later = sorted([await start(platform, flow, "c-1"), await start(platform, flow, "c-2")], key=lambda r: r.id)
+    await cancel(platform, ended.id)
+    async with platform.access_db[1]() as session, session.begin():
+        # A requested row the caller's terminal transaction did not end, older than every other call.
+        await session.execute(
+            text(
+                "UPDATE run_calls SET status='requested',code=NULL,ended_at=NULL,delivered=false,"
+                "requested_at=requested_at-interval '1 hour' WHERE caller_run_id=:id"
+            ),
+            {"id": ended.id},
+        )
+    from firefly_weave.access.scheduler import _CATALOG_AUTHORITY, _SchedulerScope
+
+    report = await platform.recovery._scan_scheduled(_SchedulerScope(platform.scope, _CATALOG_AUTHORITY), 1)
+    assert report.calls_started == 1
+    assert [row["status"] for row in await calls(platform, ended.id)] == ["cancelled"]
+
+
+async def test_a_child_whose_stop_is_refused_never_holds_back_the_cancellation_of_others(platform):
+    loop = {
+        "id": "each",
+        "kind": "forEach",
+        "items": {"literal": ["c-1", "c-2"]},
+        "concurrency": 2,
+        "body": {
+            "steps": [call("hold", "hold@1.0.0", **{"with": {"object": {"customerId": {"ref": "/item"}}}})],
+            "output": {"ref": "/steps/hold/output"},
+        },
+    }
+    leaf = await activate(platform, HOLD)
+    run = await start(platform, await activate(platform, caller("orders", loop), hold=leaf.id))
+    await scan(platform)
+    # The cancellation scan takes rows by request time, then by call ID: the first one cannot afford its stop.
+    refused, other = sorted(await calls(platform, run.id), key=lambda row: (row["requested_at"], row["id"]))
+    await exhaust_quota(platform)
+    await cancel(platform, run.id)
+    async with platform.access_db[1].begin() as owner:
+        await owner.execute(
+            text("UPDATE operation_reservations SET amount=1 WHERE kind='run' AND resource_id=:id"),
+            {"id": refused["child_run_id"]},
+        )
+    await scan(platform, 1)
+    assert (await state(platform, other["child_run_id"]))["status"] == "cancelled"
+    assert (await state(platform, refused["child_run_id"]))["status"] == "waiting"
+
+
+async def test_a_call_that_cannot_start_at_full_quota_waits_and_never_stops_the_scan(platform):
+    leaf = await activate(platform, HOLD)
+    flow = await activate(platform, caller("orders", call("hold", "hold@1.0.0")), hold=leaf.id)
+    ended = await start(platform, flow, "c-1")
+    await scan(platform)
+    [child] = await calls(platform, ended.id)
+    waiting = await start(platform, flow, "c-2")
+    await exhaust_quota(platform)
+    await cancel(platform, ended.id)
+    # The new call cannot start a child under the spent quota; the cancellation after it in the scan still runs.
+    await scan(platform, 1)
+    [row] = await calls(platform, waiting.id)
+    assert (row["status"], row["child_run_id"]) == ("requested", None)
+    assert (await state(platform, child["child_run_id"]))["status"] == "cancelled"
