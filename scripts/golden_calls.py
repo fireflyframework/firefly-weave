@@ -213,6 +213,17 @@ SOURCES = (
                     ),
                 ),
             ),
+            Scenario(
+                "too-deep-then-terminated",
+                {"customerId": "c-1"},
+                (
+                    ("incident_opened", {"node_id": "enrich", "generation": 0, "code": "WV-CALL-DEPTH"}),
+                    (
+                        "incident_resolved",
+                        {"incident_key": "enrich:0", "node_id": "enrich", "generation": 0, "kind": "terminate"},
+                    ),
+                ),
+            ),
         ),
     ),
     Source(

@@ -45,6 +45,7 @@ def test_the_call_corpus_records_every_source_once_and_every_outcome():
         ("golden-call-wait", "child-failed"): "failed",
         ("golden-call-wait", "interrupted-then-retried"): "succeeded",
         ("golden-call-wait", "start-refused-then-reconciled"): "succeeded",
+        ("golden-call-wait", "too-deep-then-terminated"): "cancelled",
         ("golden-call-continue", "child-timed-out"): "succeeded",
         ("golden-call-continue", "child-succeeded"): "succeeded",
         ("golden-call-detach", "detached"): "succeeded",

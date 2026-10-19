@@ -1032,6 +1032,153 @@
        }
       }
      ]
+    },
+    {
+     "input": {
+      "customerId": "c-1"
+     },
+     "name": "too-deep-then-terminated",
+     "stream": [
+      {
+       "digest": "e032720206b15acd8ad4bf44bedbbec48ac569ff03f6f92860c164242e354f2f",
+       "event": {
+        "data": {},
+        "id": "588bdba4-ab02-53d9-81c8-31535507f53a",
+        "sequence": 1,
+        "timestamp": "2026-10-08T00:00:00Z",
+        "type": "started"
+       },
+       "transition": {
+        "commands": [
+         {
+          "business_key": "c-1",
+          "input": {
+           "customerId": "c-1"
+          },
+          "kind": "call",
+          "mode": "wait",
+          "node_id": "enrich",
+          "on_failure": "stop",
+          "workflow_digest": "a92e82183cc65da73682eddb2a5211fb0b1c6c80790cfe04f09dfb7896a0480a",
+          "workflow_reference": "golden-enrich@1.0.0"
+         }
+        ],
+        "state": {
+         "accepted_sequence": 1,
+         "active": [
+          "enrich"
+         ],
+         "branches": {},
+         "deferred_results": [],
+         "incident": null,
+         "incidents": {},
+         "input": {
+          "customerId": "c-1"
+         },
+         "joins": {},
+         "output": null,
+         "status": "waiting",
+         "steps": {},
+         "waits": {}
+        },
+        "steps": [
+         {
+          "node_id": "enrich",
+          "output": null,
+          "status": "waiting"
+         }
+        ]
+       }
+      },
+      {
+       "digest": "d2889baeadef69982a2f69a2d527f89ab7374e245e47db87dad8a7c85e545b89",
+       "event": {
+        "data": {
+         "code": "WV-CALL-DEPTH",
+         "generation": 0,
+         "node_id": "enrich"
+        },
+        "id": "c8dbcbe9-b445-521b-b5be-09f560b66d58",
+        "sequence": 2,
+        "timestamp": "2026-10-08T00:00:01Z",
+        "type": "incident_opened"
+       },
+       "transition": {
+        "commands": [],
+        "state": {
+         "accepted_sequence": 2,
+         "active": [
+          "enrich"
+         ],
+         "branches": {},
+         "deferred_results": [],
+         "incident": "WV-CALL-DEPTH",
+         "incidents": {
+          "enrich:0": {
+           "code": "WV-CALL-DEPTH",
+           "generation": 0,
+           "node_id": "enrich"
+          }
+         },
+         "input": {
+          "customerId": "c-1"
+         },
+         "joins": {},
+         "output": null,
+         "status": "suspended",
+         "steps": {},
+         "waits": {}
+        },
+        "steps": []
+       }
+      },
+      {
+       "digest": "f5ab52908d1102bef4fc405f27cff4e90ffb33ab5e0b424949a4fc2560c0572b",
+       "event": {
+        "data": {
+         "generation": 0,
+         "incident_key": "enrich:0",
+         "kind": "terminate",
+         "node_id": "enrich"
+        },
+        "id": "7541699b-d360-5d8b-8b28-12fc0cf3940a",
+        "sequence": 3,
+        "timestamp": "2026-10-08T00:00:02Z",
+        "type": "incident_resolved"
+       },
+       "transition": {
+        "commands": [
+         {
+          "branch": null,
+          "kind": "revoke_leases",
+          "node_id": "enrich"
+         },
+         {
+          "branch": null,
+          "kind": "terminate",
+          "node_id": "enrich"
+         }
+        ],
+        "state": {
+         "accepted_sequence": 3,
+         "active": [],
+         "branches": {},
+         "deferred_results": [],
+         "incident": null,
+         "incidents": {},
+         "input": {
+          "customerId": "c-1"
+         },
+         "joins": {},
+         "output": null,
+         "status": "cancelled",
+         "steps": {},
+         "waits": {}
+        },
+        "steps": []
+       }
+      }
+     ]
     }
    ],
    "source": "scripts/golden_calls.py#golden-call-wait"
