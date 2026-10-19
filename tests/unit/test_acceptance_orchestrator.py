@@ -547,3 +547,17 @@ def test_the_studio_harness_writes_the_people_and_dumps_the_scan_expects():
     assert f'const STUDIO_PEOPLE = "{acceptance.STUDIO_PEOPLE}";' in harness
     assert '"browser-storage",\n          `${base}.json`' in harness
     assert "const base = `${this.id}-${this.viewport}-${signed.name}`;" in harness
+
+
+@pytest.mark.parametrize("profile", ["ai", "cluster", "k3d"])
+def test_a_missing_storage_dump_fails_the_scan_in_profiles_without_j9(tmp_path, monkeypatch, profile):
+    monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+    monkeypatch.setattr(acceptance, "JOURNEYS", journeys_map(tmp_path, True))
+    plan = journeys_plan(tmp_path / "run")
+    plan.profile = profile
+    (plan.private / acceptance.STUDIO_PEOPLE).write_text(
+        json.dumps({"journey": "J4", "viewport": "1440x900", "person": "builder"}) + "\n", encoding="utf-8"
+    )
+    with pytest.raises(acceptance.StageFailed, match="captured for J4-1440x900-builder"):
+        acceptance.scan(plan, FakeRecorder())
+    assert scan_steps(plan) == []

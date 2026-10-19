@@ -615,6 +615,10 @@ def scan(plan: Plan, recorder: Recorder) -> None:
     _scan_step(plan, found.hits, storage_error, time.monotonic() - started)
     if found.hits:
         raise StageFailed(f"The canary scan found a secret in {found.hits} file(s); inspect private evidence")
+    # Whether or not this profile records the scan step: a Studio sign-in whose storage was not captured
+    # was never scanned.
+    if storage_error:
+        raise StageFailed(storage_error)
     output = os.environ.get("GITHUB_OUTPUT")
     if output:
         with open(output, "a", encoding="utf-8") as stream:
