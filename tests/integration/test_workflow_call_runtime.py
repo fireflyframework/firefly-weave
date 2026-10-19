@@ -494,3 +494,32 @@ async def test_purge_waits_for_active_children_and_for_undelivered_results(platf
         assert (
             await session.scalar(text("SELECT count(*) FROM run_calls WHERE caller_run_id=:id"), {"id": second.id}) == 0
         )
+
+
+async def test_the_history_of_a_caller_and_of_its_child_replay_consistently_and_a_tampered_call_does_not(platform):
+    from firefly_weave.operations.replay import replay
+
+    leaf = await activate(platform, NOTIFY)
+    run = await start(
+        platform, await activate(platform, caller("orders", call("notify", "notify@1.0.0")), notify=leaf.id)
+    )
+    await scan(platform)
+    [row] = await calls(platform, run.id)
+    async with platform.runtime.definitions.transaction(platform.scope, None, mutation=False) as tx:
+        parent = await platform.history.export(
+            tx, run.id, actor=platform.actor, scope=platform.scope, context=AuditContext()
+        )
+        child = await platform.history.export(
+            tx, row["child_run_id"], actor=platform.actor, scope=platform.scope, context=AuditContext()
+        )
+    assert parent.replay.status == "consistent", parent.replay
+    assert child.replay.status == "consistent", child.replay
+    assert [event.type for event in parent.events] == ["started", "call_completed"]
+    assert [event.type for event in child.events] == ["started"]
+    from firefly_weave.compiler.api import import_artifact
+
+    async with platform.access_db[1]() as session:
+        artifact = import_artifact(await session.scalar(text("SELECT artifact FROM runs WHERE id=:id"), {"id": run.id}))
+    events = list(parent.events)
+    events[1] = events[1].model_copy(update={"data": {**events[1].data, "child_run_id": str(uuid4())}})
+    assert replay(artifact, tuple(events)).status == "inconsistent"

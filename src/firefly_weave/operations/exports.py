@@ -21,15 +21,16 @@ from collections.abc import Mapping
 from typing import Final, cast, get_args
 
 from firefly_weave.compiler.api import CompiledArtifact
+from firefly_weave.compiler.calls import CALL_ERROR_SCHEMA, call_output_schema
 from firefly_weave.compiler.canonical import canonical_digest
-from firefly_weave.compiler.ir import ActionNode, HumanTaskNode, IRNode, SignalNode
+from firefly_weave.compiler.ir import ActionNode, CallWorkflowNode, HumanTaskNode, IRNode, SignalNode
 from firefly_weave.contracts.definitions import ActionDefinition, load_definition
 from firefly_weave.contracts.instance_keys import InvalidInstanceKey, split_instance
 from firefly_weave.contracts.run_views import RunOrigin
 from firefly_weave.contracts.values import JsonObject, JsonValue
 from firefly_weave.contracts.workers import TaskError
 from firefly_weave.operations.redaction import Omission, project
-from firefly_weave.runtime.kernel import action_schemas, workflow
+from firefly_weave.runtime.kernel import action_schemas, called_workflow, workflow
 from firefly_weave.runtime.models import RuntimeEvent, Transition
 
 RUN_ORIGINS: Final = frozenset(get_args(RunOrigin.__value__))
@@ -92,6 +93,7 @@ def safe_event(event: RuntimeEvent, artifact: CompiledArtifact | None, *, unavai
         "timed_out": {"node_id", "deadline", "wait_id", "code"},
         "wait_elapsed": {"node_id", "deadline", "wait_id"},
         "signal_received": {"node_id", "output", "accepted_at", "deadline"},
+        "call_completed": {"node_id", "generation", "child_run_id", "status", "output"},
     }[event.type]
     if (
         event.type == "started"
@@ -132,6 +134,12 @@ def safe_event(event: RuntimeEvent, artifact: CompiledArtifact | None, *, unavai
             schemas = [{"type": "object", "properties": {"data": node.form_schema, "decision": {"type": "string"}}}]
         elif isinstance(node, SignalNode) and event.type == "signal_received":
             schemas = [ir.schemas[node.schema_ref]]
+        elif isinstance(node, CallWorkflowNode) and event.type in {"call_completed", "incident_resolved"}:
+            output = cast(JsonObject, called_workflow(ir, node)[1]["outputSchema"])
+            if event.type == "incident_resolved":
+                schemas = [call_output_schema(node.mode, node.on_failure, output)]
+            else:
+                schemas = [output if data.get("status") == "succeeded" else CALL_ERROR_SCHEMA]
         bundle = {d.reference: d.document for d in ir.dependencies if d.kind == "Schema"}
         if not schemas or any(not project(data["output"], schema, bundle).available for schema in schemas):
             data.pop("output")

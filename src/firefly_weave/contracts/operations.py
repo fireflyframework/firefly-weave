@@ -151,6 +151,25 @@ class WaitReceipt(ContractModel):
     complete: bool = True
 
 
+class CallFact(ContractModel):
+    """A call row a transition created: one generation of one call step instance."""
+
+    call_id: UUID
+    node_id: str
+    generation: int = Field(ge=0)
+    mode: Literal["wait", "detach"]
+    workflow_reference: str
+
+
+class CallReceipt(ContractModel):
+    """The call row an accepted call outcome came from: the child run and how it ended or why it never started."""
+
+    call: CallFact
+    child_run_id: UUID | None = None
+    status: Literal["succeeded", "failed", "cancelled", "timed_out", "rejected"]
+    code: str | None = Field(default=None, exclude_if=lambda v: v is None)
+
+
 class HumanTaskFact(ContractModel):
     task_id: UUID
     node_id: str
@@ -165,6 +184,8 @@ class HumanDecisionReceipt(ContractModel):
 
 class RecordedEvidence(ContractModel):
     issued_human_tasks: list[HumanTaskFact] = Field(default_factory=list, max_length=1000, exclude_if=lambda v: not v)
+    issued_calls: list[CallFact] = Field(default_factory=list, max_length=1000, exclude_if=lambda v: not v)
+    call_receipt: CallReceipt | None = Field(default=None, exclude_if=lambda v: v is None)
     human_receipt: HumanDecisionReceipt | None = Field(default=None, exclude_if=lambda v: v is None)
     version: Literal["weave/recorded-v1"] = "weave/recorded-v1"
     provenance: Literal["accepted_transaction", "synthetic_kernel"] = "accepted_transaction"

@@ -32,6 +32,7 @@ from firefly_weave.operations.facts import FactRepository, RunStartFacts, author
 from firefly_weave.operations.outbox import OutboxService
 from firefly_weave.persistence.uow import Transaction
 from firefly_weave.runtime.models import (
+    CallIntent,
     ControlCommand,
     Deadline,
     HumanTaskIntent,
@@ -618,6 +619,8 @@ class RuntimeRepository:
         """Bind optional safe facts in the accepted-event transaction, never amend old rows."""
         from firefly_weave.compiler.api import import_artifact
         from firefly_weave.contracts.operations import (
+            CallFact,
+            CallReceipt,
             DeadlineFact,
             HumanDecisionReceipt,
             HumanTaskFact,
@@ -712,6 +715,52 @@ class RuntimeRepository:
                     DeadlineFact(
                         wait_id=due[0]["id"], node_id=command.node_id, deadline=command.deadline, name=command.name
                     )
+                )
+
+        async def call_fact(node_id: object, generation: int | None = None) -> tuple[CallFact, dict[str, Any]] | None:
+            rows = await self.rows(
+                f"SELECT * FROM run_calls WHERE {SCOPE} AND caller_run_id=:run AND node_id=:node "
+                "AND (cast(:generation AS integer) IS NULL OR generation=:generation) ORDER BY generation DESC LIMIT 1",
+                run=view.id,
+                node=node_id,
+                generation=generation,
+            )
+            if not rows:
+                return None
+            row = rows[0]
+            fact = CallFact(
+                call_id=row["id"],
+                node_id=row["node_id"],
+                generation=row["generation"],
+                mode=row["mode"],
+                workflow_reference=row["workflow_reference"],
+            )
+            return fact, row
+
+        for command in result.commands:
+            if isinstance(command, CallIntent):
+                issued = await call_fact(command.node_id, 0)
+                assert issued is not None
+                evidence.issued_calls.append(issued[0])
+        if (
+            event.type == "incident_resolved"
+            and event.data.get("kind") == "retry_safe"
+            and (retried := await call_fact(event.data.get("node_id"))) is not None
+            and retried[1]["status"] == "requested"
+        ):
+            evidence.issued_calls.append(retried[0])
+        generation = event.data.get("generation")
+        if event.type in {"call_completed", "incident_opened"} and isinstance(generation, int):
+            received = await call_fact(event.data.get("node_id"), generation)
+            ended = {"succeeded", "failed", "cancelled", "timed_out", "rejected"}
+            if received is not None and received[1]["status"] in ended:
+                fact, row = received
+                evidence = evidence.model_copy(
+                    update={
+                        "call_receipt": CallReceipt(
+                            call=fact, child_run_id=row["child_run_id"], status=row["status"], code=row["code"]
+                        )
+                    }
                 )
         if event.type == "human_completed":
             human_rows = await self.rows(
