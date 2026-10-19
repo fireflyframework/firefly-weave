@@ -46,9 +46,9 @@ The first run builds the server image and takes about 25 minutes.
 | --- | --- | --- |
 | prepare | Checks tools, pulls the images in [versions.toml](versions.toml) by digest, builds the Acme fixture and the server image from the inputs `weave platform up` uses, builds Studio | 30 min |
 | up | On Linux CI with `--block-egress`, drops container traffic to public addresses; then journey J0 | 25 min |
-| run | The other journey tests and the Playwright suites of the profile | 35 min (pr) |
+| run | The other pytest journeys, the Playwright suites of the profile, then the Studio journeys (`studio/playwright.acceptance.config.ts`) | 35 min (pr) |
 | collect | `weave platform status` and container logs | 5 min |
-| scan | Fails when any generated secret appears in evidence or private files | 5 min |
+| scan | Fails when any generated secret appears in evidence, private files or any Studio browser storage; records step J9.4 | 5 min |
 | down | Removes the run's containers, networks and volumes, then audits that nothing is left | 10 min |
 
 Each run writes `build/acceptance/RUN_ID/`. `private/` holds the platform, the
@@ -74,6 +74,53 @@ change that delivers a capability merges:
 
 `tests/unit/test_acceptance_journeys.py` fails when an enabled step or check has
 no test.
+
+## Studio journeys
+
+Studio journeys live in `studio/tests/acceptance/*.spec.ts` and run with
+`studio/playwright.acceptance.config.ts`: one worker, no retries, traces only on
+failure and only under `private/`. The orchestrator writes `RUN_DIR/enablement.json`
+from [journeys.toml](journeys.toml); without `WEAVE_ACC_RUN_DIR` every journey
+skips. A journey is one test; each step runs through
+`j.step("J1.1", async () => { … })` and each check through
+`j.check("J9.2/execute-in-local", async () => { … })`, which record the same
+statuses as the pytest harness. People sign in with `j.signIn("builder")` in
+their own browser context, through the real Studio host and the identity
+provider's pages. When a journey ends, the harness keeps every context's
+browser storage and requests under `private/` for the scan, checks that every
+request stayed on the Studio host and the identity provider, and removes each
+platform through Studio, which signs out and deletes the stored sign-in.
+Sign-ins left by a failed test are deleted only when the credential store was
+read before the run started; otherwise nothing is deleted.
+
+Journey code may not intercept requests, control the clock, force clicks or
+dispatch synthetic events, and every `page.evaluate` is a read-only audit with a
+note on the line before it (`tests/unit/test_acceptance_lint.py`).
+
+## People and API sessions
+
+`J0` creates the owner, builder, approver, operator and viewer with generated
+passwords in `private/people/` (0600). pytest journeys call the API as a person
+with `async with run.client("builder") as client:`, which signs in through the
+identity provider's pages with PKCE every time it is called. Each client keeps
+its tokens in its own file under `private/sessions/`, removed when the client
+closes, never in the system credential store.
+
+## Viewports and evidence
+
+Studio steps are recorded per viewport: every Studio journey at 1440x900, and
+J1, J3 and J7 also at 600x500; nightly and release runs record both sizes for
+every Studio journey. `acceptance.json` has one entry per journey and viewport;
+a pytest step counts for every viewport of its journey. Step screenshots go to
+`evidence/screens/JOURNEY/VIEWPORT/`.
+
+## Authorization matrix
+
+[authorization.toml](authorization.toml) lists every operation added since the
+0.1.0a14 release with the capability it needs and one request that is safe to
+send as anyone. `tests/contracts/test_authorization_matrix.py` fails when a new
+operation has no row. Journey step J9.1 sends every row as each person and
+expects exactly `403 WV-FORBIDDEN` where the person's roles lack the capability.
 
 ## Fixtures
 
