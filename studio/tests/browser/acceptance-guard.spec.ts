@@ -124,7 +124,7 @@ test("a guarded context and its pages refuse every denied method", async ({
         method,
       ).toThrow(/may not use (page|context)\.request\./);
 
-  // The prototypes hold guards too: the batch-5 review's bypass reaches the
+  // The prototypes hold guards too: a destructured-reflection bypass reaches the
   // class's own route through its descriptors, and still throws for this page.
   const { getPrototypeOf: gp, getOwnPropertyDescriptors: gd } = Object;
   for (const target of [page, context]) {

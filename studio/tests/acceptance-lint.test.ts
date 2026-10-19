@@ -86,7 +86,7 @@ describe("the committed journeys", () => {
 });
 
 /**
- * The batch-4 review's snippet probes (48), rebuilt from its groups:
+ * Probes that found earlier bypasses (48), in four groups:
  * structural, Playwright's own fixtures, APIs the regex lint lacked and
  * adversarial spellings. Each runs as a journey step's body.
  */
@@ -166,12 +166,12 @@ const SNIPPETS: Record<string, string> = {
     'const options = { proxy: { server: "http://127.0.0.1:8888" } };',
 };
 /**
- * The batch-5 review's bypasses: Node's `global`, destructured reflection
+ * Later bypasses: Node's `global`, destructured reflection
  * reaching the prototype's original `route`, and emptying the guard's deny
  * list. Each must fail statically; the prototype one also fails at run time
  * (tests/browser/acceptance-guard.spec.ts).
  */
-const REVIEW_BYPASSES: Record<string, string> = {
+const LATER_BYPASSES: Record<string, string> = {
   "global fetch": 'await global.fetch(host, { method: "POST" });',
   "global process":
     'global.process.getBuiltinModule("node:fs").appendFileSync("steps.jsonl", "{}");',
@@ -202,8 +202,8 @@ describe("the snippet corpus", () => {
     expect(rules(code)).not.toEqual([]);
   });
 
-  it.each(Object.entries(REVIEW_BYPASSES))(
-    "review bypass %s is caught",
+  it.each(Object.entries(LATER_BYPASSES))(
+    "later bypass %s is caught",
     (_, code) => {
       expect(rules(code)).not.toEqual([]);
     },
@@ -260,7 +260,7 @@ describe("the snippet corpus", () => {
 });
 
 /**
- * The batch-4 review's 17 structural layouts: how a helper outside the
+ * The 17 structural layouts: how a helper outside the
  * journeys folder can be reached. Each helper hides `page.route` in the
  * function the importer uses. Every layout is tried from a spec (the import
  * rule fails it) and from the harness (the type checker must follow it).

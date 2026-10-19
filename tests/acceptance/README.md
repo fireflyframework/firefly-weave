@@ -118,7 +118,7 @@ project resources needs the same. pytest journeys call the API as a person
 with `async with run.client("builder") as client:`, which signs in through the
 identity provider's pages with PKCE every time it is called. Each client keeps
 its tokens in its own file under `private/sessions/`, removed when the client
-closes, never in the system credential store. Steps the spec runs through the
+closes, never in the system credential store. Bring-up steps that run through the
 CLI use `async with run.cli("owner") as weave:` and `weave("human-groups", "put",
 request={…})`: the typed `weave` commands with the same private token file
 (`--credential-store file`) and the demo workspace as explicit flags.

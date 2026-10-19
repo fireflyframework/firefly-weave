@@ -194,7 +194,7 @@ def egress_address(run, fragment: str) -> str:
 
 REFUSED = '{"action":"private_origins.refused"'
 IDENTITY_ALIAS = "identity.acceptance.test"
-# The rule each refused destination must meet (spec: private origins). The identity provider is the control plane
+# The rule each refused destination must meet (the private-origin rules). The identity provider is the control plane
 # the API shares its network namespace with: by address it has no exact entry, and under its approved alias the
 # control-plane rule refuses it although the entry exists. The Acme service by address has no exact entry; the
 # metadata address is always refused.
