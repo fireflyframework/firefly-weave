@@ -540,3 +540,10 @@ def test_each_person_a_studio_journey_signed_in_as_needs_a_storage_dump(tmp_path
     acceptance.scan(plan, FakeRecorder())
     assert scan_steps(plan)[-1]["status"] == "passed"
     assert plan.state["secret_scan"]["browser_storage_entries"] == 2
+
+
+def test_the_studio_harness_writes_the_people_and_dumps_the_scan_expects():
+    harness = (acceptance.ROOT / "studio/tests/acceptance/harness.ts").read_text(encoding="utf-8")
+    assert f'const STUDIO_PEOPLE = "{acceptance.STUDIO_PEOPLE}";' in harness
+    assert '"browser-storage",\n          `${base}.json`' in harness
+    assert "const base = `${this.id}-${this.viewport}-${signed.name}`;" in harness
