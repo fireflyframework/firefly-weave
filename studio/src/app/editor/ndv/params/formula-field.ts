@@ -701,6 +701,14 @@ export class FormulaField implements OnInit {
       text !== (this.storedText() ?? "")
     );
   }
+  /** A field chosen by keyboard (Enter in Edit formula's Input column): its path at the caret. */
+  insertAtCaret(ref: string) {
+    const editor = this.editor();
+    this.dropText({
+      ref,
+      pos: editor ? editor.caret() : this.shownText().length,
+    });
+  }
   /** A drop on the editor in the form: the path at the text position under the pointer. */
   dropAt(ref: string, x: number, y: number) {
     const editor = this.editor();

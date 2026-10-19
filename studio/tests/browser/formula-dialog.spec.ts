@@ -216,6 +216,30 @@ for (const size of sizes)
       expect(layers.list).toBeLessThan(layers.skip);
     });
 
+    test("Enter on a field in Edit formula's Input column puts its path at the formula's caret", async ({
+      page,
+    }) => {
+      const details = await openStepFixture(page, formulasFixture);
+      await details.openWithKeyboard("flag");
+      await details
+        .field("value")
+        .getByRole("button", { name: "Edit formula" })
+        .click();
+      const dialog = page.getByRole("dialog", { name: "Edit formula: Fields" });
+      await replaceFormula(page, dialog, "input.amount > ");
+      const row = dialog.locator(
+        '.data-tree > li[data-ref="/steps/check/output/large"]',
+      );
+      await row.focus();
+      await page.keyboard.press("Enter");
+      await expect(formulaBox(dialog)).toHaveAttribute(
+        "data-text",
+        "input.amount > steps.check.output.large",
+      );
+      await expect(formulaText(dialog)).toBeFocused();
+      await expect(dialog).toBeVisible();
+    });
+
     test("Escape in Edit formula's search clears it, then closes the dialog", async ({
       page,
     }) => {

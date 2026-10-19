@@ -52,6 +52,7 @@ let sequence = 0;
         searchLabel="Search fields of earlier steps"
         [openSearch]="true"
         [compact]="true"
+        (keydown.enter)="enterField($event)"
       />
       <div class="edit-formula-main">
         <span class="sr-only" [id]="controlId + '-label'">{{
@@ -79,6 +80,17 @@ export class EditFormulaDialog {
   private readonly field = viewChild(FormulaField);
   constructor() {
     afterNextRender(() => this.field()?.focusEditor("end"));
+  }
+  /** Enter on a field of the Input column: its path at the formula's caret, as a drop would put it. */
+  enterField(event: Event) {
+    const row = (event.target as HTMLElement).closest<HTMLElement>(
+      ".data-row[data-ref]",
+    );
+    const ref = row?.dataset["ref"];
+    if (!ref) return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.field()?.insertAtCaret(ref);
   }
   /** Done (or Escape): text still waiting in the formula applies, then the dialog closes. */
   done() {
