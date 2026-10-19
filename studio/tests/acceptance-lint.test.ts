@@ -165,6 +165,26 @@ const SNIPPETS: Record<string, string> = {
   "proxy option":
     'const options = { proxy: { server: "http://127.0.0.1:8888" } };',
 };
+/**
+ * The batch-5 review's bypasses: Node's `global`, destructured reflection
+ * reaching the prototype's original `route`, and emptying the guard's deny
+ * list. Each must fail statically; the prototype one also fails at run time
+ * (tests/browser/acceptance-guard.spec.ts).
+ */
+const REVIEW_BYPASSES: Record<string, string> = {
+  "global fetch": 'await global.fetch(host, { method: "POST" });',
+  "global process":
+    'global.process.getBuiltinModule("node:fs").appendFileSync("steps.jsonl", "{}");',
+  "global Reflect and eval":
+    'global.Reflect.get(page, "ro" + "ute"); global.eval("1");',
+  "destructured prototype reflection":
+    'const { getPrototypeOf: gp, getOwnPropertyDescriptors: gd } = Object;\nconst [, d]: any = Object.entries(gd(gp(page))).find(([k]) => k === "ro" + "ute");\nawait d.value.call(page, "**/*", (r: any) => r.fulfill({ status: 200 }));',
+  "emptied deny list":
+    'const { DENIED_PAGE } = await import("./harness");\n(DENIED_PAGE as any).length = 0;',
+  "browser globals":
+    "navigator.sendBeacon(host); structuredClone(page); setTimeout(() => {}, 1);",
+};
+
 /** Ordinary journey code that must stay quiet. */
 const LEGITIMATE = [
   'await page.keyboard.type("order-review");',
@@ -180,6 +200,36 @@ describe("the snippet corpus", () => {
 
   it.each(Object.entries(SNIPPETS))("%s is caught", (_, code) => {
     expect(rules(code)).not.toEqual([]);
+  });
+
+  it.each(Object.entries(REVIEW_BYPASSES))(
+    "review bypass %s is caught",
+    (_, code) => {
+      expect(rules(code)).not.toEqual([]);
+    },
+  );
+
+  it("refuses reflective names when they are destructured", () => {
+    expect(rules("const { getPrototypeOf: gp } = Object; gp(page);")).toContain(
+      "reflective access in a journey: getPrototypeOf",
+    );
+  });
+
+  it("allows only language globals in a journey, and page globals only inside page functions", () => {
+    expect(
+      rules("const n = Math.max(1, JSON.parse('2'), Number('3'));"),
+    ).toEqual([]);
+    expect(rules("const g = global;")).toContain(
+      "undeclared global in a journey: global",
+    );
+    expect(rules("navigator.onLine;")).toContain(
+      "global outside the journey allowlist: navigator",
+    );
+    expect(
+      rules(
+        "// read-only audit: the title\nconst t = await page.evaluate(() => document.title);",
+      ),
+    ).toEqual([]);
   });
 
   it.each(LEGITIMATE)("ordinary code passes: %s", (code) => {

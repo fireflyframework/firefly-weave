@@ -129,6 +129,31 @@ const SPEC_GLOBALS: Record<string, string> = {
   module: "module loading",
   exports: "module loading",
 };
+/** The only globals a journey spec may name outside page functions: the language's own. */
+const LANGUAGE_GLOBALS = new Set([
+  "undefined",
+  "NaN",
+  "Infinity",
+  "Object",
+  "Array",
+  "JSON",
+  "Promise",
+  "Math",
+  "Date",
+  "RegExp",
+  "String",
+  "Number",
+  "Boolean",
+  "Error",
+  "Set",
+  "Map",
+  "Symbol",
+  "parseInt",
+  "parseFloat",
+  "isNaN",
+  "encodeURIComponent",
+  "decodeURIComponent",
+]);
 /** Globals no reached code may use: they hide what a call reaches. */
 const HIDDEN_CALLS: Record<string, string> = {
   Reflect: "reflective call",
@@ -301,10 +326,39 @@ function pageFunctionProblems(body: ts.Node): string[] {
 }
 
 /** The rule findings in one reached node of a file of the given kind. */
+/** Where a name is declared: in this project, only in a library's declarations, or nowhere. */
+type Origin = "project" | "library" | "none";
+
+/** Inside a function passed to evaluate: it runs in the page, where page globals are the point. */
+function inPageFunction(node: ts.Node): boolean {
+  for (let current = node.parent; current; current = current.parent) {
+    if (
+      isFunctionLike(current) &&
+      ts.isCallExpression(current.parent) &&
+      current.parent.arguments[0] === current &&
+      calleeName(current.parent) === "evaluate"
+    )
+      return true;
+  }
+  return false;
+}
+
+function inType(node: ts.Node): boolean {
+  for (let current = node.parent; current; current = current.parent)
+    if (
+      ts.isTypeNode(current) ||
+      ts.isTypeAliasDeclaration(current) ||
+      ts.isInterfaceDeclaration(current)
+    )
+      return true;
+  return false;
+}
+
 function nodeProblems(
   root: ts.Node,
   file: ts.SourceFile,
   kind: Kind,
+  origin: (node: ts.Identifier) => Origin = () => "project",
 ): { node: ts.Node; rule: string }[] {
   const found: { node: ts.Node; rule: string }[] = [];
   const add = (node: ts.Node, rule: string) => found.push({ node, rule });
@@ -370,6 +424,8 @@ function nodeProblems(
           add(node, `${FORBIDDEN_MEMBERS[key]}: ${key}`);
         if (key === "request" && kind !== "harness")
           add(node, "API request context: request");
+        if (spec && REFLECTIVE.has(key))
+          add(node, `reflective access in a journey: ${key}`);
         if (spec && FIXTURES.has(key))
           add(node, `Playwright fixture outside Journey.signIn: ${key}`);
       }
@@ -409,6 +465,18 @@ function nodeProblems(
         add(node, `${HIDDEN_CALLS[node.text]}: ${node.text}`);
       if (spec && Object.hasOwn(SPEC_GLOBALS, node.text))
         add(node, `${SPEC_GLOBALS[node.text]}: ${node.text}`);
+      if (
+        spec &&
+        !LANGUAGE_GLOBALS.has(node.text) &&
+        !inType(node) &&
+        !inPageFunction(node)
+      ) {
+        const where = origin(node);
+        if (where === "none")
+          add(node, `undeclared global in a journey: ${node.text}`);
+        if (where === "library")
+          add(node, `global outside the journey allowlist: ${node.text}`);
+      }
     }
     if (ts.isMetaProperty(node) && spec)
       add(node, "module metadata: import.meta");
@@ -679,7 +747,24 @@ export function analyzeJourneys(options: LintOptions): Analysis {
   while (queue.length) {
     const node = queue.shift()!;
     const file = node.getSourceFile();
-    for (const problem of nodeProblems(node, file, kindOf(file)))
+    for (const problem of nodeProblems(
+      node,
+      file,
+      kindOf(file),
+      (identifier) => {
+        const symbol = checker.getSymbolAtLocation(identifier);
+        const declarations = symbol?.declarations ?? [];
+        if (!declarations.length) return "none";
+        return declarations.some((declaration) => {
+          const owner = declaration.getSourceFile();
+          return (
+            !owner.isDeclarationFile && !owner.fileName.includes("node_modules")
+          );
+        })
+          ? "project"
+          : "library";
+      },
+    ))
       record(problem.node, problem.rule);
     const follow = (child: ts.Node): void => {
       if (
