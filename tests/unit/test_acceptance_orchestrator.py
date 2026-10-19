@@ -556,6 +556,9 @@ def test_the_studio_harness_writes_the_people_and_dumps_the_scan_expects():
     assert f'const KEY_CHECK = "{acceptance.SCAN_CHECK}";' in harness
     assert "storageKeyCheckOn(enablement().steps, KEY_CHECK)" in harness
     assert f"{acceptance.acceptance_evidence.DATABASES}: databases" in harness
+    # The second dump waits for the purge: no account key left, or 10 s.
+    purge = harness.index("storageAccountKeys(await dumpStorage(signed.page))")
+    assert purge < harness.index("`${base}${AFTER_REMOVAL}.json`")
 
 
 def test_a_second_sign_in_of_the_same_person_needs_its_own_dump(tmp_path):
