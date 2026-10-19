@@ -191,7 +191,13 @@ for (const size of sizes)
       if (size.width >= 768) {
         // Side by side: the fields on the left, one top edge.
         expect(input.right).toBeLessThanOrEqual(editor.x);
-        expectAligned([input.y, editor.y], "column tops", 24);
+        expectAligned([input.y, editor.y], "column tops");
+        const search = await box(
+          column.getByRole("textbox", {
+            name: "Search fields of earlier steps",
+          }),
+        );
+        expectAligned([search.y, editor.y], "search level with the formula");
       } else {
         // Stacked: the formula and its Result first, then the fields.
         expect(result.y).toBeGreaterThanOrEqual(editor.bottom);
