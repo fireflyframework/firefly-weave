@@ -38,6 +38,7 @@ import {
   modelOptions,
   weaveAiBody,
   weaveAiChoices,
+  CONTEXT_PROFILES,
   type WeaveAiDraft,
 } from "../integrations/ai-models-model";
 import {
@@ -116,6 +117,14 @@ import {
             [value]="draft.model"
             [disabled]="busy || !chosen"
             (choose)="draft.model = $event"
+          />
+          <weave-select
+            data-control
+            label="Context size"
+            [options]="contextProfiles"
+            [value]="draft.contextProfile ?? 'auto'"
+            [disabled]="busy"
+            (choose)="draft.contextProfile = $any($event)"
           />
         </div>
         @if (connectionNote; as note) {
@@ -207,6 +216,7 @@ export class WeaveAiCard implements DoCheck, OnDestroy {
   current: LumiConfiguration | null = null;
   models: AiModels | null = null;
   draft: WeaveAiDraft = { enabled: true, connection: "", model: "" };
+  readonly contextProfiles = CONTEXT_PROFILES;
   /** The saved connection revision, read when the list may not hold it. */
   pinned: AiConnection | null = null;
   /** The saved connection revision could not be read. */
@@ -309,6 +319,7 @@ export class WeaveAiCard implements DoCheck, OnDestroy {
           enabled: current?.enabled ?? true,
           connection: current?.connection_revision_id ?? "",
           model: String(current?.profile?.["model"] ?? ""),
+          contextProfile: current?.context_profile ?? "auto",
         };
         this.modelsFor = "";
         const target = this.chosen;

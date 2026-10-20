@@ -657,6 +657,28 @@ describe("Weave AI", () => {
       },
     });
   });
+  it("sends a chosen context size and leaves the automatic one out", () => {
+    const draft = { enabled: true, connection: "r2", model: "gpt-5-mini" };
+    expect(
+      weaveAiBody(
+        { ...draft, contextProfile: "compact" },
+        cloudConnection,
+        null,
+        {},
+      ),
+    ).toMatchObject({ context_profile: "compact" });
+    expect(
+      weaveAiBody(
+        { ...draft, contextProfile: "auto" },
+        cloudConnection,
+        null,
+        {},
+      ),
+    ).not.toHaveProperty("context_profile");
+    expect(weaveAiBody(draft, cloudConnection, null, {})).not.toHaveProperty(
+      "context_profile",
+    );
+  });
   it("uses 1,024 output tokens and three minutes for a new configuration", () => {
     expect(
       weaveAiBody(

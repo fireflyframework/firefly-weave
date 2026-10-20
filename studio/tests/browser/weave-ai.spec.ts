@@ -299,3 +299,77 @@ test("non-workflow proposals are validated before saving a reviewed file", async
     .click();
   await expect(panel).toContainText("must contain a DecisionTable document");
 });
+
+test("a proposal with problems offers Ask Weave AI to fix, with the problems and the proposal attached", async ({
+  page,
+}) => {
+  await connected(page, { capabilities: [...allCapabilities, "lumi.use"] });
+  await page.route("**/lumi/status", (r) =>
+    r.fulfill({
+      json: { configured: true, provider: "openai-chat", model: "qwen3:4b" },
+    }),
+  );
+  const broken = proposal.replace(
+    "durationSeconds: 120",
+    "durationSeconds: -1",
+  );
+  const sent: any[] = [];
+  await page.route("**/lumi/ask", (r) => {
+    sent.push(r.request().postDataJSON());
+    return r.fulfill({
+      json: {
+        answer: sent.length === 1 ? "Here is a draft." : "Fixed the wait.",
+        proposals: [
+          {
+            title: "Review workflow",
+            kind: "workflow",
+            format: "yaml",
+            source: sent.length === 1 ? broken : proposal,
+            diagnostics: sent.length === 1 ? 1 : 0,
+          },
+        ],
+        followUps: [],
+      },
+    });
+  });
+  await page.route("**/studio/local/validate", (r) =>
+    r.fulfill({
+      json: {
+        validationOk: false,
+        errorCount: 1,
+        diagnostics: [
+          {
+            code: "SCHEMA",
+            severity: "error",
+            message: "durationSeconds must be at least 1.",
+            path: "/spec/steps/0/durationSeconds",
+          },
+        ],
+      },
+    }),
+  );
+  await newWorkflow(page);
+  await page.getByRole("button", { name: "Ask Weave AI", exact: true }).click();
+  const panel = page.getByRole("dialog", { name: "Ask Weave AI", exact: true });
+  await panel.getByLabel("Message to Weave AI").fill("Add a wait");
+  await panel
+    .getByRole("button", { name: "Send message", exact: true })
+    .click();
+  await panel
+    .getByRole("button", { name: "Review workflow 1 problem", exact: true })
+    .click();
+  await expect(panel).toContainText(
+    "The platform found 1 problem in this proposal.",
+  );
+  await panel
+    .getByRole("button", { name: "Ask Weave AI to fix", exact: true })
+    .click();
+  await expect(panel).toContainText("Fixed the wait.");
+  expect(sent[1].message).toBe(
+    'Fix the proposal "Review workflow". The platform found 1 problem:\n- durationSeconds must be at least 1.',
+  );
+  expect(sent[1].draft).toEqual({ format: "yaml", source: broken });
+  await expect(
+    panel.getByRole("button", { name: "Review workflow", exact: true }),
+  ).toBeVisible();
+});

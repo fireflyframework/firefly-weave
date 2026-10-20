@@ -1140,3 +1140,23 @@ test("the sheet takes the connection's name once it is saved, and names its test
   );
   await expect(form.getByText("Model", { exact: true })).toHaveCount(1);
 });
+
+test("Weave AI keeps a chosen context size with its settings", async ({
+  page,
+}) => {
+  const platform = await start(page, {
+    connections: [ollamaConnection],
+    models: [QWEN],
+  });
+  const card = page.locator("weave-ai-card");
+  await card.getByLabel("Connection", { exact: true }).click();
+  await page.getByRole("option", { name: /ollama-local · revision 1/ }).click();
+  await expect(card.getByLabel("Context size", { exact: true })).toHaveValue(
+    "Automatic",
+  );
+  await card.getByLabel("Context size", { exact: true }).click();
+  await page.getByRole("option", { name: /^Compact/ }).click();
+  await card.getByRole("button", { name: "Save Weave AI settings" }).click();
+  await expect.poll(() => platform.lumiWrites.length).toBe(1);
+  expect(platform.lumiWrites[0].body.context_profile).toBe("compact");
+});
