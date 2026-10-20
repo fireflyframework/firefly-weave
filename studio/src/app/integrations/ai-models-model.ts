@@ -707,11 +707,37 @@ export function fixAction(
     : { kind: "text", label: fix.label };
 }
 
+export type ContextProfile = "auto" | "compact" | "standard" | "full";
 export interface WeaveAiDraft {
   enabled: boolean;
   connection: string;
   model: string;
+  /** How much authoring context Weave AI sends; "auto" follows the model's context size. */
+  contextProfile?: ContextProfile;
 }
+export const CONTEXT_PROFILES: readonly SelectOption[] = [
+  {
+    value: "auto",
+    label: "Automatic",
+    description: "Chosen from the model's context size",
+  },
+  {
+    value: "compact",
+    label: "Compact",
+    description:
+      "A short guide and an outline of the draft, for small local models",
+  },
+  {
+    value: "standard",
+    label: "Standard",
+    description: "The guide, the workflow schema and drafts up to 32 KiB",
+  },
+  {
+    value: "full",
+    label: "Full",
+    description: "Every authoring schema and the whole draft, for large models",
+  },
+];
 /** Limits for a new Weave AI configuration; a saved one keeps its own. */
 export const WEAVE_AI_DEFAULTS: Readonly<Record<string, unknown>> = {
   options: { max_tokens: 1024 },
@@ -742,20 +768,19 @@ export function weaveAiBody(
       model,
       outputSchema: replySchema,
     },
+    ...(draft.contextProfile && draft.contextProfile !== "auto"
+      ? { context_profile: draft.contextProfile }
+      : {}),
   };
 }
 export function weaveAiChoices(
   connections: readonly AiConnection[],
 ): SelectOption[] {
-  return connections.map((connection) => {
-    const noKey = keylessConnection(connection);
-    return {
-      value: connection.id,
-      label: `${connection.name} · revision ${connection.revision}`,
-      description: noKey
-        ? "Weave AI can't use a connection without a key yet"
-        : connection.config.endpoint,
-      disabled: noKey,
-    };
-  });
+  return connections.map((connection) => ({
+    value: connection.id,
+    label: `${connection.name} · revision ${connection.revision}`,
+    description: keylessConnection(connection)
+      ? `${connection.config.endpoint} · no key`
+      : connection.config.endpoint,
+  }));
 }

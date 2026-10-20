@@ -264,12 +264,13 @@ for (const size of sizes)
           "a connection action",
         );
       }
-      // Weave AI's dropdowns are exactly as high as the buttons beside them;
-      // side by side they share a top, stacked they share a left edge.
+      // Weave AI's dropdowns (connection, model, context size) are exactly as
+      // high as the buttons beside them; side by side they share a top,
+      // stacked they share a left edge, never two in a row and one below.
       const card = page.locator("weave-ai-card");
       // The bordered field, not the text box inside it.
       const dropdowns = await boxes(card.locator("weave-select .choice-field"));
-      expect(dropdowns).toHaveLength(2);
+      expect(dropdowns).toHaveLength(3);
       expectAligned(
         [d.control, ...dropdowns.map((dropdown) => dropdown.height)],
         "Weave AI dropdown heights",

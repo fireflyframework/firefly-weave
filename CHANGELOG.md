@@ -20,6 +20,44 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+- Weave AI runs on a local Ollama model. It works on a keyless connection such as
+  `ollama-local`, sending no credential, and `weave platform ai enable` turns it
+  on with the tested model unless Weave AI is already set up. Each request is
+  sized to the model's context: compact (under 16k tokens) sends a short guide,
+  the draft whole when it fits (otherwise an outline with the selected step
+  whole) and the last four messages in at most 4,096 tokens; standard and full
+  send more. **Context size** on the Weave AI card overrides the choice. On
+  Ollama, which cuts a long prompt silently, Weave AI counts each request
+  conservatively (identifiers, digits and text outside ASCII densely) and refuses
+  one that may not fit before the model with `WV-LUMI-CONTEXT-LIMIT`; on Ollama
+  0.40 or later an answer whose prompt count shows the model saw only part of
+  the request is not used either.
+- A run attached to a Weave AI question carries only its run facts (workflow,
+  status, times, failed steps with error codes, open incidents and the last five
+  steps), never its input, outputs or logs.
+- Weave AI's proposals are checked on the server; `lumi.ask` returns each with
+  `diagnostics`, its error count, and Studio offers **Ask Weave AI to fix**.
+  Clients that validate answers strictly must be upgraded with the server.
+- Asking Weave AI answers model failures with their own problem codes:
+  `WV-LUMI-MODEL-NOT-FOUND`, `WV-LUMI-UNREACHABLE`, `WV-LUMI-CONTEXT-LIMIT`,
+  `WV-LUMI-OUTPUT` and `WV-LUMI-TIMEOUT`, with `WV-LUMI-CAPACITY` for busy and
+  rate-limited providers, instead of `WV-LUMI-UNAVAILABLE` for all of them.
+- The local platform runs Ollama 0.40.6 (was 0.12.3). Weave AI asks thinking
+  models such as `qwen3` to answer without thinking only on Ollama 0.40 or later,
+  since Ollama 0.12.3 refuses that setting for every model; on an older Ollama a
+  thinking model that cannot answer says to upgrade Ollama.
+- On Ollama, which cuts a long prompt silently, AI tasks count identifiers,
+  digits and text outside ASCII (such as Chinese or emoji) conservatively when
+  they check that a prompt fits the model's context, and an answer whose prompt
+  count is below what the whole prompt can count fails with `LLM_CONTEXT_LIMIT`
+  instead of being returned. The check covers the task's first model call; the
+  later calls of a reasoning pattern or of the retry with the format in the
+  prompt are not checked again. Other endpoints refuse an oversized prompt
+  themselves and keep the earlier count.
+- Weave AI keeps small local models from looping: compact requests answer in at
+  most 512 tokens, the instructions ask for a brief answer, Ollama endpoints get
+  a frequency penalty, and an answer that starts repeating itself is stopped
+  early with `WV-LUMI-OUTPUT` and advice to use a larger model or less history.
 - Simulations and debug sessions run workflow calls. A waiting **Call a
   workflow** step takes a mock for its whole result under `node:CALL_ID` (or
   `node:notify[2]` for one iteration): the called workflow's output, or the

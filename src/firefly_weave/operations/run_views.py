@@ -29,10 +29,12 @@ from firefly_weave.access.models import Principal
 from firefly_weave.access.repository import load_principal
 from firefly_weave.api.transport import encode_cursor_v2
 from firefly_weave.contracts.access import Scope
+from firefly_weave.contracts.public import UnavailableResource
 from firefly_weave.contracts.run_views import (
     RunLogPage,
     RunLogQuery,
     RunStepQuery,
+    RunSummary,
     RunSummaryPage,
     RunSummaryQuery,
     StepFactPage,
@@ -80,6 +82,16 @@ class RunViewService:
                     scope, query.cursor_collection(), at.isoformat() if at else None, str(last["run_id"])
                 )
             return RunSummaryPage(items=[summary_of(row) for row in visible], next_cursor=cursor)
+
+    async def summary(
+        self, actor: Principal, scope: Scope, run_id: UUID, *, context: AuditContext
+    ) -> RunSummary | UnavailableResource | None:
+        """One run's summary from its run facts, or None when the run has none (yet)."""
+        self.precheck(actor, scope, context)
+        async with self.uow.open(scope, mutation=False) as tx:
+            await self._authorize_current(actor, scope, tx, context=context)
+            row = await FactReadRepository(tx).summary_row(run_id)
+            return summary_of(row) if row is not None else None
 
     async def steps(
         self,

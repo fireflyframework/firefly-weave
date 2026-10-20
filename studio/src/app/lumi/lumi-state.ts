@@ -36,6 +36,31 @@ export interface LumiProposal {
   kind: "workflow" | "decisionTable" | "action" | "connector";
   format: "yaml" | "json";
   source: string;
+  /** Errors the platform found when it checked the proposal; 0 when it is valid. */
+  diagnostics?: number;
+}
+/** The longest message Weave AI accepts. */
+const MESSAGE_LIMIT = 20000;
+/** "2 problems", or "" for a proposal the platform found valid. */
+export function problemLabel(proposal: LumiProposal): string {
+  const count = proposal.diagnostics ?? 0;
+  return count ? `${count} problem${count === 1 ? "" : "s"}` : "";
+}
+/** A request that asks Weave AI to fix a proposal: the problems in the message, the proposal as the draft. */
+export function fixRequest(
+  proposal: LumiProposal,
+  problems: readonly string[],
+): { message: string; draft: { format: "yaml" | "json"; source: string } } {
+  const count = problems.length;
+  let message = `Fix the proposal "${proposal.title}". The platform found ${count} problem${count === 1 ? "" : "s"}:\n${problems
+    .map((problem) => `- ${problem}`)
+    .join("\n")}`;
+  if (message.length > MESSAGE_LIMIT)
+    message = message.slice(0, MESSAGE_LIMIT - 1) + "…";
+  return {
+    message,
+    draft: { format: proposal.format, source: proposal.source },
+  };
 }
 export interface ProposalReview extends LumiProposal {
   base: DraftRevision;

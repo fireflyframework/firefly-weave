@@ -31,6 +31,8 @@ import { describeError } from "../errors";
 import { exportFile } from "../export-file";
 import {
   LumiConversation,
+  fixRequest,
+  problemLabel,
   unchangedDraft,
   type DraftRevision,
   type LumiProposal,
@@ -116,6 +118,10 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
             }
             @if (item.validated === item.source) {
               <p role="status">The proposal passed local validation.</p>
+            } @else if (item.diagnostics) {
+              <p class="notice" data-tone="warning" role="note">
+                The platform found {{ problemLabel(item) }} in this proposal.
+              </p>
             }
             @if (item.kind === "workflow" && !current(item)) {
               <p class="field-error" role="alert">
@@ -153,6 +159,15 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
                   Save reviewed draft file
                 </button>
               }
+              @if (item.diagnostics && item.validated !== item.source) {
+                <button
+                  type="button"
+                  [disabled]="validating || busy"
+                  (click)="askToFix()"
+                >
+                  Ask Weave AI to fix
+                </button>
+              }
               <button type="button" (click)="back()">
                 Back to conversation
               </button>
@@ -172,6 +187,9 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
                 @for (proposal of turn.proposals ?? []; track $index) {
                   <button type="button" (click)="openReview(proposal)">
                     {{ proposal.title }}
+                    @if (problemLabel(proposal); as problems) {
+                      <span class="tag">{{ problems }}</span>
+                    }
                   </button>
                 }
                 @for (followUp of turn.followUps ?? []; track $index) {
@@ -338,6 +356,7 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 })
 export class LumiPanel implements DoCheck {
   @Input({ required: true }) host!: App;
+  readonly problemLabel = problemLabel;
   private cdr = inject(ChangeDetectorRef);
   private element = inject<ElementRef<HTMLElement>>(ElementRef);
   private keepFocus() {
@@ -470,7 +489,18 @@ export class LumiPanel implements DoCheck {
       }
     }
   }
-  async send() {
+  /** Asks Weave AI to fix the proposal under review, with the problems the platform finds in it. */
+  async askToFix() {
+    const item = this.review;
+    if (!item) return;
+    if (!item.problems.length) await this.validateProposal();
+    if (this.review !== item || item.validated === item.source) return;
+    const request = fixRequest(item, item.problems);
+    this.back();
+    this.message = request.message;
+    await this.send(request.draft, true);
+  }
+  async send(draft?: { format: "yaml" | "json"; source: string }, fix = false) {
     if (
       this.busy ||
       !this.message.trim() ||
@@ -490,11 +520,19 @@ export class LumiPanel implements DoCheck {
         .filter((item) => this.attachments.has(item.kind + item.id))
         .map(({ kind, id }) => ({ kind, id })),
     };
-    if (this.includeSource && this.host.view !== "clusters")
+    if (draft) {
+      body["draft"] = draft;
+      // A fix sends the proposal whole when it fits, so the model sees the values it must fix.
+      if (fix) body["fix"] = true;
+    } else if (this.includeSource && this.host.view !== "clusters") {
       body["draft"] = {
         format: this.host.model.format,
         source: this.host.sourceBuffer || this.host.model.source,
       };
+      // A compact request keeps the selected step whole and outlines the rest.
+      const selected = this.host.selected?.step.id;
+      if (selected) body["selected_step"] = selected;
+    }
     this.conversation.turns.push({ role: "user", content: message });
     this.message = "";
     this.busy = true;
