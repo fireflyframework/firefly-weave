@@ -8866,6 +8866,8 @@ export class App implements CanvasHost {
       // Signing out ends a pending sign-in on the host too.
       this.loginWatcher.stop();
       this.platformGeneration++;
+      // The account's test data leaves memory, and nothing waiting is written back under its key.
+      this.testData.forget();
       this.clearPlatformState();
       this.platformNotice = null;
       this.reportSignOut(result, name);
@@ -8899,6 +8901,7 @@ export class App implements CanvasHost {
     this.cdr.markForCheck();
     try {
       const result = await this.connection.remove(name, true);
+      if (active) this.testData.forget();
       this.applyConnection(result, active, name);
       this.notify(`Removed ${name}.`);
       void this.draftCanvases.forgetPlatform(name);

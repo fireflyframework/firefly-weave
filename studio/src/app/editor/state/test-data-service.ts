@@ -148,6 +148,8 @@ export class TestDataService {
   /** Pointers of entries kept on this computer until the platform can classify them. */
   private waiting = new Set<string>();
   private waitingKey: string | null = null;
+  /** Keys of accounts signed out since: a write queued for one never runs. */
+  private readonly forgotten = new Set<string>();
   /** The platform revision this copy is based on. */
   private platformRevision: number | undefined;
 
@@ -182,12 +184,15 @@ export class TestDataService {
     const key = await this.keyOf(place);
     const raw = key ? await this.host.backend.get(key) : null;
     if (opening !== this.opened) return;
+    // Opened again for that account: it signed in again.
+    if (key) this.forgotten.delete(key);
     this.where = key ? place : { kind: "memory" };
     this.key = key;
     this.problem = null;
     this.platformRevision = undefined;
     this.waitingKey =
       key && place.kind === "connected" ? storeKeyFor(key, "local") : null;
+    if (this.waitingKey) this.forgotten.delete(this.waitingKey);
     this.waiting = new Set();
     if (this.waitingKey) {
       try {
@@ -217,6 +222,25 @@ export class TestDataService {
     }
     this.loaded++;
     this.set(data);
+  }
+  /**
+   * The account signed out: its data leaves memory now, and nothing waiting
+   * or queued is written under its key afterwards (no flush, unlike `open`).
+   */
+  forget(): void {
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+    for (const key of [this.key, this.waitingKey])
+      if (key && this.where.kind === "connected") this.forgotten.add(key);
+    this.opened++;
+    this.where = { kind: "memory" };
+    this.key = null;
+    this.waitingKey = null;
+    this.waiting = new Set();
+    this.problem = null;
+    this.platformRevision = undefined;
+    this.loaded++;
+    this.set(emptyTestData(this.stamp()));
   }
   /** Checks the entries at `pointers` and keeps the document if every one may be kept. */
   async change(
@@ -329,6 +353,7 @@ export class TestDataService {
     if (!key) return;
     const list = [...this.waiting].sort();
     this.writing = this.writing.then(async () => {
+      if (this.forgotten.has(key)) return;
       if (list.length) await this.host.backend.set(key, JSON.stringify(list));
       else await this.host.backend.remove(key);
     });
@@ -364,6 +389,7 @@ export class TestDataService {
     const data = this.current;
     if (!key) return;
     this.writing = this.writing.then(async () => {
+      if (this.forgotten.has(key)) return;
       await this.host.backend.set(key, JSON.stringify(data));
     });
   }

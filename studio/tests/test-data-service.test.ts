@@ -219,3 +219,131 @@ describe("a workflow's test data", () => {
     );
   });
 });
+
+describe("test data across draft switches and sign-outs", () => {
+  const SCOPE = {
+    profileName: "Acme",
+    subject: "user-1",
+    tenantId: "7b0c1c43-3f5a-4cde-9f0e-3c2d5a6b7c8d",
+    projectId: "9b1c2d3e-4f50-4a61-8b72-c3d4e5f60718",
+  };
+  it("keeps the previous draft's waiting change when another draft opens", async () => {
+    const { value, store } = host();
+    const service = new TestDataService(value);
+    await service.open({ kind: "local", draftId: "d-1" });
+    await service.change(withInput(service.data(), 1, "manual", ISO), [
+      "/input",
+    ]);
+    // Opened before the 800 ms keep: the change still lands next to d-1.
+    await service.open({ kind: "local", draftId: "d-2" });
+    expect(
+      JSON.parse(store.values.get("local:weave.localDraft.d-1.testData")!).input
+        .value,
+    ).toBe(1);
+    expect(store.values.has("local:weave.localDraft.d-2.testData")).toBe(false);
+  });
+  it("lets the last opening win when two overlap", async () => {
+    const { value, store } = host();
+    let release!: () => void;
+    const slow = new Promise<void>((done) => (release = done));
+    const get = store.backend.get;
+    store.backend.get = async (key) => {
+      if (key.includes("d-1")) await slow;
+      return get(key);
+    };
+    store.values.set(
+      "local:weave.localDraft.d-1.testData",
+      JSON.stringify(withInput(emptyTestData(ISO), "one", "manual", ISO)),
+    );
+    const service = new TestDataService(value);
+    const first = service.open({ kind: "local", draftId: "d-1" });
+    await service.open({ kind: "local", draftId: "d-2" });
+    release();
+    await first;
+    expect(service.place()).toEqual({ kind: "local", draftId: "d-2" });
+    expect(service.data().input).toBeUndefined();
+  });
+  it("refuses a change checked while another draft opened", async () => {
+    const { value, store } = host();
+    let release!: () => void;
+    const held = new Promise<void>((done) => (release = done));
+    const request = value.api.request;
+    value.api = {
+      request: async <T>(...args: Parameters<typeof request>): Promise<T> => {
+        await held;
+        return request<T>(...args);
+      },
+    };
+    const service = new TestDataService(value);
+    await service.open({ kind: "local", draftId: "d-1" });
+    const change = service.change(
+      withInput(service.data(), "for d-1", "manual", ISO),
+      ["/input"],
+    );
+    await service.open({ kind: "local", draftId: "d-2" });
+    release();
+    expect((await change).ok).toBe(false);
+    await service.flush();
+    expect(service.data().input).toBeUndefined();
+    expect(store.values.size).toBe(0);
+  });
+  it("forgets a signed-out account at once: nothing waiting is written", async () => {
+    const { value, store } = host();
+    const service = new TestDataService(value);
+    await service.open({ kind: "connected", scope: SCOPE, draftId: "d-1" });
+    await service.flush();
+    await service.change(withInput(service.data(), "late", "manual", ISO), [
+      "/input",
+    ]);
+    service.forget();
+    await new Promise((done) => setTimeout(done, 900));
+    await service.flush();
+    expect(
+      [...store.values.keys()].filter((key) => key.startsWith("p")),
+    ).toEqual([]);
+    expect(service.place()).toEqual({ kind: "memory" });
+    expect(service.data().input).toBeUndefined();
+    // Undo after the sign-out keeps nothing either.
+    service.restore(
+      withInput(emptyTestData(ISO), "undo", "manual", ISO),
+      service.version(),
+    );
+    await service.flush();
+    expect(
+      [...store.values.keys()].filter((key) => key.startsWith("p")),
+    ).toEqual([]);
+  });
+  it("drops a write already queued for the signed-out account", async () => {
+    const { value, store } = host();
+    let release!: () => void;
+    const held = new Promise<void>((done) => (release = done));
+    const set = store.backend.set;
+    let first = true;
+    store.backend.set = async (key, raw) => {
+      if (first) {
+        first = false;
+        await held;
+      }
+      return set(key, raw);
+    };
+    const service = new TestDataService(value);
+    await service.open({ kind: "connected", scope: SCOPE, draftId: "d-1" });
+    await service.change(withInput(service.data(), 1, "manual", ISO), [
+      "/input",
+    ]);
+    const flushing = service.flush();
+    await service.change(withInput(service.data(), 2, "manual", ISO), [
+      "/input",
+    ]);
+    const second = service.flush();
+    service.forget();
+    release();
+    await flushing;
+    await second;
+    const kept = [...store.values.entries()].filter(([key]) =>
+      key.startsWith("p"),
+    );
+    // The write that had started lands; the one only queued doesn't.
+    expect(kept.map(([, raw]) => JSON.parse(raw).input.value)).toEqual([1]);
+  });
+});
