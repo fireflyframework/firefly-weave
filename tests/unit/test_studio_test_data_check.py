@@ -245,3 +245,26 @@ def test_a_source_that_does_not_read_leaves_every_entry_unresolved(tmp_path, sou
             "/studio/local/testdata/check", json={**body(document, ACTION), "source": source}, headers=headers
         )
     assert answer.json() == {"entries": [{"path": "/pins/check", "ok": False, "code": "WV-STUDIO-TESTDATA-UNRESOLVED"}]}
+
+
+def test_an_undo_phase_entry_is_unresolved_never_checked_against_the_step_it_undoes():
+    # `check#confirm` is the confirm phase of step check, which runs another action: its output schema isn't the
+    # step's, so a value that fits the step (or a secret only the phase's schema marks) is never accepted for it.
+    result = check(
+        data(
+            pins={
+                "check#2": {**PIN, "output": {"eligible": True}},
+                "check#confirm": {**PIN, "output": {"eligible": True}},
+                "check[2]#cancel": {**PIN, "output": {"eligible": True}},
+                "token#undo": {**PIN, "output": {"id": "t-1"}},
+            },
+        ),
+        ACTION,
+        SECRET_ACTION,
+    )
+    assert result == {
+        "/pins/check#2": None,
+        "/pins/check#confirm": "WV-STUDIO-TESTDATA-UNRESOLVED",
+        "/pins/check[2]#cancel": "WV-STUDIO-TESTDATA-UNRESOLVED",
+        "/pins/token#undo": "WV-STUDIO-TESTDATA-UNRESOLVED",
+    }

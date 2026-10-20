@@ -46,6 +46,15 @@ UNRESOLVED: CheckCode = "WV-STUDIO-TESTDATA-UNRESOLVED"
 type Target = JsonObject | CheckCode
 
 _NOTHING: JsonObject = {"type": "null"}
+# The phases a step inside a transaction may be undone or confirmed with (`hold#confirm`, `add#undo`). Each runs
+# another action, so its output is never checked against the schema of the step it belongs to.
+_PHASES = frozenset({"confirm", "cancel", "undo"})
+
+
+def _phase(key: str) -> bool:
+    """Whether a key names an undo or confirm phase: its activation part ends with a phase name."""
+    activation = key.partition("#")[2].partition("~")[0]
+    return bool(activation) and activation.rsplit(".", 1)[-1] in _PHASES
 
 
 def _escape(segment: str) -> str:
@@ -156,7 +165,8 @@ def _targets(
         schema = spec.get("inputSchema")
         yield "/input", schema if isinstance(schema, dict) else UNRESOLVED, document["input"]["value"]
     for key, pin in cast(dict[str, Any], document.get("pins", {})).items():
-        yield f"/pins/{_escape(key)}", _output(workflow, _step(workflow, key), catalog), pin["output"]
+        target = UNRESOLVED if _phase(key) else _output(workflow, _step(workflow, key), catalog)
+        yield f"/pins/{_escape(key)}", target, pin["output"]
     for key, signal in cast(dict[str, Any], document.get("signals", {})).items():
         if "outcome" in signal:
             yield f"/signals/{_escape(key)}", _NOTHING, None
@@ -190,7 +200,7 @@ def _targets(
     for reference, callee in cast(dict[str, Any], document.get("workflows", {})).items():
         called = _document(catalog, "Workflow", reference)
         for key, mock in cast(dict[str, Any], callee["mocks"]).items():
-            step = _step(called, key) if called is not None else None
+            step = _step(called, key) if called is not None and not _phase(key) else None
             path = f"/workflows/{_escape(reference)}/mocks/{_escape(key)}"
             yield path, _output(called or {}, step, catalog), mock["output"]
 
