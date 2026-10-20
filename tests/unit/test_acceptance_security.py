@@ -429,3 +429,24 @@ def test_a_failed_readiness_wait_in_cleanup_keeps_the_original_error():
     waits.clear()
     with pytest.raises(AssertionError, match="not ready"), security.identity_alias(Run(), ready=ready):
         pass
+
+
+async def test_a_refused_run_is_read_only_once_recovery_has_settled_its_incident():
+    # Seen in CI: the worker's failure opens WV-TASK-FAILED first; the recovery scan then decides, and for a task that
+    # is safe to retry it ends in WV-TASK-RETRIES-EXHAUSTED once no retry is left. Reading the first code races it.
+    from uuid import uuid4
+
+    states = Runs(
+        ("running", None),
+        ("suspended", "WV-TASK-FAILED"),
+        ("waiting", None),
+        ("suspended", "WV-TASK-FAILED"),
+        ("suspended", "WV-TASK-RETRIES-EXHAUSTED"),
+    )
+    assert await security.settle(states, uuid4(), until=security.refused_settled, pause=0) == security.REFUSED_RUN
+    # A run that finishes instead of stopping at the action is returned as it is, so the assertion reports it.
+    assert await security.settle(
+        Runs(("running", None), ("succeeded", None)), uuid4(), until=security.refused_settled, pause=0
+    ) == ("succeeded", None)
+    with pytest.raises(AssertionError, match="suspended"):
+        await security.settle(Runs(("suspended", "WV-TASK-FAILED")), uuid4(), until=security.refused_settled, timeout=0)

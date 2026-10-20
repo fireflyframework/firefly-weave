@@ -348,21 +348,34 @@ async def await_refusals(
         await asyncio.sleep(pause)
 
 
-# A run that called a refused destination stops at the action: its task fails, the runtime retries what is safe to
-# retry, and the spent retries open an incident.
+# A run that called a refused destination stops at the action. The worker's failure first opens WV-TASK-FAILED;
+# the recovery scan then decides, and for a read that is safe to retry it schedules what retries the policy allows
+# and ends in WV-TASK-RETRIES-EXHAUSTED, which recovery never changes again. Only that code is a settled refusal.
 REFUSED_RUN = ("suspended", "WV-TASK-RETRIES-EXHAUSTED")
 SETTLED = frozenset({"succeeded", "failed", "cancelled", "timed_out"})
 
 
-async def settle(client: Any, run_id: UUID, *, timeout: float = 180, pause: float = 2) -> tuple[str, str | None]:
-    """A run's status and incident code once it finished or stopped at an incident; fails after ``timeout``."""
+def finished(status: str, incident: str | None) -> bool:
+    """A run that ended, or stopped at an incident."""
+    return status in SETTLED or (status == "suspended" and bool(incident))
+
+
+def refused_settled(status: str, incident: str | None) -> bool:
+    """A refused run whose incident recovery has settled, or a run that ended some other way (reported as is)."""
+    return status in SETTLED or (status, incident) == REFUSED_RUN
+
+
+async def settle(
+    client: Any, run_id: UUID, *, until: Any = finished, timeout: float = 180, pause: float = 2
+) -> tuple[str, str | None]:
+    """A run's status and incident code once ``until`` holds for them; fails after ``timeout`` with the last ones."""
     deadline = time.monotonic() + timeout
     while True:
         view = await client.invoke("runs.read", identifier=run_id)
         status, incident = view.state.status, view.state.incident
-        if status in SETTLED or (status == "suspended" and incident):
+        if until(status, incident):
             return status, incident
-        assert time.monotonic() < deadline, f"run still {status} after {timeout:.0f} seconds"
+        assert time.monotonic() < deadline, f"run still {status} ({incident}) after {timeout:.0f} seconds"
         await asyncio.sleep(pause)
 
 
@@ -381,6 +394,7 @@ async def run_through(
     releases: dict[UUID, UUID],
     name: str,
     activations: ReaderActivations,
+    until: Any = finished,
 ) -> tuple[str, str | None]:
     """Activate the reader workflow with ``connection_id`` in its slot, start one run and wait for it."""
     from firefly_weave.contracts.catalog import ActivationRequest
@@ -405,7 +419,7 @@ async def run_through(
         body=StartRunRequest(activation_id=activation.id, input={}),
         idempotency_key=f"j9-03-run-{name}-{run.run_id}",
     )
-    return await settle(client, started.id)
+    return await settle(client, started.id, until=until)
 
 
 @pytest.mark.journey_step("J9.3")
@@ -446,7 +460,9 @@ async def test_j9_03_connections_reach_only_the_approved_private_origin(run):
         refused_from = len(run.acme_control("/_control/journal")["entries"])
         with identity_alias(run):
             runs = {
-                name: await run_through(owner, run, reader, connection, releases, name, activations)
+                name: await run_through(
+                    owner, run, reader, connection, releases, name, activations, until=refused_settled
+                )
                 for name, connection in connections.items()
             }
         after = run.acme_control("/_control/journal")["entries"][refused_from:]
