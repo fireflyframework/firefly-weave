@@ -14,17 +14,19 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
+
 """Bounded mock facts around the shared resumable reducer; no server dependencies."""
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Iterator, Mapping
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import cast
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from firefly_weave.compiler.api import CompiledArtifact, import_artifact
 from firefly_weave.compiler.calls import call_output_schema
-from firefly_weave.compiler.canonical import canonical_bytes
+from firefly_weave.compiler.canonical import canonical_bytes, canonical_digest
 from firefly_weave.compiler.ir import ActionNode, CallWorkflowNode, HumanTaskNode, IRNode, SignalNode, WorkflowIR
 from firefly_weave.contracts.definitions import ActionDefinition, load_definition
 from firefly_weave.contracts.diagnostics import Diagnostic
@@ -32,24 +34,31 @@ from firefly_weave.contracts.instance_keys import InvalidInstanceKey, node_of, s
 from firefly_weave.contracts.values import JsonObject, JsonValue
 from firefly_weave.operations.debug.models import (
     Boundary,
+    CalledWorkflow,
     DebugCommand,
     DebugError,
     DebugLimits,
     DebugState,
     DebugView,
+    FrameState,
+    FrameView,
     LoopView,
     SelectedScope,
     SignalReceipt,
 )
+from firefly_weave.runtime.call_outcomes import STOPPED, call_result
 from firefly_weave.runtime.capacity import ADMISSION_OUTPUT_BYTES, ADMISSION_REDUCTIONS, TRANSITION_BYTES, logical_size
 from firefly_weave.runtime.control import enclosing_loops, loop_scope
 from firefly_weave.runtime.kernel import (
+    KernelCursor,
+    PreparedWorkflow,
     _advance_owned,
     begin,
     called_workflow,
     deadline_order,
     duration_steps,
     prepare,
+    transition,
     validate,
     validate_action,
 )
@@ -58,6 +67,9 @@ from firefly_weave.runtime.models import CallIntent, Deadline, RunState, Runtime
 _DEFAULT_LIMITS = DebugLimits()
 
 TERMINAL = {"succeeded", "failed", "cancelled", "timed_out"}
+
+# A run that holds events: the simulated workflow (the session itself) or one called workflow's frame.
+type Run = DebugState | FrameState
 
 
 def frame_run_id(key: str) -> UUID:
@@ -76,6 +88,54 @@ def first_instance(ir: WorkflowIR, step_id: str) -> str:
     return step_id + "[0]" * len(enclosing_loops(nodes, nodes[step_id]))
 
 
+def _parent(key: str) -> str:
+    return key.rpartition("/")[0]
+
+
+def _depth(key: str) -> int:
+    return key.count("/") + 1 if key else 0
+
+
+def _path(frame: str, key: str) -> str:
+    return f"{frame}/{key}" if frame else key
+
+
+@dataclass
+class _Workflow:
+    """A compiled workflow a session runs: the simulated one (``reference`` "") or a called version."""
+
+    reference: str
+    artifact: CompiledArtifact
+    prepared: PreparedWorkflow
+    mocks: dict[str, JsonValue]
+
+    @property
+    def ir(self) -> WorkflowIR:
+        return self.prepared.ir
+
+
+def _instance_node(prepared: PreparedWorkflow, key: str) -> IRNode | None:
+    """The node that ``key`` addresses: a step ID (every instance), or one instance of a step inside loops.
+
+    An instance key names one position per enclosing loop, each below that loop's ``maxItems``. Repeated
+    activations (``#``) and loop yields (``~``) are not addressed by a session.
+    """
+    try:
+        parsed = split_instance(key)
+    except InvalidInstanceKey:
+        return None
+    node = prepared.nodes.get(parsed.node_id)
+    if node is None or parsed.segments or parsed.count is not None:
+        return None
+    if parsed.indexes:
+        loops = enclosing_loops(prepared.nodes, node)
+        if len(parsed.indexes) != len(loops):
+            return None
+        if any(index >= loop.max_items for index, loop in zip(parsed.indexes, loops, strict=True)):
+            return None
+    return node
+
+
 class Simulator:
     def __init__(
         self,
@@ -85,6 +145,7 @@ class Simulator:
         input: JsonValue,
         now: datetime,
         limits: DebugLimits = _DEFAULT_LIMITS,
+        workflows: Mapping[str, CalledWorkflow] | None = None,
     ) -> None:
         self.limits = limits
         self.artifact = import_artifact(json.loads(artifact.to_bytes()))
@@ -94,50 +155,82 @@ class Simulator:
         if now.tzinfo is None or now.utcoffset() is None:
             raise DebugError("WV-DEBUG-TIME")
         validate(self.ir, self.ir.schemas[self.ir.input_schema], input)
-        self._validate_mocks(mocks)
+        self._validate_mocks(self._prepared, mocks)
+        called = self._called_workflows(dict(workflows or {}))
         self.data = DebugState(
-            artifact=json.loads(self.artifact.to_bytes()), mocks=mocks, now=now, state=RunState(input=input)
+            artifact=json.loads(self.artifact.to_bytes()),
+            mocks=mocks,
+            now=now,
+            state=RunState(input=input),
+            workflows={
+                reference: CalledWorkflow(artifact=json.loads(item.artifact.to_bytes()), mocks=item.mocks)
+                for reference, item in called.items()
+            },
         )
+        self._workflows = {"": _Workflow("", self.artifact, self._prepared, mocks), **called}
         self.data.pending.append(self._event("started", {}))
         self._bounded()
 
-    def _instance_node(self, key: str) -> IRNode | None:
-        """The node that ``key`` addresses: a step ID (every instance), or one instance of a step inside loops.
-
-        An instance key names one position per enclosing loop, each below that loop's ``maxItems``. Repeated
-        activations (``#``) and loop yields (``~``) are not addressed by a session.
+    def _called_workflows(self, supplied: dict[str, CalledWorkflow]) -> dict[str, _Workflow]:
+        """Check the called workflow versions a session may run: each one a version some call reaches, whose
+        artifact is that version with the same input and output schemas the calling workflow was compiled against.
         """
-        try:
-            parsed = split_instance(key)
-        except InvalidInstanceKey:
-            return None
-        node = self._prepared.nodes.get(parsed.node_id)
-        if node is None or parsed.segments or parsed.count is not None:
-            return None
-        if parsed.indexes:
-            loops = enclosing_loops(self._prepared.nodes, node)
-            if len(parsed.indexes) != len(loops):
-                return None
-            if any(index >= loop.max_items for index, loop in zip(parsed.indexes, loops, strict=True)):
-                return None
-        return node
+        called: dict[str, _Workflow] = {}
+        pending = [self.ir]
+        while pending:
+            ir = pending.pop()
+            for dependency in ir.dependencies:
+                if dependency.kind != "Workflow" or dependency.reference not in supplied:
+                    continue
+                item = called.get(dependency.reference)
+                if item is None:
+                    document = supplied[dependency.reference].artifact
+                    if document is None:
+                        raise DebugError("WV-DEBUG-WORKFLOW")
+                    try:
+                        artifact = import_artifact(document)
+                        item = _Workflow(
+                            dependency.reference,
+                            artifact,
+                            prepare(artifact),
+                            dict(supplied[dependency.reference].mocks),
+                        )
+                    except ValueError:
+                        raise DebugError("WV-DEBUG-WORKFLOW") from None
+                    callee = item.ir
+                    if f"{callee.metadata.name}@{callee.metadata.version}" != dependency.reference:
+                        raise DebugError("WV-DEBUG-WORKFLOW")
+                    called[dependency.reference] = item
+                    pending.append(callee)
+                spec = cast(JsonObject, dependency.document["spec"])
+                if (
+                    canonical_digest(cast(JsonObject, spec["inputSchema"])) != item.ir.input_schema
+                    or canonical_digest(cast(JsonObject, spec["outputSchema"])) != item.ir.output_schema
+                ):
+                    raise DebugError("WV-DEBUG-WORKFLOW")
+        if set(supplied) != set(called):
+            raise DebugError("WV-DEBUG-WORKFLOW")
+        for item in called.values():
+            self._validate_mocks(item.prepared, item.mocks)
+        return called
 
-    def _validate_mocks(self, mocks: dict[str, JsonValue]) -> None:
+    def _validate_mocks(self, prepared: PreparedWorkflow, mocks: Mapping[str, JsonValue]) -> None:
+        ir = prepared.ir
         steps: dict[str, tuple[ActionDefinition, ActionNode]] = {}
         actions: dict[str, list[tuple[ActionDefinition, ActionNode]]] = {}
-        for node in self.ir.graph.nodes:
+        for node in ir.graph.nodes:
             if isinstance(node, ActionNode):
-                dep = next(d for d in self.ir.dependencies if d.digest == node.dependency and d.kind == "Action")
+                dep = next(d for d in ir.dependencies if d.digest == node.dependency and d.kind == "Action")
                 definition = cast(ActionDefinition, load_definition(dep.document))
                 steps[node.id] = (definition, node)
                 actions.setdefault("action:" + dep.reference, []).append((definition, node))
         for key, value in mocks.items():
             if key.startswith("node:"):
                 # node:<step> mocks every instance of an action step; node:<instance key> mocks one of them.
-                step = self._instance_node(key.removeprefix("node:"))
+                step = _instance_node(prepared, key.removeprefix("node:"))
                 if isinstance(step, CallWorkflowNode) and step.mode == "wait":
                     # A waiting call's mock stands for the whole called run.
-                    self._validate_call_mock(step, value)
+                    self._validate_call_mock(ir, step, value)
                     continue
                 targets = [steps[step.id]] if step is not None and step.id in steps else []
             else:
@@ -146,15 +239,16 @@ class Simulator:
                 raise DebugError("WV-DEBUG-MOCK-KEY")
             try:
                 for definition, node in targets:
-                    validate_action(self.ir, definition, "output", value, node=node)
+                    validate_action(ir, definition, "output", value, node=node)
             except ValueError:
                 raise DebugError("WV-DEBUG-MOCK-OUTPUT") from None
 
-    def _validate_call_mock(self, node: CallWorkflowNode, value: JsonValue) -> None:
+    @staticmethod
+    def _validate_call_mock(ir: WorkflowIR, node: CallWorkflowNode, value: JsonValue) -> None:
         """The called workflow's output for a call that stops on failure, or the whole envelope when it continues."""
-        output = cast(JsonObject, called_workflow(self.ir, node)[1]["outputSchema"])
+        output = cast(JsonObject, called_workflow(ir, node)[1]["outputSchema"])
         try:
-            validate(self.ir, call_output_schema(node.mode, node.on_failure, output), value)
+            validate(ir, call_output_schema(node.mode, node.on_failure, output), value)
             if node.on_failure == "continue":
                 envelope = cast(JsonObject, value)
                 succeeded = envelope["status"] == "succeeded"
@@ -162,7 +256,7 @@ class Simulator:
                 if ("output" in envelope) != succeeded or ("error" in envelope) == succeeded:
                     raise ValueError("Inconsistent call envelope")
                 if succeeded:
-                    validate(self.ir, output, envelope["output"])
+                    validate(ir, output, envelope["output"])
         except ValueError:
             raise DebugError("WV-DEBUG-MOCK-OUTPUT") from None
 
@@ -177,7 +271,9 @@ class Simulator:
         result._prepared = prepare(result.artifact)
         result.ir = result._prepared.ir
         result._unchecked = result._unchecked_bytes = 0
-        result._validate_mocks(data.mocks)
+        result._validate_mocks(result._prepared, data.mocks)
+        called = result._called_workflows(dict(data.workflows))
+        result._workflows = {"": _Workflow("", result.artifact, result._prepared, data.mocks), **called}
         result.data = data
         result._bounded()
         return result
@@ -192,7 +288,7 @@ class Simulator:
             d.node_count > limits.node_reductions
             or d.fact_count > limits.facts
             or d.command_count > limits.commands
-            or len(d.signals) > limits.pending_signals
+            or sum(len(run.signals) for _, run in self._runs()) > limits.pending_signals
             or d.virtual_seconds > limits.virtual_seconds
             or len(self.serialize().encode()) > limits.session_bytes
         ):
@@ -223,16 +319,44 @@ class Simulator:
             {"id": identifier or self._identity(), "type": kind, "data": data, "timestamp": self.data.now}
         )
 
+    def _runs(self) -> Iterator[tuple[str, Run]]:
+        """The session's runs: the simulated workflow (key "") first, then each frame in the order calls started."""
+        yield "", self.data
+        for frame in self.data.frames:
+            yield frame.key, frame
+
+    def _run(self, key: str) -> Run:
+        if not key:
+            return self.data
+        frame = next((frame for frame in self.data.frames if frame.key == key), None)
+        if frame is None or frame.state is None:
+            raise DebugError("WV-DEBUG-FRAME")
+        return frame
+
+    def _workflow(self, key: str) -> _Workflow:
+        return self._workflows[cast(FrameState, self._run(key)).workflow if key else ""]
+
+    def _current(self) -> tuple[str, Run] | None:
+        """The run in the middle of an event; at most one run is, because a call starts only after its event."""
+        return next(((key, run) for key, run in self._runs() if run.cursor is not None), None)
+
     def _selected(self) -> str | None:
         cursor = self.data.cursor
         return cursor.ready[0] if cursor is not None and cursor.ready else None
 
-    def _loops(self, state: RunState) -> list[LoopView]:
+    def _selected_path(self) -> str | None:
+        """The next node to reduce, prefixed with its frame key inside a called workflow (``enrich/validate``)."""
+        current = self._current()
+        if current is None or current[1].cursor is None or not current[1].cursor.ready:
+            return None
+        return _path(current[0], current[1].cursor.ready[0])
+
+    def _loops(self, prepared: PreparedWorkflow, state: RunState) -> list[LoopView]:
         """Every loop instance in ``state``: in definition order, an outer loop before the loops in its body."""
 
         def position(key: str) -> tuple[tuple[tuple[int, int | str], ...], tuple[int, ...]]:
             # Definition paths order steps; numeric segments compare as numbers (steps/2 before steps/10).
-            path = self._prepared.nodes[node_of(key)].path
+            path = prepared.nodes[node_of(key)].path
             segments = tuple((0, int(part)) if part.isdigit() else (1, part) for part in path.split("/"))
             return segments, split_instance(key).indexes
 
@@ -261,10 +385,38 @@ class Simulator:
         scope = loop_scope(self._prepared.nodes, state, self._prepared.nodes[node_of(selected)], selected)
         return SelectedScope.model_validate(scope) if scope else None
 
+    def _frame_view(self, frame: FrameState) -> FrameView:
+        if frame.state is None:
+            return FrameView(
+                key=frame.key,
+                workflow=frame.workflow,
+                call_node=frame.call_node,
+                mode=frame.mode,
+                status="not_simulated",
+                selected_node=None,
+                active_nodes=[],
+                variables={},
+            )
+        state = frame.cursor.result.state if frame.cursor else frame.state
+        cursor = frame.cursor
+        return FrameView(
+            key=frame.key,
+            workflow=frame.workflow,
+            call_node=frame.call_node,
+            mode=frame.mode,
+            run_id=frame_run_id(frame.key),
+            status=state.status,
+            selected_node=cursor.ready[0] if cursor is not None and cursor.ready else None,
+            active_nodes=list(state.active),
+            variables=state.model_dump(mode="json"),
+            loops=self._loops(self._workflows[frame.workflow].prepared, state),
+        )
+
     def inspect(self) -> DebugView:
         selected = self._selected()
         state = self.data.cursor.result.state if self.data.cursor else self.data.state
         status = "failed" if self.data.diagnostics else "paused" if self.data.paused else state.status
+        current = self._current()
         return DebugView(
             status=status,
             selected_node=selected,
@@ -276,8 +428,10 @@ class Simulator:
             boundary=self.data.boundaries[-1] if self.data.boundaries else None,
             boundaries=self.data.boundaries,
             now=self.data.now,
-            loops=self._loops(state),
+            loops=self._loops(self._prepared, state),
             selected_scope=self._scope(state, selected),
+            frames=[self._frame_view(frame) for frame in self.data.frames],
+            selected_frame=current[0] if current is not None and current[0] else None,
         ).model_copy(deep=True)
 
     def _stops_at(self, key: str) -> bool:
@@ -285,7 +439,7 @@ class Simulator:
         return key in self.data.breakpoints or node_of(key) in self.data.breakpoints
 
     def set_breakpoints(self, node_ids: set[str]) -> None:
-        if any(self._instance_node(key) is None for key in node_ids):
+        if any(_instance_node(self._prepared, key) is None for key in node_ids):
             raise DebugError("WV-DEBUG-BREAKPOINT")
 
         def change() -> None:
@@ -330,69 +484,72 @@ class Simulator:
     def _grown(self, value: object) -> None:
         self._unchecked_bytes += logical_size(value, TRANSITION_BYTES)
 
+    def _scheduled(self) -> tuple[str, Run, RuntimeEvent | None] | None:
+        """The run the next boundary belongs to: the one in the middle of an event, otherwise the deepest frame with
+        an event ready (frames at one depth in the order their calls started), the simulated workflow last.
+        """
+        current = self._current()
+        if current is not None:
+            return current[0], current[1], None
+        for key, run in sorted(self._runs(), key=lambda entry: -_depth(entry[0])):
+            if run.state is None or run.state.status in TERMINAL:
+                continue
+            event = self._eligible(key, run)
+            if event is not None:
+                return key, run, event
+        return None
+
     def _step(self) -> bool:
         d = self.data
-        if d.diagnostics or (d.cursor is None and d.state.status in TERMINAL):
+        if d.diagnostics:
             return False
-        if d.cursor is None:
-            event = self._eligible()
-            if event is None:
-                return False
-            event = event.model_copy(update={"sequence": d.state.accepted_sequence + 1})
-            d.cursor = begin(d.state, event, self.artifact)
-        cursor = d.cursor
+        scheduled = self._scheduled()
+        if scheduled is None:
+            return False
+        key, run, event = scheduled
+        called = self._workflow(key)
+        state = cast(RunState, run.state)
+        if event is not None:
+            event = event.model_copy(update={"sequence": state.accepted_sequence + 1})
+            run.cursor = begin(state, event, called.artifact)
+        cursor = cast(KernelCursor, run.cursor)
+        frame = key or None
         if cursor.admitted:
             if d.node_count >= self.limits.node_reductions:
                 raise DebugError("WV-DEBUG-LIMIT")
-            node = self._prepared.nodes[node_of(cursor.ready[0])]
-            boundary = Boundary(kind="node", node_id=cursor.ready[0], node_kind=node.kind)
+            node = called.prepared.nodes[node_of(cursor.ready[0])]
+            boundary = Boundary(kind="node", node_id=cursor.ready[0], node_kind=node.kind, frame=frame)
             d.node_count += 1
         else:
-            boundary = Boundary(kind="event", event_type=cursor.event.type)
-            d.events.append(cursor.event)
+            boundary = Boundary(kind="event", event_type=cursor.event.type, frame=frame)
+            run.events.append(cursor.event)
             self._grown(cursor.event.data)
         changed = len(cursor.result.steps)
-        d.cursor = _advance_owned(cursor, self._prepared)
-        for change in d.cursor.result.steps[changed:]:
+        run.cursor = _advance_owned(cursor, called.prepared)
+        for change in run.cursor.result.steps[changed:]:
             self._grown(change.output)
         d.boundaries.append(boundary)
-        if d.cursor.done:
-            result = d.cursor.result
-            d.state = result.state
-            d.cursor = None
+        if run.cursor.done:
+            result = run.cursor.result
+            run.state = result.state
+            run.cursor = None
             # Measured context parts last one event, as in production, where every transition prepares its own.
-            self._prepared.contexts.parts.clear()
+            called.prepared.contexts.parts.clear()
             for command in result.commands:
                 if isinstance(command, Deadline):
-                    d.deadlines.append(command)
-                elif isinstance(command, CallIntent) and command.mode == "wait":
-                    candidates = list(dict.fromkeys(["node:" + command.node_id, "node:" + node_of(command.node_id)]))
-                    key = next((key for key in candidates if key in d.mocks), None)
-                    if key is None:
-                        d.diagnostics = [
-                            Diagnostic(
-                                code="WV-DEBUG-MISSING_MOCK",
-                                severity="error",
-                                stage="evaluation",
-                                path="",
-                                message="A step that waits for another workflow needs a mock or the called workflow.",
-                                hint="Add a mock under "
-                                + ", ".join(candidates)
-                                + f", or the artifact of {command.workflow_reference} under workflows.",
-                            )
-                        ]
+                    run.deadlines.append(command)
+                elif isinstance(command, CallIntent):
+                    if not self._call(key, run, called, command):
                         return True
-                    d.pending.append(self._event("call_completed", self._mocked_call(command, d.mocks[key])))
-                    self._grown(d.mocks[key])
                 elif isinstance(command, TaskIntent):
                     # A step mock applies to every instance of the step.
-                    key = "node:" + command.node_id
-                    if key not in d.mocks:
-                        key = "node:" + node_of(command.node_id)
-                    if key not in d.mocks:
-                        key = "action:" + command.action_reference
-                    if key not in d.mocks:
-                        tried = dict.fromkeys(["node:" + command.node_id, "node:" + node_of(command.node_id), key])
+                    mock = "node:" + command.node_id
+                    if mock not in called.mocks:
+                        mock = "node:" + node_of(command.node_id)
+                    if mock not in called.mocks:
+                        mock = "action:" + command.action_reference
+                    if mock not in called.mocks:
+                        tried = dict.fromkeys(["node:" + command.node_id, "node:" + node_of(command.node_id), mock])
                         d.diagnostics = [
                             Diagnostic(
                                 code="WV-DEBUG-MISSING_MOCK",
@@ -400,18 +557,71 @@ class Simulator:
                                 stage="evaluation",
                                 path="",
                                 message="An action requires an explicit mock.",
-                                hint="Add a mock under " + ", ".join(tried) + ".",
+                                hint="Add a mock under "
+                                + ", ".join(tried)
+                                + (f" in the mocks of {called.reference}" if called.reference else "")
+                                + ".",
                             )
                         ]
                         return True
-                    d.pending.append(
-                        self._event("task_completed", {"node_id": command.node_id, "output": d.mocks[key]})
+                    run.pending.append(
+                        self._event("task_completed", {"node_id": command.node_id, "output": called.mocks[mock]})
                     )
-                    self._grown(d.mocks[key])
+                    self._grown(called.mocks[mock])
+            if result.state.status in TERMINAL:
+                self._ended(key)
         return True
 
+    def _call(self, key: str, run: Run, called: _Workflow, command: CallIntent) -> bool:
+        """Answer a call from a mock, or start a frame that runs the called workflow; False when it cannot."""
+        d = self.data
+        child = _path(key, command.node_id)
+        if command.mode == "wait":
+            candidates = list(dict.fromkeys(["node:" + command.node_id, "node:" + node_of(command.node_id)]))
+            mock = next((mock for mock in candidates if mock in called.mocks), None)
+            if mock is not None:
+                value = called.mocks[mock]
+                run.pending.append(self._event("call_completed", self._mocked_call(child, command, value)))
+                self._grown(value)
+                return True
+        if command.workflow_reference in self._workflows:
+            if _depth(child) > self.limits.call_depth:
+                raise DebugError("WV-DEBUG-LIMIT")
+            frame = FrameState(
+                key=child,
+                workflow=command.workflow_reference,
+                call_node=command.node_id,
+                mode=command.mode,
+                on_failure=command.on_failure,
+                state=RunState(input=command.input),
+            )
+            d.frames.append(frame)
+            frame.pending.append(self._event("started", {}))
+            self._grown(command.input)
+            return True
+        if command.mode == "detach":
+            # A detached call continues at once; without its workflow, its run is shown as not simulated.
+            d.frames.append(
+                FrameState(key=child, workflow=command.workflow_reference, call_node=command.node_id, mode="detach")
+            )
+            return True
+        d.diagnostics = [
+            Diagnostic(
+                code="WV-DEBUG-MISSING_MOCK",
+                severity="error",
+                stage="evaluation",
+                path="",
+                message="A step that waits for another workflow needs a mock or the called workflow.",
+                hint="Add a mock under "
+                + ", ".join(candidates)
+                + (f" in the mocks of {called.reference}" if called.reference else "")
+                + f", or the artifact of {command.workflow_reference} under workflows.",
+            )
+        ]
+        return False
+
     @staticmethod
-    def _mocked_call(command: CallIntent, value: JsonValue) -> JsonObject:
+    def _mocked_call(key: str, command: CallIntent, value: JsonValue) -> JsonObject:
         """The recorded outcome a mocked call delivers, shaped like the outcome of a real child run."""
         data: JsonObject = {"node_id": command.node_id, "generation": 0}
         if command.on_failure == "continue":
@@ -419,58 +629,104 @@ class Simulator:
             status = cast(str, envelope["status"])
             outcome = envelope["output"] if status == "succeeded" else envelope["error"]
             return data | {"child_run_id": envelope["runId"], "status": status, "output": outcome}
-        return data | {"child_run_id": str(frame_run_id(command.node_id)), "status": "succeeded", "output": value}
+        return data | {"child_run_id": str(frame_run_id(key)), "status": "succeeded", "output": value}
 
-    def _eligible(self) -> RuntimeEvent | None:
-        d = self.data
-        durations = duration_steps(self.ir)
-        deferred = {e.data.get("node_id") for e in d.state.deferred_results}
-        deadlines = sorted(d.deadlines, key=lambda v: deadline_order(v.node_id, v.deadline, durations))
+    def _ended(self, key: str) -> None:
+        """A run ended: cancel its waiting frames, and deliver a waiting frame's outcome to the run that called it.
+
+        As on a platform, a caller that ends cancels the children it waits for and theirs, detached children keep
+        running, and an outcome reaches a caller only while that caller still waits for it.
+        """
+        for frame in self.data.frames:
+            waiting = frame.mode == "wait" and frame.state is not None and frame.state.status not in TERMINAL
+            if waiting and _parent(frame.key) == key:
+                self._cancel(frame)
+        if not key:
+            return
+        frame = cast(FrameState, self._run(key))
+        caller = self._run(_parent(key))
+        state, caller_state = cast(RunState, frame.state), cast(RunState, caller.state)
+        if frame.mode != "wait" or caller_state.status in TERMINAL or frame.call_node not in caller_state.active:
+            return
+        data: JsonObject = {"node_id": frame.call_node, "generation": 0}
+        if frame.on_failure == "stop" and state.status in STOPPED:
+            event = self._event("incident_opened", data | {"code": "WV-CALL-INTERRUPTED"})
+        else:
+            output = call_result(state.status, state.output, None)[0]
+            outcome = {"child_run_id": str(frame_run_id(key)), "status": state.status, "output": output}
+            event = self._event("call_completed", data | outcome)
+            self._grown(output)
+        frame.result = event.id
+        caller.pending.append(event)
+
+    def _cancel(self, frame: FrameState) -> None:
+        """Cancel a waiting frame whose caller ended, as a platform's cancellation of a child run does."""
+        state = cast(RunState, frame.state)
+        event = self._event("cancelled", {"reason": "Caller run ended"}).model_copy(
+            update={"sequence": state.accepted_sequence + 1}
+        )
+        frame.state = transition(state, event, self._workflows[frame.workflow].artifact).state
+        frame.events.append(event)
+        frame.pending, frame.deadlines, frame.signals = [], [], []
+        self.data.boundaries.append(Boundary(kind="event", event_type="cancelled", frame=frame.key))
+        self._ended(frame.key)
+
+    def _eligible(self, key: str, run: Run) -> RuntimeEvent | None:
+        ir = self._workflow(key).ir
+        state = cast(RunState, run.state)
+        durations = duration_steps(ir)
+        deferred = {e.data.get("node_id") for e in state.deferred_results}
+        deadlines = sorted(run.deadlines, key=lambda v: deadline_order(v.node_id, v.deadline, durations))
         for deadline in deadlines:
-            if deadline.deadline > d.now or deadline.node_id in deferred:
+            if deadline.deadline > self.data.now or deadline.node_id in deferred:
                 continue
-            if deadline.node_id != "@run" and deadline.node_id not in d.state.active:
+            if deadline.node_id != "@run" and deadline.node_id not in state.active:
                 continue
-            if deadline.name and any(s.name == deadline.name and s.accepted_at < deadline.deadline for s in d.signals):
+            if deadline.name and any(
+                s.name == deadline.name and s.accepted_at < deadline.deadline for s in run.signals
+            ):
                 continue
-            d.deadlines.remove(deadline)
+            run.deadlines.remove(deadline)
             return self._event(
                 "wait_elapsed" if node_of(deadline.node_id) in durations else "timed_out",
                 {"node_id": deadline.node_id, "deadline": deadline.deadline.isoformat()},
             )
-        for node in self.ir.graph.nodes:
-            if not isinstance(node, SignalNode) or node.id not in d.state.active or node.id in deferred:
+        for node in ir.graph.nodes:
+            if not isinstance(node, SignalNode) or node.id not in state.active or node.id in deferred:
                 continue
             matches = sorted(
-                (s for s in d.signals if s.name == node.name and s.accepted_at < d.state.waits[node.id]),
+                (s for s in run.signals if s.name == node.name and s.accepted_at < state.waits[node.id]),
                 key=lambda s: (s.accepted_at, s.id),
             )
             if matches:
                 receipt = matches[0]
-                d.signals.remove(receipt)
+                run.signals.remove(receipt)
                 return self._event(
                     "signal_received",
                     {
                         "node_id": node.id,
                         "output": receipt.payload,
                         "accepted_at": receipt.accepted_at.isoformat(),
-                        "deadline": d.state.waits[node.id].isoformat(),
+                        "deadline": state.waits[node.id].isoformat(),
                     },
                     identifier=receipt.id,
                 )
-        return d.pending.pop(0) if d.pending else None
+        return run.pending.pop(0) if run.pending else None
 
-    def human_decision(self, node_id: str, payload: JsonValue) -> DebugView:
+    def human_decision(self, node_id: str, payload: JsonValue, *, frame: str | None = None) -> DebugView:
         def receive() -> None:
+            run = self._run(frame or "")
+            ir = self._workflow(frame or "").ir
+            state = cast(RunState, run.state)
             try:
                 step = node_of(node_id)
             except InvalidInstanceKey:
                 raise DebugError("WV-DEBUG-HUMAN-TASK") from None
-            node = next((n for n in self.ir.graph.nodes if isinstance(n, HumanTaskNode) and n.id == step), None)
-            if node is None or node_id not in self.data.state.active or self.data.state.status in TERMINAL:
+            node = next((n for n in ir.graph.nodes if isinstance(n, HumanTaskNode) and n.id == step), None)
+            if node is None or node_id not in state.active or state.status in TERMINAL:
                 raise DebugError("WV-DEBUG-HUMAN-TASK")
             validate(
-                self.ir,
+                ir,
                 {
                     "type": "object",
                     "properties": {
@@ -482,21 +738,23 @@ class Simulator:
                 },
                 payload,
             )
-            self.data.pending.append(self._event("human_completed", {"node_id": node_id, "output": payload}))
+            run.pending.append(self._event("human_completed", {"node_id": node_id, "output": payload}))
 
         return self._mutate(receive)
 
-    def signal(self, name: str, payload: JsonValue) -> DebugView:
+    def signal(self, name: str, payload: JsonValue, *, frame: str | None = None) -> DebugView:
         def receive() -> None:
-            if self.data.state.status in TERMINAL:
+            run = self._run(frame or "")
+            ir = self._workflow(frame or "").ir
+            if cast(RunState, run.state).status in TERMINAL:
                 raise DebugError("WV-DEBUG-STATE")
-            node = next((n for n in self.ir.graph.nodes if isinstance(n, SignalNode) and n.name == name), None)
+            node = next((n for n in ir.graph.nodes if isinstance(n, SignalNode) and n.name == name), None)
             if node is None:
                 raise DebugError("WV-DEBUG-SIGNAL")
-            validate(self.ir, self.ir.schemas[node.schema_ref], payload)
-            if len(self.data.signals) >= self.limits.pending_signals:
+            validate(ir, ir.schemas[node.schema_ref], payload)
+            if sum(len(other.signals) for _, other in self._runs()) >= self.limits.pending_signals:
                 raise DebugError("WV-DEBUG-LIMIT")
-            self.data.signals.append(
+            run.signals.append(
                 SignalReceipt(id=self._identity(), name=name, payload=payload, accepted_at=self.data.now)
             )
 

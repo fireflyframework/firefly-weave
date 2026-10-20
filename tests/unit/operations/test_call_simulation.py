@@ -17,6 +17,8 @@
 """Debug sessions simulate workflow calls: a mock for a whole call, or a frame that runs the called workflow."""
 
 import json
+import subprocess
+import sys
 from datetime import UTC, datetime
 
 import pytest
@@ -24,7 +26,7 @@ import pytest
 from firefly_weave.compiler.api import CompiledArtifact, compile_source
 from firefly_weave.compiler.catalog import CatalogSnapshot
 from firefly_weave.contracts.definitions import load_definition
-from firefly_weave.operations.debug.models import DebugError
+from firefly_weave.operations.debug.models import CalledWorkflow, DebugError, DebugLimits
 from firefly_weave.operations.debug.simulator import Simulator, frame_run_id
 
 NOW = datetime(2026, 10, 20, tzinfo=UTC)
@@ -93,7 +95,10 @@ ENRICH = workflow(
     {"ref": "/steps/pick/output"},
 )
 REFUSE = workflow(
-    "refuse", [{"id": "stop", "kind": "fail", "code": "NO_CUSTOMER", "message": "Unknown customer."}], {"literal": None}
+    "refuse",
+    [{"id": "stop", "kind": "fail", "code": "NO_CUSTOMER", "message": "Unknown customer."}],
+    {"literal": None},
+    output_schema={},
 )
 HOLD = workflow(
     "hold",
@@ -281,3 +286,233 @@ def test_a_session_with_call_mocks_restores_and_continues_the_same_way():
         simulator.next()
     restored = Simulator.restore(simulator.serialize())
     assert restored.continue_until_breakpoint() == simulator.continue_until_breakpoint()
+
+
+def artifact_of(document) -> dict:
+    return json.loads(compiled(document).to_bytes())
+
+
+def frames(view):
+    return [(frame.key, frame.workflow, frame.call_node, frame.mode, frame.status) for frame in view.frames]
+
+
+def enrich_called(**mocks):
+    return {"enrich@1.0.0": CalledWorkflow(artifact=artifact_of(ENRICH), mocks=mocks or {"node:validate": 5})}
+
+
+def test_a_waiting_call_runs_the_called_workflow_in_a_frame_and_continues_with_its_output():
+    artifact = caller([call()], {"ref": "/steps/enrich/output"})
+    simulator = Simulator(artifact, mocks={}, input={"customerId": "c-1"}, now=NOW, workflows=enrich_called())
+    view = simulator.continue_until_breakpoint()
+    assert (view.status, view.variables["output"]) == ("succeeded", {"tier": "gold", "score": 5})
+    assert frames(view) == [("enrich", "enrich@1.0.0", "enrich", "wait", "succeeded")]
+    frame = view.frames[0]
+    assert (frame.run_id, frame.selected_node, frame.active_nodes) == (frame_run_id("enrich"), None, [])
+    assert (frame.variables["input"], frame.variables["output"]) == (
+        {"customerId": "c-1"},
+        {"tier": "gold", "score": 5},
+    )
+    assert calls(view) == [
+        {
+            "node_id": "enrich",
+            "generation": 0,
+            "child_run_id": str(frame_run_id("enrich")),
+            "status": "succeeded",
+            "output": {"tier": "gold", "score": 5},
+        }
+    ]
+    # The called workflow's boundaries run between the call step and the caller accepting its outcome.
+    trace = [(b.frame, b.event_type or b.node_id) for b in view.boundaries]
+    call_step, outcome = trace.index((None, "enrich")), trace.index((None, "call_completed"))
+    inside = trace[call_step + 1 : outcome]
+    assert inside[0] == ("enrich", "started") and ("enrich", "validate") in inside
+    assert all(frame == "enrich" for frame, _ in inside)
+
+
+def test_a_mock_on_the_call_wins_over_the_called_workflow():
+    artifact = caller([call()], {"ref": "/steps/enrich/output"})
+    mocks = {"node:enrich": {"tier": "silver", "score": 1}}
+    view = Simulator(artifact, mocks=mocks, input={"customerId": "c-1"}, now=NOW, workflows=enrich_called())
+    finished = view.continue_until_breakpoint()
+    assert (finished.variables["output"], finished.frames) == ({"tier": "silver", "score": 1}, [])
+
+
+def test_a_failing_child_fails_a_caller_that_stops_and_fills_the_envelope_of_one_that_continues():
+    workflows = {"refuse@1.0.0": CalledWorkflow(artifact=artifact_of(REFUSE))}
+    stops = caller([call(uses="refuse@1.0.0")], {"ref": "/steps/enrich/output"}, REFUSE)
+    view = Simulator(
+        stops, mocks={}, input={"customerId": "c-1"}, now=NOW, workflows=workflows
+    ).continue_until_breakpoint()
+    assert (view.status, view.variables["output"]) == (
+        "failed",
+        {"code": "NO_CUSTOMER", "message": "Unknown customer."},
+    )
+    assert frames(view) == [("enrich", "refuse@1.0.0", "enrich", "wait", "failed")]
+    continues = caller([call(uses="refuse@1.0.0", onFailure="continue")], {"ref": "/steps/enrich/output"}, REFUSE)
+    view = Simulator(continues, mocks={}, input={"customerId": "c-1"}, now=NOW, workflows=workflows)
+    assert view.continue_until_breakpoint().variables["output"] == {
+        "status": "failed",
+        "runId": str(frame_run_id("enrich")),
+        "error": {"code": "NO_CUSTOMER", "message": "Unknown customer."},
+    }
+
+
+def test_a_child_that_times_out_interrupts_a_caller_that_stops_and_reports_to_one_that_continues():
+    workflows = {"hold@1.0.0": CalledWorkflow(artifact=artifact_of(HOLD))}
+    stops = Simulator(
+        caller([call(uses="hold@1.0.0")], {"ref": "/steps/enrich/output"}, HOLD),
+        mocks={},
+        input={"customerId": "c-1"},
+        now=NOW,
+        workflows=workflows,
+    )
+    waiting = stops.continue_until_breakpoint()
+    assert (waiting.status, frames(waiting)) == ("waiting", [("enrich", "hold@1.0.0", "enrich", "wait", "waiting")])
+    assert waiting.frames[0].active_nodes == ["release"]
+    stops.advance_time(3600)
+    view = stops.continue_until_breakpoint()
+    assert (view.status, view.variables["incident"], view.frames[0].status) == (
+        "suspended",
+        "WV-CALL-INTERRUPTED",
+        "timed_out",
+    )
+    continues = Simulator(
+        caller([call(uses="hold@1.0.0", onFailure="continue")], {"ref": "/steps/enrich/output"}, HOLD),
+        mocks={},
+        input={"customerId": "c-1"},
+        now=NOW,
+        workflows=workflows,
+    )
+    continues.continue_until_breakpoint()
+    continues.advance_time(3600)
+    assert continues.continue_until_breakpoint().variables["output"] == {
+        "status": "timed_out",
+        "runId": str(frame_run_id("enrich")),
+        "error": {"code": "WV-RUN-TIMED_OUT", "message": "The called run timed out."},
+    }
+
+
+def test_a_detached_call_runs_its_frame_after_the_caller_finished_or_is_shown_as_not_simulated():
+    artifact = caller([call("audit", uses="hold@1.0.0", mode="detach")], {"literal": "sent"}, HOLD)
+    workflows = {"hold@1.0.0": CalledWorkflow(artifact=artifact_of(HOLD))}
+    simulator = Simulator(artifact, mocks={}, input={"customerId": "c-1"}, now=NOW, workflows=workflows)
+    view = simulator.continue_until_breakpoint()
+    assert (view.status, frames(view)) == ("succeeded", [("audit", "hold@1.0.0", "audit", "detach", "waiting")])
+    simulator.signal("release", {}, frame="audit")
+    assert frames(simulator.continue_until_breakpoint())[0][-1] == "succeeded"
+    alone = Simulator(artifact, mocks={}, input={"customerId": "c-1"}, now=NOW).continue_until_breakpoint()
+    assert (alone.status, frames(alone)) == ("succeeded", [("audit", "hold@1.0.0", "audit", "detach", "not_simulated")])
+    assert alone.frames[0].model_dump(mode="json", exclude={"variables"}) == {
+        "key": "audit",
+        "workflow": "hold@1.0.0",
+        "call_node": "audit",
+        "mode": "detach",
+        "status": "not_simulated",
+        "selected_node": None,
+        "active_nodes": [],
+    }
+
+
+def test_a_caller_that_ends_cancels_its_waiting_children_and_leaves_detached_ones_running():
+    steps = [call("audit", uses="hold@1.0.0", mode="detach"), call(uses="hold@1.0.0")]
+    artifact = caller(steps, {"ref": "/steps/enrich/output"}, HOLD, timeout=60)
+    workflows = {"hold@1.0.0": CalledWorkflow(artifact=artifact_of(HOLD))}
+    simulator = Simulator(artifact, mocks={}, input={"customerId": "c-1"}, now=NOW, workflows=workflows)
+    simulator.continue_until_breakpoint()
+    simulator.advance_time(60)
+    view = simulator.continue_until_breakpoint()
+    assert view.status == "timed_out"
+    assert frames(view) == [
+        ("audit", "hold@1.0.0", "audit", "detach", "waiting"),
+        ("enrich", "hold@1.0.0", "enrich", "wait", "cancelled"),
+    ]
+
+
+OUTER = workflow("outer", [call()], {"ref": "/steps/enrich/output"})
+
+
+def test_calls_nest_up_to_the_session_depth_and_a_deeper_call_is_refused_whole():
+    artifact = caller([call(uses="outer@1.0.0")], {"ref": "/steps/enrich/output"}, OUTER)
+    outer = json.loads(compiled(OUTER, ENRICH).to_bytes())
+    workflows = {"outer@1.0.0": CalledWorkflow(artifact=outer)} | enrich_called()
+    nested = Simulator(artifact, mocks={}, input={"customerId": "c-1"}, now=NOW, workflows=workflows)
+    view = nested.continue_until_breakpoint()
+    assert (view.variables["output"], [frame.key for frame in view.frames]) == (
+        {"tier": "gold", "score": 5},
+        ["enrich", "enrich/enrich"],
+    )
+    shallow = Simulator(
+        artifact, mocks={}, input={"customerId": "c-1"}, now=NOW, workflows=workflows, limits=DebugLimits(call_depth=1)
+    )
+    before = shallow.inspect()
+    with pytest.raises(DebugError, match="WV-DEBUG-LIMIT"):
+        shallow.continue_until_breakpoint()
+    assert shallow.inspect() == before
+
+
+def test_called_workflows_must_be_the_versions_the_workflow_calls():
+    artifact = caller([call()], {"ref": "/steps/enrich/output"})
+    other_output = workflow(
+        "enrich", ENRICH["spec"]["steps"], {"ref": "/steps/pick/output"}, output_schema={"type": "object"}
+    )
+    cases = [
+        {"enrich@1.0.0": CalledWorkflow(artifact=artifact_of(other_output))},  # another interface
+        {"enrich@1.0.0": CalledWorkflow(artifact=artifact_of(HOLD))},  # another workflow
+        enrich_called() | {"hold@1.0.0": CalledWorkflow(artifact=artifact_of(HOLD))},  # not called
+        {"enrich@1.0.0": CalledWorkflow(mocks={"node:validate": 5})},  # no artifact
+    ]
+    for workflows in cases:
+        with pytest.raises(DebugError, match="WV-DEBUG-WORKFLOW"):
+            Simulator(artifact, mocks={}, input={"customerId": "c-1"}, now=NOW, workflows=workflows)
+    with pytest.raises(DebugError, match="WV-DEBUG-MOCK-KEY"):
+        Simulator(artifact, mocks={}, input={"customerId": "c-1"}, now=NOW, workflows=enrich_called(**{"node:pick": 1}))
+    with pytest.raises(DebugError, match="WV-DEBUG-MOCK-OUTPUT"):
+        Simulator(
+            artifact, mocks={}, input={"customerId": "c-1"}, now=NOW, workflows=enrich_called(**{"node:validate": "x"})
+        )
+
+
+def test_a_missing_mock_inside_a_frame_names_the_called_workflow():
+    artifact = caller([call()], {"ref": "/steps/enrich/output"})
+    workflows = {"enrich@1.0.0": CalledWorkflow(artifact=artifact_of(ENRICH))}
+    view = Simulator(
+        artifact, mocks={}, input={"customerId": "c-1"}, now=NOW, workflows=workflows
+    ).continue_until_breakpoint()
+    assert [(d.code, d.hint) for d in view.diagnostics] == [
+        (
+            "WV-DEBUG-MISSING_MOCK",
+            "Add a mock under node:validate, action:echo-action@2.0.0 in the mocks of enrich@1.0.0.",
+        )
+    ]
+
+
+def test_a_session_with_frames_restores_and_continues_the_same_way():
+    artifact = caller([each_customer()], {"ref": "/steps/each/output"}, input_schema=CUSTOMERS)
+    simulator = Simulator(artifact, mocks={}, input={"customers": ["a", "b"]}, now=NOW, workflows=enrich_called())
+    for _ in range(12):
+        simulator.next()
+    assert simulator.inspect().frames
+    restored = Simulator.restore(simulator.serialize())
+    assert restored.inspect() == simulator.inspect()
+    finished = restored.continue_until_breakpoint()
+    assert finished == simulator.continue_until_breakpoint()
+    assert [frame.key for frame in finished.frames] == ["enrich[0]", "enrich[1]"]
+
+
+def test_sessions_without_calls_keep_their_stored_and_viewed_shape():
+    artifact = compiled(workflow("plain", [], {"literal": {"tier": "a", "score": 1}}, callable_=False))
+    simulator = Simulator(artifact, mocks={}, input={"customerId": "c-1"}, now=NOW)
+    view = simulator.continue_until_breakpoint().model_dump(mode="json")
+    assert {"frames", "selected_frame"}.isdisjoint(view)
+    assert all("frame" not in boundary for boundary in view["boundaries"])
+    assert {"workflows", "frames"}.isdisjoint(json.loads(simulator.serialize()))
+
+
+def test_the_simulator_imports_no_server_packages():
+    probe = (
+        "import sys; import firefly_weave.operations.debug.simulator; "
+        "print(sorted({'asyncpg', 'opentelemetry', 'pyfly', 'sqlalchemy', 'starlette'} "
+        "& {name.split('.')[0] for name in sys.modules}))"
+    )
+    result = subprocess.run([sys.executable, "-I", "-c", probe], capture_output=True, text=True, check=True)
+    assert result.stdout.strip() == "[]"
