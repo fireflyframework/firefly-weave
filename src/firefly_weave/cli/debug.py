@@ -24,7 +24,14 @@ import click
 from firefly_weave.cli import LocalError, emit_result, error_result, read_bounded
 from firefly_weave.compiler.api import import_artifact
 from firefly_weave.compiler.ir import UnsupportedIR
-from firefly_weave.operations.debug.models import DebugCommand, DebugCreate, DebugError, DebugLimits
+from firefly_weave.operations.debug.models import (
+    CalledWorkflow,
+    DebugCommand,
+    DebugCreate,
+    DebugError,
+    DebugLimits,
+    DebugView,
+)
 from firefly_weave.operations.debug.simulator import Simulator
 
 
@@ -35,16 +42,43 @@ from firefly_weave.operations.debug.simulator import Simulator
     type=click.Path(path_type=Path),
     help="JSON array of next/continue/signal/advance_time/breakpoints commands.",
 )
+@click.option(
+    "--workflow",
+    "called",
+    multiple=True,
+    metavar="REF=ARTIFACT.json",
+    help="The compiled artifact of a workflow version a call runs, to step into it; repeat for each version.",
+)
 @click.option("--output", type=click.Choice(["text", "json"]), default="text")
-def simulate(request_file: Path, commands: Path | None, output: str) -> None:
+def simulate(request_file: Path, commands: Path | None, called: tuple[str, ...], output: str) -> None:
     """Simulate a local JSON {artifact,mocks,input,now} request with no external effects."""
+    artifacts: dict[str, Path] = {}
+    for value in called:
+        reference, separator, path = value.partition("=")
+        if not separator or "@" not in reference or not path:
+            raise click.BadParameter(
+                "Use REF=ARTIFACT.json, such as enrich@1.0.0=enrich.json.", param_hint="--workflow"
+            )
+        artifacts[reference] = Path(path)
     try:
         request_bytes = read_bounded(request_file, DebugLimits().session_bytes)
         if len(request_bytes) > DebugLimits().session_bytes:
             raise DebugError("WV-DEBUG-LIMIT")
         request = DebugCreate.model_validate_json(request_bytes)
+        if request.resolve_workflows:
+            # Published versions live on a platform; a local simulation takes their artifacts from --workflow.
+            raise DebugError("WV-DEBUG-WORKFLOW")
+        workflows = dict(request.workflows)
+        for reference, location in artifacts.items():
+            mocks = workflows[reference].mocks if reference in workflows else {}
+            artifact = json.loads(read_bounded(location, DebugLimits().session_bytes))
+            workflows[reference] = CalledWorkflow(artifact=artifact, mocks=mocks)
         simulator = Simulator(
-            import_artifact(request.artifact), mocks=request.mocks, input=request.input, now=request.now
+            import_artifact(request.artifact),
+            mocks=request.mocks,
+            input=request.input,
+            now=request.now,
+            workflows=workflows,
         )
         if commands is None:
             view = simulator.continue_until_breakpoint()
@@ -73,15 +107,27 @@ def simulate(request_file: Path, commands: Path | None, output: str) -> None:
     if output == "json":
         click.echo(view.model_dump_json())
     else:
-        click.echo(f"Simulation {view.status}; {len(view.events)} accepted facts; {len(view.boundaries)} boundaries.")
-        if view.selected_node:
-            click.echo(f"Ready: {view.selected_node}")
-        for loop in view.loops:
-            click.echo(
-                f"Loop {loop.instance_key or loop.node_id}: {loop.completed} of {loop.count} items finished, "
-                f"{loop.running} running."
-            )
-        for diagnostic in view.diagnostics:
-            click.echo(f"{diagnostic.code}: {diagnostic.message}")
-    if view.status in {"failed", "suspended", "timed_out"}:
+        echo_view(view)
+    # A called workflow behind an incident never returns, so its caller waits for nothing.
+    if view.status in {"failed", "suspended", "timed_out"} or any(f.status == "suspended" for f in view.frames):
         raise SystemExit(1)
+
+
+def echo_view(view: DebugView) -> None:
+    click.echo(f"Simulation {view.status}; {len(view.events)} accepted facts; {len(view.boundaries)} boundaries.")
+    frames = {frame.key: frame for frame in view.frames}
+    if view.selected_frame is not None and frames[view.selected_frame].selected_node:
+        click.echo(f"Ready: {view.selected_frame}/{frames[view.selected_frame].selected_node}")
+    elif view.selected_node:
+        click.echo(f"Ready: {view.selected_node}")
+    loops = [("", loop) for loop in view.loops] + [(f.key + "/", loop) for f in view.frames for loop in f.loops]
+    for prefix, loop in loops:
+        click.echo(
+            f"Loop {prefix}{loop.instance_key or loop.node_id}: {loop.completed} of {loop.count} items finished, "
+            f"{loop.running} running."
+        )
+    for frame in view.frames:
+        status = frame.status.replace("not_simulated", "not simulated")
+        click.echo(f"Called workflow {frame.key} ({frame.workflow}): {status}.")
+    for diagnostic in view.diagnostics:
+        click.echo(f"{diagnostic.code}: {diagnostic.message}")
