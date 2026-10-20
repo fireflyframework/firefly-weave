@@ -236,7 +236,7 @@ class TaskError(ContractModel):
 class ClaimWorker(ContractModel):
     """The release a claiming worker runs, and whether it reports failures that applied nothing."""
 
-    release_id: UUID
+    release: UUID
     transaction_aware: bool = False
 
 

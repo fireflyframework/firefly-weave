@@ -80,7 +80,7 @@ every request needs a bearer access token plus a current grant in that scope.
 | --- | --- | --- |
 | Admit an immutable release | `/worker-releases` | A deployer sends `image_digest`, the exact `capabilities`, and optionally `credential_capabilities` and trusted `connector_bindings`; returns the release ID |
 | Register an instance | `/workers` | `release_id`, the exact `task_types`, and `capacity`; returns a worker ID owned by the authenticated principal |
-| Claim | `/tasks/claim` | `worker_id` and `limit` (1 to 100), and optionally `worker: {release_id, transaction_aware}`; returns zero or more `TaskLease` values |
+| Claim | `/tasks/claim` | `worker_id` and `limit` (1 to 100), and optionally `worker: {release, transaction_aware}`; returns zero or more `TaskLease` values |
 | Renew | `/tasks/heartbeat` | The current `LeaseProof`; returns the lease with its new expiry |
 | Complete | `/tasks/complete` | `lease`, a unique `completion_id`, and an `output` that matches the schema; returns the committed receipt |
 | Fail | `/tasks/fail` | `lease` and an `error` with `completion_id`, a bounded `code`, an `outcome` (`not_started`, `failed`, or `unknown`), and optionally `effect` (`none` when the failure applied nothing; `unknown`, the default, otherwise) |
@@ -141,7 +141,7 @@ when recovery creates a new generation.
   together with `outcome` `not_started` or `failed`; `effect: none` with
   `outcome: unknown` is refused (HTTP 422, `WV-COMPLETION-EFFECT`). A worker
   release declares that it reports this on purpose with
-  `worker: {release_id, transaction_aware: true}` on its claims, and a connector
+  `worker: {release, transaction_aware: true}` on its claims, and a connector
   action with `transactionAware: true`. The platform accepts these fields now and
   uses them once it runs transactions; a report from any other release counts as
   unknown, so the step is undone to be safe.

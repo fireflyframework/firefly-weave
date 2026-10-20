@@ -58,10 +58,15 @@ def test_a_claim_may_name_the_release_and_whether_it_is_transaction_aware():
     assert plain.model_dump(mode="json") == {"worker_id": str(worker), "limit": 5}
     aware = ClaimRequest.model_validate_json(
         json.dumps(
-            {"worker_id": str(worker), "limit": 5, "worker": {"release_id": str(release), "transaction_aware": True}}
+            {"worker_id": str(worker), "limit": 5, "worker": {"release": str(release), "transaction_aware": True}}
         )
     )
     assert aware.worker is not None and aware.worker.transaction_aware
+    assert aware.worker.release == release
+    with pytest.raises(ValidationError):
+        ClaimRequest.model_validate_json(
+            json.dumps({"worker_id": str(worker), "limit": 5, "worker": {"release_id": str(release)}})
+        )
     Draft202012Validator(export_schemas()["claim-request"]).validate(aware.model_dump(mode="json"))
 
 

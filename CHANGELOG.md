@@ -38,7 +38,7 @@ SPDX-License-Identifier: Apache-2.0
   `definiteFailures` (codes that mean nothing was applied) and
   `transactionAware`; a worker failure may report `effect: none`, and
   `effect: none` with `outcome: unknown` is refused (`422 WV-COMPLETION-EFFECT`);
-  claims accept `worker: {release_id, transaction_aware}`; workflows may declare
+  claims accept `worker: {release, transaction_aware}`; workflows may declare
   `spec.eventTrigger`, which this version defines but does not compile yet; and
   `weave schema export` writes `platform-event-v1`. `weave workflow explain` and
   `weave workflow graph` show transactions.
