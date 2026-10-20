@@ -58,7 +58,15 @@ import {
   saveStudioDocument,
 } from "./editor/state/studio-documents";
 import { CHECK_WORDS } from "./editor/state/test-data-check";
-import { entriesOf, withoutPin } from "./editor/state/test-data-ops";
+import {
+  containsRunData,
+  emptyTestData,
+  entriesOf,
+  withPin,
+  withoutPin,
+  withoutRunData,
+} from "./editor/state/test-data-ops";
+import { readTestData } from "./editor/state/test-data-read";
 import {
   TestDataService,
   type TestDataPlace,
@@ -75,6 +83,7 @@ import {
   staleText,
 } from "./editor/state/pins-stale";
 import type {
+  PinEntry,
   StudioDocument,
   StudioDocumentKind,
   StudioTestData,
@@ -2972,9 +2981,17 @@ export class App implements CanvasHost {
       this.cdr.markForCheck();
       return false;
     }
+    // Their test data goes with them; the toast's Undo brings both back.
+    const testBefore = this.testData.data();
+    const steps = this.model.stepIdSet();
+    const pruned = this.testData.prune((id) => steps.has(id));
+    const testVersion = this.testData.version();
     const what = one || `${ids.length} steps`;
     const revision = this.model.revision;
-    this.notify(`Deleted ${what}.`, {
+    const withData = pruned.length
+      ? ` and ${one ? "its" : "their"} pinned output`
+      : "";
+    this.notify(`Deleted ${what}${withData}.`, {
       label: "Undo",
       run: async () => {
         const done = await this.undoIfUnchanged(
@@ -2985,7 +3002,8 @@ export class App implements CanvasHost {
             `${one || "These steps"} can't come back from here: the workflow changed since. Use Undo in the toolbar.`,
           );
         if (done !== "undone") return;
-        this.notify(`Restored ${what}.`);
+        if (pruned.length) this.testData.restore(testBefore, testVersion);
+        this.notify(`Restored ${what}${withData}.`);
         if (one) this.focusStep(one);
       },
     });
@@ -3068,6 +3086,8 @@ export class App implements CanvasHost {
     if (!(await this.ensureApplied())) return;
     try {
       const count = this.model.renameStep(id, value);
+      // The step's test data follows its new ID.
+      this.testData.rename(id, value.trim());
       this.dirty = true;
       this.changed();
       this.error = "";
@@ -3648,7 +3668,7 @@ export class App implements CanvasHost {
     this.flushInspector();
     const before = this.model.definition;
     this.model.undo();
-    this.stepDetails.followRenames(renamedSteps(before, this.model.definition));
+    this.followRenames(renamedSteps(before, this.model.definition));
     this.dirty = true;
     this.changed();
   }
@@ -3671,6 +3691,11 @@ export class App implements CanvasHost {
     this.undo();
     return "undone";
   }
+  /** Steps an Undo or Redo renamed: entries in step details and their test data follow. */
+  private followRenames(renames: { from: string; to: string }[]) {
+    this.stepDetails.followRenames(renames);
+    for (const { from, to } of renames) this.testData.rename(from, to);
+  }
   redo() {
     if (this.editingLocked) return;
     if (this.sourcePending) {
@@ -3680,7 +3705,7 @@ export class App implements CanvasHost {
     this.cancelInspectorCommit();
     const before = this.model.definition;
     this.model.redo();
-    this.stepDetails.followRenames(renamedSteps(before, this.model.definition));
+    this.followRenames(renamedSteps(before, this.model.definition));
     this.dirty = true;
     this.changed();
   }
@@ -4127,6 +4152,7 @@ export class App implements CanvasHost {
       }),
     );
     if (this.error) return null;
+    if (Object.keys(planned.pins).length) void this.pastePins(planned.pins);
     const renamed = Object.keys(planned.renamed).length;
     this.notify(
       `Pasted ${planned.ids.length === 1 ? planned.ids[0] : `${planned.ids.length} steps`}.${
@@ -4136,6 +4162,51 @@ export class App implements CanvasHost {
       }`,
     );
     return planned;
+  }
+  /**
+   * Pasted steps bring their pinned output (never what runs recorded). Each
+   * value is checked as any pin is; one refused is dropped, and a toast says
+   * why once.
+   */
+  private async pastePins(pins: Readonly<Record<string, unknown>>) {
+    const service = this.testData;
+    const escape = (key: string) =>
+      key.replace(/~/g, "~0").replace(/\//g, "~1");
+    // What came from the clipboard is read as test data first: only well-formed pins go on.
+    const reading = readTestData({
+      ...emptyTestData(new Date().toISOString()),
+      pins,
+    });
+    let refusal = reading.ok ? "" : reading.reason;
+    let waiting: [string, PinEntry][] = reading.ok
+      ? Object.entries(reading.data.pins ?? {})
+      : [];
+    while (waiting.length) {
+      const at = new Date().toISOString();
+      let next = service.data();
+      for (const [key, entry] of waiting) next = withPin(next, key, entry, at);
+      const outcome = await service.change(
+        next,
+        waiting.map(([key]) => `/pins/${escape(key)}`),
+      );
+      if (outcome.ok) break;
+      refusal ||= outcome.message;
+      const refused = waiting.find(
+        ([key]) => `/pins/${escape(key)}` === outcome.pointer,
+      );
+      // Nothing to drop by pointer (the document changed meanwhile, say): none is pasted.
+      if (!refused) {
+        waiting = [];
+        break;
+      }
+      waiting = waiting.filter((pair) => pair !== refused);
+    }
+    if (refusal)
+      this.notify(
+        `Some pinned output wasn't pasted: ${refusal}`,
+        undefined,
+        "danger",
+      );
   }
   /** Tidy layout on the new canvas: one undo step, with an Undo toast. */
   tidyCanvas(next: CanvasSidecar | null): boolean {
@@ -6971,6 +7042,8 @@ export class App implements CanvasHost {
    * copy over it), in memory when no account can own it. False when it is
    * open already.
    */
+  /** The test data opening now; a file's test data waits for it. */
+  private testDataOpening: Promise<unknown> = Promise.resolve();
   openTestData(): boolean {
     if (!this.testData || !this.model) return false;
     const scope = this.profile ? this.accountScope() : null;
@@ -6982,9 +7055,12 @@ export class App implements CanvasHost {
     const key = JSON.stringify([place, this.model.opened]);
     if (key === this.testDataKey) return false;
     this.testDataKey = key;
-    if (place.kind === "connected")
-      void this.openPlatformTestData(place.scope, place.draftId);
-    else void this.testData.open(place);
+    // Failures are said where they happen; this only orders what waits.
+    this.testDataOpening = (
+      place.kind === "connected"
+        ? this.openPlatformTestData(place.scope, place.draftId)
+        : this.testData.open(place)
+    ).catch(() => undefined);
     return true;
   }
   /** Every step's fingerprints now, memoized on the workflow, its canvas and the test input. */
@@ -7032,6 +7108,9 @@ export class App implements CanvasHost {
         : { ...(input === undefined ? {} : { input }), pins };
     this.simulationDataMemo = { data, value };
     return value;
+  }
+  pinsForCopy(): Readonly<Record<string, PinEntry>> {
+    return this.testData.data().pins ?? {};
   }
   /** P on the canvas and the step menu: unpins the pinned steps as one Undo; never makes data (Ruling 19). */
   togglePins(ids: readonly string[]): void {
@@ -8203,6 +8282,17 @@ export class App implements CanvasHost {
             ),
           },
     ];
+    // The new editor's test data goes beside the workflow, after a word about run data.
+    if (this.editorNext) {
+      const testData = await this.testDataForFile();
+      if (testData === undefined) return;
+      if (testData)
+        files.push({
+          name: `${filename}.testdata.json`,
+          mime: "application/json",
+          content: JSON.stringify(testData, null, 2),
+        });
+    }
     const model = this.model;
     const deliveries = files.map((file) =>
       exportFile(file.name, file.mime, file.content),
@@ -8226,6 +8316,30 @@ export class App implements CanvasHost {
       console.error("Studio couldn't load the note for Save to file", error);
     }
     this.cdr.markForCheck();
+  }
+  /**
+   * The test data to save beside the workflow: null when it has nothing,
+   * undefined when the person cancelled. Data recorded from runs is saved
+   * only when they say so; otherwise it is left out.
+   */
+  private async testDataForFile(): Promise<StudioTestData | null | undefined> {
+    await this.testData.flush();
+    const data = this.testData.data();
+    if (!entriesOf(data).length) return null;
+    if (!containsRunData(data)) return data;
+    const run = entriesOf(data)
+      .map(({ entry }) => (entry as { runId?: unknown }).runId)
+      .find((id): id is string => typeof id === "string");
+    const choice = await this.dialogs.choose({
+      title: "Save data recorded from runs?",
+      message: `This file will include data from ${run ? `run ${run.slice(0, 4)}…` : "a run"}. Anyone with the file can read it.`,
+      confirmLabel: "Save without run data",
+      alternateLabel: "Save anyway",
+    });
+    if (choice === null) return undefined;
+    if (choice === "alternate") return data;
+    const kept = withoutRunData(data, new Date().toISOString());
+    return entriesOf(kept).length ? kept : null;
   }
   async copyExport(file: ExportedFile) {
     try {
@@ -8263,7 +8377,11 @@ export class App implements CanvasHost {
     input.value = "";
     if (file) await this.importWorkflow(file);
   }
-  async importWorkflow(file: File, canvasFile: File | null = null) {
+  async importWorkflow(
+    file: File,
+    canvasFile: File | null = null,
+    testDataFile: File | null = null,
+  ) {
     if (this.view === "designer" && !this.leaveInspector()) return;
     this.flushLocalSave();
     if (file.size > 1024 * 1024) {
@@ -8271,7 +8389,7 @@ export class App implements CanvasHost {
       return;
     }
     const generation = ++this.importGeneration;
-    const read = await readImport(file, canvasFile);
+    const read = await readImport(file, canvasFile, testDataFile);
     if (!read) {
       if (generation === this.importGeneration) {
         this.error =
@@ -8310,6 +8428,59 @@ export class App implements CanvasHost {
     this.dirty = false;
     this.openTestData();
     this.scheduleFit();
+    if (read.testData !== null) void this.offerTestDataFile(read.testData);
+    else if (read.testDataUnreadable)
+      this.notify(
+        "The workflow opened without its test data: Studio couldn't read that file.",
+      );
+  }
+  /**
+   * A workflow opened with its .testdata.json: Load or Not now. The file is
+   * read as any test data and every entry is checked (secrets never stay).
+   */
+  private async offerTestDataFile(text: string) {
+    const opened = this.model.opened;
+    const draftId = this.draftId;
+    const still = () =>
+      this.model.opened === opened && this.draftId === draftId;
+    const load = await this.dialogs.confirm({
+      title: "Load the test data saved with this workflow?",
+      message:
+        "Its test input and pinned output replace this workflow's test data.",
+      confirmLabel: "Load",
+      cancelLabel: "Not now",
+    });
+    if (!load || !still()) return;
+    let value: unknown;
+    try {
+      value = JSON.parse(text);
+    } catch {
+      value = undefined;
+    }
+    const reading = readTestData(value);
+    if (!reading.ok) {
+      this.notify(
+        `The test data wasn't loaded: ${reading.reason}`,
+        undefined,
+        "danger",
+      );
+      return;
+    }
+    await this.testDataOpening;
+    if (!still()) return;
+    const outcome = await this.testData.change(
+      reading.data,
+      entriesOf(reading.data).map((entry) => entry.path),
+    );
+    if (!still()) return;
+    if (outcome.ok)
+      this.notify("Loaded the test data saved with this workflow.");
+    else
+      this.notify(
+        `The test data wasn't loaded: ${outcome.message}`,
+        undefined,
+        "danger",
+      );
   }
   /** The canvas file chosen with a workflow; a file Studio can't use is set aside with a reason. */
   private applyCanvasFile(text: string) {

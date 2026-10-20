@@ -370,7 +370,11 @@ SPDX-License-Identifier: Apache-2.0
                 [pairsCanvas]="editorNext"
                 (importWorkflow)="importWorkflow($event)"
                 (importWithCanvas)="
-                  importWorkflow($event.workflow, $event.canvas)
+                  importWorkflow(
+                    $event.workflow,
+                    $event.canvas,
+                    $event.testData
+                  )
                 "
                 (connect)="openWizard('server')"
                 (connectModel)="openAiModels()"

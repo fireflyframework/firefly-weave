@@ -20,7 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 // their output, and a pin that survives a reload, follows a rename and goes
 // with its step.
 import { expect, test, type Page } from "@playwright/test";
-import { sizes } from "./step-details-po";
+import { fitCanvas, sizes } from "./step-details-po";
 import {
   banner,
   openTestDataFixture,
@@ -109,5 +109,40 @@ for (const size of sizes)
         "Output is computed from the input; pin the steps it reads instead.",
       );
       await expect(pinButton(pane)).toHaveCount(0);
+    });
+
+    test("a pin survives reload and follows a rename", async ({ page }) => {
+      const details = await openTestDataFixture(page);
+      // After the connection's own routes, so these answer first.
+      const drafts = await routeDrafts(page);
+      await details.open("lookup");
+      const pane = await outputPane(details);
+      await pane.getByRole("button", { name: "Generate sample" }).click();
+      await expect(banner(pane)).toBeVisible();
+      await details.close();
+      // A change to the workflow: the draft saves itself on the platform
+      // (at most every 10 s, and the pin itself just saved).
+      await fitCanvas(page);
+      await page.locator('[data-step="notify"]').first().click();
+      await page.keyboard.press("ControlOrMeta+d");
+      await expect.poll(() => drafts.size, { timeout: 15000 }).toBe(1);
+      await page.reload();
+      await details.open("lookup");
+      await expect(banner(await outputPane(details))).toBeVisible();
+      // Below 768 px the step's name heads the Parameters pane.
+      if (size.width < 768)
+        await details.dialog
+          .getByRole("tablist", { name: "Step details panes" })
+          .getByRole("tab", { name: "Parameters" })
+          .click();
+      await details.dialog
+        .getByRole("button", { name: "Rename lookup" })
+        .click();
+      await details.dialog
+        .getByRole("textbox", { name: "Step name" })
+        .fill("find");
+      await page.keyboard.press("Enter");
+      await expect(details.dialogFor("find")).toBeVisible();
+      await expect(banner(await outputPane(details))).toBeVisible();
     });
   });

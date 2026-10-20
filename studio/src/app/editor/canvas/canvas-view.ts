@@ -2221,7 +2221,7 @@ export class CanvasView implements OnInit, DoCheck {
     const copied = copySteps(
       h.model.definition,
       ids,
-      {},
+      h.pinsForCopy(),
       ownedActionsOf(h.model.canvas),
     );
     if (!(await this.writeClipboard(copied)))

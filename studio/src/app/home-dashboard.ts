@@ -349,7 +349,7 @@ const text = (value: unknown) => (typeof value === "string" ? value : "");
 })
 export class HomeDashboard {
   connected = input(false);
-  /** The new editor: Import also takes a workflow's canvas file with it. */
+  /** The new editor: Import also takes a workflow's canvas and test data files with it. */
   pairsCanvas = input(false);
   workspaceName = input("");
   /** Tasks claimed by the signed-in person. */
@@ -376,8 +376,12 @@ export class HomeDashboard {
   canConnectModel = input(false);
   createWorkflow = output<void>();
   importWorkflow = output<File>();
-  /** A workflow file chosen together with its canvas file. */
-  importWithCanvas = output<{ workflow: File; canvas: File }>();
+  /** A workflow file with its canvas file, its test data file, or both. */
+  importWithCanvas = output<{
+    workflow: File;
+    canvas: File | null;
+    testData: File | null;
+  }>();
   connect = output<void>();
   connectModel = output<void>();
   navigate = output<"workflows" | "tasks" | "runs">();
@@ -425,8 +429,14 @@ export class HomeDashboard {
     }
     this.importError = "";
     const workflow = list[choice.workflow];
-    if (choice.canvas === null) this.importWorkflow.emit(workflow);
-    else this.importWithCanvas.emit({ workflow, canvas: list[choice.canvas] });
+    if (choice.canvas === null && choice.testData === null)
+      this.importWorkflow.emit(workflow);
+    else
+      this.importWithCanvas.emit({
+        workflow,
+        canvas: choice.canvas === null ? null : list[choice.canvas],
+        testData: choice.testData === null ? null : list[choice.testData],
+      });
   }
   private kind(kind: "task" | "run"): StatusKind {
     return kind;
