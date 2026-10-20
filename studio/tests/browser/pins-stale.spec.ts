@@ -209,7 +209,8 @@ for (const size of [
       expect(icon.right).toBeLessThan(text.x);
       for (const name of ["Keep pinned", "Unpin"]) {
         const link = await box(shown.getByRole("button", { name }));
-        expect(link.x).toBeGreaterThanOrEqual(text.x - 1);
+        // Its target may reach into the padding; never out of the banner.
+        expect(link.x).toBeGreaterThanOrEqual(outer.x);
         expect(link.right).toBeLessThanOrEqual(outer.right);
       }
       // The Pinned tag and the count share the sub-row with Edit and Pin.

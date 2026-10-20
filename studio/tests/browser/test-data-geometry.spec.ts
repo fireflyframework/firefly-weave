@@ -21,6 +21,8 @@ SPDX-License-Identifier: Apache-2.0
 // icon buttons and rows 32 px; touch and below 768 px: 44 px.
 import { expect, test, type Page } from "@playwright/test";
 import { setTestInput } from "./formula-po";
+import { applySource } from "./owned-actions";
+import { sourceText } from "./support";
 import { type StepDetailsPage } from "./step-details-po";
 import {
   box,
@@ -228,6 +230,50 @@ for (const size of sizes)
         [amountValue.right, amountRow.right - 8],
         "value right edge",
       );
+      if (size.width < 768) await noSidewaysScroll(page);
+    });
+
+    test("the out-of-date banner's Keep pinned and Unpin are full-size targets, apart", async ({
+      page,
+    }) => {
+      const details = await openTestDataFixture(page);
+      await details.open("notify");
+      let pane = await outputPane(details);
+      await pane.getByRole("button", { name: "Generate sample" }).click();
+      await expect(banner(pane)).toBeVisible();
+      await details.close();
+      const source = await sourceText(page);
+      await applySource(
+        page,
+        source.replace(
+          "/steps/lookup/output/tier",
+          "/steps/lookup/output/customerId",
+        ),
+      );
+      await details.open("notify");
+      pane = await outputPane(details);
+      await expect(banner(pane)).toHaveAttribute("data-tone", "warning");
+      const touch = (await density(page)).touch;
+      const keep = await box(
+        banner(pane).getByRole("button", { name: "Keep pinned" }),
+      );
+      const unpin = await box(
+        banner(pane).getByRole("button", { name: "Unpin" }),
+      );
+      for (const target of [keep, unpin])
+        expect(Math.round(target.height)).toBeGreaterThanOrEqual(
+          touch ? 44 : 24,
+        );
+      expect(intersects(keep, unpin)).toBe(false);
+      // Apart enough to touch one and not the other.
+      if (Math.abs(keep.middle - unpin.middle) < 2)
+        expect(unpin.x - keep.right).toBeGreaterThanOrEqual(touch ? 8 : 4);
+      const outer = await box(banner(pane));
+      for (const target of [keep, unpin]) {
+        expect(target.x).toBeGreaterThanOrEqual(outer.x);
+        expect(target.right).toBeLessThanOrEqual(outer.right);
+      }
+      expect(await clippedText(details.dialog)).toEqual([]);
       if (size.width < 768) await noSidewaysScroll(page);
     });
   });

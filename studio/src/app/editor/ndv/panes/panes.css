@@ -489,12 +489,32 @@ weave-input-pane.is-compact .pane-source-field::before {
   grid-column: 2;
   margin: 0;
 }
+/* Links to look at, full-size targets to use: 24 px tall on desktop, 44 px
+   on touch, with room between them. */
 .pinned-banner .text-link {
-  min-height: 0;
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
   margin-inline-start: var(--space-1);
-  padding: 0;
+  padding: 0 var(--space-1);
+  vertical-align: middle;
   font: inherit;
   color: var(--info-ink);
+}
+@media (max-width: 767px), (pointer: coarse) {
+  /* The sentence keeps its line height; the links get a row of their own,
+     their text on the sentence's left edge. */
+  .pinned-banner p > [role="status"] {
+    display: block;
+  }
+  .pinned-banner .text-link {
+    min-height: 44px;
+    margin-inline-start: var(--space-2);
+    padding-inline: var(--space-2);
+  }
+  .pinned-banner [role="status"] + .text-link {
+    margin-inline-start: calc(-1 * var(--space-2));
+  }
 }
 .pinned-banner[data-tone="warning"] .text-link {
   color: var(--warning-ink);
