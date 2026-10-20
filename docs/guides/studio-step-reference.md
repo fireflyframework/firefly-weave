@@ -241,20 +241,25 @@ matching, no-match behavior, limits and API/SDK usage.
 In step details, an AI task shows **Model** and **Prompt**. **Model** lists the
 approved models of every AI connection you may use, grouped by connection, with
 what each model can do (calls tools, its context size, local). Choosing one
-writes the step's AI settings (`spec.llmProfiles`, named after the step), the
-`ai` connection slot and the built-in action together, as one change you can
-undo. Until a model is chosen, the canvas card reads **Choose a model** and
-shows that the step needs setup instead of listing errors. **Set up AI** under
-the field opens the AI connection side sheet when no connection exists yet.
+writes the step's AI settings (`spec.llmProfiles`, named after the step, or
+`<step>-2` and so on when that name is taken), the `ai` connection slot and the
+built-in action together, as one change you can undo. When the step uses
+settings that other AI steps share, the field says so: a new model changes
+shared settings for every step that uses them, except the `default` settings a
+new AI task starts with, where the step gets settings of its own. Until a model
+is chosen, the canvas card reads **Choose a model** and shows that the step
+needs setup instead of listing errors. **Set up AI** under the field opens the
+AI connection side sheet.
 
 A new AI task answers in text, up to 1,024 output tokens. **Structured result**
 under **Add option** describes fields the model fills in instead; **Max output
 tokens**, **Temperature** and **Reasoning pattern** tune the step's settings, and
 **Share settings with other AI steps** points the step at another AI step's
 settings, so both use the same model and options. **Timeout** (120 seconds) is
-on **Settings**.
+on **Settings**, and can be changed once a model is chosen.
 
-The classic inspector works as follows. Choose **AI task** from the Actions palette. The built-in action reference is
+The classic inspector works as follows. Choose **AI task** from the Actions
+palette. The built-in action reference is
 `weave-agentic-generate@1.0.0`; Studio indicates whether that action is available
 in the connected catalog. Select a **Workflow AI profile** and an **AI connection
 slot**, then map **AI prompt** and **AI context** using Value, Data or Formula.
