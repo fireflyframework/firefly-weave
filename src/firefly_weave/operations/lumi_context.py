@@ -97,11 +97,13 @@ connector, never a fragment. Say what you could not see when the context lists t
 """
 
 
-# llama3.2:3b counted up to 1.55 times characters / 4 on Weave AI requests (hex identifiers, Japanese text), so the
-# estimate counts 2.5 characters per token and never fewer tokens than the model does. The gateway uses the same rule.
+# llama3.2:3b counted up to 1.55 times characters / 4 on ASCII Weave AI requests (hex identifiers), so ASCII counts
+# 2.5 characters per token. Other text can cost far more (Chinese 1.9 characters per token, emoji 0.33), so each of its
+# characters counts its UTF-8 bytes: a byte-level token never covers less than one byte. The gateway uses the same rule.
 def estimate_tokens(text: str) -> int:
-    """A conservative token count: one per two and a half characters, rounded up; the same rule as the gateway's."""
-    return -(-len(text) * 2 // 5)
+    """A token count never below the model's: ASCII at 2.5 characters per token, other text at one per UTF-8 byte."""
+    ascii_characters = len(text.encode("ascii", "ignore"))
+    return -(-ascii_characters * 2 // 5) + len(text.encode()) - ascii_characters
 
 
 def _tokens(value: JsonValue) -> int:

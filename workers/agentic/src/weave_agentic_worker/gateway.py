@@ -102,9 +102,14 @@ LOOP_REPEATS = 4
 LOOP_MIN_CHARS = 256
 LOOP_MAX_PERIOD = 512
 LOOP_CHECK_EVERY = 64
-# No text measured on Weave AI requests took more than 4.6 characters per token, so a model that counted fewer
-# tokens than one per 6 characters sent saw only part of the prompt (Ollama drops the start of a long prompt).
-MAX_CHARS_PER_TOKEN = 6
+# No text measured on Weave AI requests took more than 4.6 ASCII characters or 2 other characters per token, so a
+# model that counted fewer tokens saw only part of the prompt (Ollama drops the start of a long prompt).
+MAX_ASCII_PER_TOKEN = 6
+MAX_OTHER_PER_TOKEN = 2
+# Ollama runs a model with this context unless the policy says otherwise; when it cuts a prompt it keeps about half
+# of it (4,098 of 8,192 tokens, measured twice on Ollama 0.40.2).
+OLLAMA_CONTEXT_TOKENS = 8192
+CUT_MARGIN = 16
 TEST_PROMPT = "Reply with the single word: ready"
 PROBE_PROMPT = "Call the ping tool with the value weave. Do not answer in text."
 PING = ToolDefinition(
@@ -166,8 +171,17 @@ def _secret(credential: SecretStr | None) -> str:
 
 
 def conservative_tokens(*parts: str) -> int:
-    """A token count that is never below the model's: 2.5 characters per token, the same rule as the API's."""
-    return -(-sum(len(part) for part in parts) * 2 // 5)
+    """A token count never below the model's, the same rule as the API's: ASCII at 2.5 characters per token,
+    other text at one token per UTF-8 byte."""
+    text = "".join(parts)
+    ascii_characters = len(text.encode("ascii", "ignore"))
+    return -(-ascii_characters * 2 // 5) + len(text.encode()) - ascii_characters
+
+
+def fewest_tokens(text: str) -> int:
+    """The fewest tokens a model can count for the whole of this text."""
+    ascii_characters = len(text.encode("ascii", "ignore"))
+    return ascii_characters // MAX_ASCII_PER_TOKEN + (len(text) - ascii_characters) // MAX_OTHER_PER_TOKEN
 
 
 def repeating(text: str) -> bool:
@@ -344,11 +358,11 @@ def create_app(
                 if entry.credential == "required" and body.credential is None:
                     return JSONResponse({"code": "LUMI_INPUT"}, status_code=422)
                 reply_format = json.dumps(provider_schema(profile.output_schema))
-                if (
-                    entry.context_tokens is not None
-                    and conservative_tokens(INSTRUCTIONS, prompt, reply_format) + profile.options.max_tokens
-                    > entry.context_tokens
-                ):
+                context = entry.context_tokens
+                if context is None and entry.compat == "ollama":
+                    context = OLLAMA_CONTEXT_TOKENS
+                sent = conservative_tokens(INSTRUCTIONS, prompt, reply_format)
+                if context is not None and sent + profile.options.max_tokens > context:
                     # Refuse what may not fit rather than let the endpoint drop part of it.
                     raise ConnectorFailure("LLM_CONTEXT_LIMIT", "not_started")
                 if entry.max_output_tokens is not None and profile.options.max_tokens > entry.max_output_tokens:
@@ -386,7 +400,11 @@ def create_app(
                 if (
                     entry.compat == "ollama"
                     and isinstance(counted, int)
-                    and 0 < counted * MAX_CHARS_PER_TOKEN < len(INSTRUCTIONS) + len(prompt)
+                    and counted > 0
+                    and (
+                        counted < fewest_tokens(INSTRUCTIONS + prompt)
+                        or (context is not None and sent > context // 2 + CUT_MARGIN >= counted)
+                    )
                 ):
                     # The model saw only part of the request, perhaps without its instructions: never use the answer.
                     return JSONResponse({"code": "LUMI_TRUNCATED"}, status_code=422)

@@ -84,6 +84,21 @@ def test_the_estimate_counts_two_and_a_half_characters_per_token():
     assert estimate_tokens("x" * 1000) == 400 and estimate_tokens("x") == 1 and estimate_tokens("") == 0
 
 
+# Text outside ASCII, measured on llama3.2:3b in compact requests: 5,000 Chinese characters counted 4,838 tokens,
+# 5,000 Japanese 5,031, and 3,000 emoji 9,206. Each such character counts its UTF-8 bytes, a true upper bound.
+@pytest.mark.parametrize(
+    ("text", "counted"),
+    [("中" * 5000, 4838), ("日本" * 2500, 5031), ("😀" * 3000, 9206)],
+    ids=["chinese", "japanese", "emoji"],
+)
+def test_text_outside_ascii_counts_its_bytes_and_never_fewer_tokens_than_the_model(text, counted):
+    assert estimate_tokens(text) == len(text.encode()) >= counted
+
+
+def test_mixed_text_counts_ascii_by_characters_and_the_rest_by_bytes():
+    assert estimate_tokens("ab" * 5 + "é" + "中") == 4 + 2 + 3
+
+
 def test_the_gateway_text_and_the_guide_leave_two_thirds_of_the_compact_budget():
     # The gateway's tests keep its instructions and reply format within this reserve.
     assert GATEWAY_RESERVE_TOKENS == 736
@@ -628,3 +643,18 @@ def test_a_fix_request_too_large_to_send_whole_sends_the_diagnosed_steps_and_the
     assert sent_tokens(shaped, "Fix the proposal") <= COMPACT_INPUT_TOKENS
     assert estimate_tokens(json.dumps(draft)) <= COMPACT_INPUT_TOKENS * 0.40
     assert {"outlined", "steps"} <= set(shaped.context["trimmed"])
+
+
+def test_an_ollama_endpoint_without_a_context_size_is_shaped_as_compact():
+    from types import SimpleNamespace
+
+    from firefly_weave.operations.lumi import LumiService
+
+    entry = SimpleNamespace(context_tokens=None, compat="ollama")
+    cloud = SimpleNamespace(context_tokens=None, compat=None)
+    for endpoint, expected in ((entry, 8192), (cloud, None)):
+        policy = SimpleNamespace(current=lambda endpoint=endpoint: SimpleNamespace(entry_for=lambda url: endpoint))
+        service = LumiService(SimpleNamespace(definitions=None), None, None, None, None, policy, None)
+        connection = SimpleNamespace(config={"endpoint": "http://ollama:11434/v1"})
+        assert service._context_tokens(connection) == expected
+    assert choose_profile(8192) == "compact"

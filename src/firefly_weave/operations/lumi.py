@@ -28,6 +28,7 @@ from firefly_weave.access.audit import AuditContext
 from firefly_weave.access.models import Principal
 from firefly_weave.access.repository import load_principal
 from firefly_weave.access.service import audit
+from firefly_weave.ai_policy import DEFAULT_CONTEXT_TOKENS
 from firefly_weave.compiler.api import validate_authoring
 from firefly_weave.compiler.expressions import measure_value
 from firefly_weave.compiler.parser import parse_source
@@ -279,7 +280,12 @@ class LumiService:
         policy = self.policy.current()
         endpoint = connection.config.get("endpoint")
         entry = policy.entry_for(endpoint) if policy is not None and isinstance(endpoint, str) else None
-        return entry.context_tokens if entry is not None else None
+        if entry is None:
+            return None
+        if entry.context_tokens is None and entry.compat == "ollama":
+            # Ollama runs a model with a small context unless told otherwise; never size for an unbounded one.
+            return DEFAULT_CONTEXT_TOKENS
+        return entry.context_tokens
 
     def _shape(
         self, config: LumiConfiguration, request: LumiAskRequest, resources: list[JsonValue], tokens: int | None

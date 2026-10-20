@@ -35,7 +35,14 @@ from pydantic_ai.models.function import DeltaToolCall, FunctionModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.usage import RequestUsage
 
-from weave_agentic_worker.gateway import OLLAMA_FREQUENCY_PENALTY, conservative_tokens, create_app, repeating
+from weave_agentic_worker.gateway import (
+    LOOP_MIN_CHARS,
+    OLLAMA_FREQUENCY_PENALTY,
+    conservative_tokens,
+    create_app,
+    fewest_tokens,
+    repeating,
+)
 from weave_agentic_worker.handler import WorkerPolicy
 from weave_agentic_worker.providers import ProviderModel, build_model
 
@@ -1088,6 +1095,69 @@ async def test_ollama_replies_carry_a_frequency_penalty_and_cloud_replies_do_not
 
 def test_the_gateway_counts_two_and_a_half_characters_per_token_like_the_api():
     assert conservative_tokens("x" * 1000) == 400 and conservative_tokens("ab", "c") == 2
+    # Outside ASCII each character counts its UTF-8 bytes, like the API: measured 1.9 characters per token for
+    # Chinese and 0.33 for emoji on llama3.2:3b.
+    assert conservative_tokens("ab" * 5 + "é" + "中") == 4 + 2 + 3
+    assert conservative_tokens("中" * 5000) == 15000 >= 4838 and conservative_tokens("😀" * 3000) == 12000 >= 9206
+
+
+def test_the_fewest_tokens_a_whole_prompt_can_count_depends_on_its_script():
+    # No text measured took more than 4.6 ASCII characters per token or 2 other characters per token.
+    assert fewest_tokens("x" * 600) == 100 and fewest_tokens("中" * 100) == 50
+    assert fewest_tokens("x" * 600 + "中" * 100) == 150
+
+
+def test_a_short_repeated_tail_is_not_yet_a_loop():
+    assert LOOP_MIN_CHARS == 256
+    assert not repeating("x" + "ab" * 100) and repeating("x" + "ab" * 128)
+
+
+async def test_an_emoji_question_that_may_not_fit_is_refused_before_the_model(tmp_path):
+    calls = []
+    ask = ollama_ask()
+    # 3,000 emoji counted 9,206 tokens on llama3.2:3b; characters / 2.5 would have let it through.
+    ask["request"]["message"] = "😀" * 3000
+    async with gateway(tmp_path, builder=lambda *_: reply_model(calls)) as client:
+        response = await client.post("/v1/lumi", json=ask, headers=AUTH)
+    assert (response.status_code, response.json()) == (422, {"code": "LLM_CONTEXT_LIMIT"})
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    ("message", "counted"),
+    [
+        # Ollama 0.40.2 keeps about half the context when it cuts a prompt: 4,098 of 8,192, measured twice.
+        ("word " * 2400, 4098),
+        # Fewer tokens than 800 emoji (at least one per two characters) and the ASCII around them can count.
+        ("😀" * 800, 400),
+    ],
+    ids=["half-the-context", "fewer-than-the-script-allows"],
+)
+async def test_an_answer_to_a_prompt_ollama_cut_is_not_used(tmp_path, message, counted):
+    calls = []
+    ask = ollama_ask()
+    ask["request"]["message"] = message
+
+    def cut(*_):
+        model = reply_model(calls)
+        model.tokens = counted
+        return model
+
+    async with gateway(tmp_path, builder=cut) as client:
+        response = await client.post("/v1/lumi", json=ask, headers=AUTH)
+    assert (response.status_code, response.json()) == (422, {"code": "LUMI_TRUNCATED"})
+    assert len(calls) == 1
+
+
+async def test_an_ollama_entry_without_a_context_size_is_held_to_the_default_context(tmp_path):
+    calls = []
+    ask = ollama_ask()
+    ask["request"]["message"] = "word " * 4000
+    policy = ollama_gateway_policy(tmp_path, contextTokens=None)
+    async with gateway(tmp_path, builder=lambda *_: reply_model(calls), policy=policy) as client:
+        response = await client.post("/v1/lumi", json=ask, headers=AUTH)
+    assert (response.status_code, response.json()) == (422, {"code": "LLM_CONTEXT_LIMIT"})
+    assert calls == []
 
 
 async def test_a_request_that_may_not_fit_the_context_is_refused_before_the_model(tmp_path):
