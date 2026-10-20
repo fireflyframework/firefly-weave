@@ -48,7 +48,7 @@ class DestinationPolicy(ContractModel):
     boundary: DeploymentName
     executable: str = Field(min_length=1, max_length=4096)
     context: DeploymentName
-    capabilities: list[DeploymentCapability] = Field(min_length=1, max_length=5)
+    capabilities: list[DeploymentCapability] = Field(min_length=1, max_length=6)
     components: list[ComponentBinding] = Field(min_length=1, max_length=100)
     image_repositories: list[str] = Field(min_length=1, max_length=100)
     compose_file: str | None = None
@@ -62,7 +62,7 @@ class DestinationPolicy(ContractModel):
         if self.adapter == "azure-container-apps" and not self.lock_file:
             raise ValueError("ACA requires a shared local runner lock")
         if self.adapter == "docker-compose":
-            supported.add("deploy")
+            supported |= {"deploy", "restart_workers"}
             if not self.compose_file or not self.lock_file:
                 raise ValueError("Compose requires an operator-owned file and shared lock path")
         if "observe" not in self.capabilities or not set(self.capabilities) <= supported:
