@@ -154,3 +154,44 @@ async def test_native_member_http_contracts_and_scoped_cursors(client, human_ide
         assert (await typed.set_active(managed.id, True)).active is True
         member = await typed.grant(MemberGrantRequest(principal_id=managed.id, role="viewer"))
         assert (await typed.revoke(member.id)).revoked is True
+
+
+async def test_creating_a_principal_with_a_key_answers_the_same_principal_again(access_db, provisioned):
+    """A resumed setup that lost the response repeats its key and gets the principal it created, not a second one."""
+    from sqlalchemy import text
+
+    owner, sessions, access, _ = access_db
+    admin, scopes = provisioned
+    members = MemberAdminService(access)
+
+    async def count():
+        async with sessions() as session:
+            return await session.scalar(text("SELECT count(*) FROM principals"))
+
+    before = await count()
+    first = await members.create_principal(admin, PrincipalCreateRequest(kind="worker"), idempotency_key="setup-1")
+    again = await members.create_principal(admin, PrincipalCreateRequest(kind="worker"), idempotency_key="setup-1")
+    assert again == first and await count() == before + 1
+    with pytest.raises(CatalogError) as conflict:
+        await members.create_principal(admin, PrincipalCreateRequest(kind="human"), idempotency_key="setup-1")
+    assert (conflict.value.status, conflict.value.code) == (409, "WV-IDEMPOTENCY-CONFLICT")
+    other = await members.create_principal(admin, PrincipalCreateRequest(kind="worker"), idempotency_key="setup-2")
+    assert other.id != first.id
+    # Another administrator's key is their own.
+    second_admin_id = await access.create_principal(admin, "human")
+    async with sessions.begin() as session:
+        await session.execute(
+            text("INSERT INTO platform_administrators(principal_id) VALUES(:id)"), {"id": second_admin_id}
+        )
+    second_admin = await access.load_principal(second_admin_id)
+    theirs = await members.create_principal(
+        second_admin, PrincipalCreateRequest(kind="worker"), idempotency_key="setup-1"
+    )
+    assert theirs.id != first.id
+    # Without a key, each call creates a principal, as before.
+    plain = [await members.create_principal(admin, PrincipalCreateRequest(kind="worker")) for _ in range(2)]
+    assert plain[0].id != plain[1].id
+    for key in ("", "x" * 201):
+        with pytest.raises(CatalogError) as refused:
+            await members.create_principal(admin, PrincipalCreateRequest(kind="worker"), idempotency_key=key)
+        assert refused.value.status == 422

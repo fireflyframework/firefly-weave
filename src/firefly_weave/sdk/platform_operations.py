@@ -550,7 +550,11 @@ async def _principals(
     issuer = f"http://localhost:{state['ports']['keycloak']}/realms/weave"
     for role, kind, client_id in (("worker", "worker", WORKER_CLIENT), ("runner", "application", RUNNER_CLIENT)):
         if value.get(role + "_principal_id") is None:
-            created = await members.create_principal(PrincipalCreateRequest(kind=kind))  # type: ignore[arg-type]
+            # A repeated key answers the principal the lost response named, so a resumed setup makes no second one.
+            created = await members.create_principal(
+                PrincipalCreateRequest(kind=kind),  # type: ignore[arg-type]
+                idempotency_key=f"weave-platform-operations-{state['id']}-{role}-principal",
+            )
             value[role + "_principal_id"] = str(created.id)
             save()
         if not value.get(role + "_linked"):

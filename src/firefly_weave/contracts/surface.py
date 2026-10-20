@@ -1255,6 +1255,7 @@ OPERATIONS = {
             "grant.admin",
             PrincipalCreateRequest,
             (201,),
+            optional_idempotency=True,
         ),
         Operation(
             "principals.link",

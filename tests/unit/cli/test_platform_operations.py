@@ -483,3 +483,29 @@ def test_the_workers_receive_only_their_own_private_origin_entries(operations):
     )
     value = json.loads((case.directory / "operations.json").read_text())
     assert "config/worker-origins.json" in value["files"]
+
+
+def test_a_lost_principal_response_is_retried_with_the_same_key(operations):
+    """The platform answers a repeated key with the principal it created, so a resumed setup makes no second one."""
+    case = operations
+    invoke = case.api.invoke
+    lost = []
+
+    async def losing(operation, **kwargs):
+        result = await invoke(operation, **kwargs)
+        if operation == "principals.create" and not lost:
+            lost.append(kwargs)
+            raise platform.PlatformError("response lost")
+        return result
+
+    case.api.invoke = losing
+    with pytest.raises(platform.PlatformError, match="Operations setup stopped at identities"):
+        enable(case)
+    enable(case)
+    keys = [kwargs.get("idempotency_key") for name, kwargs in case.api.calls if name == "principals.create"]
+    owner = platform._load(case.directory)["id"]
+    assert keys == [
+        f"weave-platform-operations-{owner}-worker-principal",
+        f"weave-platform-operations-{owner}-worker-principal",
+        f"weave-platform-operations-{owner}-runner-principal",
+    ]
