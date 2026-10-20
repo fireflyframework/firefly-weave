@@ -629,3 +629,97 @@ def test_import_refuses_a_forged_artifact_whose_undo_binds_a_literal_to_a_secret
     value["digest"] = canonical_digest(executable_value)
     with pytest.raises(ValueError, match="classified or unclassifiable"):
         import_artifact(json.dumps(value), features=["flow.transaction"])
+
+
+def _connector(name: str) -> dict:
+    return {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Connector",
+        "metadata": {"name": name, "version": "1.0.0"},
+        "spec": {
+            "adapter": "http",
+            "configSchema": {},
+            "authSchema": {},
+            "compatibility": {"apiVersion": "weave/v1alpha1"},
+            "limits": {"maxRequestBytes": 1000, "maxResponseBytes": 1000, "maxTimeoutSeconds": 60},
+            "actions": {
+                "read": {
+                    "inputSchema": {"type": "string"},
+                    "outputSchema": {"type": "boolean"},
+                    "sideEffect": "read_only",
+                    "timeoutSeconds": 30,
+                }
+            },
+        },
+    }
+
+
+def _connected(undo_connector: str | None):
+    """The hold needs the source connector; its confirm and release need ``undo_connector``, or nothing."""
+    definitions = copy.deepcopy(FIXTURE["definitions"])
+    for item in definitions:
+        name = item["metadata"]["name"]
+        if name == "source-system.hold-quantity":
+            item["spec"]["connection"] = {"connector": "source@1.0.0"}
+        if name in ("source-system.confirm-hold", "source-system.release-hold") and undo_connector:
+            item["spec"]["connection"] = {"connector": undo_connector}
+    resources = [_connector("source"), _connector("other"), *definitions]
+    catalog = CatalogSnapshot.from_definitions(
+        [load_definition(item) for item in resources], tasks=FIXTURE["tasks"], adapters=["http"]
+    )
+    document = workflow(transaction(hold(connection="source"), add(), submit()))
+    document["spec"]["connections"] = {"source": {"connector": "source@1.0.0"}, "other": {"connector": "other@1.0.0"}}
+    return document, catalog
+
+
+def _phases(result) -> dict:
+    node = next(node for node in executable(result)["graph"]["nodes"] if node["id"] == "hold")
+    return node["txn"]["phases"]
+
+
+def test_an_undo_action_with_a_connection_uses_the_steps_connection_unless_it_names_its_own():
+    document, catalog = _connected("source@1.0.0")
+    result = compile_source(document, format="object", catalog=catalog)
+    assert findings(result, "CONNECTION") == []
+    assert result.ok, findings(result)
+    assert {name: phase.get("connection") for name, phase in _phases(result).items()} == {
+        "confirm": "source",
+        "cancel": "source",
+    }
+    WorkflowIR.model_validate(executable(result))
+    # Import binds each phase as written: a phase that drops the connection its action needs is refused.
+    value = executable(result)
+    next(node for node in value["graph"]["nodes"] if node["id"] == "hold")["txn"]["phases"]["cancel"].pop("connection")
+    with pytest.raises(ValidationError, match="Missing required action connection"):
+        WorkflowIR.model_validate(value)
+
+
+def test_an_undo_action_without_a_connection_binds_none():
+    document, catalog = _connected(None)
+    result = compile_source(document, format="object", catalog=catalog)
+    assert findings(result, "CONNECTION") == []
+    assert result.ok, findings(result)
+    assert all("connection" not in phase for phase in _phases(result).values())
+    WorkflowIR.model_validate(executable(result))
+    # Naming a connection for an undo action that needs none is still an error.
+    document["spec"]["steps"][0]["steps"][0]["cancel"]["connection"] = "source"
+    result = compile_source(document, format="object", catalog=catalog)
+    assert findings(result, "CONNECTION") == [("CONNECTION", f"{BODY}/0/cancel/connection", "error")]
+
+
+def test_an_undo_action_whose_connector_differs_from_the_steps_names_its_own_connection():
+    document, catalog = _connected("other@1.0.0")
+    result = compile_source(document, format="object", catalog=catalog)
+    assert findings(result, "CONNECTION") == [
+        ("CONNECTION", f"{BODY}/0/cancel/connection", "error"),
+        ("CONNECTION", f"{BODY}/0/confirm/connection", "error"),
+    ]
+    for name in ("confirm", "cancel"):
+        document["spec"]["steps"][0]["steps"][0][name]["connection"] = "other"
+    result = compile_source(document, format="object", catalog=catalog)
+    assert result.ok, findings(result)
+    assert {name: phase.get("connection") for name, phase in _phases(result).items()} == {
+        "confirm": "other",
+        "cancel": "other",
+    }
+    WorkflowIR.model_validate(executable(result))

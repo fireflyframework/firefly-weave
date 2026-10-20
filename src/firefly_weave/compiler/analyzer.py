@@ -1352,7 +1352,9 @@ class _Analyzer:
                 spec = cast(JsonObject, resource.definition.value["spec"]) if resource else None
                 target = cast(JsonObject, spec["inputSchema"]) if spec else None
                 self.expression(expression, path + "/with", scope, target)
-                slot = cast(str | None, undo.get("connection", step.get("connection")))
+                # The step's connection is the default only for an undo action that needs one.
+                inherited = step.get("connection") if spec is not None and spec.get("connection") else None
+                slot = cast(str | None, undo.get("connection", inherited))
                 if spec is not None:
                     self.connection({"connection": slot} if slot is not None else {}, spec, path + "/connection")
                     self.guard(path + "/with", "undo_input", cast(JsonObject, target))

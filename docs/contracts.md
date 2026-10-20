@@ -308,7 +308,8 @@ of them succeed or what they did is undone. Each `action` or waiting
 | Can't be undone | `irreversible: true` | Once this step runs the transaction can't go back, so it must be the last step that changes data |
 
 `confirm`, `cancel` and `compensate` are each `{kind: action, uses, with}` (with
-an optional `connection` slot, which defaults to the step's) or
+an optional `connection` slot, which defaults to the step's when the undo
+action needs a connection; an undo action that needs none gets no slot) or
 `{kind: callWorkflow, uses, with}`, which always waits for its result. Their
 `with` sees what the step saw, the step's own output, and two more roots:
 `/participant/operationKey` (the step's operation key) and
