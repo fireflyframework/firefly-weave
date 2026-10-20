@@ -93,6 +93,23 @@ Each item names the step and iteration, the call's generation, the child run's
 ID, and its status. `weave runs read "$CHILD_RUN_ID"` shows the child, whose
 `caller` field names the run and step that started it.
 
+## Simulate a call before you publish
+
+A simulation runs the called workflow too, without starting any run. Compile
+both workflows, then pass the called version's artifact:
+
+```bash
+weave workflow simulate request.json \
+  --workflow notify-customer@1.0.0=notify-customer.json
+```
+
+The view lists the call under `frames`; a breakpoint such as `notify/record`
+stops inside the called workflow, and `step_out` returns to the caller. To skip
+the called workflow, mock the whole call instead:
+`"mocks": {"node:notify": {"status": "succeeded", "runId": "...", "output": {...}}}`.
+In a debug session on a platform, `"resolve_workflows": true` loads the
+published versions. See [Simulate workflow calls](../reference/simulation.md#simulate-workflow-calls).
+
 ## What happens when something goes wrong
 
 | What happened | With `onFailure: stop` (the default) | With `onFailure: continue` |

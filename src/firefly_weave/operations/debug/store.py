@@ -16,7 +16,8 @@
 
 """Project-scoped, creator-only sessions; all mutable state belongs to a locked row."""
 
-from typing import Any
+from functools import partial
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 from pyfly.container import service
@@ -26,13 +27,16 @@ from firefly_weave.access.audit import AuditContext
 from firefly_weave.access.authorization import AccessDenied
 from firefly_weave.access.models import Principal
 from firefly_weave.access.service import AccessService
-from firefly_weave.compiler.api import import_artifact
+from firefly_weave.compiler.api import CompiledArtifact, import_artifact
 from firefly_weave.compiler.canonical import canonical_bytes
 from firefly_weave.compiler.ir import UnsupportedIR
 from firefly_weave.contracts.access import Scope
+from firefly_weave.contracts.language_features import MAX_CALL_DEPTH
+from firefly_weave.contracts.values import JsonObject
+from firefly_weave.definitions.calls import called_dependencies
 from firefly_weave.definitions.models import CatalogError, ir_unsupported
 from firefly_weave.definitions.service import DefinitionService
-from firefly_weave.operations.debug.models import DebugCommand, DebugCreate, DebugSession
+from firefly_weave.operations.debug.models import CalledWorkflow, DebugCommand, DebugCreate, DebugError, DebugSession
 from firefly_weave.operations.debug.simulator import Simulator
 from firefly_weave.operations.execution import debug_operation, execute_pure
 from firefly_weave.persistence.uow import Transaction
@@ -64,6 +68,50 @@ class DebugRepository:
         )
         if not rows:
             raise CatalogError(410, "WV-DEBUG-EXPIRED", "Debug session expired")
+
+
+async def published_workflows(
+    repository: DebugRepository, request: DebugCreate, artifact: CompiledArtifact
+) -> dict[str, CalledWorkflow]:
+    """``request.workflows`` with the published artifact of every called version it gives none for, through every
+    call the simulated workflow and those versions make, supplied ones included, up to the call depth a session
+    runs. ``artifact`` is the request's artifact, already imported. A version the project never published, or one
+    whose definition differs from the one its caller was compiled against, is refused.
+    """
+    workflows = dict(request.workflows)
+    pending = [(called_dependencies(artifact.executable), 1)]
+    seen: set[str] = set()
+    while pending:
+        dependencies, depth = pending.pop()
+        for reference, digest in dependencies.items():
+            if reference in seen:
+                continue
+            seen.add(reference)
+            supplied = workflows.get(reference)
+            if supplied is not None and supplied.artifact is not None:
+                # A supplied artifact wins over the published version; the versions it calls still resolve.
+                try:
+                    document = (await execute_pure(partial(import_artifact, supplied.artifact))).executable
+                except UnsupportedIR:
+                    raise
+                except ValueError:
+                    raise DebugError("WV-DEBUG-WORKFLOW") from None
+            else:
+                name, _, version = reference.rpartition("@")
+                rows = await repository.rows(
+                    "SELECT definition_digest,artifact FROM definition_versions WHERE tenant_id=:tenant "
+                    "AND project_id=:project AND kind='Workflow' AND name=:name AND version=:version",
+                    name=name,
+                    version=version,
+                )
+                if not rows or rows[0]["definition_digest"] != digest:
+                    raise DebugError("WV-DEBUG-WORKFLOW")
+                published = cast(JsonObject, rows[0]["artifact"])
+                workflows[reference] = CalledWorkflow(artifact=published, mocks=supplied.mocks if supplied else {})
+                document = cast(JsonObject, published["executable"])
+            if depth < MAX_CALL_DEPTH:
+                pending.append((called_dependencies(document), depth + 1))
+    return workflows
 
 
 async def restored(row: dict[str, Any]) -> Simulator:
@@ -99,12 +147,26 @@ class DebugService:
         self, tx: Transaction, request: DebugCreate, *, actor: Principal, scope: Scope, context: AuditContext
     ) -> DebugSession:
         self.definitions.require(actor, scope, "simulate", context)
+        if request.resolve_workflows:
+            self.definitions.require(actor, scope, "catalog.read", context)
         async with self.definitions.transaction(scope, tx) as enlisted:
             await self._authorize(enlisted, actor, scope, context)
+            workflows = request.workflows
+            if request.resolve_workflows:
+                principal = await self.access.load_principal(actor.id, tx=enlisted)
+                self.definitions.require(principal, scope, "catalog.read", context)
             try:
+                # Checked before resolution reads its calls, so a malformed artifact gets the same answer either way.
+                artifact = await execute_pure(lambda: import_artifact(request.artifact))
+                if request.resolve_workflows:
+                    workflows = await published_workflows(DebugRepository(enlisted), request, artifact)
                 simulator = await execute_pure(
                     lambda: Simulator(
-                        import_artifact(request.artifact), mocks=request.mocks, input=request.input, now=request.now
+                        artifact,
+                        mocks=request.mocks,
+                        input=request.input,
+                        now=request.now,
+                        workflows=workflows,
                     )
                 )
             except UnsupportedIR as error:
