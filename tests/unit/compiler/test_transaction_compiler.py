@@ -472,3 +472,69 @@ def test_the_participant_budget_is_the_compiling_platforms_and_import_does_not_a
     assert raised.ok, findings(raised)
     features = [*ADVERTISED_FEATURES, "flow.transaction"]
     assert import_artifact(raised.artifact.to_bytes(), features=features).digest == raised.artifact.digest
+
+
+def test_workflows_called_to_undo_a_step_count_as_calls_for_depth_pins_and_side_effects():
+    import asyncio
+    from uuid import uuid4
+
+    from firefly_weave.compiler.calls import CallGraph, called_references
+    from firefly_weave.contracts.access import Scope
+    from firefly_weave.definitions.calls import call_pins, call_tree_side_effect, called_dependencies, side_effect
+    from firefly_weave.definitions.models import CatalogError
+
+    assert called_references(EXAMPLE) == ["reverse-target-addition@1.0.0"]
+    graph = CallGraph(CatalogSnapshot.from_definitions([load_definition(EXAMPLE)]))
+    assert graph.calls("move-between-systems@1.0.0") == ("reverse-target-addition@1.0.0",)
+    value = executable(compiled(EXAMPLE))
+    assert set(called_dependencies(value)) == {"reverse-target-addition@1.0.0"}
+    # Activation must pin the workflow an undo calls, like any called workflow.
+    scope = Scope(tenant_id=uuid4(), project_id=uuid4(), environment_id=uuid4())
+
+    async def nothing(identifier):
+        raise AssertionError("pins are compared with the calls before anything is loaded")
+
+    with pytest.raises(CatalogError) as refused:
+        asyncio.run(call_pins("move-between-systems@1.0.0", scope, value, {}, nothing))
+    assert refused.value.code == "WV-READINESS-CALL"
+    # Undo actions count toward the workflow's side effect, and so does what its undo workflows do.
+    assert side_effect(value) == "non_idempotent"
+    reverse = next(item for item in FIXTURE["definitions"] if item["metadata"]["name"] == "reverse-target-addition")
+    callee = executable(compile_source(reverse, format="object", catalog=CATALOG))
+    pin = uuid4()
+
+    async def resolve(identifier):
+        assert identifier == pin
+        return callee, {}
+
+    pins = {"reverse-target-addition@1.0.0": pin}
+    assert asyncio.run(call_tree_side_effect(value, pins, resolve)) == "non_idempotent"
+
+
+def test_import_refuses_a_forged_artifact_whose_undo_binds_a_literal_to_a_secret_input():
+    from firefly_weave.compiler.canonical import canonical_digest
+    from firefly_weave.compiler.catalog import CatalogResource, FrozenDocument
+
+    literal = undo(
+        "source-system.release-hold@1.0.0",
+        {"object": {"reference": {"literal": "M-1"}, "holdOperation": ref("/participant/operationKey")}},
+    )
+    artifact = compiled(workflow(transaction(hold(cancel=literal), add(), submit()))).artifact
+    assert import_artifact(artifact.to_bytes(), features=["flow.transaction"]).digest == artifact.digest
+    value = json.loads(artifact.to_bytes())
+    executable_value = value["executable"]
+    dependency = next(
+        d for d in executable_value["dependencies"] if d["reference"] == "source-system.release-hold@1.0.0"
+    )
+    dependency["document"]["spec"]["inputSchema"]["properties"]["reference"]["x-secret"] = True
+    digest = CatalogResource(
+        "Action", dependency["reference"], FrozenDocument.from_value(dependency["document"])
+    ).digest
+    for node in executable_value["graph"]["nodes"]:
+        for phase in node.get("txn", {}).get("phases", {}).values():
+            if phase["dependency"] == dependency["digest"]:
+                phase["dependency"] = digest
+    dependency["digest"] = digest
+    value["digest"] = canonical_digest(executable_value)
+    with pytest.raises(ValueError, match="classified or unclassifiable"):
+        import_artifact(json.dumps(value), features=["flow.transaction"])
