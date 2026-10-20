@@ -237,8 +237,11 @@ class _Walk:
     pivots: set[str] = field(default_factory=set)
     # For each step: whether every state that reached it had a pivot.
     reached: dict[str, bool] = field(default_factory=dict)
-    # Loop bodies already walked, by loop, entry states and placement: each is walked once per distinct entry.
-    walked: dict[tuple[int, frozenset[_State], bool], frozenset[_State]] = field(default_factory=dict)
+    # Loop bodies already walked, by loop, entry states, placement and reservations held beside them: each is walked
+    # once per distinct entry.
+    walked: dict[tuple[int, frozenset[_State], bool, int | None], frozenset[_State]] = field(default_factory=dict)
+    # For each branch: the shortest hold it can reserve before a point of no return, and whether it can end without one.
+    open_holds: dict[int, tuple[int | None, bool]] = field(default_factory=dict)
 
     def add(self, key: str, path: str, severity: Severity, **values: object) -> None:
         code = RULE_CODES[key]
@@ -257,11 +260,14 @@ class _Walk:
                 move if isinstance(move, tuple) else None,
             )
 
-    def sequence(self, sequence: Sequence, states: frozenset[_State], *, loop: bool, shared: bool) -> frozenset[_State]:
+    def sequence(
+        self, sequence: Sequence, states: frozenset[_State], *, loop: bool, shared: bool, beside: int | None = None
+    ) -> frozenset[_State]:
+        """Walk ``sequence`` from ``states``; ``beside`` is the shortest hold reserved in a parallel sibling."""
         for index, element in enumerate(sequence.elements):
             if not states:
                 break
-            states = self.element(element, states, sequence, index, loop=loop, shared=shared)
+            states = self.element(element, states, sequence, index, loop=loop, shared=shared, beside=beside)
         return states
 
     def element(
@@ -273,17 +279,22 @@ class _Walk:
         *,
         loop: bool,
         shared: bool,
+        beside: int | None,
     ) -> frozenset[_State]:
         if isinstance(element, Choice):
-            return frozenset().union(*(self.sequence(path, states, loop=loop, shared=shared) for path in element.paths))
+            return frozenset().union(
+                *(self.sequence(path, states, loop=loop, shared=shared, beside=beside) for path in element.paths)
+            )
         if isinstance(element, Fork):
             participating = [_participants(branch) > 0 for branch in element.branches]
+            alongside = _shortest_beside([self.open_hold(branch)[0] for branch in element.branches])
             results = [
                 self.sequence(
                     branch,
                     states,
                     loop=loop,
                     shared=shared or any(other for number, other in enumerate(participating) if number != position),
+                    beside=_shortest(beside, alongside[position]),
                 )
                 for position, branch in enumerate(element.branches)
             ]
@@ -295,28 +306,62 @@ class _Walk:
                 merged |= combined
             return frozenset(merged) if all(results) else frozenset()
         if isinstance(element, Repeat):
-            once = self.repeat(element, states, shared=shared)
+            once = self.repeat(element, states, shared=shared, beside=beside)
             # A second iteration starts where the first ended; it differs only when the first changed the state.
-            twice = self.repeat(element, once, shared=shared) if once != states else once
+            twice = self.repeat(element, once, shared=shared, beside=beside) if once != states else once
             return states | once | twice
         self.reached[element.id] = self.reached.get(element.id, True) and all(s.pivot is not None for s in states)
         if isinstance(element, Other):
-            return self.other(element, states)
+            return self.other(element, states, beside)
         return self.participant(element, states, sequence, index, loop=loop, shared=shared)
 
-    def repeat(self, loop: Repeat, states: frozenset[_State], *, shared: bool) -> frozenset[_State]:
+    def repeat(self, loop: Repeat, states: frozenset[_State], *, shared: bool, beside: int | None) -> frozenset[_State]:
         """One iteration of a loop body from ``states``; memoized, so nested loops cost no more than flat ones."""
-        key = (id(loop), states, shared)
+        key = (id(loop), states, shared, beside)
         if key not in self.walked:
-            self.walked[key] = self.sequence(loop.body, states, loop=True, shared=shared)
+            self.walked[key] = self.sequence(loop.body, states, loop=True, shared=shared, beside=beside)
         return self.walked[key]
 
-    def other(self, step: Other, states: frozenset[_State]) -> frozenset[_State]:
+    def open_hold(self, sequence: Sequence) -> tuple[int | None, bool]:
+        """The shortest hold ``sequence`` can reserve before a point of no return, and whether it can end without one.
+
+        A wait in a parallel branch runs while reservations in its sibling branches are held.
+        """
+        key = id(sequence)
+        if key in self.open_holds:
+            return self.open_holds[key]
+        shortest: int | None = None
+        open_ = True
+        for element in sequence.elements:
+            if not open_:
+                break
+            if isinstance(element, Participant):
+                if element.mode == "reserve":
+                    shortest = _shortest(shortest, element.hold)
+                elif element.mode in (None, "irreversible"):
+                    open_ = False
+            elif isinstance(element, Other):
+                open_ = element.kind != "fail"
+            elif isinstance(element, Repeat):
+                shortest = _shortest(shortest, self.open_hold(element.body)[0])
+            else:
+                parts = [
+                    self.open_hold(part)
+                    for part in (element.paths if isinstance(element, Choice) else element.branches)
+                ]
+                for hold, _ in parts:
+                    shortest = _shortest(shortest, hold)
+                ends = [ends for _, ends in parts]
+                open_ = any(ends) if isinstance(element, Choice) else all(ends)
+        self.open_holds[key] = (shortest, open_)
+        return shortest, open_
+
+    def other(self, step: Other, states: frozenset[_State], beside: int | None) -> frozenset[_State]:
         if step.kind == "fail":
             return frozenset()
         pivots = sorted((s.pivot for s in states if s.pivot is not None), key=lambda p: path_order(p.path))
         if step.kind in _WAITS:
-            holds = [s.hold for s in states if s.pivot is None and s.hold is not None]
+            holds = [hold for s in states if s.pivot is None and (hold := _shortest(s.hold, beside)) is not None]
             if holds and (step.wait_seconds is None or step.wait_seconds > min(holds)):
                 key = "TXN_HOLD_WAIT_UNBOUNDED" if step.wait_seconds is None else "TXN_HOLD_WAIT"
                 wait = duration_text(step.wait_seconds) if step.wait_seconds is not None else ""
@@ -384,6 +429,25 @@ class _Walk:
             elif step.side_effect == "non_idempotent":
                 self.add("TXN_AFTER_PIVOT_UNSAFE", step.path, "error", step=step.id, pivot=pivot.id)
         return frozenset(result)
+
+
+def _shortest(first: int | None, second: int | None) -> int | None:
+    """The smaller of two holds, either of which may be absent."""
+    if first is None:
+        return second
+    return first if second is None else min(first, second)
+
+
+def _shortest_beside(holds: list[int | None]) -> list[int | None]:
+    """For each branch, the shortest hold among the other branches, in linear time."""
+    before: list[int | None] = [None]
+    for hold in holds[:-1]:
+        before.append(_shortest(before[-1], hold))
+    after: list[int | None] = [None]
+    for hold in reversed(holds[1:]):
+        after.append(_shortest(after[-1], hold))
+    after.reverse()
+    return [_shortest(left, right) for left, right in zip(before, after, strict=True)]
 
 
 def _merge(left: _State, right: _State) -> _State:

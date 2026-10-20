@@ -257,6 +257,30 @@ def test_waits_before_the_decision_warn_when_they_can_outlast_reservations():
     assert check(Other("approve", at(0), "humanTask", None), reserve(1), irreversible(2))[0] == []
 
 
+def test_a_wait_beside_a_reservation_in_a_parallel_step_warns_too():
+    left, right = at(0) + "/branches/a/steps", at(0) + "/branches/b/steps"
+    branches = (
+        Sequence(left, (reserve(0, 60, base=left),)),
+        Sequence(right, (Other("approve", at(0, right), "humanTask", None),)),
+    )
+    issues, analysis = check(Fork("both", at(0), branches), irreversible(1, timeout=10))
+    assert issues == [("TXN_HOLD_WAIT", at(0, right), "warning")]
+    assert (
+        analysis.issues[0].message == "approve can wait without a time limit, but reservations are held for 1 minute."
+    )
+    inner = at(0, right) + "/branches/x/steps"
+    nested = Fork("inside", at(0, right), (Sequence(inner, (Other("pause", at(0, inner), "wait", 120),)),))
+    branches = (Sequence(left, (reserve(0, 60, base=left),)), Sequence(right, (nested,)))
+    assert check(Fork("both", at(0), branches), irreversible(1, timeout=10))[0] == [
+        ("TXN_HOLD_WAIT", at(0, inner), "warning")
+    ]
+    short = (
+        Sequence(left, (reserve(0, 900, base=left),)),
+        Sequence(right, (Other("pause", at(0, right), "wait", 60),)),
+    )
+    assert check(Fork("both", at(0), short), irreversible(1, timeout=10))[0] == []
+
+
 def test_size_is_bounded_with_loops_multiplied_out_and_an_edit_on_maxitems():
     body = Sequence(at(0) + "/body/steps", (compensate(0, base=at(0) + "/body/steps"),))
     issues, analysis = check(Repeat("each", at(0), body, 2000))
@@ -504,7 +528,19 @@ def _expected(body: Sequence):
                     if holds and node.timeout is not None and holds[0][0] < node.timeout + 30:
                         found.add(("TXN_HOLD_PIVOT", holds[0][1] + "/holdSeconds"))
             elif node.kind in ("wait", "signal", "humanTask"):
-                if not after and holds and (node.wait_seconds is None or node.wait_seconds > holds[0][0]):
+                # A wait also outlasts reservations made beside it in a parallel step.
+                beside = [
+                    nodes[other].hold
+                    for other in range(len(nodes))
+                    if other != index
+                    and other not in preds[index]
+                    and index not in preds[other]
+                    and isinstance(nodes[other], Participant)
+                    and nodes[other].mode == "reserve"
+                    and not any(decides[earlier] for earlier in preds[other])
+                ]
+                held = sorted([hold for hold, _ in holds] + beside)
+                if not after and held and (node.wait_seconds is None or node.wait_seconds > held[0]):
                     found.add(("TXN_HOLD_WAIT", node.path))
                 if after:
                     found.add(("TXN_AFTER_PIVOT_WAIT", node.path))
