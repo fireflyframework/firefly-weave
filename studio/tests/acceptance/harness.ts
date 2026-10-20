@@ -199,23 +199,32 @@ const guarded = new WeakSet<object>();
  * javascript: page would replace Studio as setContent does.
  */
 function restrictNavigation(page: Page): void {
-  const prototype = Object.getPrototypeOf(page) as Record<string, unknown>;
-  const original = prototype["goto"];
-  if (typeof original !== "function" || guards.has(original)) return;
-  const wrapped = function (this: object, ...args: unknown[]): unknown {
-    if (guarded.has(this) && !/^https?:\/\//i.test(String(args[0])))
-      return Promise.reject(
-        Error("Studio journeys navigate only to http(s) pages"),
-      );
-    return (original as (...args: unknown[]) => unknown).apply(this, args);
-  };
-  guards.add(wrapped);
-  Object.defineProperty(prototype, "goto", {
-    value: wrapped,
-    writable: false,
-    configurable: false,
-    enumerable: false,
-  });
+  // Pages and their frames: a frame's page is the guarded one.
+  const ownerOf = (target: object): object =>
+    typeof (target as { page?: unknown }).page === "function"
+      ? ((target as { page: () => object }).page() ?? target)
+      : target;
+  for (const prototype of [
+    Object.getPrototypeOf(page),
+    Object.getPrototypeOf(page.mainFrame()),
+  ] as Record<string, unknown>[]) {
+    const original = prototype["goto"];
+    if (typeof original !== "function" || guards.has(original)) continue;
+    const wrapped = function (this: object, ...args: unknown[]): unknown {
+      if (guarded.has(ownerOf(this)) && !/^https?:\/\//i.test(String(args[0])))
+        return Promise.reject(
+          Error("Studio journeys navigate only to http(s) pages"),
+        );
+      return (original as (...args: unknown[]) => unknown).apply(this, args);
+    };
+    guards.add(wrapped);
+    Object.defineProperty(prototype, "goto", {
+      value: wrapped,
+      writable: false,
+      configurable: false,
+      enumerable: false,
+    });
+  }
 }
 
 /** A page whose interception, injection and request methods throw. */
@@ -517,6 +526,8 @@ class Journey {
   // edit the running step's record.
   #failed = false;
   #shots = 0;
+  /** Where a person's main frame went that it may not go: outside http(s), the host or the identity provider. */
+  #navigationProblems: string[] = [];
   #current: {
     id: string;
     ran: Set<string>;
@@ -573,7 +584,11 @@ class Journey {
     const shot = () =>
       current.screenshot ? { screenshot: current.screenshot } : {};
     try {
+      const navigated = this.#navigationProblems.length;
       await body();
+      // The step that took a page outside http(s) or its hosts fails, not only the journey.
+      if (this.#navigationProblems.length > navigated)
+        throw Error(this.#navigationProblems.slice(navigated).join("; "));
       const outcome = stepOutcome(
         stepId,
         enablement().steps,
@@ -671,7 +686,15 @@ class Journey {
     );
     context.on("request", (request) => signed.urls.push(request.url()));
     page.on("framenavigated", (frame) => {
-      if (frame === page.mainFrame()) signed.navigations.push(frame.url());
+      if (frame !== page.mainFrame()) return;
+      signed.navigations.push(frame.url());
+      if (signed.host)
+        this.#navigationProblems.push(
+          ...navigationProblems(
+            [frame.url()],
+            [setup().keycloak, signed.host],
+          ).map((problem) => `${signed.name}: ${problem}`),
+        );
     });
     page.on("console", (message) =>
       signed.console.push(`${message.type()}: ${message.text()}`),

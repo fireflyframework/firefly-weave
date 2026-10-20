@@ -132,7 +132,13 @@ test("a guarded context and its pages refuse every denied method", async ({
     await expect(page.goto(url), url).rejects.toThrow(
       /Studio journeys navigate only to http\(s\) pages/,
     );
+  // The same through the page's frames, with a URL built at run time.
+  const scheme = ["da", "ta"].join("");
+  await expect(
+    page.mainFrame().goto(`${scheme}:text/html,<h1>FAKE</h1>`),
+  ).rejects.toThrow(/Studio journeys navigate only to http\(s\) pages/);
   expect((await page.goto(baseURL!))?.ok()).toBe(true);
+  expect((await page.mainFrame().goto(baseURL!))?.ok()).toBe(true);
 
   // Requests with the person's cookies: GET only.
   expect((await page.request.get(baseURL!)).ok()).toBe(true);

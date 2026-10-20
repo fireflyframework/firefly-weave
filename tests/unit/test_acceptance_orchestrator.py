@@ -672,3 +672,14 @@ def test_the_studio_harness_redacts_the_identity_providers_admin_secret():
     body = harness[harness.index("function secrets(): string[] {") :]
     body = body[: body.index("\n}\n")]
     assert "adminSecret()" in body
+
+
+def test_a_studio_step_whose_page_left_http_or_its_hosts_fails_itself():
+    # finish() fails the test, but the step that navigated must not keep a passed record.
+    harness = (acceptance.ROOT / "studio/tests/acceptance/harness.ts").read_text(encoding="utf-8")
+    step = harness[harness.index("  async step(stepId: string") :]
+    step = step[: step.index("\n  }\n")]
+    body, after = step.index("await body();"), step.index("this.#navigationProblems.length > navigated")
+    assert body < after
+    sign_in = harness[harness.index("  async signIn(name: string)") :]
+    assert "this.#navigationProblems.push(" in sign_in[: sign_in.index("\n  }\n")]
