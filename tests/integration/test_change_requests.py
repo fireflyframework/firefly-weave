@@ -1264,6 +1264,60 @@ async def test_a_drain_shows_the_change_only_to_someone_who_may_read_it(ops, fle
     assert again.change_request is not None and again.change_request.state == "draining"
 
 
+async def test_job_following_expiry_and_busy_edges(ops):
+    runner = ops.authority("planner")
+    # A runner that finds the target no longer matches fails the change with a re-plannable code.
+    setup = await prepared(ops)
+    change_request = await applying(ops, setup)
+    lease = await ops.service.claim(RunnerClaimRequest(runner_id=setup.runner.id), **runner)
+    await ops.service.report(
+        RunnerReport(
+            lease=lease.proof,
+            report_id=uuid4(),
+            state="failed",
+            receipt=SafeDeploymentReceipt(code="precondition_failed"),
+        ),
+        **runner,
+    )
+    failed = await ops.changes.read(change_request.id, **ops.authority("approver"))
+    assert (failed.state, failed.failure.code) == ("failed", "WV-PRECONDITION-FAILED")
+    # A wrong If-Match is refused before anything is planned again.
+    with pytest.raises(CatalogError) as stale:
+        await ops.changes.replan(failed.id, failed.revision + 3, **ops.authority("planner"))
+    assert (stale.value.status, stale.value.code) == (409, "WV-REVISION")
+    # Expiry never touches an applying change, even with a past plan expiry.
+    setup = await prepared(ops)
+    change_request = await applying(ops, setup)
+    stored = await payload(ops, change_request.id)
+    stored["plan_expires_at"] = "2000-01-01T00:00:00Z"
+    await rewrite(ops, change_request.id, stored)
+    async with UnitOfWork(ops.access[0]).open(ops.scope) as tx:
+        repo = DeploymentRepository(tx)
+        assert await persist_expiry(repo, await repo.now()) == 0
+    assert (await ops.changes.read(change_request.id, **ops.authority("approver"))).state == "applying"
+    # An unfinished job keeps the target busy for a new change request.
+    setup = await prepared(ops)
+    await ops.service.observe(ObserveRequest(target_id=setup.target.id), uuid4().hex, **runner)
+    with pytest.raises(CatalogError) as busy:
+        await ops.changes.create(change(setup, replicas=3), uuid4().hex, **runner)
+    assert (busy.value.status, busy.value.code) == (409, "WV-TARGET-BUSY")
+
+
+async def test_advance_supersedes_when_the_target_changed(ops):
+    setup = await prepared(ops)
+    created = await ops.changes.create(change(setup, replicas=3), uuid4().hex, **ops.authority("planner"))
+    await run_observation(ops, setup, 0)
+    ready = await ops.changes.read(created.id, **ops.authority("planner"))
+    await ops.service.update_target(
+        setup.target.id,
+        TargetUpdate(runner_principal_id=setup.target.runner_principal_id, capabilities=CAPABILITIES),
+        setup.target.revision,
+        **ops.authority("planner"),
+    )
+    moved = await ops.changes.advance(created.id, ready.revision, **ops.authority("planner"))
+    assert moved.state == "superseded"
+
+
 async def test_a_change_whose_drain_window_closed_can_be_planned_again(ops, fleet):
     change_request = await approved(ops, fleet.setup, observed_count=3, replicas=1)
     async with ops.access[1].begin() as session:
