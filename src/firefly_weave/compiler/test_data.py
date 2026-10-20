@@ -165,8 +165,8 @@ def _targets(
         schema = spec.get("inputSchema")
         yield "/input", schema if isinstance(schema, dict) else UNRESOLVED, document["input"]["value"]
     for key, pin in cast(dict[str, Any], document.get("pins", {})).items():
-        target = UNRESOLVED if _phase(key) else _output(workflow, _step(workflow, key), catalog)
-        yield f"/pins/{_escape(key)}", target, pin["output"]
+        output: Target = UNRESOLVED if _phase(key) else _output(workflow, _step(workflow, key), catalog)
+        yield f"/pins/{_escape(key)}", output, pin["output"]
     for key, signal in cast(dict[str, Any], document.get("signals", {})).items():
         if "outcome" in signal:
             yield f"/signals/{_escape(key)}", _NOTHING, None
