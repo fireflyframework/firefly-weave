@@ -20,7 +20,10 @@ SPDX-License-Identifier: Apache-2.0
 // the steps it holds), what it calls (the action, table, workflow or AI
 // profile behind it) and what it reads (the steps it references, each with
 // its own fingerprint, and the test input when it reads the workflow
-// input). They detect changes; they protect nothing.
+// input). A step inside a loop that reads the loop's item, index or
+// `/loops/<id>` also reads what that loop goes over: its items expression,
+// the steps that expression reads and the test input when it reads it. They
+// detect changes; they protect nothing.
 import { canonicalJson } from "../../forms/core/json";
 import type { Step, Workflow } from "../../model";
 import { referencesOf } from "../formula/preview";
@@ -76,9 +79,21 @@ export interface FingerprintInputs {
   contractOf(step: Step): string;
 }
 
+const unescape = (segment: string) =>
+  segment.replace(/~1/g, "/").replace(/~0/g, "~");
 const stepOfPointer = (pointer: string): string | null => {
   const match = /^\/steps\/([^/]+)/.exec(pointer);
-  return match ? match[1].replace(/~1/g, "/").replace(/~0/g, "~") : null;
+  return match ? unescape(match[1]) : null;
+};
+/** The loops a pointer reads: the innermost enclosing one for `/item` and `/index`, the named one for `/loops/<id>`. */
+const loopsOfPointer = (
+  pointer: string,
+  enclosing: readonly string[],
+): string[] => {
+  if (/^\/(?:item|index)(?:\/|$)/.test(pointer))
+    return enclosing.length ? [enclosing[enclosing.length - 1]!] : [];
+  const named = /^\/loops\/([^/]+)/.exec(pointer);
+  return named ? [unescape(named[1]!)] : [];
 };
 
 /** Every step's fingerprints, by step ID, in one pass (each step is hashed once). */
@@ -86,18 +101,61 @@ export function fingerprints(
   inputs: FingerprintInputs,
 ): Map<string, StepFingerprints> {
   const steps = new Map<string, Step>();
-  const visit = (list: readonly Step[]) => {
+  // The loops around each step, outermost first.
+  const loopsAround = new Map<string, readonly string[]>();
+  const visit = (list: readonly Step[], enclosing: readonly string[]) => {
     for (const step of list) {
       if (steps.has(step.id)) continue;
       steps.set(step.id, step);
-      for (const inner of childLists(step)) visit(inner);
+      loopsAround.set(step.id, enclosing);
+      const inside =
+        (step.kind as string) === "forEach"
+          ? [...enclosing, step.id]
+          : enclosing;
+      for (const inner of childLists(step)) visit(inner, inside);
     }
   };
-  visit(inputs.workflow.spec.steps);
+  visit(inputs.workflow.spec.steps, []);
   const input = fingerprint(inputs.testInput ?? null);
+  const readsTheInput = (pointers: readonly string[]) =>
+    pointers.some(
+      (pointer) => pointer === "/input" || pointer.startsWith("/input/"),
+    );
+  // What one loop goes over: its items expression and everything that expression reads.
+  const iterations = new Map<string, Fingerprint | null>();
+  const iterating = new Set<string>();
+  const iteration = (id: string): Fingerprint | null => {
+    if (iterations.has(id)) return iterations.get(id)!;
+    const loop = steps.get(id);
+    if (!loop || (loop.kind as string) !== "forEach" || iterating.has(id))
+      return null;
+    iterating.add(id);
+    const items = loop["items"];
+    const pointers = referencesOf(items);
+    const reads = [
+      ...new Set(pointers.map(stepOfPointer).filter((dep) => dep !== null)),
+    ].sort();
+    const outer = [
+      ...new Set(
+        pointers.flatMap((pointer) =>
+          loopsOfPointer(pointer, loopsAround.get(id) ?? []),
+        ),
+      ),
+    ].sort();
+    const value = fingerprint([
+      items ?? null,
+      reads.map((dep) => [dep, of(dep)?.execution ?? null]),
+      outer.map((loopId) => [loopId, iteration(loopId)]),
+      readsTheInput(pointers) ? input : null,
+    ]);
+    iterating.delete(id);
+    iterations.set(id, value);
+    return value;
+  };
   const done = new Map<string, StepFingerprints>();
   const busy = new Set<string>();
-  const of = (id: string): StepFingerprints | null => {
+  // Hoisted: iteration() and of() call each other.
+  function of(id: string): StepFingerprints | null {
     const cached = done.get(id);
     if (cached) return cached;
     const step = steps.get(id);
@@ -113,12 +171,19 @@ export function fingerprints(
     }
     for (const list of childLists(step))
       for (const child of list) deps.add(child.id);
-    const readsInput = pointers.some(
-      (pointer) => pointer === "/input" || pointer.startsWith("/input/"),
-    );
+    const loops = [
+      ...new Set(
+        pointers.flatMap((pointer) =>
+          loopsOfPointer(pointer, loopsAround.get(id) ?? []),
+        ),
+      ),
+    ].sort();
     const upstream = fingerprint([
       [...deps].sort().map((dep) => [dep, of(dep)?.execution ?? null]),
-      readsInput ? input : null,
+      readsTheInput(pointers) ? input : null,
+      ...(loops.length
+        ? [loops.map((loopId) => [loopId, iteration(loopId)])]
+        : []),
     ]);
     const config = fingerprint(own);
     const contract = fingerprint(inputs.contractOf(step));
@@ -131,7 +196,7 @@ export function fingerprints(
     busy.delete(id);
     done.set(id, result);
     return result;
-  };
+  }
   for (const id of steps.keys()) of(id);
   return done;
 }

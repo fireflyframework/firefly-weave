@@ -190,3 +190,90 @@ describe("fingerprints", () => {
     expect((performance.now() - started) / 5).toBeLessThan(50);
   });
 });
+
+describe("fingerprints of steps inside a loop", () => {
+  const loop = (
+    fetchWith: unknown,
+    items: unknown,
+    reads: unknown = { ref: "/item" },
+  ): Step[] =>
+    [
+      { id: "fetch", kind: "action", uses: "crm.list@1.0.0", with: fetchWith },
+      {
+        id: "each",
+        kind: "forEach",
+        items,
+        concurrency: 1,
+        body: {
+          steps: [
+            {
+              id: "send",
+              kind: "action",
+              uses: "mail.send@1.0.0",
+              with: reads,
+            },
+          ],
+          output: { literal: null },
+        },
+      },
+    ] as unknown as Step[];
+  const stale = (
+    before: Step[],
+    after: Step[],
+    id: string,
+    inputs_: [unknown, unknown] = [{ orders: [1] }, { orders: [1] }],
+  ) => {
+    const was = fingerprints(inputs(before, inputs_[0])).get(id)!;
+    return staleReason(
+      {
+        configHash: was.config,
+        contractHash: was.contract,
+        upstreamHash: was.upstream,
+      },
+      fingerprints(inputs(after, inputs_[1])).get(id),
+    );
+  };
+  const items = { ref: "/steps/fetch/output" };
+  it("go out of date when the step the loop goes over changes", () => {
+    expect(
+      stale(
+        loop({ literal: {} }, items),
+        loop({ literal: { all: true } }, items),
+        "send",
+      ),
+    ).toBe("upstream");
+  });
+  it("go out of date when the loop's items change", () => {
+    expect(
+      stale(
+        loop({ literal: {} }, items),
+        loop({ literal: {} }, { ref: "/steps/fetch/output/other" }),
+        "send",
+      ),
+    ).toBe("upstream");
+  });
+  it("go out of date when the loop goes over the test input and it changes", () => {
+    const steps = loop({ literal: {} }, { ref: "/input/orders" });
+    expect(
+      stale(steps, steps, "send", [{ orders: [1] }, { orders: [2] }]),
+    ).toBe("upstream");
+  });
+  it("follow a loop named by its ID, and stay current when nothing it reads changes", () => {
+    const named = { ref: "/loops/each/index" };
+    expect(
+      stale(
+        loop({ literal: {} }, items, named),
+        loop({ literal: { all: true } }, items, named),
+        "send",
+      ),
+    ).toBe("upstream");
+    const constant = { literal: 1 };
+    expect(
+      stale(
+        loop({ literal: {} }, items, constant),
+        loop({ literal: { all: true } }, items, constant),
+        "send",
+      ),
+    ).toBeNull();
+  });
+});
