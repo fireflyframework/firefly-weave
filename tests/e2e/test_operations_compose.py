@@ -96,16 +96,32 @@ def tidy(run) -> Any:
 
     async def cancel() -> None:
         async with run.client("operator") as operator:
-            for item in (await operator.invoke("deployment_change_requests.list")).items:
+            for item in (await call(operator, "deployment_change_requests.list")).items:
                 if item.state in {"observing", "ready_to_plan", "awaiting_approval", "approved", "draining"}:
                     with contextlib.suppress(WeaveError):
-                        await operator.invoke(
+                        await call(
+                            operator,
                             "deployment_change_requests.cancel",
                             identifier=item.id,
                             body=ChangeRequestDecision(reason="The journey ended"),
                         )
 
     asyncio.run(cancel())
+
+
+CAPACITY = {"WV-OPERATION-CAPACITY", "WV-REQUEST-CAPACITY"}
+
+
+async def call(client, operation: str, **kwargs: Any) -> Any:
+    """One operation; a busy platform's 429 capacity refusal is sent again, as the platform asks clients to."""
+    deadline = time.monotonic() + 120
+    while True:
+        try:
+            return await client.invoke(operation, **kwargs)
+        except WeaveError as error:
+            if error.status != 429 or error.code not in CAPACITY or time.monotonic() > deadline:
+                raise
+        await asyncio.sleep(2)
 
 
 def until(read, done, seconds: float, what: str) -> Any:
@@ -129,9 +145,9 @@ async def auntil(read, done, seconds: float, what: str) -> Any:
 
 
 async def local_docker(client) -> tuple[Any, Any]:
-    targets = (await client.invoke("deployment_targets.list", query={"limit": 100})).items
+    targets = (await call(client, "deployment_targets.list", query={"limit": 100})).items
     (target,) = [item for item in targets if item.name == "local-docker"]
-    deployments = (await client.invoke("deployments.list", query={"limit": 100})).items
+    deployments = (await call(client, "deployments.list", query={"limit": 100})).items
     (deployment,) = [item for item in deployments if item.target_id == target.id]
     return target, deployment
 
@@ -150,35 +166,38 @@ async def requested(client, intent: str, replicas: int | None = None, **values: 
     }
     if replicas is not None:
         body["desired"] = [{"name": COMPONENT, "replicas": replicas}]
-    created = await client.invoke(
+    created = await call(
+        client,
         "deployment_change_requests.create",
         body=ChangeRequestCreate.model_validate_json(json.dumps(body)),
         idempotency_key=uuid4().hex,
     )
 
     async def read():
-        return await client.invoke("deployment_change_requests.read", identifier=created.id)
+        return await call(client, "deployment_change_requests.read", identifier=created.id)
 
     ready = await auntil(read, lambda item: item.state != "observing", CHANGE_SECONDS, "still observing")
     assert ready.state == "ready_to_plan", ready.failure
-    return await client.invoke("deployment_change_requests.advance", identifier=created.id, revision=ready.revision)
+    return await call(client, "deployment_change_requests.advance", identifier=created.id, revision=ready.revision)
 
 
 async def finished(client, change, *, approver=None) -> Any:
     """Approve (as `approver`, else the same person), let workers finish when the change drains, apply, wait."""
     approving = approver or client
-    approved = await approving.invoke(
+    approved = await call(
+        approving,
         "deployment_change_requests.approve",
         identifier=change.id,
         body=ChangeRequestApprove(digest=change.plan_digest),
     )
     assert approved.state == "approved"
     if approved.drain_set:
-        await client.invoke("deployment_change_requests.drain", identifier=change.id, idempotency_key=uuid4().hex)
+        await call(client, "deployment_change_requests.drain", identifier=change.id, idempotency_key=uuid4().hex)
 
     async def apply():
         try:
-            return await client.invoke(
+            return await call(
+                client,
                 "deployment_change_requests.apply",
                 identifier=change.id,
                 body=ChangeRequestApply(digest=change.plan_digest),
@@ -192,7 +211,7 @@ async def finished(client, change, *, approver=None) -> Any:
     await auntil(apply, lambda value: value is not None, CHANGE_SECONDS, "drained workers still busy")
 
     async def read():
-        return await client.invoke("deployment_change_requests.read", identifier=change.id)
+        return await call(client, "deployment_change_requests.read", identifier=change.id)
 
     done = await auntil(read, lambda item: item.state != "applying", CHANGE_SECONDS, "still applying")
     assert done.state == "succeeded", (done.state, done.failure)
@@ -200,7 +219,7 @@ async def finished(client, change, *, approver=None) -> Any:
 
 
 async def fixture_workers(client) -> list[Any]:
-    listed = (await client.invoke("workers.list", query={"limit": 100})).items
+    listed = (await call(client, "workers.list", query={"limit": 100})).items
     return [
         item
         for item in listed
@@ -233,7 +252,8 @@ async def lite_activation(client, release: str, journey: str) -> Any:
             "retry": {"maxAttempts": 1, "initialDelaySeconds": 1, "maxDelaySeconds": 1},
         },
     }
-    await client.invoke(
+    await call(
+        client,
         "definitions.publish",
         collection="actions",
         body=PublicationRequest(format="json", source=json.dumps(action)),
@@ -253,13 +273,15 @@ async def lite_activation(client, release: str, journey: str) -> Any:
             "output": {"ref": "/steps/sleep/output"},
         },
     }
-    version = await client.invoke(
+    version = await call(
+        client,
         "definitions.publish",
         collection="workflows",
         body=PublicationRequest(format="json", source=json.dumps(workflow)),
         idempotency_key=uuid4().hex,
     )
-    return await client.invoke(
+    return await call(
+        client,
         "activations.create",
         body=ActivationRequest.model_validate_json(
             json.dumps(
@@ -285,7 +307,8 @@ async def start_runs(client, activation, inputs: list[dict]) -> list[UUID]:
         deadline = time.monotonic() + 120
         while True:
             try:
-                started = await client.invoke(
+                started = await call(
+                    client,
                     "runs.start",
                     body=StartRunRequest.model_validate_json(
                         json.dumps({"activation_id": str(activation.id), "input": value})
@@ -302,7 +325,7 @@ async def start_runs(client, activation, inputs: list[dict]) -> list[UUID]:
 
 
 async def run_states(client, runs: list[UUID]) -> dict[UUID, str]:
-    return {run: (await client.invoke("runs.read", identifier=run)).state.status for run in runs}
+    return {run: (await call(client, "runs.read", identifier=run)).state.status for run in runs}
 
 
 def platform_sql(run, sql: str) -> str:
@@ -331,7 +354,7 @@ async def test_o_j1_a_clean_platform_has_local_operations_ready(run):
     assert status["operations"] == {"stage": "ready", "runner": "online", "target": "local-docker"}
     assert set(run.roles("owner")) >= set(LOCAL_OWNER_ROLES)
     async with run.client("owner") as owner:
-        summary = await owner.invoke("operations_summary.read")
+        summary = await call(owner, "operations_summary.read")
         assert summary.api.compatibility.mode == "ready"
         target, deployment = await local_docker(owner)
         assert target.approval_policy.distinct_approver is False
@@ -391,14 +414,14 @@ async def test_o_j3_a_restart_replaces_every_worker_and_the_old_ones_are_retired
         assert {item.id for item in fresh} - old
 
         async def stale():
-            listed = (await operator.invoke("workers.list", query={"limit": 100})).items
+            listed = (await call(operator, "workers.list", query={"limit": 100})).items
             return {item.id: item.presence for item in listed if item.id in old}
 
         await auntil(stale, lambda value: set(value.values()) <= {"stale"}, STALE_SECONDS, "old instances online")
     async with run.client("owner") as owner:
         for worker in old:
-            await owner.invoke("workers.revoke", identifier=worker)
-        listed = (await owner.invoke("workers.list", query={"limit": 100})).items
+            await call(owner, "workers.revoke", identifier=worker)
+        listed = (await call(owner, "workers.list", query={"limit": 100})).items
         assert all(item.revoked for item in listed if item.id in old)
 
 
@@ -408,7 +431,8 @@ async def test_o_j8_four_eyes_on_local_docker(run):
     async with run.client("owner") as owner, run.client("operator") as operator:
         target, _ = await local_docker(owner)
         policy = {"runner_principal_id": str(target.runner_principal_id), "capabilities": list(target.capabilities)}
-        updated = await owner.invoke(
+        updated = await call(
+            owner,
             "deployment_targets.update",
             identifier=target.id,
             body=TargetUpdate.model_validate_json(
@@ -439,22 +463,23 @@ async def test_o_j8_four_eyes_on_local_docker(run):
             short = await requested(operator, "scale_workers", 3, plan_ttl_seconds=30)
 
             async def read():
-                return await operator.invoke("deployment_change_requests.read", identifier=short.id)
+                return await call(operator, "deployment_change_requests.read", identifier=short.id)
 
             expired = await auntil(read, lambda item: item.state == "expired", 120, "plan not expired")
-            observing = await operator.invoke(
-                "deployment_change_requests.replan", identifier=short.id, revision=expired.revision
+            observing = await call(
+                operator, "deployment_change_requests.replan", identifier=short.id, revision=expired.revision
             )
             assert observing.state == "observing"
             ready = await auntil(read, lambda item: item.state != "observing", CHANGE_SECONDS, "still observing")
-            planned = await operator.invoke(
-                "deployment_change_requests.advance", identifier=short.id, revision=ready.revision
+            planned = await call(
+                operator, "deployment_change_requests.advance", identifier=short.id, revision=ready.revision
             )
             assert planned.state == "awaiting_approval"
             await finished(operator, planned, approver=owner)
         finally:
             current, _ = await local_docker(owner)
-            await owner.invoke(
+            await call(
+                owner,
                 "deployment_targets.update",
                 identifier=current.id,
                 body=TargetUpdate.model_validate_json(
@@ -474,7 +499,8 @@ async def test_o_j9_an_unknown_outcome_opens_an_incident_that_a_safe_retry_resol
     async with run.client("operator") as operator, run.client("owner") as owner:
         own = await fixture_workers(operator)
         for worker in own:
-            await operator.invoke(
+            await call(
+                operator,
                 "workers.drain",
                 identifier=worker.id,
                 body=WorkerControlRequest(expected_revision=worker.revision),
@@ -503,7 +529,7 @@ async def test_o_j9_an_unknown_outcome_opens_an_incident_that_a_safe_retry_resol
             (run_id,) = await start_runs(owner, activation, [{"ms": 0, "fail": "unknown"}])
 
             async def incidents():
-                return (await owner.invoke("incidents.run_list", identifier=run_id)).items
+                return (await call(owner, "incidents.run_list", identifier=run_id)).items
 
             (incident,) = await auntil(incidents, lambda items: len(items) == 1, 300, "no incident")
         finally:
@@ -511,8 +537,9 @@ async def test_o_j9_an_unknown_outcome_opens_an_incident_that_a_safe_retry_resol
             assert json.loads(labels).get("weave.owner") == "o3", "refusing to remove an unowned container"
             run.require(run.docker("rm", "--force", FAULT_CONTAINER))
             for worker in own:
-                current = await operator.invoke("workers.read", identifier=worker.id)
-                await operator.invoke(
+                current = await call(operator, "workers.read", identifier=worker.id)
+                await call(
+                    operator,
                     "workers.resume",
                     identifier=worker.id,
                     body=WorkerControlRequest(expected_revision=current.revision),
