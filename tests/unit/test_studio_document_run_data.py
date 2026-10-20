@@ -18,23 +18,62 @@
 
 from uuid import UUID
 
+import pytest
+from pydantic import ValidationError
+
 from firefly_weave.definitions.studio_documents import run_data
 
 RUN = "3f2a6c1e-0d5b-4a63-9c1f-2b7e8d9a0b11"
 ENVIRONMENT = "9b1c2d3e-4f50-4a61-8b72-c3d4e5f60718"
+PIN = {
+    "output": {},
+    "source": "manual",
+    "pinnedAt": "2026-10-20T10:00:00Z",
+    "configHash": "fnv1a64:0000000000000001",
+    "contractHash": "fnv1a64:0000000000000002",
+    "upstreamHash": "fnv1a64:0000000000000003",
+}
+RECORDED = {"source": "run", "runId": RUN, "runEnvironmentId": ENVIRONMENT}
+
+
+def document(**fields):
+    return {"schemaVersion": 1, "kind": "weave.studio/testData", "updatedAt": "2026-10-20T10:00:00Z", **fields}
 
 
 def test_entries_from_runs_and_test_calls_are_run_data():
-    pin = {"output": {}, "source": "test-call", "runId": RUN, "runEnvironmentId": ENVIRONMENT}
-    assert run_data({"pins": {"a": pin}}) == (True, [UUID(ENVIRONMENT)])
-    turns = {"turns": [], "source": "run", "runId": RUN, "runEnvironmentId": ENVIRONMENT}
-    assert run_data({"aiTurns": {"support": turns}}) == (True, [UUID(ENVIRONMENT)])
+    pin = {**PIN, "source": "test-call", "runId": RUN, "runEnvironmentId": ENVIRONMENT}
+    assert run_data(document(pins={"a": pin})) == (True, [UUID(ENVIRONMENT)])
+    turns = {"turns": [], **RECORDED}
+    assert run_data(document(aiTurns={"support": turns})) == (True, [UUID(ENVIRONMENT)])
+    mock = {"output": {}, **RECORDED}
+    assert run_data(document(workflows={"notify@1.0.0": {"mocks": {"send": mock}}})) == (True, [UUID(ENVIRONMENT)])
+
+
+@pytest.mark.parametrize("step", ["data", "output", "value", "payload"])
+def test_an_entry_of_a_step_named_like_a_value_field_is_still_read(step):
+    recorded = (True, [UUID(ENVIRONMENT)])
+    assert run_data(document(pins={step: {**PIN, **RECORDED}})) == recorded
+    assert run_data(document(signals={step: {"payload": {}, **RECORDED}})) == recorded
+    assert run_data(document(humans={step: {"decision": "approve", "data": {}, **RECORDED}})) == recorded
+    assert run_data(document(aiTurns={step: {"turns": [], **RECORDED}})) == recorded
 
 
 def test_values_named_like_provenance_are_just_data():
     manual = {"value": {"source": "run", "runId": RUN, "runEnvironmentId": ENVIRONMENT}, "source": "manual"}
-    assert run_data({"input": manual}) == (False, [])
+    assert run_data(document(input=manual)) == (False, [])
+    # Inside AI turns and memory, fields named like provenance are data too, even when they aren't UUIDs.
+    turns = {
+        "turns": [{"runEnvironmentId": "not a uuid", "source": "run", "runId": RUN}],
+        "memory": [{"role": "user", "content": "runEnvironmentId"}],
+        "source": "manual",
+    }
+    assert run_data(document(aiTurns={"agent": turns})) == (False, [])
 
 
 def test_manual_and_generated_data_are_not():
-    assert run_data({"input": {"value": 1, "source": "schema"}, "pins": {}}) == (False, [])
+    assert run_data(document(input={"value": 1, "source": "schema"}, pins={})) == (False, [])
+
+
+def test_a_document_that_does_not_parse_is_refused_not_guessed():
+    with pytest.raises(ValidationError):
+        run_data(document(pins={"a": {**PIN, "source": "run"}}))

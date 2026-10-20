@@ -55,24 +55,28 @@ _RUN_SOURCES = {"run", "test-call"}
 
 
 def run_data(document: JsonObject) -> tuple[bool, list[UUID]]:
-    """Whether a test-data document holds data recorded from runs, and the environments of those runs."""
+    """Whether a test-data document holds data recorded from runs, and the environments of those runs.
+
+    Read from the typed entries only (the test input, pins, signals, human answers, AI turns and called-workflow
+    mocks) and their provenance fields, never from inside the values they hold: a step may be called ``data`` or
+    ``output``, and a value may hold a field named ``runEnvironmentId``. A document that doesn't parse raises: run
+    data is never guessed.
+    """
+    data = parse_test_data(json.dumps(document, ensure_ascii=False).encode("utf-8"))
+    entries: list[Any] = [data.input]
+    for section in (data.pins, data.signals, data.humans, data.ai_turns):
+        entries.extend((section or {}).values())
+    for callee in (data.workflows or {}).values():
+        entries.extend(callee.mocks.values())
     found = False
     environments: set[UUID] = set()
-    stack: list[Any] = [document]
-    while stack:
-        node = stack.pop()
-        if isinstance(node, list):
-            stack.extend(node)
-            continue
-        if not isinstance(node, dict):
-            continue
-        if "runId" in node or node.get("source") in _RUN_SOURCES:
+    for entry in entries:
+        run_id = getattr(entry, "run_id", None)
+        environment = getattr(entry, "run_environment_id", None)
+        if run_id is not None or getattr(entry, "source", None) in _RUN_SOURCES:
             found = True
-        environment = node.get("runEnvironmentId")
-        if isinstance(environment, str):
-            environments.add(UUID(environment))
-        # Values inside entries are data: only the entry fields above count, so a value named "source" doesn't.
-        stack.extend(value for key, value in node.items() if key not in {"value", "output", "payload", "data"})
+        if environment is not None:
+            environments.add(UUID(str(environment)))
     return found, sorted(environments, key=str)
 
 
@@ -196,7 +200,11 @@ class StudioDocumentService:
     ) -> StudioDocument:
         scope = project_scope(scope)
         document = self._document(kind, body.document)
-        found, environments = run_data(document) if kind == "test-data" else (False, [])
+        try:
+            found, environments = run_data(document) if kind == "test-data" else (False, [])
+        except ValidationError:
+            # Run data is never guessed: a document whose entries don't parse is refused.
+            raise CatalogError(422, "WV-STUDIO-DOCUMENT-SCHEMA", "Test data does not match its format") from None
         self._require(actor, scope, kind, environments, write=True, context=context)
         async with self.definitions.transaction(scope, None) as tx:
             await lock(tx, f"draft:{scope.tenant_id}:{scope.project_id}:{draft}")

@@ -294,3 +294,42 @@ async def test_saves_and_deletes_are_audited_without_values(author, headers, pro
     assert [row[0] for row in rows] == ["studio_document.save", "studio_document.delete"]
     assert all("Ada" not in row[1] for row in rows)
     assert json.loads(rows[0][1]) == {"kind": "test-data", "revision": 1, "contains_run_data": False}
+
+
+async def draft_with_steps(author, headers, project_url, steps):
+    """A draft of WORKFLOW at revision 2 whose steps are `steps`."""
+    identifier = await draft(author, headers, project_url)
+    workflow = {**WORKFLOW, "spec": {**WORKFLOW["spec"], "steps": steps}}
+    saved = await author[0].put(
+        f"{project_url}/drafts/{identifier}", headers={**headers, "If-Match": '"1"'}, json={"document": workflow}
+    )
+    assert saved.status_code == 200, saved.text
+    return identifier
+
+
+@pytest.mark.parametrize("step", ["data", "output", "value", "payload"])
+async def test_run_data_under_a_step_named_like_a_value_field_is_still_run_data(
+    author, headers, other_headers, project_url, person, step
+):
+    steps = [{"id": step, "kind": "action", "uses": "crm.token@1.0.0", "with": {"literal": {}}}]
+    identifier = await draft_with_steps(author, headers, project_url, steps)
+    environment = str(author[2].environment_id)
+    pin = {**PIN, "output": {"id": "from a run"}, "source": "run", "runId": RUN, "runEnvironmentId": environment}
+    saved = await author[0].put(
+        url(project_url, identifier),
+        headers=headers,
+        json={"draft_revision": 2, "document": document_of(pins={step: pin})},
+    )
+    assert saved.status_code == 201, saved.text
+    assert saved.json()["contains_run_data"] is True
+    assert saved.json()["source_environment_ids"] == [environment]
+    await person[0](["developer"])  # simulate and definition.write, no run.read in the environment
+    assert (await author[0].get(url(project_url, identifier), headers=other_headers)).status_code == 403
+
+
+async def test_a_field_named_like_provenance_inside_ai_turns_is_data(author, headers, project_url):
+    identifier = await draft(author, headers, project_url)
+    turns = {"turns": [{"runEnvironmentId": "not a uuid", "source": "run"}], "source": "manual"}
+    saved = await save(author[0], project_url, headers, identifier, document_of(aiTurns={"agent": turns}))
+    # The AI turns themselves are unclassified (no turn schema yet), never a validation error of provenance.
+    assert saved.status_code == 422 and saved.json()["code"] == "WV-STUDIO-DOCUMENT-UNCLASSIFIED", saved.text
