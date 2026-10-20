@@ -143,6 +143,42 @@ describe("shared language fixtures", () => {
       }
     }
   });
+  it("names every undo phase at a canonical instance key of its step", () => {
+    const { pattern } = fixture("instance-keys.json") as { pattern: string };
+    const instanceKey = new RegExp(`^(?:${pattern})$`, "u");
+    const shared = fixture("transactions.json") as {
+      phase_keys: { key: string; instance_key: string; phase: string }[];
+      not_phase_keys: string[];
+      states: string[];
+      state_order: string[];
+      terminal_states: string[];
+      unsettled_states: string[];
+      cases: {
+        name: string;
+        diagnostics: { code: string; path: string; severity: string }[];
+      }[];
+    };
+    const suffix: Record<string, string> = {
+      confirm: "confirm",
+      cancel: "cancel",
+      compensate: "undo",
+    };
+    for (const { key, instance_key, phase } of shared.phase_keys) {
+      expect(instanceKey.test(key), key).toBe(true);
+      expect(key, key).toBe(`${instance_key}#${suffix[phase]}`);
+    }
+    for (const key of shared.not_phase_keys)
+      expect(/#(confirm|cancel|undo)$/.test(key), key).toBe(false);
+    expect([...shared.state_order].sort()).toEqual([...shared.states].sort());
+    expect(
+      [...shared.terminal_states, ...shared.unsettled_states].sort(),
+    ).toEqual([...shared.states].sort());
+    for (const { name, diagnostics } of shared.cases)
+      for (const { code, severity } of diagnostics) {
+        expect(code, name).toMatch(/^WV-COMP-(TXN_[A-Z_]+|[A-Z_]+)$/);
+        expect(["error", "warning", "info"], name).toContain(severity);
+      }
+  });
   it("publishes the manifest with Studio marks on every entry", () => {
     const { manifest } = fixture("manifest.json") as {
       manifest: Record<string, { studio: string }[]>;

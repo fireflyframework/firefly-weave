@@ -18,8 +18,8 @@
 
 The fixtures pin the stable language contracts: instance-key parse and format cases with the
 ``INSTANCE_KEY_PATTERN`` expression, the text conversion table for ``concat`` and ``join``, template segments
-with their saved form, ``scope_at`` suggestions inside and around loops and after workflow calls, and the language
-manifest snapshot.
+with their saved form, ``scope_at`` suggestions inside and around loops and after workflow calls, the language
+manifest snapshot, and the transaction vocabulary with the diagnostics editors show without a catalog.
 Expected values are written here by hand; the generator refuses to write a fixture that the implementation
 disagrees with. Scope cases pin each suggestion's reference, source, loop and type label by hand and record the
 rest of each entry as ``scope_at`` returns it.
@@ -37,6 +37,7 @@ from typing import Any
 
 import rfc8785
 
+from firefly_weave.compiler.api import validate_authoring
 from firefly_weave.compiler.expressions import text_of as evaluator_text
 from firefly_weave.compiler.scope import scope_at
 from firefly_weave.compiler.templates import Segment, template_expression
@@ -51,6 +52,17 @@ from firefly_weave.contracts.instance_keys import (
     split_instance,
 )
 from firefly_weave.contracts.language import language_manifest
+from firefly_weave.contracts.transactions import (
+    PARTICIPANT_STATUSES,
+    TERMINAL_TRANSACTION_STATES,
+    TRANSACTION_EVENT_TYPES,
+    TRANSACTION_STATE_ORDER,
+    TRANSACTION_STATES,
+    UNDO_MODES,
+    UNSETTLED_TRANSACTION_STATES,
+    phase_key,
+    split_phase,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "studio" / "tests" / "fixtures" / "language"
@@ -491,6 +503,177 @@ def scope_cases() -> dict[str, Any]:
     return {"generator": GENERATOR, "rule": "scope suggestions", "cases": cases}
 
 
+# (step instance, phase, expected key)
+PHASE_KEYS: tuple[tuple[str, str, str], ...] = (
+    ("hold", "confirm", "hold#confirm"),
+    ("hold", "cancel", "hold#cancel"),
+    ("add", "compensate", "add#undo"),
+    ("hold[3]", "cancel", "hold[3]#cancel"),
+    ("add[0][12]", "compensate", "add[0][12]#undo"),
+)
+NOT_PHASE_KEYS: tuple[str, ...] = ("hold", "hold[3]", "support#2", "support#2.1", "notify~2", "hold#confirm.1")
+
+
+def _undo(uses: str, value: dict[str, Any] | None = None, kind: str = "action") -> dict[str, Any]:
+    return {"kind": kind, "uses": uses, "with": value or {"object": {}}}
+
+
+def _participant(identifier: str, **fields: Any) -> dict[str, Any]:
+    return {"id": identifier, "kind": "action", "uses": f"{identifier}-action@1.0.0", "with": {"object": {}}, **fields}
+
+
+def _transaction(*steps: dict[str, Any], identifier: str = "move") -> dict[str, Any]:
+    return {"id": identifier, "kind": "transaction", "steps": list(steps), "output": {"literal": None}}
+
+
+def _txn_workflow(*steps: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {"name": "transaction-cases", "version": "1.0.0"},
+        "spec": {
+            "inputSchema": {
+                "type": "object",
+                "properties": {"items": {"type": "array", "items": {"type": "string"}}},
+                "required": ["items"],
+                "additionalProperties": False,
+            },
+            "outputSchema": {},
+            "steps": list(steps),
+            "output": {"literal": None},
+        },
+    }
+
+
+_RESERVE = {"confirm": _undo("confirm-hold@1.0.0"), "cancel": _undo("release-hold@1.0.0")}
+_REVERSE = {"compensate": _undo("remove-quantity@1.0.0")}
+# (name, document, expected (code, path, severity) without WV-COMP- and without catalog notes)
+TRANSACTION_CASES: tuple[tuple[str, dict[str, Any], list[tuple[str, str, str]]], ...] = (
+    (
+        "in order",
+        _txn_workflow(
+            _transaction(
+                _participant("hold", **_RESERVE),
+                _participant("add", **_REVERSE),
+                _participant("submit", irreversible=True),
+            )
+        ),
+        [],
+    ),
+    (
+        "a step that can be undone after one that can't",
+        _txn_workflow(
+            _transaction(
+                _participant("hold", **_RESERVE),
+                _participant("submit", irreversible=True),
+                _participant("add", **_REVERSE),
+            )
+        ),
+        [("TXN_ORDER", "/spec/steps/0/steps/2/compensate", "error")],
+    ),
+    (
+        "the step that can't be undone in a loop",
+        _txn_workflow(
+            _transaction(
+                _participant("hold", **_RESERVE),
+                _loop("each", "/input/items", _participant("submit", irreversible=True), maxItems=10),
+            )
+        ),
+        [("TXN_PIVOT_PLACEMENT", "/spec/steps/0/steps/1/body/steps/0", "error")],
+    ),
+    (
+        "a call that says nothing",
+        _txn_workflow(_transaction(_participant("hold", **_RESERVE), _call("lookup"))),
+        [("TXN_UNDECLARED", "/spec/steps/0/steps/1", "error")],
+    ),
+    (
+        "cancel reads its own step",
+        _txn_workflow(
+            _transaction(
+                _participant(
+                    "hold",
+                    confirm=_undo("confirm-hold@1.0.0"),
+                    cancel=_undo("release-hold@1.0.0", {"object": {"id": {"ref": "/steps/hold/output/id"}}}),
+                )
+            )
+        ),
+        [("TXN_CANCEL_OUTPUT", "/spec/steps/0/steps/0/cancel/with/object/id/ref", "error")],
+    ),
+    (
+        "confirm without cancel",
+        _txn_workflow(_transaction(_participant("hold", confirm=_undo("confirm-hold@1.0.0")))),
+        [("TXN_RESERVE_PAIR", "/spec/steps/0/steps/0/confirm", "error")],
+    ),
+    (
+        "two ways to undo one step",
+        _txn_workflow(_transaction(_participant("add", irreversible=True, **_REVERSE))),
+        [("TXN_UNDO_FORMS", "/spec/steps/0/steps/0/irreversible", "error")],
+    ),
+    (
+        "undo fields outside a transaction",
+        _txn_workflow(_participant("add", **_REVERSE)),
+        [("TXN_OUTSIDE", "/spec/steps/0/compensate", "error")],
+    ),
+    (
+        "a transaction inside a transaction",
+        _txn_workflow(
+            _transaction(
+                _participant("hold", **_RESERVE), _transaction(_participant("add", **_REVERSE), identifier="inner")
+            )
+        ),
+        [("TXN_NESTED", "/spec/steps/0/steps/1/kind", "error")],
+    ),
+    (
+        "nothing to undo",
+        _txn_workflow(_transaction(_participant("submit", irreversible=True))),
+        [("TXN_NOTHING_TO_UNDO", "/spec/steps/0", "warning")],
+    ),
+    (
+        "undo roots outside an undo",
+        _txn_workflow(
+            _transaction(_participant("hold", **_RESERVE)),
+            {"id": "key", "kind": "transform", "value": {"ref": "/participant/operationKey"}},
+        ),
+        [("TXN_SCOPE", "/spec/steps/1/value/ref", "error")],
+    ),
+)
+
+
+def transaction_cases() -> dict[str, Any]:
+    phases = []
+    for instance, phase, key in PHASE_KEYS:
+        if phase_key(instance, phase) != key or split_phase(key) != (instance, phase):  # type: ignore[arg-type]
+            raise SystemExit(f"Implementation disagrees with the phase key {key!r}")
+        phases.append({"key": key, "instance_key": instance, "phase": phase})
+    if any(split_phase(key) is not None for key in NOT_PHASE_KEYS):
+        raise SystemExit("Implementation reads a phase key where there is none")
+    cases = []
+    for name, document, expected in TRANSACTION_CASES:
+        result = validate_authoring(document, format="object")
+        found = [
+            {"code": d.code, "path": d.path, "severity": d.severity}
+            for d in result.diagnostics
+            if d.code != "WV-COMP-CATALOG_PENDING"
+        ]
+        if [(d["code"].removeprefix("WV-COMP-"), d["path"], d["severity"]) for d in found] != expected:
+            raise SystemExit(f"Implementation disagrees with the transaction case {name!r}")
+        cases.append({"name": name, "document": document, "diagnostics": found})
+    return {
+        "generator": GENERATOR,
+        "rule": "transaction vocabulary and offline diagnostics",
+        "phase_keys": phases,
+        "not_phase_keys": list(NOT_PHASE_KEYS),
+        "states": list(TRANSACTION_STATES),
+        "terminal_states": sorted(TERMINAL_TRANSACTION_STATES),
+        "unsettled_states": sorted(UNSETTLED_TRANSACTION_STATES),
+        "state_order": list(TRANSACTION_STATE_ORDER),
+        "undo_modes": list(UNDO_MODES),
+        "participant_statuses": list(PARTICIPANT_STATUSES),
+        "event_types": list(TRANSACTION_EVENT_TYPES),
+        "cases": cases,
+    }
+
+
 def manifest_snapshot() -> dict[str, Any]:
     return {"generator": GENERATOR, "manifest": language_manifest().model_dump(mode="json")}
 
@@ -502,6 +685,7 @@ def render() -> dict[str, str]:
         "template-segments.json": template_cases(),
         "scope.json": scope_cases(),
         "manifest.json": manifest_snapshot(),
+        "transactions.json": transaction_cases(),
     }
     return {name: json.dumps(value, indent=2, ensure_ascii=False) + "\n" for name, value in files.items()}
 
