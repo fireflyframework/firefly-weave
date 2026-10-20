@@ -18,6 +18,7 @@ SPDX-License-Identifier: Apache-2.0
 import {
   canvasFile,
   canvasFromStored,
+  emptyCanvas,
   ownedRecipes,
   readCanvas,
   removeTrigger,
@@ -46,9 +47,22 @@ import {
 import {
   bootStudioStorage,
   flushStudioStorage,
+  studioBackend,
   studioStorage,
 } from "./editor/state/studio-storage";
 import { Autosave } from "./editor/state/autosave";
+import {
+  readStudioDocument,
+  saveStudioDocument,
+} from "./editor/state/studio-documents";
+import { CHECK_WORDS } from "./editor/state/test-data-check";
+import { entriesOf } from "./editor/state/test-data-ops";
+import { TestDataService } from "./editor/state/test-data-service";
+import type {
+  StudioDocument,
+  StudioDocumentKind,
+  StudioTestData,
+} from "./editor/state/test-data";
 import {
   stepDetailsEnabled,
   type StepDetailsHost,
@@ -1840,7 +1854,27 @@ export class App implements CanvasHost {
     this.draftCanvasReading = pending;
     const model = this.model;
     const canvas = model.canvas;
-    const stored = await this.draftCanvases.read(scope, pending.draftId);
+    void this.openPlatformTestData(scope, pending.draftId);
+    // The platform keeps the canvas; this computer's copy is for recovery, and goes up when the platform has none.
+    let platform: StudioDocument | null | undefined;
+    try {
+      platform = await readStudioDocument(this.api, pending.draftId, "canvas");
+    } catch {
+      platform = undefined;
+    }
+    if (this.platformDocs.draftId !== pending.draftId)
+      this.platformDocs = {
+        draftId: pending.draftId,
+        testData: null,
+        canvas: null,
+      };
+    if (platform) {
+      this.platformDocs.canvas = canonicalJson(platform.document);
+      this.platformDocs.canvasRevision = platform.revision;
+    }
+    const stored = platform
+      ? platform.document
+      : await this.draftCanvases.read(scope, pending.draftId);
     this.draftCanvasReading = null;
     if (this.draftCanvasPending === pending) this.draftCanvasPending = null;
     const same =
@@ -6776,7 +6810,8 @@ export class App implements CanvasHost {
       }
       this.error = "";
       await this.flushDraftCanvas();
-      return true;
+      // Test data and the canvas follow the draft, naming the revision just saved.
+      return await this.flushPlatformDocuments();
     } catch (e) {
       this.saveState = "Not saved";
       if (e instanceof ApiError && e.status === 409) {
@@ -6809,6 +6844,209 @@ export class App implements CanvasHost {
     this.unknownCommand = false;
     this.draftRevision = Number(result["revision"]);
     return true;
+  }
+  // --- test data and the canvas of a platform draft, on the platform -------
+  /** The open workflow's test data: test input and pinned output. */
+  readonly testData = new TestDataService({
+    api: this.api,
+    backend: studioBackend(),
+    now: () => new Date(),
+    inputs: () => this.testDataInputs(),
+  });
+  /** What the host checks test data against: the workflow, and its input schema. */
+  private testDataInputs() {
+    const definition = this.model.definition;
+    return {
+      source: JSON.stringify(definition),
+      definitions: [],
+      schemaOf: (pointer: string) =>
+        pointer === "/input"
+          ? (definition.spec.inputSchema as never)
+          : undefined,
+    };
+  }
+  /** What the platform last saved of each document of the open draft (canonical JSON, revision). */
+  private platformDocs: {
+    draftId: string;
+    testData: string | null;
+    canvas: string | null;
+    canvasRevision?: number;
+  } = { draftId: "", testData: null, canvas: null };
+  /** "Someone else changed the test data" (or the canvas): Keep mine or Use theirs. */
+  documentConflict: {
+    kind: StudioDocumentKind;
+    draftId: string;
+    theirs: StudioDocument;
+  } | null = null;
+  /** Opens a platform draft's test data: this computer's copy, then the platform's over it. */
+  private async openPlatformTestData(scope: AccountScope, draftId: string) {
+    await this.testData.open({ kind: "connected", scope, draftId });
+    if (draftId !== this.draftId) return;
+    let document: StudioDocument | null;
+    try {
+      document = await readStudioDocument(this.api, draftId, "test-data");
+    } catch {
+      return;
+    }
+    if (draftId !== this.draftId) return;
+    this.testData.syncFrom(document);
+    if (this.platformDocs.draftId !== draftId)
+      this.platformDocs = { draftId, testData: null, canvas: null };
+    this.platformDocs.testData = document
+      ? canonicalJson(this.testData.toPlatform().document)
+      : null;
+    this.cdr.markForCheck();
+  }
+  /** After the draft saves: test data and the canvas, each when it changed since its last save. */
+  private async flushPlatformDocuments(): Promise<boolean> {
+    const draftId = this.draftId;
+    if (!this.profile || this.draftRevision === undefined) return true;
+    if (this.platformDocs.draftId !== draftId)
+      this.platformDocs = { draftId, testData: null, canvas: null };
+    let ok = true;
+    const place = this.testData.place();
+    if (place.kind === "connected" && place.draftId === draftId) {
+      await this.testData.flush();
+      const { document } = this.testData.toPlatform();
+      const text = canonicalJson(document);
+      const nothing =
+        !entriesOf(document).length && this.platformDocs.testData === null;
+      if (text !== this.platformDocs.testData && !nothing)
+        ok = (await this.savePlatformDocument("test-data", document)) && ok;
+    }
+    // A canvas still being read from this computer isn't the draft's canvas yet.
+    if (this.draftCanvasPending?.draftId !== draftId) {
+      const canvas = this.model.canvas;
+      const text = canonicalJson(canvas);
+      const nothing =
+        canonicalJson(emptyCanvas()) === text &&
+        this.platformDocs.canvas === null;
+      if (text !== this.platformDocs.canvas && !nothing)
+        ok =
+          (await this.savePlatformDocument(
+            "canvas",
+            canvas as unknown as Record<string, unknown>,
+          )) && ok;
+    }
+    return ok;
+  }
+  /** One save of a studio document; refusals and conflicts are handled here. */
+  private async savePlatformDocument(
+    kind: StudioDocumentKind,
+    document: object,
+    revision = kind === "test-data"
+      ? this.testData.revision()
+      : this.platformDocs.canvasRevision,
+    again = true,
+  ): Promise<boolean> {
+    const draftId = this.draftId;
+    const draftRevision = this.draftRevision;
+    if (draftRevision === undefined) return false;
+    const answer = await saveStudioDocument(
+      this.api,
+      draftId,
+      kind,
+      { draft_revision: draftRevision, document: document as never },
+      revision,
+    );
+    if (draftId !== this.draftId) return true;
+    if (answer.ok) {
+      const text = canonicalJson(answer.document.document);
+      if (kind === "test-data") {
+        this.testData.savedOnPlatform(answer.document.revision);
+        this.platformDocs.testData = text;
+      } else {
+        this.platformDocs.canvas = text;
+        this.platformDocs.canvasRevision = answer.document.revision;
+      }
+      return true;
+    }
+    if (answer.status === 412) {
+      try {
+        const theirs = await readStudioDocument(this.api, draftId, kind);
+        if (theirs && draftId === this.draftId)
+          this.documentConflict = { kind, draftId, theirs };
+      } catch {
+        // The conflict shows at the next save.
+      }
+      this.cdr.markForCheck();
+      return false;
+    }
+    if (kind === "test-data" && answer.code === "WV-STUDIO-DOCUMENT-SECRET") {
+      await this.testData.dropSecret(answer.paths);
+      for (const _ of answer.paths)
+        this.notify(CHECK_WORDS["WV-SCHEMA-SECRET_VALUE"], undefined, "danger");
+      if (!again) return false;
+      return this.savePlatformDocument(
+        kind,
+        this.testData.toPlatform().document,
+        revision,
+        false,
+      );
+    }
+    if (
+      kind === "test-data" &&
+      answer.code === "WV-STUDIO-DOCUMENT-UNCLASSIFIED" &&
+      again
+    ) {
+      this.testData.markLocalOnly(answer.paths);
+      return this.savePlatformDocument(
+        kind,
+        this.testData.toPlatform().document,
+        revision,
+        false,
+      );
+    }
+    return false;
+  }
+  /** Keep mine: saved again over theirs. */
+  async keepMyDocument() {
+    const conflict = this.documentConflict;
+    this.documentConflict = null;
+    if (!conflict || conflict.draftId !== this.draftId) return;
+    const mine =
+      conflict.kind === "test-data"
+        ? this.testData.toPlatform().document
+        : (this.model.canvas as unknown as Record<string, unknown>);
+    await this.savePlatformDocument(
+      conflict.kind,
+      mine,
+      conflict.theirs.revision,
+    );
+    this.cdr.markForCheck();
+  }
+  /** Use theirs: the platform's document replaces this one (test data with an Undo toast). */
+  useTheirDocument() {
+    const conflict = this.documentConflict;
+    this.documentConflict = null;
+    if (!conflict || conflict.draftId !== this.draftId) return;
+    const text = canonicalJson(conflict.theirs.document);
+    if (conflict.kind === "test-data") {
+      const previous: StudioTestData = this.testData.data();
+      this.testData.syncFrom(conflict.theirs);
+      this.platformDocs.testData = text;
+      const version = this.testData.version();
+      this.notify("Using the test data saved on the platform.", {
+        label: "Undo",
+        run: () => {
+          if (this.testData.restore(previous, version)) this.autosave.touch();
+        },
+      });
+    } else {
+      const model = this.model;
+      const read = canvasFromStored(
+        conflict.theirs.document,
+        model.definition,
+        model.stepIdSet(),
+      );
+      if (!read.problems.length) {
+        model.amend(() => (model.canvas = read.canvas));
+        this.tick.update((n) => n + 1);
+      }
+      this.platformDocs.canvas = text;
+      this.platformDocs.canvasRevision = conflict.theirs.revision;
+    }
+    this.cdr.markForCheck();
   }
   // --- the recovery copy of a platform draft -------------------------------
   private recoveryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -7596,6 +7834,11 @@ export class App implements CanvasHost {
       // The project catalog changed: compiles cached before it are stale.
       this.validation?.invalidate();
       this.ownedPublishedNow += published;
+      // Entries kept on this computer until the action was published go up with the next save.
+      if (this.testData.localOnly().size) {
+        this.testData.releaseLocalOnly();
+        if (this.profile) this.autosave.touch();
+      }
     }
     return result;
   }

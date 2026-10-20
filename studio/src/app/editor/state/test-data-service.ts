@@ -21,6 +21,13 @@ SPDX-License-Identifier: Apache-2.0
 // account's prefix for a platform draft). Every changed entry is checked
 // before it is kept; a refused one is never kept anywhere. Test data is
 // outside the workflow's undo history: callers offer Undo with `restore`.
+//
+// A platform draft's test data also lives on the platform. The platform's
+// copy replaces this computer's when the draft opens, except entries the
+// platform couldn't classify yet (an action not published): those are kept
+// on this computer only, listed beside the copy, and sent once publishing
+// makes them classifiable. A value the platform refuses as secret leaves
+// every copy at once.
 import { signal } from "@angular/core";
 import type { StudioApi } from "../../api";
 import {
@@ -38,7 +45,74 @@ import {
   renameEntries,
 } from "./test-data-ops";
 import { readTestData } from "./test-data-read";
-import type { StudioTestData } from "./test-data";
+import type { StudioDocument, StudioTestData } from "./test-data";
+
+const unescapePointer = (segment: string) =>
+  segment.replace(/~1/g, "/").replace(/~0/g, "~");
+/** Where a document pointer points: a section and key, or a called workflow's mock. */
+function locate(
+  pointer: string,
+):
+  | { section: "input" }
+  | { section: string; key: string }
+  | { section: "workflows"; reference: string; key: string }
+  | null {
+  const parts = pointer.split("/").slice(1).map(unescapePointer);
+  if (parts.length === 1 && parts[0] === "input") return { section: "input" };
+  if (parts.length === 2) return { section: parts[0]!, key: parts[1]! };
+  if (parts.length === 4 && parts[0] === "workflows" && parts[2] === "mocks")
+    return { section: "workflows", reference: parts[1]!, key: parts[3]! };
+  return null;
+}
+type Sections = Record<string, unknown>;
+/** The entry at a pointer, or undefined. */
+function entryAt(data: StudioTestData, pointer: string): unknown {
+  const at = locate(pointer);
+  const doc = data as unknown as Sections;
+  if (!at) return undefined;
+  if (at.section === "input") return data.input;
+  if ("reference" in at) return data.workflows?.[at.reference]?.mocks[at.key];
+  return (doc[at.section] as Sections | undefined)?.[
+    (at as { key: string }).key
+  ];
+}
+/** The document with the entry at `pointer` set (or removed when `entry` is undefined). */
+function withEntry(
+  data: StudioTestData,
+  pointer: string,
+  entry: unknown,
+): StudioTestData {
+  const at = locate(pointer);
+  if (!at) return data;
+  const next = { ...(data as unknown as Sections) };
+  if (at.section === "input") {
+    if (entry === undefined) delete next["input"];
+    else next["input"] = entry;
+    return next as unknown as StudioTestData;
+  }
+  if ("reference" in at) {
+    const workflows = { ...(data.workflows ?? {}) } as Record<
+      string,
+      { mocks: Sections }
+    >;
+    const mocks = { ...(workflows[at.reference]?.mocks ?? {}) };
+    if (entry === undefined) delete mocks[at.key];
+    else mocks[at.key] = entry;
+    workflows[at.reference] = { mocks };
+    next["workflows"] = workflows;
+    return next as unknown as StudioTestData;
+  }
+  const key = (at as { key: string }).key;
+  const section = { ...((next[at.section] as Sections | undefined) ?? {}) };
+  if (entry === undefined) delete section[key];
+  else section[key] = entry;
+  if (Object.keys(section).length) next[at.section] = section;
+  else delete next[at.section];
+  return next as unknown as StudioTestData;
+}
+
+/** The key of a list kept beside a copy: `<copy key>.local`. */
+const storeKeyFor = (key: string, suffix: string) => `${key}.${suffix}`;
 
 export type TestDataPlace =
   | { kind: "local"; draftId: string }
@@ -67,6 +141,11 @@ export class TestDataService {
   private problem: string | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private writing: Promise<void> = Promise.resolve();
+  /** Pointers of entries kept on this computer until the platform can classify them. */
+  private waiting = new Set<string>();
+  private waitingKey: string | null = null;
+  /** The platform revision this copy is based on. */
+  private platformRevision: number | undefined;
 
   constructor(private readonly host: TestDataHost) {
     this.current = emptyTestData(host.now().toISOString());
@@ -98,6 +177,24 @@ export class TestDataService {
     this.where = key ? place : { kind: "memory" };
     this.key = key;
     this.problem = null;
+    this.platformRevision = undefined;
+    this.waitingKey =
+      key && place.kind === "connected" ? storeKeyFor(key, "local") : null;
+    this.waiting = new Set();
+    if (this.waitingKey) {
+      try {
+        const list: unknown = JSON.parse(
+          (await this.host.backend.get(this.waitingKey)) ?? "[]",
+        );
+        if (Array.isArray(list))
+          this.waiting = new Set(
+            list.filter((item): item is string => typeof item === "string"),
+          );
+      } catch {
+        this.waiting = new Set();
+      }
+      if (opening !== this.opened) return;
+    }
     let data = emptyTestData(this.host.now().toISOString());
     if (raw !== null) {
       let parsed: unknown = null;
@@ -153,6 +250,81 @@ export class TestDataService {
     this.keep();
     return removed;
   }
+  // --- the platform side (platform drafts) ---------------------------------
+  /** The platform's document: it replaces this copy, except entries waiting for publishing. */
+  syncFrom(document: StudioDocument | null): void {
+    if (!document) return;
+    const reading = readTestData(document.document);
+    if (!reading.ok) {
+      this.problem = UNREADABLE;
+      return;
+    }
+    let next = reading.data;
+    for (const pointer of this.waiting) {
+      const entry = entryAt(this.current, pointer);
+      if (entry !== undefined) next = withEntry(next, pointer, entry);
+    }
+    this.platformRevision = document.revision;
+    this.set(next);
+    this.keep();
+  }
+  /** What the platform receives: the document without the entries kept on this computer. */
+  toPlatform(): { document: StudioTestData; localOnly: string[] } {
+    let document = this.current;
+    const localOnly = [...this.waiting].filter(
+      (pointer) => entryAt(document, pointer) !== undefined,
+    );
+    for (const pointer of localOnly)
+      document = withEntry(document, pointer, undefined);
+    return { document, localOnly };
+  }
+  /** Entries the platform can't classify yet ("Kept on this computer until the action is published"). */
+  markLocalOnly(paths: readonly string[]): void {
+    for (const path of paths) this.waiting.add(path);
+    this.keepWaiting();
+    this.version.update((value) => value + 1);
+  }
+  /** Publishing made them classifiable: the next save sends them. */
+  releaseLocalOnly(): void {
+    if (!this.waiting.size) return;
+    this.waiting.clear();
+    this.keepWaiting();
+    this.version.update((value) => value + 1);
+  }
+  localOnly(): ReadonlySet<string> {
+    return this.waiting;
+  }
+  /** Entries the platform refused as secret: removed from this copy and every copy on this computer, now. */
+  async dropSecret(paths: readonly string[]): Promise<void> {
+    let next = this.current;
+    for (const path of paths) {
+      next = withEntry(next, path, undefined);
+      this.waiting.delete(path);
+    }
+    this.set(next);
+    this.keepWaiting();
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+    this.write();
+    await this.writing;
+  }
+  revision(): number | undefined {
+    return this.platformRevision;
+  }
+  /** After a save on the platform: the revision the next save names. */
+  savedOnPlatform(revision: number): void {
+    this.platformRevision = revision;
+  }
+  private keepWaiting(): void {
+    const key = this.waitingKey;
+    if (!key) return;
+    const list = [...this.waiting].sort();
+    this.writing = this.writing.then(async () => {
+      if (list.length) await this.host.backend.set(key, JSON.stringify(list));
+      else await this.host.backend.remove(key);
+    });
+  }
+
   async flush(): Promise<void> {
     if (this.timer) {
       clearTimeout(this.timer);

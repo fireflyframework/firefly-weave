@@ -15,10 +15,11 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-// What a platform draft keeps beside its workflow until the platform keeps
-// it too: its canvas (notes, trigger choices, step notes and the recipes of
-// the actions it owns), for the signed-in account, on this computer, under
-// the connected key scheme. Signing out of a platform, or removing it,
+// A copy on this computer, for recovery: the platform keeps a platform
+// draft's canvas (notes, trigger choices, step notes and the recipes of the
+// actions it owns) as a studio document. The copy is kept for the signed-in
+// account under the connected key scheme, and goes up to the platform when
+// the platform has none for the draft. Signing out of a platform, or removing it,
 // deletes them with every other key of that platform. Canvas data is never
 // a secret (the sidecar holds none).
 import {

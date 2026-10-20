@@ -562,6 +562,33 @@ SPDX-License-Identifier: Apache-2.0
           </div>
         </weave-modal>
       }
+      @if (documentConflict; as changed) {
+        <weave-modal
+          [heading]="
+            changed.kind === 'test-data'
+              ? 'Someone else changed the test data'
+              : 'Someone else changed the canvas'
+          "
+          describedBy="document-conflict-description"
+          (dismiss)="documentConflict = null"
+        >
+          <p id="document-conflict-description" class="dialog-message">
+            Keep your version, or use the one saved on the platform.
+          </p>
+          <div class="dialog-actions">
+            <button type="button" (click)="useTheirDocument()">
+              Use theirs</button
+            ><button
+              type="button"
+              class="primary"
+              data-initial-focus
+              (click)="keepMyDocument()"
+            >
+              Keep mine
+            </button>
+          </div>
+        </weave-modal>
+      }
       @if (showActivation && published && profile) {
         <!-- Loaded on first use, like the other dialogs. -->
         @defer (on immediate) {
