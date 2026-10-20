@@ -54,7 +54,7 @@ class Server:
     """The server steps, recorded; the HTTP operations behind them are tested on their own."""
 
     def __init__(self):
-        self.calls, self.connections = [], set()
+        self.calls, self.connections, self.owners = [], set(), []
         self.scope_visible = False
         self.answer = {
             "ok": True,
@@ -101,7 +101,8 @@ class Server:
         self.calls.append(("test", model))
         return dict(self.answer)
 
-    async def configure_weave_ai(self, client, revision_id, model):
+    async def configure_weave_ai(self, client, revision_id, model, *, owner=None, scope=None):
+        self.owners.append(owner)
         self.calls.append(("weave_ai", revision_id, model))
         state = "unchanged" if ("weave_ai", revision_id, model) in self.calls[:-1] else "configured"
         return {"state": state, "provider": "openai-chat", "model": model}
@@ -1046,3 +1047,13 @@ def test_status_and_model_reads_refuse_a_docker_context_that_points_elsewhere(ha
     with pytest.raises(platform.PlatformError, match="different engine"):
         run()
     assert len(h.runner.calls) == calls and len(h.pulls) == 1
+
+
+def test_enable_sets_weave_ai_up_as_the_installation_owner(harness):
+    h = harness
+    owner = str(uuid4())
+    path = h.directory / "bootstrap.json"
+    path.write_text(json.dumps({"principal_id": owner, "provider_id": "local-keycloak"}))
+    path.chmod(0o600)
+    enable(h, verify=True)
+    assert h.server.owners == [owner]

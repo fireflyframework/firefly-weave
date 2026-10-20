@@ -565,6 +565,16 @@ def _next(value: dict[str, Any]) -> str:
     return STAGES[min(STAGES.index(value["stage"]) + 1, len(STAGES) - 1)]
 
 
+def _host_principal(directory: Path) -> str | None:
+    """The installation's own host principal, from its private bootstrap receipt; None when there is none."""
+    path = directory / "bootstrap.json"
+    if not path.exists():
+        return None
+    value = strict_json(read_file(path, 65536, private=True))
+    principal = value.get("principal_id") if isinstance(value, dict) else None
+    return str(UUID(principal)) if isinstance(principal, str) else None
+
+
 async def _with_client(
     api: str,
     token: str,
@@ -877,7 +887,9 @@ def enable(
                 scope,
                 transport,
                 lambda: "weave_ai",
-                lambda client: setup.configure_weave_ai(client, value["connection_revision_id"], model),
+                lambda client: setup.configure_weave_ai(
+                    client, value["connection_revision_id"], model, owner=_host_principal(directory), scope=scope
+                ),
             )
         )
         advance("weave_ai")

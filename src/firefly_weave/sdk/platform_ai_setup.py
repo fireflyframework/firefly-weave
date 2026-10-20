@@ -48,6 +48,7 @@ from firefly_weave.contracts.connectors import NO_CREDENTIAL, ConnectionRequest,
 from firefly_weave.contracts.definitions import load_definition
 from firefly_weave.contracts.lumi import LUMI_REPLY_SCHEMA, LumiConfigurationRequest
 from firefly_weave.contracts.members import MemberGrantRequest, PrincipalCreateRequest, PrincipalIdentityRequest
+from firefly_weave.contracts.public import GrantRequest
 from firefly_weave.contracts.runtime import StartRunRequest
 from firefly_weave.contracts.workers import ReleaseRequest
 from firefly_weave.sdk import platform as local
@@ -333,14 +334,38 @@ WEAVE_AI_MAX_TOKENS = 1024
 WEAVE_AI_TIMEOUT_SECONDS = 180
 
 
-async def configure_weave_ai(client: WeaveClient, revision_id: str, model: str) -> dict[str, Any]:
-    """Turn Weave AI on for the local connection, once; a configuration someone already chose is kept."""
+async def _weave_ai_configuration(client: WeaveClient) -> Any:
     try:
-        current = await client.invoke("lumi.configuration.read")
+        return await client.invoke("lumi.configuration.read")
     except WeaveError as error:
         if error.status != 404:
             raise
-        current = None
+        return None
+
+
+async def configure_weave_ai(
+    client: WeaveClient,
+    revision_id: str,
+    model: str,
+    *,
+    owner: str | None = None,
+    scope: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Turn Weave AI on for the local connection, once; a configuration someone already chose is kept.
+
+    Setting Weave AI up takes its manager role. The installation's own host principal (`owner`, a platform
+    administrator) gets it in the demo workspace the first time, as the first run grants it its other roles."""
+    try:
+        current = await _weave_ai_configuration(client)
+    except WeaveError as error:
+        if error.status != 403 or owner is None or scope is None:
+            raise
+        await client.grant(
+            GrantRequest.model_validate_json(
+                json.dumps({"principal_id": owner, "grant": {"role": "lumi_manager", "scope": scope}})
+            )
+        )
+        current = await _weave_ai_configuration(client)
     if current is not None:
         state = "unchanged" if str(current.connection_revision_id) == revision_id else "kept"
         return {"state": state, "provider": current.profile.provider, "model": current.profile.model}
