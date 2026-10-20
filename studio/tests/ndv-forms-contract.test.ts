@@ -440,6 +440,10 @@ describe("forms of every kind", () => {
     expect(wf(workflowSettingsForm()), "Workflow settings").toBe(2);
   });
 
+  /** Keys the AI task's Model field writes with the model it chooses. */
+  const WRITTEN_BY_MODEL: Partial<Record<Kind, string[]>> = {
+    llm: ["uses", "connection"],
+  };
   it("keeps every field the classic editor edits", () => {
     const withContract: Partial<Record<Kind, Record<string, unknown>>> = {
       action: { uses: "sql.lookup@1.0.0", with: { literal: {} } },
@@ -461,9 +465,10 @@ describe("forms of every kind", () => {
           .map(({ spec }) => String(spec.path[0] ?? "")),
       );
       for (const field of propertyFields(step))
-        expect(covered, `${kind} ${field.label}`).toContain(
-          String(field.path[0]),
-        );
+        if (!(WRITTEN_BY_MODEL[kind] ?? []).includes(String(field.path[0])))
+          expect(covered, `${kind} ${field.label}`).toContain(
+            String(field.path[0]),
+          );
     }
     const workflowPaths = new Set(
       [triggerForm(), endForm(), workflowSettingsForm()].flatMap((form) =>

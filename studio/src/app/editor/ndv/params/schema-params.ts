@@ -207,3 +207,21 @@ export function paramsFromSchema(
     options: params.filter((param) => !param.required),
   };
 }
+
+/**
+ * The schema a schema field's designer starts from. A field still at a
+ * default that is one value rather than fields (an AI task's text result)
+ * starts with no fields, so the first field added makes it structured.
+ */
+export function designerSchema(stored: unknown, fallback: unknown): unknown {
+  const schema = stored === undefined ? fallback : stored;
+  const oneValue =
+    !!schema &&
+    typeof schema === "object" &&
+    !Array.isArray(schema) &&
+    (schema as Record<string, unknown>)["type"] !== undefined &&
+    (schema as Record<string, unknown>)["type"] !== "object";
+  return oneValue && canonicalJson(schema) === canonicalJson(fallback ?? null)
+    ? undefined
+    : schema;
+}
