@@ -62,6 +62,7 @@ import {
   containsRunData,
   emptyTestData,
   entriesOf,
+  pruneEntries,
   withPin,
   withoutPin,
   withoutRunData,
@@ -8509,14 +8510,24 @@ export class App implements CanvasHost {
     }
     await this.testDataOpening;
     if (!still()) return;
-    const outcome = await this.testData.change(
+    // Entries for steps this workflow doesn't have are left out, and named.
+    const steps = this.model.stepIdSet();
+    const { data, removed } = pruneEntries(
       reading.data,
-      entriesOf(reading.data).map((entry) => entry.path),
+      (id) => steps.has(id),
+      new Date().toISOString(),
+    );
+    const outcome = await this.testData.change(
+      data,
+      entriesOf(data).map((entry) => entry.path),
     );
     if (!still()) return;
     if (outcome.ok) {
-      this.markForeign(Object.keys(reading.data.pins ?? {}));
-      this.notify("Loaded the test data saved with this workflow.");
+      this.markForeign(Object.keys(data.pins ?? {}));
+      const left = removed.length
+        ? ` Left out test data for ${removed.length === 1 ? "a step" : "steps"} this workflow doesn't have: ${removed.join(", ")}.`
+        : "";
+      this.notify(`Loaded the test data saved with this workflow.${left}`);
     } else
       this.notify(
         `The test data wasn't loaded: ${outcome.message}`,

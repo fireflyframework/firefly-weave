@@ -289,3 +289,43 @@ test("the toolbar's Undo of a delete brings the pin back too, and Redo takes it 
     page.locator('[data-step="notify"] .tile-badge').first(),
   ).toHaveAttribute("data-badge", "pinned");
 });
+
+test("a test data file with pinned output for a step the workflow doesn't have loads the rest, and says so", async ({
+  page,
+}) => {
+  await withNewEditor(page);
+  await connected(page, {
+    catalog: [...defaultCatalog, { id: "a3", document: lookupContract }],
+    tenantId: TENANT,
+    projectId: PROJECT,
+  });
+  await withLanguageFeatures(page);
+  await page.getByLabel("Choose a workflow file").setInputFiles([
+    asFile(
+      "tiered-orders.yaml",
+      await readFile("tests/fixtures/test-data.yaml", "utf8"),
+    ),
+    asFile(
+      "tiered-orders.testdata.json",
+      testDataFile({
+        lookup: pin({ customerId: "c-5", found: true, tier: "gold" }),
+        ghost: pin({ id: 1 }),
+      }),
+    ),
+  ]);
+  await page
+    .getByRole("dialog", {
+      name: "Load the test data saved with this workflow?",
+    })
+    .getByRole("button", { name: "Load" })
+    .click();
+  await expect(
+    page.locator(".toast").filter({
+      hasText:
+        "Loaded the test data saved with this workflow. Left out test data for a step this workflow doesn't have: ghost.",
+    }),
+  ).toHaveCount(1);
+  await expect(
+    page.locator('[data-step="lookup"] .tile-badge').first(),
+  ).toHaveAttribute("data-badge", /^pinned/);
+});
