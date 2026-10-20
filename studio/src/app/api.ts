@@ -141,8 +141,12 @@ export class StudioApi {
   wait = (milliseconds: number) =>
     new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
   /** A pause that a cancel ends at once, so a canceled request is never sent again. */
-  private async pause(milliseconds: number, signal?: AbortSignal) {
-    if (!signal) return this.wait(milliseconds);
+  private pause(milliseconds: number, signal?: AbortSignal) {
+    return this.untilCanceled(() => this.wait(milliseconds), signal);
+  }
+  /** Waits for `work`, or rejects at once when `signal` cancels first. */
+  private async untilCanceled(work: () => Promise<void>, signal?: AbortSignal) {
+    if (!signal) return work();
     signal.throwIfAborted();
     let stop = () => {};
     const canceled = new Promise<never>((_resolve, reject) => {
@@ -150,7 +154,7 @@ export class StudioApi {
       signal.addEventListener("abort", stop, { once: true });
     });
     try {
-      await Promise.race([this.wait(milliseconds), canceled]);
+      await Promise.race([work(), canceled]);
     } finally {
       signal.removeEventListener("abort", stop);
     }
@@ -217,8 +221,7 @@ export class StudioApi {
         );
         const guard = keyed ? this.replayGuard : null;
         if (guard) {
-          await guard.settled();
-          signal?.throwIfAborted();
+          await this.untilCanceled(() => guard.settled(), signal);
           // Nothing ran: the refusal stands, rather than a send as someone else.
           if (guard.scope() !== scope) throw error;
         }

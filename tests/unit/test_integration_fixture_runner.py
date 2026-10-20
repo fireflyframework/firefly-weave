@@ -244,7 +244,8 @@ def test_failed_pytest_stage_names_failing_tests_without_output(runner, monkeypa
             b"FAILED tests/unit/test_a.py::test_one[case-1] - AssertionError: token=never-print-this-secret\n"
             b"ERROR tests/unit/test_b.py::test_two - RuntimeError: never-print-this-body\n"
             b"FAILED tests/unit/test_c.py::test_three\x1b[31m\n"
-            b"1 failed, 1 error in 3.00s\n"
+            b"===================== 2 failed, 1 error in 3.00s ======================\n"
+            b"FAILED printed-after-the-summary\n"
             if name == "unit-contracts"
             else b""
         )
@@ -258,7 +259,7 @@ def test_failed_pytest_stage_names_failing_tests_without_output(runner, monkeypa
     assert "FAILED tests/unit/test_a.py::test_one[case-1]\n" in printed
     assert "ERROR tests/unit/test_b.py::test_two\n" in printed
     assert "FAILED tests/unit/test_c.py::test_three\n" in printed
-    assert "printed-by-a-test" not in printed
+    assert "printed-by-a-test" not in printed and "printed-after-the-summary" not in printed
     assert "never-print" not in printed and "AssertionError" not in printed and "\x1b" not in printed
 
 

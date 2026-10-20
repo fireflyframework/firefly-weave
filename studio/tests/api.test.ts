@@ -288,6 +288,33 @@ describe("capacity rejections", () => {
     });
     expect(fetch).toHaveBeenCalledTimes(1);
   });
+  it("stops at once when canceled while the sign-in check is still out", async () => {
+    const fetch = vi.fn(async () => busy());
+    vi.stubGlobal("fetch", fetch);
+    const client = api();
+    let waiting: () => void = () => undefined;
+    const reached = new Promise<void>((resolve) => (waiting = resolve));
+    client.replayGuard = {
+      scope: () => "jane",
+      settled: () => {
+        waiting();
+        return new Promise<void>(() => undefined);
+      },
+    };
+    const controller = new AbortController();
+    const pending = client.request(
+      "/studio/api/runs",
+      "POST",
+      {},
+      { "Idempotency-Key": "k" },
+      15000,
+      controller.signal,
+    );
+    await reached;
+    controller.abort(new DOMException("Canceled.", "AbortError"));
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
   it("replays a keyed change after the sign-in check finds the same person", async () => {
     const fetch = vi
       .fn()

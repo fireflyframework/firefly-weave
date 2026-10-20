@@ -1541,7 +1541,7 @@ test.describe("another person on the same environment", () => {
         // Studio pauses for Retry-After, then would send the same keyed change again.
         return r.fulfill({
           status: 429,
-          headers: { "Retry-After": "2" },
+          headers: { "Retry-After": "5" },
           json: { code: "WV-OPERATION-CAPACITY", message: "Busy" },
         });
       }
@@ -1560,12 +1560,13 @@ test.describe("another person on the same environment", () => {
     await out;
     const refused = Date.now();
     await people.switch();
-    expect(Date.now() - refused).toBeLessThan(2000);
+    // The switch lands inside the five-second pause, even on a slow runner.
+    expect(Date.now() - refused).toBeLessThan(4500);
     await expect
       .poll(() => people.lists.filter((item) => item.person === "john").length)
       .toBeGreaterThan(0);
     // Past the pause, nothing has gone out for John.
-    await page.waitForTimeout(Math.max(0, 3500 - (Date.now() - refused)));
+    await page.waitForTimeout(Math.max(0, 6500 - (Date.now() - refused)));
     expect(sent).toEqual([{ person: "jane", path: `${online}/drain` }]);
   });
 

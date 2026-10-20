@@ -82,7 +82,10 @@ def failing_tests(log: Path) -> list[str]:
         return []
     _, header, summary = tail.rpartition("short test summary info")
     names = []
-    for line in summary.splitlines() if header else ():
+    for line in summary.splitlines()[1:] if header else ():
+        # pytest closes its summary with a "==== 1 failed in 3.00s ====" line; later output is not its summary.
+        if line.startswith("="):
+            break
         match = SUMMARY_LINE.match(re.sub(r"\x1b\[[0-9;]*m", "", line))
         if match and len(match.group(2)) <= SUMMARY_MAX_LENGTH:
             names.append(match.group(1) + " " + match.group(2))
