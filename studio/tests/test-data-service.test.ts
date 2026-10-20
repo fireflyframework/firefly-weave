@@ -420,28 +420,15 @@ describe("reviving a deleted step's test data", () => {
       ),
     ).toEqual([]);
     expect(service.data().pins?.["notify"]).toBeUndefined();
-    // That entry is gone for good: another step took the ID.
-    expect(
-      await service.revive(
-        () => true,
-        () => "notify as it was",
-      ),
-    ).toEqual([]);
-    // Deleted again, then the same step as it was comes back: so does its pin.
-    await service.change(
-      withPin(emptyTestData(ISO), "notify", pin({ id: 2 }), ISO),
-      [],
-    );
-    service.prune(
-      () => false,
-      () => "notify as it was",
-    );
+    // The entry stays kept: when the same step, as it was, comes back (an
+    // Undo past the rename), so does its pin.
     expect(
       await service.revive(
         () => true,
         () => "notify as it was",
       ),
     ).toEqual(["/pins/notify"]);
+    expect(service.data().pins?.["notify"]?.output).toEqual({ id: 1 });
   });
   it("checks what it brings back, as any change: a value now secret stays out", async () => {
     const { value } = host({ "/pins/notify": "WV-SCHEMA-SECRET_VALUE" });
@@ -568,5 +555,36 @@ describe("test data set before the account is known", () => {
     // An Undo after the sign-out brings nothing of the old account back.
     expect(await service.revive(() => true)).toEqual([]);
     expect(service.data().pins).toBeUndefined();
+  });
+  it("never loses what it brings back to a change made during the host's check", async () => {
+    const { value } = host();
+    const request = value.api.request;
+    value.api = {
+      request: async <T>(...args: Parameters<typeof request>): Promise<T> => {
+        // The host's check takes a moment.
+        await new Promise((done) => setTimeout(done, 50));
+        return request<T>(...args);
+      },
+    };
+    const service = new TestDataService(value);
+    await service.open({ kind: "local", draftId: "d" });
+    let data = withPin(emptyTestData(ISO), "a", pin({ a: 1 }), ISO);
+    data = withPin(data, "b", pin({ b: 1 }), ISO);
+    expect((await service.change(data, [])).ok).toBe(true);
+    // a is deleted (kept for Undo); one Undo brings a back and removes b.
+    service.prune(
+      (id) => id !== "a",
+      (id) => (id === "a" ? "A" : "B"),
+    );
+    const reviving = service.revive(
+      (id) => id === "a",
+      (id) => (id === "a" ? "A" : "B"),
+    );
+    service.prune(
+      (id) => id !== "b",
+      (id) => (id === "b" ? "B" : "A"),
+    );
+    expect(await reviving).toEqual(["/pins/a"]);
+    expect(Object.keys(service.data().pins ?? {})).toEqual(["a"]);
   });
 });

@@ -370,40 +370,48 @@ export class TestDataService {
   }
   /**
    * Steps came back (an Undo of their deletion, a Redo of their insertion):
-   * the entries their deletion took return, unless one was set since or
-   * another step has the ID now (`identityOf` differs). They are checked as
-   * any change is; one refused (a value now secret) stays out. Returns the
-   * pointers brought back.
+   * the entries their deletion took return, when the step is the same as it
+   * was (`identityOf`) and nothing was set there since. A kept entry stays
+   * kept until it is back: another step with the ID now leaves it for a later
+   * Undo, and a change made during the host's check is met by trying again
+   * against the data of now. What comes back is checked as any change is; one
+   * refused (a value now secret) stays out. Returns the pointers brought back.
    */
   async revive(
     exists: (id: string) => boolean,
     identityOf: (stepId: string) => string | undefined = () => undefined,
   ): Promise<string[]> {
-    let next = this.current;
-    const revived: string[] = [];
-    for (const [path, kept] of [...this.deleted]) {
-      const at = locate(path);
-      const key = at && "key" in at ? at.key : null;
-      const step = key ? ownerOf(key, kept.entry) : "";
-      if (!key || !exists(step)) continue;
-      this.deleted.delete(path);
-      if (kept.step !== identityOf(step)) continue;
-      if (entryAt(next, path) !== undefined) continue;
-      next = withEntry(next, path, kept.entry);
-      revived.push(path);
-    }
-    let pending = revived;
-    while (pending.length) {
+    const opening = this.opened;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      if (opening !== this.opened) return [];
+      let next = this.current;
+      const pending: string[] = [];
+      for (const [path, kept] of this.deleted) {
+        const at = locate(path);
+        const key = at && "key" in at ? at.key : null;
+        const step = key ? ownerOf(key, kept.entry) : "";
+        if (!key || !exists(step) || kept.step !== identityOf(step)) continue;
+        // Set again since: the newer entry stays, and this one isn't needed.
+        if (entryAt(next, path) !== undefined) {
+          this.deleted.delete(path);
+          continue;
+        }
+        next = withEntry(next, path, kept.entry);
+        pending.push(path);
+      }
+      if (!pending.length) return [];
       const outcome = await this.change(
         { ...next, updatedAt: this.stamp() },
         pending,
       );
-      if (outcome.ok) return pending;
-      // One refused: it stays out, and the rest are checked again.
-      const refused = outcome.pointer;
-      if (!refused || !pending.includes(refused)) return [];
-      next = withEntry(next, refused, undefined);
-      pending = pending.filter((path) => path !== refused);
+      if (outcome.ok) {
+        for (const path of pending) this.deleted.delete(path);
+        return pending;
+      }
+      // One refused (a value now secret): it stays out for good.
+      if (outcome.pointer && pending.includes(outcome.pointer))
+        this.deleted.delete(outcome.pointer);
+      // Otherwise the data changed meanwhile: try again against it.
     }
     return [];
   }

@@ -387,3 +387,67 @@ test("an unrelated Undo never puts a deleted step's pin on another step that too
     .evaluateAll((all) => all.map((b) => b.getAttribute("data-badge")));
   expect(badges).toEqual([]);
 });
+
+test("Undo, Redo, Undo while the host's check takes a moment keeps the pin", async ({
+  page,
+}) => {
+  const details = await openTestDataFixture(page);
+  await details.open("notify");
+  const pane = await outputPane(details);
+  await pane.getByRole("button", { name: "Generate sample" }).click();
+  await expect(banner(pane)).toBeVisible();
+  await details.close();
+  // The host's check answers after 400 ms, as a busy computer may.
+  await page.route("**/studio/local/testdata/check", async (route) => {
+    await new Promise((r) => setTimeout(r, 400));
+    await route.fallback();
+  });
+  await fitCanvas(page);
+  await page.locator('[data-step="notify"]').first().click();
+  await page.keyboard.press("Delete");
+  await expect(page.locator('[data-step="notify"]')).toHaveCount(0);
+  await page.getByLabel("Workflow canvas", { exact: true }).focus();
+  // Quickly, as a person stepping through history does.
+  await page.keyboard.press("ControlOrMeta+z");
+  await page.keyboard.press("ControlOrMeta+Shift+z");
+  await page.keyboard.press("ControlOrMeta+z");
+  await expect(page.locator('[data-step="notify"]').first()).toBeVisible();
+  await expect(
+    page.locator('[data-step="notify"] .tile-badge').first(),
+  ).toHaveAttribute("data-badge", /^pinned/, { timeout: 5000 });
+});
+
+test("delete, rename onto the ID, Undo, Redo, Undo, Undo brings the original pin back", async ({
+  page,
+}) => {
+  const details = await openTestDataFixture(page);
+  await details.open("notify");
+  const pane = await outputPane(details);
+  await pane.getByRole("button", { name: "Generate sample" }).click();
+  await expect(banner(pane)).toBeVisible();
+  await details.close();
+  await fitCanvas(page);
+  await page.locator('[data-step="notify"]').first().click();
+  await page.keyboard.press("Delete");
+  await expect(page.locator('[data-step="notify"]')).toHaveCount(0);
+  // lookup takes the free ID.
+  await details.open("lookup");
+  await details.dialog.getByRole("button", { name: "Rename lookup" }).click();
+  await details.dialog
+    .getByRole("textbox", { name: "Step name" })
+    .fill("notify");
+  await page.keyboard.press("Enter");
+  await expect(details.dialogFor("notify")).toBeVisible();
+  await details.close();
+  await command(page, "Undo");
+  await expect(page.locator('[data-step="lookup"]').first()).toBeVisible();
+  await command(page, "Redo");
+  // The renamed lookup has no pin of the deleted step.
+  await expect(page.locator('[data-step="notify"] .tile-badge')).toHaveCount(0);
+  await command(page, "Undo");
+  await command(page, "Undo");
+  // The deleted step, as it was, is back, and so is its pin.
+  await expect(
+    page.locator('[data-step="notify"] .tile-badge').first(),
+  ).toHaveAttribute("data-badge", /^pinned/, { timeout: 5000 });
+});

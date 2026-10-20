@@ -3740,9 +3740,13 @@ export class App implements CanvasHost {
   ) {
     const after = this.model.stepIdSet();
     // Only steps this Undo or Redo brought back, and only as they were.
+    // Read live: a retry after a change during the host's check sees the
+    // workflow as it is then (a later Redo may have removed the step again).
+    const model = this.model;
     void this.testData.revive(
-      (id) => after.has(id) && !before.has(id),
-      stepIdentities(this.model.definition),
+      (id) =>
+        !before.has(id) && model === this.model && model.stepIdSet().has(id),
+      (id) => stepIdentities(model.definition)(id),
     );
     this.testData.prune((id) => after.has(id) || !before.has(id), previous);
   }
