@@ -18,6 +18,7 @@ SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from "vitest";
 import {
   accountsToDelete,
+  savedBinding,
   navigationProblems,
   shotName,
   stepRefusal,
@@ -254,6 +255,29 @@ describe("acceptance step records", () => {
     );
     expect(platformBinding(document, "someone-else")).toBeUndefined();
     expect(platformBinding({}, "j9-viewer-ab12")).toBeUndefined();
+  });
+
+  it("says why a signed-in platform's binding cannot be found", () => {
+    const login = {
+      provider_id: "p",
+      issuer: "http://localhost:1/realms/weave",
+      client_id: "c",
+      target: "http://127.0.0.1:2",
+      account: "j9-viewer-ab12",
+    };
+    const text = JSON.stringify({ profiles: { "j9-viewer-ab12": { login } } });
+    expect(savedBinding(text, "j9-viewer-ab12")).toEqual({
+      binding: loginBinding(login),
+    });
+    expect(savedBinding(undefined, "j9-viewer-ab12")).toEqual({
+      problem: "the Studio host saved no platforms file",
+    });
+    expect(savedBinding("{not json", "j9-viewer-ab12")).toEqual({
+      problem: "the Studio host's platforms file is unreadable",
+    });
+    expect(savedBinding(text, "j9-builder-cd34")).toEqual({
+      problem: "the Studio host's platforms file has no j9-builder-cd34",
+    });
   });
 
   it("deletes only this run's own bindings: one another process stores meanwhile survives", () => {

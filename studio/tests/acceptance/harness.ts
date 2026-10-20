@@ -64,7 +64,7 @@ import {
   errorLine,
   navigationProblems,
   networkProblems,
-  platformBinding,
+  savedBinding,
   shotName,
   stepRefusal,
   redact,
@@ -792,8 +792,13 @@ class Journey {
           .map((line) => JSON.stringify({ line: redact(line, secrets()) }))
           .join("\n"),
       );
-      // A sign-in that failed half-way may still have stored its binding.
-      recordBinding(signed);
+      // A sign-in that failed half-way may still have stored its binding; one
+      // that completed must have.
+      const unnamed = recordBinding(signed);
+      if (unnamed && signed.signedIn)
+        problems.push(
+          `sign-in of ${signed.name} left no binding the run can name: ${unnamed}`,
+        );
       let removed = false;
       try {
         if (signed.signedIn) {
@@ -858,20 +863,27 @@ let baseline: Set<string> | undefined;
 /** Credential-store bindings of the platforms this run added; the only ones it may delete. */
 const ownBindings = new Set<string>();
 
-/** Adds the binding of `signed`'s platform, read from its Studio host's saved platforms. */
-function recordBinding(signed: { configHome: string; platform: string }): void {
-  if (!signed.configHome) return;
+/**
+ * Adds the binding of `signed`'s platform, read from its Studio host's saved
+ * platforms; or says why it cannot, so a sign-in whose binding the run cannot
+ * name (and therefore never deletes) fails the journey instead of passing.
+ */
+function recordBinding(signed: {
+  configHome: string;
+  platform: string;
+}): string {
+  if (!signed.configHome) return "the Studio host never started";
   const path = join(signed.configHome, "profiles.json");
-  if (!existsSync(path)) return;
+  let text: string | undefined;
   try {
-    const binding = platformBinding(
-      JSON.parse(readFileSync(path, "utf8")),
-      signed.platform,
-    );
-    if (binding) ownBindings.add(binding);
+    text = existsSync(path) ? readFileSync(path, "utf8") : undefined;
   } catch {
-    // An unreadable file names no binding; nothing of it is deleted.
+    return "the Studio host's platforms file is unreadable";
   }
+  const found = savedBinding(text, signed.platform);
+  if ("problem" in found) return found.problem;
+  ownBindings.add(found.binding);
+  return "";
 }
 
 /** Registers the suite hooks: credential-store baseline and cleanup. Call once per spec file. */

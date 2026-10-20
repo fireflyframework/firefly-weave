@@ -361,6 +361,25 @@ export function navigationProblems(
   return [...new Set(problems)];
 }
 
+/** A platform's binding from the text of a host's `profiles.json`, or why there is none. */
+export function savedBinding(
+  text: string | undefined,
+  platform: string,
+): { binding: string } | { problem: string } {
+  if (text === undefined)
+    return { problem: "the Studio host saved no platforms file" };
+  let document: unknown;
+  try {
+    document = JSON.parse(text);
+  } catch {
+    return { problem: "the Studio host's platforms file is unreadable" };
+  }
+  const binding = platformBinding(document, platform);
+  return binding
+    ? { binding }
+    : { problem: `the Studio host's platforms file has no ${platform}` };
+}
+
 /** Why a dump is not the person's Studio storage, or "" when it is. */
 export function dumpOriginProblem(origin: string, host: string): string {
   if (!host) return "storage was read before the Studio host started";
