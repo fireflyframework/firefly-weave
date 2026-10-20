@@ -1665,3 +1665,81 @@ async def test_an_offline_earlier_instance_on_the_same_host_does_not_hide_the_li
     planned = await awaiting(ops, fleet.setup, observed_count=3, replicas=1)
     assert planned.warnings == []
     assert {member.worker_id for member in planned.drain_set} == {worker.id for worker in fleet.workers}
+
+
+async def test_a_change_requests_plan_is_applied_and_approved_only_through_its_change_request(
+    ops, fleet, queued_task, task_service, transaction_factory
+):
+    """The low-level apply would skip the drain and the force rule: one drained worker still holds a task, and the
+    person holds deployment.apply but not worker.drain. Both low-level commands point to the change request."""
+    async with transaction_factory() as tx:
+        lease = (await task_service.claim(tx, fleet.workers[0].id, 1))[0]
+    assert lease is not None
+    planned = await awaiting(ops, fleet.setup, observed_count=3, replicas=1)
+    with pytest.raises(CatalogError) as approve:
+        await ops.service.approve(
+            planned.plan_id, PlanApprovalRequest(digest=planned.plan_digest), **ops.authority("approver")
+        )
+    assert (approve.value.status, approve.value.code) == (409, "WV-CHANGE-REQUEST")
+    assert str(planned.id) in str(approve.value)
+    change_request = await ops.changes.approve(
+        planned.id, ChangeRequestApprove(digest=planned.plan_digest), **ops.authority("approver")
+    )
+    with pytest.raises(CatalogError) as pending:
+        await ops.changes.apply(
+            change_request.id, ChangeRequestApply(digest=change_request.plan_digest), "cr", **ops.authority("planner")
+        )
+    assert pending.value.code == "WV-DRAIN-PENDING"
+    with pytest.raises(CatalogError) as low:
+        await ops.service.apply(
+            change_request.plan_id,
+            ApplyPlanRequest(digest=change_request.plan_digest),
+            "low",
+            **ops.authority("planner"),
+        )
+    assert (low.value.status, low.value.code) == (409, "WV-CHANGE-REQUEST")
+    assert (
+        await ops.service.claim(RunnerClaimRequest(runner_id=fleet.setup.runner.id), **ops.authority("planner")) is None
+    )
+    assert (await ops.changes.read(change_request.id, **ops.authority("approver"))).state == "approved"
+
+
+async def test_a_change_that_needs_reconciliation_gives_back_its_drain(ops, fleet):
+    """A drain-first restart whose apply ends ambiguous resumes every worker it drained, audited; a worker someone
+    else drained again since is left as they left it."""
+    first, second = sorted(worker.id for worker in fleet.workers)
+    created = await ops.changes.create(
+        change(fleet.setup, intent="restart_workers", replicas=3, drain={"mode": "drain_first"}),
+        uuid4().hex,
+        **ops.authority("planner"),
+    )
+    await run_observation(ops, fleet.setup, 3)
+    ready = await ops.changes.read(created.id, **ops.authority("planner"))
+    planned = await ops.changes.advance(created.id, ready.revision, **ops.authority("planner"))
+    approved_change = await ops.changes.approve(
+        planned.id, ChangeRequestApprove(digest=planned.plan_digest), **ops.authority("approver")
+    )
+    await ops.changes.drain(approved_change.id, uuid4().hex, **ops.authority("operator"))
+    # Someone resumes the second worker and drains it again for maintenance: it is theirs now.
+    await operator_control(ops, second, draining=False)
+    await operator_control(ops, second, draining=True)
+    await ops.changes.apply(
+        planned.id, ChangeRequestApply(digest=planned.plan_digest), uuid4().hex, **ops.authority("operator")
+    )
+    runner = ops.authority("planner")
+    lease = await ops.service.claim(RunnerClaimRequest(runner_id=fleet.setup.runner.id), **runner)
+    await ops.service.report(RunnerReport(lease=lease.proof, report_id=uuid4(), state="running"), **runner)
+    await ops.service.report(
+        RunnerReport(
+            lease=lease.proof,
+            report_id=uuid4(),
+            state="reconciliation_required",
+            receipt=SafeDeploymentReceipt(code="ambiguous", external_effects_may_continue=True),
+        ),
+        **runner,
+    )
+    ended = await ops.changes.read(planned.id, **ops.authority("planner"))
+    assert ended.state == "reconciliation_required" and ended.drained == []
+    assert (await draining_state(ops, first))[0] is False
+    assert (await draining_state(ops, second))[0] is True
+    assert [target for target, _, _ in await resumed_audit(ops, planned.id)] == [str(first)]

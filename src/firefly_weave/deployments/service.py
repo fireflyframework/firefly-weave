@@ -682,7 +682,26 @@ class DeploymentService:
             repo = DeploymentRepository(tx)
             plan = await repo.get("plans", identifier, DeploymentPlan)
             actor = await self.authorize(tx, actor, "deployment.approve", context, plan.target_id)
+            await self.outside_change_request(repo, plan)
             return await self.approve_in(repo, plan, request.digest, actor, context)
+
+    @staticmethod
+    async def outside_change_request(repo: DeploymentRepository, plan: DeploymentPlan) -> None:
+        """409 WV-CHANGE-REQUEST when an active change request owns the plan: approving or applying it directly
+        would skip the change's drain, its force rule and its record of the job."""
+        rows = await repo.rows(
+            "SELECT c.id FROM deployment_plans p JOIN deployment_change_requests c ON c.id=p.change_request_id "
+            "AND c.tenant_id=p.tenant_id AND c.project_id=p.project_id AND c.environment_id=p.environment_id "
+            "WHERE p.tenant_id=:tenant AND p.project_id=:project AND p.environment_id=:environment AND p.id=:plan "
+            "AND c.ended_at IS NULL",
+            plan=plan.id,
+        )
+        if rows:
+            raise CatalogError(
+                409,
+                "WV-CHANGE-REQUEST",
+                f"Change request {rows[0]['id']} owns this plan; approve and apply it through that change request",
+            )
 
     async def approve_in(
         self, repo: DeploymentRepository, plan: DeploymentPlan, digest: str, actor: Principal, context: AuditContext
@@ -721,6 +740,7 @@ class DeploymentService:
             )
             if saved := await idem.replay():
                 return DeploymentJob.model_validate_json(json.dumps(saved))
+            await self.outside_change_request(repo, plan)
             result = await self.apply_in(repo, plan, request.digest, actor, context)
             await idem.save(result.model_dump(mode="json"))
             return result
