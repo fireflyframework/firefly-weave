@@ -62,6 +62,10 @@ def upgrade():
     # it and its digest stays as it was. Plans made before this revision have none. A nullable column without a
     # default is a catalog-only change.
     op.execute("ALTER TABLE deployment_plans ADD COLUMN planned_by uuid")
+    # The change request a plan was made for, kept after the change is planned again, so its requester and its
+    # approval policy still apply to the earlier plan. No foreign key: retention removes change requests while
+    # plans stay.
+    op.execute("ALTER TABLE deployment_plans ADD COLUMN change_request_id uuid")
     op.execute(f"UPDATE weave_schema_version SET version='{revision}'")
 
 

@@ -534,7 +534,7 @@ class ChangeRequestService:
                 ttl_seconds=record.plan_ttl_seconds or DEFAULT_PLAN_SECONDS,
             )
             try:
-                plan = await self.deployments.plan_in(tx, repo, request, actor, context)
+                plan = await self.deployments.plan_in(tx, repo, request, actor, context, change_request_id=record.id)
             except CatalogError as error:
                 if error.code != "WV-PLAN-STALE":
                     raise

@@ -171,19 +171,21 @@ async def test_retention_finds_ended_changes_through_its_index(upgraded):
         assert "Seq Scan" not in plan and "Index" in plan, plan
 
 
-async def test_plans_gain_a_nullable_planner_beside_their_document(upgraded):
+@pytest.mark.parametrize("name", ["planned_by", "change_request_id"])
+async def test_plans_gain_a_nullable_planner_and_change_request_beside_their_document(upgraded, name):
     engine, _ = upgraded
     async with engine.connect() as connection:
         column = (
             await connection.execute(
                 text(
                     "SELECT data_type,is_nullable,column_default FROM information_schema.columns "
-                    "WHERE table_name='deployment_plans' AND column_name='planned_by'"
-                )
+                    "WHERE table_name='deployment_plans' AND column_name=:name"
+                ),
+                {"name": name},
             )
         ).one()
         granted = await connection.scalar(
-            text("SELECT has_column_privilege('weave_app','deployment_plans','planned_by','INSERT')")
+            text("SELECT has_column_privilege('weave_app','deployment_plans',:name,'INSERT')"), {"name": name}
         )
     assert tuple(column) == ("uuid", "YES", None)
     assert granted

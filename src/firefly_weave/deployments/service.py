@@ -318,11 +318,12 @@ class DeploymentService:
         The stricter of the target's policy and the policy its change request recorded applies.
         """
         distinct, requester = target.approval_policy.distinct_approver, None
+        # The change request a plan was made for stays linked to it after the change is planned again.
         rows = await repo.rows(
-            f"SELECT payload FROM deployment_change_requests WHERE {SCOPE} AND target_id=:target "
-            "AND payload->>'plan_id'=:plan",
-            target=target.id,
-            plan=str(plan.id),
+            "SELECT c.payload FROM deployment_plans p JOIN deployment_change_requests c ON c.id=p.change_request_id "
+            "AND c.tenant_id=p.tenant_id AND c.project_id=p.project_id AND c.environment_id=p.environment_id "
+            "WHERE p.tenant_id=:tenant AND p.project_id=:project AND p.environment_id=:environment AND p.id=:plan",
+            plan=plan.id,
         )
         if rows:
             change = ChangeRequest.model_validate_json(json.dumps(rows[0]["payload"]))
@@ -547,6 +548,8 @@ class DeploymentService:
         request: PlanRequest,
         actor: Principal,
         context: AuditContext,
+        *,
+        change_request_id: UUID | None = None,
     ) -> DeploymentPlan:
         """Make and store a plan inside the caller's transaction; the caller authorized deployment.plan."""
         scope = tx.scope
@@ -631,7 +634,12 @@ class DeploymentService:
             update={"digest": canonical_digest(draft.model_dump(mode="json", exclude={"digest"}))}
         )
         await repo.insert(
-            "plans", result.id, target.id, result, deployment_id=deployment.id, extra={"planned_by": actor.id}
+            "plans",
+            result.id,
+            target.id,
+            result,
+            deployment_id=deployment.id,
+            extra={"planned_by": actor.id, "change_request_id": change_request_id},
         )
         await self.record(tx, actor, "deployment.plan", result.id, context)
         return result

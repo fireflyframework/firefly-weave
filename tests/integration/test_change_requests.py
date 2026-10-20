@@ -936,3 +936,23 @@ async def test_runners_and_clients_of_the_previous_release_still_read_plans_leas
     strict = await prepared(ops)
     released_target = strict.target.model_copy(update={"capabilities": ["observe", "deploy", "update"]})
     released.DeploymentTarget.model_validate_json(released_target.model_dump_json())
+
+
+async def test_a_replaced_plan_keeps_its_change_request_and_its_requester_check(ops):
+    setup = await prepared(ops)
+    # The owner requests the change and someone else plans it, so only the requester rule refuses the owner.
+    created = await ops.changes.create(change(setup, replicas=3), uuid4().hex, **ops.authority("owner"))
+    await run_observation(ops, setup, 0)
+    ready = await ops.changes.read(created.id, **ops.authority("owner"))
+    first = await ops.changes.advance(created.id, ready.revision, **ops.authority("planner"))
+    stored = await payload(ops, created.id)
+    stored["plan_expires_at"] = "2000-01-01T00:00:00Z"
+    await rewrite(ops, created.id, stored)
+    again = await ops.changes.replan(created.id, first.revision, **ops.authority("planner"))
+    assert again.plan_id is None
+    # The first plan has not expired itself; it still belongs to the change request and its requester.
+    with pytest.raises(CatalogError) as refused:
+        await ops.service.approve(
+            first.plan_id, PlanApprovalRequest(digest=first.plan_digest), **ops.authority("owner")
+        )
+    assert (refused.value.status, refused.value.code) == (403, "WV-APPROVAL-SELF")
