@@ -49,6 +49,7 @@ from firefly_weave.contracts.deployments import (
     JobCancelRequest,
     ObservationReport,
     ObservedMember,
+    ObservedResource,
     ObserveRequest,
     PlanApproval,
     PlanApprovalRequest,
@@ -564,9 +565,11 @@ class DeploymentService:
         if request.intent == "restart_workers" and any(by_name[c.name].replicas != c.replicas for c in selected):
             raise CatalogError(409, "WV-PLAN-STALE", "A restart keeps the observed number of workers; scale them first")
         removed = {
-            c.name: self.removed_members(target, by_name[c.name].members, by_name[c.name].replicas - c.replicas)
+            c.name: hosts
             for c in selected
-            if request.intent == "scale_workers" and by_name[c.name].replicas > c.replicas
+            if request.intent == "scale_workers"
+            and by_name[c.name].replicas > c.replicas
+            and (hosts := self.scale_down_members(target, by_name[c.name], c.replicas))
         }
         steps = [
             PlanStep(
@@ -608,6 +611,26 @@ class DeploymentService:
         await repo.insert("plans", result.id, target.id, result, deployment_id=deployment.id)
         await self.record(tx, actor, "deployment.plan", result.id, context)
         return result
+
+    @classmethod
+    def scale_down_members(
+        cls, target: DeploymentTarget, resource: ObservedResource, desired: int
+    ) -> builtins.list[str]:
+        """The running members a scale-down to `desired` removes.
+
+        Compose lists only running containers as members, and counts exited ones in its replicas: those go first,
+        need no drain, and are removed by the runner without being named, so an exited container never makes a
+        scale-down remove a running worker or wait for one that cannot be observed. Kubernetes lists every pod.
+        """
+        excess = resource.replicas - desired
+        if target.adapter == "docker-compose":
+            if resource.ready_replicas > len(resource.members):
+                # Ready containers are running ones, so members that cannot all be listed are unknown, not exited.
+                raise CatalogError(
+                    409, "WV-PLAN-STALE", "The observation does not list every worker; observe the target again"
+                )
+            excess -= max(0, resource.replicas - len(resource.members))
+        return cls.removed_members(target, resource.members, max(0, excess))
 
     @staticmethod
     def removed_members(target: DeploymentTarget, members: Sequence[ObservedMember], count: int) -> builtins.list[str]:

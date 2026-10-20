@@ -237,8 +237,18 @@ class ComposeAdapter:
     def _victims(
         hosts: list[str], containers: list[dict[str, Any]], replicas: int, component: ComponentSpec
     ) -> list[str]:
-        """Full IDs of the reviewed members a scale-down removes; each must be one live container of the service."""
-        if len(hosts) != replicas - component.replicas:
+        """Full IDs of the containers a scale-down removes: the reviewed running members, then exited containers.
+
+        Exited containers go first, highest number first, and are never named in the plan; the reviewed members
+        cover only what remains, and each must be one live container of the service.
+        """
+        excess = replicas - component.replicas
+        stopped = sorted(
+            (item for item in containers if item["state"] in _STOPPED),
+            key=lambda item: _ordinal(item.get("number")) or 0,
+            reverse=True,
+        )
+        if len(hosts) != max(0, excess - len(stopped)):
             raise RunnerPolicyError()
         found = []
         for host in hosts:
@@ -246,7 +256,7 @@ class ComposeAdapter:
             if len(matches) != 1:
                 raise RunnerPolicyError()
             found.append(matches[0])
-        return found
+        return found + [item["id"] for item in stopped[: max(0, excess)]]
 
     async def apply(self, plan: DeploymentPlan, before_write: Callable[[], Awaitable[None]]) -> ObservationReport:
         assert self.policy.lock_file is not None
@@ -283,7 +293,7 @@ class ComposeAdapter:
                 raise RunnerPolicyError()
             if step.action == "restart_workers" and component.replicas != fact.replicas:
                 raise RunnerPolicyError()
-            if step.remove_members:
+            if step.remove_members or (step.action == "scale_workers" and fact.replicas > component.replicas):
                 victims += self._victims(step.remove_members, containers[component.name], fact.replicas, component)
             spec = override["services"].setdefault(component.name, {})
             spec.setdefault("labels", {})["firefly.weave.target"] = str(self.policy.target_id)

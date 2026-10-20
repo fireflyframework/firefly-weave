@@ -183,7 +183,8 @@ def observed(count, *, listed=None, image=IMAGE):
                 kind="worker",
                 image=image,
                 replicas=count,
-                ready_replicas=count,
+                # Exited containers are counted but never ready, and never listed as members.
+                ready_replicas=count if listed is None else min(count, listed),
                 version="1",
                 ownership="managed",
                 state="ready" if count else "stopped",
@@ -847,3 +848,30 @@ async def test_a_restart_keeps_the_observed_image_and_count_and_drains(ops):
                 ops, other, intent="restart_workers", deployed=deployed, observed_count=count, image=image
             )
         assert (refused.value.status, refused.value.code) == (409, "WV-PLAN-STALE")
+
+
+@pytest.mark.parametrize(("listed", "desired"), [(2, 2), (1, 1)])
+async def test_a_scale_down_removes_exited_containers_first_and_is_never_stuck_on_them(ops, listed, desired):
+    """Three containers, of which only the first `listed` run: the plan removes no running worker."""
+    setup = await prepared(ops, replicas=3)
+    authority = ops.authority("planner")
+    current = await ops.service.read("deployments", setup.deployment.id, **authority)
+    update = current.model_dump(include={"target_id", "name", "ownership", "components"})
+    update["components"][0]["replicas"] = desired
+    current = await ops.service.update_deployment(
+        current.id, DeploymentRequest.model_validate(update), current.revision, **authority
+    )
+    await ops.service.observe(ObserveRequest(target_id=setup.target.id), uuid4().hex, **authority)
+    job = await run_observation(ops, setup, 3, listed=listed)
+    plan = await ops.service.plan(
+        PlanRequest(
+            deployment_id=current.id,
+            deployment_revision=current.revision,
+            observation_id=job.observation_id,
+            intent="scale_workers",
+        ),
+        uuid4().hex,
+        **authority,
+    )
+    assert [step.remove_members for step in plan.steps] == [[]]
+    assert "worker_drain" not in plan.risks

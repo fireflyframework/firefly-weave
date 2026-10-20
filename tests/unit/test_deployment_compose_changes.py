@@ -121,6 +121,9 @@ class Project:
         while len(live) < scale:
             top += 1
             live.append(self.new(top))
+        for item in live:
+            # Compose starts the containers it keeps.
+            item["state"] = "running"
         self.containers = live
         return b""
 
@@ -254,3 +257,47 @@ async def test_a_restart_that_leaves_an_old_worker_running_is_not_a_success(tmp_
 
     with pytest.raises(RunnerPolicyError):
         await ComposeAdapter(config, command=stubborn).apply(project.plan("restart_workers", 2), renewed)
+
+
+async def test_a_scale_down_removes_exited_containers_before_any_running_worker(tmp_path):
+    config = policy(tmp_path)
+    project = Project(config, 3)
+    project.containers[2]["state"] = "exited"
+    exited, kept = project.full(3), [project.full(1), project.full(2)]
+    plan = project.plan("scale_workers", 2)
+    project.calls.clear()
+    result = await ComposeAdapter(config, command=project.command).apply(plan, renewed)
+    assert [item["id"] for item in project.containers] == kept
+    assert result.settled and result.resources[0].replicas == 2
+    remove = next(argv for argv, _ in project.calls if "rm" in argv)
+    assert remove[3:] == ["rm", exited]
+
+
+async def test_a_scale_down_past_every_exited_container_removes_the_reviewed_running_ones(tmp_path):
+    config = policy(tmp_path)
+    project = Project(config, 4)
+    project.containers[3]["state"] = "exited"
+    plan = project.plan("scale_workers", 2, remove=[project.host(3)])
+    kept = [project.full(1), project.full(2)]
+    removed = [project.full(3), project.full(4)]
+    await ComposeAdapter(config, command=project.command).apply(plan, renewed)
+    assert [item["id"] for item in project.containers] == kept
+    remove = next(argv for argv, _ in project.calls if "rm" in argv)
+    assert sorted(remove[4:]) == sorted(removed)
+
+
+async def test_a_scale_down_to_the_running_workers_never_needs_a_running_victim(tmp_path):
+    config = policy(tmp_path)
+    project = Project(config, 3)
+    project.containers[1]["state"] = "exited"
+    project.containers[2]["state"] = "exited"
+    keep = project.full(1)
+    await ComposeAdapter(config, command=project.command).apply(project.plan("scale_workers", 1), renewed)
+    assert [item["id"] for item in project.containers] == [keep]
+    # A running worker named on top of the exited ones would remove one too many.
+    project = Project(config, 3)
+    project.containers[2]["state"] = "exited"
+    plan = project.plan("scale_workers", 2, remove=[project.host(2)])
+    with pytest.raises(RunnerPolicyError):
+        await ComposeAdapter(config, command=project.command).apply(plan, renewed)
+    assert "rm" not in project.verbs()
