@@ -81,7 +81,8 @@ def test_a_platform_s_keys_go_when_it_is_forgotten(tmp_path):
     store.put(ACCOUNT + "canvas.d-2", "{}")
     store.put(profile_prefix("other") + "x:y:z:canvas.d-3", "{}")
     store.put("local:weave.localDraft.d-1", "{}")
-    assert store.purge(profile_prefix("acme")) == 2
+    purged = store.purge(profile_prefix("acme"))
+    assert (purged.removed, purged.unreadable, purged.complete) == (2, 0, True)
     assert store.keys() == ["local:weave.localDraft.d-1", profile_prefix("other") + "x:y:z:canvas.d-3"]
     with pytest.raises(ValueError):
         store.purge("")
@@ -151,3 +152,67 @@ def test_a_browser_studio_has_no_store(tmp_path):
         headers = pair(browser)
         answer = browser.get("/studio/local/store", headers=headers)
     assert answer.status_code == 404 and answer.json()["code"] == "WV-STUDIO-STORE-OFF"
+
+
+@POSIX
+def test_a_purge_skips_what_it_can_t_read_and_says_so(tmp_path):
+    folder = tmp_path / "studio-store"
+    store = LocalStore(folder)
+    store.put(ACCOUNT + "testData.d-1", "{}")
+    store.put(ACCOUNT + "canvas.d-1", "{}")
+    store.put("local:weave.localDraft.d-9", "{}")
+    (folder / "backup").mkdir()
+    (tmp_path / "x.json").write_text("{}")
+    os.symlink(tmp_path / "x.json", folder / "zz-link.json")
+    os.link(folder / file_name("local:weave.localDraft.d-9"), tmp_path / "hard-elsewhere.json")
+    (folder / "zz-big.json").write_bytes(b"x" * (local_store.FILE_LIMIT + 1))
+    purged = store.purge(profile_prefix("acme"))
+    # The platform's own keys go; four entries nobody can attribute stay, and the purge says it is incomplete.
+    assert (purged.removed, purged.unreadable, purged.complete) == (2, 4, False)
+    assert not (folder / file_name(ACCOUNT + "testData.d-1")).exists()
+    assert not (folder / file_name(ACCOUNT + "canvas.d-1")).exists()
+    assert (tmp_path / "x.json").read_text() == "{}"
+    assert store.pending() == [profile_prefix("acme")]
+
+
+def test_a_purge_removes_copies_a_write_left_behind(tmp_path):
+    folder = tmp_path / "studio-store"
+    store = LocalStore(folder)
+    store.put("local:a", "1")
+    # What a process killed between writing and renaming leaves: a hidden temporary copy with the key and value.
+    orphan = folder / f".{file_name(ACCOUNT + 'testData.d-3')}.0123456789abcdef.tmp"
+    orphan.write_text(json.dumps({"key": ACCOUNT + "testData.d-3", "value": "from a killed write"}))
+    assert store.purge(profile_prefix("acme")).complete
+    assert not orphan.exists()
+    assert store.keys() == ["local:a"]
+
+
+def test_an_unfinished_purge_is_kept_and_finished_later(tmp_path, monkeypatch):
+    folder = tmp_path / "studio-store"
+    store = LocalStore(folder)
+    store.put(ACCOUNT + "testData.d-1", "{}")
+    remove = local_store.PrivateFolder.remove
+
+    def failing(self, directory, name):
+        raise OSError("the disk said no")
+
+    monkeypatch.setattr(local_store.PrivateFolder, "remove", failing)
+    with pytest.raises(StoreUnavailable):
+        store.purge(profile_prefix("acme"))
+    assert store.pending() == [profile_prefix("acme")]
+    monkeypatch.setattr(local_store.PrivateFolder, "remove", remove)
+    finished = LocalStore(folder).finish_purges(saved=set())
+    assert [(prefix, result.complete) for prefix, result in finished] == [(profile_prefix("acme"), True)]
+    assert store.keys() == [] and store.pending() == []
+
+
+def test_starting_forgets_platforms_that_are_no_longer_saved(tmp_path):
+    folder = tmp_path / "studio-store"
+    store = LocalStore(folder)
+    store.put(ACCOUNT + "testData.d-1", "{}")
+    kept = profile_prefix("Saved") + "0123456789abcdef:t:p:canvas.d-2"
+    store.put(kept, "{}")
+    store.put("local:weave.localDraft.d-3", "{}")
+    store.put("ui:weave.panes", "{}")
+    store.finish_purges(saved={profile_prefix("Saved")})
+    assert store.keys() == ["local:weave.localDraft.d-3", kept, "ui:weave.panes"]

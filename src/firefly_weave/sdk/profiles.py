@@ -736,6 +736,11 @@ class PrivateFolder:
         listed = os.listdir(self.directory if directory is None else directory)
         return sorted(name for name in listed if not name.startswith(".") and not name.endswith(".lock"))
 
+    def temporaries(self, directory: int | None) -> list[str]:
+        """Temporary copies a write left behind when its process ended before the rename (``.<name>.<hex>.tmp``)."""
+        listed = os.listdir(self.directory if directory is None else directory)
+        return sorted(name for name in listed if name.startswith(".") and name.endswith(".tmp"))
+
     def size(self, directory: int | None, name: str) -> int:
         try:
             if directory is None:

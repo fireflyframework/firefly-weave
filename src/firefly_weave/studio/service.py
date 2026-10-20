@@ -225,14 +225,49 @@ class StudioService:
         from firefly_weave.studio.local_store import LocalStore
 
         self.local_store = LocalStore(options.store_directory) if options.store_directory is not None else None
+        # Platforms signed out or removed while this host runs: their keys aren't written again until a sign-in.
+        self.forgotten: set[str] = set()
+        if self.local_store is not None:
+            self._finish_purges()
 
-    def forget_profile_data(self, name: str) -> None:
-        """Sign-out and removal delete what this computer keeps for that platform (best effort; never raises)."""
+    def _finish_purges(self) -> None:
+        """Finish purges an earlier run couldn't, and forget platforms that are no longer saved (best effort)."""
+        from firefly_weave.sdk.profiles import ProfileError
         from firefly_weave.studio.local_store import StoreUnavailable, profile_prefix
 
-        if self.local_store is not None:
-            with suppress(StoreUnavailable):
-                self.local_store.purge(profile_prefix(name))
+        assert self.local_store is not None
+        saved: set[str] | None = None
+        if self.options.profile_store is not None:
+            try:
+                saved = {profile_prefix(name) for name in self.options.profile_store.load().profiles}
+            except ProfileError:
+                saved = None
+        with suppress(StoreUnavailable):
+            self.local_store.finish_purges(saved)
+
+    def forget_profile_data(self, name: str) -> bool | None:
+        """Sign-out and removal delete what this computer keeps for that platform. True when everything went, False
+        when something stayed (the purge is finished at the next start), None without a store. Never raises."""
+        from firefly_weave.studio.local_store import StoreUnavailable, profile_prefix
+
+        if self.local_store is None:
+            return None
+        prefix = profile_prefix(name)
+        self.forgotten.add(prefix)
+        try:
+            return self.local_store.purge(prefix).complete
+        except StoreUnavailable:
+            return False
+
+    def remember_profile_data(self, name: str) -> None:
+        """A sign-in to this platform lets Studio keep its data on this computer again."""
+        from firefly_weave.studio.local_store import profile_prefix
+
+        self.forgotten.discard(profile_prefix(name))
+
+    def keeps(self, key: str) -> bool:
+        """Whether Studio may write this key: never one of a platform signed out or removed since."""
+        return not any(key.startswith(prefix) for prefix in self.forgotten)
 
     async def close(self) -> None:
         self.connection_generation += 1

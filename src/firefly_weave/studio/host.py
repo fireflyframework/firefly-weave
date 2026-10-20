@@ -524,6 +524,12 @@ class StudioController:
             return problem(404, "WV-STUDIO-STORE-OFF", "This Studio keeps its data in the browser.")
         if KEY.fullmatch(key) is None:
             return problem(422, "WV-STUDIO-REQUEST", "Keys use letters, digits, colons, dots, underscores or hyphens")
+        if not self.service.keeps(key):
+            return problem(
+                409,
+                "WV-STUDIO-STORE-SIGNED-OUT",
+                "You signed out of this platform; sign in again to keep its data on this computer.",
+            )
         try:
             body = StoreValue.model_validate_json(await request.body())
         except ValidationError:
