@@ -133,14 +133,17 @@ test("test data and the canvas persist across reload and a second browser profil
     Amount: "1500",
   });
   expect((await testData).status()).toBeLessThan(300);
+  // The canvas save that holds the note and its text.
   const canvas = page.waitForResponse(
     (r) =>
       r.url().endsWith(`/drafts/${draftId}/studio/canvas`) &&
-      r.request().method() === "PUT",
+      r.request().method() === "PUT" &&
+      (r.request().postData() ?? "").includes("Kept on the platform"),
     { timeout: 60_000 },
   );
   await page.locator('[data-step="shape"]').first().click();
   await page.keyboard.press("Shift+S");
+  await page.keyboard.insertText("Kept on the platform");
   await page.keyboard.press("Escape");
   expect((await canvas).status()).toBeLessThan(300);
   await shot(page, "td-02-saved");
@@ -151,7 +154,10 @@ test("test data and the canvas persist across reload and a second browser profil
     timeout: 30_000,
   });
   await expectCustomerId(page, "c-1042");
-  await expect(page.locator(".sticky-note-body")).toHaveCount(1);
+  await expect(page.locator(".sticky-note-body")).toHaveText(
+    "Kept on the platform",
+    { timeout: 30_000 },
+  );
 
   // 3. A second browser profile, its own host and sign-in: the same draft,
   // from the platform (this profile's storage starts empty).
@@ -168,7 +174,10 @@ test("test data and the canvas persist across reload and a second browser profil
     timeout: 30_000,
   });
   await expectCustomerId(second, "c-1042");
-  await expect(second.locator(".sticky-note-body")).toHaveCount(1);
+  await expect(second.locator(".sticky-note-body")).toHaveText(
+    "Kept on the platform",
+    { timeout: 30_000 },
+  );
   await shot(second, "td-03-second-profile");
 
   // 4. A secret value: Studio never lets it be typed, and the platform
