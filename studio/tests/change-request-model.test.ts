@@ -29,55 +29,11 @@ import {
   replannable,
   wizardSteps,
 } from "../src/app/operate/clusters/change-request-model";
-import type { ChangeRequest } from "../src/app/operations/deployment-contracts";
+import { at, change, serverNow } from "./change-request-fixture";
 
 // The browser's clock runs 7 s ahead of the server's; Studio counts on the server's.
-const serverNow = Date.parse("2026-10-20T12:00:00Z");
 const offset = -7000;
 const browserNow = serverNow - offset;
-const at = (seconds: number) =>
-  new Date(serverNow + seconds * 1000).toISOString();
-
-export function change(overrides: Partial<ChangeRequest> = {}): ChangeRequest {
-  return {
-    id: "c1c1c1c1-0000-4000-8000-000000000001",
-    target_id: "11111111-1111-4111-8111-111111111111",
-    deployment_id: "22222222-2222-4222-8222-222222222222",
-    expected_deployment_revision: 1,
-    intent: "scale_workers",
-    components: ["fixture-worker"],
-    desired: [{ name: "fixture-worker", replicas: 3 }],
-    drain: { mode: "none", timeout_seconds: 300 },
-    title: "Scale fixture-worker to 3",
-    reason: "",
-    plan_ttl_seconds: 600,
-    scope: { tenant_id: "t", project_id: "p", environment_id: "e" },
-    revision: 3,
-    requested_by: "ana",
-    created_at: at(-60),
-    deployment_revision: 2,
-    approval_policy: { distinct_approver: true },
-    state: "awaiting_approval",
-    observation_job_id: null,
-    observation_id: null,
-    plan_id: "p1",
-    plan_digest: "a".repeat(64),
-    plan_expires_at: at(582),
-    approval: null,
-    planned_by: "ana",
-    drain_set: [],
-    drained: [],
-    apply_job_id: null,
-    failure: null,
-    warnings: [],
-    history: [
-      { at: at(-60), state: "observing", actor_id: "ana" },
-      { at: at(-30), state: "ready_to_plan", actor_id: null },
-      { at: at(-20), state: "awaiting_approval", actor_id: "ana" },
-    ],
-    ...overrides,
-  };
-}
 
 describe("the approval countdown", () => {
   it("is neutral above 2 minutes, warns at 2 minutes, is urgent at 30 seconds, then expires", () => {
@@ -140,7 +96,7 @@ describe("states and lifetimes", () => {
     expect(planLifetimeError(false, 300, 60)).toBeNull();
   });
   it("names the wizard's steps", () => {
-    expect(wizardSteps).toEqual(["Intent", "Details", "Review", "Progress"]);
+    expect(wizardSteps).toEqual(["Change", "Details", "Review", "Progress"]);
   });
   it("shows progress, skipping the drain for a change that does not drain", () => {
     const steps = progressSteps(change(), serverNow);

@@ -197,11 +197,20 @@ describe("the change request wizard", () => {
       reason: "",
     });
   });
-  it("suggests a title from the change", () => {
+  it("suggests a title from the details, and keeps a title the person typed", () => {
     const state = wizard();
     state.choose("scale_workers");
+    state.next();
     state.replicas = 3;
     state.next();
     expect(state.title).toBe("Scale fixture-worker to 3");
+    state.back();
+    state.replicas = 4;
+    state.next();
+    expect(state.title).toBe("Scale fixture-worker to 4");
+    state.title = "Add capacity for the import";
+    state.back();
+    state.next();
+    expect(state.title).toBe("Add capacity for the import");
   });
 });

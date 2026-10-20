@@ -281,13 +281,16 @@ describe("approvals inbox", () => {
 
   it("stops after 1,000 plans and reports a failed plan read", async () => {
     let reads = 0;
+    let changeReads = 0;
     const inbox = new ApprovalsInbox(async <T>(path: string) => {
       if (path.includes("/approval")) return null as T;
-      reads++;
+      if (path.includes("/deployment-change-requests?")) changeReads++;
+      else reads++;
       return { items: [], next_cursor: "more" } as T;
     });
     await inbox.load("env", now);
     expect(reads).toBe(10);
+    expect(changeReads).toBe(10);
     expect(inbox.truncated).toBe(true);
     const failing = new ApprovalsInbox(async () => {
       throw Object.assign(new Error("Denied"), {

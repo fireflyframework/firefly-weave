@@ -83,7 +83,7 @@ export const STATE_FILTERS: [string, string, ChangeState[]][] = [
           </button>
         }
       </div>
-      <div class="operate-filters">
+      <div class="operate-filters change-filters">
         <label class="field"
           >State
           <select
@@ -119,6 +119,16 @@ export const STATE_FILTERS: [string, string, ChangeState[]][] = [
         </label>
       </div>
       @let list = page.changes;
+      @if (list.loaded && store.errors.targets) {
+        <weave-operate-state
+          kind="partial"
+          [message]="
+            'Target names could not be loaded. ' + store.errors.targets
+          "
+          [code]="store.errorInfo.targets?.code ?? ''"
+          (retry)="page.poller.refresh()"
+        />
+      }
       @if (list.error?.status === 403) {
         <weave-operate-state
           kind="access"

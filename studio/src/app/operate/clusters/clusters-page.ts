@@ -70,7 +70,7 @@ import {
   ClusterChangeRequestsTab,
   STATE_FILTERS,
 } from "./cluster-change-requests-tab";
-import { isActive } from "./change-request-model";
+import { approvableCount, isActive } from "./change-request-model";
 import { ApprovalsInbox } from "./approvals-inbox";
 import { ClusterApprovalsTab } from "./cluster-approvals-tab";
 import { ClusterDeploymentDetail } from "./cluster-deployment-detail";
@@ -819,12 +819,28 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
     if (tab !== "approvals" || !this.inbox.loaded || this.inbox.error)
       return label;
     const now = Date.now();
-    const count = this.inbox.rows.filter(
+    const plans = this.inbox.rows.filter(
       (plan) =>
         Date.parse(plan.expires_at) > now &&
         this.host.can("deployment.approve", plan.target_id),
     ).length;
+    const count =
+      plans +
+      approvableCount(
+        this.inbox.changes,
+        (capability, target) => this.host.can(capability, target),
+        this.host.identity?.principal_id,
+        (target) => this.targetStrict(target),
+        now,
+      );
     return count ? `${label} (${count})` : label;
+  }
+  /** Whether a target asks for a second approver; unknown targets do. */
+  targetStrict(targetId: string) {
+    const target =
+      this.store.targets.find((item) => item.id === targetId) ??
+      (this.target?.id === targetId ? this.target : null);
+    return target?.approval_policy?.distinct_approver !== false;
   }
   async approveFromInbox(plan: Plan) {
     if (
@@ -1051,7 +1067,7 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
           targets: ["targets", "deployments", "runners"],
           jobs: ["jobs"],
           runners: ["runners", "targets"],
-          approvals: ["targets", "deployments"],
+          approvals: ["targets", "deployments", "observations"],
           "change-requests": ["targets"],
         } as Record<ClusterTab, Collection[]>
       )[this.tab];
@@ -1583,21 +1599,33 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
     }
     this.cdr.markForCheck();
   }
-  async approveChange() {
-    const record = this.change;
+  /** Approves a change's plan; from the inbox, after confirming its digest. */
+  async approveChange(record = this.change) {
     if (!record?.plan_digest) return;
+    const inbox = record !== this.change;
+    if (inbox) {
+      const confirmed = await this.host.dialogs.confirm({
+        title: "Approve this plan?",
+        message: `You approve "${record.title}" on ${this.targetName(record.target_id)}, plan ${record.plan_digest.slice(0, 12)}. Applying checks this approval and the target again.`,
+        confirmLabel: "Approve plan",
+      });
+      if (!confirmed) return;
+    }
     const result = await this.store.mutate<ChangeRequest>(
       `deployment-change-requests/${record.id}/approve`,
       { digest: record.plan_digest },
     );
-    if (result && this.change?.id === record.id) {
-      this.change = result;
-      this.host.notify("Plan approved.");
-    }
+    if (!result) return;
+    this.host.notify("Plan approved.");
+    void this.host.refreshApprovals();
+    if (this.change?.id === record.id) this.change = result;
+    if (inbox) await this.poller.refresh();
   }
   /** Asks why, then declines or cancels the open change request. */
-  private async decide(kind: "decline" | "cancel") {
-    const record = this.change;
+  private async decide(
+    kind: "decline" | "cancel",
+    record: ChangeRequest | null,
+  ) {
     if (!record) return;
     const reason = await this.host.dialogs.prompt({
       title:
@@ -1624,18 +1652,21 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
             : "Give a reason.",
       },
     });
-    if (reason === null || this.change?.id !== record.id) return;
+    if (reason === null) return;
     const result = await this.store.mutate<ChangeRequest>(
       `deployment-change-requests/${record.id}/${kind}`,
       { reason: reason.trim() },
     );
-    if (result && this.change?.id === record.id) this.change = result;
+    if (!result) return;
+    void this.host.refreshApprovals();
+    if (this.change?.id === record.id) this.change = result;
+    else await this.poller.refresh();
   }
-  declineChange() {
-    return this.decide("decline");
+  declineChange(record = this.change) {
+    return this.decide("decline", record);
   }
-  cancelChange() {
-    return this.decide("cancel");
+  cancelChange(record = this.change) {
+    return this.decide("cancel", record);
   }
   async drainChange() {
     const record = this.change;
@@ -1663,8 +1694,7 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
     );
     if (result && this.change?.id === record.id) this.change = result;
   }
-  async replanChange() {
-    const record = this.change;
+  async replanChange(record = this.change) {
     if (!record) return;
     const result = await this.store.mutate<ChangeRequest>(
       `deployment-change-requests/${record.id}/replan`,
@@ -1672,10 +1702,11 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
       "POST",
       record.revision,
     );
-    if (result && this.change?.id === record.id) {
+    if (!result) return;
+    if (this.change?.id === record.id) {
       this.drainProgress = null;
       this.change = result;
-    }
+    } else await this.openChange(result);
   }
   riskLabel(risk: string) {
     return (

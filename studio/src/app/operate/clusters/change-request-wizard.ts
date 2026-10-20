@@ -138,7 +138,11 @@ export class WizardState {
   get drains(): boolean {
     if (this.intent === "restart_workers") return this.drainFirst;
     if (this.intent !== "scale_workers") return false;
-    return this.selected.some((item) => this.replicas < item.replicas);
+    // A scale-down of what runs now: the observed count, else the desired one.
+    return this.selected.some(
+      (item) =>
+        this.replicas < (this.observed(item.name)?.replicas ?? item.replicas),
+    );
   }
   /**
    * The workers a scale-down removes, by the platform's rule: stopped
@@ -228,9 +232,12 @@ export class WizardState {
     }
     return "";
   }
+  /** The title last suggested; a title the person typed is kept. */
+  private suggested = "";
   next(): boolean {
     if (this.step >= 2 || this.blocker) return false;
-    if (this.step === 0 && !this.title) this.title = this.suggestedTitle();
+    if (this.step === 1 && (!this.title || this.title === this.suggested))
+      this.title = this.suggested = this.suggestedTitle();
     this.step++;
     return true;
   }
@@ -382,8 +389,8 @@ export class WizardState {
         }
         @case (1) {
           @if (state.intent === "scale_workers") {
-            <label class="field"
-              >Workers
+            <div class="field">
+              <label for="change-replicas">Workers</label>
               <span class="stepper">
                 <button
                   type="button"
@@ -395,6 +402,7 @@ export class WizardState {
                   −
                 </button>
                 <input
+                  id="change-replicas"
                   type="number"
                   name="replicas"
                   min="0"
@@ -413,7 +421,7 @@ export class WizardState {
                   +
                 </button>
               </span>
-            </label>
+            </div>
             @if (state.drains) {
               <section
                 class="drain-preview"
@@ -537,7 +545,7 @@ export class WizardState {
             />
           </label>
           <label class="field"
-            >Reason <span class="hint">(optional)</span>
+            ><span>Reason <span class="hint">(optional)</span></span>
             <textarea
               name="reason"
               rows="3"
@@ -622,11 +630,17 @@ export class ChangeRequestWizard implements OnChanges {
     });
     if (fresh && this.targetId) {
       this.state.targetId = this.targetId;
-      this.state.deploymentId =
-        this.deploymentId ||
-        (this.state.targetDeployments.length === 1
-          ? this.state.targetDeployments[0].id
-          : "");
+      this.state.deploymentId = this.deploymentId;
+    }
+    // Deployments may arrive after the wizard opens: a target with one
+    // deployment chooses it as soon as it is known.
+    if (
+      this.state.targetId &&
+      !this.state.deploymentId &&
+      this.state.targetDeployments.length === 1
+    ) {
+      this.state.deploymentId = this.state.targetDeployments[0].id;
+      if (this.state.intent) this.state.choose(this.state.intent);
     }
   }
   choices() {

@@ -199,8 +199,11 @@ export const legacyRedirects: Routes = [
   { path: "runs", redirectTo: "operate/runs", pathMatch: "full" },
   { path: "workers", redirectTo: "operate/workers", pathMatch: "full" },
   { path: "operations", redirectTo: "operate/clusters", pathMatch: "full" },
-  ...clusterCollections.map((collection) => ({
-    path: `operations/${collection}/:id`,
-    redirectTo: `operate/clusters/${collection}/:id`,
-  })),
+  // Change requests came after Operate, so they never had an old address.
+  ...clusterCollections
+    .filter((collection) => collection !== "change-requests")
+    .map((collection) => ({
+      path: `operations/${collection}/:id`,
+      redirectTo: `operate/clusters/${collection}/:id`,
+    })),
 ];

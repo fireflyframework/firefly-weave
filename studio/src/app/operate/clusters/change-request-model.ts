@@ -135,7 +135,7 @@ export function defaultPlanSeconds(drainsWorkers: boolean): number {
   return drainsWorkers ? DRAINING_PLAN_SECONDS : DEFAULT_PLAN_SECONDS;
 }
 
-export const wizardSteps = ["Intent", "Details", "Review", "Progress"] as const;
+export const wizardSteps = ["Change", "Details", "Review", "Progress"] as const;
 
 const intents: Record<ChangeIntent, string> = {
   scale_workers: "Scale workers",
@@ -343,15 +343,57 @@ export function changeActions(
 }
 
 /** "Plan ready for approval: Scale fixture-worker to 3 — expires in 9:42" for the first new row, once. */
+/** The first change in `rows` that waits for an approval and is not in `previous`. */
+export function newApproval(
+  previous: ReadonlySet<string>,
+  rows: readonly ChangeRequest[],
+  now = Date.now(),
+): ChangeRequest | null {
+  return (
+    rows.find(
+      (row) =>
+        !previous.has(row.id) &&
+        effectiveState(row, now) === "awaiting_approval",
+    ) ?? null
+  );
+}
+
+/** "Plan ready for approval: <title> — expires in m:ss" for the first new change. */
 export function approvalToast(
   previous: ReadonlySet<string>,
   rows: readonly ChangeRequest[],
   now = Date.now(),
 ): string | null {
-  const fresh = rows.find(
-    (row) =>
-      !previous.has(row.id) && effectiveState(row, now) === "awaiting_approval",
+  const fresh = newApproval(previous, rows, now);
+  return fresh
+    ? `Plan ready for approval: ${fresh.title} — expires in ${changeCountdown(fresh, now).label}`
+    : null;
+}
+
+/**
+ * The changes the viewer can approve now: waiting for an approval, on a
+ * target where they may approve, and not their own request or plan where
+ * a second person must approve. `strict` says whether a target asks for one.
+ */
+export function approvableCount(
+  rows: readonly ChangeRequest[],
+  can: (capability: string, targetId: string) => boolean,
+  viewer: string | null | undefined,
+  strict: (targetId: string) => boolean,
+  now = Date.now(),
+): number {
+  return rows.filter((row) => approvable(row, can, viewer, strict, now)).length;
+}
+export function approvable(
+  row: ChangeRequest,
+  can: (capability: string, targetId: string) => boolean,
+  viewer: string | null | undefined,
+  strict: (targetId: string) => boolean,
+  now = Date.now(),
+): boolean {
+  return (
+    effectiveState(row, now) === "awaiting_approval" &&
+    can("deployment.approve", row.target_id) &&
+    !blockedByFourEyes(row, viewer, strict(row.target_id))
   );
-  if (!fresh) return null;
-  return `Plan ready for approval: ${fresh.title} — expires in ${changeCountdown(fresh, now).label}`;
 }

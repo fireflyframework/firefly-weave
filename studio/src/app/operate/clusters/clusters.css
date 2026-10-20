@@ -221,22 +221,30 @@ dd {
   text-align: left;
 }
 
-/* Approvals: the countdown keeps its width as it ticks, and the last column
-   fits Review beside Approve plan or Open deployment, so every row lines up
-   with the headings. */
+/* Approvals: one line per row with a mouse. The countdown is right-aligned
+   in tabular figures so it keeps its width as it ticks, and the last column
+   fits Review beside Approve plan and Decline, so every row lines up with
+   the headings. */
 .approval-table {
-  --cols: minmax(180px, 1fr) 130px minmax(120px, 1fr) 130px 200px;
+  --cols: minmax(200px, 1fr) 124px 148px 100px 96px 76px 212px;
 }
 .approval-table .table-head,
 .approval-table .resource-row {
   grid-template-columns: var(--cols);
+  gap: var(--space-3);
 }
-.approval-table .row-text {
-  display: grid;
+.change-cell {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: var(--space-2);
   min-width: 0;
 }
-.approval-table .row-text strong {
+.change-cell strong {
   overflow-wrap: anywhere;
+}
+.approval-table [role="cell"]:not(.change-cell, .risks) {
+  white-space: nowrap;
 }
 .approval-table small {
   font: var(--type-caption);
@@ -244,19 +252,25 @@ dd {
   color: var(--muted);
 }
 .countdown {
-  display: grid;
-  justify-items: start;
-  gap: var(--space-1);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  white-space: nowrap;
+}
+.countdown .status-pill {
+  font-variant-numeric: tabular-nums;
+  justify-content: flex-end;
 }
 .approval-actions {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
-  gap: var(--space-2);
+  gap: var(--space-1);
 }
 @media (max-width: 1024px) {
   .approval-table {
-    --cols: minmax(0, 1fr) 130px;
+    --cols: minmax(0, 1fr) 156px;
   }
   /* The actions sit on their own line, under a heading only screen readers
      need. */
@@ -264,13 +278,10 @@ dd {
   .approval-table .table-head > :last-child {
     display: none;
   }
-  /* Narrow list tables drop their second heading; this one keeps it. */
-  .approval-table .table-head > :nth-child(2) {
-    display: block;
-  }
   .approval-actions {
     grid-column: 1 / -1;
     justify-content: flex-start;
+    padding-bottom: var(--space-2);
   }
 }
 @media (max-width: 600px) {
@@ -279,6 +290,7 @@ dd {
   }
   .approval-table .resource-row {
     grid-template-columns: minmax(0, 1fr) auto;
+    padding-top: var(--space-2);
   }
 }
 
@@ -522,7 +534,8 @@ details.chooser-option[open] summary {
   gap: var(--space-2);
 }
 .stepper button {
-  width: var(--control-sm);
+  width: var(--control-md);
+  min-height: var(--control-md);
   padding: 0;
 }
 .stepper input {
@@ -577,6 +590,17 @@ details.chooser-option[open] summary {
 .review dt,
 .review dd {
   margin: 0;
+}
+.review dt {
+  font: var(--type-label);
+  color: var(--muted);
+}
+.review dd {
+  font: var(--type-body);
+}
+/* Numbers take the width of a number, not of the form. */
+.wizard-body > .field > input[type="number"] {
+  max-width: 160px;
 }
 .wizard-actions {
   justify-content: flex-end;
@@ -717,5 +741,49 @@ details.chooser-option[open] summary {
   }
   .change-summary .status-pill {
     justify-self: start;
+  }
+}
+/* On a phone or a touch screen the row actions are 44 px targets. */
+@media (max-width: 767px), (pointer: coarse) {
+  .approval-actions button.sm {
+    min-height: var(--control-touch);
+  }
+}
+/* A phone shows each change on two lines: what it is, then its state. */
+@media (max-width: 600px) {
+  .change-table {
+    --cols: minmax(0, 1fr);
+  }
+  .change-table .resource-row {
+    row-gap: var(--space-1);
+    padding-block: var(--space-2);
+  }
+  .change-table .status-pill {
+    justify-self: start;
+  }
+}
+/* Radios, checkboxes and switches keep their own size beside their label. */
+.choice input,
+.check input,
+.switch-row input {
+  width: auto;
+}
+@media (max-width: 767px), (pointer: coarse) {
+  .wizard-body select,
+  .wizard-body input:not([type="radio"], [type="checkbox"]),
+  .operate-filters select {
+    min-height: var(--control-touch);
+  }
+}
+/* The Change requests filters sit under the heading, a full row each on a phone. */
+.change-filters {
+  margin-top: var(--space-4);
+}
+@media (max-width: 600px) {
+  .change-filters .field {
+    flex: 1 1 100%;
+  }
+  .change-filters select {
+    width: 100%;
   }
 }
