@@ -31,7 +31,13 @@ from typing import Any, cast
 from pydantic import ValidationError
 
 from firefly_weave.compiler.canonical import canonical_digest
-from firefly_weave.contracts.deployments import DeploymentPlan, ObservationReport, ObservedMember, ObservedResource
+from firefly_weave.contracts.deployments import (
+    ComponentSpec,
+    DeploymentPlan,
+    ObservationReport,
+    ObservedMember,
+    ObservedResource,
+)
 from firefly_weave.contracts.values import JsonObject
 from firefly_weave.deployment_runner.command import run_command
 from firefly_weave.deployment_runner.policy import DestinationPolicy
@@ -69,6 +75,8 @@ def _ordinal(number: object) -> int | None:
 
 # Containers in these states run no worker that placement could describe.
 _STOPPED = frozenset({"exited", "dead", "removing"})
+# Seconds a removed worker gets to finish its tasks after SIGTERM; the workers project sets the same stop grace.
+STOP_GRACE_SECONDS = 240
 
 
 def _state(fact: dict[str, Any]) -> str:
@@ -151,6 +159,10 @@ class ComposeAdapter:
         return cast(dict[str, Any], result)
 
     async def observe(self) -> ObservationReport:
+        return (await self._inventory())[0]
+
+    async def _inventory(self) -> tuple[ObservationReport, dict[str, list[dict[str, Any]]]]:
+        """The observation and, per service, the inspected containers it was built from."""
         await self._identity()
         configuration = await self._configuration()
         raw = await self.command([*self._files(), "ps", "--all", "--no-trunc", "--format", "json"])
@@ -219,7 +231,22 @@ class ComposeAdapter:
                     members=(_members(members) or []) if binding.kind == "worker" else [],
                 )
             )
-        return ObservationReport(resources=resources, complete=True, settled=settled)
+        return ObservationReport(resources=resources, complete=True, settled=settled), groups
+
+    @staticmethod
+    def _victims(
+        hosts: list[str], containers: list[dict[str, Any]], replicas: int, component: ComponentSpec
+    ) -> list[str]:
+        """Full IDs of the reviewed members a scale-down removes; each must be one live container of the service."""
+        if len(hosts) != replicas - component.replicas:
+            raise RunnerPolicyError()
+        found = []
+        for host in hosts:
+            matches = [item["id"] for item in containers if item["id"][:12] == host and item["state"] not in _STOPPED]
+            if len(matches) != 1:
+                raise RunnerPolicyError()
+            found.append(matches[0])
+        return found
 
     async def apply(self, plan: DeploymentPlan, before_write: Callable[[], Awaitable[None]]) -> ObservationReport:
         assert self.policy.lock_file is not None
@@ -235,7 +262,7 @@ class ComposeAdapter:
     async def _apply_locked(
         self, plan: DeploymentPlan, before_write: Callable[[], Awaitable[None]]
     ) -> ObservationReport:
-        current = await self.observe()
+        current, containers = await self._inventory()
         observed = {resource.name: resource for resource in current.resources}
         if self.overrides.exists():
             if self.overrides.stat().st_size > 256 * 1024:
@@ -244,13 +271,20 @@ class ComposeAdapter:
         else:
             override = {"services": {}}
         scales = []
+        victims: list[str] = []
         for step in plan.steps:
             component = step.component
             fact = observed.get(component.name)
             if step.action not in self.policy.capabilities or fact is None or step.expected_version != fact.version:
                 raise RunnerPolicyError()
-            if step.action == "scale_workers" and (component.kind != "worker" or component.image != fact.image):
+            if step.action in {"scale_workers", "restart_workers"} and (
+                component.kind != "worker" or component.image != fact.image
+            ):
                 raise RunnerPolicyError()
+            if step.action == "restart_workers" and component.replicas != fact.replicas:
+                raise RunnerPolicyError()
+            if step.remove_members:
+                victims += self._victims(step.remove_members, containers[component.name], fact.replicas, component)
             spec = override["services"].setdefault(component.name, {})
             spec.setdefault("labels", {})["firefly.weave.target"] = str(self.policy.target_id)
             spec.setdefault("deploy", {})["replicas"] = component.replicas
@@ -268,10 +302,13 @@ class ComposeAdapter:
             json.dump(override, handle)
         try:
             await self._configuration(candidate)
+            # A scale-down keeps the reviewed survivors; a restart replaces every worker at the current scale.
+            mode = ["--force-recreate"] if plan.intent == "restart_workers" else ["--no-recreate"] if victims else []
             arguments = [
                 "up",
                 "--detach",
                 "--no-deps",
+                *mode,
                 *scales,
                 *[step.component.name for step in plan.steps],
             ]
@@ -282,6 +319,12 @@ class ComposeAdapter:
                 raise RunnerPolicyError()
             await before_write()
             os.replace(candidate, self.overrides)
+            if victims:
+                # Drained before the plan was applied; SIGTERM lets each finish what it still holds.
+                await self.command(
+                    [*self.base, "stop", "--time", str(STOP_GRACE_SECONDS), *victims], timeout=STOP_GRACE_SECONDS + 60
+                )
+                await self.command([*self.base, "rm", *victims], timeout=60)
             await self.command([*self._files(), *arguments, "--wait", "--wait-timeout", "90"], timeout=120)
             result = await self.observe()
             facts = {fact.name: fact for fact in result.resources}
@@ -291,6 +334,10 @@ class ComposeAdapter:
                 for step in plan.steps
             ):
                 raise RunnerPolicyError()
+            if plan.intent == "restart_workers":
+                before = {item["id"][:12] for step in plan.steps for item in containers[step.component.name]}
+                if any(member.host in before for step in plan.steps for member in facts[step.component.name].members):
+                    raise RunnerPolicyError()
             return result
         finally:
             candidate.unlink(missing_ok=True)
