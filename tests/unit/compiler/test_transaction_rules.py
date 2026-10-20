@@ -157,7 +157,7 @@ def test_undo_steps_must_be_safe_to_retry_and_called_workflows_must_have_a_time_
         True,
         None,
         None,
-        (UndoFacts("compensate", at(1) + "/compensate", "callWorkflow", "release-stock@1.0.0", resolved=True),),
+        (UndoFacts("compensate", at(1) + "/compensate", "callWorkflow", "release-slot@1.0.0", resolved=True),),
     )
     issues, analysis = check(unsafe, call)
     assert issues == [
@@ -171,7 +171,7 @@ def test_undo_steps_must_be_safe_to_retry_and_called_workflows_must_have_a_time_
     )
     assert messages[at(1) + "/compensate/uses"] == (
         "Called workflows inside a transaction must have a time limit. "
-        "Set timeoutSeconds on release-stock in a new version."
+        "Set timeoutSeconds on release-slot in a new version."
     )
 
 

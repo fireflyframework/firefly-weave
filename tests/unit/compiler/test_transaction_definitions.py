@@ -43,7 +43,7 @@ HOLD = {
 }
 ADD = {"id": "add", "kind": "action", "uses": "target-system.add-quantity@1.0.0", "with": {"object": {}}}
 SUBMIT = {"id": "submit", "kind": "action", "uses": "orders.submit-order@1.0.0", "with": {"object": {}}}
-CALL = {"id": "reserve", "kind": "callWorkflow", "uses": "reserve-stock@1.0.0", "with": {"object": {}}, "mode": "wait"}
+CALL = {"id": "reserve", "kind": "callWorkflow", "uses": "reserve-slot@1.0.0", "with": {"object": {}}, "mode": "wait"}
 
 
 def transaction(steps: list[dict], **fields: object) -> dict:
