@@ -265,3 +265,104 @@ async def test_a_supplied_called_workflow_resolves_the_published_versions_it_cal
         ("enrich", "debug-outer@1.0.0", "succeeded"),
         ("enrich/enrich", "debug-enrich@1.0.0", "succeeded"),
     ]
+
+
+def orders_calling_enrich(called=CALLED):
+    """A request whose workflow calls debug-enrich@1.0.0, compiled against ``called``."""
+    artifact = compiled(
+        workflow("debug-orders", [call("debug-enrich@1.0.0")], {"ref": "/steps/enrich/output"}),
+        CatalogSnapshot.from_definitions([load_definition(yaml.safe_load(called))]),
+    )
+    return {"artifact": json.loads(artifact.to_bytes()), "mocks": {}, "input": {"customerId": "c-1"}, "now": NOW}
+
+
+async def published(author, headers, project_url, source, key):
+    response = await catalog_tests.publish(author, headers, project_url, {"format": "yaml", "source": source}, key=key)
+    assert response.status_code in {200, 201}, response.text
+
+
+async def test_a_session_refuses_a_published_version_that_differs_from_the_one_compiled_against(
+    author, headers, project_url
+):
+    await published(author, headers, project_url, CALLED, "debug-enrich")
+    # The same name and version, and the same input and output schemas, but another definition.
+    body = orders_calling_enrich(CALLED.replace("literal: gold", "literal: silver"))
+    refused = await author[0].post(
+        project_url + "/debug/sessions", headers=headers, json=body | {"resolve_workflows": True}
+    )
+    assert (refused.status_code, refused.json()["code"]) == (422, "WV-DEBUG-WORKFLOW")
+
+
+async def test_resolution_follows_published_calls_and_keeps_the_mocks_supplied_for_a_resolved_version(
+    author, headers, project_url
+):
+    await published(author, headers, project_url, CALLED, "debug-enrich")
+    await published(author, headers, project_url, OUTER, "debug-outer")
+    body = orders_calling_outer()[0] | {"resolve_workflows": True}
+    view = await continued(author, headers, project_url, body)
+    assert (view["status"], view["variables"]["output"]) == ("succeeded", {"tier": "gold"})
+    assert frame_rows(view) == [
+        ("enrich", "debug-outer@1.0.0", "succeeded"),
+        ("enrich/enrich", "debug-enrich@1.0.0", "succeeded"),
+    ]
+    mocked = body | {"workflows": {"debug-outer@1.0.0": {"mocks": {"node:enrich": {"tier": "silver"}}}}}
+    view = await continued(author, headers, project_url, mocked)
+    assert (view["status"], view["variables"]["output"]) == ("succeeded", {"tier": "silver"})
+    assert frame_rows(view) == [("enrich", "debug-outer@1.0.0", "succeeded")]
+
+
+async def test_resolution_reads_only_the_versions_published_in_the_sessions_project(
+    author, headers, project_url, access_db, provisioned
+):
+    from firefly_weave.access.models import Grant
+    from firefly_weave.contracts.access import Scope
+
+    await published(author, headers, project_url, CALLED, "debug-enrich")
+    admin, scopes = provisioned
+    access = access_db[2]
+    tenant = scopes[0].tenant_id
+    sibling = await access.create_project(await access.load_principal(admin.id), Scope(tenant_id=tenant), "sibling")
+    await access.grant(admin, author[1].id, Grant(role="developer", scope=Scope(tenant_id=tenant, project_id=sibling)))
+    body = orders_calling_enrich() | {"resolve_workflows": True}
+    sibling_url = f"/tenants/{tenant}/projects/{sibling}"
+    refused = await author[0].post(sibling_url + "/debug/sessions", headers=headers, json=body)
+    assert (refused.status_code, refused.json()["code"]) == (422, "WV-DEBUG-WORKFLOW")
+    assert (await continued(author, headers, project_url, body))["status"] == "succeeded"
+
+
+@pytest.mark.parametrize("missing_from", ["request", "transaction"])
+async def test_resolution_needs_catalog_read_on_the_request_and_inside_the_transaction(
+    author, headers, project_url, access_db, provisioned, monkeypatch, missing_from
+):
+    """A custom role may grant ``simulate`` without ``catalog.read``: both reads of the principal are checked."""
+    from firefly_weave.access import authorization
+    from firefly_weave.access.models import Grant
+    from firefly_weave.access.service import AccessService
+    from firefly_weave.contracts.access import Scope
+
+    await published(author, headers, project_url, CALLED, "debug-enrich")
+    body = orders_calling_enrich() | {"resolve_workflows": True}
+    project = Scope(tenant_id=author[2].tenant_id, project_id=author[2].project_id)
+    viewer = Grant(role="viewer", scope=project)
+    if missing_from == "transaction":
+        # The request's principal holds catalog.read; the principal read inside the transaction no longer does.
+        await access_db[2].grant(provisioned[0], author[1].id, viewer)
+    capabilities = dict(authorization.ROLE_CAPABILITIES)
+    capabilities["developer"] = capabilities["developer"] - {"catalog.read"}
+    monkeypatch.setattr(authorization, "ROLE_CAPABILITIES", capabilities)
+    load = AccessService.load_principal
+
+    async def loaded(self, principal_id, *, tx=None):
+        principal = await load(self, principal_id, tx=tx)
+        if tx is None or principal_id != author[1].id:
+            return principal
+        if missing_from == "transaction":
+            return principal.model_copy(update={"grants": tuple(g for g in principal.grants if g.role != "viewer")})
+        return principal.model_copy(update={"grants": (*principal.grants, viewer)})
+
+    monkeypatch.setattr(AccessService, "load_principal", loaded)
+    refused = await author[0].post(project_url + "/debug/sessions", headers=headers, json=body)
+    assert refused.status_code == 403, refused.text
+    # Without the flag the same principal simulates: only resolution reads the catalog.
+    plain = await author[0].post(project_url + "/debug/sessions", headers=headers, json=orders_calling_enrich())
+    assert plain.status_code == 201, plain.text
