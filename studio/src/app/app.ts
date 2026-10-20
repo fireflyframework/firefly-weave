@@ -1181,6 +1181,12 @@ export class App implements CanvasHost {
       );
     });
     this.api.onSessionEnded = () => this.sessionEnded();
+    // A keyed change refused for capacity is sent again only once Studio knows
+    // who is signed in, and only for the person and workspace it was sent for.
+    this.api.replayGuard = {
+      settled: () => this.identitySettled(),
+      scope: () => scopeKeyOf(this),
+    };
     this.loginWatcher.subscribe((event) => this.backgroundLogin(event));
     afterEveryRender(() => {
       const title = this.pageTitle();

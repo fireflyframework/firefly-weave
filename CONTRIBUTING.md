@@ -41,8 +41,10 @@ site build, Ruff lint and format checks, strict mypy, unit and contract tests,
 and release package preparation with installed-artifact verification.
 
 Expected: the last line is `All requested checks passed.` A failing stage stops
-the run, which then prints `Checks failed; inspect private evidence.`; each
-stage's log and a `checks.json` summary are in a new `build/checks-…` directory.
+the run, which then prints `Stage <name> failed.`, the node id of each failing
+test from pytest's short summary (never its output), and
+`Checks failed; inspect private evidence.`; each stage's log and a `checks.json`
+summary are in a new `build/checks-…` directory.
 For a focused change, first run
 its relevant suite; the integrated delivery must still pass the full gate. Do not
 update lock or upstream framework provenance casually to resolve an unrelated

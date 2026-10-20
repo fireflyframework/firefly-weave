@@ -484,6 +484,20 @@ SPDX-License-Identifier: Apache-2.0
 - While the platform is not ready, the outbox waits for readiness instead of
   starting a delivery turn every second that is refused and logged as
   `Outbox turn failed` at ERROR.
+- `weave workflow graph` draws decision table steps as **Apply a decision
+  table**. Before, it stopped with `KeyError: 'decisionTable'` on any workflow
+  with a decision table.
+- Studio sends a change that the platform refused for capacity again only when
+  the same person is still signed in to the same workspace. It first waits for
+  a sign-in check still out. Before, a change refused just as another person
+  signed in could be sent again as that person.
+- `weave platform user` grants `viewer` on the demo project instead of the demo
+  environment, so a person created with roles such as `operator` or
+  `deployment_approver` plus `viewer` can read the project's published
+  workflows.
+- When `make check` fails, it prints the failing stage and the node ids of the
+  failing tests from pytest's short summary. Test output stays in the private
+  stage logs.
 
 ## 0.1.0a15
 

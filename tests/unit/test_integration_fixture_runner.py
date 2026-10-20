@@ -229,3 +229,51 @@ def test_integration_has_bounded_full_suite_budget_and_actionable_failure_output
     assert "-v" in command and "--maxfail=1" in command
     assert "--tb=short" in command and "--show-capture=no" in command
     assert "--showlocals" not in command
+
+
+def test_failed_pytest_stage_names_failing_tests_without_output(runner, monkeypatch, tmp_path, capsys):
+    evidence = tmp_path / "checks"
+
+    def command(argv, **kwargs):
+        name = kwargs["log_path"].stem
+        kwargs["log_path"].write_bytes(
+            b"....F.E\n"
+            b"FAILED printed-by-a-test-before-the-summary\n"
+            b"E   AssertionError: token=never-print-this-secret\n"
+            b"=========================== short test summary info ============================\n"
+            b"FAILED tests/unit/test_a.py::test_one[case-1] - AssertionError: token=never-print-this-secret\n"
+            b"ERROR tests/unit/test_b.py::test_two - RuntimeError: never-print-this-body\n"
+            b"FAILED tests/unit/test_c.py::test_three\x1b[31m\n"
+            b"===================== 2 failed, 1 error in 3.00s ======================\n"
+            b"FAILED printed-after-the-summary\n"
+            if name == "unit-contracts"
+            else b""
+        )
+        if name == "unit-contracts":
+            raise RuntimeError("controlled command failure")
+
+    monkeypatch.setattr(runner, "run_command", command)
+    assert runner.run(ROOT, evidence, release=False, context=None) == 1
+    printed = capsys.readouterr().out
+    assert "Stage unit-contracts failed" in printed
+    assert "FAILED tests/unit/test_a.py::test_one[case-1]\n" in printed
+    assert "ERROR tests/unit/test_b.py::test_two\n" in printed
+    assert "FAILED tests/unit/test_c.py::test_three\n" in printed
+    assert "printed-by-a-test" not in printed and "printed-after-the-summary" not in printed
+    assert "never-print" not in printed and "AssertionError" not in printed and "\x1b" not in printed
+
+
+def test_failed_stage_without_pytest_summary_names_only_the_stage(runner, monkeypatch, tmp_path, capsys):
+    evidence = tmp_path / "checks"
+
+    def command(argv, **kwargs):
+        name = kwargs["log_path"].stem
+        kwargs["log_path"].write_bytes(b"src/x.py:1:1: F401 secret-looking-output\n")
+        if name == "lint":
+            raise RuntimeError("controlled command failure")
+
+    monkeypatch.setattr(runner, "run_command", command)
+    assert runner.run(ROOT, evidence, release=False, context=None) == 1
+    printed = capsys.readouterr().out
+    assert "Stage lint failed" in printed
+    assert "secret-looking-output" not in printed and "F401" not in printed

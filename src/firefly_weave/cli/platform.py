@@ -269,8 +269,10 @@ def user(context: click.Context, username: str | None, roles: tuple[str, ...], o
     never saved; an existing username is never reset.
 
     Default roles are the smallest set to author, publish, activate, run,
-    inspect runs, and work on human tasks: developer on the demo project, and
-    deployer, operator, viewer, and task_participant on the demo environment.
+    inspect runs, and work on human tasks: developer and viewer on the demo
+    project, and deployer, operator, and task_participant on the demo
+    environment. Add viewer to any other set so the person can read the
+    project's published workflows.
     Use `user grant` to add roles to an account later.
     """
     if context.invoked_subcommand is not None:

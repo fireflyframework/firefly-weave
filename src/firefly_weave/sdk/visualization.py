@@ -31,6 +31,7 @@ LABELS = {
     "end": "Return the result",
     "action": "Call an action",
     "transform": "Shape the data",
+    "decisionTable": "Apply a decision table",
     "wait": "Wait for a duration",
     "signal": "Wait for a signal",
     "humanTask": "Wait for a human decision",
