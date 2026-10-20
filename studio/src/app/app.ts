@@ -2037,6 +2037,8 @@ export class App implements CanvasHost {
   /** Edits not yet kept anywhere: on this computer or on the platform. */
   get unsavedWork() {
     if (this.inspectorProblem) return true;
+    // An output edit in step details not saved yet.
+    if (this.stepDetails.outputEditDirty?.()) return true;
     if (this.sourcePending) return true;
     if (!this.dirty) return false;
     if (this.profile || this.draftRevision !== undefined || this.published)

@@ -234,6 +234,20 @@ for (const size of [
 
 test.describe("leaving the designer with an unsaved output edit", () => {
   test.use({ viewport: { width: 1440, height: 900 } });
+  test("closing or reloading the tab asks the browser's question", async ({
+    page,
+  }) => {
+    const details = await openTestDataFixture(page);
+    const { editor } = await openEditor(details);
+    await replaceText(page, editor, '{"customerId": "unsaved"}');
+    let asked = false;
+    page.on("dialog", async (dialog) => {
+      asked = dialog.type() === "beforeunload";
+      await dialog.dismiss();
+    });
+    await page.close({ runBeforeUnload: true });
+    await expect.poll(() => asked).toBe(true);
+  });
   test("Back asks first; Keep editing stays, Discard leaves", async ({
     page,
   }) => {
