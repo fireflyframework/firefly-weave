@@ -240,7 +240,9 @@ describe("a change that needs a check", () => {
     );
     const last = steps[steps.length - 1];
     expect(last.label).toBe("Needs a check");
-    expect(last.detail).toContain("take new tasks again");
+    expect(last.detail).toContain(
+      "take new tasks again, except those the plan removes",
+    );
   });
 });
 

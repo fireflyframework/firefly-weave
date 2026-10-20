@@ -224,7 +224,7 @@ export function progressSteps(
       label: "Needs a check",
       state: "failed",
       detail:
-        "The runner may still be changing the target. Check it, then record what you found. Workers that were finishing their tasks for this change take new tasks again.",
+        "The runner may still be changing the target. Check it, then record what you found. Workers that were finishing their tasks for this change take new tasks again, except those the plan removes.",
     },
     expired: {
       label: "Expired",

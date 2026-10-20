@@ -333,8 +333,9 @@ or automatically repeat the earlier change.
 When the job belongs to a change request, the change ends in
 `reconciliation_required` and the workers it let finish their tasks go back to
 work at once, each resume audited; a worker someone drained again since stays
-as they left it. Workers the change already removed are gone with their
-containers.
+as they left it. Workers a scale-down was removing stay draining, because the
+runner may still be stopping their containers; a drain-first restart gets all
+its workers back.
 
 Draining a worker and removing container replicas are different actions. In
 **Operate › Workers**, open the worker and select **Drain** to let its running

@@ -326,7 +326,7 @@ What a change request can do:
 | `applying` | The runner applies the plan and verifies it |
 | `succeeded` | Applied and verified |
 | `failed` | The plan no longer fit the target, the runner refused it, or nobody claimed the job before its deadline |
-| `reconciliation_required` | The runner may have changed something; see [step 7](#7-verify-the-receipt-or-reconcile-uncertainty). The workers it let finish their tasks go back to work |
+| `reconciliation_required` | The runner may have changed something; see [step 7](#7-verify-the-receipt-or-reconcile-uncertainty). The workers it let finish their tasks go back to work, except those a scale-down was removing, which stay draining |
 | `expired` | The plan expired before it was applied |
 | `declined`, `cancelled` | Someone ended it, with a reason |
 | `superseded` | The target or deployment changed while the change was being planned |
@@ -335,8 +335,9 @@ An `expired`, `superseded`, or `failed` change whose failure means nothing was
 applied (`WV-PLAN-STALE`, `WV-PRECONDITION-FAILED`, `WV-DRAIN-WINDOW` or
 `WV-JOB-CANCELLED`) can be **re-observed and re-planned** in one step. A change
 that ends without applying anything puts the workers it drained back to work,
-and so does a change that needs reconciliation, and a change that succeeds,
-except for the workers its plan removed.
+and so do a change that needs reconciliation and a change that succeeds,
+except for the workers its plan removes: those stay draining, since their
+containers are gone or the runner may still be stopping them.
 Each such resume is audited.
 
 ### The drain window

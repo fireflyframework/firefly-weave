@@ -1812,6 +1812,29 @@ async def test_a_drained_worker_someone_resumed_holds_the_apply_back(ops, fleet)
     assert [member["worker_id"] for member in pending.value.result["remaining"]] == [str(first)]
 
 
+async def test_a_scale_down_that_needs_reconciliation_keeps_the_workers_it_was_removing_drained(ops, fleet):
+    """The runner may still be stopping the removed containers: their workers stay draining, as after success, so
+    none takes a new task before its stop."""
+    workers = sorted(worker.id for worker in fleet.workers)
+    change_request = await drained_and_applying(ops, fleet)
+    runner = ops.authority("planner")
+    lease = await ops.service.claim(RunnerClaimRequest(runner_id=fleet.setup.runner.id), **runner)
+    await ops.service.report(RunnerReport(lease=lease.proof, report_id=uuid4(), state="running"), **runner)
+    await ops.service.report(
+        RunnerReport(
+            lease=lease.proof,
+            report_id=uuid4(),
+            state="reconciliation_required",
+            receipt=SafeDeploymentReceipt(code="ambiguous", external_effects_may_continue=True),
+        ),
+        **runner,
+    )
+    ended = await ops.changes.read(change_request.id, **ops.authority("planner"))
+    assert ended.state == "reconciliation_required" and sorted(ended.drained) == workers
+    assert [(await draining_state(ops, worker))[0] for worker in workers] == [True, True]
+    assert await resumed_audit(ops, change_request.id) == []
+
+
 async def test_a_successful_scale_down_keeps_the_workers_it_removed_drained(ops, fleet):
     """The removed workers are gone with their containers: success never puts them back to work."""
     workers = sorted(worker.id for worker in fleet.workers)

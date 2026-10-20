@@ -102,15 +102,13 @@ async def move(
     now = await repo.now()
     moved = transition(record, state, actor=actor, at=now)
     moved = moved.model_copy(update={"failure": failure, "warnings": [*record.warnings, *warnings][:10]})
-    # A change that needs reconciliation may or may not have changed the target; its drain is given back too, so
-    # no worker stays out of work behind a reconciliation (removed workers are gone and resume nothing).
-    if moved.drained and (
-        state in _UNAPPLIED or state == "reconciliation_required" or _nothing_applied(state, failure)
-    ):
+    if moved.drained and (state in _UNAPPLIED or _nothing_applied(state, failure)):
         await resume_drained(repo, moved, actor)
         moved = moved.model_copy(update={"drained": [], "drained_revisions": {}})
-    elif moved.drained and state == "succeeded":
-        # Workers the plan removed are gone with their containers; every other drained worker goes back to work.
+    elif moved.drained and state in {"succeeded", "reconciliation_required"}:
+        # Workers the plan removes are gone with their containers, or the runner may still be stopping them after an
+        # ambiguous apply: they stay draining. Every other drained worker goes back to work, so no worker stays out
+        # of work behind a reconciliation.
         removed = await _removed_workers(repo, moved)
         await resume_drained(
             repo, moved.model_copy(update={"drained": [w for w in moved.drained if w not in removed]}), actor
