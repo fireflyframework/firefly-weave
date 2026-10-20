@@ -339,7 +339,9 @@ _EXPRESSION_GRAMMAR = {
 def test_every_expression_field_of_every_step_kind_is_scanned():
     assert {"action", "transform", "switch", "parallel"} <= {_kind(model) for model in _step_models()}
     for model in _step_models():
-        assert _expression_fields(model) == set(support._EXPRESSIONS.get(_kind(model), ())), _kind(model)
+        # A transaction is its own block: its output is scanned with its steps.
+        block = {"output"} if _kind(model) == "transaction" else set()
+        assert _expression_fields(model) == set(support._EXPRESSIONS.get(_kind(model), ())) | block, _kind(model)
 
 
 def test_only_kinds_the_scan_walks_hold_blocks():
@@ -361,6 +363,8 @@ def test_every_expression_field_outside_steps_is_scanned():
         "DecisionRule": {"when", "output"},
         "DecisionTableSpec": {"defaultOutput"},
         "WorkflowSpec": {"output"},
+        "ActionUndo": {"with"},
+        "CallUndo": {"with"},
     }
 
 

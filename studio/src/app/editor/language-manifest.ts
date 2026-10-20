@@ -23,7 +23,10 @@ SPDX-License-Identifier: Apache-2.0
 export type StudioMark = "ready" | "pending";
 export interface ManifestBlock {
   name: string;
-  /** Points at a branch: its steps are at path + "/steps". */
+  /**
+   * Points at a branch: its steps are at path + "/steps". An empty path is the
+   * step itself (a transaction's own steps and output).
+   */
   path: string;
   label: string;
 }
@@ -53,6 +56,22 @@ export interface ManifestWorkflowField {
   feature?: string | null;
   studio: StudioMark;
 }
+/**
+ * A setting several kinds share, such as how a step inside a transaction is
+ * undone: each value writes the fields in `paths` (or the one `path`).
+ */
+export interface ManifestStepField {
+  name: string;
+  feature?: string | null;
+  kinds: string[];
+  values: string[];
+  path?: string;
+  paths?: Record<string, string[]>;
+  default?: string;
+  block?: ManifestBlock;
+  only_inside?: string;
+  studio: StudioMark;
+}
 export interface LanguageManifest {
   version: "weave/language-manifest-v1";
   language_version: string;
@@ -62,6 +81,22 @@ export interface LanguageManifest {
   operators: ManifestOperator[];
   workflow_fields: ManifestWorkflowField[];
   step_kinds: ManifestStepKind[];
+  /** Absent from platforms that predate shared step settings. */
+  step_fields?: ManifestStepField[];
+}
+
+/** Step fields a kind may hold that Studio does not edit yet, without the leading "/". */
+export function pendingStepFields(
+  manifest: LanguageManifest,
+  kind: string,
+): string[] {
+  return (manifest.step_fields ?? [])
+    .filter((entry) => entry.studio === "pending" && entry.kinds.includes(kind))
+    .flatMap((entry) => [
+      ...(entry.path ? [entry.path] : []),
+      ...Object.values(entry.paths ?? {}).flat(),
+    ])
+    .map((path) => path.replace(/^\//, ""));
 }
 
 /** Step kinds Studio must have a descriptor for; pending kinds may lack one. */

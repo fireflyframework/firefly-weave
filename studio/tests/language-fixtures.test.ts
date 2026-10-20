@@ -147,7 +147,12 @@ describe("shared language fixtures", () => {
     const { manifest } = fixture("manifest.json") as {
       manifest: Record<string, { studio: string }[]>;
     };
-    for (const group of ["step_kinds", "operators", "workflow_fields"])
+    for (const group of [
+      "step_kinds",
+      "operators",
+      "workflow_fields",
+      "step_fields",
+    ])
       for (const entry of manifest[group])
         expect(["ready", "pending"]).toContain(entry.studio);
   });

@@ -44,9 +44,11 @@ from firefly_weave.contracts.language_features import (
     MAX_LOOP_ITEMS,
     MAX_RUN_ITERATIONS,
     OPERATOR_FEATURES,
+    UNDO_KINDS,
     WORKFLOW_FIELD_FEATURES,
     LanguageFeature,
 )
+from firefly_weave.contracts.transactions import UNDO_MODES
 from firefly_weave.contracts.values import JsonObject, JsonObjectData
 
 type JsonType = Literal["array", "boolean", "integer", "null", "number", "object", "string"]
@@ -92,10 +94,13 @@ class ManifestWorkflowField(ContractModel):
 
 
 class ManifestBlock(ContractModel):
-    """A nested Branch at a fixed path: its steps are at ``path + "/steps"`` and its output at ``path + "/output"``."""
+    """A nested Branch at a fixed path: its steps are at ``path + "/steps"`` and its output at ``path + "/output"``.
+
+    An empty path is the step itself, for a step whose own ``steps`` and ``output`` form its block.
+    """
 
     name: str
-    path: str = Field(pattern=r"^(?:/[A-Za-z]+)+$")
+    path: str = Field(pattern=r"^(?:/[A-Za-z]+)*$")
     label: str = Field(min_length=1)
 
 
@@ -109,6 +114,31 @@ class ManifestStepKind(ContractModel):
     label: str = Field(min_length=1)
     blocks: list[ManifestBlock]
     scope_roots: list[str]
+    studio: StudioMark
+
+
+class ManifestStepField(ContractModel):
+    """A setting several step kinds share, such as how a step inside a transaction is undone.
+
+    ``values`` are the choices; ``paths`` names the step fields each choice writes, ``path`` the one field when there
+    is a single one, and ``only_inside`` the block kind a step must sit in for the setting to apply.
+    """
+
+    name: str
+    feature: OmissionOnly[LanguageFeature] = Field(
+        default=None, exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+    kinds: list[str] = Field(min_length=1)
+    values: list[str] = Field(min_length=1)
+    path: OmissionOnly[str] = Field(default=None, exclude_if=_is_absent, json_schema_extra=_omit_absent_default)
+    paths: OmissionOnly[dict[str, list[str]]] = Field(
+        default=None, exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+    default: OmissionOnly[str] = Field(default=None, exclude_if=_is_absent, json_schema_extra=_omit_absent_default)
+    block: OmissionOnly[ManifestBlock] = Field(
+        default=None, exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+    only_inside: OmissionOnly[str] = Field(default=None, exclude_if=_is_absent, json_schema_extra=_omit_absent_default)
     studio: StudioMark
 
 
@@ -131,6 +161,7 @@ class LanguageManifest(ContractModel):
     operators: list[ManifestOperator]
     workflow_fields: list[ManifestWorkflowField]
     step_kinds: list[ManifestStepKind]
+    step_fields: list[ManifestStepField]
 
     @model_validator(mode="after")
     def unique_entries(self) -> "LanguageManifest":
@@ -138,6 +169,7 @@ class LanguageManifest(ContractModel):
             [entry.name for entry in self.operators],
             [entry.name for entry in self.workflow_fields],
             [entry.kind for entry in self.step_kinds],
+            [entry.name for entry in self.step_fields],
         ):
             if len(set(names)) != len(names):
                 raise ValueError("Manifest entries must be unique")
@@ -211,6 +243,7 @@ _WORKFLOW_FIELD_MARKS: Final[tuple[tuple[str, StudioMark], ...]] = (
     ("steps", "ready"),
     ("output", "ready"),
     ("callable", "pending"),
+    ("eventTrigger", "pending"),
 )
 WORKFLOW_FIELDS: Final[tuple[ManifestWorkflowField, ...]] = tuple(
     ManifestWorkflowField.model_validate(
@@ -263,10 +296,31 @@ STEP_KINDS: Final[tuple[ManifestStepKind, ...]] = (
         studio="pending",
     ),
     _kind("callWorkflow", "CallWorkflowStep", "flow", "Call a workflow", studio="pending"),
+    _kind(
+        "transaction", "TransactionStep", "flow", "Transaction", blocks=[("body", "", "Transaction")], studio="pending"
+    ),
     _kind("wait", "WaitStep", "wait", "Wait for time"),
     _kind("signal", "SignalStep", "wait", "Wait for signal"),
     _kind("humanTask", "HumanTaskStep", "human", "Human task"),
     _kind("fail", "FailStep", "flow", "Stop with error"),
+)
+
+
+# Settings shared by several kinds. Step error handling adds "onError" here.
+STEP_FIELDS: Final[tuple[ManifestStepField, ...]] = (
+    ManifestStepField(
+        name="undo",
+        feature="flow.transaction",
+        kinds=list(UNDO_KINDS),
+        values=list(UNDO_MODES),
+        paths={
+            "reserve": ["/confirm", "/cancel", "/holdSeconds"],
+            "compensate": ["/compensate"],
+            "irreversible": ["/irreversible"],
+        },
+        only_inside="transaction",
+        studio="pending",
+    ),
 )
 
 
@@ -293,6 +347,7 @@ def language_manifest(features: Sequence[LanguageFeature] = ADVERTISED_FEATURES)
         operators=list(OPERATORS),
         workflow_fields=list(WORKFLOW_FIELDS),
         step_kinds=list(STEP_KINDS),
+        step_fields=list(STEP_FIELDS),
     )
 
 

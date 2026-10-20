@@ -23,7 +23,16 @@ from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Final, Literal, get_args
 
-type LanguageFeature = Literal["ai.agent", "ai.memory", "flow.callWorkflow", "flow.forEach", "text.concat", "text.join"]
+type LanguageFeature = Literal[
+    "ai.agent",
+    "ai.memory",
+    "flow.callWorkflow",
+    "flow.eventTrigger",
+    "flow.forEach",
+    "flow.transaction",
+    "text.concat",
+    "text.join",
+]
 
 # Every feature the language defines, sorted. The values are frozen; adding one is a contract change.
 LANGUAGE_FEATURES: Final[tuple[LanguageFeature, ...]] = tuple(sorted(get_args(LanguageFeature.__value__)))
@@ -38,12 +47,20 @@ ADVERTISED_FEATURES: Final[tuple[LanguageFeature, ...]] = (
 
 # Step kinds, operators and workflow fields that need a feature. AI steps add "agent": "ai.agent" with AgentStep.
 KIND_FEATURES: Final[Mapping[str, LanguageFeature]] = MappingProxyType(
-    {"forEach": "flow.forEach", "callWorkflow": "flow.callWorkflow"}
+    {"forEach": "flow.forEach", "callWorkflow": "flow.callWorkflow", "transaction": "flow.transaction"}
 )
 OPERATOR_FEATURES: Final[Mapping[str, LanguageFeature]] = MappingProxyType(
     {"concat": "text.concat", "join": "text.join"}
 )
-WORKFLOW_FIELD_FEATURES: Final[Mapping[str, LanguageFeature]] = MappingProxyType({"callable": "flow.callWorkflow"})
+WORKFLOW_FIELD_FEATURES: Final[Mapping[str, LanguageFeature]] = MappingProxyType(
+    {"callable": "flow.callWorkflow", "eventTrigger": "flow.eventTrigger"}
+)
+# Step fields that need a feature, by the kinds that accept them: how a step inside a transaction is undone.
+UNDO_FIELDS: Final[tuple[str, ...]] = ("confirm", "cancel", "compensate", "irreversible", "holdSeconds")
+UNDO_KINDS: Final[tuple[str, ...]] = ("action", "callWorkflow")
+STEP_FIELD_FEATURES: Final[Mapping[str, LanguageFeature]] = MappingProxyType(
+    {name: "flow.transaction" for name in UNDO_FIELDS}
+)
 
 # Language limits the manifest publishes. Limits uses them as defaults; the compiler enforces the loop limits and the
 # call depth, and activation enforces the call depth again through the pinned workflows.

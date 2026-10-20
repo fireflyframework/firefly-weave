@@ -507,6 +507,11 @@
         "name": "callable",
         "feature": "flow.callWorkflow",
         "studio": "pending"
+      },
+      {
+        "name": "eventTrigger",
+        "feature": "flow.eventTrigger",
+        "studio": "pending"
       }
     ],
     "step_kinds": [
@@ -601,6 +606,22 @@
         "studio": "pending"
       },
       {
+        "kind": "transaction",
+        "feature": "flow.transaction",
+        "schema_ref": "workflow.schema.json#/$defs/TransactionStep",
+        "group": "flow",
+        "label": "Transaction",
+        "blocks": [
+          {
+            "name": "body",
+            "path": "",
+            "label": "Transaction"
+          }
+        ],
+        "scope_roots": [],
+        "studio": "pending"
+      },
+      {
         "kind": "wait",
         "schema_ref": "workflow.schema.json#/$defs/WaitStep",
         "group": "wait",
@@ -635,6 +656,36 @@
         "blocks": [],
         "scope_roots": [],
         "studio": "ready"
+      }
+    ],
+    "step_fields": [
+      {
+        "name": "undo",
+        "feature": "flow.transaction",
+        "kinds": [
+          "action",
+          "callWorkflow"
+        ],
+        "values": [
+          "reserve",
+          "compensate",
+          "irreversible"
+        ],
+        "paths": {
+          "reserve": [
+            "/confirm",
+            "/cancel",
+            "/holdSeconds"
+          ],
+          "compensate": [
+            "/compensate"
+          ],
+          "irreversible": [
+            "/irreversible"
+          ]
+        },
+        "only_inside": "transaction",
+        "studio": "pending"
       }
     ]
   }
