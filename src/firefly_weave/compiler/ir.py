@@ -40,12 +40,15 @@ from firefly_weave.contracts.definitions import (
     ContractModel,
     DecisionTableSpec,
     Expression,
+    HoldSeconds,
     JsonPointer,
     Metadata,
     ObjectExpression,
     OpExpression,
     PositiveInt,
     ResourceName,
+    SideEffect,
+    UndoRetryPolicy,
     WorkerImplementation,
     WorkflowSpec,
     load_definition,
@@ -53,7 +56,8 @@ from firefly_weave.contracts.definitions import (
 from firefly_weave.contracts.diagnostics import Diagnostic, SourceRange
 from firefly_weave.contracts.language_features import OPERATOR_FEATURES, LanguageFeature
 from firefly_weave.contracts.llm import LLMProfile
-from firefly_weave.contracts.values import JsonObject, JsonObjectData, JsonValue, UnicodeString
+from firefly_weave.contracts.transactions import UndoMode, UndoPhase
+from firefly_weave.contracts.values import MAX_SAFE_INTEGER, JsonObject, JsonObjectData, JsonValue, UnicodeString
 
 type Digest = Annotated[UnicodeString, Field(pattern=r"^[a-f0-9]{64}$")]
 type NodeId = Annotated[UnicodeString, Field(min_length=1)]
@@ -103,6 +107,7 @@ class Guard(ContractModel):
         "loop_items",
         "call_input",
         "call_output",
+        "undo_input",
         "workflow_input",
         "workflow_output",
     ]
@@ -124,12 +129,49 @@ class EndNode(Node):
     output: Expression
 
 
+class UndoPhaseNode(ContractModel):
+    """One confirm, cancel or compensate of a step; it runs by instance key and never sits on an edge."""
+
+    kind: Literal["action", "callWorkflow"]
+    dependency: Digest
+    input: Expression = Field(alias="with")
+    # The connection slot of an action phase: its own, or the step's.
+    connection: ResourceName | None = Field(default=None, exclude_if=lambda value: value is None)
+
+    @model_validator(mode="after")
+    def connection_is_an_action_slot(self) -> UndoPhaseNode:
+        if self.kind == "callWorkflow" and self.connection is not None:
+            raise ValueError("A called workflow uses its own connections")
+        return self
+
+
+class Participation(ContractModel):
+    """How a step inside a transaction is undone; ``pivot`` marks the first irreversible step on some path."""
+
+    owner: NodeId
+    mode: UndoMode
+    pivot: bool = Field(default=False, exclude_if=lambda value: not value)
+    # A reservation's hold: the step's own holdSeconds or the transaction's.
+    hold_seconds: HoldSeconds | None = Field(default=None, alias="holdSeconds", exclude_if=lambda v: v is None)
+    phases: dict[UndoPhase, UndoPhaseNode] = Field(default_factory=dict, exclude_if=lambda value: not value)
+
+    @model_validator(mode="after")
+    def phases_match_mode(self) -> Participation:
+        expected = {"reserve": {"confirm", "cancel"}, "compensate": {"compensate"}, "irreversible": set()}[self.mode]
+        if set(self.phases) != expected:
+            raise ValueError("Undo phases must match how the step is undone")
+        if (self.hold_seconds is not None) != (self.mode == "reserve") or (self.pivot and self.mode != "irreversible"):
+            raise ValueError("Only reservations hold, and only irreversible steps decide")
+        return self
+
+
 class ActionNode(Node):
     kind: Literal["action"]
     dependency: Digest
     input: Expression = Field(alias="with")
     connection: ResourceName | None
     llm_profile: LLMProfile | None = Field(default=None, alias="llmProfile", exclude_if=lambda value: value is None)
+    txn: Participation | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class TransformNode(Node):
@@ -183,11 +225,14 @@ class CallWorkflowNode(Node):
         default=None, alias="onFailure", exclude_if=lambda value: value is None
     )
     business_key: Expression | None = Field(default=None, alias="businessKey", exclude_if=lambda value: value is None)
+    txn: Participation | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @model_validator(mode="after")
     def failure_needs_wait(self) -> CallWorkflowNode:
         if self.mode == "detach" and self.on_failure is not None:
             raise ValueError("onFailure applies only when the call waits for its result")
+        if self.mode == "detach" and self.txn is not None:
+            raise ValueError("Only a call that waits for its result can be undone")
         return self
 
 
@@ -228,6 +273,24 @@ class ForEachNode(Node):
     join: NodeId
 
 
+class TransactionPolicyNode(ContractModel):
+    hold_seconds: PositiveInt = Field(alias="holdSeconds")
+    undo_retry: UndoRetryPolicy = Field(alias="undoRetry")
+    undo_timeout_seconds: PositiveInt = Field(alias="undoTimeoutSeconds")
+
+
+class TransactionNode(Node):
+    """Runs the body that starts at ``target`` so that all of it succeeds or what it did is undone."""
+
+    kind: Literal["transaction"]
+    business_key: Expression | None = Field(default=None, alias="businessKey", exclude_if=lambda value: value is None)
+    policy: TransactionPolicyNode
+    target: NodeId
+    join: NodeId
+    # Steps that, when reached, mean the transaction has gone ahead: no path reaches them before a pivot.
+    after_pivot: list[NodeId] = Field(default_factory=list, alias="afterPivot", exclude_if=lambda value: not value)
+
+
 class BranchOutputNode(Node):
     kind: Literal["branch-output"]
     owner: NodeId
@@ -239,7 +302,7 @@ class BranchOutputNode(Node):
 class JoinNode(Node):
     kind: Literal["join"]
     owner: NodeId
-    mode: Literal["all", "selected", "each"]
+    mode: Literal["all", "selected", "each", "transaction"]
     branches: list[NodeId] = Field(min_length=1)
     completes: bool
 
@@ -258,6 +321,7 @@ type IRNode = Annotated[
     | SwitchNode
     | ParallelNode
     | ForEachNode
+    | TransactionNode
     | BranchOutputNode
     | JoinNode,
     Field(discriminator="kind"),
@@ -265,13 +329,13 @@ type IRNode = Annotated[
 
 
 # Nodes that own lexical blocks and a join.
-CONTROL_NODES = (SwitchNode, ParallelNode, ForEachNode)
+CONTROL_NODES = (SwitchNode, ParallelNode, ForEachNode, TransactionNode)
 
 
 class IREdge(ContractModel):
     source: NodeId
     target: NodeId
-    kind: Literal["next", "case", "default", "fork", "each", "join"]
+    kind: Literal["next", "case", "default", "fork", "each", "transaction", "join"]
     branch: UnicodeString | None
 
 
@@ -301,7 +365,7 @@ class IRGraph(ContractModel):
                 {c.branch for c in n.cases} | {"default"}
                 if isinstance(n, SwitchNode)
                 else {"body"}
-                if isinstance(n, ForEachNode)
+                if isinstance(n, (ForEachNode, TransactionNode))
                 else {b.name for b in n.branches}
             )
             for n in self.nodes
@@ -346,6 +410,10 @@ class IRGraph(ContractModel):
                     expected = {(node.target, "each", "body")}
                     names = ["body"]
                     mode = "each"
+                elif isinstance(node, TransactionNode):
+                    expected = {(node.target, "transaction", "body")}
+                    names = ["body"]
+                    mode = "transaction"
                 else:
                     expected = {(b.target, "fork", b.name) for b in node.branches}
                     names = [b.name for b in node.branches]
@@ -406,7 +474,7 @@ class IRGraph(ContractModel):
             source, target = nodes[edge.source], nodes[edge.target]
             if edge.kind == "next" and source.scope != target.scope:
                 raise ValueError("Sequential edge crosses lexical scopes")
-            control = edge.kind in {"case", "default", "fork", "each"}
+            control = edge.kind in {"case", "default", "fork", "each", "transaction"}
             if control and target.scope != source.scope + [source.id, edge.branch]:
                 raise ValueError("Control edge crosses lexical scopes")
         for node in self.nodes:
@@ -441,7 +509,7 @@ class IRGraph(ContractModel):
                 {c.branch: c.target for c in node.cases} | {"default": node.default}
                 if isinstance(node, SwitchNode)
                 else {"body": node.target}
-                if isinstance(node, ForEachNode)
+                if isinstance(node, (ForEachNode, TransactionNode))
                 else {b.name: b.target for b in node.branches}
             )
             for output_id in join.branches:
@@ -485,6 +553,9 @@ def workflow_requirements(graph: IRGraph) -> tuple[str, list[LanguageFeature]]:
             if node.llm_profile is not None:
                 level = max(level, 2)
             expressions.append(node.input)
+            if node.txn is not None:
+                features.add("flow.transaction")
+                expressions.extend(phase.input for phase in node.txn.phases.values())
         elif isinstance(node, HumanTaskNode):
             level = max(level, 1)
             expressions.extend((node.title, node.context))
@@ -496,6 +567,13 @@ def workflow_requirements(graph: IRGraph) -> tuple[str, list[LanguageFeature]]:
         elif isinstance(node, CallWorkflowNode):
             features.add("flow.callWorkflow")
             expressions.append(node.input)
+            if node.business_key is not None:
+                expressions.append(node.business_key)
+            if node.txn is not None:
+                features.add("flow.transaction")
+                expressions.extend(phase.input for phase in node.txn.phases.values())
+        elif isinstance(node, TransactionNode):
+            features.add("flow.transaction")
             if node.business_key is not None:
                 expressions.append(node.business_key)
     while expressions:
@@ -635,6 +713,17 @@ class WorkflowIR(ExecutableBase):
                     raise ValueError("The called workflow does not allow calls from this workflow")
             if isinstance(node, SignalNode) and node.schema_ref not in self.schemas:
                 raise ValueError("Unknown signal schema")
+            if isinstance(node, (ActionNode, CallWorkflowNode)) and node.txn is not None:
+                for phase in node.txn.phases.values():
+                    if phase.kind == "action" and phase.dependency not in actions:
+                        raise ValueError("Unknown undo action dependency")
+                    if phase.kind == "callWorkflow":
+                        if phase.dependency not in workflows:
+                            raise ValueError("Unknown undo workflow dependency")
+                        callee = cast(JsonObject, workflows[phase.dependency]["spec"])
+                        if not allows_caller(callee.get("callable"), self.metadata.name):
+                            raise ValueError("The called workflow does not allow calls from this workflow")
+        _validate_transactions(self)
         return self
 
 
@@ -745,6 +834,13 @@ def _validate_dependency_closure(executable: ExecutableBase) -> None:
             dependency.digest: definitions[key] for key, dependency in resources.items() if dependency.kind == "Action"
         }
         for node in executable.graph.nodes:
+            if isinstance(node, (ActionNode, CallWorkflowNode)) and node.txn is not None:
+                for phase in node.txn.phases.values():
+                    if phase.kind == "action":
+                        undo_action = actions.get(phase.dependency)
+                        if not isinstance(undo_action, ActionDefinition):
+                            raise ValueError("Unknown undo action dependency")
+                        binding(phase.connection, undo_action.spec.connection, executable.connections)
             if isinstance(node, ActionNode):
                 locked_action = actions.get(node.dependency)
                 if not isinstance(locked_action, ActionDefinition):
@@ -807,3 +903,122 @@ class ArtifactEnvelope(ContractModel):
         if any(d.severity == "error" for d in self.diagnostics):
             raise ValueError("Artifact contains compilation errors")
         return self
+
+
+def _validate_transactions(workflow: WorkflowIR) -> None:
+    """Every transaction of a workflow: placement, participants, and the publish-time rules recomputed."""
+    from firefly_weave.compiler import transactions as rules
+
+    nodes = {node.id: node for node in workflow.graph.nodes}
+    owners = {node.id: node for node in workflow.graph.nodes if isinstance(node, TransactionNode)}
+    if not owners and not any(isinstance(n, (ActionNode, CallWorkflowNode)) and n.txn for n in workflow.graph.nodes):
+        return
+    outgoing: dict[str, list[IREdge]] = {}
+    for edge in workflow.graph.edges:
+        outgoing.setdefault(edge.source, []).append(edge)
+    documents = {d.digest: d.document for d in workflow.dependencies if d.kind in {"Action", "Workflow"}}
+
+    def enclosing(node: Node) -> str | None:
+        found = [node.scope[index] for index in range(0, len(node.scope), 2) if node.scope[index] in owners]
+        if len(found) > 1 or (isinstance(node, TransactionNode) and found):
+            raise ValueError("A transaction cannot contain another transaction")
+        return found[0] if found else None
+
+    for node in workflow.graph.nodes:
+        owner = enclosing(node)
+        if isinstance(node, (ActionNode, CallWorkflowNode)) and node.txn is not None:
+            if node.txn.owner != owner:
+                raise ValueError("A transaction participant must sit in its own transaction's body")
+        elif owner is not None and isinstance(node, CallWorkflowNode):
+            raise ValueError("A call inside a transaction must say how it is undone")
+        elif owner is not None and isinstance(node, ActionNode) and node.llm_profile is None:
+            spec = cast(JsonObject, documents[node.dependency]["spec"])
+            if spec["sideEffect"] != "read_only":
+                raise ValueError("A step inside a transaction that changes data must say how it is undone")
+
+    def spec_of(digest: str) -> JsonObject:
+        return cast(JsonObject, documents[digest]["spec"])
+
+    def participant(node: ActionNode | CallWorkflowNode, txn: Participation) -> rules.Participant:
+        undo = []
+        for name, phase in txn.phases.items():
+            document = documents[phase.dependency]
+            phase_spec = cast(JsonObject, document["spec"])
+            metadata = cast(JsonObject, document["metadata"])
+            undo.append(
+                rules.UndoFacts(
+                    name,
+                    f"{node.path}/{name}",
+                    phase.kind,
+                    f"{metadata['name']}@{metadata['version']}",
+                    cast(SideEffect, phase_spec["sideEffect"]) if phase.kind == "action" else None,
+                    cast(int | None, phase_spec.get("timeoutSeconds")) if phase.kind == "callWorkflow" else None,
+                    True,
+                )
+            )
+        spec = spec_of(node.dependency)
+        effect = cast(SideEffect, spec["sideEffect"]) if isinstance(node, ActionNode) else None
+        timeout = cast(int | None, spec.get("timeoutSeconds"))
+        kind: Literal["action", "callWorkflow"] = "action" if isinstance(node, ActionNode) else "callWorkflow"
+        return rules.Participant(
+            node.id, node.path, kind, txn.mode, effect, True, timeout, txn.hold_seconds, tuple(undo)
+        )
+
+    def element(node: IRNode) -> rules.Element:
+        if isinstance(node, (ActionNode, CallWorkflowNode)) and node.txn is not None:
+            return participant(node, node.txn)
+        if isinstance(node, ActionNode):
+            return rules.Other(node.id, node.path, "llm" if node.llm_profile is not None else "action")
+        if isinstance(node, WaitNode):
+            return rules.Other(node.id, node.path, "wait", node.duration_seconds)
+        if isinstance(node, SignalNode):
+            return rules.Other(node.id, node.path, "signal", node.timeout_seconds)
+        if isinstance(node, HumanTaskNode):
+            return rules.Other(node.id, node.path, "humanTask", node.expiry_seconds)
+        return rules.Other(node.id, node.path, node.kind)
+
+    def sequence(start: str) -> rules.Sequence:
+        elements: list[rules.Element] = []
+        current: str | None = start
+        while current is not None:
+            node = nodes[current]
+            if isinstance(node, (BranchOutputNode, EndNode)):
+                break
+            if isinstance(node, (SwitchNode, ParallelNode, ForEachNode)):
+                targets = {edge.branch: edge.target for edge in outgoing.get(node.id, []) if edge.kind != "next"}
+                if isinstance(node, SwitchNode):
+                    names = [case.branch for case in node.cases] + ["default"]
+                    elements.append(rules.Choice(node.id, node.path, tuple(sequence(targets[n]) for n in names)))
+                elif isinstance(node, ParallelNode):
+                    branches = tuple(sequence(branch.target) for branch in node.branches)
+                    elements.append(rules.Fork(node.id, node.path, branches))
+                else:
+                    elements.append(rules.Repeat(node.id, node.path, sequence(node.target), node.max_items))
+                current = node.join
+            elif isinstance(node, JoinNode):
+                pass
+            else:
+                elements.append(element(node))
+            following = [edge.target for edge in outgoing.get(current, []) if edge.kind == "next"]
+            current = following[0] if following else None
+        paths = [item.path for item in elements]
+        return rules.Sequence(paths[0].rpartition("/")[0] if paths else "", tuple(elements))
+
+    for transaction in owners.values():
+        # The participant budget is the compiling platform's operator limit, applied when the artifact was compiled.
+        analysis = rules.check_transaction(
+            rules.TransactionBody(transaction.id, transaction.path, sequence(transaction.target)),
+            max_participants=MAX_SAFE_INTEGER,
+        )
+        if any(issue.severity == "error" for issue in analysis.issues):
+            raise ValueError("The transaction breaks a publish-time rule")
+        marked = {
+            node.id
+            for node in workflow.graph.nodes
+            if isinstance(node, (ActionNode, CallWorkflowNode))
+            and node.txn is not None
+            and node.txn.owner == transaction.id
+            and node.txn.pivot
+        }
+        if marked != analysis.pivots or transaction.after_pivot != list(analysis.after_pivot):
+            raise ValueError("Transaction decision points disagree with the graph")
