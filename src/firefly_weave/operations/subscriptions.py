@@ -38,6 +38,11 @@ from firefly_weave.persistence.uow import Transaction
 from firefly_weave.runtime.repository import SCOPE, RuntimeRepository
 
 
+def event_capability(kind: str) -> str:
+    """The read capability a subscriber needs for one event type."""
+    return {"run.transition": "run.read", "change_request.transition": "deployment.read"}.get(kind, "catalog.read")
+
+
 @service
 class SubscriptionService:
     def __init__(self, bindings: SourceBindingService) -> None:
@@ -52,10 +57,7 @@ class SubscriptionService:
         self.authorization.require(actor, tx.scope, "connection.bind", resource=str(revision.id))
         for kind in request.event_types:
             scope = tx.scope.model_copy(update={"environment_id": None}) if kind == "definition.published" else tx.scope
-            capability = {"run.transition": "run.read", "change_request.transition": "deployment.read"}.get(
-                kind, "catalog.read"
-            )
-            self.authorization.require(actor, scope, capability)
+            self.authorization.require(actor, scope, event_capability(kind))
         if revision.adapter != "weave-http" or request.signing_slot not in revision.secret_refs:
             raise CatalogError(422, "WV-DELIVERY-CONFIG", "HTTP destination and signing reference required")
         if origin(str(revision.config.get("baseUrl", ""))) not in {origin(v) for v in revision.allowed_destinations}:

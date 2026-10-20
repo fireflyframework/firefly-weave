@@ -190,3 +190,11 @@ def test_subscriptions_accept_five_event_types():
         pass
     else:
         raise AssertionError("six event types were accepted")
+
+
+def test_subscribing_to_change_request_events_needs_deployment_read():
+    from firefly_weave.operations.subscriptions import event_capability
+
+    assert event_capability("change_request.transition") == "deployment.read"
+    assert event_capability("run.transition") == "run.read"
+    assert event_capability("activation.activated") == "catalog.read"

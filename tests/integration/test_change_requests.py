@@ -1171,3 +1171,81 @@ async def test_a_runner_without_restarts_never_claims_a_restart(ops):
         approved_change.id, ChangeRequestApply(digest=planned.plan_digest), uuid4().hex, **ops.authority("operator")
     )
     assert await ops.service.claim(RunnerClaimRequest(runner_id=older.id), **runner) is None
+
+
+async def test_a_person_without_the_capability_is_refused_before_any_lookup(ops, access_db, provisioned):
+    """Refused alike for an existing change request and a random ID, so a refusal never tells which exist."""
+    setup = await prepared(ops)
+    created = await ops.changes.create(change(setup, replicas=3), uuid4().hex, **ops.authority("planner"))
+    viewer = await access_db[2].create_principal(provisioned[0], "application")
+    await access_db[2].grant(provisioned[0], viewer, Grant(role="viewer", scope=ops.scope))
+    ops.people["viewer"] = await access_db[2].load_principal(viewer)
+    authority = ops.authority("viewer")
+    digest = "0" * 64
+    for identifier in (created.id, uuid4()):
+        calls = (
+            lambda identifier=identifier: ops.changes.read(identifier, **authority),
+            lambda identifier=identifier: ops.changes.advance(identifier, 1, **authority),
+            lambda identifier=identifier: ops.changes.advance(identifier, None, **authority),
+            lambda identifier=identifier: ops.changes.replan(identifier, 1, **authority),
+            lambda identifier=identifier: ops.changes.approve(
+                identifier, ChangeRequestApprove(digest=digest), **authority
+            ),
+            lambda identifier=identifier: ops.changes.decline(
+                identifier, ChangeRequestDecision(reason="No"), **authority
+            ),
+            lambda identifier=identifier: ops.changes.cancel(
+                identifier, ChangeRequestDecision(reason="No"), **authority
+            ),
+            lambda identifier=identifier: ops.changes.drain(identifier, uuid4().hex, **authority),
+            lambda identifier=identifier: ops.changes.apply(
+                identifier, ChangeRequestApply(digest=digest), uuid4().hex, **authority
+            ),
+        )
+        for call in calls:
+            with pytest.raises(AccessDenied):
+                await call()
+    with pytest.raises(AccessDenied):
+        await ops.changes.list(**authority)
+
+
+def without_target_manage(monkeypatch):
+    """A custom role from here on: it plans changes but may not change a deployment's desired values."""
+    from firefly_weave.access import authorization
+    from firefly_weave.deployments import change_service, service
+
+    roles = dict(authorization.ROLE_CAPABILITIES)
+    roles["deployment_planner"] = frozenset({"deployment.read", "deployment.plan"})
+    for module in (authorization, change_service, service):
+        monkeypatch.setattr(module, "ROLE_CAPABILITIES", roles)
+
+
+async def test_changing_desired_values_needs_target_manage(ops, monkeypatch):
+    setup = await prepared(ops, replicas=3)
+    without_target_manage(monkeypatch)
+    with pytest.raises(AccessDenied):
+        await ops.changes.create(change(setup, replicas=1), uuid4().hex, **ops.authority("planner"))
+    # A restart sets no desired values, so planning it is enough.
+    restart = await ops.changes.create(
+        change(setup, intent="restart_workers", replicas=3), uuid4().hex, **ops.authority("planner")
+    )
+    assert restart.state == "observing"
+
+
+async def test_replanning_a_superseded_change_with_desired_values_needs_target_manage(ops, monkeypatch):
+    setup = await prepared(ops)
+    created = await ops.changes.create(change(setup, replicas=3), uuid4().hex, **ops.authority("planner"))
+    await run_observation(ops, setup, 0)
+    ready = await ops.changes.read(created.id, **ops.authority("planner"))
+    current = await ops.service.read("deployments", setup.deployment.id, **ops.authority("planner"))
+    await ops.service.update_deployment(
+        current.id,
+        DeploymentRequest.model_validate(current.model_dump(include={"target_id", "name", "ownership", "components"})),
+        current.revision,
+        **ops.authority("planner"),
+    )
+    superseded = await ops.changes.advance(created.id, ready.revision, **ops.authority("planner"))
+    assert superseded.state == "superseded"
+    without_target_manage(monkeypatch)
+    with pytest.raises(AccessDenied):
+        await ops.changes.replan(created.id, superseded.revision, **ops.authority("planner"))
