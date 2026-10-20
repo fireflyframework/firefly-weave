@@ -3054,6 +3054,9 @@ details.disclosure[open] > summary::before {
     min-height: var(--control-touch);
     height: var(--control-touch);
   }
+  .recovery-actions button {
+    min-height: var(--control-touch);
+  }
 }
 .editor-grid {
   --palette-w: 192px;

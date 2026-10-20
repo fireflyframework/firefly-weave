@@ -21,7 +21,7 @@ SPDX-License-Identifier: Apache-2.0
 import { expect, test, type Page, type Route } from "@playwright/test";
 import { CanvasPage, useNewEditor } from "./canvas-po";
 import { StepDetailsPage } from "./step-details-po";
-import { box } from "./step-geometry";
+import { box, intersects } from "./step-geometry";
 
 const tenant = "0b9b5a59-6c63-4f3e-9d58-6a3c8f0e2b11";
 const project = "5f0c2d4e-7a1b-4c3d-8e9f-0a1b2c3d4e5f";
@@ -127,8 +127,12 @@ async function platform(page: Page, drafts: Drafts) {
   );
 }
 
-async function openDraft(page: Page, drafts: Drafts) {
-  await page.setViewportSize({ width: 1440, height: 900 });
+async function openDraft(
+  page: Page,
+  drafts: Drafts,
+  size = { width: 1440, height: 900 },
+) {
+  await page.setViewportSize(size);
   await useNewEditor(page);
   await platform(page, drafts);
   const signedIn = page.waitForResponse("**/studio/api/api/v1/identity");
@@ -228,3 +232,55 @@ test("unsaved changes come back after a reload", async ({ page }) => {
   await expect(offer).toHaveCount(0);
   await expect(page.locator('[data-step^="check-customer"]')).toHaveCount(2);
 });
+
+for (const size of [
+  { width: 1440, height: 900 },
+  { width: 600, height: 500 },
+  { width: 360, height: 640 },
+])
+  test(`the retry chip and the recovery notice fit and align at ${size.width}x${size.height}`, async ({
+    page,
+  }) => {
+    const drafts: Drafts = { puts: [], mode: "hang" };
+    await openDraft(page, drafts, size);
+    await edit(page);
+    await page.waitForTimeout(1200);
+    await page.reload();
+    await new CanvasPage(page).ready();
+    const offer = page.locator(".recovery-note");
+    await expect(offer).toBeVisible();
+    const touch = size.width < 768;
+    const note = await box(offer);
+    const text = await box(offer.locator(".recovery-text"));
+    const restore = await box(offer.getByRole("button", { name: "Restore" }));
+    const discard = await box(offer.getByRole("button", { name: "Discard" }));
+    // Inside the window, buttons at their target size, one shared center line, nothing overlapping.
+    expect(note.x).toBeGreaterThanOrEqual(0);
+    expect(note.right).toBeLessThanOrEqual(size.width + 0.5);
+    for (const button of [restore, discard]) {
+      expect(button.height).toBeGreaterThanOrEqual(touch ? 44 : 32);
+      expect(button.right).toBeLessThanOrEqual(note.right - 15.5);
+    }
+    expect(Math.abs(restore.y - discard.y)).toBeLessThanOrEqual(0.5);
+    expect(intersects(restore, discard)).toBe(false);
+    expect(intersects(text, restore)).toBe(false);
+    if (restore.y < text.bottom)
+      expect(
+        Math.abs(restore.y + restore.height / 2 - (text.y + text.height / 2)),
+      ).toBeLessThanOrEqual(1);
+    expect(text.x - note.x).toBeGreaterThanOrEqual(15.5);
+    // The chip as a button: its target, centered with the workflow's name.
+    drafts.mode = "fail";
+    await offer.getByRole("button", { name: "Discard" }).click();
+    await edit(page);
+    const retry = page.getByRole("button", { name: "Not saved: retry" });
+    await expect(retry).toBeVisible({ timeout: 6000 });
+    const button = await box(retry);
+    const title = await box(page.locator(".editor-identity h1"));
+    expect(button.height).toBeGreaterThanOrEqual(touch ? 44 : 24);
+    expect(button.width).toBeGreaterThanOrEqual(touch ? 44 : 24);
+    expect(
+      Math.abs(button.y + button.height / 2 - (title.y + title.height / 2)),
+    ).toBeLessThanOrEqual(1);
+    expect(intersects(button, title)).toBe(false);
+  });
