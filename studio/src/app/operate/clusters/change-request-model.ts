@@ -301,6 +301,8 @@ export interface ChangeActions {
   apply: boolean;
   /** Apply may be forced: the drain timeout has passed. */
   force: boolean;
+  /** Apply needs a reason: some workers the plan removes or restarts match no registered worker. */
+  reasonToApply: boolean;
 }
 /** What the viewer may do with a change now; the server checks each one again. */
 export function changeActions(
@@ -320,6 +322,7 @@ export function changeActions(
   ].includes(state);
   const ready = state === "approved" || state === "draining";
   const started = drainStartedAt(record);
+  const unmatched = record.warnings.includes("WV-DRAIN-UNKNOWN");
   return {
     cancel: beforeApply && can("deployment.plan"),
     replan: replannable(record, now) && can("deployment.plan"),
@@ -337,7 +340,10 @@ export function changeActions(
       record.drain_set.length > 0 &&
       can("worker.drain") &&
       (state === "draining" || drainWindowOpen(record, now)),
-    apply: ready && can("deployment.apply"),
+    // Removing workers that can't finish first is a forced apply, which needs worker.drain too.
+    apply:
+      ready && can("deployment.apply") && (!unmatched || can("worker.drain")),
+    reasonToApply: ready && unmatched,
     // Apply is the main action once the workers are finishing, or when none must; before that it is Let workers
     // finish, and an apply would only answer that they are still busy.
     applyFirst: state === "draining" || record.drain_set.length === 0,

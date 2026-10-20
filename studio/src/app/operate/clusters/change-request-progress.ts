@@ -132,6 +132,18 @@ export interface ApplyChoice {
         }
       </p>
     }
+    @if (actions.apply && actions.reasonToApply && !forcing) {
+      <label class="field"
+        >Why remove them without letting them finish?
+        <textarea
+          name="unmatched-reason"
+          rows="2"
+          maxlength="2000"
+          [value]="forceReason"
+          (input)="forceReason = text($event)"
+        ></textarea>
+      </label>
+    }
     @if (forcing) {
       <label class="field"
         >Why apply before every worker has finished?
@@ -198,8 +210,13 @@ export interface ApplyChoice {
           <button
             type="button"
             [class.primary]="actions.applyFirst"
-            [disabled]="busy"
-            (click)="apply.emit({ force: false, reason: '' })"
+            [disabled]="busy || (actions.reasonToApply && !forceReason.trim())"
+            (click)="
+              apply.emit({
+                force: false,
+                reason: actions.reasonToApply ? forceReason.trim() : '',
+              })
+            "
           >
             Apply plan
           </button>
@@ -321,7 +338,7 @@ export class ChangeRequestProgress {
   warningText() {
     const texts: Record<string, string> = {
       "WV-DRAIN-UNKNOWN":
-        "Some workers could not be matched to a container, so they were not asked to finish first.",
+        "Some workers could not be matched to a container, so they can't finish their tasks first.",
       "WV-DRAIN-VICTIMS":
         "A worker the plan removes was still running after the change. Check the target.",
     };

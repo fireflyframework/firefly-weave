@@ -1704,9 +1704,8 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
       `deployment-change-requests/${record.id}/apply`,
       {
         digest: record.plan_digest,
-        ...(choice.force
-          ? { force_after_timeout: true, force_reason: choice.reason }
-          : {}),
+        ...(choice.force ? { force_after_timeout: true } : {}),
+        ...(choice.reason ? { force_reason: choice.reason } : {}),
       },
     );
     if (result && this.change?.id === record.id) this.change = result;

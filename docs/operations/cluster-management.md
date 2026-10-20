@@ -357,6 +357,14 @@ Apply waits until every drained worker holds no task (`WV-DRAIN-PENDING`).
 After the drain timeout, a person with `worker.drain` may force the apply with a
 reason, which is audited.
 
+A worker is matched to its container by the host it reports. When a container
+the plan removes or restarts matches no registered worker, or several, the
+change carries the warning `WV-DRAIN-UNKNOWN`: that worker can't be asked to
+finish first. Applying such a change needs a reason from a person with
+`worker.drain`, without waiting for the drain timeout; the apply is audited as
+forced, and the container's stop grace period is the only time its tasks get.
+Without a reason, apply answers `WV-DRAIN-UNKNOWN`.
+
 ### Which workers a scale-down removes
 
 Any plan that lowers a worker component's replicas is a scale-down, whatever

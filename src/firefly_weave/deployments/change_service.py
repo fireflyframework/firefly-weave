@@ -844,6 +844,16 @@ class ChangeRequestService:
             )
             if not runners:
                 raise CatalogError(409, "WV-RUNNER-OFFLINE", "The target's runner is offline; start it and try again")
+            reason = (request.force_reason or "").strip()
+            # A removed container no registered worker matches can't finish its tasks first: removing it is forced.
+            unmatched = "WV-DRAIN-UNKNOWN" in record.warnings
+            if unmatched and not reason:
+                raise CatalogError(
+                    409,
+                    "WV-DRAIN-UNKNOWN",
+                    "Some workers this plan removes or restarts match no registered worker, so they can't finish "
+                    "their tasks first; give a reason to go ahead anyway",
+                )
             remaining = [member for member in await drain_progress(repo, record.drain_set) if not drained(member)]
             if remaining:
                 started = next((entry.at for entry in reversed(record.history) if entry.state == "draining"), None)
@@ -862,6 +872,7 @@ class ChangeRequestService:
                             ]
                         },
                     )
+            if remaining or unmatched:
                 await self.deployments.authorize(tx, actor, "worker.drain", context, record.target_id)
                 await audit(
                     tx.session,
@@ -871,7 +882,7 @@ class ChangeRequestService:
                     scope=scope,
                     capability="worker.drain",
                     context=context,
-                    details={"reason": request.force_reason, "remaining": len(remaining)},
+                    details={"reason": request.force_reason, "remaining": len(remaining), "unmatched": unmatched},
                 )
             plan = await repo.get("plans", record.plan_id, DeploymentPlan)
             job = await self.deployments.apply_in(repo, plan, request.digest, actor, context)

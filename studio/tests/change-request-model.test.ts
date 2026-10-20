@@ -292,4 +292,28 @@ describe("making the plan and the main action", () => {
       ).applyFirst,
     ).toBe(true);
   });
+  it("asks for a reason to apply when some workers match no registered worker", () => {
+    const unmatched = change({
+      state: "approved",
+      drain_set: [],
+      warnings: ["WV-DRAIN-UNKNOWN"],
+    });
+    expect(changeActions(unmatched, all, "carmen", serverNow)).toMatchObject({
+      apply: true,
+      reasonToApply: true,
+    });
+    // Removing them without a drain is forced, which needs worker.drain.
+    expect(
+      changeActions(unmatched, (c) => c !== "worker.drain", "carmen", serverNow)
+        .apply,
+    ).toBe(false);
+    expect(
+      changeActions(
+        change({ state: "approved", drain_set: [] }),
+        all,
+        "carmen",
+        serverNow,
+      ).reasonToApply,
+    ).toBe(false);
+  });
 });

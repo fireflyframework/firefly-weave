@@ -1383,6 +1383,50 @@ test.describe("the progress view for someone who did not request the change", ()
   });
 });
 
+test.describe("a change that removes workers it could not match", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test("applies only with a reason, which is sent with the apply", async ({
+    page,
+  }) => {
+    const id = "c0000000-0000-4000-8000-0000000000f4";
+    const state = await platform(page, full, [
+      changeRecord({
+        id,
+        state: "approved",
+        approval: { principal_id: ana, approved_at: iso(-5) },
+        drain: { mode: "drain_first", timeout_seconds: 300 },
+        drain_set: [],
+        warnings: ["WV-DRAIN-UNKNOWN"],
+        plan_expires_at: iso(840),
+      }),
+    ]);
+    await page.goto(`/operate/clusters/change-requests/${id}`);
+    const progress = page.locator("weave-change-request-progress");
+    await expect(
+      progress.getByRole("status").filter({ hasText: "could not be matched" }),
+    ).toHaveText(
+      "Some workers could not be matched to a container, so they can't finish their tasks first.",
+    );
+    const reason = progress.getByRole("textbox", {
+      name: "Why remove them without letting them finish?",
+    });
+    const apply = progress.getByRole("button", { name: "Apply plan" });
+    await expect(apply).toBeDisabled();
+    await reason.fill("  The worker image reports no host  ");
+    await expect(apply).toBeEnabled();
+    await apply.click();
+    await expect
+      .poll(
+        () => state.calls.find((call) => call.path.endsWith("/apply"))?.body,
+      )
+      .toEqual({
+        digest: "4".repeat(64),
+        force_reason: "The worker image reports no host",
+      });
+  });
+});
+
 for (const viewport of [
   { width: 1440, height: 900 },
   { width: 360, height: 640 },

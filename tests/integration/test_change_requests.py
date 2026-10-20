@@ -718,11 +718,11 @@ async def test_apply_refuses_when_the_targets_runner_is_offline(ops):
     assert [item["kind"] for item in jobs["items"]] == ["observe"]
 
 
-async def applying(ops, setup, *, observed_count=0, replicas=3):
+async def applying(ops, setup, *, observed_count=0, replicas=3, reason=None):
     change_request = await approved(ops, setup, observed_count=observed_count, replicas=replicas)
     return await ops.changes.apply(
         change_request.id,
-        ChangeRequestApply(digest=change_request.plan_digest),
+        ChangeRequestApply(digest=change_request.plan_digest, force_reason=reason),
         uuid4().hex,
         **ops.authority("operator"),
     )
@@ -790,9 +790,41 @@ async def test_a_change_request_follows_its_jobs_through_report_expiry_cancel_an
     assert (await ops.changes.read(change_request.id, **ops.authority("approver"))).state == "reconciliation_required"
 
 
+async def test_removing_workers_that_cannot_be_matched_needs_a_reason(ops):
+    """A removed container no registered worker matches can't finish its tasks first, so its removal is a forced
+    apply: refused without a reason, audited with one."""
+    setup = await prepared(ops, replicas=3)
+    change_request = await approved(ops, setup, observed_count=3, replicas=1)
+    assert change_request.drain_set == [] and change_request.warnings == ["WV-DRAIN-UNKNOWN"]
+    for reason in (None, "   "):
+        with pytest.raises(CatalogError) as refused:
+            await ops.changes.apply(
+                change_request.id,
+                ChangeRequestApply(digest=change_request.plan_digest, force_reason=reason),
+                uuid4().hex,
+                **ops.authority("operator"),
+            )
+        assert (refused.value.status, refused.value.code) == (409, "WV-DRAIN-UNKNOWN")
+        assert "reason" in refused.value.message
+    assert (await ops.changes.read(change_request.id, **ops.authority("approver"))).state == "approved"
+    applied = await ops.changes.apply(
+        change_request.id,
+        ChangeRequestApply(digest=change_request.plan_digest, force_reason="The worker image reports no host"),
+        uuid4().hex,
+        **ops.authority("operator"),
+    )
+    assert applied.state == "applying"
+    async with ops.access[1]() as session:
+        details = await session.scalar(
+            text("SELECT event->'details' FROM access_audit WHERE action='deployment.apply.forced' AND target=:id"),
+            {"id": str(change_request.id)},
+        )
+    assert details == {"reason": "The worker image reports no host", "remaining": 0, "unmatched": True}
+
+
 async def test_a_scale_down_that_leaves_a_removed_member_running_is_flagged(ops):
     setup = await prepared(ops, replicas=3)
-    change_request = await applying(ops, setup, observed_count=3, replicas=1)
+    change_request = await applying(ops, setup, observed_count=3, replicas=1, reason="No worker reports these hosts")
     assert change_request.drain_set == [] and change_request.warnings == ["WV-DRAIN-UNKNOWN"]
     runner = ops.authority("planner")
     lease = await ops.service.claim(RunnerClaimRequest(runner_id=setup.runner.id), **runner)
@@ -1135,7 +1167,7 @@ async def test_only_a_runner_that_applies_the_reviewed_members_claims_a_scale_do
         ),
         **runner,
     )
-    change_request = await applying(ops, setup, observed_count=3, replicas=1)
+    change_request = await applying(ops, setup, observed_count=3, replicas=1, reason="No worker reports these hosts")
     await ops.service.revoke_runner(setup.runner.id, **ops.authority("owner"))
     # The scale-down removes reviewed members, which that runner would leave to Compose: it waits.
     assert await ops.service.claim(RunnerClaimRequest(runner_id=older.id), **runner) is None
@@ -1458,7 +1490,10 @@ async def test_a_successful_change_resumes_every_drained_worker_it_did_not_remov
     )
     await ops.changes.drain(approved_change.id, uuid4().hex, **ops.authority("operator"))
     await ops.changes.apply(
-        planned.id, ChangeRequestApply(digest=planned.plan_digest), uuid4().hex, **ops.authority("operator")
+        planned.id,
+        ChangeRequestApply(digest=planned.plan_digest, force_reason="One removed container reports no worker"),
+        uuid4().hex,
+        **ops.authority("operator"),
     )
     runner = ops.authority("planner")
     lease = await ops.service.claim(RunnerClaimRequest(runner_id=fleet.setup.runner.id), **runner)
@@ -1725,7 +1760,10 @@ async def test_a_change_that_needs_reconciliation_gives_back_its_drain(ops, flee
     await operator_control(ops, second, draining=False)
     await operator_control(ops, second, draining=True)
     await ops.changes.apply(
-        planned.id, ChangeRequestApply(digest=planned.plan_digest), uuid4().hex, **ops.authority("operator")
+        planned.id,
+        ChangeRequestApply(digest=planned.plan_digest, force_reason="One removed container reports no worker"),
+        uuid4().hex,
+        **ops.authority("operator"),
     )
     runner = ops.authority("planner")
     lease = await ops.service.claim(RunnerClaimRequest(runner_id=fleet.setup.runner.id), **runner)
