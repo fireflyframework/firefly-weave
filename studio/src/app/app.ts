@@ -7108,7 +7108,8 @@ export class App implements CanvasHost {
       this.testDataKey ===
         JSON.stringify([{ kind: "memory" }, this.model.opened]);
     this.testDataKey = key;
-    void this.loadTools();
+    // A failure is said where it happens; nothing waits on this one.
+    this.loadTools().catch(() => undefined);
     // Another workflow's test data: no pin here came from elsewhere yet.
     this.foreignPins.clear();
     this.foreignVersion++;
@@ -7147,15 +7148,33 @@ export class App implements CanvasHost {
   > | null = null;
   /** Bumped when the tools arrive, so what reads them draws again. */
   private readonly toolsReady = signal(0);
+  /** The tools' chunk (a test replaces it). */
+  private importTools = () => import("./editor/state/test-data-tools");
+  /**
+   * Loads the tools once; a failed load (a network blip, or a new version
+   * deployed while the window is open) is tried once more, then said in
+   * plain words, and the next call tries afresh.
+   */
   private loadTools() {
-    this.toolsLoading ??= import("./editor/state/test-data-tools").then(
-      (tools) => {
-        this.tools = tools;
-        this.toolsReady.update((n) => n + 1);
-        this.cdr.markForCheck();
-        return tools;
-      },
-    );
+    this.toolsLoading ??= this.importTools()
+      .catch(() => this.importTools())
+      .then(
+        (tools) => {
+          this.tools = tools;
+          this.toolsReady.update((n) => n + 1);
+          this.cdr.markForCheck();
+          return tools;
+        },
+        (error: unknown) => {
+          this.toolsLoading = null;
+          this.notify(
+            "Studio couldn't load what test data needs. Reload the page to try again.",
+            undefined,
+            "danger",
+          );
+          throw error;
+        },
+      );
     return this.toolsLoading;
   }
   private pinStatesMemo: {
