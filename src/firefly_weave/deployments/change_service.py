@@ -104,14 +104,19 @@ async def move(
     moved = moved.model_copy(update={"failure": failure, "warnings": [*record.warnings, *warnings][:10]})
     if moved.drained and (state in _UNAPPLIED or _nothing_applied(state, failure)):
         await resume_drained(repo, moved, actor)
-        moved = moved.model_copy(update={"drained": []})
+        moved = moved.model_copy(update={"drained": [], "drained_revisions": {}})
     elif moved.drained and state == "succeeded":
         # Workers the plan removed are gone with their containers; every other drained worker goes back to work.
         removed = await _removed_workers(repo, moved)
         await resume_drained(
             repo, moved.model_copy(update={"drained": [w for w in moved.drained if w not in removed]}), actor
         )
-        moved = moved.model_copy(update={"drained": [w for w in moved.drained if w in removed]})
+        moved = moved.model_copy(
+            update={
+                "drained": [w for w in moved.drained if w in removed],
+                "drained_revisions": {w: r for w, r in moved.drained_revisions.items() if w in removed},
+            }
+        )
     await repo.update(
         "change_requests",
         moved.id,
@@ -143,15 +148,20 @@ async def _removed_workers(repo: DeploymentRepository, record: ChangeRequest) ->
 async def resume_drained(repo: DeploymentRepository, record: ChangeRequest, actor: UUID | None) -> None:
     """Resume the workers this change drained and that still drain, auditing each one.
 
-    Workers that were draining before the change, or that someone resumed or revoked since, are left alone. The
-    actor is the person who ended the change, or none when the operations loop persisted its expiry.
+    Workers that were draining before the change are never in `drained`. A worker revoked since, or whose control
+    revision moved since this change drained it (someone resumed it, or drained it again), is left alone. The actor
+    is the person who ended the change, or none when the operations loop persisted its expiry.
     """
-    rows = await repo.rows(
-        "UPDATE worker_instances SET draining=false,control_revision=control_revision+1 "
-        "WHERE tenant_id=:tenant AND project_id=:project AND environment_id=:environment "
-        "AND id=ANY(cast(:ids AS uuid[])) AND draining AND NOT revoked RETURNING id",
-        ids=list(record.drained),
-    )
+    rows = []
+    for worker in record.drained:
+        rows += await repo.rows(
+            "UPDATE worker_instances SET draining=false,control_revision=control_revision+1 "
+            "WHERE tenant_id=:tenant AND project_id=:project AND environment_id=:environment "
+            "AND id=:id AND draining AND NOT revoked "
+            "AND (cast(:revision AS integer) IS NULL OR control_revision=:revision) RETURNING id",
+            id=worker,
+            revision=record.drained_revisions.get(worker),
+        )
     workers = WorkerRepository(repo.tx)
     for row in sorted(rows, key=lambda item: str(item["id"])):
         await workers.record_drain(row["id"], draining=False, was_draining=True)
@@ -732,6 +742,7 @@ class ChangeRequestService:
             if state == "approved":
                 require_drain_window(record, now)
             newly: builtins.list[UUID] = []
+            revisions: dict[UUID, int] = {}
             for member in await drain_progress(repo, record.drain_set):
                 if member.revoked or member.draining:
                     continue
@@ -742,6 +753,8 @@ class ChangeRequestService:
                 )
                 revision = rows[0]["control_revision"]
                 newly.append(member.worker_id)
+                # The control below moves the revision by one; resuming later checks nobody moved it since.
+                revisions[member.worker_id] = revision + 1
                 await self.workers.control(
                     actor,
                     scope,
@@ -753,7 +766,12 @@ class ChangeRequestService:
                     tx=tx,
                 )
             if newly:
-                record = record.model_copy(update={"drained": [*record.drained, *newly][:100]})
+                record = record.model_copy(
+                    update={
+                        "drained": [*record.drained, *newly][:100],
+                        "drained_revisions": {**record.drained_revisions, **revisions},
+                    }
+                )
             if record.state == "approved":
                 record = await move(repo, record, "draining", actor=actor.id)
                 await self.record(tx, actor, "worker.drain", record, context)

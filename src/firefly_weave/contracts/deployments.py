@@ -483,6 +483,9 @@ class ChangeRequest(ChangeRequestCreate):
     # The workers this change put into draining and has not resumed: they are resumed when it ends without
     # applying anything; after it succeeds only the workers its plan removed stay listed.
     drained: list[UUID] = Field(default_factory=list, max_length=100)
+    # Each drained worker's control revision right after this change drained it: a worker whose revision moved
+    # since was resumed, or drained again, by someone else, and the change leaves it as they left it.
+    drained_revisions: dict[UUID, int] = Field(default_factory=dict, max_length=100, exclude_if=lambda v: not v)
     apply_job_id: UUID | None = None
     failure: ChangeFailure | None = None
     # Codes the runner's verification raised after a change succeeded, such as WV-DRAIN-VICTIMS.

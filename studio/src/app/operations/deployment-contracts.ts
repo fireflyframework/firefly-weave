@@ -307,6 +307,8 @@ export interface ChangeRequest
   planned_by: string | null;
   drain_set: DrainMember[];
   drained: string[];
+  /** Each drained worker's control revision right after this change drained it. */
+  drained_revisions?: Record<string, number>;
   apply_job_id: string | null;
   failure: { code: string; message: string } | null;
   warnings: string[];

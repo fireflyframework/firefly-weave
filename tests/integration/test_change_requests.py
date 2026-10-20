@@ -51,9 +51,9 @@ from firefly_weave.contracts.deployments import (
     TargetRequest,
     TargetUpdate,
 )
-from firefly_weave.contracts.workers import InstanceRequest, ReleaseRequest, WorkerIdentity
+from firefly_weave.contracts.workers import InstanceRequest, ReleaseRequest, WorkerControlRequest, WorkerIdentity
 from firefly_weave.definitions.models import CatalogError
-from firefly_weave.deployments.change_service import ChangeRequestService, persist_expiry
+from firefly_weave.deployments.change_service import ChangeRequestService, move, persist_expiry
 from firefly_weave.deployments.repository import DeploymentRepository
 from firefly_weave.deployments.service import DeploymentService, plan_victims
 from firefly_weave.persistence.uow import UnitOfWork
@@ -1528,3 +1528,102 @@ async def test_a_low_level_plan_that_lowers_workers_names_their_removal_and_drai
     plan = await low_level_plan(ops, setup, intent=intent, deployed=1, observed_count=3)
     assert await victims(ops, plan) == {COMPONENT: ["c0ffee000003", "c0ffee000002"]}
     assert "worker_drain" in plan.risks
+
+
+async def operator_control(ops, worker, *, draining):
+    """An operator drains or resumes a worker by hand."""
+    return await ops.workers.control(
+        ops.people["operator"],
+        ops.scope,
+        worker,
+        WorkerControlRequest(expected_revision=await control_revision(ops, worker)),
+        uuid4().hex,
+        draining=draining,
+        context=AuditContext(),
+    )
+
+
+async def drained_at(ops, worker):
+    async with ops.access[1]() as session:
+        return await session.scalar(text("SELECT drained_at FROM worker_facts WHERE worker_id=:id"), {"id": worker})
+
+
+async def declined_after_drain(ops, fleet, between=None):
+    change_request = await approved(ops, fleet.setup, observed_count=3, replicas=1)
+    await ops.changes.drain(change_request.id, uuid4().hex, **ops.authority("operator"))
+    if between is not None:
+        await between()
+    return await ops.changes.decline(
+        change_request.id, ChangeRequestDecision(reason="Not now"), **ops.authority("approver")
+    )
+
+
+async def test_resume_leaves_alone_a_worker_revoked_since_the_drain(ops, fleet):
+    first, second = sorted(worker.id for worker in fleet.workers)
+
+    async def revoke():
+        async with ops.access[1].begin() as session:
+            await session.execute(text("UPDATE worker_instances SET revoked=true WHERE id=:id"), {"id": first})
+
+    declined = await declined_after_drain(ops, fleet, revoke)
+    assert await draining_state(ops, first) == (True, 2)
+    assert await draining_state(ops, second) == (False, 3)
+    assert [target for target, _, _ in await resumed_audit(ops, declined.id)] == [str(second)]
+
+
+async def test_resume_leaves_alone_a_worker_an_operator_resumed_or_drained_again(ops, fleet):
+    """Resumed by hand, a worker stays as the operator left it; drained again for maintenance, it stays drained."""
+    first, second = sorted(worker.id for worker in fleet.workers)
+
+    async def by_hand():
+        await operator_control(ops, first, draining=False)
+        await operator_control(ops, second, draining=False)
+        await operator_control(ops, second, draining=True)
+
+    declined = await declined_after_drain(ops, fleet, by_hand)
+    assert await draining_state(ops, first) == (False, 3)
+    assert await draining_state(ops, second) == (True, 4)
+    assert await resumed_audit(ops, declined.id) == []
+
+
+async def test_a_later_drain_call_records_the_workers_it_adds_and_resume_clears_their_drain_time(ops, fleet):
+    first, second = sorted(worker.id for worker in fleet.workers)
+    # The first worker was draining before the change: the first drain call leaves it out.
+    await operator_control(ops, first, draining=True)
+    change_request = await approved(ops, fleet.setup, observed_count=3, replicas=1)
+    progress = await ops.changes.drain(change_request.id, uuid4().hex, **ops.authority("operator"))
+    assert progress.change_request.drained == [second]
+    # The operator resumes it; the next drain call drains it for the change and records that.
+    await operator_control(ops, first, draining=False)
+    again = await ops.changes.drain(change_request.id, uuid4().hex, **ops.authority("operator"))
+    assert again.change_request.drained == [second, first]
+    assert await drained_at(ops, first) is not None
+    declined = await ops.changes.decline(
+        change_request.id, ChangeRequestDecision(reason="Not now"), **ops.authority("approver")
+    )
+    assert declined.drained == []
+    for worker in (first, second):
+        assert (await draining_state(ops, worker))[0] is False
+        assert await drained_at(ops, worker) is None
+    async with ops.access[1]() as session:
+        principals = (
+            await session.execute(
+                text(
+                    "SELECT event->>'principal_id' FROM access_audit WHERE action='worker.resume' "
+                    "AND event->'details'->>'change_request_id'=:id"
+                ),
+                {"id": str(change_request.id)},
+            )
+        ).scalars()
+        assert set(principals) == {str(ops.people["approver"].id)}
+
+
+async def test_a_draining_change_that_is_superseded_resumes_its_workers(ops, fleet):
+    change_request = await approved(ops, fleet.setup, observed_count=3, replicas=1)
+    progress = await ops.changes.drain(change_request.id, uuid4().hex, **ops.authority("operator"))
+    async with UnitOfWork(ops.access[0]).open(ops.scope) as tx:
+        repo = DeploymentRepository(tx)
+        moved = await move(repo, progress.change_request, "superseded", actor=None)
+    assert moved.drained == []
+    for worker in fleet.workers:
+        assert (await draining_state(ops, worker.id))[0] is False
