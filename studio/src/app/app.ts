@@ -109,6 +109,11 @@ import {
 } from "./designer/step-picker";
 import type { CanvasHost, WorkflowSection } from "./editor/canvas/canvas-host";
 import { setupPhrase, type StepFacts } from "./editor/canvas/tile-facts";
+import {
+  aiTaskSetup,
+  deferredToSetup,
+  isAiWorkflow,
+} from "./editor/ndv/kinds/ai-task-setup";
 import type { CanvasRun } from "./editor/canvas/run-state";
 import type { Json, KindContext } from "./editor/ndv/registry";
 import { StartRunDialog, type StartRunRequest } from "./run/start-run-dialog";
@@ -1076,14 +1081,19 @@ export class App implements CanvasHost {
       this.gapCache = {
         tick,
         revision: this.contractRevision,
-        rows: this.nodes.flatMap((node) =>
-          contractGaps(
-            node.step,
-            this.contractCache.get(String(node.step["uses"])) ??
-              this.decisionContracts.get(String(node.step["uses"])),
-            this.model.definition,
-          ).map((gap) => ({ ...gap, stepId: node.step.id })),
-        ),
+        rows: this.nodes.flatMap((node) => {
+          // An AI task without a model needs only that: its slot comes with it.
+          const ai = aiTaskSetup(this.model.definition, node.step);
+          const gaps: ContractGap[] = ai
+            ? [{ label: ai, field: "connection", dataPath: [] }]
+            : contractGaps(
+                node.step,
+                this.contractCache.get(String(node.step["uses"])) ??
+                  this.decisionContracts.get(String(node.step["uses"])),
+                this.model.definition,
+              );
+          return gaps.map((gap) => ({ ...gap, stepId: node.step.id }));
+        }),
       };
     }
     return this.gapCache.rows;
@@ -3154,6 +3164,9 @@ export class App implements CanvasHost {
           const location = locateDiagnostic(path, definition);
           const { stepId } = location;
           if (stepId === "$workflow") continue;
+          // An AI task without a model shows "Choose a model" instead.
+          if (isAiWorkflow(definition) && deferredToSetup(definition, stepId))
+            continue;
           const at = [...location.field, ...location.dataPath];
           const entry = steps.get(stepId) ?? {
             errors: 0,
@@ -3571,12 +3584,16 @@ export class App implements CanvasHost {
     for (const node of this.nodes) {
       const found = this.diagnosticSteps.get(node.step.id);
       const chip = incompleteChip(node.step);
-      const setup = [
-        ...gaps
-          .filter((gap) => gap.stepId === node.step.id)
-          .map((gap) => setupPhrase(gap.label)),
-        ...(chip ? [setupPhrase(chip)] : []),
-      ];
+      // An AI task without a model needs only that: its slot comes with it.
+      const ai = aiTaskSetup(this.model.definition, node.step);
+      const setup = ai
+        ? [setupPhrase(ai)]
+        : [
+            ...gaps
+              .filter((gap) => gap.stepId === node.step.id)
+              .map((gap) => setupPhrase(gap.label)),
+            ...(chip ? [setupPhrase(chip)] : []),
+          ];
       // One order for what a badge says and opens (see badgeFocus):
       // compiler errors as the Problems strip lists them, then entries in
       // step details that aren't applied yet.

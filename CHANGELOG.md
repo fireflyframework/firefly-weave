@@ -38,6 +38,28 @@ SPDX-License-Identifier: Apache-2.0
   codes: `WV-DEBUG-WORKFLOW` and `WV-DEBUG-FRAME`. A waiting call without a mock
   or its workflow still answers `WV-DEBUG-MISSING_MOCK`, now with a hint.
   Upgrade the SDK together with the server to read debug views with frames.
+- The AI task in step details takes its model connection first. **Model** lists
+  the approved models of every AI connection you may use, grouped by connection;
+  choosing one writes the step's own AI settings, the `ai` connection slot and
+  the built-in action in one change. A new AI task answers in text with up to
+  1,024 output tokens, and the canvas card asks for a model instead of listing
+  errors until one is chosen. Structured results, output tokens, temperature,
+  reasoning and shared settings are under **Add option**; the timeout is on
+  **Settings**.
+- AI tasks whose result is plain text are asked for text, with no output tool or
+  response format, which small local models answer more reliably. This applies
+  to published workflows too: the answer is the model's own text with leading
+  and trailing whitespace removed, closed `<think>…</think>` reasoning blocks
+  are removed wherever they appear, and an answer cut off at the output token
+  limit fails with `LLM_LIMIT` instead of being returned. Steps still receive a
+  string, but models are more likely to wrap an answer asked for as JSON in a
+  code fence, so a later step that parses JSON from it may need a structured
+  result instead. When an endpoint refuses a native response format, the worker
+  asks once more with the format in the prompt; that refused request counts as
+  one of the step's model calls.
+- Recorded AI turns in Studio test data follow a published schema,
+  `urn:firefly-weave:schema:studio-ai-turns:v1`, and a simulated AI task replays
+  its saved final turn, with no usage, unless the step is pinned.
 
 ## 0.1.0a16
 

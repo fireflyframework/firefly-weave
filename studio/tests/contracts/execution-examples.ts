@@ -43,7 +43,7 @@ export const executeRequest: ExecuteRequest = {
   scripts: {
     signals: { "wait-paid": { payload: { paid: true } } },
     humans: { approval: { decision: "approve", data: {} } },
-    aiTurns: { support: { turns: [{ result: { text: "Shipped." } }] } },
+    aiTurns: { support: { turns: [{ final: { text: "Shipped." } }] } },
     autoAdvanceWaits: true,
   },
   target: { mode: "step", stepId: "send", instanceKey: "send[1]" },

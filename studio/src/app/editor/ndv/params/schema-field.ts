@@ -36,6 +36,7 @@ import {
 } from "../../../forms/ui/schema-designer";
 import type { ParamSpec } from "../registry";
 import type { FormSession } from "./form-session";
+import { designerSchema } from "./schema-params";
 
 export const STALE_EXAMPLE =
   "The step changed while Studio read the example. Paste it again.";
@@ -61,6 +62,7 @@ const PURPOSES: Record<string, DesignerPurpose> = {
   payload: "payload",
   form: "form",
   resultSchema: "output",
+  result: "output",
 };
 
 @Component({
@@ -93,7 +95,10 @@ export class SchemaField {
 
   schema(): unknown {
     const value = this.session().read(this.spec());
-    return value.mode === "fixed" ? value.value : this.spec().default;
+    return designerSchema(
+      value.mode === "fixed" ? value.value : undefined,
+      this.spec().default,
+    );
   }
   purpose(): DesignerPurpose {
     return PURPOSES[this.spec().id] ?? "other";

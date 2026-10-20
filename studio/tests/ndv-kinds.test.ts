@@ -112,7 +112,7 @@ describe("built-in step kinds", () => {
     ).toEqual({
       action: ["app", "app", "action", true, null],
       decisionTable: ["rules", "data", "decisionTable", false, null],
-      llm: ["ai-task", "ai", "llm", true, null],
+      llm: ["ai-task", "ai", "llm", true, "ai-turns"],
       transform: ["transform", "data", "transform", false, null],
       switch: ["decision", "flow", "switch", false, null],
       parallel: ["parallel", "flow", "parallel", false, null],
