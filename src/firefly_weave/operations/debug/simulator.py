@@ -702,6 +702,12 @@ class Simulator:
             waiting = frame.mode == "wait" and frame.state is not None and frame.state.status not in TERMINAL
             if waiting and _parent(frame.key) == key:
                 self._cancel(frame)
+        ended = self._run(key)
+        for frame in self.data.frames:
+            if _parent(frame.key) == key and any(event.id == frame.result for event in ended.pending):
+                # As on a platform, an outcome the caller never accepted is abandoned: the child keeps it.
+                ended.pending = [event for event in ended.pending if event.id != frame.result]
+                frame.result = None
         if not key:
             return
         frame = cast(FrameState, self._run(key))

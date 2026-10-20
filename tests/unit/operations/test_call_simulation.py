@@ -682,3 +682,24 @@ def test_a_frame_waiting_for_a_signal_is_selected_once_the_signal_is_ready():
     assert ready.selected_frame == "enrich"
     out = simulator.step_out()
     assert (out.status, out.frames[0].status, out.boundary.event_type) == ("waiting", "succeeded", "call_completed")
+
+
+def test_an_outcome_the_caller_never_accepts_is_abandoned_when_the_caller_ends():
+    artifact = caller([call(uses="hold@1.0.0")], {"ref": "/steps/enrich/output"}, HOLD, timeout=60)
+    workflows = {"hold@1.0.0": CalledWorkflow(artifact=artifact_of(HOLD))}
+    simulator = Simulator(artifact, mocks={}, input={"customerId": "c-1"}, now=NOW, workflows=workflows)
+    simulator.continue_until_breakpoint()
+    simulator.signal("release", {}, frame="enrich")
+    simulator.advance_time(60)
+    # The frame ends first and queues its outcome; the caller's run deadline is due before that outcome.
+    out = simulator.step_out()
+    assert (out.status, out.frames[0].status, out.boundary.event_type, out.boundary.frame) == (
+        "timed_out",
+        "succeeded",
+        "timed_out",
+        None,
+    )
+    stored = json.loads(simulator.serialize())
+    assert stored["pending"] == [] and "result" not in stored["frames"][0]
+    assert all(event.type != "call_completed" for event in out.events)
+    assert simulator.continue_until_breakpoint() == out
