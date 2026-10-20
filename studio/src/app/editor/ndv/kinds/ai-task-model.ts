@@ -239,6 +239,8 @@ export function parseModelValue(
     ? { revisionId: value.slice(0, at), model: value.slice(at + 1) }
     : null;
 }
+// "Local" means a plain HTTP endpoint: models served that way run beside the
+// platform (Ollama on the host or in Compose), while cloud endpoints use HTTPS.
 const local = (connection: BindableConnection): boolean =>
   (connection.endpoint_origin ?? "").startsWith("http://");
 
