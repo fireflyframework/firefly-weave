@@ -57,6 +57,11 @@ SCHEMAS: dict[Profile, tuple[str, ...]] = {
 GUIDE_SHARE, DRAFT_SHARE, ATTACHMENT_SHARE, HISTORY_SHARE = 0.25, 0.40, 0.20, 0.15
 OTHER_SHARES = DRAFT_SHARE + ATTACHMENT_SHARE + HISTORY_SHARE
 UNPARSED = "The draft does not parse yet, so only its errors can be discussed."
+TOO_LARGE_DRAFT = "The draft is too large to outline within this model's context."
+TOO_LARGE_STEP = "This step is too large to send whole."
+# The only metadata an outline keeps; descriptions and labels are free text the budget does not need.
+METADATA_KEYS = ("name", "version")
+OUTLINE_KEYS = ("id", "kind", "uses")
 GUIDE_VERSION = 1
 GUIDE = """\
 Weave workflow guide (version 1).
@@ -128,16 +133,57 @@ def _steps(block: object) -> list[JsonObject]:
     return found
 
 
+def _entry(step: JsonObject) -> JsonObject:
+    return {key: step[key] for key in OUTLINE_KEYS if isinstance(step.get(key), str)}
+
+
+def _note(trimmed: list[str], part: str) -> None:
+    if part not in trimmed:
+        trimmed.append(part)
+
+
+def _bounded(shown: JsonObject, allowance: int | None, trimmed: list[str]) -> JsonObject | None:
+    """An outline held to its allowance: the selected step named only, then the step list cut in the middle;
+    None when not even the first and last step fit."""
+    if allowance is None:
+        return shown
+    selected = shown.get("selected")
+    if isinstance(selected, dict) and _tokens(selected) > allowance // 2:
+        shown = {**shown, "selected": {**_entry(selected), "note": TOO_LARGE_STEP}}
+        _note(trimmed, "selected_step")
+    if _tokens(shown) <= allowance:
+        return shown
+    steps = cast(list[JsonValue], shown["steps"])
+    best: JsonObject | None = None
+    low, high = 0, len(steps) // 2
+    while low <= high:
+        # The largest number of steps kept at each end that still fits, found by bisection.
+        kept = (low + high) // 2
+        candidate: JsonObject = {
+            **shown,
+            "steps": [*steps[:kept], f"... {len(steps) - 2 * kept} more steps", *steps[len(steps) - kept :]],
+        }
+        if _tokens(candidate) <= allowance:
+            best, low = candidate, kept + 1
+        else:
+            high = kept - 1
+    _note(trimmed, "steps")
+    return best
+
+
 def outline(document: JsonValue, selected_step: str | None) -> JsonObject:
     """Each step's id, kind and uses, in order (nested steps too), and the selected step whole."""
     spec = document.get("spec") if isinstance(document, dict) else None
     steps = _steps(spec.get("steps") if isinstance(spec, dict) else None)
+    metadata = document.get("metadata") if isinstance(document, dict) else None
     shown: JsonObject = {
         "kind": document.get("kind") if isinstance(document, dict) else None,
-        "metadata": document.get("metadata") if isinstance(document, dict) else None,
-        "steps": [
-            {key: step[key] for key in ("id", "kind", "uses") if isinstance(step.get(key), str)} for step in steps
-        ],
+        "metadata": (
+            {key: metadata[key] for key in METADATA_KEYS if isinstance(metadata.get(key), str)}
+            if isinstance(metadata, dict)
+            else None
+        ),
+        "steps": [_entry(step) for step in steps],
     }
     chosen = next((step for step in steps if step["id"] == selected_step), None)
     if chosen is not None:
@@ -267,8 +313,16 @@ def shape(
             if document is None:
                 context["draft"] = {"note": UNPARSED}
             else:
-                context["draft"] = {"outline": outline(document, selected_step)}
                 trimmed.append("outlined")
+                metadata = document.get("metadata") if isinstance(document, dict) else None
+                if isinstance(metadata, dict) and set(metadata) - set(METADATA_KEYS):
+                    _note(trimmed, "metadata")
+                shown = _bounded(outline(document, selected_step), fits, trimmed)
+                if shown is None:
+                    context["draft"] = {"note": TOO_LARGE_DRAFT}
+                    _note(trimmed, "draft")
+                else:
+                    context["draft"] = {"outline": shown}
     allowance = share(ATTACHMENT_SHARE)
     kept: list[JsonValue] = []
     for resource in resources:

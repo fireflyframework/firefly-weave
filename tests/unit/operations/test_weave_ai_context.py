@@ -380,3 +380,85 @@ async def test_asking_sizes_the_request_to_the_endpoints_context(monkeypatch):
     assert configuration.profile.options.max_tokens == 1024
     shaped = context.Shaped(context=sent_context, history=list(sent_request.history), profile="compact")
     assert sent_tokens(shaped, request.message) <= 4096
+
+
+def large_draft(steps=20, selected_bytes=0, description_bytes=0):
+    document = yaml.safe_load(draft(steps))
+    if selected_bytes:
+        document["spec"]["steps"][3]["with"] = {"literal": {"note": "s" * selected_bytes}}
+    if description_bytes:
+        document["metadata"]["description"] = "d" * description_bytes
+    return yaml.safe_dump(document)
+
+
+@pytest.mark.parametrize(
+    ("steps", "selected_bytes", "description_bytes", "trims"),
+    [
+        (300, 0, 0, {"outlined", "steps"}),
+        (600, 0, 0, {"outlined", "steps"}),
+        (20, 20000, 0, {"outlined", "selected_step"}),
+        (20, 0, 20000, {"outlined", "metadata"}),
+    ],
+)
+def test_a_large_compact_draft_stays_within_its_share_and_the_cap(steps, selected_bytes, description_bytes, trims):
+    message = "Why does step-3 fail?"
+    budget = input_budget("compact", 8192, 512)
+    shaped = shape(
+        "compact",
+        budget,
+        message=message,
+        history=HISTORY,
+        resources=[RUN],
+        draft=("yaml", large_draft(steps, selected_bytes, description_bytes)),
+        selected_step="step-3",
+        schemas={},
+    )
+    assert budget == COMPACT_INPUT_TOKENS
+    assert sent_tokens(shaped, message) <= budget
+    assert estimate_tokens(json.dumps(shaped.context["draft"])) <= budget * 0.40
+    assert trims <= set(shaped.context["trimmed"])
+    assert "d" * 100 not in json.dumps(shaped.context) and "s" * 100 not in json.dumps(shaped.context)
+
+
+def test_a_shortened_outline_keeps_the_first_and_last_steps_and_says_how_many_are_left_out():
+    shaped = shape(
+        "compact",
+        COMPACT_INPUT_TOKENS,
+        message="Review it",
+        history=[],
+        resources=[],
+        draft=("yaml", draft(600)),
+        selected_step=None,
+        schemas={},
+    )
+    listed = shaped.context["draft"]["outline"]["steps"]
+    marker = next(item for item in listed if isinstance(item, str))
+    shown = [item for item in listed if isinstance(item, dict)]
+    assert listed[0]["id"] == "step-0" and listed[-1]["id"] == "step-599"
+    assert marker == f"... {600 - len(shown)} more steps"
+    assert listed.index(marker) == len(shown) // 2
+
+
+def test_an_outline_keeps_only_the_name_and_version_of_the_metadata():
+    document = {"kind": "Workflow", "metadata": {"name": "a", "version": "1.0.0", "labels": {"team": "x"}}}
+    assert outline(document, None)["metadata"] == {"name": "a", "version": "1.0.0"}
+
+
+def test_a_selected_step_too_large_to_send_whole_is_named_with_a_note():
+    shaped = shape(
+        "compact",
+        COMPACT_INPUT_TOKENS,
+        message="Why does step-3 fail?",
+        history=[],
+        resources=[],
+        draft=("yaml", large_draft(20, 20000)),
+        selected_step="step-3",
+        schemas={},
+    )
+    selected = shaped.context["draft"]["outline"]["selected"]
+    assert selected == {
+        "id": "step-3",
+        "kind": "action",
+        "uses": "crm-lookup@1.3.0",
+        "note": "This step is too large to send whole.",
+    }
