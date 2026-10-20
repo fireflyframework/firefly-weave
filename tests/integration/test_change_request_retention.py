@@ -207,3 +207,5 @@ async def test_retention_reads_ended_change_requests_by_index(services, access_d
         )
     assert "deployment_change_requests_ended" in plan or "Index" in plan
     assert "Seq Scan on deployment_change_requests" not in plan
+    # The cutoff is a parameter, so the end time bounds the index range instead of filtering every ended row.
+    assert any("Index Cond" in line and "ended_at <" in line for line in plan.splitlines()), plan
