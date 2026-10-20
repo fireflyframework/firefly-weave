@@ -56,7 +56,8 @@ TRANSITIONS: dict[ChangeState, frozenset[ChangeState]] = {
     "observing": frozenset({"ready_to_plan", "failed", "cancelled", "superseded"}),
     "ready_to_plan": frozenset({"awaiting_approval", "failed", "cancelled", "superseded"}),
     "awaiting_approval": frozenset({"approved", "declined", "cancelled", "expired", "superseded"}),
-    "approved": frozenset({"draining", "applying", "declined", "cancelled", "expired", "superseded"}),
+    # An approved change fails when its drain window closed before the drain started (WV-DRAIN-WINDOW).
+    "approved": frozenset({"draining", "applying", "declined", "cancelled", "expired", "failed", "superseded"}),
     "draining": frozenset({"applying", "declined", "cancelled", "expired", "superseded"}),
     "applying": frozenset({"succeeded", "failed", "reconciliation_required"}),
     "succeeded": frozenset(),

@@ -335,6 +335,14 @@ async def drain_progress(
     return result
 
 
+def _window_open(record: ChangeRequest, now: datetime) -> bool:
+    try:
+        require_drain_window(record, now)
+    except CatalogError:
+        return False
+    return True
+
+
 def drained(member: DrainProgressMember) -> bool:
     """Draining with no active lease, offline, or revoked: removing it interrupts no work."""
     return member.revoked or member.presence == "stale" or (member.draining and member.active_leases == 0)
@@ -830,7 +838,14 @@ class ChangeRequestService:
                 raise ValueError("A positive revision is required")
             if record.revision != revision:
                 raise CatalogError(409, "WV-REVISION", "Change request changed; refresh before retrying")
-            current = effective(record, await repo.now())
+            now = await repo.now()
+            current = effective(record, now)
+            if current.state == "approved" and drains(current) and not _window_open(current, now):
+                # The drain could no longer start before the plan expires: record why, then plan again.
+                failure = ChangeFailure(
+                    code="WV-DRAIN-WINDOW", message="Not enough plan lifetime was left to drain and apply"
+                )
+                record = current = await move(repo, record, "failed", actor=actor.id, failure=failure)
             if not replannable(current):
                 raise CatalogError(
                     409, "WV-CHANGE-STATE", f"A change request cannot be planned again while {current.state}"

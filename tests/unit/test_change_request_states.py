@@ -45,6 +45,8 @@ ALLOWED = {
     ("awaiting_approval", "expired"),
     ("awaiting_approval", "superseded"),
     ("approved", "draining"),
+    # The drain window closed before the drain started.
+    ("approved", "failed"),
     ("approved", "applying"),
     ("approved", "declined"),
     ("approved", "cancelled"),

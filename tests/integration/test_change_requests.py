@@ -1262,3 +1262,22 @@ async def test_a_drain_shows_the_change_only_to_someone_who_may_read_it(ops, fle
     assert "change_request" not in progress.model_dump(mode="json")
     again = await ops.changes.drain(change_request.id, "again", **ops.authority("operator"))
     assert again.change_request is not None and again.change_request.state == "draining"
+
+
+async def test_a_change_whose_drain_window_closed_can_be_planned_again(ops, fleet):
+    change_request = await approved(ops, fleet.setup, observed_count=3, replicas=1)
+    async with ops.access[1].begin() as session:
+        await session.execute(
+            text(
+                "UPDATE deployment_change_requests SET payload=jsonb_set(payload,'{plan_expires_at}',"
+                "to_jsonb(to_char(clock_timestamp() AT TIME ZONE 'UTC' + interval '300 seconds',"
+                '\'YYYY-MM-DD"T"HH24:MI:SS.US"Z"\'))) WHERE id=:id'
+            ),
+            {"id": change_request.id},
+        )
+    with pytest.raises(CatalogError) as refused:
+        await ops.changes.drain(change_request.id, "drain", **ops.authority("operator"))
+    assert refused.value.code == "WV-DRAIN-WINDOW"
+    again = await ops.changes.replan(change_request.id, change_request.revision, **ops.authority("planner"))
+    assert again.state == "observing"
+    assert [entry.state for entry in again.history][-2:] == ["failed", "observing"]
