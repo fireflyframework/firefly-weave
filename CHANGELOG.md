@@ -558,9 +558,9 @@ SPDX-License-Identifier: Apache-2.0
   rollback.
 
 Verified on macOS (Apple silicon) before tagging: the full local check gate (17
-stages, including 7,751 unit and contract tests, the Agentic and Files worker
+stages, including 7,761 unit and contract tests, the Agentic and Files worker
 suites, and building, installing, and checking the 0.1.0a16 core and 0.1.8
-worker packages); Studio's type check, 2,391 unit tests, and production build;
+worker packages); Studio's type check, 2,394 unit tests, and production build;
 941 integration tests against a real PostgreSQL 17; and the release acceptance
 profile against a real Docker platform with PostgreSQL 17 and Keycloak 26.7.4,
 where J0, J1, J5, J8, and J9 steps passed (15 in full and 8 with checks for
