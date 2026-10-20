@@ -658,3 +658,98 @@ def test_an_ollama_endpoint_without_a_context_size_is_shaped_as_compact():
         connection = SimpleNamespace(config={"endpoint": "http://ollama:11434/v1"})
         assert service._context_tokens(connection) == expected
     assert choose_profile(8192) == "compact"
+
+
+async def ask_through_the_service(monkeypatch, request, reply):
+    """LumiService.ask on a keyless compact endpoint with a spy gateway; returns the answer and the spy."""
+    from contextlib import asynccontextmanager
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from uuid import uuid4
+
+    from firefly_weave import private_origins as po
+    from firefly_weave.access.audit import AuditContext
+    from firefly_weave.contracts.access import Scope
+    from firefly_weave.contracts.agentic import AGENTIC_DESCRIPTOR
+    from firefly_weave.contracts.connectors import ConnectionRevision
+    from firefly_weave.contracts.lumi import LUMI_REPLY_SCHEMA, LumiConfiguration
+    from firefly_weave.operations import lumi as module
+    from firefly_weave.operations.lumi import LumiService
+
+    scope = Scope(tenant_id=uuid4(), project_id=uuid4(), environment_id=uuid4())
+    origins = po.PrivateOrigins(platform=po.PLATFORM).with_entries(
+        [
+            po.PrivateOrigin(
+                origin="http://ollama:11434", purpose="model", networks=("10.246.21.0/24",), credentials="none"
+            )
+        ]
+    )
+    connection = ConnectionRevision.model_validate(
+        {
+            "id": uuid4(),
+            "revision": 1,
+            "name": "ollama-local",
+            "connector_version_id": uuid4(),
+            "connector": "weave-agentic-provider@1.0.0",
+            "connector_digest": AGENTIC_DESCRIPTOR.manifest.digest,
+            "adapter": "weave-agentic-provider",
+            "config": {"provider": "openai-chat", "endpoint": "http://ollama:11434/v1", "secretSlot": "apiKey"},
+            "secretRef": {"apiKey": "no-credential"},
+            "allowed_destinations": ("http://ollama:11434",),
+        }
+    )
+    configuration = LumiConfiguration.model_validate(
+        {
+            "enabled": True,
+            "connection_revision_id": connection.id,
+            "revision": 1,
+            "profile": {
+                "provider": "openai-chat",
+                "model": "qwen3:4b",
+                "options": {"max_tokens": 1024},
+                "timeoutSeconds": 180,
+                "outputSchema": LUMI_REPLY_SCHEMA,
+            },
+        }
+    )
+    entry = SimpleNamespace(context_tokens=8192, compat="ollama")
+    policy = SimpleNamespace(current=lambda: SimpleNamespace(entry_for=lambda url: entry))
+
+    @asynccontextmanager
+    async def transaction(*args, **kwargs):
+        yield SimpleNamespace(scope=scope)
+
+    connections = SimpleNamespace(definitions=SimpleNamespace(transaction=transaction), secrets=None)
+    gateway = SimpleNamespace(configured=True, ask=AsyncMock(return_value=reply))
+    service = LumiService(connections, None, None, gateway, None, policy, None)
+    actor = SimpleNamespace(id=uuid4())
+    service._require = AsyncMock(return_value=actor)
+    service._read = AsyncMock(return_value=configuration)
+    monkeypatch.setattr(
+        module, "ConnectionRepository", lambda tx: SimpleNamespace(revision=AsyncMock(return_value=connection))
+    )
+    with po.installed(origins):
+        answer = await service.ask(actor, scope, request, context=AuditContext())
+    return answer, gateway.ask
+
+
+async def test_asking_returns_each_proposal_with_the_platforms_problem_count(monkeypatch):
+    from firefly_weave.contracts.lumi import LumiAskRequest, LumiReply
+
+    proposal = {"title": "Broken", "kind": "workflow", "format": "yaml", "source": broken_proposal()}
+    reply = LumiReply.model_validate({"answer": "Here it is.", "proposals": [proposal]})
+    answer, _ = await ask_through_the_service(monkeypatch, LumiAskRequest(message="Write it"), reply)
+    assert [item.diagnostics for item in answer.proposals] == [1]
+
+
+async def test_a_fix_request_sends_the_faulty_value_to_the_model_on_a_compact_endpoint(monkeypatch):
+    from firefly_weave.contracts.lumi import LumiAskRequest, LumiReply
+
+    faulty = broken_proposal().replace("value: {}", "value: {objct: 1}")
+    request = LumiAskRequest(message="Fix the proposal", fix=True, draft={"format": "yaml", "source": faulty})
+    _, spy = await ask_through_the_service(monkeypatch, request, LumiReply(answer="Fixed."))
+    sent = spy.await_args.args[2]
+    assert sent["profile"] == "compact" and "objct" in sent["draft"]["source"]
+    ordinary = request.model_copy(update={"fix": False})
+    _, spy = await ask_through_the_service(monkeypatch, ordinary, LumiReply(answer="Explained."))
+    assert "objct" not in json.dumps(spy.await_args.args[2])
