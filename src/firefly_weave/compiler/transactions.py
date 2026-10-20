@@ -338,7 +338,8 @@ class _Walk:
         shared: bool,
     ) -> frozenset[_State]:
         irreversible = step.mode in (None, "irreversible")
-        if irreversible and (loop or shared):
+        # Only a step that can decide the transaction is restricted; after a point of no return, rule 3 applies.
+        if irreversible and (loop or shared) and any(state.pivot is None for state in states):
             self.add(
                 "TXN_PIVOT_PLACEMENT", step.path, "error", step=step.id, place="loop" if loop else "parallel branch"
             )

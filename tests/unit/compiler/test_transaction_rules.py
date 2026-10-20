@@ -116,6 +116,35 @@ def test_the_step_that_cant_be_undone_may_not_sit_in_a_loop_or_beside_parallel_s
     assert check(Fork("both", at(0), (left, alone)), reserve(1))[0] == [("TXN_ORDER", at(1) + "/confirm", "error")]
 
 
+def test_after_the_point_of_no_return_steps_that_cant_be_undone_may_repeat_or_run_side_by_side():
+    inner = at(2) + "/body/steps"
+    safe = Sequence(inner, (irreversible(0, step="send", base=inner),))
+    issues, analysis = check(reserve(0), irreversible(1, step="submit"), Repeat("each", at(2), safe, 10))
+    assert issues == []
+    assert analysis.pivots == {"submit"}
+    unsafe = Sequence(inner, (irreversible(0, step="send", base=inner, side_effect="non_idempotent"),))
+    issues, _ = check(reserve(0), irreversible(1, step="submit"), Repeat("each", at(2), unsafe, 10))
+    assert issues == [("TXN_AFTER_PIVOT_UNSAFE", at(0, inner), "error")]
+    left, right = at(2) + "/branches/a/steps", at(2) + "/branches/b/steps"
+    branches = (
+        Sequence(left, (irreversible(0, step="send-a", base=left),)),
+        Sequence(right, (irreversible(0, step="send-b", base=right),)),
+    )
+    assert check(reserve(0), irreversible(1, step="submit"), Fork("both", at(2), branches))[0] == []
+
+
+def test_a_step_that_can_be_reached_before_the_point_of_no_return_still_may_not_repeat():
+    first, second = at(0) + "/cases/0/steps", at(0) + "/cases/1/steps"
+    route = Choice(
+        "route",
+        at(0),
+        (Sequence(first, (irreversible(0, step="submit", base=first),)), Sequence(second, (reserve(0, base=second),))),
+    )
+    inner = at(1) + "/body/steps"
+    issues, _ = check(route, Repeat("each", at(1), Sequence(inner, (irreversible(0, step="send", base=inner),)), 10))
+    assert ("TXN_PIVOT_PLACEMENT", at(0, inner), "error") in issues
+
+
 def test_after_the_point_of_no_return_only_work_that_is_safe_to_retry():
     issues, analysis = check(
         reserve(0),
@@ -446,12 +475,14 @@ def _misplaced(sequence: Sequence, *, loop: bool = False, shared: bool = False):
 
 def _expected(body: Sequence):
     """Every finding, the pivots and the steps reached only after one, read off each run directly."""
-    found, pivots, ran, only_after = set(), set(), set(), {}
+    # Rule 2 applies before the point of no return; after it, rule 3 decides what may repeat or run side by side.
+    found, pivots, before, only_after = set(), set(), set(), {}
     for nodes, preds, _ in _runs(body):
         decides = [isinstance(node, Participant) and node.mode in (None, "irreversible") for node in nodes]
         for index, node in enumerate(nodes):
-            ran.add(node.path)
             after = any(decides[other] for other in preds[index])
+            if not after:
+                before.add(node.path)
             only_after[node.id] = only_after.get(node.id, True) and after
             holds = sorted(
                 (nodes[other].hold, nodes[other].path)
@@ -479,7 +510,7 @@ def _expected(body: Sequence):
                     found.add(("TXN_AFTER_PIVOT_WAIT", node.path))
             elif node.kind in ("transform", "llm", "decisionTable") and after:
                 found.add(("TXN_AFTER_PIVOT_PURE", node.path))
-    found |= {("TXN_PIVOT_PLACEMENT", path) for path in _misplaced(body) if path in ran}
+    found |= {("TXN_PIVOT_PLACEMENT", path) for path in _misplaced(body) if path in before}
     return found, pivots, {step for step, only in only_after.items() if only}
 
 
