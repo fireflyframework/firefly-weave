@@ -322,7 +322,11 @@ that applies wins:
    mocks, signals and deadlines, and the session's virtual time. Its outcome
    reaches the caller as in a real run: the output, or the envelope; a failed
    run fails a caller that stops, and a cancelled or timed-out one opens
-   `WV-CALL-INTERRUPTED` on it.
+   `WV-CALL-INTERRUPTED` on it. A succeeded output is checked against the
+   call's output schema first, as on a platform: a secret or unclassifiable
+   value opens `WV-SCHEMA-SECRET_VALUE` or `WV-SCHEMA-CLASSIFICATION` on the
+   caller instead. Sessions hold no files, so the platform's step of handing
+   the child's files to its caller is skipped.
 
 Without either, the simulation stops with `WV-DEBUG-MISSING_MOCK`, whose hint
 names both. A detached call (`mode: detach`) never needs a mock: it continues at
