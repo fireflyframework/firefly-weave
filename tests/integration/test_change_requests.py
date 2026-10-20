@@ -1249,3 +1249,16 @@ async def test_replanning_a_superseded_change_with_desired_values_needs_target_m
     without_target_manage(monkeypatch)
     with pytest.raises(AccessDenied):
         await ops.changes.replan(created.id, superseded.revision, **ops.authority("planner"))
+
+
+async def test_a_drain_shows_the_change_only_to_someone_who_may_read_it(ops, fleet, access_db, provisioned):
+    change_request = await approved(ops, fleet.setup, observed_count=3, replicas=1)
+    drainer = await access_db[2].create_principal(provisioned[0], "application")
+    await access_db[2].grant(provisioned[0], drainer, Grant(role="worker_operator", scope=ops.scope))
+    ops.people["drainer"] = await access_db[2].load_principal(drainer)
+    progress = await ops.changes.drain(change_request.id, "drain", **ops.authority("drainer"))
+    # Worker drain rights reveal the drain, not the change's title, reason, values or people.
+    assert progress.change_request is None and progress.remaining == 0
+    assert "change_request" not in progress.model_dump(mode="json")
+    again = await ops.changes.drain(change_request.id, "again", **ops.authority("operator"))
+    assert again.change_request is not None and again.change_request.state == "draining"

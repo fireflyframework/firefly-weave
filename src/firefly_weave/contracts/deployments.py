@@ -516,7 +516,8 @@ class DrainProgressMember(DrainMember):
 
 
 class DrainProgress(ContractModel):
-    change_request: ChangeRequest
+    # Present only for a caller who may read the change request's target; worker drain rights alone show the drain.
+    change_request: ChangeRequest | None = Field(default=None, exclude_if=lambda v: v is None)
     members: list[DrainProgressMember] = Field(max_length=100)
     remaining: int = Field(ge=0, le=100)
 

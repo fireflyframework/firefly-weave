@@ -681,7 +681,7 @@ class ChangeRequestService:
             await self.able(tx, actor, "worker.drain")
             repo = DeploymentRepository(tx)
             record = await repo.get("change_requests", identifier, ChangeRequest, lock=True)
-            actor = await load_principal(tx.session, actor.id)
+            original, actor = actor, await load_principal(tx.session, actor.id)
             idem = Idempotency(
                 tx,
                 actor.id,
@@ -726,8 +726,16 @@ class ChangeRequestService:
             elif newly:
                 await repo.update("change_requests", record.id, record, extra={"state": record.state})
             members = await drain_progress(repo, record.drain_set)
+            readable = all(
+                self.deployments.authorization.allows(
+                    principal, scope, "deployment.read", resource=str(record.target_id)
+                )
+                for principal in (original, actor)
+            )
             result = DrainProgress(
-                change_request=record, members=members, remaining=sum(not drained(member) for member in members)
+                change_request=record if readable else None,
+                members=members,
+                remaining=sum(not drained(member) for member in members),
             )
             await idem.save(result.model_dump(mode="json"))
             return result
