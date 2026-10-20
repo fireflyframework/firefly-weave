@@ -391,12 +391,13 @@ const FORMULA_MEASURED_KEYSTROKES = 60;
 const FORMULA_CALIBRATION = { rounds: 4000, runs: 9 };
 /**
  * The calibration's median on a GitHub-hosted runner with an AMD EPYC 9V45,
- * the fastest CPU those runners report.
+ * the fastest CPU those runners report: 19.9 ms in job 118428684852, where
+ * an EPYC 7763 read 31.2 to 33.4 ms and a Xeon 8573C 24.2 ms.
  */
 const FORMULA_CALIBRATION_REFERENCE_MS = 20;
 /**
- * Shared runners differ about 1.8x in CPU speed (AMD EPYC 7763 against
- * 9V45). A runner slower than the reference gets its own slowdown as
+ * Shared runners differ about 1.6x in this calibration (AMD EPYC 7763
+ * against 9V45). A runner slower than the reference gets its own slowdown as
  * headroom, up to 2x; a faster one gets none.
  */
 const FORMULA_MAX_SPEED_ALLOWANCE = 2;
