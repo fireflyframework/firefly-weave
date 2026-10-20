@@ -37,6 +37,10 @@ SPDX-License-Identifier: Apache-2.0
   `WV-LUMI-MODEL-NOT-FOUND`, `WV-LUMI-UNREACHABLE`, `WV-LUMI-CONTEXT-LIMIT`,
   `WV-LUMI-OUTPUT` and `WV-LUMI-TIMEOUT`, with `WV-LUMI-CAPACITY` for busy and
   rate-limited providers, instead of `WV-LUMI-UNAVAILABLE` for all of them.
+- AI tasks count text outside ASCII, such as Chinese or emoji, by its UTF-8 bytes
+  when they check that a prompt fits the model's context, and on Ollama an answer
+  to a prompt the model saw only part of fails with `LLM_CONTEXT_LIMIT` instead
+  of being returned.
 - Weave AI keeps small local models from looping: compact requests answer in at
   most 512 tokens, the instructions ask for a brief answer, Ollama endpoints get
   a frequency penalty, and an answer that starts repeating itself is stopped

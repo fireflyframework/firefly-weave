@@ -191,9 +191,12 @@ as `connection_revision_id` and `release_id`.
 
 Keep `options.max_tokens` at 4,096 or less: a larger value fails with
 `LLM_OPTIONS`. The worker estimates the prompt, the context and the result fields
-at about four characters per token, adds `max_tokens`, and fails with
+at about four characters per token for ASCII text and one token per UTF-8 byte for
+other text, such as Chinese or emoji, adds `max_tokens`, and fails with
 `LLM_CONTEXT_LIMIT` before any request when the sum does not fit the policy's
-context size, instead of letting Ollama cut the prompt silently.
+context size, instead of letting Ollama cut the prompt silently. When Ollama
+reports fewer prompt tokens than the whole prompt can count, the answer is not
+used and the step fails with `LLM_CONTEXT_LIMIT` too.
 
 ## Test the connection
 

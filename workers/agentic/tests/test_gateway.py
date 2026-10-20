@@ -35,12 +35,12 @@ from pydantic_ai.models.function import DeltaToolCall, FunctionModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.usage import RequestUsage
 
+from weave_agentic_worker.execution import fewest_tokens
 from weave_agentic_worker.gateway import (
     LOOP_MIN_CHARS,
     OLLAMA_FREQUENCY_PENALTY,
     conservative_tokens,
     create_app,
-    fewest_tokens,
     repeating,
 )
 from weave_agentic_worker.handler import WorkerPolicy

@@ -77,7 +77,7 @@ from weave_agentic_worker.discovery import (
 )
 from weave_agentic_worker.egress import PinnedModelTransport, resolve
 from weave_agentic_worker.errors import classify
-from weave_agentic_worker.execution import private_framework_logging, provider_schema, run_model
+from weave_agentic_worker.execution import cut, private_framework_logging, provider_schema, run_model
 from weave_agentic_worker.handler import ModelBuilder, WorkerPolicy
 from weave_agentic_worker.main import read_policy
 from weave_agentic_worker.providers import ProviderModel, build_model
@@ -102,14 +102,8 @@ LOOP_REPEATS = 4
 LOOP_MIN_CHARS = 256
 LOOP_MAX_PERIOD = 512
 LOOP_CHECK_EVERY = 64
-# No text measured on Weave AI requests took more than 4.6 ASCII characters or 2 other characters per token, so a
-# model that counted fewer tokens saw only part of the prompt (Ollama drops the start of a long prompt).
-MAX_ASCII_PER_TOKEN = 6
-MAX_OTHER_PER_TOKEN = 2
-# Ollama runs a model with this context unless the policy says otherwise; when it cuts a prompt it keeps half of it,
-# within a few tokens (4,098 of 8,192, measured twice on Ollama 0.40.2).
+# Ollama runs a model with this context unless the policy says otherwise.
 OLLAMA_CONTEXT_TOKENS = 8192
-CUT_MARGIN = 16
 # How long the gateway waits for Ollama to say whether a model thinks before it asks without the setting.
 THINKING_SECONDS = 5.0
 TEST_PROMPT = "Reply with the single word: ready"
@@ -178,12 +172,6 @@ def conservative_tokens(*parts: str) -> int:
     text = "".join(parts)
     ascii_characters = len(text.encode("ascii", "ignore"))
     return -(-ascii_characters * 2 // 5) + len(text.encode()) - ascii_characters
-
-
-def fewest_tokens(text: str) -> int:
-    """The fewest tokens a model can count for the whole of this text."""
-    ascii_characters = len(text.encode("ascii", "ignore"))
-    return ascii_characters // MAX_ASCII_PER_TOKEN + (len(text) - ascii_characters) // MAX_OTHER_PER_TOKEN
 
 
 def repeating(text: str) -> bool:
@@ -413,21 +401,11 @@ def create_app(
                         if isinstance(owned, ProviderModel):
                             await owned.close()
                 assert isinstance(output, dict)
-                counted = cast(dict[str, Any], output.get("usage") or {}).get("inputTokens")
+                usage = cast(dict[str, Any], output.get("usage") or {})
                 if (
                     entry.compat == "ollama"
-                    and isinstance(counted, int)
-                    and counted > 0
-                    and (
-                        counted < fewest_tokens(INSTRUCTIONS + prompt)
-                        # Ollama's cut leaves almost exactly half the context; a whole prompt the estimate
-                        # overcounts (text outside ASCII) lands anywhere below it and is not a cut.
-                        or (
-                            context is not None
-                            and sent > context // 2 + CUT_MARGIN
-                            and abs(counted - context // 2) <= CUT_MARGIN
-                        )
-                    )
+                    and context is not None
+                    and cut(usage.get("inputTokens"), INSTRUCTIONS + prompt, sent, context, usage.get("requests"))
                 ):
                     # The model saw only part of the request, perhaps without its instructions: never use the answer.
                     return JSONResponse({"code": "LUMI_TRUNCATED"}, status_code=422)
