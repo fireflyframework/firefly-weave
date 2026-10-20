@@ -226,3 +226,13 @@ def test_a_step_pin_wins_over_an_iteration_turn():
     artifact = looped()
     mocks = with_ai_turns(artifact, {"node:summarize": pinned("Pinned.")}, dict([ITERATION_TURN]))
     assert answers(artifact, mocks) == ["Pinned.", "Pinned.", "Pinned."]
+
+
+@pytest.mark.parametrize("key", ["summarize[5]", "summarize[0][1]", "summarize#1", "summarize~1"])
+@pytest.mark.parametrize("step_first", [True, False], ids=["step first", "iteration first"])
+def test_a_turn_for_an_iteration_the_loop_cannot_reach_is_left_alone(key, step_first):
+    artifact = looped()
+    stale = (key, {"turns": [{"final": "Stale."}]})
+    entries = dict([STEP_TURN, stale] if step_first else [stale, STEP_TURN])
+    assert set(ai_task_mocks(artifact, entries)) == {"node:summarize"}
+    assert answers(artifact, with_ai_turns(artifact, {}, entries)) == ["Every.", "Every.", "Every."]

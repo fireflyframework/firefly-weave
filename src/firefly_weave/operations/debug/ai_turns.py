@@ -20,10 +20,11 @@ from collections.abc import Mapping
 
 from firefly_weave.compiler.api import CompiledArtifact
 from firefly_weave.compiler.ir import ActionNode
-from firefly_weave.contracts.instance_keys import InvalidInstanceKey, node_of
+from firefly_weave.contracts.instance_keys import InvalidInstanceKey, split_instance
 from firefly_weave.contracts.studio_documents import ai_turns_problems
 from firefly_weave.contracts.values import JsonValue
 from firefly_weave.operations.debug.models import DebugError
+from firefly_weave.runtime.control import enclosing_loops
 from firefly_weave.runtime.kernel import workflow
 
 # Nothing was sent to a model, so a replayed turn reports no usage.
@@ -35,21 +36,29 @@ def ai_task_mocks(artifact: CompiledArtifact, entries: Mapping[str, object]) -> 
 
     A key is a step ID (every instance) or an instance key (one instance). An AI task replays the ``final`` of its
     only turn, with its profile's provider and model and no usage. Entries without turns give no mock, and entries
-    for keys that name no AI task (an AI agent's, or a removed step's) are left alone. An entry that breaks the
-    recorded turns schema, or an AI task entry that is not one final turn, raises ``WV-DEBUG-MOCK-OUTPUT``.
+    for keys that name no AI task (an AI agent's, or a removed step's) or no iteration it can run are left alone.
+    An entry that breaks the recorded turns schema, or an AI task entry that is not one final turn, raises
+    ``WV-DEBUG-MOCK-OUTPUT``.
     """
-    tasks = {
-        node.id: node
-        for node in workflow(artifact).graph.nodes
-        if isinstance(node, ActionNode) and node.llm_profile is not None
-    }
+    nodes = {node.id: node for node in workflow(artifact).graph.nodes}
     mocks: dict[str, JsonValue] = {}
     for key, entry in entries.items():
         try:
-            node = tasks.get(node_of(key))
+            parsed = split_instance(key)
         except InvalidInstanceKey:
             continue
-        if node is None or node.llm_profile is None:
+        node = nodes.get(parsed.node_id)
+        if not isinstance(node, ActionNode) or node.llm_profile is None:
+            continue
+        # An instance key names one position per enclosing loop, each below that loop's maxItems; a saved turn
+        # for an iteration the loop cannot reach is left alone, as an entry for a removed step is.
+        loops = enclosing_loops(nodes, node)
+        if (
+            parsed.segments
+            or parsed.count is not None
+            or len(parsed.indexes) not in {0, len(loops)}
+            or any(index >= loop.max_items for index, loop in zip(parsed.indexes, loops, strict=False))
+        ):
             continue
         if ai_turns_problems(entry):
             raise DebugError("WV-DEBUG-MOCK-OUTPUT")
@@ -77,7 +86,7 @@ def with_ai_turns(
     """
     merged = dict(mocks)
     for key, mock in ai_task_mocks(artifact, entries).items():
-        step = "node:" + node_of(key.removeprefix("node:"))
+        step = "node:" + split_instance(key.removeprefix("node:")).node_id
         if key not in mocks and step not in mocks:
             merged[key] = mock
     return merged
