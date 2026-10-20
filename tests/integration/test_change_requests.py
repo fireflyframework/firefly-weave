@@ -1635,3 +1635,33 @@ async def test_registering_the_same_release_again_returns_it_so_a_resumed_setup_
     )
     again = await ops.workers.register_release(ops.people["workers"], ops.scope, request, context=AuditContext())
     assert again.id == ops.release.id
+
+
+async def test_an_offline_earlier_instance_on_the_same_host_does_not_hide_the_live_worker(ops, fleet):
+    """A container that was stopped and started again keeps its host; its earlier worker instance stays registered
+    but offline. The drain set maps the member to the live instance, not WV-DRAIN-UNKNOWN."""
+    _, _, workers, actor, scope, _, _ = fleet.worker_setup
+    earlier = await workers.register_instance(
+        actor,
+        scope,
+        InstanceRequest(
+            release_id=fleet.workers[0].release_id,
+            task_types=["echo@1.2.0"],
+            capacity=1,
+            identity=WorkerIdentity(host="c0ffee000003", runtime="container"),
+        ),
+        context=AuditContext(),
+    )
+    async with ops.access[1].begin() as session:
+        # The fleet's workers report now; the earlier instance last did ten minutes ago.
+        await session.execute(
+            text("UPDATE worker_instances SET last_seen_at=clock_timestamp() WHERE id=ANY(cast(:ids AS uuid[]))"),
+            {"ids": [worker.id for worker in fleet.workers]},
+        )
+        await session.execute(
+            text("UPDATE worker_instances SET last_seen_at=clock_timestamp()-interval '10 minutes' WHERE id=:id"),
+            {"id": earlier.id},
+        )
+    planned = await awaiting(ops, fleet.setup, observed_count=3, replicas=1)
+    assert planned.warnings == []
+    assert {member.worker_id for member in planned.drain_set} == {worker.id for worker in fleet.workers}

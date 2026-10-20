@@ -298,7 +298,8 @@ async def drain_set(
 
     A scale-down drains the members its plan removes; a restart that drains first drains every observed member.
     A member maps to the one current worker of the step's release whose reported host is the member's host, so a
-    worker of another release cannot make the platform drain this component by reporting the same host.
+    worker of another release cannot make the platform drain this component by reporting the same host; among
+    several, the one seen in the last 60 seconds.
     """
     wanted: builtins.list[tuple[str, UUID]] = []
     observation = await repo.get("observations", plan.observation_id, DeploymentObservation)
@@ -318,7 +319,9 @@ async def drain_set(
     if not wanted:
         return [], []
     rows = await repo.rows(
-        "SELECT w.id,w.release_id,f.identity->>'host' AS host FROM worker_instances w JOIN worker_facts f "
+        "SELECT w.id,w.release_id,f.identity->>'host' AS host,"
+        "coalesce(w.last_seen_at>clock_timestamp()-interval '60 seconds',false) AS live "
+        "FROM worker_instances w JOIN worker_facts f "
         "ON f.worker_id=w.id AND f.tenant_id=w.tenant_id AND f.project_id=w.project_id "
         "AND f.environment_id=w.environment_id WHERE w.tenant_id=:tenant AND w.project_id=:project "
         "AND w.environment_id=:environment AND NOT w.revoked AND f.identity->>'host'=ANY(cast(:hosts AS text[])) "
@@ -328,7 +331,11 @@ async def drain_set(
     members: builtins.list[DrainMember] = []
     unknown = False
     for host, release in wanted:
-        matches = [row["id"] for row in rows if row["host"] == host and row["release_id"] == release]
+        candidates = [row for row in rows if row["host"] == host and row["release_id"] == release]
+        # A container started again keeps its host, and its earlier instance stays registered but offline: the one
+        # live instance is the member's worker.
+        live = [row for row in candidates if row["live"]]
+        matches = [row["id"] for row in (live if len(candidates) > 1 and live else candidates)]
         if len(matches) != 1:
             unknown = True
             continue
