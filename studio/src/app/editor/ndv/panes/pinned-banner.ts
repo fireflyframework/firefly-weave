@@ -33,7 +33,6 @@ import { Icon } from "../../../icon";
   imports: [Icon],
   template: `<div
     class="pinned-banner"
-    role="status"
     [attr.data-tone]="stale() ? 'warning' : 'info'"
   >
     <weave-icon
@@ -42,13 +41,17 @@ import { Icon } from "../../../icon";
       aria-hidden="true"
     />
     <p>
+      <!-- Only the sentence is announced; the buttons beside it aren't. -->
+      <span role="status">{{
+        stale()
+          ? "Pinned output may be out of date: earlier steps changed."
+          : "This data is pinned for test runs. Production runs ignore it."
+      }}</span
+      >&ngsp;
       @if (stale()) {
-        Pinned output may be out of date: earlier steps changed.
         <button type="button" class="text-link" (click)="keep.emit()">
           Keep pinned
         </button>
-      } @else {
-        This data is pinned for test runs. Production runs ignore it.
       }
       <button type="button" class="text-link" (click)="unpin.emit()">
         Unpin

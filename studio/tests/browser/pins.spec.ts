@@ -66,6 +66,13 @@ for (const size of sizes)
       await expect(banner(pane)).toHaveText(
         "This data is pinned for test runs. Production runs ignore it. Unpin",
       );
+      // Only the sentence is announced, never the buttons beside it.
+      await expect(banner(pane).getByRole("status")).toHaveText(
+        "This data is pinned for test runs. Production runs ignore it.",
+      );
+      await expect(
+        banner(pane).getByRole("status").getByRole("button"),
+      ).toHaveCount(0);
       // The sample never holds the secret field.
       await expect(
         pane.locator(".data-key", { hasText: /^tier$/ }),
