@@ -417,3 +417,77 @@ weave-input-pane.is-compact .pane-source-field::before {
 .pane-source-tag {
   flex: none;
 }
+/* Pin output: a toggle beside the search, pressed in the info tone. */
+/* At the end of the sub-row, beside the Pinned tag and the count. */
+.step-details button.pane-pin {
+  flex: none;
+  margin-left: auto;
+  width: var(--sd-target);
+  min-width: var(--sd-target);
+  height: var(--sd-target);
+  min-height: var(--sd-target);
+}
+.step-details button.pane-pin[aria-pressed="true"] {
+  color: var(--info-ink);
+  background: var(--info-bg);
+  border-color: var(--info-bd);
+}
+.step-details button.pane-pin[aria-disabled="true"] {
+  color: var(--subtle);
+}
+/* What a pin does (info), or that it may be out of date (warning). */
+.pinned-banner {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  column-gap: var(--space-2);
+  margin-bottom: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--info-bd);
+  border-radius: var(--radius-sm);
+  background: var(--info-bg);
+  color: var(--text);
+  font: var(--type-small);
+}
+.pinned-banner[data-tone="warning"] {
+  border-color: var(--warning-bd);
+  background: var(--warning-bg);
+}
+.pinned-banner > weave-icon {
+  /* On the first line's center. */
+  margin-top: 2px;
+  color: var(--info-ink);
+}
+.pinned-banner[data-tone="warning"] > weave-icon {
+  color: var(--warning-ink);
+}
+.pinned-banner p {
+  grid-column: 2;
+  margin: 0;
+}
+.pinned-banner .text-link {
+  min-height: 0;
+  margin-inline-start: var(--space-1);
+  padding: 0;
+  font: inherit;
+  color: var(--info-ink);
+}
+.pinned-banner[data-tone="warning"] .text-link {
+  color: var(--warning-ink);
+}
+.pinned-banner p.pinned-banner-note {
+  margin-top: var(--space-1);
+  color: var(--muted);
+}
+.pane-empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+.pane-problem {
+  margin: 0 0 var(--space-3);
+  font: var(--type-small);
+  color: var(--danger-ink);
+}

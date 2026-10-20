@@ -1393,6 +1393,16 @@ export class StepDetails {
         event.preventDefault();
         if (this.canExecute()) this.explainExecute();
         return;
+      case "togglePin": {
+        const target = this.session().target;
+        const controller = this.controller();
+        if (isTyping(event.target as HTMLElement)) return;
+        if (target.startsWith("$") || !controller.pinnable(target)) return;
+        event.preventDefault();
+        if (controller.pinOfTarget(target)) controller.unpin(target);
+        else host.notify("Set test output or generate a sample to pin it.");
+        return;
+      }
       default:
         return;
     }

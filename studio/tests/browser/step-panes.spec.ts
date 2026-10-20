@@ -615,6 +615,12 @@ for (const size of [
           const rows = await boxes(pane.locator(".data-row"));
           left.push(rows[0].x);
           left.push((await textBox(pane.locator(".pane-caption"))).x);
+        } else {
+          // The pin sits at the sub-row's end, on the count's line.
+          const pin = await box(pane.locator(".pane-pin"));
+          expectAligned([pin.middle, count.middle], "pin and count", 2);
+          expectAligned([pin.right, edges.right], "pin right edge");
+          expect(pin.x).toBeGreaterThan(count.right);
         }
         expectAligned(left, `${name} pane left edge`);
         expect(await clippedText(details.dialog)).toEqual([]);

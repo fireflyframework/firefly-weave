@@ -16,8 +16,11 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 // The Output pane: the shape later steps can map (Schema), and what this
-// step returns once it runs (Table and JSON, which wait for data). Steps
-// with no output say why.
+// step returns: its pinned test output (Schema with values, and JSON) until
+// it runs. A step whose output can be pinned has Pin output (P) in the
+// header, and without a pin offers Set test output and Generate sample.
+// Steps with no output say why; steps that compute their output from their
+// input say to pin the steps they read instead.
 import {
   ChangeDetectionStrategy,
   Component,
@@ -29,6 +32,7 @@ import {
 } from "@angular/core";
 import { Icon } from "../../../icon";
 import { DataTree } from "./data-tree";
+import { PinnedBanner } from "./pinned-banner";
 import {
   countLabel,
   sampleCount,
@@ -39,6 +43,7 @@ import {
   writeView,
   defaultOutputView,
   schemaRows,
+  withSamples,
   type DataView,
 } from "./views";
 import type { FormSession } from "../params/form-session";
@@ -48,8 +53,10 @@ import { ndvRegistry, type Json } from "../registry";
   selector: "weave-output-pane",
   standalone: true,
   changeDetection: ChangeDetectionStrategy.Eager,
-  imports: [Icon, DataTree],
+  imports: [Icon, DataTree, PinnedBanner],
   template: `@let none = noOutput();
+    @let pin = pinned();
+    @let canPin = pinnable();
     @let rows = this.rows();
     @let shown = filter(rows);
     <header class="sd-pane-head">
@@ -95,7 +102,9 @@ import { ndvRegistry, type Json } from "../registry";
       </div>
     }
     <div class="pane-sub">
-      @if (event() !== undefined && value() === undefined) {
+      @if (pin) {
+        <span class="pill" data-tone="info">Pinned</span>
+      } @else if (event() !== undefined && value() === undefined) {
         <span class="pill" data-tone="info">Sample</span>
       }
       <span class="pane-count">{{
@@ -105,9 +114,33 @@ import { ndvRegistry, type Json } from "../registry";
             ? sampleCount(event())
             : countLabel(rows.length, query() ? shown.length : undefined)
       }}</span>
+      @if (canPin) {
+        <button
+          type="button"
+          class="icon-button pane-pin"
+          [attr.aria-pressed]="!!pin"
+          [attr.aria-label]="pin ? 'Unpin output' : 'Pin output'"
+          [attr.aria-disabled]="pin ? null : 'true'"
+          [title]="pin ? 'Pin output (P)' : noPinYet"
+          (click)="togglePin()"
+        >
+          <weave-icon [name]="pin ? 'unpin' : 'pin'" [size]="16" />
+        </button>
+      }
     </div>
     <div class="sd-pane-body">
       <div class="pane-content">
+        @if (pin) {
+          <weave-pinned-banner
+            [stale]="pin.stale !== null"
+            [localOnly]="localOnly()"
+            (unpin)="unpin()"
+            (keep)="keepPinned()"
+          />
+        }
+        @if (problem()) {
+          <p class="pane-problem" role="alert">{{ problem() }}</p>
+        }
         @if (none) {
           <p class="pane-empty-text">{{ none }}</p>
         } @else if (event() !== undefined && view() !== "schema") {
@@ -124,6 +157,30 @@ import { ndvRegistry, type Json } from "../registry";
         } @else if (view() === "schema") {
           @if (session().target === "$trigger" && event() === undefined) {
             <p class="pane-empty-text">No test event yet</p>
+          }
+          @if (computed()) {
+            <p class="pane-empty-text">
+              Output is computed from the input; pin the steps it reads instead.
+            </p>
+          }
+          @if (canPin && !pin) {
+            <div class="pane-empty">
+              <span class="pane-empty-icon" aria-hidden="true"
+                ><weave-icon name="pin" [size]="20"
+              /></span>
+              <h4>No output yet</h4>
+              <p>
+                Set test output, or generate a sample from the output fields.
+              </p>
+              <div class="pane-empty-actions">
+                <button type="button" class="sm" (click)="setOutput()">
+                  Set test output
+                </button>
+                <button type="button" class="sm" (click)="generate()">
+                  <weave-icon name="refresh" [size]="16" />Generate sample
+                </button>
+              </div>
+            </div>
           }
           @if (rows.length) {
             <weave-data-tree [rows]="shown" label="Output fields" />
@@ -176,13 +233,64 @@ export class OutputPane {
     const step = this.session().controller.step(this.session().target);
     return step ? noOutputSentence(step) : null;
   }
-  /** The step's data: its output once known, and the trigger's test event. */
+  /** The step's data: its output once known, its pinned output, and the trigger's test event. */
   event(): Json | undefined {
     if (this.value() !== undefined) return this.value();
-    return this.session().target === "$trigger"
-      ? this.session().controller.testEvent()
-      : undefined;
+    const { controller, target } = this.session();
+    return target === "$trigger"
+      ? controller.testEvent()
+      : controller.pinnedOutput(target);
   }
+  readonly noPinYet = "Set test output or generate a sample to pin it.";
+  readonly problem = signal("");
+  pinned() {
+    const { controller, target } = this.session();
+    return target.startsWith("$") ? null : controller.pinOfTarget(target);
+  }
+  pinnable(): boolean {
+    const { controller, target } = this.session();
+    return !target.startsWith("$") && controller.pinnable(target);
+  }
+  /** Kinds whose output comes from their input (transform, decision, parallel…): nothing to pin. */
+  computed(): boolean {
+    const { controller, target } = this.session();
+    const step = controller.step(target);
+    return (
+      !!step && !this.pinnable() && !this.noOutput() && !target.startsWith("$")
+    );
+  }
+  localOnly(): boolean {
+    const { controller, target } = this.session();
+    const key = target.replace(/~/g, "~0").replace(/\//g, "~1");
+    return controller.testData.localOnly().has(`/pins/${key}`);
+  }
+  togglePin() {
+    if (!this.pinned()) {
+      this.problem.set(this.noPinYet);
+      return;
+    }
+    this.unpin();
+  }
+  unpin() {
+    this.problem.set("");
+    this.session().controller.unpin(this.session().target);
+  }
+  keepPinned() {
+    this.session().controller.keepPinned(this.session().target);
+  }
+  async generate() {
+    const session = this.session();
+    const refused = await session.controller.generateOutput(session.target);
+    if (this.session() !== session) return;
+    this.problem.set(refused ?? "");
+    if (!refused)
+      session.announce(`Pinned a sample output for ${session.target}.`);
+  }
+  /** Set test output: the JSON editor (Edit output). */
+  setOutput() {
+    this.editing.set(true);
+  }
+  readonly editing = signal(false);
   rows() {
     const session = this.session();
     const target = session.target;
@@ -196,7 +304,8 @@ export class OutputPane {
           .kind(step.kind)
           ?.outputSchema(step, session.controller.kindContext())
       : null;
-    return schemaRows(schema);
+    // With pinned output, each field shows its value.
+    return withSamples(schemaRows(schema), this.event(), "");
   }
   filter(rows: ReturnType<OutputPane["rows"]>) {
     return filterRows(rows, this.query());

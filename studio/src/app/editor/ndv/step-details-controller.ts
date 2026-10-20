@@ -66,6 +66,7 @@ import {
 import { fingerprints, type StepFingerprints } from "../state/fingerprints";
 import {
   contractOf,
+  keepPinned as keepPin,
   ownedContract,
   pinsView,
   stampedPin,
@@ -393,6 +394,19 @@ export class StepDetailsController {
       .change(withoutPin(previous, target, at), [])
       .then((outcome) => {
         if (outcome.ok) this.offerUndo(`Unpinned ${target}.`, outcome.previous);
+      });
+  }
+  /** Keep pinned: the same output, current again (today's fingerprints). */
+  keepPinned(target: string): void {
+    const service = this.testData;
+    const entry = service.data().pins?.[target];
+    const now = this.prints().get(target);
+    if (!entry || !now) return;
+    const at = new Date().toISOString();
+    void service
+      .change(withPin(service.data(), target, keepPin(entry, now), at), [])
+      .then((outcome) => {
+        if (outcome.ok) this.host.notify(`Kept pinned output for ${target}.`);
       });
   }
   /** Pins a sample made from the step's output fields. */

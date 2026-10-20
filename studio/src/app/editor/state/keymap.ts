@@ -187,7 +187,11 @@ export const KEYMAP: readonly KeymapRow[] = [
   {
     id: "pin",
     keys: ["P"],
-    commands: { canvas: "togglePin", outline: "togglePin" },
+    commands: {
+      canvas: "togglePin",
+      outline: "togglePin",
+      stepDetails: "togglePin",
+    },
   },
   {
     id: "select-all",

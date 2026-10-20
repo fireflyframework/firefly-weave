@@ -236,7 +236,8 @@ export function withSamples(
 ): TreeRow[] {
   if (data === undefined) return rows;
   return rows.map((row) => {
-    const value = row.ref ? valueAt(data, root, row.ref) : undefined;
+    // Input rows carry their reference; output rows their pointer below the output.
+    const value = valueAt(data, root, row.ref ?? row.key);
     if (value === undefined) return row;
     const text = Array.isArray(value)
       ? `${value.length} ${value.length === 1 ? "item" : "items"}`

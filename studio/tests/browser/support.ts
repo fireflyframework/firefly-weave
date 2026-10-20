@@ -148,6 +148,9 @@ export interface ConnectedOptions {
   catalogFailures?: number;
   // Milliseconds to hold the identity answer (a slow platform check).
   identityDelay?: number;
+  // Workspace IDs; UUIDs let Studio keep this account's data on this computer.
+  tenantId?: string;
+  projectId?: string;
 }
 export interface Recorder {
   catalogPages: number;
@@ -161,6 +164,8 @@ export async function connected(
   await routeTestDataCheck(page);
   const capabilities = options.capabilities ?? allCapabilities;
   const catalog = options.catalog ?? defaultCatalog;
+  const tenant = options.tenantId ?? profile.tenantId;
+  const project = options.projectId ?? profile.projectId;
   await page.route("**/studio/session", (r) =>
     r.fulfill({
       json: {
@@ -168,7 +173,7 @@ export async function connected(
         csrfToken: "test-csrf",
         version: "1",
         mode: "connected",
-        profile,
+        profile: { ...profile, tenantId: tenant, projectId: project },
       },
     }),
   );
@@ -189,8 +194,8 @@ export async function connected(
           {
             role: "test",
             scope: {
-              tenant_id: "tenant",
-              project_id: "project",
+              tenant_id: tenant,
+              project_id: project,
               environment_id: "development",
             },
             resources: [],
@@ -202,7 +207,7 @@ export async function connected(
       },
     });
   });
-  await page.route("**/projects/project/actions?*", async (r) => {
+  await page.route(`**/projects/${project}/actions?*`, async (r) => {
     const delay = options.catalogDelays?.[recorder.catalogPages] ?? 0;
     recorder.catalogPages++;
     if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
@@ -228,17 +233,20 @@ export async function connected(
       .catch(() => undefined);
   });
   for (const entry of catalog)
-    await page.route(`**/projects/project/actions/${entry.id}/export`, (r) => {
-      recorder.exports.push(entry.id);
-      return r.fulfill({
-        json: {
-          id: entry.id,
-          name: entry.document.metadata.name,
-          version: entry.document.metadata.version,
-          document: entry.document,
-        },
-      });
-    });
+    await page.route(
+      `**/projects/${project}/actions/${entry.id}/export`,
+      (r) => {
+        recorder.exports.push(entry.id);
+        return r.fulfill({
+          json: {
+            id: entry.id,
+            name: entry.document.metadata.name,
+            version: entry.document.metadata.version,
+            document: entry.document,
+          },
+        });
+      },
+    );
   await page.route("**/studio/local/validate", (r) =>
     r.fulfill({
       json: {
