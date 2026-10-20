@@ -397,3 +397,35 @@ def test_a_refused_run_stops_at_its_action_once_the_task_retries_are_spent():
     # Seen live: the refused action fails its task, the runtime retries what is safe to retry, and the run stops at
     # the action with this incident.
     assert security.REFUSED_RUN == ("suspended", "WV-TASK-RETRIES-EXHAUSTED")
+
+
+def test_a_failed_readiness_wait_in_cleanup_keeps_the_original_error():
+    import json
+    import subprocess
+
+    class Run:
+        def platform_state(self):
+            return {"private_origins": {"network": "net"}}
+
+        def docker(self, *args, **_):
+            stdout = ""
+            if args[:2] == ("network", "inspect"):
+                stdout = json.dumps([{"Containers": {"k": {"Name": "p-keycloak-1", "IPv4Address": "10.0.0.3/24"}}}])
+            return subprocess.CompletedProcess(args, 0, stdout=stdout, stderr="")
+
+        def require(self, result):
+            return result
+
+    waits = []
+
+    def ready():
+        waits.append(1)
+        if len(waits) == 2:
+            raise AssertionError("the API was not ready within 60 seconds")
+
+    with pytest.raises(RuntimeError, match="the step's own failure"), security.identity_alias(Run(), ready=ready):
+        raise RuntimeError("the step's own failure")
+    # Without an earlier failure, the wait's own failure still surfaces.
+    waits.clear()
+    with pytest.raises(AssertionError, match="not ready"), security.identity_alias(Run(), ready=ready):
+        pass

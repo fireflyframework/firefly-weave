@@ -241,17 +241,26 @@ def identity_alias(run, ready: Any = None) -> Iterator[None]:
     ]
     run.require(run.docker("network", "disconnect", network, name))
     aliased = False
+    failed = False
     try:
         run.require(run.docker("network", "connect", "--ip", address, "--alias", IDENTITY_ALIAS, network, name))
         aliased = True
         wait()
         yield
+    except BaseException:
+        failed = True
+        raise
     finally:
         # Keycloak rejoins without the alias whatever happened, so later steps meet the same platform.
         if aliased:
             run.require(run.docker("network", "disconnect", network, name))
         run.require(run.docker("network", "connect", "--ip", address, network, name))
-        wait()
+        try:
+            wait()
+        except AssertionError:
+            # The original failure says more than a slow API afterwards; raise this one only on its own.
+            if not failed:
+                raise
 
 
 def refusal_records(text: str) -> list[dict[str, Any]]:
