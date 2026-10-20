@@ -20,6 +20,15 @@ SPDX-License-Identifier: Apache-2.0
 // platform accepts: the same fields, keys, sizes and provenance rules. A
 // shared fixture written by the platform's own models holds the two to the
 // same answers. A document Studio can't read is never half-used.
+//
+// Values follow the platform's JSON rules too: integers within ±(2^53 - 1),
+// finite numbers, text and keys without lone surrogates, and nesting at most
+// 200 levels below the document. Two differences are one-way and fail
+// closed, because a parsed value has lost its spelling: Studio refuses an
+// integer-valued number beyond 2^53 - 1 written as `1e20` (the platform reads
+// that as a float), and accepts `afterSeconds: 1.0` (the platform wants an
+// integer spelling). The 1 MB bound is checked on Studio's own compact JSON,
+// which is what Studio sends; the platform measures the bytes it receives.
 import { isInstanceKey } from "./instance-keys";
 import { TEST_DATA_MAX_BYTES, type StudioTestData } from "./test-data";
 
@@ -215,9 +224,38 @@ function aiTurns(value: unknown) {
   provenance(item);
 }
 
+/** Deepest level the platform's JSON parser reads, the document being level 0. */
+const MAX_DEPTH = 200;
+/** Whether text holds a lone surrogate (which UTF-8 can't encode). */
+const lonely = (value: string) =>
+  /[\uD800-\uDFFF]/.test(value.replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, ""));
+/** Every value of the document within the platform's JSON domain, iteratively (no stack to overflow). */
+function jsonDomain(document: unknown) {
+  const stack: [unknown, number][] = [[document, 0]];
+  while (stack.length > 0) {
+    const [value, depth] = stack.pop()!;
+    if (depth > MAX_DEPTH) refuse();
+    if (typeof value === "number")
+      check(
+        Number.isFinite(value) &&
+          (!Number.isInteger(value) || Math.abs(value) <= MAX_SAFE),
+      );
+    else if (typeof value === "string") check(!lonely(value));
+    else if (Array.isArray(value))
+      for (const item of value) stack.push([item, depth + 1]);
+    else if (isRecord(value))
+      for (const [key, item] of Object.entries(value)) {
+        check(!lonely(key));
+        stack.push([item, depth + 1]);
+      }
+  }
+}
+
 /** The document, checked field by field, or why Studio can't use it. */
 export function readTestData(value: unknown): TestDataReading {
   try {
+    // First, and without recursion: a deeply nested value never reaches JSON.stringify.
+    jsonDomain(value);
     const json = JSON.stringify(value) ?? "";
     // UTF-8 takes at most three bytes per UTF-16 unit: encode only when it could matter.
     if (

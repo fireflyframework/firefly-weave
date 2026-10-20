@@ -51,6 +51,31 @@ describe("test data documents", () => {
     expect(readTestData(document(1000)).ok).toBe(true);
     expect(readTestData(document(1001)).ok).toBe(false);
   });
+  it("refuses numbers JSON can't keep, which the platform refuses too", () => {
+    const value = (text: string) =>
+      readTestData(
+        JSON.parse(
+          `{"schemaVersion":1,"kind":"weave.studio/testData","updatedAt":"2026-10-07T10:00:00Z","input":{"value":${text},"source":"manual"}}`,
+        ),
+      ).ok;
+    expect(value("1e400")).toBe(false);
+    expect(value("[-1e400]")).toBe(false);
+    expect(value("9007199254740991")).toBe(true);
+    expect(value("1.5")).toBe(true);
+    let deep: unknown = 1;
+    for (let level = 0; level < 100_000; level++) deep = [deep];
+    expect(value(JSON.stringify(1))).toBe(true);
+    expect(
+      readTestData({
+        schemaVersion: 1,
+        kind: "weave.studio/testData",
+        updatedAt: "2026-10-07T10:00:00Z",
+        input: { value: deep, source: "manual" },
+      }).ok,
+    ).toBe(false);
+    // Parsed text can't tell 1e20 from 100000000000000000000, which the platform refuses: Studio refuses both.
+    expect(value("1e20")).toBe(false);
+  });
   it("reads the documented example", () => {
     expect(readTestData(structuredClone(testData))).toEqual({
       ok: true,

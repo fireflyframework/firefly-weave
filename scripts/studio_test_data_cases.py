@@ -69,6 +69,17 @@ FULL: dict[str, Any] = {
 }
 
 
+MAX_SAFE = 2**53 - 1
+
+
+def nested(depth: int, inner: Any, key: str | None = None) -> Any:
+    """``inner`` wrapped in ``depth`` lists (or objects under ``key``)."""
+    value = inner
+    for _ in range(depth):
+        value = {key: value} if key is not None else [value]
+    return value
+
+
 def doc(**fields: Any) -> dict[str, Any]:
     return {**copy.deepcopy(MINIMAL), **copy.deepcopy(fields)}
 
@@ -184,6 +195,42 @@ CASES: tuple[tuple[str, Any], ...] = (
         "characters beyond the Basic Multilingual Plane",
         doc(humans={"approval": {"decision": "ok \U0001f600", "data": {}}}),
     ),
+    # Data values follow the platform's JSON rules: safe integers, text without lone surrogates, bounded nesting.
+    ("the largest safe integer in a value", doc(input={"value": MAX_SAFE, "source": "manual"})),
+    ("the smallest safe integer in a value", doc(input={"value": -MAX_SAFE, "source": "manual"})),
+    ("an integer beyond 2^53 - 1 in a value", doc(input={"value": MAX_SAFE + 1, "source": "manual"})),
+    ("an integer below -(2^53 - 1) in an output", doc(pins={"send": {**PIN, "output": {"n": -MAX_SAFE - 1}}})),
+    ("an integer JSON can't keep exactly", doc(input={"value": [MAX_SAFE + 2], "source": "manual"})),
+    ("a twenty-digit integer in a payload", doc(signals={"s": {"payload": 10**20}})),
+    ("a lone high surrogate in a value", doc(input={"value": "\ud800", "source": "manual"})),
+    ("a lone low surrogate nested in a value", doc(input={"value": {"a": ["\udc00"]}, "source": "manual"})),
+    ("a lone surrogate in a value's key", doc(humans={"h": {"decision": "a", "data": {"\ud800": 1}}})),
+    (
+        "a lone surrogate in AI memory",
+        doc(aiTurns={"a": {"turns": [], "memory": [{"role": "user", "content": "\udfff"}]}}),
+    ),
+    ("a lone surrogate in an AI turn", doc(aiTurns={"a": {"turns": [{"text": "\ud800"}]}})),
+    (
+        "a lone surrogate in a callee mock",
+        doc(workflows={"n@1.0.0": {"mocks": {"s": {"output": "\ud800", "source": "manual"}}}}),
+    ),
+    ("a surrogate pair in a value", doc(input={"value": {"\U0001f600": "\U0001f600"}, "source": "manual"})),
+    ("a value nested as deep as the platform reads", doc(input={"value": nested(198, 1), "source": "manual"})),
+    ("a value nested one level too deep", doc(input={"value": nested(199, 1), "source": "manual"})),
+    ("empty lists nested as deep as the platform reads", doc(input={"value": nested(198, []), "source": "manual"})),
+    ("empty lists nested one level too deep", doc(input={"value": nested(199, []), "source": "manual"})),
+    ("an output nested as deep as the platform reads", doc(pins={"send": {**PIN, "output": nested(197, 1)}})),
+    ("an output nested one level too deep", doc(pins={"send": {**PIN, "output": nested(198, 1)}})),
+    ("objects nested 300 deep", doc(input={"value": nested(300, {}, "a"), "source": "manual"})),
+    # The bounds of frames, callee references, AI memory and delays, each side.
+    ("a frame of 1024 characters", doc(signals={"s": {"outcome": "timeout", "frame": "f" * 1024}})),
+    ("a frame of 1025 characters", doc(signals={"s": {"outcome": "timeout", "frame": "f" * 1025}})),
+    ("a callee reference of 300 characters", doc(workflows={"c" * 294 + "@1.0.0": {"mocks": {}}})),
+    ("a callee reference of 301 characters", doc(workflows={"c" * 295 + "@1.0.0": {"mocks": {}}})),
+    ("200 AI memory messages", doc(aiTurns={"a": {"turns": [], "memory": [{"role": "user", "content": "x"}] * 200}})),
+    ("201 AI memory messages", doc(aiTurns={"a": {"turns": [], "memory": [{"role": "user", "content": "x"}] * 201}})),
+    ("the largest delay", doc(signals={"s": {"payload": 1, "afterSeconds": MAX_SAFE}})),
+    ("a delay of 2^53", doc(signals={"s": {"payload": 1, "afterSeconds": MAX_SAFE + 1}})),
 )
 
 
