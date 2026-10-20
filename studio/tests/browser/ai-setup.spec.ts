@@ -610,7 +610,7 @@ test("saves Weave AI on a cloud connection with a suggested model, keeping its l
     page.getByRole("option", { name: /ollama-local/ }),
   ).not.toHaveAttribute("aria-disabled", "true");
   await page.getByRole("option", { name: /openai · revision 1/ }).click();
-  await expect(card).not.toContainText("Small local models");
+  await expect(card).not.toContainText("Local models sometimes");
   await expect(card.getByLabel("Model", { exact: true })).toHaveValue(
     "gpt-5-mini",
   );
@@ -649,7 +649,7 @@ test("Weave AI can run on a keyless local Ollama connection", async ({
     "qwen3:4b",
   );
   await expect(card.getByRole("note")).toContainText(
-    "Small local models often fail to produce valid changes. Use a larger model when you want Weave AI to propose changes.",
+    "Local models sometimes propose changes with problems. Check each proposal's problems before you apply it, or use a larger model.",
   );
   await card.getByRole("button", { name: "Save Weave AI settings" }).click();
   await expect.poll(() => platform.lumiWrites.length).toBe(1);

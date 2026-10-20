@@ -126,7 +126,7 @@ for the connection's endpoint (`contextTokens`):
 
 | Context size | When | What Weave AI sends |
 | --- | --- | --- |
-| Compact | Under 16k tokens, such as a local Ollama model | A short authoring guide, an outline of the draft (each step's ID, kind and action) with the selected step whole, attachments, and the last 4 messages, in at most 4,096 tokens |
+| Compact | Under 16k tokens, such as a local Ollama model | A short authoring guide, the draft whole when it fits its share (otherwise an outline of each step's ID, kind and action with the selected step whole), attachments, and the last 4 messages, in at most 4,096 tokens |
 | Standard | 16k to 64k tokens | The guide, the workflow schema, the whole draft up to 32 KiB (an outline above that), attachments, and the last 8 messages |
 | Full | Over 64k tokens, or when the policy records no size | Every authoring schema, the whole draft, attachments, and the last 16 messages |
 
@@ -146,12 +146,14 @@ conversation, so less history is sent. The same check can stop an answer that
 is meant to repeat itself, such as a decision table with many identical rows or
 a long list of the same value; the answer is then not used, never applied.
 
-Small local models often fail to produce valid changes. On the compact size
-Weave AI sees an outline of your draft, so a change to an existing draft has
-to guess the values of the steps it does not see. Local models explain drafts
-and runs and write small new documents more reliably than they change existing
-ones. Use a larger model when you want Weave AI to propose changes, and check
-each proposal's problems before you apply it.
+Local models sometimes propose changes with problems. In our checks on Ollama
+with `qwen3:4b`, which `weave platform ai enable` offers by default, 4 of 5
+proposals for a new workflow and 4 of 5 proposals that changed a small draft
+were valid; smaller models such as `llama3.2:3b` and `qwen2.5:1.5b` seldom
+wrote a valid proposal. A draft too large for the compact size is sent as an
+outline, so a change to it has to guess the values of the steps it does not
+see. Check each proposal's problems before you apply it, use **Ask Weave AI to
+fix**, or use a larger model.
 
 A run attachment holds only the run's facts: the workflow's name and version,
 its status and times, failed steps with their error codes, the number of open

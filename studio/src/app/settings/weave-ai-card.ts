@@ -133,8 +133,8 @@ import {
         }
         @if (chosen && local(chosen)) {
           <p class="notice" data-tone="info" role="note">
-            Small local models often fail to produce valid changes. Use a larger
-            model when you want Weave AI to propose changes.
+            Local models sometimes propose changes with problems. Check each
+            proposal's problems before you apply it, or use a larger model.
           </p>
         }
         @if (!usable.length) {
@@ -252,7 +252,7 @@ export class WeaveAiCard implements DoCheck, OnDestroy {
     );
   }
   /** Why the saved connection is not the one shown, when it isn't. */
-  /** A local model without a key; measured, small local models seldom write valid changes. */
+  /** A local model without a key: its proposals are worth checking before they are applied. */
   readonly local = keylessConnection;
   get connectionNote(): string {
     const id = this.draft.connection;

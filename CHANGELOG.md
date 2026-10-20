@@ -24,9 +24,9 @@ SPDX-License-Identifier: Apache-2.0
   `ollama-local`, sending no credential, and `weave platform ai enable` turns it
   on with the tested model unless Weave AI is already set up. Each request is
   sized to the model's context: compact (under 16k tokens) sends a short guide,
-  an outline of the draft with the selected step whole and the last four
-  messages in at most 4,096 tokens; standard and full send more. **Context
-  size** on the Weave AI card overrides the choice.
+  the draft whole when it fits (otherwise an outline with the selected step
+  whole) and the last four messages in at most 4,096 tokens; standard and full
+  send more. **Context size** on the Weave AI card overrides the choice.
 - A run attached to a Weave AI question carries only its run facts (workflow,
   status, times, failed steps with error codes, open incidents and the last five
   steps), never its input, outputs or logs.
