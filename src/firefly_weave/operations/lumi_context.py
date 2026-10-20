@@ -241,6 +241,7 @@ def run_context(summary: RunSummary, steps: Sequence[StepFact], *, partial: bool
         (item for item in steps if item.scheduled_at or item.started_at or item.ended_at),
         key=lambda item: cast(datetime, item.ended_at or item.started_at or item.scheduled_at),
     )
+
     def code(value: str | None) -> JsonValue:
         return value if value is not None and ERROR_CODE.fullmatch(value) else None
 
