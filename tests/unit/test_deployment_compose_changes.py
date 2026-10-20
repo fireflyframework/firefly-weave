@@ -362,3 +362,12 @@ async def test_a_lowering_plan_made_on_another_state_is_refused_before_any_chang
     with pytest.raises(RunnerPolicyError):
         await ComposeAdapter(config, command=project.command).apply(plan, renewed)
     assert "stop" not in project.verbs() and len(project.containers) == 3
+
+
+async def test_the_victims_stop_fits_the_runner_command_bound():
+    """Stopping reviewed victims waits their 240 s grace; the runner's command bound must allow it, or every real
+    scale-down fails right after the override was written and the job ends ambiguous."""
+    from firefly_weave.deployment_runner.command import MAX_COMMAND_SECONDS, run_command
+
+    assert STOP_GRACE_SECONDS + 60 <= MAX_COMMAND_SECONDS
+    assert await run_command(["/bin/sh", "-c", "exit 0"], timeout=STOP_GRACE_SECONDS + 60) == b""
