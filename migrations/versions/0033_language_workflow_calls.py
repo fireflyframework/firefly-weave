@@ -120,6 +120,9 @@ def control_accounting() -> None:
     its requested calls and abandons undelivered results), and otherwise to the child it started (the child's
     terminal write records its outcome there), or to the caller when no child exists yet. Each run's reserve holds
     room for every call row its stop can still change: its undelivered calls, and its own call row as a child.
+
+    A caller's ordinary write to a started call row refreshes the child's reserve, against the run-before-call-row lock
+    order; the project's operation lock, taken first by every mutating transaction, serializes the two writers.
     """
     anchor = "IF relation_name='runs' THEN RETURN (item->>'id')::uuid; END IF;"
     patch_function(

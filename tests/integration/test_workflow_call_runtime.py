@@ -863,17 +863,21 @@ async def test_a_child_start_refused_the_same_way_every_time_rejects_the_call(pl
     assert (await state(platform, run.id))["incident"] == "WV-CALL-START"
 
 
-async def exhaust_quota(platform) -> None:
-    """Spend the project's whole ordinary byte quota, as a project at its limit has."""
+async def exhaust_quota(platform, *, overdrawn: int = 0) -> None:
+    """Spend the project's whole ordinary byte quota, as a project at its limit has.
+
+    ``overdrawn`` sets the limit that many bytes below the usage, so no write a stop frees first can make room for
+    an ordinary byte of growth later in the same transaction.
+    """
     async with platform.access_db[1].begin() as owner:
         await owner.execute(
             text(
                 "UPDATE operation_policy SET limits=jsonb_set(jsonb_set(limits,'{ordinary_bytes}',to_jsonb((SELECT "
-                "sum(value) FROM operation_usage WHERE metric='ordinary_bytes' AND project_id=:p)::bigint)),"
+                "sum(value) FROM operation_usage WHERE metric='ordinary_bytes' AND project_id=:p)::bigint-:overdrawn)),"
                 "'{control_bytes}',to_jsonb((SELECT sum(value) FROM operation_usage WHERE metric IN "
                 "('control_bytes','control_reserved') AND project_id=:p)::bigint))"
             ),
-            {"p": platform.scope.project_id},
+            {"p": platform.scope.project_id, "overdrawn": overdrawn},
         )
 
 
@@ -1278,3 +1282,65 @@ async def test_a_call_that_cannot_start_at_full_quota_waits_and_never_stops_the_
     [row] = await calls(platform, waiting.id)
     assert (row["status"], row["child_run_id"]) == ("requested", None)
     assert (await state(platform, child["child_run_id"]))["status"] == "cancelled"
+
+
+async def test_a_call_that_must_be_rejected_at_full_quota_never_stops_the_cancellation_of_others(platform):
+    leaf = await activate(platform, HOLD)
+    held = await start(platform, await activate(platform, caller("orders", call("hold", "hold@1.0.0")), hold=leaf.id))
+    await scan(platform)
+    [child] = await calls(platform, held.id)
+    retired = await activate(platform, NOTIFY)
+    refused = await start(
+        platform, await activate(platform, caller("notices", call("notify", "notify@1.0.0")), notify=retired.id)
+    )
+    await platform.definitions.retire_activation(
+        platform.actor, platform.scope, retired.id, str(uuid4()), 1, context=AuditContext()
+    )
+    await exhaust_quota(platform)
+    await cancel(platform, held.id)
+    # The rejection cannot be written under the spent quota; the cancellation of the other caller's child still runs.
+    await scan(platform, 2)
+    assert (await state(platform, child["child_run_id"]))["status"] == "cancelled"
+    [row] = await calls(platform, refused.id)
+    assert (row["status"], row["child_run_id"]) == ("requested", None)
+
+
+async def test_a_caller_cancelled_at_full_quota_abandons_a_failed_result_it_never_received(platform):
+    leaf = await activate(platform, REFUSE)
+    run = await start(
+        platform, await activate(platform, caller("checks", call("check", "refuse@1.0.0")), refuse=leaf.id)
+    )
+    from firefly_weave.access.scheduler import _CATALOG_AUTHORITY, _SchedulerScope
+
+    # One scan starts the child, which fails at once; its result is delivered only by a later scan.
+    await platform.recovery._scan_scheduled(_SchedulerScope(platform.scope, _CATALOG_AUTHORITY), 10)
+    [row] = await calls(platform, run.id)
+    assert (row["status"], row["delivered"]) == ("failed", False)
+    await exhaust_quota(platform, overdrawn=1 << 20)
+    await cancel(platform, run.id)
+    assert (await state(platform, run.id))["status"] == "cancelled"
+    [row] = await calls(platform, run.id)
+    assert row["status"] == "abandoned"
+
+
+async def test_each_undelivered_call_and_each_child_link_reserve_room_for_their_stop(platform):
+    leaf = await activate(platform, HOLD)
+    run = await start(platform, await activate(platform, caller("orders", call("hold", "hold@1.0.0")), hold=leaf.id))
+    await scan(platform)
+    [row] = await calls(platform, run.id)
+
+    async def reserve(identifier) -> int:
+        async with platform.access_db[1].begin() as owner:
+            await owner.execute(text("SELECT weave_reserve_refresh('run',:id,false)"), {"id": identifier})
+            return await owner.scalar(
+                text("SELECT amount FROM operation_reservations WHERE kind='run' AND resource_id=:id"),
+                {"id": identifier},
+            )
+
+    caller_before, child_before = await reserve(run.id), await reserve(row["child_run_id"])
+    async with platform.access_db[1].begin() as owner:
+        # Without its call row and its link, each run's stop needs exactly 1 KiB less.
+        await owner.execute(text("UPDATE run_calls SET delivered=true WHERE id=:id"), {"id": row["id"]})
+        await owner.execute(text("DELETE FROM run_call_links WHERE run_id=:id"), {"id": row["child_run_id"]})
+    assert caller_before - await reserve(run.id) == 1024
+    assert child_before - await reserve(row["child_run_id"]) == 1024
