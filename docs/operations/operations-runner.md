@@ -223,6 +223,17 @@ more than 100 live containers, or a container whose details cannot be read, the
 observation leaves the members out (placement unknown) and still succeeds. A
 service that sets its own `hostname` gets no placement.
 
+**Scale-downs and restarts.** Any plan that lowers a worker service's replicas
+names the containers it removes: exited containers first, then the highest
+Compose numbers. The runner checks that each named container is one live
+container of the service, stops them together with a 240-second grace period
+(they were drained first), removes them, and only then scales, so Compose never
+picks which workers go. A restart (`restart_workers`) recreates every container
+of the service at the same count and succeeds only when no old container is
+left. The Compose runner registers adapter version 2, which the platform
+requires before it hands the runner a scale-down; runners of earlier releases
+never get one.
+
 ### Kubernetes
 
 The adapter manages **existing deployments**, not arbitrary resources. Each

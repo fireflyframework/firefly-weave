@@ -249,14 +249,14 @@ async def test_the_token_relay_carries_credentials_only_where_an_entry_allows_th
 
 async def test_the_fixture_reports_an_unknown_outcome_only_when_faults_are_turned_on(monkeypatch):
     """O-J9 opens an incident through the fixture: {"fail": "unknown"} reports an unknown outcome, and only on a
-    fixture service the journey started with WEAVE_FIXTURE_FAULTS=1; the platform's own workers never do."""
+    fixture service the journey started with WEAVE_FIXTURE_FAULTS=1; the platform's own workers ignore the field,
+    so retrying the step on them succeeds."""
     from firefly_weave.contracts.connectors import ConnectorFailure
 
     module = fixture()
     lease = SimpleNamespace(input={"ms": 0, "fail": "unknown"})
     monkeypatch.delenv("WEAVE_FIXTURE_FAULTS", raising=False)
-    with pytest.raises(ValueError, match="Faults are off"):
-        await module.sleep(lease)
+    assert await module.sleep(lease) == {"slept_ms": 0}
     monkeypatch.setenv("WEAVE_FIXTURE_FAULTS", "1")
     with pytest.raises(ConnectorFailure) as fault:
         await module.sleep(lease)

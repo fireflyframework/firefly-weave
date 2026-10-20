@@ -188,6 +188,36 @@ Agentic worker; `weave platform start` and `up` start them again. See
 [Run AI tasks with Ollama](ollama.md) for Ollama on this computer, other models
 and troubleshooting.
 
+## 8. Try infrastructure changes on this computer (development only)
+
+`weave platform up` also sets up local operations, so you can scale, update and
+restart workers through reviewed change requests without a cluster:
+
+- a local image registry on `127.0.0.1`;
+- the sleep fixture worker `example-sleep@1.0.0`, admitted as a release;
+- a workers project with the component `fixture-worker` at 0 replicas, on the
+  platform network, which you own and change only through change requests;
+- the target `local-docker` and its runner `runner-local-docker`, which reads
+  and changes that project; one person may approve their own changes on it.
+
+Expected: the summary shows `Operations: target local-docker, runner
+runner-local-docker, registry ...`, and `weave platform status` shows
+`Operations: ready, runner online, target local-docker` within a minute. Then open **Clusters** in Studio and
+choose **New change request** on `local-docker`; see
+[Request a change](../operations/cluster-management.md#request-a-change).
+
+The runner mounts the Docker socket: it can control the whole Docker engine,
+which on Docker Desktop and Colima means the virtual machine, and on Linux the
+host. `weave platform doctor` says so. Use it for development only, and skip it
+with `up --no-operations`; rerun `up` without the flag to add it later. A setup
+that stops part way resumes where it stopped on the next `up`.
+
+Local operations add development-only private-origin entries: the workers reach
+the API and the identity provider on the platform network, and sign in through
+their own loopback relay; the runner signs in on loopback. `weave platform stop`
+stops the fixture workers first, giving each up to 240 seconds to finish its
+tasks, then the platform.
+
 ## If something goes wrong
 
 | What you see | What to do |

@@ -490,8 +490,9 @@ Commands that call a platform are thin adapters over the typed SDK and use the
 canonical `/api/v1/tenants/...` paths. The public families are `remote`,
 `definitions` (with `drafts` and `activations`), `connections`, `runs` (with
 `incidents` and `debug`), `workers` (with `releases`), `triggers` (with
-`schedules`), and the integration, human-work, email, and administration
-families listed [above](#pick-the-command-family). Install the `client` extra.
+`schedules`), `operations` (with `change-requests`, `targets`, `deployments`,
+`plans`, `jobs` and `runners`), and the integration, human-work, email, and
+administration families listed [above](#pick-the-command-family). Install the `client` extra.
 
 ### Choose the platform and workspace
 

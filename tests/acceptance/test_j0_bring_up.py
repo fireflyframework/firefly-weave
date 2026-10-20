@@ -145,6 +145,11 @@ def _expect_operations_entries(run, document, value):
         key=lambda entry: (entry["origin"], entry["purpose"]),
     )
     assert value["operations"]["runner"] == "runner-local-docker"
+    # The runner of local-docker is online within 60 s of up.
+    deadline = time.monotonic() + 60
+    while run.status()["operations"]["runner"] != "online":
+        assert time.monotonic() < deadline, "the local-docker runner is not online 60 s after up"
+        time.sleep(2)
 
 
 # Roles a person also needs on the demo project. An environment grant does not cover project operations
@@ -341,6 +346,81 @@ async def test_j0_09_the_child_workflow_is_active_and_callable_in_the_demo_envir
     assert not read.get("workflow_call_pins")
     assert "callable" in exported["document"]["spec"] and exported.get("retired", False) is False
     run.save_private("child-workflow", {**child, "activation_id": activation["id"]})
+
+
+CHANGE_SECONDS = 600
+
+
+def _until(read, done, seconds: float, what: str):
+    """Read again every 2 s until ``done(value)``; the last value."""
+    deadline = time.monotonic() + seconds
+    while True:
+        value = read()
+        if done(value):
+            return value
+        assert time.monotonic() < deadline, f"{what} after {seconds:.0f} s: {json.dumps(value)[:600]}"
+        time.sleep(2)
+
+
+@pytest.mark.journey_step("J0.10")
+async def test_j0_10_a_change_request_scales_the_fixture_worker_on_local_docker(run):
+    """As the operator, through weave operations: request one fixture worker on local-docker, approve the plan
+    (one person may on the targets platform up creates), apply it; Workers then lists it on local-docker."""
+    async with run.cli("operator") as weave:
+        targets = weave("operations", "targets", "list", "--limit", "100")["items"]
+        (target,) = [item for item in targets if item["name"] == "local-docker"]
+        assert target.get("approval_policy", {}).get("distinct_approver") is False
+        deployments = weave("operations", "deployments", "list", "--limit", "100")["items"]
+        (deployment,) = [item for item in deployments if item["target_id"] == target["id"]]
+        created = weave(
+            *("operations", "change-requests", "create", "--idempotency-key", f"j0-10-{run.run_id}"),
+            request={
+                "target_id": target["id"],
+                "deployment_id": deployment["id"],
+                "expected_deployment_revision": deployment["revision"],
+                "intent": "scale_workers",
+                "components": ["fixture-worker"],
+                "desired": [{"name": "fixture-worker", "replicas": 1}],
+                "title": "Scale fixture-worker to 1",
+            },
+        )
+
+        def read():
+            return weave("operations", "change-requests", "read", created["id"])
+
+        ready = _until(read, lambda item: item["state"] != "observing", CHANGE_SECONDS, "still observing")
+        assert ready["state"] == "ready_to_plan", ready
+        planned = weave("operations", "change-requests", "advance", created["id"], "--revision", str(ready["revision"]))
+        assert planned["state"] == "awaiting_approval" and planned["drain_set"] == [], planned
+        approved = weave(
+            "operations", "change-requests", "approve", created["id"], request={"digest": planned["plan_digest"]}
+        )
+        assert approved["state"] == "approved"
+        weave(
+            *(
+                "operations",
+                "change-requests",
+                "apply",
+                created["id"],
+                "--idempotency-key",
+                f"j0-10-apply-{run.run_id}",
+            ),
+            request={"digest": planned["plan_digest"]},
+        )
+        done = _until(read, lambda item: item["state"] not in {"applying"}, CHANGE_SECONDS, "still applying")
+        assert done["state"] == "succeeded", done
+
+        def online():
+            return [
+                item
+                for item in weave("workers", "list", "--limit", "100")["items"]
+                if "example-sleep@1.0.0" in item.get("task_types", []) and item.get("presence") == "recent"
+            ]
+
+        (worker,) = _until(online, lambda items: len(items) == 1, 120, "no online fixture worker")
+    placement = worker.get("placement") or {}
+    assert (placement.get("target_name"), placement.get("component")) == ("local-docker", "fixture-worker"), worker
+    run.save_private("fixture-worker", {"worker_id": worker["id"], "change_request_id": created["id"]})
 
 
 @pytest.mark.journey_step("J0.14")

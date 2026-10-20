@@ -143,6 +143,7 @@ def test_the_committed_map_is_valid():
         "ai-gateway",
         "ai-models-screen",
         "run-views",
+        "compose-operations",
         "acceptance-foundations",
         "real-platform-journeys",
     ]
@@ -152,6 +153,10 @@ def test_the_committed_map_is_valid():
     assert enablement.applies("J0.12", "ai") and not enablement.applies("J0.12", "pr")
     assert enablement.missing("J0.3/owner-roles") == ()
     assert enablement.missing("J5.1") == ()
+    # Local operations landed: the compose-gated steps run, those that also need metrics, logs or alerts wait.
+    for step in ("J0.3/operations", "J0.10", "J5.2", "J5.3", "J5.7", "J9.2/operations-controls"):
+        assert enablement.missing(step) == (), step
+    assert enablement.missing("J5.4") == ("metrics",)
     assert enablement.applies("J5.1", "pr") and not enablement.applies("J5.1", "ai")
     assert enablement.journey_steps("J1") == tuple(f"J1.{n}" for n in range(1, 11))
     assert enablement.journey_steps("J2") == tuple(f"J2.{n}" for n in range(1, 10))

@@ -63,7 +63,7 @@
 "run-view-contracts" = false
 "operations-studio" = false
 "run-views" = true
-"compose-operations" = false
+"compose-operations" = true
 "kubernetes-operations" = false
 "metrics" = false
 "logs" = false

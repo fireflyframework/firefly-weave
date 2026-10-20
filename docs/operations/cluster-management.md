@@ -296,6 +296,108 @@ The [API inventory](../reference/api.md#deployment-operations-authority) lists
 the same authority checks. Python applications use the canonical models with
 [WeaveClient.invoke](../reference/sdk.md#deployment-operations-through-the-sdk).
 
+## Request a change
+
+A **change request** runs the steps above for you. You say what to change; the
+platform checks the target, makes the plan, waits for an approval, lets the
+affected workers finish their tasks, applies the plan and follows the runner to
+the end. Plans still expire and approvals still sign the exact plan. In Studio,
+choose **New change request** on a target card or on **Clusters › Change
+requests**; the progress view shows each step as it happens.
+
+What a change request can do:
+
+| Intent | What changes | Workers finish first |
+|---|---|---|
+| `scale_workers` | The number of workers of the selected components | When it lowers the number |
+| `update` | Image, release, CPU or memory | When it also lowers the number |
+| `deploy` | The trusted local template (Compose only) | When it also lowers the number |
+| `restart_workers` | Nothing: every worker is replaced at the same count | When you keep **Let workers finish their tasks first** on (the default) |
+
+### States
+
+| State | Meaning |
+|---|---|
+| `observing` | The runner is reading the target |
+| `ready_to_plan` | The target was read; the plan is made next |
+| `awaiting_approval` | The plan waits for an approval |
+| `approved` | Approved; ready to let workers finish, then apply |
+| `draining` | The workers the plan removes or restarts finish their tasks and take no new ones |
+| `applying` | The runner applies the plan and verifies it |
+| `succeeded` | Applied and verified |
+| `failed` | The plan no longer fit the target, the runner refused it, or nobody claimed the job before its deadline |
+| `reconciliation_required` | The runner may have changed something; see [step 7](#7-verify-the-receipt-or-reconcile-uncertainty) |
+| `expired` | The plan expired before it was applied |
+| `declined`, `cancelled` | Someone ended it, with a reason |
+| `superseded` | The target or deployment changed while the change was being planned |
+
+An `expired`, `superseded`, or `failed` change whose failure means nothing was
+applied (`WV-PLAN-STALE`, `WV-PRECONDITION-FAILED`, `WV-DRAIN-WINDOW` or
+`WV-JOB-CANCELLED`) can be **re-observed and re-planned** in one step. A change
+that ends without applying anything puts the workers it drained back to work,
+and so does a change that succeeds, except for the workers its plan removed.
+Each such resume is audited.
+
+### The drain window
+
+A change that lets workers finish needs time to do it before the plan expires:
+
+- The plan must live at least the drain timeout plus 3 minutes. Left out, the
+  plan lives 10 minutes, or 15 when the change lets workers finish.
+- Draining starts only while the plan has the drain timeout plus 2 minutes
+  left, so an apply forced after the timeout still lands in time. Studio counts
+  down to that moment ("Approve within m:ss").
+
+For example, with the default 5-minute drain timeout, the plan must live at
+least 8 minutes, and draining must start with at least 7 minutes of the plan
+left. A change whose window closed answers `WV-DRAIN-WINDOW`; re-plan it.
+
+Apply waits until every drained worker holds no task (`WV-DRAIN-PENDING`).
+After the drain timeout, a person with `worker.drain` may force the apply with a
+reason, which is audited.
+
+### Which workers a scale-down removes
+
+Any plan that lowers a worker component's replicas is a scale-down, whatever
+its intent. The plan names the members it removes, by one rule: stopped
+containers first, then the highest container numbers (Compose) or unready pods,
+then the most recently started (Kubernetes). Those workers are the ones that
+finish their tasks first. The Compose runner stops and removes exactly those
+containers before it scales, so Compose never chooses. A scale-down whose
+observation does not list every member answers `WV-PLAN-STALE`; observe again.
+Only runners that register adapter version 2 take scale-downs: today, Compose
+runners.
+
+### A second approver
+
+Targets need a second approver by default: the person who requested the change
+and the person who made its plan cannot approve it (`WV-APPROVAL-SELF`, 403).
+See [Who counts as a second approver](#who-counts-as-a-second-approver). The
+target `local-docker` that `weave platform up` creates turns it off, so one
+person can try changes on their own computer. To change it, use the target's
+**A second person must approve changes** switch in Studio, or send
+`approval_policy` with `weave operations targets update`; either needs
+`environment.manage` and is audited as `deployment_target.approval_policy`.
+Turn it on for shared environments.
+
+### From the CLI
+
+```sh
+# Request one fixture worker on local-docker; the platform reads the target first.
+weave operations change-requests create --request change.json --idempotency-key change-01
+weave operations change-requests read "$CHANGE_ID"
+# Once it reads ready_to_plan, make the plan with the revision you read.
+weave operations change-requests advance "$CHANGE_ID" --revision "$REVISION"
+weave operations change-requests approve "$CHANGE_ID" --request reviewed-digest.json
+weave operations change-requests drain "$CHANGE_ID" --idempotency-key drain-01
+weave operations change-requests apply "$CHANGE_ID" --request reviewed-digest.json --idempotency-key apply-01
+```
+
+`change.json` names `target_id`, `deployment_id`,
+`expected_deployment_revision`, `intent`, `components`, optional `desired`
+values, `drain` (`mode` and `timeout_seconds`, 60–600), `title` and `reason`.
+`decline` and `cancel` take a `reason`.
+
 ## Current bounds
 
 Each environment permits up to 100 targets, desired deployments, and runner
@@ -306,6 +408,9 @@ command for those records. Restarting a runner with the same application,
 target, adapter version, and capabilities reuses its non-revoked logical
 registration. Revoked registrations are never revived. Keep the collection
 limits in view when operating a long-lived environment.
+
+Change requests: one active change request per target, up to 10,000 per
+environment, and ended change requests are removed 90 days after they end.
 
 Observations expire after 15 minutes. Plans last 30–900 seconds, bounded by
 their observation's expiry. Jobs have a 15-minute deadline and renewable

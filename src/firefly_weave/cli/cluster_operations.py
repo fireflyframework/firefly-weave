@@ -33,8 +33,9 @@ from firefly_weave.cli.remote import command, family, machine_result
 def operations() -> None:
     """Manage container destinations with reviewed plans and an outbound runner.
 
-    Request a change, let the platform observe the target and plan it, approve
-    the plan, then apply it; or observe, plan, approve and apply step by step. The runner keeps provider credentials locally.
+    Request a change and let the platform observe the target and plan it, then
+    approve and apply the plan. Observe, plan, approve and apply step by step
+    with the low-level families. The runner keeps provider credentials locally.
     `summary` and `telemetry` read the environment's platform health and the
     project's telemetry settings.
     """

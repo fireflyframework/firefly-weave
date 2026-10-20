@@ -56,11 +56,10 @@ def capacity(environ: Mapping[str, str]) -> int:
 
 
 async def sleep(lease: Any) -> dict[str, int]:
-    if lease.input.get("fail") == "unknown":
+    if lease.input.get("fail") == "unknown" and os.environ.get("WEAVE_FIXTURE_FAULTS") == "1":
         # A test fault: report an outcome the platform cannot know, so it opens an incident. Only a fixture
-        # service started with WEAVE_FIXTURE_FAULTS=1 does; the platform's own workers refuse the input.
-        if os.environ.get("WEAVE_FIXTURE_FAULTS") != "1":
-            raise ValueError("Faults are off on this fixture worker")
+        # service started with WEAVE_FIXTURE_FAULTS=1 does; every other fixture worker ignores the field and
+        # sleeps, so retrying the step on one of them succeeds.
         raise ConnectorFailure("FIXTURE_FAULT", "unknown")
     milliseconds = int(lease.input["ms"])
     await asyncio.sleep(milliseconds / 1000)
