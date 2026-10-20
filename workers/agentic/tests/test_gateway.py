@@ -1224,3 +1224,41 @@ async def test_a_whole_prompt_the_estimate_overcounts_is_answered(tmp_path):
     async with gateway(tmp_path, builder=whole) as client:
         response = await client.post("/v1/lumi", json=ask, headers=AUTH)
     assert response.status_code == 200, response.text
+
+
+async def test_ask_weave_ai_to_fix_reaches_the_model_through_the_real_route(tmp_path):
+    # The API's own client builds the body; the gateway's own route validates and answers it.
+    from firefly_weave.contracts.lumi import LumiAskRequest, LumiConfiguration
+    from firefly_weave.operations.lumi_gateway import LumiGatewayClient, LumiGatewaySettings
+
+    calls = []
+    token = tmp_path / "token"
+    token.write_text("service-token")
+    app = create_app(
+        ollama_gateway_policy(tmp_path),
+        token,
+        model_builder=lambda *_: reply_model(calls),
+        transport_factory=fake_ollama([]),
+    )
+    client = LumiGatewayClient(
+        LumiGatewaySettings(endpoint="https://gateway.invalid/v1/lumi", token_file=str(token)),
+        transport=httpx.ASGITransport(app=app),
+    )
+    configuration = LumiConfiguration.model_validate(
+        {
+            "enabled": True,
+            "connection_revision_id": "22222222-2222-4222-8222-222222222222",
+            "revision": 1,
+            "profile": {
+                "provider": "openai-chat",
+                "model": "qwen2.5:1.5b",
+                "options": {"max_tokens": 512},
+                "timeoutSeconds": 5,
+                "outputSchema": LUMI_REPLY_SCHEMA,
+            },
+        }
+    )
+    request = LumiAskRequest(message="Fix the proposal", fix=True, draft={"format": "yaml", "source": "a: 1"})
+    shaped = {"profile": "compact", "draft": {"format": "yaml", "source": "a: 1"}}
+    reply = await client.ask(configuration, request, shaped, {"endpoint": "http://ollama:11434/v1"}, None)
+    assert reply.answer == "Ready" and len(calls) == 1

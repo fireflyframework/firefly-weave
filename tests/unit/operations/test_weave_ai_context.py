@@ -776,3 +776,17 @@ def test_a_compact_request_sends_a_draft_that_fits_whole():
     )
     assert shaped.context["draft"] == {"format": "yaml", "source": small}
     assert "trimmed" not in shaped.context
+
+
+async def test_only_a_fix_request_sends_the_problems_of_a_draft_over_its_share(monkeypatch):
+    from firefly_weave.contracts.lumi import LumiAskRequest, LumiReply
+
+    large = broken_proposal(steps=200)
+    fix = LumiAskRequest(message="Fix the proposal", fix=True, draft={"format": "yaml", "source": large})
+    _, spy = await ask_through_the_service(monkeypatch, fix, LumiReply(answer="Fixed."))
+    sent = spy.await_args.args[2]["draft"]
+    assert "outline" in sent and sent["problems"] and [step["id"] for step in sent["diagnosed"]] == ["step-1"]
+    ordinary = fix.model_copy(update={"fix": False})
+    _, spy = await ask_through_the_service(monkeypatch, ordinary, LumiReply(answer="Explained."))
+    sent = spy.await_args.args[2]["draft"]
+    assert "outline" in sent and "problems" not in sent and "diagnosed" not in sent

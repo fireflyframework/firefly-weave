@@ -685,3 +685,38 @@ def test_a_context_limit_without_a_known_size_says_so_without_a_number():
     assert unknown.message == "The prompt is too long for this model's context."
     known = weave_ai_problem("LLM_CONTEXT_LIMIT", configuration, "http://ollama:11434/v1", 8192)
     assert "8192" in known.message.replace(",", "")
+
+
+FORWARDED = [
+    {"message": "Fix the proposal", "fix": True, "draft": {"format": "yaml", "source": "a: 1"}},
+    {"message": "Why?", "draft": {"format": "yaml", "source": "a: 1"}, "selected_step": "step-3"},
+    {"message": "Why?", "attachments": [{"kind": "run", "id": "11111111-1111-4111-8111-111111111111"}]},
+    {"message": "Why?", "history": [{"role": "user", "content": "Earlier"}]},
+]
+
+
+@pytest.mark.parametrize("asked", FORWARDED, ids=["fix", "selected-step", "attachment", "history"])
+async def test_the_request_the_gateway_receives_is_one_it_accepts(tmp_path, asked):
+    from firefly_weave.contracts.lumi import LUMI_REPLY_SCHEMA, LumiAskRequest, LumiConfiguration
+
+    sent = []
+
+    def answer(request):
+        sent.append(json.loads(request.content))
+        return httpx.Response(200, json={"answer": "Ready", "proposals": [], "followUps": []})
+
+    token = tmp_path / "token"
+    token.write_text("service-token")
+    client = LumiGatewayClient(
+        LumiGatewaySettings(endpoint="https://trusted.invalid/v1/lumi", token_file=str(token)),
+        transport=httpx.MockTransport(answer),
+    )
+    configuration = LumiConfiguration.model_validate(
+        {**ASK_CONFIGURATION, "profile": {**ASK_CONFIGURATION["profile"], "outputSchema": LUMI_REPLY_SCHEMA}}
+    )
+    request = LumiAskRequest.model_validate(asked)
+    await client.ask(configuration, request, {}, {"endpoint": "http://ollama:11434/v1"}, None)
+    forwarded = sent[0]["request"]
+    # The gateway validates this part as the same request type; the shaped draft travels in the attachments.
+    assert LumiAskRequest.model_validate(forwarded).message == request.message
+    assert "draft" not in forwarded and "fix" not in forwarded
