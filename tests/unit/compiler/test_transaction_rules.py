@@ -175,6 +175,22 @@ def test_undo_steps_must_be_safe_to_retry_and_called_workflows_must_have_a_time_
     )
 
 
+def test_the_step_named_as_the_point_of_no_return_is_the_first_in_step_order():
+    cases = tuple(
+        Sequence(
+            f"{at(0)}/cases/{number}/steps",
+            (irreversible(0, step=f"submit{number}", base=f"{at(0)}/cases/{number}/steps"),)
+            if number in (2, 10)
+            else (),
+        )
+        for number in range(11)
+    )
+    _, analysis = check(Choice("route", at(0), cases), compensate(1))
+    assert analysis.issues[0].code == "TXN_ORDER"
+    assert analysis.issues[0].related == f"{at(0)}/cases/2/steps/0"
+    assert "runs after submit2," in analysis.issues[0].message
+
+
 def test_a_step_that_changes_data_must_say_how_it_is_undone_and_counts_as_irreversible_meanwhile():
     undeclared = Participant("add", at(0), "action", None, "non_idempotent", True, 30)
     issues, analysis = check(undeclared, compensate(1, step="add2"))

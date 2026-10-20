@@ -314,7 +314,7 @@ class _Walk:
     def other(self, step: Other, states: frozenset[_State]) -> frozenset[_State]:
         if step.kind == "fail":
             return frozenset()
-        pivots = sorted((s.pivot for s in states if s.pivot is not None), key=lambda p: p.path)
+        pivots = sorted((s.pivot for s in states if s.pivot is not None), key=lambda p: path_order(p.path))
         if step.kind in _WAITS:
             holds = [s.hold for s in states if s.pivot is None and s.hold is not None]
             if holds and (step.wait_seconds is None or step.wait_seconds > min(holds)):
@@ -369,7 +369,7 @@ class _Walk:
             else:
                 result.add(state)
         if after:
-            pivot = sorted((s.pivot for s in after if s.pivot is not None), key=lambda p: p.path)[0]
+            pivot = sorted((s.pivot for s in after if s.pivot is not None), key=lambda p: path_order(p.path))[0]
             if step.mode in ("reserve", "compensate"):
                 field = "/confirm" if step.mode == "reserve" else "/compensate"
                 move = None
