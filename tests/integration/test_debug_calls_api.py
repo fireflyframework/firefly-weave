@@ -195,3 +195,15 @@ async def test_a_session_refuses_a_called_version_the_project_never_published(au
         project_url + "/debug/sessions", headers=headers, json=body | {"resolve_workflows": True}
     )
     assert (refused.status_code, refused.json()["code"]) == (422, "WV-DEBUG-WORKFLOW")
+
+
+async def test_a_malformed_artifact_is_refused_the_same_way_when_called_versions_are_resolved(
+    author, headers, project_url
+):
+    url = project_url + "/debug/sessions"
+    for artifact in ({"executable": {"dependencies": [{}]}}, {"executable": {"dependencies": "x"}}, {"executable": []}):
+        body = {"artifact": artifact, "mocks": {}, "input": {}, "now": NOW}
+        plain = await author[0].post(url, headers=headers, json=body)
+        resolved = await author[0].post(url, headers=headers, json=body | {"resolve_workflows": True})
+        assert plain.status_code == 422, plain.text
+        assert (resolved.status_code, resolved.json()["code"]) == (422, plain.json()["code"]), artifact

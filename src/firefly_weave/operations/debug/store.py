@@ -26,7 +26,7 @@ from firefly_weave.access.audit import AuditContext
 from firefly_weave.access.authorization import AccessDenied
 from firefly_weave.access.models import Principal
 from firefly_weave.access.service import AccessService
-from firefly_weave.compiler.api import import_artifact
+from firefly_weave.compiler.api import CompiledArtifact, import_artifact
 from firefly_weave.compiler.canonical import canonical_bytes
 from firefly_weave.compiler.ir import UnsupportedIR
 from firefly_weave.contracts.access import Scope
@@ -68,16 +68,18 @@ class DebugRepository:
             raise CatalogError(410, "WV-DEBUG-EXPIRED", "Debug session expired")
 
 
-async def published_workflows(repository: DebugRepository, request: DebugCreate) -> dict[str, CalledWorkflow]:
+async def published_workflows(
+    repository: DebugRepository, request: DebugCreate, artifact: CompiledArtifact
+) -> dict[str, CalledWorkflow]:
     """``request.workflows`` with the published artifact of every called version it gives none for, through every
-    call those versions make. A version the project never published, or one whose definition differs from the one
-    the calling workflow was compiled against, is refused.
+    call those versions make. ``artifact`` is the request's artifact, already imported. A version the project never
+    published, or one whose definition differs from the one the calling workflow was compiled against, is refused.
     """
     workflows = dict(request.workflows)
-    pending = [cast(JsonObject, request.artifact.get("executable", {}))]
+    pending = [called_dependencies(artifact.executable)]
     seen: set[str] = set()
     while pending:
-        for reference, digest in called_dependencies(pending.pop()).items():
+        for reference, digest in pending.pop().items():
             supplied = workflows.get(reference)
             if reference in seen or (supplied is not None and supplied.artifact is not None):
                 continue
@@ -91,9 +93,9 @@ async def published_workflows(repository: DebugRepository, request: DebugCreate)
             )
             if not rows or rows[0]["definition_digest"] != digest:
                 raise DebugError("WV-DEBUG-WORKFLOW")
-            artifact = cast(JsonObject, rows[0]["artifact"])
-            workflows[reference] = CalledWorkflow(artifact=artifact, mocks=supplied.mocks if supplied else {})
-            pending.append(cast(JsonObject, artifact["executable"]))
+            document = cast(JsonObject, rows[0]["artifact"])
+            workflows[reference] = CalledWorkflow(artifact=document, mocks=supplied.mocks if supplied else {})
+            pending.append(called_dependencies(cast(JsonObject, document["executable"])))
     return workflows
 
 
@@ -138,11 +140,14 @@ class DebugService:
             if request.resolve_workflows:
                 principal = await self.access.load_principal(actor.id, tx=enlisted)
                 self.definitions.require(principal, scope, "catalog.read", context)
-                workflows = await published_workflows(DebugRepository(enlisted), request)
             try:
+                # Checked before resolution reads its calls, so a malformed artifact gets the same answer either way.
+                artifact = await execute_pure(lambda: import_artifact(request.artifact))
+                if request.resolve_workflows:
+                    workflows = await published_workflows(DebugRepository(enlisted), request, artifact)
                 simulator = await execute_pure(
                     lambda: Simulator(
-                        import_artifact(request.artifact),
+                        artifact,
                         mocks=request.mocks,
                         input=request.input,
                         now=request.now,
