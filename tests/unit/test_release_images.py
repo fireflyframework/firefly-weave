@@ -57,7 +57,8 @@ def test_runner_stage_pins_the_docker_cli_by_digest():
         f"COPY --from={cli} /usr/local/libexec/docker/cli-plugins/docker-compose "
         "/usr/local/libexec/docker/cli-plugins/docker-compose"
     ) in runner
-    assert "USER 65532:65532" in runner
+    assert runner[-2] == "USER 65532:65532"
+    assert "RUN mkdir -p /run/weave-operations/state && chown 65532:65532 /run/weave-operations/state" in runner
     assert runner[-1] == (
         'ENTRYPOINT ["weave", "operations", "runner", "run", "--config", "/run/weave-operations/config/runner.json"]'
     )

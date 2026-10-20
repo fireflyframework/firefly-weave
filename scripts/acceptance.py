@@ -320,7 +320,36 @@ def _docker_subnets(recorder: Recorder, docker: list[str]) -> list[str]:
 
 def _projects(plan: Plan) -> list[str]:
     identifier = plan.platform_id()
-    return [*([f"weave-local-{identifier}"] if identifier else []), f"weave-acc-{plan.run_id}"]
+    platform = [f"weave-local-{identifier}", f"weave-local-{identifier}-workers"] if identifier else []
+    return [*platform, f"weave-acc-{plan.run_id}"]
+
+
+def _operations_images(plan: Plan, recorder: Recorder, docker: list[str], release: Path) -> list[dict[str, str]]:
+    """Build the runner and the sleep fixture worker from the prepared inputs, as weave platform up does."""
+    images = release / "images"
+    inventory = []
+    for name, arguments, label in (
+        ("runner", ["--target", "runner", str(images)], "firefly-weave runner (weave platform up inputs)"),
+        (
+            "operations-worker",
+            ["-f", str(images / "worker.Dockerfile"), "--target", "operations-worker", str(images)],
+            "firefly-weave sleep fixture worker (weave platform up inputs)",
+        ),
+    ):
+        receipt = plan.private / f"{name}.iid"
+        recorder.run([*docker, "build", "--iidfile", str(receipt), *arguments], timeout=1500)
+        inventory.append(_image(recorder, docker, receipt.read_text(encoding="utf-8").strip(), label))
+    return inventory
+
+
+def _operations_image_ids(plan: Plan) -> list[str]:
+    """The images this run's platform built for operations, by ID, from its private receipt."""
+    path = plan.platform_dir / "operations.json"
+    if not path.is_file():
+        return []
+    value = json.loads(path.read_text(encoding="utf-8"))
+    found = [value.get(key) for key in ("runner_image", "worker_image_id")]
+    return [item for item in found if isinstance(item, str) and re.fullmatch(r"sha256:[a-f0-9]{64}", item)]
 
 
 def prepare(plan: Plan, recorder: Recorder) -> None:
@@ -368,6 +397,7 @@ def prepare(plan: Plan, recorder: Recorder) -> None:
             "firefly-weave server (weave platform up inputs)",
         )
     )
+    inventory += _operations_images(plan, recorder, docker, release)
     if not (ROOT / "studio/node_modules").is_dir():
         raise StageFailed("Install the Studio dependencies first: (cd studio && npm ci)")
     recorder.run(["npm", "run", "build"], cwd=ROOT / "studio", timeout=900, capture=False)
@@ -682,6 +712,7 @@ def down(plan: Plan, recorder: Recorder) -> None:
         return
     docker = plan.docker()
     prefixes = _projects(plan)
+    images = _operations_image_ids(plan)
     for project in prefixes:
         ids = recorder.run(
             [*docker, "ps", "--all", "--quiet", "--filter", f"label=com.docker.compose.project={project}"], check=False
@@ -695,6 +726,9 @@ def down(plan: Plan, recorder: Recorder) -> None:
             ).stdout.split()
             if ids:
                 recorder.run([*docker, kind, "rm", *ids], check=False, timeout=120)
+    if images:
+        # Only the images this run's platform built for operations, by ID; never by name or label.
+        recorder.run([*docker, "image", "rm", "--force", *images], check=False, timeout=180)
     if plan.state.get("egress_rules") and _released(recorder, egress_release_rules()):
         plan.state["egress_rules"] = False  # while set, the audit lists the egress block as a leftover
     left = _audit(plan, recorder, prefixes)

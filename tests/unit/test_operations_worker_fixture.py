@@ -24,6 +24,8 @@ from types import SimpleNamespace
 import jsonschema
 import pytest
 
+from firefly_weave.contracts.workers import ReleaseRequest
+
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = ROOT / "tests/fixtures/operations-worker"
 
@@ -56,8 +58,10 @@ def test_the_fixture_manifest_bounds_the_sleep():
     assert (capability["taskType"], capability["taskVersion"], capability["sideEffect"]) == (
         "example-sleep",
         "1.0.0",
-        "none",
+        "read_only",
     )
+    # The manifest is what the platform admits as the fixture worker's release.
+    ReleaseRequest.model_validate_json(json.dumps({"image_digest": "sha256:" + "a" * 64, **manifest()}))
     assert manifest()["credential_capabilities"] == []
     schema = capability["inputSchema"]
     jsonschema.validate({"ms": 60000}, schema)

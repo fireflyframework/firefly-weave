@@ -280,7 +280,14 @@ def doctor(source: Path, context: str | None) -> dict[str, Any]:
         "context": context,
         "endpoint": endpoint,
         "engine": engine,
+        "notes": platform_operations_notes(),
     }
+
+
+def platform_operations_notes() -> list[str]:
+    from firefly_weave.sdk import platform_operations
+
+    return platform_operations.doctor_notes()
 
 
 def _validate_subnet(value: str) -> ipaddress.IPv4Network:
@@ -361,9 +368,10 @@ def _state(directory: Path) -> dict[str, Any]:
         )
     ports = state.get("ports", {})
     if (
-        set(ports) != {"postgres", "keycloak", "api", "container_api"}
+        # The local operations registry adds its port once operations are enabled.
+        set(ports) - {"registry"} != {"postgres", "keycloak", "api", "container_api"}
         or any(type(port) is not int or not 1024 <= port <= 65535 for port in ports.values())
-        or len(set(ports.values())) != 4
+        or len(set(ports.values())) != len(ports)
     ):
         raise PlatformError("Installation port metadata is invalid.")
     return state
@@ -486,6 +494,11 @@ def _compose(state: dict[str, Any]) -> list[str]:
         command.extend(["-f", str(platform_docker.dependencies(state))])
         for path in platform_ai.compose_files(state):
             command.extend(["-f", str(path)])
+        from firefly_weave.sdk import platform_operations
+
+        operations = platform_operations.compose_file(state)
+        if operations is not None:
+            command.extend(["-f", str(operations)])
     return command
 
 
@@ -873,6 +886,10 @@ def status(directory: Path) -> dict[str, Any]:
         from firefly_weave.sdk import platform_origins
 
         result["private_origins"] = platform_origins.summary(state)
+    if state.get("mode") == "docker":
+        from firefly_weave.sdk import platform_operations
+
+        result["operations"] = platform_operations.status(state)
     return result
 
 
@@ -1477,6 +1494,9 @@ def stop(directory: Path) -> dict[str, Any]:
 
             platform_docker.stop(state)
             platform_ai.stop_services(state)
+            from firefly_weave.sdk import platform_operations
+
+            platform_operations.stop_services(state)
         _run(
             state,
             "dependencies-stop",
@@ -1981,8 +2001,13 @@ def up(
     roles: Sequence[str] = (),
     progress: Callable[[str], None] | None = None,
     private_origins: Sequence[str] = (),
+    operations: bool = True,
 ) -> dict[str, Any]:
-    """Prepare once, then resume the retained Docker platform and its demo workspace."""
+    """Prepare once, then resume the retained Docker platform and its demo workspace.
+
+    Unless ``operations`` is False, it then sets up local operations (a registry, a sleep fixture worker and a
+    runner); a failure there leaves the platform running and names the stage to resume.
+    """
     from firefly_weave.sdk import platform_origins
 
     if roles and username is None:
@@ -2003,6 +2028,11 @@ def up(
             "Private origins are fixed when an installation is created; use a new --directory to change them."
         )
     with _exclusive(directory, ".up.lock", "Another platform up command is active."):
+        if operations:
+            from firefly_weave.sdk import platform_operations
+
+            # The API accepts the operations clients only from the next start, so this comes first.
+            platform_operations.prepare_provider(state)
         start(directory, progress)
         first = demo(directory)
         result = {**_summary(state), "first_run_saved": True, "run": first["receipt"]}
@@ -2033,6 +2063,10 @@ def up(
                 except Exception:  # noqa: BLE001 - the account exists; never lose its shown-once password
                     account = {**account, "receipt_saved": False, "receipt_hint": _RECEIPT_NOT_SAVED}
                 result["account"] = account
+        if operations:
+            from firefly_weave.sdk import platform_operations
+
+            result["operations"] = platform_operations.enable(directory, _load(directory), progress or (lambda _: None))
         return result
 
 

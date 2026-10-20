@@ -31,6 +31,9 @@ from uuid import uuid4
 from firefly_weave.sdk import platform as local
 from firefly_weave.sdk.deployment import read_file, real_path, strict_json
 
+# The clients the local provider accepts: those setup creates, and the two local operations add.
+_CLIENTS = frozenset({"weave-host", "weave-worker", "weave-cli", "weave-operations-worker", "weave-operations-runner"})
+
 
 def _private_bytes(path: Path, data: bytes) -> None:
     with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".docker-", delete=False) as stream:
@@ -80,6 +83,8 @@ def environment(state: dict[str, Any], execution: dict[str, str]) -> dict[str, s
         or providers[0].get("issuer") != issuer
         or providers[0].get("jwks_uri") != issuer + "/protocol/openid-connect/certs"
         or providers[0].get("local_development") is not True
+        or not isinstance(providers[0].get("clients"), dict)
+        or not set(providers[0]["clients"]) <= _CLIENTS
     ):
         raise local.PlatformError("The saved identity configuration is outside this installation.")
     providers[0]["jwks_uri"] = "http://127.0.0.1:8080/realms/weave/protocol/openid-connect/certs"

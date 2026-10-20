@@ -97,19 +97,54 @@ def test_j0_03_up_with_the_fixture_origin(run):
     inspected = json.loads(run.require(run.docker("network", "inspect", saved["network"])).stdout)[0]
     assert [config["Subnet"] for config in inspected["IPAM"]["Config"]] == [saved["subnet"]]
     document = json.loads((run.platform_dir / "private-origins.json").read_text(encoding="utf-8"))
-    assert document == {
-        "format": "weave/private-origins-v1",
-        "platform": "local-development",
-        "entries": [
-            {"origin": origin, "purpose": purpose, "networks": [saved["subnet"]], "credentials": "bridge"}
-            for origin in sorted(run.origins)
-            for purpose in ("event-delivery", "http-connector")
-        ],
-    }
+    assert (document["format"], document["platform"]) == ("weave/private-origins-v1", "local-development")
+    # The connector test origins are exactly the approved fixtures; local operations add their own entries.
+    fixtures = [entry for entry in document["entries"] if entry["purpose"] in {"event-delivery", "http-connector"}]
+    assert fixtures == [
+        {"origin": origin, "purpose": purpose, "networks": [saved["subnet"]], "credentials": "bridge"}
+        for origin in sorted(run.origins)
+        for purpose in ("event-delivery", "http-connector")
+    ]
     run.check(
         "J0.3/owner-roles",
         lambda: _expect_roles(value["account"]["grants"], LOCAL_OWNER_ROLES),
     )
+    run.check("J0.3/operations", lambda: _expect_operations_entries(run, document, value))
+
+
+def _expect_operations_entries(run, document, value):
+    """Local operations add exactly four development-only entries: the workers' bridge hops and the runner's
+    loopback sign-in, the bridge ones limited to the platform network's own subnet as Docker reports it."""
+    network = json.loads(
+        run.require(run.docker("network", "inspect", f"weave-local-{run.platform_state()['id']}_default")).stdout
+    )[0]
+    (subnet,) = [config["Subnet"] for config in network["IPAM"]["Config"] if "." in config["Subnet"]]
+    operations = [entry for entry in document["entries"] if entry["purpose"] in {"platform-api", "worker-auth"}]
+    assert operations == sorted(
+        [
+            {
+                "origin": "http://127.0.0.1:8000",
+                "purpose": "platform-api",
+                "networks": ["127.0.0.1/32"],
+                "credentials": "loopback",
+            },
+            {
+                "origin": "http://keycloak:8000",
+                "purpose": "platform-api",
+                "networks": [subnet],
+                "credentials": "bridge",
+            },
+            {
+                "origin": "http://127.0.0.1:8080",
+                "purpose": "worker-auth",
+                "networks": ["127.0.0.1/32"],
+                "credentials": "loopback",
+            },
+            {"origin": "http://keycloak:8080", "purpose": "worker-auth", "networks": [subnet], "credentials": "bridge"},
+        ],
+        key=lambda entry: (entry["origin"], entry["purpose"]),
+    )
+    assert value["operations"]["runner"] == "runner-local-docker"
 
 
 # Roles a person also needs on the demo project. An environment grant does not cover project operations

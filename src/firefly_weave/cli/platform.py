@@ -94,7 +94,15 @@ def platform(ctx: click.Context, directory: Path) -> None:
 @click.option("--output", type=click.Choice(["text", "json"]), default="text")
 def doctor(source: Path, context: str | None, output: str) -> None:
     """Check prerequisites without creating files or changing services."""
-    _call(lambda: lifecycle.doctor(source, context), output)
+
+    def render(value: dict[str, Any]) -> None:
+        for key, item in value.items():
+            if key not in {"source_sha256", "engine", "endpoint", "ok", "notes"}:
+                click.echo(f"{key.replace('_', ' ').capitalize()}: {item}")
+        for note in value.get("notes", []):
+            click.echo(note)
+
+    _call(lambda: lifecycle.doctor(source, context), output, render)
 
 
 @platform.command()
@@ -155,8 +163,11 @@ def _show_private_origins(value: dict[str, Any] | None) -> None:
 
 def _show_status(value: dict[str, Any]) -> None:
     for key, item in value.items():
-        if key not in {"source_sha256", "engine", "endpoint", "ok", "private_origins"}:
+        if key not in {"source_sha256", "engine", "endpoint", "ok", "private_origins", "operations"}:
             click.echo(f"{key.replace('_', ' ').capitalize()}: {item}")
+    operations = value.get("operations")
+    if operations:
+        click.echo(f"Operations: {operations['stage']}, runner {operations['runner']}, target {operations['target']}")
     _show_private_origins(value.get("private_origins"))
 
 
@@ -724,6 +735,12 @@ def ai_models_remove(directory: Path, provider: str, model: str, output: str) ->
     help="Development only: let connector actions and signed webhooks reach this exact http://host:port test "
     "service on a separate egress network. Repeat for several origins. Fixed when the installation is created.",
 )
+@click.option(
+    "--no-operations",
+    is_flag=True,
+    help="Skip the local operations setup (a registry, a sleep fixture worker and a runner that mounts the "
+    "Docker socket). Rerun up without it to add them later.",
+)
 @click.option("--output", type=click.Choice(["text", "json"]), default="text")
 @click.pass_obj
 def up(
@@ -734,6 +751,7 @@ def up(
     username: str | None,
     roles: tuple[str, ...],
     private_origins: tuple[str, ...],
+    no_operations: bool,
     output: str,
 ) -> None:
     """Set up once and leave a Docker API, database and identity provider running.
@@ -755,6 +773,7 @@ def up(
                 roles=roles,
                 progress=update,
                 private_origins=private_origins,
+                operations=not no_operations,
             )
 
     def render(value: dict[str, Any]) -> None:
@@ -767,6 +786,15 @@ def up(
             _show_person(account)
         elif account:
             click.echo("Existing account retained: " + account["username"] + ". Its password was not reset.")
+        operations = value.get("operations")
+        if operations:
+            click.echo(
+                "Operations: target local-docker, runner "
+                + operations["runner"]
+                + ", registry "
+                + operations["registry"]
+                + " (development only; the runner mounts the Docker socket)"
+            )
         click.echo("Connect: weave auth setup " + value["api_url"])
         click.echo("Open Studio: weave studio")
         click.echo("Logs: weave platform --directory " + shlex.quote(str(directory)) + " logs")

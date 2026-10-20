@@ -34,6 +34,17 @@ EGRESS = "10.231.1.0/24"
 OWNER = "b" * 24
 
 
+@pytest.fixture(autouse=True)
+def _without_operations(monkeypatch):
+    """These tests cover the platform and its account; tests/unit/cli/test_platform_operations.py covers operations."""
+    from firefly_weave.sdk import platform_operations
+
+    monkeypatch.setattr(platform_operations, "prepare_provider", lambda state: False)
+    monkeypatch.setattr(
+        platform_operations, "enable", lambda directory, state, progress=None, **kwargs: {"stage": "ready"}
+    )
+
+
 @pytest.fixture
 def owned(tmp_path, monkeypatch):
     directory = tmp_path / "platform"

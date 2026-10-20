@@ -1,0 +1,289 @@
+# Copyright 2026 Firefly Software Foundation.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# Author: Firefly Software Foundation
+# SPDX-License-Identifier: Apache-2.0
+
+"""weave platform up sets up local operations out of the box: resumable, exact, and without secrets in its records."""
+
+import json
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from types import SimpleNamespace
+from uuid import uuid4
+
+import pytest
+from ai_platform_support import OWNER, SCOPE, SERVER_IMAGE, SUBNET, owned_fixture  # noqa: F401
+
+from firefly_weave import private_origins as po
+from firefly_weave.sdk import platform, platform_ai_setup, platform_docker, platform_operations
+
+WORKER_IMAGE_ID = "sha256:" + "1" * 64
+RUNNER_IMAGE_ID = "sha256:" + "2" * 64
+PUSHED = "sha256:" + "3" * 64
+SUBJECTS = {"weave-operations-worker": str(uuid4()), "weave-operations-runner": str(uuid4())}
+MANIFEST = json.loads((Path(__file__).resolve().parents[2] / "fixtures/operations-worker/manifest.json").read_text())
+
+
+class FakeAPI:
+    """The public operations the step calls, each answered once per distinct request and recorded."""
+
+    def __init__(self):
+        self.calls = []
+        self.fail = None
+
+    async def invoke(self, operation, **kwargs):
+        if self.fail == operation:
+            self.fail = None
+            raise platform.PlatformError("refused once")
+        self.calls.append((operation, kwargs))
+        if operation == "deployment_runners.list":
+            fresh = datetime.now(UTC) + timedelta(seconds=60)
+            return SimpleNamespace(items=[SimpleNamespace(revoked=False, expires_at=fresh)])
+        return SimpleNamespace(id=uuid4())
+
+    def count(self, operation):
+        return sum(1 for name, _ in self.calls if name == operation)
+
+
+@pytest.fixture
+def operations(owned, monkeypatch):
+    directory, state, runner = owned
+    receipt = {
+        "status": "succeeded",
+        "output": {"message": "Hello, Weave"},
+        "version_id": str(uuid4()),
+        "activation_id": str(uuid4()),
+        "run_id": str(uuid4()),
+        "scope": SCOPE,
+    }
+    platform._write(directory / "first-run.json", receipt)
+    context = directory / "release" / "images"
+    context.mkdir(parents=True)
+    (context / "operations-worker.py").write_text("# fixture\n")
+
+    def build(command):
+        path = Path(command[command.index("--iidfile") + 1])
+        path.write_text(RUNNER_IMAGE_ID if "runner" in command else WORKER_IMAGE_ID)
+        return b""
+
+    def inspect(command):
+        port = json.loads((directory / "operations.json").read_text())["registry_port"]
+        registry = f"127.0.0.1:{port}/example-sleep@{PUSHED}"
+        return json.dumps([{"Id": WORKER_IMAGE_ID, "RepoDigests": [registry]}]).encode()
+
+    def network(command):
+        return json.dumps(
+            [
+                {
+                    "Name": command[-1],
+                    "Labels": {"com.docker.compose.project": "weave-local-" + OWNER},
+                    "IPAM": {"Config": [{"Subnet": SUBNET}]},
+                }
+            ]
+        ).encode()
+
+    runner.answers.update(
+        {
+            "operations-runner-build": build,
+            "operations-worker-build": build,
+            "operations-worker-inspect": inspect,
+            "operations-manifest": json.dumps(MANIFEST).encode(),
+            "operations-socket": b"991\n",
+            "ai-network": network,
+            "operations-status": b"running\n",
+        }
+    )
+    api = FakeAPI()
+
+    async def call(state, value, work, transport):
+        return await work(api)
+
+    async def clients(state, found, transport):
+        return dict(SUBJECTS)
+
+    async def scope(*args):
+        return False
+
+    monkeypatch.setattr(platform_operations, "_api", call)
+    monkeypatch.setattr(platform_operations, "_keycloak_clients", clients)
+    monkeypatch.setattr(platform_ai_setup, "ensure_worker_scope", scope)
+    return SimpleNamespace(directory=directory, runner=runner, api=api)
+
+
+def enable(case):
+    return platform_operations.enable(case.directory, platform._load(case.directory))
+
+
+def test_operations_enable_is_resumable_stage_by_stage(operations):
+    case = operations
+    stages = {
+        "registry": ("runner", "operations-registry"),
+        "images": ("runner", "operations-worker-push"),
+        "identities": ("api", "principals.link"),
+        "release": ("api", "releases.create"),
+        "target": ("api", "deployments.create"),
+        "runner": ("runner", "operations-runner"),
+    }
+    for stage, (where, name) in stages.items():
+        if where == "runner":
+            original = case.runner.answers.get(name, b"")
+            case.runner.answers[name] = platform.PlatformError("failed once")
+        else:
+            case.api.fail = name
+        with pytest.raises(platform.PlatformError, match=f"Operations setup stopped at {stage}"):
+            enable(case)
+        if where == "runner":
+            case.runner.answers[name] = original
+    result = enable(case)
+    assert result["stage"] == "ready" and result["runner"] == "runner-local-docker"
+    # Every record was created once in total, however often the step resumed.
+    for operation in ("principals.create", "releases.create", "deployment_targets.create", "deployments.create"):
+        expected = 2 if operation == "principals.create" else 1
+        assert case.api.count(operation) == expected, operation
+    assert case.api.count("members.grant") == 2
+    assert case.runner.names().count("operations-runner-build") == 1
+    # A rerun changes nothing and creates nothing.
+    calls = len(case.api.calls)
+    assert enable(case)["target_id"] == result["target_id"]
+    assert [name for name, _ in case.api.calls[calls:]] == ["deployment_runners.list"]
+
+
+def test_the_workers_project_and_runner_service_are_exactly_what_the_receipt_says(operations):
+    case = operations
+    enable(case)
+    value = json.loads((case.directory / "operations.json").read_text())
+    workers = json.loads((case.directory / "operations" / "workers" / "compose.json").read_text())
+    (service,) = workers["services"].values()
+    assert workers["name"] == f"weave-local-{OWNER}-workers"
+    assert service["deploy"] == {"replicas": 0} and service["stop_grace_period"] == "240s"
+    assert service["networks"] == ["platform"] and "ports" not in service
+    assert workers["networks"] == {"platform": {"name": f"weave-local-{OWNER}_default", "external": True}}
+    assert service["image"] == f"127.0.0.1:{value['registry_port']}/example-sleep@{PUSHED}"
+    assert service["labels"]["firefly.weave.target"] == value["target_id"]
+    assert all(volume["read_only"] for volume in service["volumes"])
+    assert service["user"] == "65532:65532" and service["cap_drop"] == ["ALL"] and service["read_only"]
+    assert service["environment"]["WEAVE_API_URL"] == "http://keycloak:8000"
+    compose = json.loads((case.directory / "compose.operations.json").read_text())
+    runner = compose["services"]["runner-local-docker"]
+    assert runner["network_mode"] == "service:keycloak" and runner["group_add"] == ["991"]
+    assert runner["read_only"] and runner["cap_drop"] == ["ALL"] and runner["user"] == "65532:65532"
+    assert {"type": "bind", "source": "/var/run/docker.sock", "target": "/var/run/docker.sock"} in runner["volumes"]
+    writable = [item for item in runner["volumes"] if not item.get("read_only")]
+    assert [item["target"] for item in writable] == ["/var/run/docker.sock", "/run/weave-operations/state"]
+    assert compose["services"]["registry"]["ports"] == [f"127.0.0.1:{value['registry_port']}:5000"]
+    configuration = json.loads((case.directory / "operations" / "config" / "runner.json").read_text())
+    assert configuration["base_url"] == "http://127.0.0.1:8000"
+    assert configuration["destination"]["image_repositories"] == [f"127.0.0.1:{value['registry_port']}/example-sleep"]
+    # A file changed on disk is refused, never silently rewritten.
+    path = case.directory / "compose.operations.json"
+    path.write_text(path.read_text().replace("991", "0"))
+    with pytest.raises(platform.PlatformError, match="changed outside platform commands"):
+        platform._compose(platform._load(case.directory))
+
+
+def test_operations_receipt_and_compose_files_hold_no_secret_values(operations):
+    case = operations
+    enable(case)
+    secrets = [path.read_text().strip() for path in (case.directory / "operations" / "secrets").iterdir()]
+    assert len(secrets) == 2 and all(len(secret) >= 40 for secret in secrets)
+    readable = [
+        case.directory / "operations.json",
+        case.directory / "compose.operations.json",
+        case.directory / "platform.json",
+        case.directory / "operations" / "workers" / "compose.json",
+        *(case.directory / "operations" / "config").iterdir(),
+    ]
+    status = json.dumps(platform_operations.status(platform._load(case.directory)))
+    for secret in secrets:
+        assert all(secret not in path.read_text() for path in readable)
+        assert secret not in status and all(secret not in json.dumps(command) for _, command in case.runner.calls)
+    for path in (case.directory / "operations" / "secrets").iterdir():
+        assert path.stat().st_mode & 0o777 == 0o444
+
+
+def test_operations_entries_cover_only_the_platform_network_subnet(operations):
+    case = operations
+    enable(case)
+    path = case.directory / "private-origins.json"
+    before = path.read_bytes()
+    policy = po.parse(before)
+    found = {(entry.origin, entry.purpose): entry for entry in policy.entries}
+    assert set(found) == {
+        ("http://keycloak:8000", "platform-api"),
+        ("http://keycloak:8080", "worker-auth"),
+        ("http://127.0.0.1:8000", "platform-api"),
+        ("http://127.0.0.1:8080", "worker-auth"),
+    }
+    for (origin, _), entry in found.items():
+        expected = ((SUBNET,), "bridge") if "keycloak" in origin else (("127.0.0.1/32",), "loopback")
+        assert (entry.networks, entry.credentials) == expected
+    enable(case)
+    assert path.read_bytes() == before
+
+
+def test_local_docker_lets_the_local_owner_plan_and_approve(operations):
+    case = operations
+    enable(case)
+    (request,) = [kwargs["body"] for name, kwargs in case.api.calls if name == "deployment_targets.create"]
+    assert request.approval_policy.distinct_approver is False
+    assert request.capabilities == ["observe", "deploy", "update", "scale_workers", "restart_workers"]
+    assert "drain_workers" not in request.capabilities and request.name == "local-docker"
+    assert request.boundary == f"weave-local-{OWNER}-workers"
+
+
+def test_no_operations_skips_the_step_and_status_says_so(owned, monkeypatch):
+    directory, _, runner = owned
+    called = []
+    monkeypatch.setattr(platform_operations, "enable", lambda *args, **kwargs: called.append("enable"))
+    monkeypatch.setattr(platform_operations, "prepare_provider", lambda state: called.append("provider"))
+    monkeypatch.setattr(platform, "start", lambda directory, progress=None: None)
+    monkeypatch.setattr(platform, "demo", lambda directory: {"receipt": {"status": "succeeded"}})
+    result = platform.up(directory, Path("."), None, operations=False)
+    assert called == [] and "operations" not in result
+    assert not any("build" in name for name in runner.names())
+    assert platform_operations.status(platform._load(directory)) == {
+        "stage": "skipped",
+        "runner": "absent",
+        "target": "local-docker",
+    }
+
+
+def test_doctor_explains_the_docker_socket():
+    (note,) = platform_operations.doctor_notes()
+    assert "Docker socket" in note and "local development only" in note
+
+
+def test_the_provider_accepts_the_operations_clients_once(owned):
+    directory, state, _ = owned
+    assert platform_operations.prepare_provider(state) is True
+    providers = json.loads(platform._env_file(directory / "runtime.env")["WEAVE_OIDC_PROVIDERS"])
+    assert providers[0]["clients"] == {
+        "weave-cli": "human",
+        "weave-operations-worker": "application",
+        "weave-operations-runner": "application",
+    }
+    assert platform_operations.prepare_provider(state) is False
+    assert platform_docker.environment(state, {})["WEAVE_OIDC_PROVIDERS"]
+
+
+def test_the_api_environment_accepts_exactly_the_operations_clients(owned):
+    directory, state, _ = owned
+    path = directory / "runtime.env"
+    text = path.read_text()
+    path.write_text(text.replace('"weave-cli": "human"', '"weave-cli": "human", "intruder": "application"'))
+    with pytest.raises(platform.PlatformError, match="identity configuration"):
+        platform_docker.environment(state, {})
+    path.write_text(text)
+    platform_operations.prepare_provider(state)
+    platform_docker.environment(state, {})

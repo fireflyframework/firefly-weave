@@ -50,5 +50,8 @@ CMD ["uvicorn", "firefly_weave.main:create_application", "--factory", "--host", 
 FROM server AS runner
 COPY --from=docker:27.5.1-cli@sha256:851f91d241214e7c6db86513b270d58776379aacc5eb9c4a87e5b47115e3065c /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=docker:27.5.1-cli@sha256:851f91d241214e7c6db86513b270d58776379aacc5eb9c4a87e5b47115e3065c /usr/local/libexec/docker/cli-plugins/docker-compose /usr/local/libexec/docker/cli-plugins/docker-compose
+# The runner keeps its lock and the workers' zero-replica overrides here; a new volume takes this ownership.
+USER root
+RUN mkdir -p /run/weave-operations/state && chown 65532:65532 /run/weave-operations/state
 USER 65532:65532
 ENTRYPOINT ["weave", "operations", "runner", "run", "--config", "/run/weave-operations/config/runner.json"]
