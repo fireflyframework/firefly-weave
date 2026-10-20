@@ -101,7 +101,8 @@ RULE_CODES: Final[dict[str, str]] = {
 }
 _SAFE_UNDO: Final = frozenset({"idempotent", "idempotency_key"})
 _WAITS: Final = frozenset({"wait", "signal", "humanTask"})
-_PURE: Final = frozenset({"transform", "decisionTable", "llm"})
+# Steps that change nothing but can still fail; read-only actions are "action" here, since they never participate.
+_PURE: Final = frozenset({"transform", "decisionTable", "llm", "action"})
 
 
 def duration_text(seconds: int) -> str:

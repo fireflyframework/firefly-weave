@@ -322,6 +322,16 @@ def test_a_transaction_with_nothing_to_undo_warns():
     assert check(Other("note", at(0), "transform"))[0] == [("TXN_NOTHING_TO_UNDO", "/spec/steps/0", "warning")]
 
 
+def test_a_read_only_action_after_the_point_of_no_return_is_noted_because_its_failure_cant_be_undone():
+    issues, analysis = check(
+        reserve(0), Other("lookup", at(1), "action"), irreversible(2), Other("check", at(3), "action")
+    )
+    assert issues == [("TXN_AFTER_PIVOT_PURE", at(3), "info")]
+    assert analysis.issues[0].message == (
+        "If check fails after submit, nothing can be undone and the transaction is left in doubt."
+    )
+
+
 def test_a_fail_step_ends_its_path():
     issues, _ = check(reserve(0), Other("stop", at(1), "fail"), irreversible(2), compensate(3))
     assert issues == []
@@ -544,7 +554,7 @@ def _expected(body: Sequence):
                     found.add(("TXN_HOLD_WAIT", node.path))
                 if after:
                     found.add(("TXN_AFTER_PIVOT_WAIT", node.path))
-            elif node.kind in ("transform", "llm", "decisionTable") and after:
+            elif node.kind in ("transform", "llm", "decisionTable", "action") and after:
                 found.add(("TXN_AFTER_PIVOT_PURE", node.path))
     found |= {("TXN_PIVOT_PLACEMENT", path) for path in _misplaced(body) if path in before}
     return found, pivots, {step for step, only in only_after.items() if only}
