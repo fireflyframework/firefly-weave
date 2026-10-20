@@ -113,9 +113,6 @@ function shown(
 ) {
   const workflow = freshWorkflow();
   workflow.spec.steps.push(step);
-  workflow.spec["llmProfiles"] = {
-    default: { provider: "ollama", model: "qwen3:4b" },
-  };
   const ctx = context(workflow, features);
   const descriptor = ndvRegistry.kind(step.kind)!;
   const spec = descriptor[form]?.(step, ctx) ?? { fields: [] };
@@ -206,12 +203,6 @@ describe("default forms", () => {
     ).toEqual([
       ["case.when", ["when"]],
       ["case.output", ["output"]],
-    ]);
-  });
-  it("lists the AI profiles as models", () => {
-    const { spec } = shown(fresh("llm"));
-    expect(spec.fields[0].choices).toEqual([
-      { value: "default", label: "default · qwen3:4b" },
     ]);
   });
   it("offers Callable by other workflows only on platforms that support calls", () => {
@@ -443,11 +434,14 @@ describe("options", () => {
       "Callable by other workflows",
     ]);
   });
-  it("offers a model's context, action version and connection", () => {
+  it("offers an AI task's context, result, model options and sharing", () => {
     expect(addableOf(shown(fresh("llm")).state)).toEqual([
       "Context",
-      "AI action version",
-      "AI connection",
+      "Structured result",
+      "Max output tokens",
+      "Temperature",
+      "Reasoning pattern",
+      "Share settings with other AI steps",
     ]);
   });
   it("shows Callable by other workflows once the workflow is callable", () => {
@@ -1115,11 +1109,11 @@ describe("removing and resetting", () => {
     expect(keepers(fresh("signal"))).toEqual(["payload"]);
     expect(keepers(fresh("humanTask"))).toEqual(["title", "context", "form"]);
     expect(keepers(fresh("llm"))).toEqual([
-      "model",
       "prompt",
       "context",
-      "action",
-      "connection",
+      "result",
+      "maxTokens",
+      "share",
     ]);
     expect(keepers(fresh("switch"))).toEqual([
       "cases",
@@ -1184,8 +1178,11 @@ describe("removing and resetting", () => {
     const { options } = llmForm(ai, context(freshWorkflow()));
     expect(options!.map((o) => [o.id, o.default])).toEqual([
       ["context", {}],
-      ["action", ai["uses"]],
-      ["connection", ai["connection"]],
+      ["result", { type: "string", maxLength: 20000 }],
+      ["maxTokens", 1024],
+      ["temperature", undefined],
+      ["reasoning", "none"],
+      ["share", ai["profile"]],
     ]);
     const cases = shown(fresh("switch")).spec.fields[0].children!(
       step,

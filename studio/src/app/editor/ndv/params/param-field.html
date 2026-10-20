@@ -149,6 +149,15 @@ SPDX-License-Identifier: Apache-2.0
             [readOnly]="reason"
           />
         }
+        @case ("model") {
+          <weave-model-field
+            [session]="session()"
+            [spec]="spec"
+            [controlId]="ids.control"
+            [describedBy]="describedBy()"
+            [readOnly]="reason"
+          />
+        }
         @case ("conditions") {
           <weave-conditions-field
             [session]="session()"

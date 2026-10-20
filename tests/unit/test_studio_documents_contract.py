@@ -72,7 +72,7 @@ FULL_EXAMPLE = {
         "review": {"decision": "reject", "data": {"note": "Wrong address"}, "frame": "enrich"},
     },
     "aiTurns": {
-        "support": {"turns": [{"result": {"text": "Your order shipped."}}], "autoApprove": True, "source": "manual"}
+        "support": {"turns": [{"final": {"text": "Your order shipped."}}], "autoApprove": True, "source": "manual"}
     },
     "workflows": {"notify-customer@1.0.0": {"mocks": {"send-mail": {"output": {"id": "m-9"}, "source": "manual"}}}},
     "waits": {"autoAdvance": True},

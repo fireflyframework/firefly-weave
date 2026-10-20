@@ -48,6 +48,7 @@ import { KeyValueField } from "./key-value-field";
 import { FieldsField } from "./fields-field";
 import { ResourceField } from "./resource-field";
 import { ConnectionField } from "./connection-field";
+import { ModelField } from "./model-field";
 import { ConditionsField } from "./conditions-field";
 import { parseCondition } from "../../../designer/conditions";
 import { EditFormulaDialog } from "./edit-formula-dialog";
@@ -98,6 +99,7 @@ const UNIT_CODE: Record<string, string> = {
     FormulaField,
     ResourceField,
     ConnectionField,
+    ModelField,
     ListField,
     KeyValueField,
     FieldsField,

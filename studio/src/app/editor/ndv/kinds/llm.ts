@@ -15,22 +15,28 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-// The AI task descriptor. It describes the `llm` step as it works now; the AI
-// step components replace this module's contents (descriptor, output schema,
-// parameters) rather than registering a second `llm` kind.
+
+// The AI task descriptor: a model chosen connection first, a prompt, and
+// options that tune the step's AI settings. Its canvas subtitle is the model.
 import { registerKind, type StepKindDescriptor } from "../registry";
-import { llmForm } from "./forms/llm-form";
+import { SETUP, profileOf } from "./ai-task-model";
+import { llmForm, llmSettings } from "./forms/llm-form";
 import { common } from "./shared";
 
 export const llmKind: StepKindDescriptor = {
   ...common("llm", "ai-task", "ai"),
+  summary: (step, ctx) => {
+    const model = profileOf(ctx.workflow, step)?.["model"];
+    return typeof model === "string" && model ? model : SETUP;
+  },
   fields: () => [
     { path: ["prompt"], label: "Prompt", templateCapable: true },
     { path: ["context"], label: "Context" },
   ],
   pinnable: true,
+  script: "ai-turns",
   form: llmForm,
-  settings: () => ({ fields: [] }),
+  settings: llmSettings,
 };
 
 export function register(): void {

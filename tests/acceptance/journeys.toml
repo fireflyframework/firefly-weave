@@ -47,7 +47,7 @@
 "loop-simulation" = true
 "workflow-call-compiler" = true
 "workflow-call-runtime" = true
-"workflow-call-simulation" = false
+"workflow-call-simulation" = true
 "workflow-call-fast-path" = false
 "language-docs" = false
 "step-error-handling" = false

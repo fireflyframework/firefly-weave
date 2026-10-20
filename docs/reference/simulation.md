@@ -198,11 +198,12 @@ implementation.
 
 | Command | Fields | Effect |
 | --- | --- | --- |
-| `breakpoints` | `node_ids`: complete node IDs or instance keys | Replace the breakpoint set; use IDs from `weave workflow explain`, including synthetic ones such as `@join:ID`. Inside a loop, a step ID stops every iteration and an instance key such as `send[2]` stops one |
-| `next` | — | Process one boundary: one admitted event or one node |
-| `continue` | — | Run until a breakpoint, a wait, a suspension, the end, or the command's work ceiling |
-| `signal` | `name`, `payload` | Validate the payload against the signal's schema and queue it at virtual now |
-| `human_decision` | `name`: the human task step ID; `payload`: `{"decision": ..., "data": {...}}` | Validate the decision and form data, then queue the completion |
+| `breakpoints` | `node_ids`: complete node IDs or instance keys | Replace the breakpoint set; use IDs from `weave workflow explain`, including synthetic ones such as `@join:ID`. Inside a loop, a step ID stops every iteration and an instance key such as `send[2]` stops one. Inside a called workflow, prefix the call: `notify/record` (see [Simulate workflow calls](#simulate-workflow-calls)) |
+| `next` | — | Process one boundary: one admitted event or one node, in the most deeply called workflow that has work |
+| `continue` | — | Run until a breakpoint, a wait, a suspension, the end, or the command's work ceiling, through called workflows too |
+| `step_out` | `frame` (optional) | Run until the called workflow returns its outcome to its caller; breakpoints still stop on the way. Without `frame`, the called workflow of the next boundary |
+| `signal` | `name`, `payload`, `frame` (optional) | Validate the payload against the signal's schema and queue it at virtual now, in the called workflow `frame` names |
+| `human_decision` | `name`: the human task step ID; `payload`: `{"decision": ..., "data": {...}}`; `frame` (optional) | Validate the decision and form data, then queue the completion |
 | `advance_time` | `seconds`: whole number, zero or more | Move virtual time forward |
 
 `signal`, `human_decision`, and `advance_time` return the current view without
@@ -221,15 +222,10 @@ result. There is no scripting of retry outcomes and no live fallback: an action
 without a mock stops the simulation with `WV-DEBUG-MISSING_MOCK`, whose hint
 lists the keys that would answer it.
 
-**Calls to other workflows.** A simulation never starts another workflow, and
-**Call a workflow** steps take no mocks: a `node:` key for a call step is
-rejected with `WV-DEBUG-MOCK-KEY`. A detached call (`mode: detach`) continues at
-once with `null`, as it does in a real run, so the simulation goes on past it. A
-waiting call (`mode: wait`, the default) stops the simulation with
-`WV-DEBUG-MISSING_MOCK` and status `failed`: "A step that waits for another
-workflow cannot be simulated yet; simulate the called workflow on its own." This
-diagnostic has no hint. Simulate the called workflow separately, with the input
-the call would send.
+**Calls to other workflows.** A simulation never starts a real run of another
+workflow. A waiting **Call a workflow** step takes a `node:` mock for its whole
+result, or runs the called workflow inside the simulation when the request
+carries its artifact; see [Simulate workflow calls](#simulate-workflow-calls).
 
 ## Read the debugger view
 
@@ -248,6 +244,8 @@ Every command returns a view:
 | `now` | Virtual time; waiting in your shell does not change it |
 | `loops` | Workflows with loops only: one entry per loop instance (see [Simulate loops](#simulate-loops)) |
 | `selected_scope` | Inside a loop body only: the `item`, `index` and `loops` values the selected step reads |
+| `frames` | Workflows whose calls ran in the simulation only: one entry per call (see [Simulate workflow calls](#simulate-workflow-calls)) |
+| `selected_frame` | Only while the next boundary belongs to a called workflow: that call's frame key |
 
 Node IDs in `selected_node`, `active_nodes`, `current_nodes`, boundaries and
 events are [instance keys](compiler.md#instance-keys): the step ID outside loops,
@@ -304,6 +302,147 @@ for the input `[10, 20, 30]`, and a `loops` entry with `"completed": 1`. In
 text output, the CLI prints one line per loop, such as
 `Loop each: 1 of 3 items finished, 1 running.`
 
+## Simulate workflow calls
+
+A waiting **Call a workflow** step (`mode: wait`, the default) needs the called
+workflow's result. A simulation gets it in one of two ways, and the first one
+that applies wins:
+
+1. **A mock for the whole call.** `node:CALL_ID` answers every run of the call,
+   and `node:INSTANCE_KEY`, such as `node:notify[2]`, one iteration inside a
+   loop. Under `onFailure: stop` (the default) the mock is the called workflow's
+   output; under `onFailure: continue` it is the whole envelope the step returns,
+   such as
+   `{"status": "failed", "runId": "...", "error": {"code": "NO_CUSTOMER", "message": "Unknown customer."}}`.
+   A success carries `output` and any other status carries `error`.
+   `action:` keys never answer a call.
+2. **The called workflow itself.** When the request's `workflows` gives the
+   compiled artifact of the version the call names, the simulation runs that
+   workflow in a **frame**: a simulated run with the call's input, its own
+   mocks, signals and deadlines, and the session's virtual time. Its outcome
+   reaches the caller as in a real run: the output, or the envelope; a failed
+   run fails a caller that stops, and a cancelled or timed-out one opens
+   `WV-CALL-INTERRUPTED` on it. A succeeded output is checked against the
+   call's output schema first, as on a platform: a secret or unclassifiable
+   value opens `WV-SCHEMA-SECRET_VALUE` or `WV-SCHEMA-CLASSIFICATION` on the
+   caller instead. Sessions hold no files, so the platform's step of handing
+   the child's files to its caller is skipped.
+
+Without either, the simulation stops with `WV-DEBUG-MISSING_MOCK`, whose hint
+names both. A detached call (`mode: detach`) never needs a mock: it continues at
+once with `null`, and its frame runs when the artifact is given, even after the
+caller finished; otherwise the call is listed with status `not_simulated`. A
+caller that ends cancels the frames it waits for, and theirs.
+
+**The request.** `workflows` maps each called version to its artifact and the
+mocks used inside it. In this sketch, `send-receipt@1.0.0` stands for a called
+workflow whose `send-mail` step runs an action:
+
+```json
+{"workflows": {"send-receipt@1.0.0": {"artifact": {"executable": "..."}, "mocks": {"node:send-mail": {"id": "m-9"}}}}}
+```
+
+Each artifact must be the version the call names, with the input and output
+schemas the calling workflow was compiled against, and each entry must be a
+version some call reaches (`WV-DEBUG-WORKFLOW`). Mocks inside a frame use the
+same keys as top-level mocks, and apply to every run of that version. On a
+platform, `"resolve_workflows": true` loads the published version of every
+called workflow the request gives no artifact for, following the calls of
+supplied and published versions alike; each must be the definition its caller
+was compiled against. It needs the `catalog.read` capability as well as
+`simulate`. From the CLI, pass each artifact with
+`--workflow REF=ARTIFACT.json`.
+
+**Stepping in and out.** Frames have keys: the call's instance key, joined with
+`/` through nested calls (`notify`, `notify[2]`, `notify/audit`). `next` takes
+one boundary in the most deeply called workflow that has work, so stepping past
+a call steps into it. A breakpoint `notify/record` stops before `record` in
+every run of the call `notify`, and `notify[2]/record` in one. `step_out`
+continues until the called workflow's outcome reaches its caller, then stops
+before the caller's next step.
+
+For example, this compiles the two workflows under `examples/language/` and
+simulates `order-intake`, whose `notify` call waits and whose `audit` call is
+detached. Save it as `.local/make-call-simulation.py` and run it from a source
+checkout with `uv run python .local/make-call-simulation.py`:
+
+```python
+import json
+from pathlib import Path
+
+import yaml
+
+from firefly_weave.compiler.api import compile_source
+from firefly_weave.compiler.catalog import CatalogSnapshot
+from firefly_weave.contracts.definitions import load_definition
+
+examples = Path("examples/language")
+called = (examples / "notify-customer.workflow.yaml").read_text()
+calling = (examples / "order-intake.workflow.yaml").read_text()
+catalog = CatalogSnapshot.from_definitions([load_definition(yaml.safe_load(called))])
+notify = compile_source(called, format="yaml", catalog=CatalogSnapshot.empty()).artifact
+orders = compile_source(calling, format="yaml", catalog=catalog).artifact
+folder = Path(".local/calls")
+folder.mkdir(parents=True, exist_ok=True)
+(folder / "notify-customer.json").write_bytes(notify.to_bytes())
+request = {
+    "artifact": json.loads(orders.to_bytes()),
+    "input": {"customerId": "c-1", "orderId": "o-7", "tags": ["new", "web"]},
+    "now": "2026-01-01T00:00:00Z",
+}
+(folder / "request.json").write_text(json.dumps(request))
+(folder / "step-in.json").write_text(
+    json.dumps([{"kind": "breakpoints", "node_ids": ["notify/record"]}, {"kind": "continue"}])
+)
+```
+
+```sh
+# Run both calls inside the simulation.
+weave workflow simulate .local/calls/request.json \
+  --workflow notify-customer@1.0.0=.local/calls/notify-customer.json
+```
+
+Expected: exit code `0` and
+
+```text
+Simulation succeeded; 2 accepted facts; 14 boundaries.
+Called workflow notify (notify-customer@1.0.0): succeeded.
+Called workflow audit (notify-customer@1.0.0): succeeded.
+```
+
+`boundaries` counts the boundaries of every frame; `accepted facts` counts the
+calling workflow's own events. Without `--workflow`, the command exits `1` with
+`WV-DEBUG-MISSING_MOCK` at `notify`. With
+`--commands .local/calls/step-in.json`, it stops inside the called workflow and
+prints `Ready: notify/record`; adding `{"kind": "step_out"}` to the commands
+returns to `order-intake` with `steps.notify.output` set to
+`{"status": "succeeded", "runId": "59475034-e4de-5a95-9d2e-23035f9fa906", "output": {"customerId": "c-1", "delivered": true}}`.
+A frame's `runId` is fixed by its key, so it is the same in every simulation.
+
+**The view.** Top-level fields keep describing the simulated workflow. The
+caller's events include a `call_completed` event for each outcome a call
+received, and `frames` lists each call that ran, in the order the calls
+started:
+
+| Field | Meaning |
+| --- | --- |
+| `key` | The frame key, such as `notify` or `notify[2]/audit` |
+| `workflow` | The called version, such as `notify-customer@1.0.0` |
+| `call_node` | The call's instance key in its caller |
+| `mode` | `wait` or `detach` |
+| `run_id` | The simulated run's ID, which the envelope's `runId` repeats; omitted when not simulated |
+| `status` | The simulated run's status, or `not_simulated` |
+| `selected_node` | The next node to reduce in this frame, or `null` |
+| `active_nodes` | The frame's outstanding waits and tasks |
+| `variables` | The frame's run data: its `input`, step outputs, and `output` |
+| `loops` | The frame's loop instances, as for the simulated workflow |
+
+Boundaries inside a called workflow carry `frame`. In text output, the CLI
+prints one line per frame, such as
+`Called workflow notify (notify-customer@1.0.0): succeeded.`, and exits `1`
+when a called workflow its caller waits for is `suspended`, because that caller
+would wait forever. A suspended detached call does not fail the command.
+
 ## Use the Python library
 
 Embedders use the `Simulator` class. Run this from a source checkout with
@@ -348,7 +487,7 @@ clients can drive it across requests. Routes are project-scoped under
 
 | Request | Body | Result |
 | --- | --- | --- |
-| `POST /debug/sessions` | The same `{artifact, mocks, input, now}` request | `{id, revision, created_at, expires_at, view}`, starting at revision 1 |
+| `POST /debug/sessions` | The same `{artifact, mocks, input, now}` request, with optional `workflows` and `resolve_workflows` | `{id, revision, created_at, expires_at, view}`, starting at revision 1 |
 | `GET /debug/sessions/{id}` | — | The current session |
 | `POST /debug/sessions/{id}/commands` | One command from the table above | The next revision; requires `If-Match` with the current revision, for example `"1"` |
 
@@ -420,11 +559,16 @@ server sessions:
 | Pending signals | 1,000 |
 | Boundaries per `continue` | 10,000 |
 | Total virtual time | 366 days |
+| Depth of called workflows | 8 |
 | Serialized session (artifact, mocks, state, queues, histories) | 64 MiB |
 
 Source, compiler, and payload limits still apply. Authors cannot change these
 limits through the workflow or a request; local embedding can pass its own
 `DebugLimits`.
+
+Frames share these limits with the simulated workflow: their boundaries,
+events, signals and data count toward the same totals. A call deeper than the
+depth limit refuses the command whole with `WV-DEBUG-LIMIT`.
 
 Every command ends with a full check of these limits. While `continue` runs, the
 serialized size is checked every 64 boundaries, or sooner once 1 MiB of new step
@@ -463,15 +607,17 @@ fingerprints.
 | `WV-DEBUG-REQUEST` from the CLI | The request file is not valid JSON, misses a field, or its input or mocks violate a schema | Check `artifact`, `mocks`, `input`, and a `now` with a time zone |
 | `WV-DEBUG-COMMAND` | The command file is not a JSON array, or a command lacks the field its kind needs, such as a `signal` without `name` | Check each command against the [command reference](#command-reference) |
 | `WV-DEBUG-MISSING_MOCK`, status `failed` | An action has no mock (in Studio, **Skip this action** was selected) | Add a mock under one of the keys in the diagnostic's hint |
-| `WV-DEBUG-MISSING_MOCK` without a hint, at a **Call a workflow** step | The step waits for another workflow, which a simulation does not start | Simulate the called workflow on its own; see [Mock actions, send signals, decide tasks, and move time](#mock-actions-send-signals-decide-tasks-and-move-time) |
-| `WV-DEBUG-MOCK-KEY` | A mock key names no action node in this artifact, or no iteration of it (call steps take no mocks) | Use `action:EXACT_REFERENCE`, `node:NODE_ID` or `node:INSTANCE_KEY` with one position per enclosing loop, below its `maxItems` |
+| `WV-DEBUG-MISSING_MOCK` at a **Call a workflow** step | The step waits for another workflow, and the request has neither a mock for the call nor the called workflow's artifact | Add a `node:` mock for the call, or the artifact under `workflows` (`--workflow` in the CLI); see [Simulate workflow calls](#simulate-workflow-calls) |
+| `WV-DEBUG-MOCK-KEY` | A mock key names no action node or waiting call in this artifact, or no iteration of it (detached calls and `action:` keys for calls take no mocks) | Use `action:EXACT_REFERENCE`, `node:NODE_ID` or `node:INSTANCE_KEY` with one position per enclosing loop, below its `maxItems` |
+| `WV-DEBUG-WORKFLOW` | A `workflows` entry is not a version any call reaches, has no artifact, or its artifact is another version or has other input or output schemas; `resolve_workflows` reached a version this project never published, or one whose published definition differs from the one its caller was compiled against; `resolve_workflows` was set in a request to the CLI, which has no published versions; or a stored session has a frame of a version it does not carry | Compile the exact version the call names; on a platform, publish it or pass its artifact; from the CLI, pass `--workflow` |
+| `WV-DEBUG-FRAME` | `step_out`, `signal` or `human_decision` named a frame that does not exist or is not simulated, or `step_out` had no called workflow to leave | Use a `key` from `frames` |
 | `WV-IR-UNSUPPORTED` (HTTP 422 on a server) | The workflow uses a language feature this version does not run; a server names it in `result.missing_features`, and `weave workflow simulate` in its message (`Missing language features: flow.forEach.`) | Upgrade the platform or CLI, or simulate on one that runs the feature |
 | `WV-DEBUG-MOCK-OUTPUT` | The mock does not match the action's output schema | Fix the mocked result |
 | Status `waiting` | The run waits for time, a signal, or a person | Send the signal or decision, or advance time, then continue |
 | `WV-DEBUG-SIGNAL` | No step waits for a signal with that name | Use the `name` declared on the **Wait for signal** step |
 | `WV-DEBUG-HUMAN-TASK` | That human task is not waiting for a decision now | Continue until it is active, and use its step ID as `name` |
 | `WV-DEBUG-STATE` | The simulated run already finished | Start a new simulation |
-| `WV-DEBUG-BREAKPOINT` | A breakpoint names a node that does not exist, or no iteration of it | Use complete IDs from `weave workflow explain`, or instance keys with one position per enclosing loop |
+| `WV-DEBUG-BREAKPOINT` | A breakpoint names a node that does not exist, or no iteration of it, or a path through a step that is not a call or a call whose workflow the session does not have | Use complete IDs from `weave workflow explain`, or instance keys with one position per enclosing loop, prefixed with the frame keys of the calls |
 | `WV-DEBUG-TIME` | `advance_time` was negative or not a whole number | Use whole seconds, zero or more |
 | `WV-DEBUG-LIMIT` | A simulation limit was reached | Use a smaller input, or advance time in smaller amounts |
 | HTTP 409 `WV-DEBUG-REVISION` | The session changed in another window or request | Read it again and send the current revision |
