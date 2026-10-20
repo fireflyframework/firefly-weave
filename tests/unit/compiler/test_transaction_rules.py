@@ -220,6 +220,27 @@ def test_the_step_named_as_the_point_of_no_return_is_the_first_in_step_order():
     assert "runs after submit2," in analysis.issues[0].message
 
 
+def test_waits_and_pure_steps_name_the_first_step_that_cant_be_undone_in_step_order():
+    cases = tuple(
+        Sequence(
+            f"{at(0)}/cases/{number}/steps",
+            (irreversible(0, step=f"submit{number}", base=f"{at(0)}/cases/{number}/steps"),)
+            if number in (2, 10)
+            else (),
+        )
+        for number in range(11)
+    )
+    _, analysis = check(
+        reserve(1, step="hold"),
+        Choice("route", at(0), cases),
+        Other("pause", at(2), "wait", 5),
+        Other("note", at(3), "llm"),
+    )
+    messages = {issue.code: issue.message for issue in analysis.issues}
+    assert "after submit2," in messages["TXN_AFTER_PIVOT_WAIT"]
+    assert "after submit2," in messages["TXN_AFTER_PIVOT_PURE"]
+
+
 def test_a_step_that_changes_data_must_say_how_it_is_undone_and_counts_as_irreversible_meanwhile():
     undeclared = Participant("add", at(0), "action", None, "non_idempotent", True, 30)
     issues, analysis = check(undeclared, compensate(1, step="add2"))
