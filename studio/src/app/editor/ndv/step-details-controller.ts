@@ -162,6 +162,10 @@ const beneath = (path: string, root: string): boolean =>
   path === root || path.startsWith(`${root}/`);
 const BURST_MS = 600;
 
+/** Generate sample on output fields Studio can't sample. */
+export const CANT_SAMPLE =
+  "Can't make a sample for this output; set it by hand.";
+
 export class StepDetailsController {
   // --- test data: the test input and pinned output --------------------------
   /** The shell's test data, or this controller's own, in memory (tests, a shell without one). */
@@ -417,7 +421,14 @@ export class StepDetailsController {
       ? this.descriptor(target)?.outputSchema(step, this.kindContext())
       : null;
     if (!schema) return "Studio doesn't know this step's output fields yet.";
-    return this.pin(target, sampleFromSchema(schema) as Json, "schema");
+    let sample: Json;
+    try {
+      sample = sampleFromSchema(schema) as Json;
+    } catch {
+      // anyOf, allOf, an unknown format or bounds no value meets.
+      return CANT_SAMPLE;
+    }
+    return this.pin(target, sample, "schema");
   }
   /** Test data is outside the workflow's undo: a toast offers to put the previous document back. */
   private offerUndo(

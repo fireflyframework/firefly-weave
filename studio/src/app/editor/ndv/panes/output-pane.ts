@@ -51,6 +51,7 @@ import {
   type DataView,
 } from "./views";
 import type { FormSession } from "../params/form-session";
+import { CANT_SAMPLE } from "../step-details-controller";
 import { ndvRegistry, type Json } from "../registry";
 
 @Component({
@@ -318,7 +319,13 @@ export class OutputPane {
   }
   async generate() {
     const session = this.session();
-    const refused = await session.controller.generateOutput(session.target);
+    let refused: string | null;
+    try {
+      refused = await session.controller.generateOutput(session.target);
+    } catch {
+      // Never silent: a sample that couldn't be made or kept says so.
+      refused = CANT_SAMPLE;
+    }
     if (this.session() !== session) return;
     this.problem.set(refused ?? "");
     if (!refused)

@@ -20,10 +20,21 @@ SPDX-License-Identifier: Apache-2.0
 // their output, and a pin that survives a reload, follows a rename and goes
 // with its step.
 import { expect, test, type Page } from "@playwright/test";
-import { fitCanvas, sizes } from "./step-details-po";
+import {
+  fitCanvas,
+  openStepFixture,
+  sizes,
+  withLanguageFeatures,
+  withNewEditor,
+} from "./step-details-po";
+import { connected, defaultCatalog } from "./support";
 import {
   banner,
+  lookupContract,
   openTestDataFixture,
+  PROJECT,
+  TENANT,
+  testDataFixture,
   outputPane,
   pinButton,
   routeDrafts,
@@ -144,5 +155,43 @@ for (const size of sizes)
       await page.keyboard.press("Enter");
       await expect(details.dialogFor("find")).toBeVisible();
       await expect(banner(await outputPane(details))).toBeVisible();
+    });
+
+    test("Generate sample on output fields Studio can't sample says so", async ({
+      page,
+    }) => {
+      const composed = structuredClone(lookupContract) as {
+        spec: { outputSchema: unknown };
+      };
+      composed.spec.outputSchema = {
+        anyOf: [
+          { type: "object", properties: { a: { type: "string" } } },
+          { type: "string" },
+        ],
+      };
+      const errors: string[] = [];
+      page.on("pageerror", (error) => errors.push(String(error)));
+      await withNewEditor(page);
+      const details = await openStepFixture(
+        page,
+        testDataFixture,
+        async (p) => {
+          const started = await connected(p, {
+            catalog: [...defaultCatalog, { id: "a3", document: composed }],
+            tenantId: TENANT,
+            projectId: PROJECT,
+          });
+          await withLanguageFeatures(p);
+          return started;
+        },
+      );
+      await details.open("lookup");
+      const pane = await outputPane(details);
+      await pane.getByRole("button", { name: "Generate sample" }).click();
+      await expect(pane.locator(".pane-problem")).toHaveText(
+        "Can't make a sample for this output; set it by hand.",
+      );
+      await expect(banner(pane)).toHaveCount(0);
+      expect(errors).toEqual([]);
     });
   });
