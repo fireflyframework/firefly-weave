@@ -231,3 +231,15 @@ describe("the approval notice", () => {
     expect(approvalToast(new Set([first.id]), [first], serverNow)).toBeNull();
   });
 });
+
+describe("a change that needs a check", () => {
+  it("says the workers it let finish take new tasks again", () => {
+    const steps = progressSteps(
+      change({ state: "reconciliation_required" }),
+      serverNow,
+    );
+    const last = steps[steps.length - 1];
+    expect(last.label).toBe("Needs a check");
+    expect(last.detail).toContain("take new tasks again");
+  });
+});

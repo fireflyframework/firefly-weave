@@ -324,6 +324,12 @@ remaining external operation, request a fresh settled observation, and use the
 explicit reconciliation flow. It records the resolution; it does not roll back
 or automatically repeat the earlier change.
 
+When the job belongs to a change request, the change ends in
+`reconciliation_required` and the workers it let finish their tasks go back to
+work at once, each resume audited; a worker someone drained again since stays
+as they left it. Workers the change already removed are gone with their
+containers.
+
 Draining a worker and removing container replicas are different actions. In
 **Operate › Workers**, open the worker and select **Drain** to let its running
 tasks finish while it takes no new ones. Reducing container capacity can
