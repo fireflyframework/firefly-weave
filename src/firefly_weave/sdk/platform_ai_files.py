@@ -57,7 +57,7 @@ TOKEN_ENDPOINT = KEYCLOAK_ORIGIN + "/realms/weave/protocol/openid-connect/token"
 API_ORIGIN = "http://127.0.0.1:8000"
 LOOPBACK = ("127.0.0.1/32",)
 CONNECTION = "ollama-local"
-OLLAMA_IMAGE = "ollama/ollama:0.12.3@sha256:c622a7adec67cf5bd7fe1802b7e26aa583a955a54e91d132889301f50c3e0bd0"
+OLLAMA_IMAGE = "ollama/ollama:0.40.6@sha256:265409e1d931028a8f7d5a32bcbafddd7bffbc6cc629d77efe9560adf692a5e7"
 OLLAMA_ENVIRONMENT = {
     "OLLAMA_CONTEXT_LENGTH": "8192",
     "OLLAMA_HOST": "0.0.0.0:11434",
