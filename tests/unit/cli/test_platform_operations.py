@@ -509,3 +509,16 @@ def test_a_lost_principal_response_is_retried_with_the_same_key(operations):
         f"weave-platform-operations-{owner}-worker-principal",
         f"weave-platform-operations-{owner}-runner-principal",
     ]
+
+
+def test_the_runner_keeps_docker_state_on_its_temporary_space(operations):
+    """The Docker CLI writes buildx state under its configuration directory, which the runner mounts read-only:
+    every Compose dry run then failed. The runner points buildx at its private temporary space instead."""
+    case = operations
+    enable(case)
+    compose = json.loads((case.directory / "compose.operations.json").read_text())
+    runner = compose["services"]["runner-local-docker"]
+    assert runner["environment"]["BUILDX_CONFIG"].startswith("/tmp/")
+    assert any(item.startswith("/tmp:") for item in runner["tmpfs"])
+    configuration = [item for item in runner["volumes"] if item["target"].endswith("/docker-config")]
+    assert configuration and all(item["read_only"] for item in configuration)

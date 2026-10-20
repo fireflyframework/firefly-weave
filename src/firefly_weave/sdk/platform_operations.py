@@ -295,6 +295,8 @@ def runner_document(state: dict[str, Any], value: dict[str, Any]) -> dict[str, A
             "group_add": [str(value["socket_gid"])],
             "environment": {
                 "DOCKER_CONFIG": CONTAINER + "/docker-config",
+                # The Docker configuration is read-only; buildx keeps its state on the private temporary space.
+                "BUILDX_CONFIG": "/tmp/buildx",
                 "WEAVE_PRIVATE_ORIGINS_FILE": platform_origins.CONTAINER_PATH,
             },
             "volumes": [
