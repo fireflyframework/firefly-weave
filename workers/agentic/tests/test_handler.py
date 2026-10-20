@@ -1037,3 +1037,23 @@ async def test_an_ai_task_answer_to_a_prompt_ollama_cut_is_not_used(tmp_path):
             ollama_lease(outputSchema=TEXT_SCHEMA)
         )
     assert (failed.value.code, failed.value.outcome) == ("LLM_CONTEXT_LIMIT", "failed")
+
+
+async def test_only_ollama_entries_get_the_ollama_prompt_checks(tmp_path, monkeypatch):
+    from weave_agentic_worker import handler as module
+
+    seen = []
+    real = module.run_model
+
+    async def spy(*args, **kwargs):
+        seen.append(kwargs.get("ollama"))
+        return await real(*args, **kwargs)
+
+    monkeypatch.setattr(module, "run_model", spy)
+    await handler(Transport(), fixture_model([]))(lease())
+    builder = recording_builder([], lambda _: chat_answer('{"result":{"summary":"Summary"}}'))
+    with po.installed(OLLAMA_ORIGINS):
+        await AgenticTaskHandler(OllamaTransport(), ollama_policy(tmp_path), model_builder=builder)(
+            ollama_lease(outputSchema=SUMMARY_SCHEMA)
+        )
+    assert seen == [False, True]

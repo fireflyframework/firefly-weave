@@ -39,10 +39,11 @@ SPDX-License-Identifier: Apache-2.0
   rate-limited providers, instead of `WV-LUMI-UNAVAILABLE` for all of them.
 - The local platform runs Ollama 0.40.6 (was 0.12.3); Weave AI asks thinking models
   such as `qwen3` to answer without thinking, which 0.12.3 refused.
-- AI tasks count text outside ASCII, such as Chinese or emoji, by its UTF-8 bytes
-  when they check that a prompt fits the model's context, and on Ollama an answer
-  to a prompt the model saw only part of fails with `LLM_CONTEXT_LIMIT` instead
-  of being returned.
+- On Ollama, which cuts a long prompt silently, AI tasks count text outside
+  ASCII, such as Chinese or emoji, by its UTF-8 bytes when they check that a
+  prompt fits the model's context, and an answer to a prompt the model saw only
+  part of fails with `LLM_CONTEXT_LIMIT` instead of being returned. Other
+  endpoints refuse an oversized prompt themselves and keep the earlier count.
 - Weave AI keeps small local models from looping: compact requests answer in at
   most 512 tokens, the instructions ask for a brief answer, Ollama endpoints get
   a frequency penalty, and an answer that starts repeating itself is stopped

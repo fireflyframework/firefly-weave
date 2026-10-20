@@ -150,11 +150,18 @@ def without_thinking(text: str, *, split: bool = False) -> str:
     return _REASONING_REMAINDER.sub("", text, count=1) if split else text
 
 
-# Text outside ASCII can cost far more than four characters per token (Chinese about 1.9 characters per token, emoji
-# about 0.33, measured on llama3.2:3b), so each such character counts its UTF-8 bytes: a byte-level token never
-# covers less than one byte.
 def estimate_tokens(*parts: str) -> int:
-    """An approximate token count: ASCII at four characters per token, other text at one token per UTF-8 byte."""
+    """An approximate token count: one token per four characters, rounded up. Endpoints other than Ollama refuse a
+    prompt longer than their context themselves, so this rough count is enough for them."""
+    return -(-sum(len(part) for part in parts) // 4)
+
+
+# Ollama cuts a prompt longer than its context silently, so its count must never be below the model's. Text outside
+# ASCII can cost far more than four characters per token (Chinese about 1.9 characters per token, emoji about 0.33,
+# measured on llama3.2:3b), so each such character counts its UTF-8 bytes: a byte-level token never covers less than
+# one byte.
+def conservative_tokens(*parts: str) -> int:
+    """A token count for Ollama endpoints: ASCII at four characters per token, other text at one per UTF-8 byte."""
     text = "".join(parts)
     ascii_characters = len(text.encode("ascii", "ignore"))
     return -(-ascii_characters // 4) + len(text.encode()) - ascii_characters
@@ -194,16 +201,17 @@ async def run_model(
     instructions: str = "",
     context_tokens: int | None = None,
     output_mode: str = "tool",
-    cut_check: bool = False,
+    ollama: bool = False,
 ) -> JsonValue:
-    """`cut_check` (Ollama endpoints) refuses an answer whose prompt count shows the model saw only part of it."""
+    """On an Ollama endpoint (`ollama`), which cuts a long prompt silently, the prompt is counted conservatively and
+    an answer whose prompt count shows the model saw only part of it is refused."""
     private_framework_logging()
     prompt = json.dumps({"prompt": user_prompt, "context": context}, ensure_ascii=False)
     estimate = 0
     if context_tokens is not None:
         # Ollama silently truncates a prompt beyond its context, so refuse it before any request.
         schema = "" if text_result(profile.output_schema) else json.dumps(provider_schema(profile.output_schema))
-        estimate = estimate_tokens(instructions, prompt, schema)
+        estimate = (conservative_tokens if ollama else estimate_tokens)(instructions, prompt, schema)
         if estimate + profile.options.max_tokens > context_tokens:
             raise ConnectorFailure("LLM_CONTEXT_LIMIT", "not_started")
     try:
@@ -213,7 +221,7 @@ async def run_model(
             )
     except TimeoutError:
         raise ConnectorFailure("LLM_TIMEOUT", "unknown") from None
-    if cut_check and context_tokens is not None and isinstance(output, dict):
+    if ollama and context_tokens is not None and isinstance(output, dict):
         usage = output.get("usage")
         if isinstance(usage, dict) and cut(
             usage.get("inputTokens"), instructions + prompt, estimate, context_tokens, usage.get("requests")
