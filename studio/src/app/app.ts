@@ -1081,14 +1081,19 @@ export class App implements CanvasHost {
       this.gapCache = {
         tick,
         revision: this.contractRevision,
-        rows: this.nodes.flatMap((node) =>
-          contractGaps(
-            node.step,
-            this.contractCache.get(String(node.step["uses"])) ??
-              this.decisionContracts.get(String(node.step["uses"])),
-            this.model.definition,
-          ).map((gap) => ({ ...gap, stepId: node.step.id })),
-        ),
+        rows: this.nodes.flatMap((node) => {
+          // An AI task without a model needs only that: its slot comes with it.
+          const ai = aiTaskSetup(this.model.definition, node.step);
+          const gaps: ContractGap[] = ai
+            ? [{ label: ai, field: "connection", dataPath: [] }]
+            : contractGaps(
+                node.step,
+                this.contractCache.get(String(node.step["uses"])) ??
+                  this.decisionContracts.get(String(node.step["uses"])),
+                this.model.definition,
+              );
+          return gaps.map((gap) => ({ ...gap, stepId: node.step.id }));
+        }),
       };
     }
     return this.gapCache.rows;

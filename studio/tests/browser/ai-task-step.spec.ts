@@ -120,6 +120,11 @@ for (const size of sizes)
           name: "Show issues for summarize: Setup needed: choose a model",
         }),
       ).toBeVisible();
+      // The setup list says the same as the card.
+      const setupList = page.getByRole("list", { name: "Setup needed" });
+      await expect(setupList.getByRole("button")).toHaveText([
+        "summarize · Choose a model",
+      ]);
       await details.open("summarize");
       await expect(details.topFields()).toHaveCount(2);
       expect(
@@ -155,6 +160,7 @@ for (const size of sizes)
           name: /^Show issues for summarize: Setup needed/,
         }),
       ).toHaveCount(0);
+      await expect(setupList.getByRole("button")).toHaveCount(0);
       const source = parse(await sourceText(page));
       expect(source.spec.llmProfiles).toEqual({
         summarize: {
