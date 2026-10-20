@@ -380,3 +380,57 @@ def test_every_generated_file_is_checked_before_platform_commands_use_it(operati
         platform._compose(platform._load(case.directory))
     with pytest.raises(platform.PlatformError, match="changed outside platform commands"):
         enable(case)
+
+
+def test_up_prepares_the_provider_before_starting_and_sets_operations_up_after(owned, monkeypatch):
+    directory, _, _ = owned
+    called = []
+    monkeypatch.setattr(platform_operations, "prepare_provider", lambda state: called.append("provider"))
+    monkeypatch.setattr(
+        platform_operations, "enable", lambda *args, **kwargs: called.append("enable") or {"stage": "ready"}
+    )
+    monkeypatch.setattr(platform, "start", lambda directory, progress=None: called.append("start"))
+    monkeypatch.setattr(
+        platform, "demo", lambda directory: called.append("demo") or {"receipt": {"status": "succeeded"}}
+    )
+    platform.up(directory, Path("."), None)
+    assert called[:3] == ["provider", "start", "demo"] and "enable" in called[3:]
+
+
+@pytest.mark.parametrize(("flags", "expected"), [([], True), (["--no-operations"], False)])
+def test_the_cli_passes_no_operations_to_up(tmp_path, monkeypatch, flags, expected):
+    from click.testing import CliRunner
+
+    from firefly_weave.cli.main import cli
+
+    seen = {}
+
+    def up(*args, **kwargs):
+        seen.update(kwargs)
+        return {"api_url": "http://127.0.0.1:8000"}
+
+    monkeypatch.setattr(platform, "up", up)
+    CliRunner().invoke(cli, ["platform", "--directory", str(tmp_path / "platform"), "up", *flags, "--output", "json"])
+    assert seen["operations"] is expected
+
+
+def test_ai_and_operations_share_their_loopback_entries_once():
+    from firefly_weave.sdk import platform_origins
+
+    operations_entries = platform_operations.entries({}, SUBNET)
+    loopback = [entry for entry in operations_entries if entry.credentials == "loopback"]
+    value = {
+        "ai": {"entries": platform_origins.entry_records(loopback)},
+        "operations": {"entries": platform_origins.entry_records(operations_entries)},
+    }
+    rendered = json.loads(platform_origins._render(value))
+    pairs = [(item["origin"], item["purpose"]) for item in rendered["entries"]]
+    assert sorted(pairs) == sorted({(entry.origin, entry.purpose) for entry in operations_entries})
+
+
+@pytest.mark.parametrize("answer", [b"991x\n", b"-1\n", b"\n", b"9 9\n", "\u00b2\n".encode()])
+def test_a_socket_group_that_is_not_a_number_stops_the_runner_setup(owned, answer):
+    directory, state, runner = owned
+    runner.answers["operations-socket"] = answer
+    with pytest.raises(platform.PlatformError, match="socket's group could not be read"):
+        platform_operations._socket_group(state, {"runner_image": "weave-operations-runner@" + RUNNER_IMAGE_ID})

@@ -779,8 +779,9 @@ def _socket_group(state: dict[str, Any], value: dict[str, Any]) -> int:
         ],
         timeout=120,
     )
-    text = output.decode().strip()
-    if not text.isdigit():
+    text = output.decode(errors="replace").strip()
+    # ASCII digits only: str.isdigit also accepts superscripts and other scripts' digits.
+    if re.fullmatch(r"[0-9]{1,10}", text) is None:
         raise local.PlatformError("The Docker socket's group could not be read; the runner was not started.")
     return int(text)
 
