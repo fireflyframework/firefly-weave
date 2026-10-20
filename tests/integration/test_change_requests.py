@@ -147,7 +147,9 @@ async def prepared(ops, *, replicas=0, policy=None, who="planner", release=None)
         TargetRequest.model_validate_json(json.dumps(request)), uuid4().hex, **authority
     )
     runner = await service.register_runner(
-        RunnerRegistration(target_id=target.id, adapter="docker-compose", capabilities=CAPABILITIES),
+        RunnerRegistration(
+            target_id=target.id, adapter="docker-compose", adapter_version="2", capabilities=CAPABILITIES
+        ),
         **ops.authority("planner"),
     )
     deployment = await service.create_deployment(
@@ -914,8 +916,12 @@ async def test_runners_and_clients_of_the_previous_release_still_read_plans_leas
     earlier = released.DeploymentPlan.model_validate_json(plan.model_dump_json())
     assert earlier.model_dump_json() == plan.model_dump_json()
     assert canonical_digest(earlier.model_dump(mode="json", exclude={"digest"})) == plan.digest
-    # A runner of the earlier release registers only the capabilities it knows, and claims the apply job.
+    # A runner of the earlier release registers only the capabilities it knows, and claims an apply job that
+    # removes nobody (a scale-down waits for an upgraded runner; see the next tests).
     authority = ops.authority("planner")
+    setup = await prepared(ops, replicas=1, policy=False, who="owner")
+    plan = await low_level_plan(ops, setup, intent="scale_workers", deployed=3, observed_count=1)
+    released.DeploymentPlan.model_validate_json(plan.model_dump_json())
     old_runner = await ops.service.register_runner(
         RunnerRegistration(
             target_id=setup.target.id, adapter="docker-compose", capabilities=["observe", "update", "scale_workers"]
@@ -1098,3 +1104,27 @@ async def test_a_change_that_ends_without_applying_resumes_the_workers_it_draine
     audited = await resumed_audit(ops, change_request.id)
     assert [(target, principal) for target, principal, _ in audited] == [(str(workers[1]), who)]
     assert audited[0][2]["state"] == ended.state
+
+
+async def test_only_a_runner_that_applies_the_reviewed_members_claims_a_scale_down(ops):
+    setup = await prepared(ops, replicas=3)
+    runner = ops.authority("planner")
+    # A runner of the previous release registers adapter version 1 and only the capabilities it knows.
+    older = await ops.service.register_runner(
+        RunnerRegistration(
+            target_id=setup.target.id, adapter="docker-compose", capabilities=["observe", "update", "scale_workers"]
+        ),
+        **runner,
+    )
+    change_request = await applying(ops, setup, observed_count=3, replicas=1)
+    await ops.service.revoke_runner(setup.runner.id, **ops.authority("owner"))
+    # The scale-down removes reviewed members, which that runner would leave to Compose: it waits.
+    assert await ops.service.claim(RunnerClaimRequest(runner_id=older.id), **runner) is None
+    upgraded = await ops.service.register_runner(
+        RunnerRegistration(
+            target_id=setup.target.id, adapter="docker-compose", adapter_version="2", capabilities=CAPABILITIES
+        ),
+        **runner,
+    )
+    lease = await ops.service.claim(RunnerClaimRequest(runner_id=upgraded.id), **runner)
+    assert lease is not None and lease.job.id == change_request.apply_job_id

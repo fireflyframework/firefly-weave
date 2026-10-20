@@ -580,8 +580,12 @@ what runners, CLIs and SDKs of the previous release read:
 
 Upgrade runners soon after the server anyway: a runner of the previous release
 cannot run restart jobs (it never registers `restart_workers`, so it never claims
-them), and it scales down by letting Compose choose the containers instead of
-removing the reviewed members. CLIs and SDKs of the previous release cannot read
+them), and it is never offered a scale-down that removes workers, because it would
+let Compose choose the containers instead of removing the reviewed members.
+**Scale-downs wait until the target's runner is upgraded**: an upgraded runner
+registers adapter version 2, which promises to remove exactly the reviewed
+members, and only such a runner claims a scale-down's apply job. A job nobody
+claims is cancelled at its deadline, and its change request can be planned again. CLIs and SDKs of the previous release cannot read
 a restart plan, a target that offers `restart_workers`, or a target whose
 environment manager turned off the second approver; upgrade them with the server.
 

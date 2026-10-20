@@ -167,6 +167,9 @@ class DeploymentLeases:
             capability = plan.intent if plan else "observe"
             if capability not in runner.capabilities or capability not in target.capabilities:
                 return None
+            if plan and runner.adapter_version == "1" and await self.removes_members(repo, plan):
+                # An earlier runner would let Compose choose which workers to remove; the scale-down waits.
+                return None
             if plan:
                 await self.service.valid_plan(repo, plan, plan.digest)
             generation = row["generation"] + 1
@@ -193,6 +196,15 @@ class DeploymentLeases:
                 DeploymentLeaseProof(job_id=job.id, runner_id=runner.id, generation=generation, token=token),
                 expires,
             )
+
+    @staticmethod
+    async def removes_members(repo: DeploymentRepository, plan: DeploymentPlan) -> bool:
+        """Whether applying the plan removes running or exited members: a scale-down below the observed count."""
+        if plan.intent != "scale_workers":
+            return False
+        observation = await repo.get("observations", plan.observation_id, DeploymentObservation)
+        observed = {resource.name: resource.replicas for resource in observation.resources}
+        return any(observed.get(step.component.name, 0) > step.component.replicas for step in plan.steps)
 
     async def checked(
         self,

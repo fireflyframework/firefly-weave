@@ -115,6 +115,7 @@ async def serve(config: RunnerConfiguration, *, once: bool = False) -> None:
                 body=RunnerRegistration(
                     target_id=config.destination.target_id,
                     adapter=config.destination.adapter,
+                    adapter_version="2",
                     capabilities=config.destination.capabilities,
                 ),
             ),

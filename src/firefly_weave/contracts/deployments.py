@@ -311,7 +311,9 @@ class DeploymentJob(ContractModel):
 class RunnerRegistration(ContractModel):
     target_id: UUID
     adapter: AdapterKind
-    adapter_version: Literal["1"] = "1"
+    # Version 2 runners remove exactly the members `scale_down_members` chooses on a scale-down; only they
+    # are offered scale-down apply jobs. Runners of earlier releases register version 1.
+    adapter_version: Literal["1", "2"] = "1"
     capabilities: list[DeploymentCapability] = Field(min_length=1, max_length=6)
 
 
