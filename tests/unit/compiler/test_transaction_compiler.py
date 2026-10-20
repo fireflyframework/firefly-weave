@@ -348,6 +348,20 @@ def test_undo_fields_outside_a_transaction_are_refused():
     ]
 
 
+def test_a_call_that_does_not_wait_outside_a_transaction_is_told_the_fields_belong_in_one():
+    call = {
+        "id": "notify",
+        "kind": "callWorkflow",
+        "uses": "reverse-target-addition@1.0.0",
+        "mode": "detach",
+        "with": {"object": {"reference": ref("/input/moveId"), "addOperation": {"literal": "x"}}},
+        "irreversible": True,
+    }
+    assert findings(compiled(workflow(call))) == [("TXN_OUTSIDE", "/spec/steps/0/irreversible", "error")]
+    inside = findings(compiled(workflow(transaction(hold(), call, submit()))), "TXN_DETACH", "TXN_OUTSIDE")
+    assert inside == [("TXN_DETACH", f"{BODY}/1/mode", "error")]
+
+
 def test_read_only_actions_and_steps_that_change_nothing_need_no_declaration():
     lookup = action("lookup", "reports.lookup@1.0.0")
     result = compiled(workflow(transaction(hold(), lookup, add(), submit())))

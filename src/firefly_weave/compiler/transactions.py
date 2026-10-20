@@ -677,7 +677,9 @@ def undo_shape_issues(document: JsonValue) -> list[tuple[str, str]]:
     from firefly_weave.compiler.calls import workflow_steps
 
     found: list[tuple[str, str]] = []
-    for step, path in workflow_steps(document):
+    steps = list(workflow_steps(document))
+    transactions = [path + "/steps/" for step, path in steps if step.get("kind") == "transaction"]
+    for step, path in steps:
         if step.get("kind") not in ("action", "callWorkflow"):
             continue
         if ("confirm" in step) != ("cancel" in step):
@@ -688,9 +690,13 @@ def undo_shape_issues(document: JsonValue) -> list[tuple[str, str]]:
             found.append(("TXN_UNDO_FORMS", path + "/irreversible"))
         if "holdSeconds" in step and "confirm" not in step and "cancel" not in step:
             found.append(("TXN_HOLD_RESERVE", path + "/holdSeconds"))
-        undo = any(name in step for name in (*_UNDO_PHASES, "irreversible", "holdSeconds"))
-        if step.get("kind") == "callWorkflow" and step.get("mode") == "detach" and undo:
-            found.append(("TXN_DETACH", path + "/mode"))
+        present = [name for name in (*_UNDO_PHASES, "irreversible", "holdSeconds") if name in step]
+        if step.get("kind") == "callWorkflow" and step.get("mode") == "detach" and present:
+            # Inside a transaction the call must wait; outside one the fields don't apply at all.
+            if any(path.startswith(prefix) for prefix in transactions):
+                found.append(("TXN_DETACH", path + "/mode"))
+            else:
+                found.extend(("TXN_OUTSIDE", f"{path}/{name}") for name in present)
     return found
 
 
