@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from copy import deepcopy
 from typing import Any, cast
 
@@ -96,6 +97,21 @@ class _BoundedAgent(FireflyAgent[Any, Any]):
             raise self.failure from None
 
 
+# A string schema with only these keywords is a plain text answer: no output tool, no response format.
+_TEXT_KEYWORDS = frozenset({"type", "minLength", "maxLength", "title", "description"})
+# Some models write their reasoning inline before the answer; it is never returned or stored.
+_THINKING = re.compile(r"\A\s*<think>.*?</think>\s*", re.DOTALL)
+
+
+def text_result(schema: dict[str, Any]) -> bool:
+    """True when the result is plain text, asked for without an output tool or a response format."""
+    return schema.get("type") == "string" and set(schema) <= _TEXT_KEYWORDS
+
+
+def without_thinking(text: str) -> str:
+    return _THINKING.sub("", text, count=1)
+
+
 def estimate_tokens(*parts: str) -> int:
     """An approximate token count: one token per four characters, rounded up."""
     return -(-sum(len(part) for part in parts) // 4)
@@ -116,7 +132,7 @@ async def run_model(
     if context_tokens is not None:
         # Ollama silently truncates a prompt beyond its context, so refuse it before any request.
         prompt = json.dumps({"prompt": user_prompt, "context": context}, ensure_ascii=False)
-        schema = json.dumps(provider_schema(profile.output_schema))
+        schema = "" if text_result(profile.output_schema) else json.dumps(provider_schema(profile.output_schema))
         if estimate_tokens(instructions, prompt, schema) + profile.options.max_tokens > context_tokens:
             raise ConnectorFailure("LLM_CONTEXT_LIMIT", "not_started")
     try:
@@ -168,13 +184,18 @@ async def _run_model(
                 },
                 ensure_ascii=False,
             )
-        if output_mode == "native" and not model.profile.get("supports_json_schema_output", False):
-            output_mode = "prompted"
-        output_type = {"native": NativeOutput, "tool": ToolOutput, "prompted": PromptedOutput}[output_mode](
-            StructuredDict(provider_schema(profile.output_schema), name="WeaveResult")
-        )
-        final = await agent.run(prompt, output_type=output_type)
-        result = final.output["result"]
+        result: JsonValue
+        if text_result(profile.output_schema):
+            answer = await agent.run(prompt, output_type=str)
+            result = without_thinking(answer.output).strip()
+        else:
+            if output_mode == "native" and not model.profile.get("supports_json_schema_output", False):
+                output_mode = "prompted"
+            output_type = {"native": NativeOutput, "tool": ToolOutput, "prompted": PromptedOutput}[output_mode](
+                StructuredDict(provider_schema(profile.output_schema), name="WeaveResult")
+            )
+            final = await agent.run(prompt, output_type=output_type)
+            result = final.output["result"]
         if validate_payload(profile.output_schema, result, {}):
             raise ConnectorFailure("LLM_OUTPUT", "failed")
         usage = agent.shared_usage

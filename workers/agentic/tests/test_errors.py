@@ -25,12 +25,12 @@ from firefly_weave.contracts.connectors import ConnectorFailure
 from firefly_weave.contracts.llm import LLMProfile
 from openai import APIConnectionError, APITimeoutError
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UsageLimitExceeded
-from pydantic_ai.messages import ModelResponse, ToolCallPart
+from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 
 from weave_agentic_worker.egress import ModelEgressDenied
 from weave_agentic_worker.errors import classify
-from weave_agentic_worker.execution import estimate_tokens, provider_schema, run_model
+from weave_agentic_worker.execution import estimate_tokens, provider_schema, run_model, text_result
 
 REQUEST = httpx2.Request("POST", "http://ollama:11434/v1/chat/completions")
 
@@ -121,7 +121,11 @@ def test_provider_text_never_leaves_the_classification():
     assert str(failure) == "LLM_PROVIDER" and "secret-canary" not in repr(failure.args)
 
 
-def profile(max_tokens=1024):
+TEXT = {"type": "string"}
+WORD = {"type": "string", "pattern": "^[a-z]+$"}
+
+
+def profile(max_tokens=1024, schema=TEXT):
     return LLMProfile.model_validate(
         {
             "provider": "openai-chat",
@@ -129,7 +133,7 @@ def profile(max_tokens=1024):
             "options": {"max_tokens": max_tokens},
             "maxCalls": 2,
             "timeoutSeconds": 10,
-            "outputSchema": {"type": "string"},
+            "outputSchema": schema,
         }
     )
 
@@ -142,9 +146,7 @@ def test_tokens_are_estimated_as_four_characters_each():
 async def test_a_prompt_longer_than_the_context_is_refused_before_any_call():
     calls = []
 
-    def respond(messages, info):
-        calls.append(messages)
-        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {"result": "short"})])
+    respond = answering(calls)
 
     with pytest.raises(ConnectorFailure) as refused:
         await run_model(profile(), "Summarize", "x" * 200, FunctionModel(respond), {}, context_tokens=512)
@@ -158,14 +160,17 @@ async def test_a_prompt_longer_than_the_context_is_refused_before_any_call():
 def answering(calls):
     def respond(messages, info):
         calls.append(messages)
-        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {"result": "short"})])
+        if info.output_tools:
+            return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {"result": "short"})])
+        return ModelResponse(parts=[TextPart("short")])
 
     return respond
 
 
 def tokens_needed(model_profile, prompt, context, instructions=""):
     request = json.dumps({"prompt": prompt, "context": context}, ensure_ascii=False)
-    schema = json.dumps(provider_schema(model_profile.output_schema))
+    structured = not text_result(model_profile.output_schema)
+    schema = json.dumps(provider_schema(model_profile.output_schema)) if structured else ""
     return estimate_tokens(instructions, request, schema) + model_profile.options.max_tokens
 
 
@@ -178,9 +183,10 @@ async def test_a_long_context_is_refused_even_when_the_answer_allowance_is_small
     assert calls == []
 
 
-async def test_a_prompt_that_exactly_fills_the_context_runs_and_one_token_more_is_refused():
+@pytest.mark.parametrize("schema", [TEXT, WORD])
+async def test_a_prompt_that_exactly_fills_the_context_runs_and_one_token_more_is_refused(schema):
     calls = []
-    small = profile(max_tokens=64)
+    small = profile(max_tokens=64, schema=schema)
     instructions = "Answer in one word."
     needed = tokens_needed(small, "Summarize", "x" * 200, instructions)
     model = FunctionModel(answering(calls))
