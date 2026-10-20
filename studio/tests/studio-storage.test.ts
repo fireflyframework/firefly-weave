@@ -138,4 +138,46 @@ describe("a platform signed out", () => {
     expect(mirror.getItem("p0123456789abcdef:s:t:p:testData.d-1")).toBeNull();
     expect(mirror.getItem("local:a")).toBe("1");
   });
+  it("says which keys it dropped, so Studio can tell the person", async () => {
+    const api = {
+      request: async <T>(path: string, method = "GET"): Promise<T> => {
+        if (method === "PUT")
+          throw Object.assign(new Error("Signed out"), {
+            status: 409,
+            code: "WV-STUDIO-STORE-SIGNED-OUT",
+          });
+        if (method === "GET") return { keys: [] } as T;
+        return undefined as T;
+      },
+    };
+    const mirror = new MirroredStorage();
+    const dropped: string[] = [];
+    const stop = mirror.onDropped((key) => dropped.push(key));
+    await mirror.hydrate(hostBackend(api, (key) => mirror.drop(key)));
+    mirror.setItem("p0123456789abcdef:s:t:p:recovery.d-1", "{}");
+    await mirror.flush();
+    expect(dropped).toEqual(["p0123456789abcdef:s:t:p:recovery.d-1"]);
+    stop();
+    mirror.setItem("p0123456789abcdef:s:t:p:recovery.d-2", "{}");
+    await mirror.flush();
+    expect(dropped).toHaveLength(1);
+  });
+  it("never reads a store failure as a sign-out", async () => {
+    const signedOut: string[] = [];
+    for (const [status, code] of [
+      [413, "WV-STUDIO-STORE-FULL"],
+      [500, "WV-STUDIO-STORE"],
+    ] as const) {
+      const api = {
+        request: async <T>(): Promise<T> => {
+          throw Object.assign(new Error("No"), { status, code });
+        },
+      };
+      const backend = hostBackend(api, (key) => signedOut.push(key));
+      expect(
+        await backend.set("p0123456789abcdef:s:t:p:canvas.d-1", "{}"),
+      ).toBe(false);
+    }
+    expect(signedOut).toEqual([]);
+  });
 });

@@ -46,6 +46,7 @@ import {
 } from "./editor/state/browser-store";
 import {
   bootStudioStorage,
+  onStudioStorageDropped,
   flushStudioStorage,
   studioBackend,
   studioStorage,
@@ -1343,8 +1344,25 @@ export class App implements CanvasHost {
     } catch {
       // Nothing kept is lost: the keys stay where they were until the next start.
     }
+    onStudioStorageDropped(() => this.storageDropped());
     this.inspectorWidth = keptInspectorWidth();
     this.closedSections = keptSections();
+  }
+  /** Said once a session: values dropped while the platform shows signed in. */
+  private droppedNoticeShown = false;
+  /**
+   * The host refused a value because it counts the platform as signed out.
+   * Right after a sign-out that is expected; while Studio shows the platform
+   * signed in, the person is told once, so the loss isn't silent.
+   */
+  private storageDropped() {
+    if (this.droppedNoticeShown || !this.profile || !this.identity) return;
+    this.droppedNoticeShown = true;
+    this.notify(
+      `This computer didn't keep some of your work for ${this.profile.name}: Studio still counts it as signed out here. Sign in again to keep it.`,
+      undefined,
+      "danger",
+    );
   }
   async pair() {
     if (!this.pairCode.trim() || this.busy) return;

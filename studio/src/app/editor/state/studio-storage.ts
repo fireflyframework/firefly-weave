@@ -22,7 +22,8 @@ SPDX-License-Identifier: Apache-2.0
 // module reads and writes through `studioStorage()`, so the keys are the
 // same everywhere and signing out purges them in one place. After a sign-out
 // the host refuses the platform's keys (409 WV-STUDIO-STORE-SIGNED-OUT) until
-// the next sign-in: the mirror then drops the value instead of keeping it.
+// the next sign-in: the mirror then drops the value instead of keeping it,
+// and tells whoever listens (`onStudioStorageDropped`), so it isn't silent.
 import type { StudioApi } from "../../api";
 import { isDesktopShell } from "../../export-file";
 import {
@@ -115,9 +116,16 @@ export class MirroredStorage implements BrowserStorage {
     this.values.delete(key);
     this.queue(key, null);
   }
+  private readonly droppedListeners = new Set<(key: string) => void>();
   /** Drops a value the host won't keep (its platform was signed out), without writing. */
   drop(key: string): void {
     this.values.delete(key);
+    for (const listener of this.droppedListeners) listener(key);
+  }
+  /** Hears every value dropped; returns how to stop. */
+  onDropped(listener: (key: string) => void): () => void {
+    this.droppedListeners.add(listener);
+    return () => this.droppedListeners.delete(listener);
   }
   /** Fills the mirror from the host; returns how many keys came. */
   async hydrate(backend: StoreBackend): Promise<number> {
@@ -174,6 +182,10 @@ export async function bootStudioStorage(
   }
   return { migrated: await migrateLegacyKeys(studioBackend()), desktop };
 }
+/** Hears every value the desktop host refused to keep because its platform is signed out there. */
+export const onStudioStorageDropped = (
+  listener: (key: string) => void,
+): (() => void) => (mirror ? mirror.onDropped(listener) : () => undefined);
 /** Pending desktop writes (on close, Save and quitting). */
 export const flushStudioStorage = (): Promise<boolean> =>
   mirror ? mirror.flush() : Promise.resolve(true);
