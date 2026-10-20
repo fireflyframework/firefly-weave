@@ -255,6 +255,7 @@ def workers_document(state: dict[str, Any], value: dict[str, Any]) -> dict[str, 
                     "WEAVE_WORKER_RELEASE_ID": value["release_id"],
                     "WEAVE_WORKER_OAUTH_CONFIG_FILE": CONTAINER + "/config/worker-oauth.json",
                     "WEAVE_PRIVATE_ORIGINS_FILE": platform_origins.CONTAINER_PATH,
+                    "WEAVE_TOKEN_RELAY": "keycloak:8080",
                 },
                 "volumes": [
                     files._bind(root / "config" / "worker-oauth.json", CONTAINER + "/config/worker-oauth.json"),
@@ -352,7 +353,9 @@ def _write_files(state: dict[str, Any], value: dict[str, Any]) -> bool:
     if "release_id" in value and "origins_copy" in value:
         workers = _shared(state, "workers")
         changed = files._publish(workers / "compose.json", files._json(workers_document(state, value))) or changed
-        oauth = _oauth(BRIDGE_KEYCLOAK, WORKER_CLIENT, "worker-client-secret")
+        # OAuth clients take plain HTTP on loopback only: the worker signs in through its own loopback relay,
+        # which forwards to Keycloak on the platform network after checking the bridge entry.
+        oauth = _oauth(KEYCLOAK_ORIGIN, WORKER_CLIENT, "worker-client-secret")
         changed = files._publish(config / "worker-oauth.json", files._json(oauth)) or changed
     if "target_id" in value:
         runner = files._json(runner_configuration(state, value))

@@ -97,3 +97,50 @@ def test_the_fixture_worker_capacity_is_bounded(value, expected):
     for refused in ("0", "9", "two"):
         with pytest.raises(ValueError):
             fixture().capacity({"WEAVE_WORKER_CAPACITY": refused})
+
+
+async def test_the_token_relay_forwards_only_to_an_approved_bridge_origin():
+    """OAuth clients accept plain HTTP only on loopback, so the worker reaches Keycloak on the platform network
+    through a loopback relay that checks the destination against the worker's private-origin entries."""
+    import asyncio
+
+    from firefly_weave import private_origins as po
+
+    async def echo(reader, writer):
+        writer.write(b"pong:" + await reader.read(4))
+        await writer.drain()
+        writer.close()
+
+    server = await asyncio.start_server(echo, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    module = fixture()
+    allowed = po.PrivateOrigins(platform=po.PLATFORM).with_entries(
+        [
+            po.PrivateOrigin(
+                origin=f"http://127.0.0.1:{port}",
+                purpose="worker-auth",
+                networks=("127.0.0.1/32",),
+                credentials="loopback",
+            )
+        ]
+    )
+    with po.installed(allowed):
+        relay = await module.start_relay(f"127.0.0.1:{port}", listen=0)
+        relay_port = relay.sockets[0].getsockname()[1]
+        reader, writer = await asyncio.open_connection("127.0.0.1", relay_port)
+        writer.write(b"ping")
+        await writer.drain()
+        assert await reader.read(9) == b"pong:ping"
+        writer.close()
+        relay.close()
+    with po.installed(po.PrivateOrigins.empty()):
+        relay = await module.start_relay(f"127.0.0.1:{port}", listen=0)
+        relay_port = relay.sockets[0].getsockname()[1]
+        reader, writer = await asyncio.open_connection("127.0.0.1", relay_port)
+        writer.write(b"ping")
+        await writer.drain()
+        # Without an entry for the destination, the relay closes the connection and sends nothing.
+        assert await reader.read(9) == b""
+        writer.close()
+        relay.close()
+    server.close()

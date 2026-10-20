@@ -24,6 +24,7 @@ when stopped. It never accepts database or administrator settings.
 import asyncio
 import os
 import signal
+import socket
 import sys
 from collections.abc import Mapping
 from pathlib import Path
@@ -57,12 +58,47 @@ async def sleep(lease: Any) -> dict[str, int]:
     return {"slept_ms": milliseconds}
 
 
+async def _pipe(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    try:
+        while data := await reader.read(65536):
+            writer.write(data)
+            await writer.drain()
+    finally:
+        writer.close()
+
+
+async def start_relay(destination: str, *, listen: int = 8080) -> asyncio.Server:
+    """A loopback relay to Keycloak on the platform network, for the token endpoint only.
+
+    OAuth clients accept plain HTTP only on loopback, so the worker signs in through 127.0.0.1. Each
+    connection is checked against the worker's private-origin entries for worker-auth before anything is
+    forwarded, and goes to the checked address.
+    """
+    host, _, port = destination.rpartition(":")
+
+    async def relay(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        try:
+            found = await asyncio.get_running_loop().getaddrinfo(host, int(port), type=socket.SOCK_STREAM)
+            addresses = sorted({item[4][0] for item in found})
+            private_origins.active().check("worker-auth", f"http://{host}:{port}/", addresses, sends_credentials=True)
+            upstream_reader, upstream_writer = await asyncio.open_connection(addresses[0], int(port))
+        except Exception:
+            writer.close()
+            return
+        await asyncio.gather(_pipe(reader, upstream_writer), _pipe(upstream_reader, writer), return_exceptions=True)
+
+    return await asyncio.start_server(relay, "127.0.0.1", listen)
+
+
 async def main() -> None:
     forbidden = [key for key in os.environ if "DATABASE" in key or key.startswith(("PG", "WEAVE_KC_ADMIN"))]
     if forbidden:
         raise RuntimeError("The fixture worker must not receive database or administrator settings")
     concurrent = capacity(os.environ)
     private_origins.install(private_origins.load())
+    relay = os.environ.get("WEAVE_TOKEN_RELAY")
+    if relay:
+        await start_relay(relay)
     api = os.environ["WEAVE_API_URL"]
     provider = ClientCredentialsTokenProvider.from_file(Path(os.environ["WEAVE_WORKER_OAUTH_CONFIG_FILE"]), api)
     async with httpx.AsyncClient(
