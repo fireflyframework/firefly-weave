@@ -335,7 +335,17 @@ describe("choosing a model", () => {
 
 describe("the model list", () => {
   it("groups models by AI connection and shows what each can do", () => {
-    expect(modelOptions(groups)).toEqual([
+    const offered = [
+      {
+        ...groups[0],
+        models: [
+          ...groups[0].models!,
+          { ...small, name: "llama3.2:3b", available: false },
+        ],
+      },
+      groups[1],
+    ];
+    expect(modelOptions(offered)).toEqual([
       {
         value: modelValue("r-ollama", "qwen3:4b"),
         label: "qwen3:4b",
