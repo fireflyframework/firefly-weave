@@ -7197,6 +7197,10 @@ export class App implements CanvasHost {
     this.simulationDataMemo = { data, value };
     return value;
   }
+  pinFromElsewhere(id: string): boolean {
+    this.pinStates();
+    return this.foreignPins.has(id);
+  }
   pinsForCopy(): Readonly<Record<string, PinEntry>> {
     return this.testData.data().pins ?? {};
   }

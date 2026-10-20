@@ -84,6 +84,8 @@ export interface StepDetailsHost {
   testDataPrints?(): ReadonlyMap<string, StepFingerprints> | null;
   /** Opens the test data of the workflow and account shown now; false when it was open already. */
   openTestData?(): boolean;
+  /** This step's pin came from another workflow (pasted, or loaded from a file) and isn't kept yet. */
+  pinFromElsewhere?(id: string): boolean;
   /** Saves a platform draft's pending edits now (closing step details); true when nothing is left. */
   flushAutosave?(): Promise<boolean>;
   /**

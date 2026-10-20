@@ -25,6 +25,7 @@ import {
   output,
 } from "@angular/core";
 import { Icon } from "../../../icon";
+import type { StaleReason } from "../registry";
 
 @Component({
   selector: "weave-pinned-banner",
@@ -44,7 +45,7 @@ import { Icon } from "../../../icon";
       <!-- Only the sentence is announced; the buttons beside it aren't. -->
       <span role="status">{{
         stale()
-          ? "Pinned output may be out of date: earlier steps changed."
+          ? "Pinned output may be out of date: " + reasonText() + "."
           : "This data is pinned for test runs. Production runs ignore it."
       }}</span
       >&ngsp;
@@ -66,6 +67,20 @@ import { Icon } from "../../../icon";
 })
 export class PinnedBanner {
   stale = input(false);
+  /** Why it may be out of date; "upstream" when not known. */
+  reason = input<StaleReason | "elsewhere" | null>(null);
+  reasonText(): string {
+    switch (this.reason()) {
+      case "settings":
+        return "this step's settings changed";
+      case "contract":
+        return "what this step calls changed";
+      case "elsewhere":
+        return "it was pinned in another workflow";
+      default:
+        return "earlier steps changed";
+    }
+  }
   localOnly = input(false);
   readonly unpin = output<void>();
   readonly keep = output<void>();

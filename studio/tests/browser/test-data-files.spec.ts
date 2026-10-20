@@ -224,6 +224,12 @@ test("copying steps leaves out pins recorded from runs", async ({ page }) => {
   await expect(page.locator('[data-step="notify-1"] .tile-badge')).toHaveCount(
     0,
   );
+  // The pasted pin's banner says why it may not fit.
+  const details = new StepDetailsPage(page);
+  await details.open("lookup-1");
+  await expect(banner(await outputPane(details))).toContainText(
+    "Pinned output may be out of date: it was pinned in another workflow.",
+  );
 });
 
 test("undoing a rename moves the pin back, and deleting a step offers its pin back", async ({

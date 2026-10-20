@@ -161,6 +161,7 @@ import { ndvRegistry, type Json } from "../registry";
           @if (pin) {
             <weave-pinned-banner
               [stale]="pin.stale !== null"
+              [reason]="pinFromElsewhere() ? 'elsewhere' : pin.stale"
               [localOnly]="localOnly()"
               (unpin)="unpin()"
               (keep)="keepPinned()"
@@ -297,6 +298,11 @@ export class OutputPane {
     return (
       !!step && !this.pinnable() && !this.noOutput() && !target.startsWith("$")
     );
+  }
+  /** The pin came from another workflow and isn't kept here yet. */
+  pinFromElsewhere(): boolean {
+    const { controller, target } = this.session();
+    return controller.pinFromElsewhere(target);
   }
   localOnly(): boolean {
     const { controller, target } = this.session();

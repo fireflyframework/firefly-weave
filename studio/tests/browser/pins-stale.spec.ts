@@ -103,6 +103,24 @@ for (const size of sizes)
       );
     });
 
+    test("the banner names why: the step's own settings", async ({ page }) => {
+      const details = await openTestDataFixture(page);
+      await pin(details, "notify");
+      // notify's own mapping changes.
+      const source = await sourceText(page);
+      const changed = source.replace(
+        "with: {object: {customerId: {ref: /steps/score/output/tier}}}",
+        "with: {object: {customerId: {ref: /input/customerId}}}",
+      );
+      expect(changed).not.toBe(source);
+      await applySource(page, changed);
+      await details.open("notify");
+      const pane = await outputPane(details);
+      await expect(banner(pane)).toContainText(
+        "Pinned output may be out of date: this step's settings changed.",
+      );
+    });
+
     test("Keep pinned makes it current again", async ({ page }) => {
       const details = await openTestDataFixture(page);
       await pin(details, "notify");

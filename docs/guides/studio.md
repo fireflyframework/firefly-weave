@@ -1170,10 +1170,12 @@ becomes part of the workflow definition.
   **Undo**. On the canvas, pinned steps show a pin badge.
 - **Out of date.** When a pinned step's settings, what it calls, or anything it
   reads changes, its badge reads "Pinned test data, out of date" with the
-  reason, and the Output pane says "Pinned output may be out of date: earlier
-  steps changed." Select **Keep pinned** to keep the output as it is. Output
-  pasted or loaded from another workflow reads "pinned in another workflow;
-  check it still fits" until you keep it.
+  reason, and the Output pane says why: "Pinned output may be out of date:
+  earlier steps changed." (or "this step's settings changed", "what this step
+  calls changed", "it was pinned in another workflow"). Select **Keep pinned**
+  to keep the output as it is. Output pasted or loaded from another workflow
+  reads "pinned in another workflow; check it still fits" on its tile until
+  you keep it.
 - **Secrets.** Test data never keeps a value for a field its schema marks
   secret or write-only. Studio checks every value before it keeps it, and the
   platform checks again.

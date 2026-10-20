@@ -137,6 +137,7 @@ export type ControllerHost = Pick<
   | "testData"
   | "testDataPrints"
   | "openTestData"
+  | "pinFromElsewhere"
 >;
 /** A diagnostic of one step, located in it. */
 export interface StepDiagnostic {
@@ -400,6 +401,10 @@ export class StepDetailsController {
       .then((outcome) => {
         if (outcome.ok) this.offerUndo(`Unpinned ${target}.`, outcome.previous);
       });
+  }
+  /** This step's pin came from another workflow and isn't kept here yet. */
+  pinFromElsewhere(target: string): boolean {
+    return !!this.host.pinFromElsewhere?.(target);
   }
   /** Keep pinned: the same output, current again (today's fingerprints). */
   keepPinned(target: string): void {
