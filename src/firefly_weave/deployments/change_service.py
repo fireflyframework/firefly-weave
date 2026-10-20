@@ -80,6 +80,7 @@ from firefly_weave.deployments.service import DeploymentService, plan_victims
 from firefly_weave.operations.outbox import OutboxService
 from firefly_weave.persistence.idempotency import Idempotency
 from firefly_weave.persistence.uow import Transaction, UnitOfWork
+from firefly_weave.workers.repository import WorkerRepository
 from firefly_weave.workers.service import WorkerService
 
 _ACTIVE_SQL = ",".join(f"'{state}'" for state in ACTIVE)
@@ -100,6 +101,8 @@ async def move(
     now = await repo.now()
     moved = transition(record, state, actor=actor, at=now)
     moved = moved.model_copy(update={"failure": failure, "warnings": [*record.warnings, *warnings][:10]})
+    if state in _UNAPPLIED and moved.drained:
+        await resume_drained(repo, moved, actor)
     await repo.update(
         "change_requests",
         moved.id,
@@ -108,6 +111,45 @@ async def move(
     )
     await OutboxService().append(repo.tx, transition_event(moved, now))
     return moved
+
+
+# A change that ends in these states never applied, so the workers it drained go back to work.
+_UNAPPLIED: frozenset[ChangeState] = frozenset({"declined", "cancelled", "expired", "superseded"})
+
+
+async def resume_drained(repo: DeploymentRepository, record: ChangeRequest, actor: UUID | None) -> None:
+    """Resume the workers this change drained and that still drain, auditing each one.
+
+    Workers that were draining before the change, or that someone resumed or revoked since, are left alone. The
+    actor is the person who ended the change, or none when the operations loop persisted its expiry.
+    """
+    rows = await repo.rows(
+        "UPDATE worker_instances SET draining=false,control_revision=control_revision+1 "
+        "WHERE tenant_id=:tenant AND project_id=:project AND environment_id=:environment "
+        "AND id=ANY(cast(:ids AS uuid[])) AND draining AND NOT revoked RETURNING id",
+        ids=list(record.drained),
+    )
+    workers = WorkerRepository(repo.tx)
+    for row in sorted(rows, key=lambda item: str(item["id"])):
+        await workers.record_drain(row["id"], draining=False, was_draining=True)
+        event = {
+            "version": 1,
+            "action": "worker.resume",
+            "principal_id": str(actor) if actor else None,
+            "identity": None,
+            "scope": repo.tx.scope.model_dump(mode="json"),
+            "capability": "worker.drain",
+            "outcome": "success",
+            "correlation": {},
+            "details": {"change_request_id": str(record.id), "state": record.state},
+        }
+        await repo.tx.session.execute(
+            text(
+                "INSERT INTO access_audit(principal_id,action,target,event) "
+                "VALUES(:actor,'worker.resume',:target,cast(:event AS jsonb))"
+            ),
+            {"actor": actor, "target": str(row["id"]), "event": json.dumps(event)},
+        )
 
 
 def transition_event(record: ChangeRequest, at: datetime) -> IntegrationEvent:
@@ -655,6 +697,7 @@ class ChangeRequestService:
                 raise CatalogError(409, "WV-CHANGE-STATE", f"A change request cannot drain while {state}")
             if state == "approved":
                 require_drain_window(record, now)
+            newly: builtins.list[UUID] = []
             for member in await drain_progress(repo, record.drain_set):
                 if member.revoked or member.draining:
                     continue
@@ -664,6 +707,7 @@ class ChangeRequestService:
                     id=member.worker_id,
                 )
                 revision = rows[0]["control_revision"]
+                newly.append(member.worker_id)
                 await self.workers.control(
                     actor,
                     scope,
@@ -674,9 +718,13 @@ class ChangeRequestService:
                     context=context,
                     tx=tx,
                 )
+            if newly:
+                record = record.model_copy(update={"drained": [*record.drained, *newly][:100]})
             if record.state == "approved":
                 record = await move(repo, record, "draining", actor=actor.id)
                 await self.record(tx, actor, "worker.drain", record, context)
+            elif newly:
+                await repo.update("change_requests", record.id, record, extra={"state": record.state})
             members = await drain_progress(repo, record.drain_set)
             result = DrainProgress(
                 change_request=record, members=members, remaining=sum(not drained(member) for member in members)

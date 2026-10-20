@@ -52,7 +52,7 @@ from firefly_weave.contracts.deployments import (
 )
 from firefly_weave.contracts.workers import InstanceRequest, ReleaseRequest, WorkerIdentity
 from firefly_weave.definitions.models import CatalogError
-from firefly_weave.deployments.change_service import ChangeRequestService
+from firefly_weave.deployments.change_service import ChangeRequestService, persist_expiry
 from firefly_weave.deployments.repository import DeploymentRepository
 from firefly_weave.deployments.service import DeploymentService, plan_victims
 from firefly_weave.persistence.uow import UnitOfWork
@@ -1035,3 +1035,66 @@ async def test_a_draining_change_whose_observation_ends_too_soon_must_observe_ag
     assert (failed.state, failed.failure.code, failed.plan_id) == ("failed", "WV-DRAIN-WINDOW", None)
     again = await ops.changes.replan(created.id, failed.revision, **ops.authority("planner"))
     assert again.state == "observing"
+
+
+async def draining_state(ops, worker):
+    async with ops.access[1]() as session:
+        row = (
+            await session.execute(
+                text("SELECT draining,control_revision FROM worker_instances WHERE id=:id"), {"id": worker}
+            )
+        ).one()
+    return tuple(row)
+
+
+async def resumed_audit(ops, change_id):
+    async with ops.access[1]() as session:
+        rows = (
+            await session.execute(
+                text(
+                    "SELECT target,principal_id,event->'details' FROM access_audit WHERE action='worker.resume' "
+                    "AND event->'details'->>'change_request_id'=:id ORDER BY target"
+                ),
+                {"id": str(change_id)},
+            )
+        ).all()
+    return [tuple(row) for row in rows]
+
+
+@pytest.mark.parametrize("ending", ["decline", "cancel", "expire"])
+async def test_a_change_that_ends_without_applying_resumes_the_workers_it_drained(ops, fleet, ending):
+    workers = sorted(worker.id for worker in fleet.workers)
+    # One worker was already draining before the change; the change leaves it as it found it.
+    async with ops.access[1].begin() as session:
+        await session.execute(
+            text("UPDATE worker_instances SET draining=true,control_revision=control_revision+1 WHERE id=:id"),
+            {"id": workers[0]},
+        )
+    change_request = await approved(ops, fleet.setup, observed_count=3, replicas=1)
+    progress = await ops.changes.drain(change_request.id, "drain", **ops.authority("operator"))
+    assert progress.change_request.drained == [workers[1]]
+    if ending == "decline":
+        ended = await ops.changes.decline(
+            change_request.id, ChangeRequestDecision(reason="Not now"), **ops.authority("approver")
+        )
+        who = ops.people["approver"].id
+    elif ending == "cancel":
+        ended = await ops.changes.cancel(
+            change_request.id, ChangeRequestDecision(reason="Not now"), **ops.authority("planner")
+        )
+        who = ops.people["planner"].id
+    else:
+        stored = await payload(ops, change_request.id)
+        stored["plan_expires_at"] = "2000-01-01T00:00:00Z"
+        await rewrite(ops, change_request.id, stored)
+        async with UnitOfWork(ops.access[0]).open(ops.scope) as tx:
+            repo = DeploymentRepository(tx)
+            assert await persist_expiry(repo, await repo.now()) == 1
+        ended = await ops.changes.read(change_request.id, **ops.authority("planner"))
+        who = None
+    assert ended.state in {"declined", "cancelled", "expired"}
+    assert await draining_state(ops, workers[1]) == (False, 3)
+    assert await draining_state(ops, workers[0]) == (True, 2)
+    audited = await resumed_audit(ops, change_request.id)
+    assert [(target, principal) for target, principal, _ in audited] == [(str(workers[1]), who)]
+    assert audited[0][2]["state"] == ended.state
