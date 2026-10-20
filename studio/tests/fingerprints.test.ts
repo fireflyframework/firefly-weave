@@ -21,6 +21,7 @@ import {
   fingerprints,
   fnv1a64,
   staleReason,
+  STALE_WORDS,
   type FingerprintInputs,
 } from "../src/app/editor/state/fingerprints";
 import type { Step, Workflow } from "../src/app/model";
@@ -383,6 +384,72 @@ describe("fingerprints hold to what a step is", () => {
         pinOf(before, "read"),
         fingerprints(inputs(steps(2))).get("read"),
       ),
+    ).toBe("upstream");
+  });
+});
+
+describe("renaming a step", () => {
+  const pinOf = (
+    all: Map<string, { config: string; contract: string; upstream: string }>,
+    id: string,
+  ) => {
+    const now = all.get(id)!;
+    return {
+      configHash: now.config,
+      contractHash: now.contract,
+      upstreamHash: now.upstream,
+    };
+  };
+  const renamed = (): Step[] => {
+    const steps = base();
+    steps[0]["id"] = "find";
+    steps[1]["with"] = { ref: "/steps/find/output" };
+    return steps;
+  };
+  it("keeps its own pin and the pins of the steps that read it current", () => {
+    const before = fingerprints(inputs(base()));
+    const after = fingerprints(inputs(renamed()));
+    expect(staleReason(pinOf(before, "lookup"), after.get("find"))).toBeNull();
+    expect(staleReason(pinOf(before, "score"), after.get("score"))).toBeNull();
+    expect(staleReason(pinOf(before, "route"), after.get("route"))).toBeNull();
+  });
+  it("keeps a group current when one of its steps is renamed", () => {
+    const steps = base();
+    ((steps[2]["cases"] as { steps: Step[] }[])[0].steps[0] as Step)["id"] =
+      "alert";
+    const before = fingerprints(inputs(base()));
+    expect(
+      staleReason(
+        pinOf(before, "route"),
+        fingerprints(inputs(steps)).get("route"),
+      ),
+    ).toBeNull();
+  });
+  it("says what this step reads changed when it reads another step instead", () => {
+    const steps = base();
+    steps[1]["with"] = { ref: "/steps/note/output" };
+    const before = fingerprints(inputs(base()));
+    expect(
+      staleReason(
+        pinOf(before, "score"),
+        fingerprints(inputs(steps)).get("score"),
+      ),
+    ).toBe("upstream");
+    expect(STALE_WORDS.upstream).toBe("what this step reads changed");
+  });
+  it("finds references inside an object field named literal", () => {
+    const steps = (value: number): Step[] =>
+      [
+        { id: "a", kind: "transform", value: { literal: value } },
+        {
+          id: "b",
+          kind: "transform",
+          value: { object: { literal: { ref: "/steps/a/output" } } },
+        },
+      ] as unknown as Step[];
+    const before = fingerprints(inputs(steps(1)));
+    expect(
+      staleReason(pinOf(before, "b"), fingerprints(inputs(steps(2))).get("b")),
     ).toBe("upstream");
   });
 });

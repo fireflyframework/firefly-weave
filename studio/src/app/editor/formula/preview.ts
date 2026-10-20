@@ -93,7 +93,10 @@ export function referencesOf(expression: unknown): string[] {
           ? (found.push(node["ref"]), [])
           : Object.keys(node).length === 1 && "literal" in node
             ? []
-            : Object.values(node)
+            : // An object expression's fields are names, so one called "literal" still holds an expression.
+              Object.keys(node).length === 1 && isRecord(node["object"])
+              ? Object.values(node["object"])
+              : Object.values(node)
         : [];
     for (let i = children.length - 1; i >= 0; i--) stack.push(children[i]);
   }
