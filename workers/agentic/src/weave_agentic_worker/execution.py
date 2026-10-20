@@ -193,6 +193,8 @@ def conservative_tokens(*parts: str) -> int:
 # No text measured took more than 4.6 ASCII characters or 2 other characters per token, so a model that counted fewer
 # tokens than these saw only part of the prompt. Ollama drops the start of a prompt longer than its context, and
 # keeps half the context, within a few tokens (4,098 of 8,192, measured twice on Ollama 0.40.2).
+# Prompt checks on Ollama endpoints: what they could not check is logged, never skipped silently.
+_PROMPTS = logging.getLogger("weave_agentic_worker.prompts")
 MAX_ASCII_PER_TOKEN = 6
 MAX_OTHER_PER_TOKEN = 2
 CUT_MARGIN = 16
@@ -210,6 +212,7 @@ def cut(
     """Whether a model's prompt count shows that it saw only part of what was sent. `half` is for Ollama 0.40 and
     later, which keep half the context when they cut; Ollama 0.12.3 keeps 5 tokens and fills the window instead."""
     if not isinstance(counted, int) or counted <= 0:
+        _PROMPTS.warning("The model reported no prompt token count, so the check for a cut prompt was skipped.")
         return False
     middle = context_tokens // 2
     return counted < fewest_tokens(sent) or (

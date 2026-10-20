@@ -216,3 +216,16 @@ def test_half_the_context_is_a_cut_only_where_ollama_cuts_at_half():
     sent = "word " * 2500
     assert cut(4096, sent, 5000, 8192, 1, half=True) and not cut(4096, sent, 5000, 8192, 1, half=False)
     assert not cut(4096, sent, 5000, 8192, 2, half=True)
+
+
+@pytest.mark.parametrize("counted", [None, 0])
+def test_a_missing_prompt_count_skips_the_cut_check_out_loud(caplog, counted):
+    import logging
+
+    from weave_agentic_worker.execution import cut
+
+    with caplog.at_level(logging.WARNING, logger="weave_agentic_worker.prompts"):
+        assert not cut(counted, "word " * 600, 1200, 8192, 1, half=True)
+    assert [record.getMessage() for record in caplog.records] == [
+        "The model reported no prompt token count, so the check for a cut prompt was skipped."
+    ]
