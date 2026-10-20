@@ -1004,3 +1004,34 @@ async def test_the_stricter_policy_and_the_requester_apply_to_low_level_approve_
             planned.plan_id, ApplyPlanRequest(digest=planned.plan_digest), uuid4().hex, **ops.authority("operator")
         )
     assert (applied.value.status, applied.value.code) == (403, "WV-APPROVAL-SELF")
+
+
+async def test_a_draining_change_can_still_be_declined(ops, fleet):
+    change_request = await approved(ops, fleet.setup, observed_count=3, replicas=1)
+    progress = await ops.changes.drain(change_request.id, "drain", **ops.authority("operator"))
+    assert progress.change_request.state == "draining"
+    declined = await ops.changes.decline(
+        change_request.id, ChangeRequestDecision(reason="Not during the batch window"), **ops.authority("approver")
+    )
+    assert declined.state == "declined"
+
+
+async def test_a_draining_change_whose_observation_ends_too_soon_must_observe_again(ops):
+    setup = await prepared(ops, replicas=3)
+    created = await ops.changes.create(change(setup, replicas=1), uuid4().hex, **ops.authority("planner"))
+    job = await run_observation(ops, setup, 3)
+    # The plan cannot outlive its observation: four minutes left is less than the drain timeout plus three minutes.
+    async with ops.access[1].begin() as session:
+        await session.execute(
+            text(
+                "UPDATE deployment_observations SET payload=jsonb_set(payload,'{expires_at}',"
+                "to_jsonb(to_char(clock_timestamp() AT TIME ZONE 'UTC' + interval '240 seconds',"
+                '\'YYYY-MM-DD"T"HH24:MI:SS.US"Z"\'))) WHERE id=:id'
+            ),
+            {"id": job.observation_id},
+        )
+    ready = await ops.changes.read(created.id, **ops.authority("planner"))
+    failed = await ops.changes.advance(created.id, ready.revision, **ops.authority("planner"))
+    assert (failed.state, failed.failure.code, failed.plan_id) == ("failed", "WV-DRAIN-WINDOW", None)
+    again = await ops.changes.replan(created.id, failed.revision, **ops.authority("planner"))
+    assert again.state == "observing"

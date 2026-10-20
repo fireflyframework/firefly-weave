@@ -57,7 +57,7 @@ TRANSITIONS: dict[ChangeState, frozenset[ChangeState]] = {
     "ready_to_plan": frozenset({"awaiting_approval", "failed", "cancelled", "superseded"}),
     "awaiting_approval": frozenset({"approved", "declined", "cancelled", "expired", "superseded"}),
     "approved": frozenset({"draining", "applying", "declined", "cancelled", "expired", "superseded"}),
-    "draining": frozenset({"applying", "cancelled", "expired", "superseded"}),
+    "draining": frozenset({"applying", "declined", "cancelled", "expired", "superseded"}),
     "applying": frozenset({"succeeded", "failed", "reconciliation_required"}),
     "succeeded": frozenset(),
     "failed": frozenset({"observing"}),

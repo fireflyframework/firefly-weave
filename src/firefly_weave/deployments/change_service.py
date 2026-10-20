@@ -65,6 +65,7 @@ from firefly_weave.definitions.models import CatalogError
 from firefly_weave.deployments.change_requests import (
     ACTIVE,
     DEFAULT_PLAN_SECONDS,
+    DRAIN_PLAN_MARGIN_SECONDS,
     ENDED,
     RETENTION,
     drains,
@@ -526,6 +527,18 @@ class ChangeRequestService:
                 moved = await move(repo, record, "superseded", actor=actor.id)
                 await self.record(tx, actor, "deployment.plan", moved, context)
                 return moved
+            if drains(record):
+                # A plan never outlives its observation, so a drain also needs an observation that lives long enough.
+                left = (observation.expires_at - await repo.now()).total_seconds()
+                needed = record.drain.timeout_seconds + DRAIN_PLAN_MARGIN_SECONDS
+                if min(left, record.plan_ttl_seconds or DEFAULT_PLAN_SECONDS) < needed:
+                    failure = ChangeFailure(
+                        code="WV-DRAIN-WINDOW",
+                        message="The observation ends before the workers could drain and apply; observe again",
+                    )
+                    moved = await move(repo, record, "failed", actor=actor.id, failure=failure)
+                    await self.record(tx, actor, "deployment.plan", moved, context)
+                    return moved
             request = PlanRequest(
                 deployment_id=deployment.id,
                 deployment_revision=deployment.revision,

@@ -52,6 +52,8 @@ ALLOWED = {
     ("approved", "superseded"),
     ("draining", "applying"),
     ("draining", "cancelled"),
+    # Declining is allowed until the change is applied, also while its workers drain.
+    ("draining", "declined"),
     ("draining", "expired"),
     ("draining", "superseded"),
     ("applying", "succeeded"),
