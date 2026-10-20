@@ -151,12 +151,19 @@ def test_a_standard_request_counts_the_workflow_schema_against_its_budget():
     assert sent_tokens(shaped, message) <= budget
 
 
-def test_the_guide_names_every_step_kind_the_language_has():
+def test_the_guide_names_every_step_kind_this_platform_runs():
+    from firefly_weave.contracts.language_features import ADVERTISED_FEATURES, KIND_FEATURES
+
     kinds = {
         typing.get_args(member.model_fields["kind"].annotation)[0]
         for member in typing.get_args(typing.get_args(Step.__value__)[0])
     }
-    assert kinds and all(f"`{kind}`" in GUIDE for kind in kinds)
+    # A kind whose feature this platform does not run yet (a transaction) would only lead to a draft it can't publish.
+    pending = {kind for kind, feature in KIND_FEATURES.items() if feature not in ADVERTISED_FEATURES}
+    assert "transaction" in kinds and "transaction" in pending
+    runnable = kinds - pending
+    assert runnable and all(f"`{kind}`" in GUIDE for kind in runnable)
+    assert not any(f"`{kind}`" in GUIDE for kind in pending)
 
 
 def draft(steps=20):
