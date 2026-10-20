@@ -44,7 +44,9 @@ COMPACT_MAX_TOKENS = 512
 COMPACT_BELOW = 16384
 STANDARD_UP_TO = 65536
 # The gateway's instructions and the reply format it sends with every request; the gateway tests keep them under it.
-GATEWAY_RESERVE_TOKENS = 512
+GATEWAY_RESERVE_TOKENS = 704
+# The request's own wrapping (prompt, context, history and attachments keys) and the list of trimmed parts.
+ENVELOPE_TOKENS = 64
 STANDARD_DRAFT_BYTES = 32768
 HISTORY: dict[Profile, int] = {"compact": 4, "standard": 8, "full": 16}
 SCHEMAS: dict[Profile, tuple[str, ...]] = {
@@ -53,6 +55,7 @@ SCHEMAS: dict[Profile, tuple[str, ...]] = {
     "full": ("workflow", "action", "connector", "decisiontable"),
 }
 GUIDE_SHARE, DRAFT_SHARE, ATTACHMENT_SHARE, HISTORY_SHARE = 0.25, 0.40, 0.20, 0.15
+OTHER_SHARES = DRAFT_SHARE + ATTACHMENT_SHARE + HISTORY_SHARE
 UNPARSED = "The draft does not parse yet, so only its errors can be discussed."
 GUIDE_VERSION = 1
 GUIDE = """\
@@ -77,9 +80,11 @@ connector, never a fragment. Say what you could not see when the context lists t
 """
 
 
+# llama3.2:3b counted up to 1.55 times characters / 4 on Weave AI requests (hex identifiers, Japanese text), so the
+# estimate counts 2.5 characters per token and never fewer tokens than the model does. The gateway uses the same rule.
 def estimate_tokens(text: str) -> int:
-    """An approximate token count, one per four characters, rounded up; the same rule as the gateway's."""
-    return -(-len(text) // 4)
+    """A conservative token count: one per two and a half characters, rounded up; the same rule as the gateway's."""
+    return -(-len(text) * 2 // 5)
 
 
 def _tokens(value: JsonValue) -> int:
@@ -241,7 +246,15 @@ def shape(
         wanted = {name: schemas[name] for name in SCHEMAS[profile] if name in schemas}
         if wanted:
             context["authoringSchemas"] = cast(JsonValue, wanted)
-    share = (lambda part: int(budget * part)) if budget is not None else (lambda part: None)
+    # The instructions, reply format, guide and schemas are sent whole; the other parts share what they leave,
+    # each held to its share of the budget and to its part of the rest, so the whole request stays within it.
+    rest = budget - GATEWAY_RESERVE_TOKENS - ENVELOPE_TOKENS - _tokens(context) if budget is not None else None
+
+    def share(part: float) -> int | None:
+        if budget is None or rest is None:
+            return None
+        return max(0, min(int(budget * part), int(rest * part / OTHER_SHARES)))
+
     if draft is not None:
         format, source = draft
         whole: JsonObject = {"format": format, "source": source}

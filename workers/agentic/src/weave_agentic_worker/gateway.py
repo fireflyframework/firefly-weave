@@ -25,6 +25,7 @@ namespace on the local developer platform.
 
 import asyncio
 import hmac
+import json
 import os
 import time
 from collections.abc import Callable, Coroutine
@@ -76,7 +77,7 @@ from weave_agentic_worker.discovery import (
 )
 from weave_agentic_worker.egress import PinnedModelTransport, resolve
 from weave_agentic_worker.errors import classify
-from weave_agentic_worker.execution import private_framework_logging, run_model
+from weave_agentic_worker.execution import private_framework_logging, provider_schema, run_model
 from weave_agentic_worker.handler import ModelBuilder, WorkerPolicy
 from weave_agentic_worker.main import read_policy
 from weave_agentic_worker.providers import ProviderModel, build_model
@@ -100,6 +101,9 @@ LOOP_REPEATS = 4
 LOOP_MIN_CHARS = 256
 LOOP_MAX_PERIOD = 512
 LOOP_CHECK_EVERY = 64
+# No text measured on Weave AI requests took more than 4.6 characters per token, so a model that counted fewer
+# tokens than one per 6 characters sent saw only part of the prompt (Ollama drops the start of a long prompt).
+MAX_CHARS_PER_TOKEN = 6
 TEST_PROMPT = "Reply with the single word: ready"
 PROBE_PROMPT = "Call the ping tool with the value weave. Do not answer in text."
 PING = ToolDefinition(
@@ -158,6 +162,11 @@ def _remaining(expires_at: datetime, cap: float) -> float:
 
 def _secret(credential: SecretStr | None) -> str:
     return credential.get_secret_value() if credential is not None else ""
+
+
+def conservative_tokens(*parts: str) -> int:
+    """A token count that is never below the model's: 2.5 characters per token, the same rule as the API's."""
+    return -(-sum(len(part) for part in parts) * 2 // 5)
 
 
 def repeating(text: str) -> bool:
@@ -319,10 +328,28 @@ def create_app(
                 return JSONResponse({"code": "LUMI_INPUT"}, status_code=422)
             if profile.provider.endswith("responses"):
                 settings["openai_store"] = False
+            prompt = json.dumps(
+                {
+                    "prompt": body.request.message,
+                    "context": {
+                        "history": [item.model_dump() for item in body.request.history],
+                        "attachments": body.attachments,
+                    },
+                },
+                ensure_ascii=False,
+            )
             try:
                 entry = policy.entry(body.endpoint, profile.provider, profile.model)
                 if entry.credential == "required" and body.credential is None:
                     return JSONResponse({"code": "LUMI_INPUT"}, status_code=422)
+                reply_format = json.dumps(provider_schema(profile.output_schema))
+                if (
+                    entry.context_tokens is not None
+                    and conservative_tokens(INSTRUCTIONS, prompt, reply_format) + profile.options.max_tokens
+                    > entry.context_tokens
+                ):
+                    # Refuse what may not fit rather than let the endpoint drop part of it.
+                    raise ConnectorFailure("LLM_CONTEXT_LIMIT", "not_started")
                 if entry.max_output_tokens is not None and profile.options.max_tokens > entry.max_output_tokens:
                     raise ConnectorFailure("LLM_OPTIONS", "not_started")
                 async with asyncio.timeout(left):
@@ -351,6 +378,14 @@ def create_app(
                         if isinstance(owned, ProviderModel):
                             await owned.close()
                 assert isinstance(output, dict)
+                counted = cast(dict[str, Any], output.get("usage") or {}).get("inputTokens")
+                if (
+                    entry.compat == "ollama"
+                    and isinstance(counted, int)
+                    and 0 < counted * MAX_CHARS_PER_TOKEN < len(INSTRUCTIONS) + len(prompt)
+                ):
+                    # The model saw only part of the request, perhaps without its instructions: never use the answer.
+                    return JSONResponse({"code": "LUMI_TRUNCATED"}, status_code=422)
                 reply = LumiReply.model_validate(output["result"])
                 return JSONResponse(reply.model_dump(by_alias=True))
             except ConnectorFailure as error:

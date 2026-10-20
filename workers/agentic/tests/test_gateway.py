@@ -18,6 +18,7 @@
 
 import asyncio
 import json
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
@@ -31,8 +32,10 @@ from firefly_weave.contracts.lumi import LUMI_REPLY_SCHEMA
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import DeltaToolCall, FunctionModel
+from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.usage import RequestUsage
 
-from weave_agentic_worker.gateway import OLLAMA_FREQUENCY_PENALTY, create_app, repeating
+from weave_agentic_worker.gateway import OLLAMA_FREQUENCY_PENALTY, conservative_tokens, create_app, repeating
 from weave_agentic_worker.handler import WorkerPolicy
 from weave_agentic_worker.providers import ProviderModel, build_model
 
@@ -562,6 +565,22 @@ async def test_credentialed_endpoints_need_the_credential(tmp_path):
 REPLY = {"result": {"answer": "Ready", "proposals": [], "followUps": []}}
 
 
+class Counted(WrapperModel):
+    """Reports the prompt tokens a real endpoint counts: three characters each, or a fixed number."""
+
+    def __init__(self, wrapped, tokens=None):
+        super().__init__(wrapped)
+        self.tokens = tokens
+
+    @asynccontextmanager
+    async def request_stream(self, messages, model_settings, model_request_parameters, run_context=None):
+        sent = sum(len(str(part.content)) for message in messages for part in getattr(message, "parts", ()))
+        sent += sum(len(message.instructions or "") for message in messages if hasattr(message, "instructions"))
+        async with self.wrapped.request_stream(messages, model_settings, model_request_parameters) as stream:
+            stream._usage = RequestUsage(input_tokens=self.tokens if self.tokens is not None else -(-sent // 3))
+            yield stream
+
+
 def reply_model(calls):
     def respond(messages, info):
         calls.append(messages)
@@ -573,7 +592,7 @@ def reply_model(calls):
         for chunk in streamed(info, [json.dumps(REPLY)]):
             yield chunk
 
-    return FunctionModel(respond, stream_function=stream)
+    return Counted(FunctionModel(respond, stream_function=stream))
 
 
 def streamed(info, chunks):
@@ -970,13 +989,13 @@ async def test_the_assistant_route_answers_only_product_codes(tmp_path, failure,
 def test_the_assistant_instructions_and_reply_format_fit_the_reserve_weave_ai_leaves_them():
     from firefly_weave.contracts.lumi import LUMI_REPLY_SCHEMA
 
-    from weave_agentic_worker.execution import estimate_tokens, provider_schema
+    from weave_agentic_worker.execution import provider_schema
     from weave_agentic_worker.gateway import INSTRUCTIONS
 
     # The API leaves these tokens for the gateway's own text (GATEWAY_RESERVE_TOKENS in the server's Weave AI context).
-    reserve = 512
+    reserve = 704
     reply_format = json.dumps(provider_schema(LUMI_REPLY_SCHEMA))
-    assert estimate_tokens(INSTRUCTIONS, reply_format) <= reserve
+    assert conservative_tokens(INSTRUCTIONS, reply_format) <= reserve
     assert INSTRUCTIONS.startswith("You are Weave AI")
     for rule in (
         "whole document",
@@ -1047,7 +1066,7 @@ async def test_ollama_replies_carry_a_frequency_penalty_and_cloud_replies_do_not
         for chunk in streamed(info, [json.dumps(REPLY)]):
             yield chunk
 
-    model = FunctionModel(respond, stream_function=stream)
+    model = Counted(FunctionModel(respond, stream_function=stream))
     async with gateway(tmp_path, builder=lambda *_: model) as client:
         local = await client.post("/v1/lumi", json=ollama_ask(), headers=AUTH)
     token = tmp_path / "cloud-token"
@@ -1062,3 +1081,32 @@ async def test_ollama_replies_carry_a_frequency_penalty_and_cloud_replies_do_not
     assert local.status_code == cloud.status_code == 200, (local.text, cloud.text)
     assert settings[0]["frequency_penalty"] == OLLAMA_FREQUENCY_PENALTY == 0.2
     assert "frequency_penalty" not in settings[1]
+
+
+def test_the_gateway_counts_two_and_a_half_characters_per_token_like_the_api():
+    assert conservative_tokens("x" * 1000) == 400 and conservative_tokens("ab", "c") == 2
+
+
+async def test_a_request_that_may_not_fit_the_context_is_refused_before_the_model(tmp_path):
+    calls = []
+    ask = ollama_ask()
+    # Characters / 4 would fit 8,192 tokens with the answer; the conservative count does not.
+    ask["request"]["message"] = "word " * 3600
+    async with gateway(tmp_path, builder=lambda *_: reply_model(calls)) as client:
+        response = await client.post("/v1/lumi", json=ask, headers=AUTH)
+    assert (response.status_code, response.json()) == (422, {"code": "LLM_CONTEXT_LIMIT"})
+    assert calls == []
+
+
+async def test_an_answer_to_a_prompt_the_model_saw_only_part_of_is_not_used(tmp_path):
+    calls = []
+
+    def truncating(*_):
+        model = reply_model(calls)
+        model.tokens = 100
+        return model
+
+    async with gateway(tmp_path, builder=truncating) as client:
+        response = await client.post("/v1/lumi", json=ollama_ask(), headers=AUTH)
+    assert (response.status_code, response.json()) == (422, {"code": "LUMI_TRUNCATED"})
+    assert len(calls) == 1

@@ -69,10 +69,43 @@ def test_compact_models_answer_in_at_most_five_hundred_twelve_tokens():
     assert input_budget("compact", 4096, output_tokens("compact", 1024)) == 3584
 
 
-def test_the_guide_and_the_gateway_text_fit_a_quarter_of_the_compact_budget():
+# Characters and the tokens llama3.2:3b counted for them (Ollama 0.40.2 prompt_eval_count): Weave AI's
+# instructions, reply format and guide, two shaped compact requests, and the most token-dense requests measured
+# (hex identifiers and Japanese literals, 1.55 and 1.48 times characters / 4).
+MEASURED = [(655, 142), (1013, 316), (1240, 351), (4312, 1522), (3532, 1155), (28660, 11140), (28180, 10420)]
+
+
+@pytest.mark.parametrize(("characters", "counted"), MEASURED)
+def test_the_estimate_never_counts_fewer_tokens_than_the_model(characters, counted):
+    assert estimate_tokens("x" * characters) >= counted
+
+
+def test_the_estimate_counts_two_and_a_half_characters_per_token():
+    assert estimate_tokens("x" * 1000) == 400 and estimate_tokens("x") == 1 and estimate_tokens("") == 0
+
+
+def test_the_gateway_text_and_the_guide_leave_most_of_the_compact_budget():
     # The gateway's tests keep its instructions and reply format within this reserve.
-    assert GATEWAY_RESERVE_TOKENS == 512
-    assert estimate_tokens(GUIDE) + GATEWAY_RESERVE_TOKENS <= COMPACT_INPUT_TOKENS // 4
+    assert GATEWAY_RESERVE_TOKENS == 704
+    assert estimate_tokens(GUIDE) + GATEWAY_RESERVE_TOKENS <= COMPACT_INPUT_TOKENS * 0.3
+
+
+def test_a_standard_request_counts_the_workflow_schema_against_its_budget():
+    message = "Review it"
+    workflow = {"type": "object", "description": "s" * 15000}
+    budget = input_budget("standard", 16384, 1024)
+    shaped = shape(
+        "standard",
+        budget,
+        message=message,
+        history=HISTORY,
+        resources=[RUN],
+        draft=("yaml", draft(120)),
+        selected_step=None,
+        schemas={"workflow": workflow},
+    )
+    assert shaped.context["authoringSchemas"] == {"workflow": workflow}
+    assert sent_tokens(shaped, message) <= budget
 
 
 def test_the_guide_names_every_step_kind_the_language_has():
