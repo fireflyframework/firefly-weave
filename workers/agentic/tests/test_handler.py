@@ -533,7 +533,7 @@ async def test_owned_preprovider_timeout_never_settles_after_authority_ends(end)
     from firefly_weave.sdk.transport import WorkerTransport
     from firefly_weave.sdk.worker import Worker
 
-    value = lease(timeoutSeconds=1).model_copy(update={"expires_at": datetime.now(UTC) + timedelta(seconds=0.25)})
+    value = lease(timeoutSeconds=1)
     retrying = asyncio.Event()
     calls, model_calls, settlements = [], [], []
 
@@ -544,14 +544,21 @@ async def test_owned_preprovider_timeout_never_settles_after_authority_ends(end)
                 retrying.set()
             return httpx.Response(429, json={"code": "WV-REQUEST-CAPACITY"})
         if request.url.path.endswith("heartbeat"):
-            await asyncio.Event().wait()
+            if retrying.is_set():
+                await asyncio.Event().wait()
+            renewed = value.model_copy(update={"expires_at": datetime.now(UTC) + timedelta(seconds=0.25)})
+            return httpx.Response(200, content=renewed.model_dump_json())
         settlements.append(True)
         raise AssertionError("Ended authority cannot settle")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(endpoint), base_url="https://weave.test") as client:
         transport = WorkerTransport(client, "/scope", value.proof.owner)
         instance = handler(transport, fixture_model(model_calls))
-        running = asyncio.create_task(Worker(transport, {value.capability: instance}, 1)._execute(value))
+        # The short lease starts with execution and is renewed until the capacity retry is observed,
+        # then its renewal stalls. Expiry is counted from the retry, however slow the setup or the
+        # first context request is on a loaded machine.
+        short = value.model_copy(update={"expires_at": datetime.now(UTC) + timedelta(seconds=0.25)})
+        running = asyncio.create_task(Worker(transport, {value.capability: instance}, 1)._execute(short))
         await asyncio.wait_for(retrying.wait(), 1)
         if end == "cancel":
             running.cancel()
