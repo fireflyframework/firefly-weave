@@ -46,7 +46,7 @@ from firefly_weave.operations.debug.models import (
     SelectedScope,
     SignalReceipt,
 )
-from firefly_weave.runtime.call_outcomes import STOPPED, call_result
+from firefly_weave.runtime.call_outcomes import STOPPED, call_result, screened
 from firefly_weave.runtime.capacity import ADMISSION_OUTPUT_BYTES, ADMISSION_REDUCTIONS, TRANSITION_BYTES, logical_size
 from firefly_weave.runtime.control import enclosing_loops, loop_scope
 from firefly_weave.runtime.kernel import (
@@ -718,8 +718,17 @@ class Simulator:
         if frame.mode != "wait" or caller_state.status in TERMINAL or frame.call_node not in caller_state.active:
             return
         data: JsonObject = {"node_id": frame.call_node, "generation": 0}
+        refused = None
+        if state.status == "succeeded":
+            # The same check a platform applies before it delivers a child's output.
+            ir = self._workflow(_parent(key)).ir
+            node = cast(CallWorkflowNode, self._workflow(_parent(key)).prepared.nodes[node_of(frame.call_node)])
+            bundle = {d.reference: d.document for d in ir.dependencies if d.kind == "Schema"}
+            refused = screened(cast(JsonObject, called_workflow(ir, node)[1]["outputSchema"]), state.output, bundle)
         if frame.on_failure == "stop" and state.status in STOPPED:
             event = self._event("incident_opened", data | {"code": "WV-CALL-INTERRUPTED"})
+        elif refused is not None:
+            event = self._event("incident_opened", data | {"code": refused})
         else:
             output = call_result(state.status, state.output, None)[0]
             outcome = {"child_run_id": str(frame_run_id(key)), "status": state.status, "output": output}

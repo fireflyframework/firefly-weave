@@ -714,3 +714,38 @@ def test_a_stored_frame_of_a_workflow_the_session_does_not_have_is_refused_on_re
     stored["frames"][0]["workflow"] = "other@1.0.0"
     with pytest.raises(DebugError, match="WV-DEBUG-WORKFLOW"):
         Simulator.restore(json.dumps(stored))
+
+
+def test_delivery_screens_a_succeeded_output_against_the_calls_output_schema():
+    from firefly_weave.runtime.call_outcomes import screened
+
+    schema = {"type": "object", "properties": {"token": {"type": "string", "x-secret": True}}}
+    assert screened(schema, {"token": "private"}, {}) == "WV-SCHEMA-SECRET_VALUE"
+    assert screened({"$ref": "missing"}, {"token": "private"}, {}) == "WV-SCHEMA-CLASSIFICATION"
+    assert screened(TIER, {"tier": "gold", "score": 5}, {}) is None
+
+
+@pytest.mark.parametrize("on_failure", ["stop", "continue"])
+def test_a_frame_delivers_its_output_only_when_real_delivery_would(monkeypatch, on_failure):
+    import firefly_weave.operations.debug.simulator as simulator_module
+
+    # A child's own run classifies its output against the same schema, so a refusal here needs a forged policy.
+    checked = []
+
+    def refuse(schema, output, bundle):
+        checked.append((schema, output))
+        return "WV-SCHEMA-SECRET_VALUE"
+
+    monkeypatch.setattr(simulator_module, "screened", refuse)
+    artifact = caller([call(onFailure=on_failure)], {"ref": "/steps/enrich/output"})
+    view = Simulator(
+        artifact, mocks={}, input={"customerId": "c-1"}, now=NOW, workflows=enrich_called()
+    ).continue_until_breakpoint()
+    assert (view.status, view.variables["incident"], view.frames[0].status) == (
+        "suspended",
+        "WV-SCHEMA-SECRET_VALUE",
+        "succeeded",
+    )
+    assert checked == [(TIER, {"tier": "gold", "score": 5})]
+    assert view.events[-1].type == "incident_opened"
+    assert view.events[-1].data == {"node_id": "enrich", "generation": 0, "code": "WV-SCHEMA-SECRET_VALUE"}

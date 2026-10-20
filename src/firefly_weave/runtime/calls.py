@@ -48,7 +48,7 @@ from firefly_weave.contracts.language_features import MAX_CALL_DEPTH
 from firefly_weave.contracts.values import JsonObject, JsonValue
 from firefly_weave.definitions.models import CatalogError, capacity_rejected
 from firefly_weave.persistence.uow import Transaction, isolated, refused_for_now
-from firefly_weave.runtime.call_outcomes import STOPPED, call_result
+from firefly_weave.runtime.call_outcomes import STOPPED, call_result, refusal, screened
 from firefly_weave.runtime.models import CallIntent, RuntimeEvent, Transition
 from firefly_weave.runtime.repository import SCOPE, RuntimeRepository
 
@@ -211,7 +211,6 @@ async def deliver_calls(
     from firefly_weave.compiler.ir import CallWorkflowNode
     from firefly_weave.compiler.schemas import _Failure
     from firefly_weave.files.authority import admit_run_files
-    from firefly_weave.operations.redaction import classify
     from firefly_weave.runtime.kernel import called_workflow, workflow
     from firefly_weave.runtime.kernel import transition_async as transition
 
@@ -249,20 +248,15 @@ async def deliver_calls(
             data.update(child_run_id=str(row["child_run_id"]), status=status, output=result)
             if status == "succeeded":
                 bundle = {d.reference: d.document for d in ir.dependencies if d.kind == "Schema"}
-                try:
-                    classify(cast(JsonObject, called_workflow(ir, node)[1]["outputSchema"]), result, bundle)
-                    await admit_run_files(repository.tx, row["child_run_id"], view.id, result)
-                except _Failure as error:
-                    kind, data = (
-                        "incident_opened",
-                        {
-                            "node_id": row["node_id"],
-                            "generation": row["generation"],
-                            "code": "WV-SCHEMA-SECRET_VALUE"
-                            if error.code == "SECRET_VALUE"
-                            else "WV-SCHEMA-CLASSIFICATION",
-                        },
-                    )
+                refused = screened(cast(JsonObject, called_workflow(ir, node)[1]["outputSchema"]), result, bundle)
+                if refused is None:
+                    try:
+                        await admit_run_files(repository.tx, row["child_run_id"], view.id, result)
+                    except _Failure as error:
+                        refused = refusal(error)
+                if refused is not None:
+                    kind = "incident_opened"
+                    data = {"node_id": row["node_id"], "generation": row["generation"], "code": refused}
         event = RuntimeEvent(
             id=uuid5(NAMESPACE_URL, f"firefly-weave/call/{row['id']}"),
             type=kind,  # type: ignore[arg-type]

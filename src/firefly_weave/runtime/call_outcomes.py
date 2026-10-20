@@ -16,9 +16,12 @@
 
 """What a calling run receives from a child run that ended; pure, so debug sessions share it with real runs."""
 
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
-from firefly_weave.contracts.values import JsonValue
+from firefly_weave.contracts.values import JsonObject, JsonValue
+
+if TYPE_CHECKING:
+    from firefly_weave.compiler.schemas import _Failure
 
 # How a child run that did not finish reports itself to a caller that continues on failure.
 STOPPED = {
@@ -37,3 +40,24 @@ def call_result(status: str, output: JsonValue, code: str | None) -> tuple[JsonV
         return {"code": error["code"], "message": error["message"]}, cast(str, error["code"])
     error_code, message = STOPPED[status]
     return {"code": error_code, "message": message}, error_code
+
+
+def refusal(error: "_Failure") -> str:
+    """The incident a caller opens instead of receiving an output its call may not hold."""
+    return "WV-SCHEMA-SECRET_VALUE" if error.code == "SECRET_VALUE" else "WV-SCHEMA-CLASSIFICATION"
+
+
+def screened(schema: JsonObject, output: JsonValue, bundle: dict[str, JsonObject]) -> str | None:
+    """Check a succeeded child's output against the call's output schema before it reaches the caller.
+
+    Returns the incident code the caller opens instead (a value the schema classifies as secret, or one it cannot
+    classify), or None when the output may be delivered.
+    """
+    from firefly_weave.compiler.schemas import _Failure
+    from firefly_weave.operations.redaction import classify
+
+    try:
+        classify(schema, output, bundle)
+    except _Failure as error:
+        return refusal(error)
+    return None
