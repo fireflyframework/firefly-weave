@@ -206,8 +206,17 @@ def test_manifest_round_trips_and_its_schema_is_exported():
         "operators",
         "workflow_fields",
         "step_kinds",
-        "step_fields",
     }
+
+
+def test_a_manifest_from_a_server_without_step_fields_still_reads():
+    older = language_manifest().model_dump(mode="json")
+    del older["step_fields"]
+    older["step_kinds"] = [entry for entry in older["step_kinds"] if entry["kind"] != "transaction"]
+    older["workflow_fields"] = [entry for entry in older["workflow_fields"] if entry["name"] != "eventTrigger"]
+    manifest = LanguageManifest.model_validate(older)
+    assert manifest.step_fields == []
+    assert "step_fields" in manifest.model_dump(mode="json")
 
 
 def test_new_constructs_stay_pending_until_studio_ships_them():

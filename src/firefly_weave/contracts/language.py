@@ -161,7 +161,8 @@ class LanguageManifest(ContractModel):
     operators: list[ManifestOperator]
     workflow_fields: list[ManifestWorkflowField]
     step_kinds: list[ManifestStepKind]
-    step_fields: list[ManifestStepField]
+    # Empty from servers that predate step fields, so this client still reads their manifest.
+    step_fields: list[ManifestStepField] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def unique_entries(self) -> "LanguageManifest":

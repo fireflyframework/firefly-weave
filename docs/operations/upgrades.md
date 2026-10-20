@@ -567,8 +567,8 @@ so **upgrade CLIs and SDKs together with the server**:
 
 - **Older clients, new server.** An earlier CLI or SDK refuses this server's
   manifest because of the new list and feature names.
-- **New clients, older server.** This CLI or SDK refuses an earlier server's
-  manifest, which has no `step_fields` list.
+- **New clients, older server.** This CLI or SDK reads an earlier server's
+  manifest; a server without the list reports no step fields.
 
 Studio reads `step_fields` as optional and works with both. Worker payloads
 are unaffected: a failure's `effect` and a claim's `worker` are left out unless

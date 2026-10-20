@@ -43,8 +43,8 @@ SPDX-License-Identifier: Apache-2.0
   `weave schema export` writes `platform-event-v1`. `weave workflow explain` and
   `weave workflow graph` show transactions. The language manifest gains
   `step_fields` and new feature names, so upgrade CLIs and SDKs together with
-  the server: an earlier CLI or SDK can't read this server's manifest, and this
-  CLI or SDK can't read an earlier server's (see
+  the server: an earlier CLI or SDK can't read this server's manifest, while
+  this CLI or SDK still reads an earlier server's (see
   [language manifest compatibility](docs/operations/upgrades.md#language-manifest-compatibility)).
 - The AI task in step details takes its model connection first. **Model** lists
   the approved models of every AI connection you may use, grouped by connection;
