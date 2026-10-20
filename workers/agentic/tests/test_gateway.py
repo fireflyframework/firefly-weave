@@ -429,9 +429,11 @@ def ollama_gateway_policy(tmp_path, models="served", **changes):
     return WorkerPolicy(source=PolicyFile(path, OLLAMA_ORIGINS), origins=OLLAMA_ORIGINS)
 
 
-def fake_ollama(paths):
+def fake_ollama(paths, version="0.40.2"):
     async def handle(request):
         paths.append(request.url.path)
+        if request.url.path == "/api/version" and version is not None:
+            return httpx2.Response(200, json={"version": version})
         if request.url.path == "/api/tags":
             return httpx2.Response(200, json=TAGS)
         if request.url.path == "/api/show":
@@ -1001,12 +1003,14 @@ def test_the_assistant_instructions_and_reply_format_fit_the_reserve_weave_ai_le
     from firefly_weave.contracts.lumi import LUMI_REPLY_SCHEMA
 
     from weave_agentic_worker.execution import provider_schema
-    from weave_agentic_worker.gateway import INSTRUCTIONS
+    from weave_agentic_worker.gateway import INSTRUCTIONS, RESERVE_TOKENS
 
     # The API leaves these tokens for the gateway's own text (GATEWAY_RESERVE_TOKENS in the server's Weave AI context).
-    reserve = 736
+    # They were measured at most 488 tokens on llama3.2:3b, qwen3:4b and qwen2.5:1.5b with these exact sizes; a change
+    # to either text must be measured again before these numbers move.
     reply_format = json.dumps(provider_schema(LUMI_REPLY_SCHEMA))
-    assert conservative_tokens(INSTRUCTIONS, reply_format) <= reserve
+    assert (len(INSTRUCTIONS), len(reply_format)) == (748, 1013)
+    assert RESERVE_TOKENS == 640 >= 488
     assert INSTRUCTIONS.startswith("You are Weave AI")
     for rule in (
         "whole document",
@@ -1116,11 +1120,11 @@ async def test_a_thinking_ollama_model_is_asked_to_answer_without_thinking(tmp_p
     assert settings[0]["openai_reasoning_effort"] == "none"
 
 
-def test_the_gateway_counts_two_and_a_half_characters_per_token_like_the_api():
-    assert conservative_tokens("x" * 1000) == 400 and conservative_tokens("ab", "c") == 2
+def test_the_gateway_counts_like_the_api():
+    assert conservative_tokens("hello world") == 4 and conservative_tokens("x" * 13) == 14
     # Outside ASCII each character counts its UTF-8 bytes, like the API: measured 1.9 characters per token for
     # Chinese and 0.33 for emoji on llama3.2:3b.
-    assert conservative_tokens("ab" * 5 + "é" + "中") == 4 + 2 + 3
+    assert conservative_tokens("ababababab" + "é" + "中") == 4 + 2 + 3
     assert conservative_tokens("中" * 5000) == 15000 >= 4838 and conservative_tokens("😀" * 3000) == 12000 >= 9206
 
 
@@ -1262,3 +1266,41 @@ async def test_ask_weave_ai_to_fix_reaches_the_model_through_the_real_route(tmp_
     shaped = {"profile": "compact", "draft": {"format": "yaml", "source": "a: 1"}}
     reply = await client.ask(configuration, request, shaped, {"endpoint": "http://ollama:11434/v1"}, None)
     assert reply.answer == "Ready" and len(calls) == 1
+
+
+def test_the_weave_ai_guide_counts_as_its_measured_reserve_and_any_other_text_by_the_estimate():
+    from weave_agentic_worker.gateway import GUIDE_HEADER, GUIDE_TOKENS, RESERVE_TOKENS, request_tokens
+
+    # Guide version 2 counted at most 424 tokens on llama3.2:3b, qwen3:4b and qwen2.5:1.5b (measured).
+    assert GUIDE_TOKENS == 512 and GUIDE_HEADER == "Weave workflow guide (version 2)."
+    guide = GUIDE_HEADER + " A workflow is YAML." * 80
+    with_guide = request_tokens("Why?", [], {"profile": "compact", "guide": guide})
+    without = request_tokens("Why?", [], {"profile": "compact"})
+    assert with_guide == without + GUIDE_TOKENS
+    other = "Weave workflow guide (version 3)." + " A workflow is YAML." * 80
+    assert request_tokens("Why?", [], {"profile": "compact", "guide": other}) > without + GUIDE_TOKENS
+    assert without == RESERVE_TOKENS + conservative_tokens(
+        json.dumps({"prompt": "Why?", "context": {"history": [], "attachments": {"profile": "compact"}}})
+    )
+
+
+async def test_on_ollama_before_0_40_a_count_at_half_the_context_is_not_read_as_a_cut(tmp_path):
+    # Ollama 0.12.3 keeps 5 tokens and fills the window when it cuts, so half the context means nothing there;
+    # the conservative pre-check is the guard.
+    calls = []
+    ask = ollama_ask()
+    ask["request"]["message"] = "word " * 2400
+
+    def counted(*_):
+        model = reply_model(calls)
+        model.tokens = 4098
+        return model
+
+    token = tmp_path / "token"
+    token.write_text("service-token")
+    app = create_app(
+        ollama_gateway_policy(tmp_path), token, model_builder=counted, transport_factory=fake_ollama([], "0.12.3")
+    )
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://gateway") as client:
+        response = await client.post("/v1/lumi", json=ask, headers=AUTH)
+    assert response.status_code == 200, response.text

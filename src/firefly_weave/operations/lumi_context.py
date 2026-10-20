@@ -46,7 +46,9 @@ COMPACT_MAX_TOKENS = 512
 COMPACT_BELOW = 16384
 STANDARD_UP_TO = 65536
 # The gateway's instructions and the reply format it sends with every request; the gateway tests keep them under it.
-GATEWAY_RESERVE_TOKENS = 736
+GATEWAY_RESERVE_TOKENS = 640
+# The guide's own tokens: at most 424 on llama3.2:3b, qwen3:4b and qwen2.5:1.5b (measured); counted as this reserve.
+GUIDE_TOKENS = 512
 # The request's own wrapping (prompt, context, history and attachments keys) and the list of trimmed parts.
 ENVELOPE_TOKENS = 64
 STANDARD_DRAFT_BYTES = 32768
@@ -97,13 +99,36 @@ connector, never a fragment. Say what you could not see when the context lists t
 """
 
 
-# llama3.2:3b counted up to 1.55 times characters / 4 on ASCII Weave AI requests (hex identifiers), so ASCII counts
-# 2.5 characters per token. Other text can cost far more (Chinese 1.9 characters per token, emoji 0.33), so each of its
-# characters counts its UTF-8 bytes: a byte-level token never covers less than one byte. The gateway uses the same rule.
-def estimate_tokens(text: str) -> int:
-    """A token count never below the model's: ASCII at 2.5 characters per token, other text at one per UTF-8 byte."""
-    ascii_characters = len(text.encode("ascii", "ignore"))
-    return -(-ascii_characters * 2 // 5) + len(text.encode()) - ascii_characters
+# Measured on Ollama 0.40.2 with llama3.2:3b, qwen3:4b and qwen2.5:1.5b: ordinary words take about 4.8 characters per
+# token, but identifiers, hex, base64, digits and runs of random letters take as little as one character per token,
+# and text outside ASCII (Chinese, emoji) more than one token per character. So a chunk with a digit, a run of more
+# than 12 letters or more than one lower-to-upper case switch counts one token per character plus one for the space
+# before it; in other chunks a letter counts 0.4 tokens (0.7 inside a run of capitals) and any other character 0.6;
+# a newline or an indent counts one; and each character outside ASCII counts its UTF-8 bytes, since a byte-level
+# token covers at least one. One shape stays below the models' count: words of random lowercase letters separated by
+# spaces (0.8 of it), which ordinary text does not contain.
+_CHUNK = re.compile(r"\S+|\n|[ \t]{2,}")
+_LONG_LETTERS = re.compile(r"[A-Za-z]{13,}")
+_CASE_SWITCH = re.compile(r"[a-z][A-Z]")
+_CAPITALS = re.compile(r"[A-Z]{2,}")
+
+
+def estimate_tokens(*parts: str) -> int:
+    """A token count never below what the recommended local models count; the same rule as the gateway's."""
+    total = 0
+    for chunk in _CHUNK.findall("".join(parts)):
+        if chunk.isspace():
+            total += 1
+            continue
+        text = chunk.encode("ascii", "ignore").decode()
+        total += len(chunk.encode()) - len(text)
+        if any(c.isdigit() for c in text) or _LONG_LETTERS.search(text) or len(_CASE_SWITCH.findall(text)) > 1:
+            total += len(text) + 1
+        else:
+            letters = sum(c.isalpha() for c in text)
+            capitals = sum(len(run) for run in _CAPITALS.findall(text))
+            total += -(-((letters - capitals) * 4 + capitals * 7 + (len(text) - letters) * 6) // 10)
+    return total
 
 
 def _tokens(value: JsonValue) -> int:
@@ -206,6 +231,30 @@ def _diagnosed(document: JsonValue, format: str, source: str, allowance: int | N
             break
         diagnosed.append(step)
     return {"diagnosed": diagnosed, "problems": problems}
+
+
+def _shortened_run(resource: JsonValue, room: int, trimmed: list[str]) -> JsonValue:
+    """A run attachment over its room lists fewer failed steps (counting the rest), then fewer recent steps; the
+    run's own facts are kept. Anything else, or a run that does not fit even so, is returned unchanged."""
+    data = resource.get("data") if isinstance(resource, dict) and resource.get("kind") == "run" else None
+    if not isinstance(resource, dict) or not isinstance(data, dict) or not isinstance(data.get("failed_steps"), list):
+        return resource
+    failed = cast(list[JsonValue], data["failed_steps"])
+    recent = cast(list[JsonValue], data.get("recent_steps") or [])
+    more = data.get("more_failed_steps")
+    for listed, latest in [
+        *((n, len(recent)) for n in range(len(failed) - 1, -1, -1)),
+        *((0, n) for n in range(len(recent) - 1, -1, -1)),
+    ]:
+        shorter: JsonObject = {**data, "failed_steps": failed[:listed], "recent_steps": recent[len(recent) - latest :]}
+        left = len(failed) - listed + (more if isinstance(more, int) else 0)
+        if left:
+            shorter["more_failed_steps"] = left
+        candidate: JsonObject = {**resource, "data": shorter}
+        if _tokens(candidate) <= room:
+            _note(trimmed, "run_steps")
+            return candidate
+    return resource
 
 
 def outline(document: JsonValue, selected_step: str | None) -> JsonObject:
@@ -359,7 +408,9 @@ def shape(
             context["authoringSchemas"] = cast(JsonValue, wanted)
     # The instructions, reply format, guide and schemas are sent whole; the other parts share what they leave,
     # each held to its share of the budget and to its part of the rest, so the whole request stays within it.
-    rest = budget - GATEWAY_RESERVE_TOKENS - ENVELOPE_TOKENS - _tokens(context) if budget is not None else None
+    fixed = _tokens({key: value for key, value in context.items() if key != "guide"})
+    fixed += GUIDE_TOKENS if "guide" in context else 0
+    rest = budget - GATEWAY_RESERVE_TOKENS - ENVELOPE_TOKENS - fixed if budget is not None else None
 
     def share(part: float) -> int | None:
         if budget is None or rest is None:
@@ -408,6 +459,8 @@ def shape(
                 if shown is not None
                 else {"note": TOO_LARGE_DRAFT, "revision": data["revision"]},
             }
+        if allowance is not None and _tokens([*kept, resource]) > allowance:
+            resource = _shortened_run(resource, allowance - _tokens(kept) if kept else allowance, trimmed)
         kept.append(resource)
 
     def over() -> bool:

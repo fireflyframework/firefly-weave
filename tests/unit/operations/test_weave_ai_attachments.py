@@ -232,8 +232,14 @@ async def test_sixty_failed_iterations_are_capped_and_the_run_still_fits_a_compa
         selected_step=None,
         schemas={},
     )
-    assert shaped.context["resources"] == [run] and "trimmed" not in shaped.context
-    assert set(keys(data)) <= RUN_FIELDS
+    # The run stays: it lists fewer failed steps, counts the rest, and says it was shortened.
+    [sent] = shaped.context["resources"]
+    listed = sent["data"]["failed_steps"]
+    assert 0 < len(listed) < 10 and listed == data["failed_steps"][: len(listed)]
+    assert sent["data"]["more_failed_steps"] == 60 - len(listed)
+    assert sent["data"]["failed_step"] == data["failed_step"] and sent["data"]["recent_steps"] == data["recent_steps"]
+    assert shaped.context["trimmed"] == ["run_steps"]
+    assert set(keys(sent["data"])) <= RUN_FIELDS
 
 
 async def test_a_run_too_long_to_read_whole_is_marked_partial():

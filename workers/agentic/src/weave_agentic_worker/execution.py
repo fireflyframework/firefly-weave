@@ -156,15 +156,38 @@ def estimate_tokens(*parts: str) -> int:
     return -(-sum(len(part) for part in parts) // 4)
 
 
-# Ollama cuts a prompt longer than its context silently, so its count must never be below the model's. Text outside
-# ASCII can cost far more than four characters per token (Chinese about 1.9 characters per token, emoji about 0.33,
-# measured on llama3.2:3b), so each such character counts its UTF-8 bytes: a byte-level token never covers less than
-# one byte.
+# Ollama cuts a prompt longer than its context silently, so its count must never be below the model's.
+# Measured on Ollama 0.40.2 with llama3.2:3b, qwen3:4b and qwen2.5:1.5b: ordinary words take about 4.8 characters per
+# token, but identifiers, hex, base64, digits and runs of random letters take as little as one character per token,
+# and text outside ASCII (Chinese, emoji) more than one token per character. So a chunk with a digit, a run of more
+# than 12 letters or more than one lower-to-upper case switch counts one token per character plus one for the space
+# before it; in other chunks a letter counts 0.4 tokens (0.7 inside a run of capitals) and any other character 0.6;
+# a newline or an indent counts one; and each character outside ASCII counts its UTF-8 bytes, since a byte-level
+# token covers at least one. One shape stays below the models' count: words of random lowercase letters separated by
+# spaces (0.8 of it), which ordinary text does not contain.
+_CHUNK = re.compile(r"\S+|\n|[ \t]{2,}")
+_LONG_LETTERS = re.compile(r"[A-Za-z]{13,}")
+_CASE_SWITCH = re.compile(r"[a-z][A-Z]")
+_CAPITALS = re.compile(r"[A-Z]{2,}")
+
+
 def conservative_tokens(*parts: str) -> int:
-    """A token count for Ollama endpoints: ASCII at four characters per token, other text at one per UTF-8 byte."""
-    text = "".join(parts)
-    ascii_characters = len(text.encode("ascii", "ignore"))
-    return -(-ascii_characters // 4) + len(text.encode()) - ascii_characters
+    """A token count for Ollama endpoints, never below what the recommended local models count; the same rule as
+    the API's Weave AI estimate."""
+    total = 0
+    for chunk in _CHUNK.findall("".join(parts)):
+        if chunk.isspace():
+            total += 1
+            continue
+        text = chunk.encode("ascii", "ignore").decode()
+        total += len(chunk.encode()) - len(text)
+        if any(c.isdigit() for c in text) or _LONG_LETTERS.search(text) or len(_CASE_SWITCH.findall(text)) > 1:
+            total += len(text) + 1
+        else:
+            letters = sum(c.isalpha() for c in text)
+            capitals = sum(len(run) for run in _CAPITALS.findall(text))
+            total += -(-((letters - capitals) * 4 + capitals * 7 + (len(text) - letters) * 6) // 10)
+    return total
 
 
 # No text measured took more than 4.6 ASCII characters or 2 other characters per token, so a model that counted fewer
@@ -181,13 +204,16 @@ def fewest_tokens(text: str) -> int:
     return ascii_characters // MAX_ASCII_PER_TOKEN + (len(text) - ascii_characters) // MAX_OTHER_PER_TOKEN
 
 
-def cut(counted: object, sent: str, estimate: int, context_tokens: int, requests: object = 1) -> bool:
-    """Whether a model's prompt count shows that it saw only part of what was sent."""
+def cut(
+    counted: object, sent: str, estimate: int, context_tokens: int, requests: object = 1, *, half: bool = False
+) -> bool:
+    """Whether a model's prompt count shows that it saw only part of what was sent. `half` is for Ollama 0.40 and
+    later, which keep half the context when they cut; Ollama 0.12.3 keeps 5 tokens and fills the window instead."""
     if not isinstance(counted, int) or counted <= 0:
         return False
-    half = context_tokens // 2
+    middle = context_tokens // 2
     return counted < fewest_tokens(sent) or (
-        requests == 1 and estimate > half + CUT_MARGIN and abs(counted - half) <= CUT_MARGIN
+        half and requests == 1 and estimate > middle + CUT_MARGIN and abs(counted - middle) <= CUT_MARGIN
     )
 
 

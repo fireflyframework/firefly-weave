@@ -80,8 +80,8 @@ def test_the_estimate_never_counts_fewer_tokens_than_the_model(characters, count
     assert estimate_tokens("x" * characters) >= counted
 
 
-def test_the_estimate_counts_two_and_a_half_characters_per_token():
-    assert estimate_tokens("x" * 1000) == 400 and estimate_tokens("x") == 1 and estimate_tokens("") == 0
+def test_the_estimate_counts_words_at_two_and_a_half_characters_per_token_and_nothing_as_nothing():
+    assert estimate_tokens("") == 0 and estimate_tokens("word") == 2 and estimate_tokens("word " * 100) == 200
 
 
 # Text outside ASCII, measured on llama3.2:3b in compact requests: 5,000 Chinese characters counted 4,838 tokens,
@@ -100,9 +100,13 @@ def test_mixed_text_counts_ascii_by_characters_and_the_rest_by_bytes():
 
 
 def test_the_gateway_text_and_the_guide_leave_two_thirds_of_the_compact_budget():
-    # The gateway's tests keep its instructions and reply format within this reserve.
-    assert GATEWAY_RESERVE_TOKENS == 736
-    assert estimate_tokens(GUIDE) + GATEWAY_RESERVE_TOKENS <= COMPACT_INPUT_TOKENS / 3
+    from firefly_weave.operations.lumi_context import ENVELOPE_TOKENS, GUIDE_TOKENS
+
+    # Measured on llama3.2:3b, qwen3:4b and qwen2.5:1.5b: the gateway's instructions and reply format at most 488
+    # tokens, this guide at most 424. A change to the guide must be measured again before these numbers move.
+    assert GATEWAY_RESERVE_TOKENS == 640 and GUIDE_TOKENS == 512
+    assert len(GUIDE) == 1494 and GUIDE.startswith("Weave workflow guide (version 2).")
+    assert GATEWAY_RESERVE_TOKENS + GUIDE_TOKENS + ENVELOPE_TOKENS <= COMPACT_INPUT_TOKENS / 3
 
 
 def test_the_guide_shows_a_whole_workflow_the_platform_accepts_without_a_warning():
@@ -123,7 +127,9 @@ def test_the_guide_shows_a_whole_workflow_the_platform_accepts_without_a_warning
 
 def test_a_standard_request_counts_the_workflow_schema_against_its_budget():
     message = "Review it"
-    workflow = {"type": "object", "description": "s" * 15000}
+    from firefly_weave.contracts.schema_export import export_schemas
+
+    workflow = export_schemas()["workflow"]
     budget = input_budget("standard", 16384, 1024)
     shaped = shape(
         "standard",
@@ -205,11 +211,15 @@ RUN = {"kind": "run", "id": "r", "data": {"status": "failed", "failed_steps": [{
 
 
 def sent_tokens(shaped, message):
+    """The request's count as the gateway makes it: its own text and the guide as their reserves, the rest estimated."""
+    from firefly_weave.operations.lumi_context import GUIDE_TOKENS
+
     history = [item.model_dump() for item in shaped.history]
+    attachments = {key: value for key, value in shaped.context.items() if key != "guide"}
     request = json.dumps(
-        {"prompt": message, "context": {"history": history, "attachments": shaped.context}}, ensure_ascii=False
+        {"prompt": message, "context": {"history": history, "attachments": attachments}}, ensure_ascii=False
     )
-    return estimate_tokens(request) + GATEWAY_RESERVE_TOKENS
+    return estimate_tokens(request) + GATEWAY_RESERVE_TOKENS + (GUIDE_TOKENS if "guide" in shaped.context else 0)
 
 
 def test_a_compact_request_for_a_twenty_step_draft_stays_under_four_thousand_tokens():
@@ -288,8 +298,11 @@ def test_over_budget_parts_are_trimmed_in_order_and_said_so():
         selected_step=None,
         schemas={"workflow": {}},
     )
-    assert shaped.context["resources"] == [RUN]
-    assert shaped.context["trimmed"] == ["outlined", "attachments", "history"]
+    # The draft is outlined and cut first, then the large run lists fewer failed steps, then history is dropped.
+    first, shortened = shaped.context["resources"]
+    assert first == RUN and 0 < len(shortened["data"]["failed_steps"]) < 200
+    assert shortened["data"]["more_failed_steps"] == 200 - len(shortened["data"]["failed_steps"])
+    assert shaped.context["trimmed"] == ["outlined", "steps", "run_steps", "history"]
     assert len(shaped.history) < 4
     assert sent_tokens(shaped, "Explain") <= 3072
 
@@ -549,7 +562,8 @@ def test_standard_attachments_are_capped_at_thirty_two_kibibytes():
 
 
 LONG_HISTORY = [
-    LumiMessage(role="user" if index % 2 == 0 else "assistant", content=f"m{index} " * 150) for index in range(16)
+    LumiMessage(role="user" if index % 2 == 0 else "assistant", content=f"message {'abcdefghijklmnop'[index]} " * 75)
+    for index in range(16)
 ]
 
 

@@ -27,6 +27,7 @@ import asyncio
 import hmac
 import json
 import os
+import re
 import time
 from collections.abc import Callable, Coroutine
 from datetime import UTC, datetime
@@ -77,7 +78,12 @@ from weave_agentic_worker.discovery import (
 )
 from weave_agentic_worker.egress import PinnedModelTransport, resolve
 from weave_agentic_worker.errors import classify
-from weave_agentic_worker.execution import cut, private_framework_logging, provider_schema, run_model
+from weave_agentic_worker.execution import (
+    conservative_tokens,
+    cut,
+    private_framework_logging,
+    run_model,
+)
 from weave_agentic_worker.handler import ModelBuilder, WorkerPolicy
 from weave_agentic_worker.main import read_policy
 from weave_agentic_worker.providers import ProviderModel, build_model
@@ -103,9 +109,17 @@ LOOP_MIN_CHARS = 256
 LOOP_MAX_PERIOD = 512
 LOOP_CHECK_EVERY = 64
 # Ollama runs a model with this context unless the policy says otherwise.
+# INSTRUCTIONS and the reply format counted at most 488 tokens on llama3.2:3b, qwen3:4b and qwen2.5:1.5b (measured);
+# the API leaves this reserve for them (GATEWAY_RESERVE_TOKENS in its Weave AI context).
+RESERVE_TOKENS = 640
+# Weave AI's guide (version 2) counted at most 424 tokens on the same models; the API counts it as this reserve too.
+GUIDE_HEADER = "Weave workflow guide (version 2)."
+GUIDE_TOKENS = 512
 OLLAMA_CONTEXT_TOKENS = 8192
 # How long the gateway waits for Ollama to say whether a model thinks before it asks without the setting.
 THINKING_SECONDS = 5.0
+# Ollama 0.40 and later keep half the context when they cut a prompt (4,098 of 8,192 on 0.40.2, twice).
+HALF_CUT_VERSION = (0, 40, 0)
 TEST_PROMPT = "Reply with the single word: ready"
 PROBE_PROMPT = "Call the ping tool with the value weave. Do not answer in text."
 PING = ToolDefinition(
@@ -166,12 +180,19 @@ def _secret(credential: SecretStr | None) -> str:
     return credential.get_secret_value() if credential is not None else ""
 
 
-def conservative_tokens(*parts: str) -> int:
-    """A token count never below the model's, the same rule as the API's: ASCII at 2.5 characters per token,
-    other text at one token per UTF-8 byte."""
-    text = "".join(parts)
-    ascii_characters = len(text.encode("ascii", "ignore"))
-    return -(-ascii_characters * 2 // 5) + len(text.encode()) - ascii_characters
+def request_tokens(message: str, history: list[Any], attachments: Any) -> int:
+    """The prompt's token count as the API sizes it: the gateway's own text and a known guide as their measured
+    reserves, everything else by the conservative estimate."""
+    counted = attachments
+    guide_tokens = 0
+    guide = attachments.get("guide") if isinstance(attachments, dict) else None
+    if isinstance(guide, str) and guide.startswith(GUIDE_HEADER):
+        counted = {key: value for key, value in attachments.items() if key != "guide"}
+        guide_tokens = GUIDE_TOKENS
+    prompt = json.dumps(
+        {"prompt": message, "context": {"history": history, "attachments": counted}}, ensure_ascii=False
+    )
+    return RESERVE_TOKENS + guide_tokens + conservative_tokens(prompt)
 
 
 def repeating(text: str) -> bool:
@@ -283,18 +304,26 @@ def create_app(
             return transport_factory(entry)
         return PinnedModelTransport(entry, policy.origins, resolver=policy.resolver or resolve)
 
-    async def thinks(entry: PolicyEndpoint, name: str) -> bool:
-        """Whether Ollama lists thinking among the model's capabilities; False when it cannot tell."""
+    async def ollama_facts(entry: PolicyEndpoint, name: str) -> tuple[tuple[int, ...] | None, bool]:
+        """Ollama's version and whether it lists thinking among the model's capabilities; None and False when it
+        cannot tell."""
+        version: tuple[int, ...] | None = None
+        thinking = False
         try:
             async with httpx2.AsyncClient(
                 transport=transports(entry), trust_env=False, follow_redirects=False, timeout=THINKING_SECONDS
             ) as client:
                 async with asyncio.timeout(THINKING_SECONDS):
+                    answer = await client.get(entry.origin + "/api/version")
+                    found = answer.json().get("version") if answer.status_code == 200 else None
+                    if isinstance(found, str) and re.fullmatch(r"\d+\.\d+\.\d+", found):
+                        version = tuple(int(part) for part in found.split("."))
                     answer = await client.post(entry.origin + "/api/show", json={"model": name})
-            capabilities = answer.json().get("capabilities") if answer.status_code == 200 else None
+                    capabilities = answer.json().get("capabilities") if answer.status_code == 200 else None
+                    thinking = isinstance(capabilities, list) and "thinking" in capabilities
         except Exception:
-            return False
-        return isinstance(capabilities, list) and "thinking" in capabilities
+            pass
+        return version, thinking
 
     async def admitted(
         request: Request, body_type: type[BaseModel], route: Callable[[Any], Coroutine[Any, Any, JSONResponse]]
@@ -328,6 +357,7 @@ def create_app(
         async def run(body: GatewayRequest) -> JSONResponse:
             profile = body.profile
             guard: LoopGuard | None = None
+            version: tuple[int, ...] | None = None
             # Request problems answer LUMI_INPUT; a failure while building or calling the model never does.
             try:
                 measure_value(body.attachments)
@@ -360,11 +390,12 @@ def create_app(
                 entry = policy.entry(body.endpoint, profile.provider, profile.model)
                 if entry.credential == "required" and body.credential is None:
                     return JSONResponse({"code": "LUMI_INPUT"}, status_code=422)
-                reply_format = json.dumps(provider_schema(profile.output_schema))
                 context = entry.context_tokens
                 if context is None and entry.compat == "ollama":
                     context = OLLAMA_CONTEXT_TOKENS
-                sent = conservative_tokens(INSTRUCTIONS, prompt, reply_format)
+                sent = request_tokens(
+                    body.request.message, [item.model_dump() for item in body.request.history], body.attachments
+                )
                 if context is not None and sent + profile.options.max_tokens > context:
                     # Refuse what may not fit rather than let the endpoint drop part of it.
                     raise ConnectorFailure("LLM_CONTEXT_LIMIT", "not_started")
@@ -376,7 +407,8 @@ def create_app(
                     if entry.compat == "ollama":
                         # Small local models are the ones that loop: penalize repeats and stop a loop early.
                         settings["frequency_penalty"] = OLLAMA_FREQUENCY_PENALTY
-                        if await thinks(entry, profile.model):
+                        version, thinking = await ollama_facts(entry, profile.model)
+                        if thinking:
                             # A thinking model otherwise spends the answer limit thinking (qwen3:4b: 512 of 512
                             # tokens, no answer). Only thinking models get it: Ollama 0.12.3 refuses "none" for
                             # a model that does not think.
@@ -405,7 +437,14 @@ def create_app(
                 if (
                     entry.compat == "ollama"
                     and context is not None
-                    and cut(usage.get("inputTokens"), INSTRUCTIONS + prompt, sent, context, usage.get("requests"))
+                    and cut(
+                        usage.get("inputTokens"),
+                        INSTRUCTIONS + prompt,
+                        sent,
+                        context,
+                        usage.get("requests"),
+                        half=version is not None and version >= HALF_CUT_VERSION,
+                    )
                 ):
                     # The model saw only part of the request, perhaps without its instructions: never use the answer.
                     return JSONResponse({"code": "LUMI_TRUNCATED"}, status_code=422)
