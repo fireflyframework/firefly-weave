@@ -405,10 +405,28 @@ describe("the model list", () => {
       name: "ollama-two",
     };
     const both = [...groups, { connection: second, models: [qwen] }];
-    expect(currentModelValue(workflow, step, both)).toBe("");
+    // Two connections serve it: the one just chosen, else the first listed.
+    expect(currentModelValue(workflow, step, both)).toBe(
+      modelValue("r-ollama", "qwen3:4b"),
+    );
+    expect(currentModelValue(workflow, step, both, () => null, "r-two")).toBe(
+      modelValue("r-two", "qwen3:4b"),
+    );
     expect(currentModelValue(workflow, step, both, () => "c-two")).toBe(
       modelValue("r-two", "qwen3:4b"),
     );
+    // A connection where the model is not approved or not available doesn't serve it.
+    const unapproved = [
+      { connection: ollama, models: [{ ...qwen, approved: false }] },
+      { connection: second, models: [qwen] },
+    ];
+    expect(currentModelValue(workflow, step, unapproved)).toBe(
+      modelValue("r-two", "qwen3:4b"),
+    );
+    const gone = [
+      { connection: ollama, models: [{ ...qwen, available: false }] },
+    ];
+    expect(currentModelValue(workflow, step, gone)).toBe("");
   });
 });
 

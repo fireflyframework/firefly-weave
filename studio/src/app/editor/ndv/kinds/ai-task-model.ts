@@ -252,28 +252,33 @@ export function modelOptions(
   });
 }
 /**
- * The listed choice that matches the step's settings: on the connection its
- * slot is bound to, else on the only connection that serves the model.
+ * The listed choice that matches the step's settings: a connection where the
+ * model is approved and available, preferring the one its slot is bound to.
  */
 export function currentModelValue(
   workflow: Workflow,
   step: Step,
   groups: readonly ConnectionModels[],
   boundTo: BoundTo = () => null,
+  chosen = "",
 ): string {
   const profile = profileOf(workflow, step);
   if (!profile) return "";
   const serving = groups.filter(
     ({ connection, models }) =>
       connection.provider === profile["provider"] &&
-      !!models?.some((model) => model.name === profile["model"]),
+      !!models?.some(
+        (model) =>
+          model.name === profile["model"] && model.approved && model.available,
+      ),
   );
+  // The bound connection; else the one chosen in this field (`chosen` is its
+  // revision); else the first connection that serves the model.
   const bound = boundTo(String(step["connection"] ?? AI_SLOT));
   const found = bound
     ? serving.find(({ connection }) => connection.connection_id === bound)
-    : serving.length === 1
-      ? serving[0]
-      : undefined;
+    : (serving.find(({ connection }) => connection.revision_id === chosen) ??
+      serving[0]);
   return found
     ? modelValue(found.connection.revision_id, String(profile["model"]))
     : "";

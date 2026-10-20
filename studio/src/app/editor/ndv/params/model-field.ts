@@ -133,6 +133,8 @@ export class ModelField {
   private groups: ConnectionModels[] | null = null;
   private failure = "";
   private loading: Promise<ConnectionModels[]> | null = null;
+  /** The connection revision last chosen here, when two connections serve one model. */
+  private chosen = "";
 
   private load(): ConnectionModels[] | null {
     const host = this.session().host;
@@ -191,7 +193,13 @@ export class ModelField {
   private listedValue(): string {
     const { workflow, step } = this.session().subject();
     return step
-      ? currentModelValue(workflow, step, this.groups ?? [], this.boundTo())
+      ? currentModelValue(
+          workflow,
+          step,
+          this.groups ?? [],
+          this.boundTo(),
+          this.chosen,
+        )
       : "";
   }
   value(): string {
@@ -238,6 +246,7 @@ export class ModelField {
         },
         this.boundTo(),
       );
+      this.chosen = group.connection.revision_id;
       session.commit(changes, this.spec().id);
     } catch (error) {
       if (error instanceof FormWriteError) session.host.notify(error.message);
