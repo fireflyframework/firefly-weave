@@ -129,6 +129,13 @@ for (const size of sizes)
       await expect(result).not.toContainText("c-7Q2-marker");
       await page.keyboard.press("Tab");
       await details.close();
-      expect(sent.filter((line) => line.includes("c-7Q2-marker"))).toEqual([]);
+      // Only Studio's own host sees the test input, to check it before it is kept.
+      expect(
+        sent.filter(
+          (line) =>
+            line.includes("c-7Q2-marker") &&
+            !line.includes("/studio/local/testdata/check"),
+        ),
+      ).toEqual([]);
     });
   });

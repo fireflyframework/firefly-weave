@@ -64,6 +64,11 @@ export { REF_MIME } from "../params/drag-map";
         /></span>
         <span class="data-key">{{ row.label }}</span>
         <span class="data-kind">{{ row.typeLabel }}</span>
+        @if (row.sample !== undefined) {
+          <span class="data-sample" [attr.title]="row.sample">{{
+            row.sample
+          }}</span>
+        }
         @if (mapped().includes(row.ref ?? "")) {
           <weave-icon
             class="data-mapped"

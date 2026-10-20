@@ -1440,6 +1440,8 @@ describe("structural reset safety", () => {
 });
 
 describe("manual sample form lifetime", () => {
+  /** The test input is kept after its check: let the check and the change settle. */
+  const settle = () => new Promise((done) => setTimeout(done, 0));
   function fixture(schema?: unknown) {
     const f = setup();
     f.model.updateWorkflow({
@@ -1474,7 +1476,7 @@ describe("manual sample form lifetime", () => {
   }
   it.each([false, true])(
     "preserves the original reference root when wrapped (array=%s)",
-    (array) => {
+    async (array) => {
       const Value = { type: "string", title: "Display name" };
       const f = fixture(
         array
@@ -1491,17 +1493,18 @@ describe("manual sample form lifetime", () => {
       if (array) expect(f.form.member(field)?.kind).toBe("text");
       else expect(field.label).toBe("Display name");
       f.form.write(["value"], array ? ["Alice"] : "Alice");
+      await settle();
       expect(f.controller.testEvent()).toEqual(array ? ["Alice"] : "Alice");
       expect(f.pane.forms()[0]).toBe(f.owner);
       expect(f.pane.forms()[0].root).toBe(f.owner.root);
       f.injector.destroy();
     },
   );
-  it("keeps schema and initial data identities through its own edits", () => {
+  it("keeps schema and initial data identities through its own edits", async () => {
     const f = fixture();
-    f.pane.changed({ name: "A" }, f.owner);
+    await f.pane.changed({ name: "A" }, f.owner);
     expect(f.pane.forms()[0]).toBe(f.owner);
-    f.pane.changed({ name: "Alice" }, f.owner);
+    await f.pane.changed({ name: "Alice" }, f.owner);
     expect(f.pane.forms()[0].initial).toBe(f.owner.initial);
     expect(f.controller.testEvent()).toEqual({ name: "Alice" });
     f.injector.destroy();
@@ -1518,7 +1521,7 @@ describe("manual sample form lifetime", () => {
       if (change === "account") f.host.api = {} as never;
       if (change === "generate") f.pane.generate();
       if (change === "destroy") f.injector.destroy();
-      await Promise.resolve();
+      await settle();
       expect(f.controller.testEvent()).toEqual(
         change === "generate" ? { enabled: true, name: "text" } : undefined,
       );
@@ -1530,7 +1533,7 @@ describe("manual sample form lifetime", () => {
   it("accepts current TaskForm default microtasks", async () => {
     const f = fixture();
     f.form.ngOnChanges({ schema: {} as never });
-    await Promise.resolve();
+    await settle();
     expect(f.controller.testEvent()).toEqual({ enabled: false });
     expect(f.pane.forms()[0]).toBe(f.owner);
     f.injector.destroy();

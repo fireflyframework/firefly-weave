@@ -15,6 +15,7 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
+import { CHECK_WORDS } from "../src/app/editor/state/test-data-check";
 import "@angular/compiler";
 import { beforeAll, describe, expect, it } from "vitest";
 import { loadKindRegistrations } from "../src/app/editor/ndv/kinds";
@@ -759,9 +760,10 @@ describe("step details context", () => {
     expect(context.sample.context([])).toBeNull();
     expect(context.sample.resolvedInput()).toEqual({ state: "none" });
     expect(context.sample.output()).toEqual({ state: "none" });
+    // Without a contract for the action, Studio can't check a pin: nothing is kept.
     expect(await context.sample.setPin(null)).toEqual({
       ok: false,
-      message: "Pinning output isn't available yet.",
+      message: CHECK_WORDS["WV-STUDIO-TESTDATA-UNRESOLVED"],
     });
     expect(await context.sample.setScript(null)).toEqual({
       ok: false,
@@ -948,11 +950,11 @@ describe("connected step catalog", () => {
 });
 
 describe("manual test event ownership", () => {
-  it("retains a null sample across dialog openings without persisting it", () => {
+  it("retains a null sample across dialog openings without persisting it", async () => {
     const { model, controller } = setup();
     const before = JSON.stringify([model.definition, model.canvas]);
     expect(controller.testEvent()).toBeUndefined();
-    controller.setTestEvent(null);
+    await controller.setTestEvent(null);
     const details = new StepDetailsService();
     details.open(openRequest("$trigger"));
     details.close();
@@ -962,9 +964,9 @@ describe("manual test event ownership", () => {
   });
   it.each(["workflow", "profile", "account"])(
     "clears samples and rejects a stale writer after %s changes",
-    (scope) => {
+    async (scope) => {
       const { model, host, controller } = setup();
-      controller.setTestEvent({ label: "old" });
+      await controller.setTestEvent({ label: "old" });
       const current = controller.testEventOwner();
       if (scope === "workflow") model.clearHistory();
       if (scope === "profile") host.profile = { id: "different" } as never;
@@ -973,7 +975,7 @@ describe("manual test event ownership", () => {
       expect(current()).toBe(false);
     },
   );
-  it("strips nested secret values at the sample boundary", () => {
+  it("strips nested secret values at the sample boundary", async () => {
     const { model, controller } = setup();
     model.updateWorkflow({
       ...model.definition,
@@ -996,14 +998,16 @@ describe("manual test event ownership", () => {
         },
       },
     });
-    controller.setTestEvent({ rows: [{ token: "private", name: "public" }] });
+    await controller.setTestEvent({
+      rows: [{ token: "private", name: "public" }],
+    });
     expect(controller.testEvent()).toEqual({ rows: [{ name: "public" }] });
   });
 });
 
-it("redacts a stored sample when an input field becomes secret", () => {
+it("redacts a stored sample when an input field becomes secret", async () => {
   const { model, controller } = setup();
-  controller.setTestEvent({ token: "private", name: "public" });
+  await controller.setTestEvent({ token: "private", name: "public" });
   model.updateWorkflow({
     ...model.definition,
     spec: {
@@ -1020,7 +1024,7 @@ it("redacts a stored sample when an input field becomes secret", () => {
   expect(controller.testEvent()).toEqual({ name: "public" });
 });
 
-it("keeps composed secrets out of the sample store and serialized workflow", () => {
+it("keeps composed secrets out of the sample store and serialized workflow", async () => {
   const { model, controller } = setup();
   model.updateWorkflow({
     ...model.definition,
@@ -1041,7 +1045,7 @@ it("keeps composed secrets out of the sample store and serialized workflow", () 
     },
   });
   const before = JSON.stringify([model.definition, model.canvas]);
-  controller.setTestEvent({ token: "private", name: "public" });
+  await controller.setTestEvent({ token: "private", name: "public" });
   expect(controller.testEvent()).toEqual({ name: "public" });
   expect(JSON.stringify([model.definition, model.canvas])).toBe(before);
 });

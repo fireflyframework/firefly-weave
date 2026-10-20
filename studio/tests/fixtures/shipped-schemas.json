@@ -21,20 +21,14 @@
         "additionalProperties": false,
         "properties": {
           "auth": {
-            "enum": [
-              "none",
-              "bearer"
-            ],
+            "enum": ["none", "bearer"],
             "type": "string"
           },
           "baseUrl": {
             "type": "string"
           }
         },
-        "required": [
-          "baseUrl",
-          "auth"
-        ],
+        "required": ["baseUrl", "auth"],
         "type": "object"
       }
     },
@@ -65,10 +59,7 @@
             "type": "integer"
           },
           "method": {
-            "enum": [
-              "GET",
-              "HEAD"
-            ],
+            "enum": ["GET", "HEAD"],
             "type": "string"
           },
           "path": {
@@ -87,11 +78,7 @@
             "type": "array"
           }
         },
-        "required": [
-          "method",
-          "path",
-          "statuses"
-        ],
+        "required": ["method", "path", "statuses"],
         "type": "object"
       }
     },
@@ -126,12 +113,7 @@
             "type": "integer"
           },
           "method": {
-            "enum": [
-              "POST",
-              "PUT",
-              "PATCH",
-              "DELETE"
-            ],
+            "enum": ["POST", "PUT", "PATCH", "DELETE"],
             "type": "string"
           },
           "path": {
@@ -150,11 +132,7 @@
             "type": "array"
           }
         },
-        "required": [
-          "method",
-          "path",
-          "statuses"
-        ],
+        "required": ["method", "path", "statuses"],
         "type": "object"
       }
     },
@@ -190,10 +168,7 @@
             "type": "string"
           }
         },
-        "required": [
-          "baseUrl",
-          "auth"
-        ],
+        "required": ["baseUrl", "auth"],
         "type": "object"
       }
     },
@@ -311,19 +286,13 @@
             "type": "integer"
           },
           "role": {
-            "enum": [
-              "read",
-              "command"
-            ],
+            "enum": ["read", "command"],
             "title": "Role",
             "type": "string"
           },
           "tls": {
             "default": "verify-full",
-            "enum": [
-              "verify-full",
-              "disable"
-            ],
+            "enum": ["verify-full", "disable"],
             "title": "Tls",
             "type": "string"
           },
@@ -335,14 +304,7 @@
             "type": "string"
           }
         },
-        "required": [
-          "dialect",
-          "host",
-          "port",
-          "database",
-          "user",
-          "role"
-        ],
+        "required": ["dialect", "host", "port", "database", "user", "role"],
         "title": "PostgresConnectionConfig",
         "type": "object"
       }
@@ -358,9 +320,7 @@
             "type": "string"
           }
         },
-        "required": [
-          "password"
-        ],
+        "required": ["password"],
         "type": "object"
       }
     },
@@ -373,14 +333,7 @@
         "properties": {
           "mappings": {
             "additionalProperties": {
-              "enum": [
-                "decimal",
-                "date",
-                "datetime",
-                "time",
-                "base64",
-                "uuid"
-              ],
+              "enum": ["decimal", "date", "datetime", "time", "base64", "uuid"],
               "type": "string"
             },
             "title": "Mappings",
@@ -421,10 +374,7 @@
             "type": "integer"
           }
         },
-        "required": [
-          "statement",
-          "parameters"
-        ],
+        "required": ["statement", "parameters"],
         "title": "SqlConfig",
         "type": "object"
       }
@@ -440,9 +390,7 @@
             "type": "object"
           }
         },
-        "required": [
-          "parameters"
-        ],
+        "required": ["parameters"],
         "type": "object"
       }
     },
@@ -455,14 +403,7 @@
         "properties": {
           "mappings": {
             "additionalProperties": {
-              "enum": [
-                "decimal",
-                "date",
-                "datetime",
-                "time",
-                "base64",
-                "uuid"
-              ],
+              "enum": ["decimal", "date", "datetime", "time", "base64", "uuid"],
               "type": "string"
             },
             "title": "Mappings",
@@ -503,10 +444,7 @@
             "type": "integer"
           }
         },
-        "required": [
-          "statement",
-          "parameters"
-        ],
+        "required": ["statement", "parameters"],
         "title": "SqlConfig",
         "type": "object"
       }
@@ -522,9 +460,7 @@
             "type": "object"
           }
         },
-        "required": [
-          "parameters"
-        ],
+        "required": ["parameters"],
         "type": "object"
       }
     },
@@ -537,14 +473,7 @@
         "properties": {
           "mappings": {
             "additionalProperties": {
-              "enum": [
-                "decimal",
-                "date",
-                "datetime",
-                "time",
-                "base64",
-                "uuid"
-              ],
+              "enum": ["decimal", "date", "datetime", "time", "base64", "uuid"],
               "type": "string"
             },
             "title": "Mappings",
@@ -585,10 +514,7 @@
             "type": "integer"
           }
         },
-        "required": [
-          "statement",
-          "parameters"
-        ],
+        "required": ["statement", "parameters"],
         "title": "SqlConfig",
         "type": "object"
       }
@@ -604,9 +530,7 @@
             "type": "object"
           }
         },
-        "required": [
-          "parameters"
-        ],
+        "required": ["parameters"],
         "type": "object"
       }
     },
@@ -644,20 +568,13 @@
           },
           "sasl_mechanism": {
             "default": "PLAIN",
-            "enum": [
-              "PLAIN",
-              "SCRAM-SHA-256",
-              "SCRAM-SHA-512"
-            ],
+            "enum": ["PLAIN", "SCRAM-SHA-256", "SCRAM-SHA-512"],
             "title": "Sasl Mechanism",
             "type": "string"
           },
           "security_protocol": {
             "default": "SASL_SSL",
-            "enum": [
-              "SASL_SSL",
-              "PLAINTEXT"
-            ],
+            "enum": ["SASL_SSL", "PLAINTEXT"],
             "title": "Security Protocol",
             "type": "string"
           },
@@ -685,12 +602,7 @@
             "title": "Username"
           }
         },
-        "required": [
-          "driver",
-          "cluster_id",
-          "bootstrap",
-          "topics"
-        ],
+        "required": ["driver", "cluster_id", "bootstrap", "topics"],
         "title": "BrokerConnectionConfig",
         "type": "object"
       }
@@ -723,9 +635,7 @@
             "type": "string"
           }
         },
-        "required": [
-          "topic"
-        ],
+        "required": ["topic"],
         "title": "BrokerPublishConfig",
         "type": "object"
       }
@@ -754,11 +664,7 @@
           },
           "auth": {
             "default": "none",
-            "enum": [
-              "none",
-              "password",
-              "oauth"
-            ],
+            "enum": ["none", "password", "oauth"],
             "title": "Auth",
             "type": "string"
           },
@@ -829,21 +735,12 @@
           },
           "tls": {
             "default": "tls",
-            "enum": [
-              "tls",
-              "starttls",
-              "local_fixture"
-            ],
+            "enum": ["tls", "starttls", "local_fixture"],
             "title": "Tls",
             "type": "string"
           }
         },
-        "required": [
-          "host",
-          "port",
-          "sender",
-          "allowed_recipients"
-        ],
+        "required": ["host", "port", "sender", "allowed_recipients"],
         "title": "MailProfile",
         "type": "object"
       }
@@ -905,11 +802,7 @@
                   "type": "string"
                 }
               },
-              "required": [
-                "filename",
-                "content_type",
-                "content_base64"
-              ],
+              "required": ["filename", "content_type", "content_base64"],
               "title": "EmailAttachment",
               "type": "object"
             },
@@ -936,11 +829,7 @@
             "type": "string"
           }
         },
-        "required": [
-          "conversation_id",
-          "parent_message_id",
-          "text"
-        ],
+        "required": ["conversation_id", "parent_message_id", "text"],
         "type": "object"
       }
     },
@@ -981,11 +870,7 @@
                   "type": "string"
                 }
               },
-              "required": [
-                "filename",
-                "content_type",
-                "content_base64"
-              ],
+              "required": ["filename", "content_type", "content_base64"],
               "title": "EmailAttachment",
               "type": "object"
             },
@@ -1027,11 +912,7 @@
             "type": "array"
           }
         },
-        "required": [
-          "to",
-          "subject",
-          "text"
-        ],
+        "required": ["to", "subject", "text"],
         "type": "object"
       }
     },
@@ -1117,9 +998,7 @@
             "type": "string"
           }
         },
-        "required": [
-          "client_secret"
-        ],
+        "required": ["client_secret"],
         "type": "object"
       }
     },
@@ -1170,11 +1049,7 @@
             "type": "string"
           }
         },
-        "required": [
-          "reference_id",
-          "generation",
-          "text"
-        ],
+        "required": ["reference_id", "generation", "text"],
         "title": "TeamsInput",
         "type": "object"
       }
@@ -1226,11 +1101,7 @@
             "type": "string"
           }
         },
-        "required": [
-          "reference_id",
-          "generation",
-          "text"
-        ],
+        "required": ["reference_id", "generation", "text"],
         "title": "TeamsInput",
         "type": "object"
       }
@@ -1265,11 +1136,7 @@
             "type": "string"
           }
         },
-        "required": [
-          "account_id",
-          "mode",
-          "allowed_chat_ids"
-        ],
+        "required": ["account_id", "mode", "allowed_chat_ids"],
         "title": "TelegramConfig",
         "type": "object"
       }
@@ -1288,10 +1155,7 @@
             "type": "string"
           }
         },
-        "required": [
-          "botToken",
-          "webhookSecret"
-        ],
+        "required": ["botToken", "webhookSecret"],
         "type": "object"
       }
     },
@@ -1333,11 +1197,7 @@
             "type": "string"
           }
         },
-        "required": [
-          "chat_id",
-          "text",
-          "message_id"
-        ],
+        "required": ["chat_id", "text", "message_id"],
         "type": "object"
       }
     },
@@ -1370,10 +1230,7 @@
             "type": "string"
           }
         },
-        "required": [
-          "chat_id",
-          "text"
-        ],
+        "required": ["chat_id", "text"],
         "type": "object"
       }
     },
@@ -1403,11 +1260,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "name",
-              "locale",
-              "body_parameters"
-            ],
+            "required": ["name", "locale", "body_parameters"],
             "title": "ApprovedTemplate",
             "type": "object"
           },
@@ -1487,11 +1340,7 @@
             "type": "string"
           }
         },
-        "required": [
-          "accessToken",
-          "appSecret",
-          "verifyToken"
-        ],
+        "required": ["accessToken", "appSecret", "verifyToken"],
         "type": "object"
       }
     },
@@ -1543,12 +1392,7 @@
             "$ref": "#/$defs/Phone"
           }
         },
-        "required": [
-          "recipient",
-          "name",
-          "locale",
-          "parameters"
-        ],
+        "required": ["recipient", "name", "locale", "parameters"],
         "title": "TemplateInput",
         "type": "object"
       }
@@ -1585,10 +1429,7 @@
             "type": "string"
           }
         },
-        "required": [
-          "recipient",
-          "text"
-        ],
+        "required": ["recipient", "text"],
         "title": "TextInput",
         "type": "object"
       }
@@ -1600,9 +1441,7 @@
       "schema": {
         "type": "object",
         "additionalProperties": false,
-        "required": [
-          "customerId"
-        ],
+        "required": ["customerId"],
         "properties": {
           "customerId": {
             "type": "string",
@@ -1618,9 +1457,7 @@
       "schema": {
         "type": "object",
         "additionalProperties": false,
-        "required": [
-          "approved"
-        ],
+        "required": ["approved"],
         "properties": {
           "approved": {
             "type": "boolean"
@@ -1647,9 +1484,7 @@
             "type": "string"
           }
         },
-        "required": [
-          "note"
-        ],
+        "required": ["note"],
         "additionalProperties": false
       }
     },
@@ -1682,11 +1517,7 @@
           },
           "effect": {
             "type": "string",
-            "enum": [
-              "message",
-              "add",
-              "remove"
-            ]
+            "enum": ["message", "add", "remove"]
           }
         },
         "required": [
@@ -1707,9 +1538,7 @@
       "schema": {
         "type": "object",
         "additionalProperties": false,
-        "required": [
-          "customerId"
-        ],
+        "required": ["customerId"],
         "properties": {
           "customerId": {
             "type": "string",
@@ -1725,17 +1554,12 @@
       "schema": {
         "type": "object",
         "additionalProperties": false,
-        "required": [
-          "parameters"
-        ],
+        "required": ["parameters"],
         "properties": {
           "parameters": {
             "type": "object",
             "additionalProperties": false,
-            "required": [
-              "customerId",
-              "rowLimit"
-            ],
+            "required": ["customerId", "rowLimit"],
             "properties": {
               "customerId": {
                 "type": "string",

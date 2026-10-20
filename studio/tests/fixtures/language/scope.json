@@ -28,9 +28,7 @@
                       "title": "Customer email"
                     }
                   },
-                  "required": [
-                    "number"
-                  ],
+                  "required": ["number"],
                   "additionalProperties": false
                 }
               },
@@ -49,18 +47,13 @@
                         "title": "Customer email"
                       }
                     },
-                    "required": [
-                      "number"
-                    ],
+                    "required": ["number"],
                     "additionalProperties": false
                   }
                 }
               }
             },
-            "required": [
-              "invoices",
-              "batches"
-            ],
+            "required": ["invoices", "batches"],
             "additionalProperties": false
           },
           "outputSchema": {},
@@ -138,9 +131,7 @@
                         "title": "Customer email"
                       }
                     },
-                    "required": [
-                      "number"
-                    ],
+                    "required": ["number"],
                     "additionalProperties": false
                   }
                 },
@@ -159,32 +150,23 @@
                           "title": "Customer email"
                         }
                       },
-                      "required": [
-                        "number"
-                      ],
+                      "required": ["number"],
                       "additionalProperties": false
                     }
                   }
                 }
               },
-              "required": [
-                "invoices",
-                "batches"
-              ],
+              "required": ["invoices", "batches"],
               "additionalProperties": false
             },
-            "types": [
-              "object"
-            ],
+            "types": ["object"],
             "typeLabel": "Group",
             "optional": false
           },
           {
             "ref": "/input/invoices",
             "source": "input",
-            "path": [
-              "invoices"
-            ],
+            "path": ["invoices"],
             "label": "invoices",
             "breadcrumb": "Workflow input › invoices",
             "schema": {
@@ -200,24 +182,18 @@
                     "title": "Customer email"
                   }
                 },
-                "required": [
-                  "number"
-                ],
+                "required": ["number"],
                 "additionalProperties": false
               }
             },
-            "types": [
-              "array"
-            ],
+            "types": ["array"],
             "typeLabel": "List of groups",
             "optional": false
           },
           {
             "ref": "/input/batches",
             "source": "input",
-            "path": [
-              "batches"
-            ],
+            "path": ["batches"],
             "label": "batches",
             "breadcrumb": "Workflow input › batches",
             "schema": {
@@ -235,16 +211,12 @@
                       "title": "Customer email"
                     }
                   },
-                  "required": [
-                    "number"
-                  ],
+                  "required": ["number"],
                   "additionalProperties": false
                 }
               }
             },
-            "types": [
-              "array"
-            ],
+            "types": ["array"],
             "typeLabel": "List of lists",
             "optional": false
           },
@@ -266,14 +238,10 @@
                   "title": "Customer email"
                 }
               },
-              "required": [
-                "number"
-              ],
+              "required": ["number"],
               "additionalProperties": false
             },
-            "types": [
-              "object"
-            ],
+            "types": ["object"],
             "typeLabel": "Group",
             "optional": false
           },
@@ -281,17 +249,13 @@
             "ref": "/item/number",
             "source": "item",
             "loop": "notify",
-            "path": [
-              "number"
-            ],
+            "path": ["number"],
             "label": "number",
             "breadcrumb": "Loop notify › Current item › number",
             "schema": {
               "type": "string"
             },
-            "types": [
-              "string"
-            ],
+            "types": ["string"],
             "typeLabel": "Text",
             "optional": false
           },
@@ -299,18 +263,14 @@
             "ref": "/item/customerEmail",
             "source": "item",
             "loop": "notify",
-            "path": [
-              "customerEmail"
-            ],
+            "path": ["customerEmail"],
             "label": "Customer email",
             "breadcrumb": "Loop notify › Current item › Customer email",
             "schema": {
               "type": "string",
               "title": "Customer email"
             },
-            "types": [
-              "string"
-            ],
+            "types": ["string"],
             "typeLabel": "Text",
             "optional": true
           },
@@ -326,9 +286,7 @@
               "minimum": 0,
               "maximum": 499
             },
-            "types": [
-              "integer"
-            ],
+            "types": ["integer"],
             "typeLabel": "Whole number",
             "optional": false
           },
@@ -343,9 +301,7 @@
             "schema": {
               "type": "string"
             },
-            "types": [
-              "string"
-            ],
+            "types": ["string"],
             "typeLabel": "Text",
             "optional": false
           }
@@ -378,9 +334,7 @@
                       "title": "Customer email"
                     }
                   },
-                  "required": [
-                    "number"
-                  ],
+                  "required": ["number"],
                   "additionalProperties": false
                 }
               },
@@ -399,18 +353,13 @@
                         "title": "Customer email"
                       }
                     },
-                    "required": [
-                      "number"
-                    ],
+                    "required": ["number"],
                     "additionalProperties": false
                   }
                 }
               }
             },
-            "required": [
-              "invoices",
-              "batches"
-            ],
+            "required": ["invoices", "batches"],
             "additionalProperties": false
           },
           "outputSchema": {},
@@ -488,9 +437,7 @@
                         "title": "Customer email"
                       }
                     },
-                    "required": [
-                      "number"
-                    ],
+                    "required": ["number"],
                     "additionalProperties": false
                   }
                 },
@@ -509,32 +456,23 @@
                           "title": "Customer email"
                         }
                       },
-                      "required": [
-                        "number"
-                      ],
+                      "required": ["number"],
                       "additionalProperties": false
                     }
                   }
                 }
               },
-              "required": [
-                "invoices",
-                "batches"
-              ],
+              "required": ["invoices", "batches"],
               "additionalProperties": false
             },
-            "types": [
-              "object"
-            ],
+            "types": ["object"],
             "typeLabel": "Group",
             "optional": false
           },
           {
             "ref": "/input/invoices",
             "source": "input",
-            "path": [
-              "invoices"
-            ],
+            "path": ["invoices"],
             "label": "invoices",
             "breadcrumb": "Workflow input › invoices",
             "schema": {
@@ -550,24 +488,18 @@
                     "title": "Customer email"
                   }
                 },
-                "required": [
-                  "number"
-                ],
+                "required": ["number"],
                 "additionalProperties": false
               }
             },
-            "types": [
-              "array"
-            ],
+            "types": ["array"],
             "typeLabel": "List of groups",
             "optional": false
           },
           {
             "ref": "/input/batches",
             "source": "input",
-            "path": [
-              "batches"
-            ],
+            "path": ["batches"],
             "label": "batches",
             "breadcrumb": "Workflow input › batches",
             "schema": {
@@ -585,16 +517,12 @@
                       "title": "Customer email"
                     }
                   },
-                  "required": [
-                    "number"
-                  ],
+                  "required": ["number"],
                   "additionalProperties": false
                 }
               }
             },
-            "types": [
-              "array"
-            ],
+            "types": ["array"],
             "typeLabel": "List of lists",
             "optional": false
           },
@@ -616,14 +544,10 @@
                   "title": "Customer email"
                 }
               },
-              "required": [
-                "number"
-              ],
+              "required": ["number"],
               "additionalProperties": false
             },
-            "types": [
-              "object"
-            ],
+            "types": ["object"],
             "typeLabel": "Group",
             "optional": false
           },
@@ -631,17 +555,13 @@
             "ref": "/item/number",
             "source": "item",
             "loop": "notify",
-            "path": [
-              "number"
-            ],
+            "path": ["number"],
             "label": "number",
             "breadcrumb": "Loop notify › Current item › number",
             "schema": {
               "type": "string"
             },
-            "types": [
-              "string"
-            ],
+            "types": ["string"],
             "typeLabel": "Text",
             "optional": false
           },
@@ -649,18 +569,14 @@
             "ref": "/item/customerEmail",
             "source": "item",
             "loop": "notify",
-            "path": [
-              "customerEmail"
-            ],
+            "path": ["customerEmail"],
             "label": "Customer email",
             "breadcrumb": "Loop notify › Current item › Customer email",
             "schema": {
               "type": "string",
               "title": "Customer email"
             },
-            "types": [
-              "string"
-            ],
+            "types": ["string"],
             "typeLabel": "Text",
             "optional": true
           },
@@ -676,9 +592,7 @@
               "minimum": 0,
               "maximum": 499
             },
-            "types": [
-              "integer"
-            ],
+            "types": ["integer"],
             "typeLabel": "Whole number",
             "optional": false
           },
@@ -693,9 +607,7 @@
             "schema": {
               "type": "string"
             },
-            "types": [
-              "string"
-            ],
+            "types": ["string"],
             "typeLabel": "Text",
             "optional": false
           },
@@ -718,14 +630,10 @@
                   "title": "Customer email"
                 }
               },
-              "required": [
-                "number"
-              ],
+              "required": ["number"],
               "additionalProperties": false
             },
-            "types": [
-              "object"
-            ],
+            "types": ["object"],
             "typeLabel": "Group",
             "optional": false
           },
@@ -734,17 +642,13 @@
             "source": "step",
             "stepId": "send",
             "stepKind": "transform",
-            "path": [
-              "number"
-            ],
+            "path": ["number"],
             "label": "number",
             "breadcrumb": "send › number",
             "schema": {
               "type": "string"
             },
-            "types": [
-              "string"
-            ],
+            "types": ["string"],
             "typeLabel": "Text",
             "optional": false
           },
@@ -753,18 +657,14 @@
             "source": "step",
             "stepId": "send",
             "stepKind": "transform",
-            "path": [
-              "customerEmail"
-            ],
+            "path": ["customerEmail"],
             "label": "Customer email",
             "breadcrumb": "send › Customer email",
             "schema": {
               "type": "string",
               "title": "Customer email"
             },
-            "types": [
-              "string"
-            ],
+            "types": ["string"],
             "typeLabel": "Text",
             "optional": true
           }
@@ -797,9 +697,7 @@
                       "title": "Customer email"
                     }
                   },
-                  "required": [
-                    "number"
-                  ],
+                  "required": ["number"],
                   "additionalProperties": false
                 }
               },
@@ -818,18 +716,13 @@
                         "title": "Customer email"
                       }
                     },
-                    "required": [
-                      "number"
-                    ],
+                    "required": ["number"],
                     "additionalProperties": false
                   }
                 }
               }
             },
-            "required": [
-              "invoices",
-              "batches"
-            ],
+            "required": ["invoices", "batches"],
             "additionalProperties": false
           },
           "outputSchema": {},
@@ -907,9 +800,7 @@
                         "title": "Customer email"
                       }
                     },
-                    "required": [
-                      "number"
-                    ],
+                    "required": ["number"],
                     "additionalProperties": false
                   }
                 },
@@ -928,32 +819,23 @@
                           "title": "Customer email"
                         }
                       },
-                      "required": [
-                        "number"
-                      ],
+                      "required": ["number"],
                       "additionalProperties": false
                     }
                   }
                 }
               },
-              "required": [
-                "invoices",
-                "batches"
-              ],
+              "required": ["invoices", "batches"],
               "additionalProperties": false
             },
-            "types": [
-              "object"
-            ],
+            "types": ["object"],
             "typeLabel": "Group",
             "optional": false
           },
           {
             "ref": "/input/invoices",
             "source": "input",
-            "path": [
-              "invoices"
-            ],
+            "path": ["invoices"],
             "label": "invoices",
             "breadcrumb": "Workflow input › invoices",
             "schema": {
@@ -969,24 +851,18 @@
                     "title": "Customer email"
                   }
                 },
-                "required": [
-                  "number"
-                ],
+                "required": ["number"],
                 "additionalProperties": false
               }
             },
-            "types": [
-              "array"
-            ],
+            "types": ["array"],
             "typeLabel": "List of groups",
             "optional": false
           },
           {
             "ref": "/input/batches",
             "source": "input",
-            "path": [
-              "batches"
-            ],
+            "path": ["batches"],
             "label": "batches",
             "breadcrumb": "Workflow input › batches",
             "schema": {
@@ -1004,16 +880,12 @@
                       "title": "Customer email"
                     }
                   },
-                  "required": [
-                    "number"
-                  ],
+                  "required": ["number"],
                   "additionalProperties": false
                 }
               }
             },
-            "types": [
-              "array"
-            ],
+            "types": ["array"],
             "typeLabel": "List of lists",
             "optional": false
           }
@@ -1046,9 +918,7 @@
                       "title": "Customer email"
                     }
                   },
-                  "required": [
-                    "number"
-                  ],
+                  "required": ["number"],
                   "additionalProperties": false
                 }
               },
@@ -1067,18 +937,13 @@
                         "title": "Customer email"
                       }
                     },
-                    "required": [
-                      "number"
-                    ],
+                    "required": ["number"],
                     "additionalProperties": false
                   }
                 }
               }
             },
-            "required": [
-              "invoices",
-              "batches"
-            ],
+            "required": ["invoices", "batches"],
             "additionalProperties": false
           },
           "outputSchema": {},
@@ -1156,9 +1021,7 @@
                         "title": "Customer email"
                       }
                     },
-                    "required": [
-                      "number"
-                    ],
+                    "required": ["number"],
                     "additionalProperties": false
                   }
                 },
@@ -1177,32 +1040,23 @@
                           "title": "Customer email"
                         }
                       },
-                      "required": [
-                        "number"
-                      ],
+                      "required": ["number"],
                       "additionalProperties": false
                     }
                   }
                 }
               },
-              "required": [
-                "invoices",
-                "batches"
-              ],
+              "required": ["invoices", "batches"],
               "additionalProperties": false
             },
-            "types": [
-              "object"
-            ],
+            "types": ["object"],
             "typeLabel": "Group",
             "optional": false
           },
           {
             "ref": "/input/invoices",
             "source": "input",
-            "path": [
-              "invoices"
-            ],
+            "path": ["invoices"],
             "label": "invoices",
             "breadcrumb": "Workflow input › invoices",
             "schema": {
@@ -1218,24 +1072,18 @@
                     "title": "Customer email"
                   }
                 },
-                "required": [
-                  "number"
-                ],
+                "required": ["number"],
                 "additionalProperties": false
               }
             },
-            "types": [
-              "array"
-            ],
+            "types": ["array"],
             "typeLabel": "List of groups",
             "optional": false
           },
           {
             "ref": "/input/batches",
             "source": "input",
-            "path": [
-              "batches"
-            ],
+            "path": ["batches"],
             "label": "batches",
             "breadcrumb": "Workflow input › batches",
             "schema": {
@@ -1253,16 +1101,12 @@
                       "title": "Customer email"
                     }
                   },
-                  "required": [
-                    "number"
-                  ],
+                  "required": ["number"],
                   "additionalProperties": false
                 }
               }
             },
-            "types": [
-              "array"
-            ],
+            "types": ["array"],
             "typeLabel": "List of lists",
             "optional": false
           },
@@ -1287,16 +1131,12 @@
                     "title": "Customer email"
                   }
                 },
-                "required": [
-                  "number"
-                ],
+                "required": ["number"],
                 "additionalProperties": false
               },
               "maxItems": 500
             },
-            "types": [
-              "array"
-            ],
+            "types": ["array"],
             "typeLabel": "List of groups",
             "optional": false
           }
@@ -1329,9 +1169,7 @@
                       "title": "Customer email"
                     }
                   },
-                  "required": [
-                    "number"
-                  ],
+                  "required": ["number"],
                   "additionalProperties": false
                 }
               },
@@ -1350,18 +1188,13 @@
                         "title": "Customer email"
                       }
                     },
-                    "required": [
-                      "number"
-                    ],
+                    "required": ["number"],
                     "additionalProperties": false
                   }
                 }
               }
             },
-            "required": [
-              "invoices",
-              "batches"
-            ],
+            "required": ["invoices", "batches"],
             "additionalProperties": false
           },
           "outputSchema": {},
@@ -1437,9 +1270,7 @@
                         "title": "Customer email"
                       }
                     },
-                    "required": [
-                      "number"
-                    ],
+                    "required": ["number"],
                     "additionalProperties": false
                   }
                 },
@@ -1458,32 +1289,23 @@
                           "title": "Customer email"
                         }
                       },
-                      "required": [
-                        "number"
-                      ],
+                      "required": ["number"],
                       "additionalProperties": false
                     }
                   }
                 }
               },
-              "required": [
-                "invoices",
-                "batches"
-              ],
+              "required": ["invoices", "batches"],
               "additionalProperties": false
             },
-            "types": [
-              "object"
-            ],
+            "types": ["object"],
             "typeLabel": "Group",
             "optional": false
           },
           {
             "ref": "/input/invoices",
             "source": "input",
-            "path": [
-              "invoices"
-            ],
+            "path": ["invoices"],
             "label": "invoices",
             "breadcrumb": "Workflow input › invoices",
             "schema": {
@@ -1499,24 +1321,18 @@
                     "title": "Customer email"
                   }
                 },
-                "required": [
-                  "number"
-                ],
+                "required": ["number"],
                 "additionalProperties": false
               }
             },
-            "types": [
-              "array"
-            ],
+            "types": ["array"],
             "typeLabel": "List of groups",
             "optional": false
           },
           {
             "ref": "/input/batches",
             "source": "input",
-            "path": [
-              "batches"
-            ],
+            "path": ["batches"],
             "label": "batches",
             "breadcrumb": "Workflow input › batches",
             "schema": {
@@ -1534,16 +1350,12 @@
                       "title": "Customer email"
                     }
                   },
-                  "required": [
-                    "number"
-                  ],
+                  "required": ["number"],
                   "additionalProperties": false
                 }
               }
             },
-            "types": [
-              "array"
-            ],
+            "types": ["array"],
             "typeLabel": "List of lists",
             "optional": false
           },
@@ -1565,14 +1377,10 @@
                   "title": "Customer email"
                 }
               },
-              "required": [
-                "number"
-              ],
+              "required": ["number"],
               "additionalProperties": false
             },
-            "types": [
-              "object"
-            ],
+            "types": ["object"],
             "typeLabel": "Group",
             "optional": false
           },
@@ -1580,17 +1388,13 @@
             "ref": "/item/number",
             "source": "item",
             "loop": "line",
-            "path": [
-              "number"
-            ],
+            "path": ["number"],
             "label": "number",
             "breadcrumb": "Loop line › Current item › number",
             "schema": {
               "type": "string"
             },
-            "types": [
-              "string"
-            ],
+            "types": ["string"],
             "typeLabel": "Text",
             "optional": false
           },
@@ -1598,18 +1402,14 @@
             "ref": "/item/customerEmail",
             "source": "item",
             "loop": "line",
-            "path": [
-              "customerEmail"
-            ],
+            "path": ["customerEmail"],
             "label": "Customer email",
             "breadcrumb": "Loop line › Current item › Customer email",
             "schema": {
               "type": "string",
               "title": "Customer email"
             },
-            "types": [
-              "string"
-            ],
+            "types": ["string"],
             "typeLabel": "Text",
             "optional": true
           },
@@ -1625,9 +1425,7 @@
               "minimum": 0,
               "maximum": 49
             },
-            "types": [
-              "integer"
-            ],
+            "types": ["integer"],
             "typeLabel": "Whole number",
             "optional": false
           },
@@ -1651,15 +1449,11 @@
                     "title": "Customer email"
                   }
                 },
-                "required": [
-                  "number"
-                ],
+                "required": ["number"],
                 "additionalProperties": false
               }
             },
-            "types": [
-              "array"
-            ],
+            "types": ["array"],
             "typeLabel": "List of groups",
             "optional": false
           },
@@ -1675,9 +1469,7 @@
               "minimum": 0,
               "maximum": 19
             },
-            "types": [
-              "integer"
-            ],
+            "types": ["integer"],
             "typeLabel": "Whole number",
             "optional": false
           }
@@ -1710,9 +1502,7 @@
                       "title": "Customer email"
                     }
                   },
-                  "required": [
-                    "number"
-                  ],
+                  "required": ["number"],
                   "additionalProperties": false
                 }
               },
@@ -1731,18 +1521,13 @@
                         "title": "Customer email"
                       }
                     },
-                    "required": [
-                      "number"
-                    ],
+                    "required": ["number"],
                     "additionalProperties": false
                   }
                 }
               }
             },
-            "required": [
-              "invoices",
-              "batches"
-            ],
+            "required": ["invoices", "batches"],
             "additionalProperties": false
           },
           "outputSchema": {},
@@ -1818,9 +1603,7 @@
                         "title": "Customer email"
                       }
                     },
-                    "required": [
-                      "number"
-                    ],
+                    "required": ["number"],
                     "additionalProperties": false
                   }
                 },
@@ -1839,32 +1622,23 @@
                           "title": "Customer email"
                         }
                       },
-                      "required": [
-                        "number"
-                      ],
+                      "required": ["number"],
                       "additionalProperties": false
                     }
                   }
                 }
               },
-              "required": [
-                "invoices",
-                "batches"
-              ],
+              "required": ["invoices", "batches"],
               "additionalProperties": false
             },
-            "types": [
-              "object"
-            ],
+            "types": ["object"],
             "typeLabel": "Group",
             "optional": false
           },
           {
             "ref": "/input/invoices",
             "source": "input",
-            "path": [
-              "invoices"
-            ],
+            "path": ["invoices"],
             "label": "invoices",
             "breadcrumb": "Workflow input › invoices",
             "schema": {
@@ -1880,24 +1654,18 @@
                     "title": "Customer email"
                   }
                 },
-                "required": [
-                  "number"
-                ],
+                "required": ["number"],
                 "additionalProperties": false
               }
             },
-            "types": [
-              "array"
-            ],
+            "types": ["array"],
             "typeLabel": "List of groups",
             "optional": false
           },
           {
             "ref": "/input/batches",
             "source": "input",
-            "path": [
-              "batches"
-            ],
+            "path": ["batches"],
             "label": "batches",
             "breadcrumb": "Workflow input › batches",
             "schema": {
@@ -1915,16 +1683,12 @@
                       "title": "Customer email"
                     }
                   },
-                  "required": [
-                    "number"
-                  ],
+                  "required": ["number"],
                   "additionalProperties": false
                 }
               }
             },
-            "types": [
-              "array"
-            ],
+            "types": ["array"],
             "typeLabel": "List of lists",
             "optional": false
           },
@@ -1948,15 +1712,11 @@
                     "title": "Customer email"
                   }
                 },
-                "required": [
-                  "number"
-                ],
+                "required": ["number"],
                 "additionalProperties": false
               }
             },
-            "types": [
-              "array"
-            ],
+            "types": ["array"],
             "typeLabel": "List of groups",
             "optional": false
           },
@@ -1972,9 +1732,7 @@
               "minimum": 0,
               "maximum": 19
             },
-            "types": [
-              "integer"
-            ],
+            "types": ["integer"],
             "typeLabel": "Whole number",
             "optional": false
           }
@@ -2007,9 +1765,7 @@
                       "title": "Customer email"
                     }
                   },
-                  "required": [
-                    "number"
-                  ],
+                  "required": ["number"],
                   "additionalProperties": false
                 }
               },
@@ -2028,18 +1784,13 @@
                         "title": "Customer email"
                       }
                     },
-                    "required": [
-                      "number"
-                    ],
+                    "required": ["number"],
                     "additionalProperties": false
                   }
                 }
               }
             },
-            "required": [
-              "invoices",
-              "batches"
-            ],
+            "required": ["invoices", "batches"],
             "additionalProperties": false
           },
           "outputSchema": {},
@@ -2123,9 +1874,7 @@
                       "title": "Customer email"
                     }
                   },
-                  "required": [
-                    "number"
-                  ],
+                  "required": ["number"],
                   "additionalProperties": false
                 }
               },
@@ -2144,18 +1893,13 @@
                         "title": "Customer email"
                       }
                     },
-                    "required": [
-                      "number"
-                    ],
+                    "required": ["number"],
                     "additionalProperties": false
                   }
                 }
               }
             },
-            "required": [
-              "invoices",
-              "batches"
-            ],
+            "required": ["invoices", "batches"],
             "additionalProperties": false
           },
           "outputSchema": {},
@@ -2202,9 +1946,7 @@
                         "title": "Customer email"
                       }
                     },
-                    "required": [
-                      "number"
-                    ],
+                    "required": ["number"],
                     "additionalProperties": false
                   }
                 },
@@ -2223,32 +1965,23 @@
                           "title": "Customer email"
                         }
                       },
-                      "required": [
-                        "number"
-                      ],
+                      "required": ["number"],
                       "additionalProperties": false
                     }
                   }
                 }
               },
-              "required": [
-                "invoices",
-                "batches"
-              ],
+              "required": ["invoices", "batches"],
               "additionalProperties": false
             },
-            "types": [
-              "object"
-            ],
+            "types": ["object"],
             "typeLabel": "Group",
             "optional": false
           },
           {
             "ref": "/input/invoices",
             "source": "input",
-            "path": [
-              "invoices"
-            ],
+            "path": ["invoices"],
             "label": "invoices",
             "breadcrumb": "Workflow input › invoices",
             "schema": {
@@ -2264,24 +1997,18 @@
                     "title": "Customer email"
                   }
                 },
-                "required": [
-                  "number"
-                ],
+                "required": ["number"],
                 "additionalProperties": false
               }
             },
-            "types": [
-              "array"
-            ],
+            "types": ["array"],
             "typeLabel": "List of groups",
             "optional": false
           },
           {
             "ref": "/input/batches",
             "source": "input",
-            "path": [
-              "batches"
-            ],
+            "path": ["batches"],
             "label": "batches",
             "breadcrumb": "Workflow input › batches",
             "schema": {
@@ -2299,16 +2026,12 @@
                       "title": "Customer email"
                     }
                   },
-                  "required": [
-                    "number"
-                  ],
+                  "required": ["number"],
                   "additionalProperties": false
                 }
               }
             },
-            "types": [
-              "array"
-            ],
+            "types": ["array"],
             "typeLabel": "List of lists",
             "optional": false
           }
@@ -2341,9 +2064,7 @@
                       "title": "Customer email"
                     }
                   },
-                  "required": [
-                    "number"
-                  ],
+                  "required": ["number"],
                   "additionalProperties": false
                 }
               },
@@ -2362,18 +2083,13 @@
                         "title": "Customer email"
                       }
                     },
-                    "required": [
-                      "number"
-                    ],
+                    "required": ["number"],
                     "additionalProperties": false
                   }
                 }
               }
             },
-            "required": [
-              "invoices",
-              "batches"
-            ],
+            "required": ["invoices", "batches"],
             "additionalProperties": false
           },
           "outputSchema": {},
@@ -2420,9 +2136,7 @@
                         "title": "Customer email"
                       }
                     },
-                    "required": [
-                      "number"
-                    ],
+                    "required": ["number"],
                     "additionalProperties": false
                   }
                 },
@@ -2441,32 +2155,23 @@
                           "title": "Customer email"
                         }
                       },
-                      "required": [
-                        "number"
-                      ],
+                      "required": ["number"],
                       "additionalProperties": false
                     }
                   }
                 }
               },
-              "required": [
-                "invoices",
-                "batches"
-              ],
+              "required": ["invoices", "batches"],
               "additionalProperties": false
             },
-            "types": [
-              "object"
-            ],
+            "types": ["object"],
             "typeLabel": "Group",
             "optional": false
           },
           {
             "ref": "/input/invoices",
             "source": "input",
-            "path": [
-              "invoices"
-            ],
+            "path": ["invoices"],
             "label": "invoices",
             "breadcrumb": "Workflow input › invoices",
             "schema": {
@@ -2482,24 +2187,18 @@
                     "title": "Customer email"
                   }
                 },
-                "required": [
-                  "number"
-                ],
+                "required": ["number"],
                 "additionalProperties": false
               }
             },
-            "types": [
-              "array"
-            ],
+            "types": ["array"],
             "typeLabel": "List of groups",
             "optional": false
           },
           {
             "ref": "/input/batches",
             "source": "input",
-            "path": [
-              "batches"
-            ],
+            "path": ["batches"],
             "label": "batches",
             "breadcrumb": "Workflow input › batches",
             "schema": {
@@ -2517,16 +2216,12 @@
                       "title": "Customer email"
                     }
                   },
-                  "required": [
-                    "number"
-                  ],
+                  "required": ["number"],
                   "additionalProperties": false
                 }
               }
             },
-            "types": [
-              "array"
-            ],
+            "types": ["array"],
             "typeLabel": "List of lists",
             "optional": false
           },
@@ -2572,9 +2267,7 @@
                       "title": "Customer email"
                     }
                   },
-                  "required": [
-                    "number"
-                  ],
+                  "required": ["number"],
                   "additionalProperties": false
                 }
               },
@@ -2593,18 +2286,13 @@
                         "title": "Customer email"
                       }
                     },
-                    "required": [
-                      "number"
-                    ],
+                    "required": ["number"],
                     "additionalProperties": false
                   }
                 }
               }
             },
-            "required": [
-              "invoices",
-              "batches"
-            ],
+            "required": ["invoices", "batches"],
             "additionalProperties": false
           },
           "outputSchema": {},
@@ -2652,9 +2340,7 @@
                         "title": "Customer email"
                       }
                     },
-                    "required": [
-                      "number"
-                    ],
+                    "required": ["number"],
                     "additionalProperties": false
                   }
                 },
@@ -2673,32 +2359,23 @@
                           "title": "Customer email"
                         }
                       },
-                      "required": [
-                        "number"
-                      ],
+                      "required": ["number"],
                       "additionalProperties": false
                     }
                   }
                 }
               },
-              "required": [
-                "invoices",
-                "batches"
-              ],
+              "required": ["invoices", "batches"],
               "additionalProperties": false
             },
-            "types": [
-              "object"
-            ],
+            "types": ["object"],
             "typeLabel": "Group",
             "optional": false
           },
           {
             "ref": "/input/invoices",
             "source": "input",
-            "path": [
-              "invoices"
-            ],
+            "path": ["invoices"],
             "label": "invoices",
             "breadcrumb": "Workflow input › invoices",
             "schema": {
@@ -2714,24 +2391,18 @@
                     "title": "Customer email"
                   }
                 },
-                "required": [
-                  "number"
-                ],
+                "required": ["number"],
                 "additionalProperties": false
               }
             },
-            "types": [
-              "array"
-            ],
+            "types": ["array"],
             "typeLabel": "List of groups",
             "optional": false
           },
           {
             "ref": "/input/batches",
             "source": "input",
-            "path": [
-              "batches"
-            ],
+            "path": ["batches"],
             "label": "batches",
             "breadcrumb": "Workflow input › batches",
             "schema": {
@@ -2749,16 +2420,12 @@
                       "title": "Customer email"
                     }
                   },
-                  "required": [
-                    "number"
-                  ],
+                  "required": ["number"],
                   "additionalProperties": false
                 }
               }
             },
-            "types": [
-              "array"
-            ],
+            "types": ["array"],
             "typeLabel": "List of lists",
             "optional": false
           },
@@ -2775,12 +2442,7 @@
               "properties": {
                 "status": {
                   "type": "string",
-                  "enum": [
-                    "succeeded",
-                    "failed",
-                    "cancelled",
-                    "timed_out"
-                  ]
+                  "enum": ["succeeded", "failed", "cancelled", "timed_out"]
                 },
                 "runId": {
                   "type": "string",
@@ -2797,22 +2459,14 @@
                       "type": "string"
                     }
                   },
-                  "required": [
-                    "code",
-                    "message"
-                  ],
+                  "required": ["code", "message"],
                   "additionalProperties": false
                 }
               },
-              "required": [
-                "status",
-                "runId"
-              ],
+              "required": ["status", "runId"],
               "additionalProperties": false
             },
-            "types": [
-              "object"
-            ],
+            "types": ["object"],
             "typeLabel": "Group",
             "optional": false
           },
@@ -2821,23 +2475,14 @@
             "source": "step",
             "stepId": "notify",
             "stepKind": "callWorkflow",
-            "path": [
-              "status"
-            ],
+            "path": ["status"],
             "label": "status",
             "breadcrumb": "notify › status",
             "schema": {
               "type": "string",
-              "enum": [
-                "succeeded",
-                "failed",
-                "cancelled",
-                "timed_out"
-              ]
+              "enum": ["succeeded", "failed", "cancelled", "timed_out"]
             },
-            "types": [
-              "string"
-            ],
+            "types": ["string"],
             "typeLabel": "Choice",
             "optional": false
           },
@@ -2846,18 +2491,14 @@
             "source": "step",
             "stepId": "notify",
             "stepKind": "callWorkflow",
-            "path": [
-              "runId"
-            ],
+            "path": ["runId"],
             "label": "runId",
             "breadcrumb": "notify › runId",
             "schema": {
               "type": "string",
               "format": "uuid"
             },
-            "types": [
-              "string"
-            ],
+            "types": ["string"],
             "typeLabel": "Text",
             "optional": false
           },
@@ -2866,9 +2507,7 @@
             "source": "step",
             "stepId": "notify",
             "stepKind": "callWorkflow",
-            "path": [
-              "output"
-            ],
+            "path": ["output"],
             "label": "output",
             "breadcrumb": "notify › output",
             "schema": {},
@@ -2881,9 +2520,7 @@
             "source": "step",
             "stepId": "notify",
             "stepKind": "callWorkflow",
-            "path": [
-              "error"
-            ],
+            "path": ["error"],
             "label": "error",
             "breadcrumb": "notify › error",
             "schema": {
@@ -2896,15 +2533,10 @@
                   "type": "string"
                 }
               },
-              "required": [
-                "code",
-                "message"
-              ],
+              "required": ["code", "message"],
               "additionalProperties": false
             },
-            "types": [
-              "object"
-            ],
+            "types": ["object"],
             "typeLabel": "Group",
             "optional": true
           },
@@ -2913,18 +2545,13 @@
             "source": "step",
             "stepId": "notify",
             "stepKind": "callWorkflow",
-            "path": [
-              "error",
-              "code"
-            ],
+            "path": ["error", "code"],
             "label": "code",
             "breadcrumb": "notify › error › code",
             "schema": {
               "type": "string"
             },
-            "types": [
-              "string"
-            ],
+            "types": ["string"],
             "typeLabel": "Text",
             "optional": true
           },
@@ -2933,18 +2560,13 @@
             "source": "step",
             "stepId": "notify",
             "stepKind": "callWorkflow",
-            "path": [
-              "error",
-              "message"
-            ],
+            "path": ["error", "message"],
             "label": "message",
             "breadcrumb": "notify › error › message",
             "schema": {
               "type": "string"
             },
-            "types": [
-              "string"
-            ],
+            "types": ["string"],
             "typeLabel": "Text",
             "optional": true
           }
@@ -2977,9 +2599,7 @@
                       "title": "Customer email"
                     }
                   },
-                  "required": [
-                    "number"
-                  ],
+                  "required": ["number"],
                   "additionalProperties": false
                 }
               },
@@ -2998,18 +2618,13 @@
                         "title": "Customer email"
                       }
                     },
-                    "required": [
-                      "number"
-                    ],
+                    "required": ["number"],
                     "additionalProperties": false
                   }
                 }
               }
             },
-            "required": [
-              "invoices",
-              "batches"
-            ],
+            "required": ["invoices", "batches"],
             "additionalProperties": false
           },
           "outputSchema": {},
@@ -3057,9 +2672,7 @@
                         "title": "Customer email"
                       }
                     },
-                    "required": [
-                      "number"
-                    ],
+                    "required": ["number"],
                     "additionalProperties": false
                   }
                 },
@@ -3078,32 +2691,23 @@
                           "title": "Customer email"
                         }
                       },
-                      "required": [
-                        "number"
-                      ],
+                      "required": ["number"],
                       "additionalProperties": false
                     }
                   }
                 }
               },
-              "required": [
-                "invoices",
-                "batches"
-              ],
+              "required": ["invoices", "batches"],
               "additionalProperties": false
             },
-            "types": [
-              "object"
-            ],
+            "types": ["object"],
             "typeLabel": "Group",
             "optional": false
           },
           {
             "ref": "/input/invoices",
             "source": "input",
-            "path": [
-              "invoices"
-            ],
+            "path": ["invoices"],
             "label": "invoices",
             "breadcrumb": "Workflow input › invoices",
             "schema": {
@@ -3119,24 +2723,18 @@
                     "title": "Customer email"
                   }
                 },
-                "required": [
-                  "number"
-                ],
+                "required": ["number"],
                 "additionalProperties": false
               }
             },
-            "types": [
-              "array"
-            ],
+            "types": ["array"],
             "typeLabel": "List of groups",
             "optional": false
           },
           {
             "ref": "/input/batches",
             "source": "input",
-            "path": [
-              "batches"
-            ],
+            "path": ["batches"],
             "label": "batches",
             "breadcrumb": "Workflow input › batches",
             "schema": {
@@ -3154,16 +2752,12 @@
                       "title": "Customer email"
                     }
                   },
-                  "required": [
-                    "number"
-                  ],
+                  "required": ["number"],
                   "additionalProperties": false
                 }
               }
             },
-            "types": [
-              "array"
-            ],
+            "types": ["array"],
             "typeLabel": "List of lists",
             "optional": false
           },
@@ -3178,9 +2772,7 @@
             "schema": {
               "type": "null"
             },
-            "types": [
-              "null"
-            ],
+            "types": ["null"],
             "typeLabel": "Empty",
             "optional": false
           }

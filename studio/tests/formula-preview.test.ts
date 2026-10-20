@@ -324,5 +324,10 @@ describe("formula previews", () => {
     if (parsed.kind !== "ok") throw new Error();
     expect(sourceLabel(parsed.expression, data(input))).toBe("From test input");
     expect(sourceLabel({ literal: 1 }, data(input))).toBe("");
+    const pinned = { ref: "/steps/lookup/output/tier" };
+    expect(sourceLabel(pinned, data(input, { lookup: { tier: "a" } }))).toBe(
+      "From pinned output",
+    );
+    expect(sourceLabel(pinned, data(input))).toBe("");
   });
 });

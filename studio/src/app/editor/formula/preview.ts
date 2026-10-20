@@ -16,8 +16,8 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 // Previews of a formula: what it resolves to with the data step details
-// show (the trigger's test input today; step outputs once test data keeps
-// them), computed in the browser by the evaluator port. Nothing is sent
+// show (the test input and pinned output), computed in the browser by the
+// evaluator port. Nothing is sent
 // anywhere. A formula that reads a value marked secret is never evaluated,
 // and the test input reaching here has had secret values removed already.
 import type { Json } from "../../forms/core/json";
@@ -186,9 +186,15 @@ export function valueTypeLabel(value: Json): string {
 
 /** Where a formula's data comes from, for the Result panel. */
 export function sourceLabel(expression: unknown, data: PreviewData): string {
-  return referencesOf(expression).some(
-    (pointer) => segmentsOf(pointer)[0] === "input",
-  ) && data.input() !== undefined
+  const roots = referencesOf(expression).map((pointer) => segmentsOf(pointer));
+  if (
+    roots.some(
+      ([root, id]) =>
+        root === "steps" && id !== undefined && data.output(id) !== undefined,
+    )
+  )
+    return "From pinned output";
+  return roots.some(([root]) => root === "input") && data.input() !== undefined
     ? "From test input"
     : "";
 }

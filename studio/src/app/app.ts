@@ -57,7 +57,16 @@ import {
 } from "./editor/state/studio-documents";
 import { CHECK_WORDS } from "./editor/state/test-data-check";
 import { entriesOf } from "./editor/state/test-data-ops";
-import { TestDataService } from "./editor/state/test-data-service";
+import {
+  TestDataService,
+  type TestDataPlace,
+} from "./editor/state/test-data-service";
+import { checkInputsOf } from "./editor/state/test-data-inputs";
+import {
+  fingerprints,
+  type StepFingerprints,
+} from "./editor/state/fingerprints";
+import { contractOf, ownedContract } from "./editor/state/pins-stale";
 import type {
   StudioDocument,
   StudioDocumentKind,
@@ -1854,7 +1863,7 @@ export class App implements CanvasHost {
     this.draftCanvasReading = pending;
     const model = this.model;
     const canvas = model.canvas;
-    void this.openPlatformTestData(scope, pending.draftId);
+    this.openTestData();
     // The platform keeps the canvas; this computer's copy is for recovery, and goes up when the platform has none.
     let platform: StudioDocument | null | undefined;
     try {
@@ -2051,6 +2060,7 @@ export class App implements CanvasHost {
     this.resetValidation();
     this.changed();
     this.dirty = false;
+    this.openTestData();
     this.scheduleFit();
     this.cdr.markForCheck();
     return true;
@@ -2119,6 +2129,7 @@ export class App implements CanvasHost {
     this.resetValidation();
     this.changed();
     this.dirty = false;
+    this.openTestData();
     this.view = "designer";
     this.activation = null;
     this.draftId = String(detail["id"]);
@@ -2199,6 +2210,7 @@ export class App implements CanvasHost {
     this.resetValidation();
     this.changed();
     this.dirty = false;
+    this.openTestData();
     this.scheduleFit();
   }
   /**
@@ -6488,6 +6500,7 @@ export class App implements CanvasHost {
           this.resetValidation();
           this.changed();
           this.dirty = false;
+          this.openTestData();
           this.view = "designer";
           this.activation = null;
           this.saveState = "Published";
@@ -6504,6 +6517,7 @@ export class App implements CanvasHost {
           this.resetValidation();
           this.changed();
           this.dirty = false;
+          this.openTestData();
           this.view = "designer";
           this.activation = null;
           this.saveState = "Published";
@@ -6745,6 +6759,7 @@ export class App implements CanvasHost {
     const model = this.model;
     try {
       // Save is the autosave, now, with its outcome said out loud.
+      this.saveForced = true;
       this.autosave.touch();
       if (await this.autosave.flush()) {
         const note = await this.draftNote(model, this.draftCanvasKept);
@@ -6758,6 +6773,8 @@ export class App implements CanvasHost {
   // --- autosave of platform drafts ---------------------------------------
   /** Platform drafts save themselves 2 s after the last change, at most every 10 s. */
   private readonly autosave = new Autosave(() => this.autosaveDraft());
+  /** Save draft was pressed: the draft saves even when nothing changed since it opened. */
+  private saveForced = false;
   /** Why the last autosave failed, when it wasn't a conflict (the compare flow shows those). */
   private autosaveFailure: unknown = null;
   /** Saves pending edits of a platform draft now (closing step details, switching tabs, leaving). */
@@ -6773,6 +6790,13 @@ export class App implements CanvasHost {
   private async autosaveDraft(): Promise<boolean> {
     this.autosaveFailure = null;
     if (!this.profile) return true;
+    const forced = this.saveForced;
+    this.saveForced = false;
+    // Nothing changed in the workflow (test data or the canvas did): only they save.
+    if (!this.dirty && !forced)
+      return this.draftRevision === undefined
+        ? true
+        : await this.flushPlatformDocuments();
     this.flushInspector();
     if (
       this.model.readonly ||
@@ -6851,19 +6875,73 @@ export class App implements CanvasHost {
     api: this.api,
     backend: studioBackend(),
     now: () => new Date(),
-    inputs: () => this.testDataInputs(),
+    inputs: () => checkInputsOf(this.model.definition, this.catalogContracts),
+    // A platform draft saves its test data with the draft.
+    changed: () => {
+      if (this.profile) this.autosave.touch();
+    },
   });
-  /** What the host checks test data against: the workflow, and its input schema. */
-  private testDataInputs() {
-    const definition = this.model.definition;
-    return {
-      source: JSON.stringify(definition),
-      definitions: [],
-      schemaOf: (pointer: string) =>
-        pointer === "/input"
-          ? (definition.spec.inputSchema as never)
-          : undefined,
+  /** The place and opening the test data was last opened for. */
+  private testDataKey = "";
+  /**
+   * Opens the test data of the workflow and account shown now: next to a
+   * local draft, under the account for a platform draft (then the platform's
+   * copy over it), in memory when no account can own it. False when it is
+   * open already.
+   */
+  openTestData(): boolean {
+    if (!this.testData || !this.model) return false;
+    const scope = this.profile ? this.accountScope() : null;
+    const place: TestDataPlace = !this.profile
+      ? { kind: "local", draftId: this.draftId }
+      : scope?.subject
+        ? { kind: "connected", scope, draftId: this.draftId }
+        : { kind: "memory" };
+    const key = JSON.stringify([place, this.model.opened]);
+    if (key === this.testDataKey) return false;
+    this.testDataKey = key;
+    if (place.kind === "connected")
+      void this.openPlatformTestData(place.scope, place.draftId);
+    else void this.testData.open(place);
+    return true;
+  }
+  /** Every step's fingerprints now, memoized on the workflow, its canvas and the test input. */
+  private printsMemo: {
+    revision: number;
+    canvas: unknown;
+    version: number;
+    prints: ReadonlyMap<string, StepFingerprints>;
+  } | null = null;
+  testDataPrints(): ReadonlyMap<string, StepFingerprints> {
+    const model = this.model;
+    const version = this.testData.version();
+    const memo = this.printsMemo;
+    if (
+      memo &&
+      memo.revision === model.revision &&
+      memo.canvas === model.canvas &&
+      memo.version === version
+    )
+      return memo.prints;
+    const prints = fingerprints({
+      workflow: model.definition,
+      testInput: this.testData.data().input?.value,
+      contractOf: (step) =>
+        contractOf(step, {
+          owned: (uses) => ownedContract(model.canvas, uses),
+          profiles:
+            (model.definition.spec["llmProfiles"] as
+              | Record<string, unknown>
+              | undefined) ?? {},
+        }),
+    });
+    this.printsMemo = {
+      revision: model.revision,
+      canvas: model.canvas,
+      version,
+      prints,
     };
+    return prints;
   }
   /** What the platform last saved of each document of the open draft (canonical JSON, revision). */
   private platformDocs: {
@@ -8058,6 +8136,7 @@ export class App implements CanvasHost {
     this.resetValidation();
     this.changed();
     this.dirty = false;
+    this.openTestData();
     this.scheduleFit();
   }
   /** The canvas file chosen with a workflow; a file Studio can't use is set aside with a reason. */

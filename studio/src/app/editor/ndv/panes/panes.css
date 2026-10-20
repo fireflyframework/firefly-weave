@@ -305,6 +305,17 @@ weave-input-pane .pane-count {
 .data-mapped {
   color: var(--success-ink);
 }
+/* A field's value from the test data, right-aligned and cut on one line. */
+.data-sample {
+  margin-inline-start: auto;
+  min-width: 0;
+  max-width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: var(--type-mono);
+  color: var(--muted);
+}
 .pane-also {
   display: flex;
   flex-direction: column;
@@ -401,4 +412,8 @@ weave-input-pane.is-compact .pane-source-field::before {
       padding-inline-end: var(--space-2);
     }
   }
+}
+/* The source of the data on show, before the count. */
+.pane-source-tag {
+  flex: none;
 }

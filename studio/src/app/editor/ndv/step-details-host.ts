@@ -26,6 +26,8 @@ import type { InferSchema } from "../../forms/ui/schema-designer";
 import type { ToastAction } from "../../toast";
 import type { StepDetailsRequest } from "./step-details-service";
 import { editorNextEnabled } from "../state/editor-flag";
+import type { StepFingerprints } from "../state/fingerprints";
+import type { TestDataService } from "../state/test-data-service";
 
 export interface StepDetailsHost {
   readonly model: StructuredCanvasAdapter;
@@ -75,6 +77,12 @@ export interface StepDetailsHost {
   blocker(command: "simulate"): string;
   /** Settles unapplied inspector edits; false when they can't be applied. */
   ensureApplied(): Promise<boolean>;
+  /** The open workflow's test data (test input, pinned output), outside undo. */
+  readonly testData?: TestDataService;
+  /** Every step's fingerprints now (memoized on the workflow, the canvas and the test input). */
+  testDataPrints?(): ReadonlyMap<string, StepFingerprints>;
+  /** Opens the test data of the workflow and account shown now; false when it was open already. */
+  openTestData?(): boolean;
   /** Saves a platform draft's pending edits now (closing step details); true when nothing is left. */
   flushAutosave?(): Promise<boolean>;
   /**

@@ -123,6 +123,8 @@ export interface TestDataHost {
   backend: StoreBackend;
   now(): Date;
   inputs(): CheckInputs;
+  /** Called after each change is kept (a platform draft then saves it with the draft). */
+  changed?(): void;
 }
 export type ChangeOutcome =
   | { ok: true; previous: StudioTestData }
@@ -138,6 +140,8 @@ export class TestDataService {
   private where: TestDataPlace = { kind: "memory" };
   private key: string | null = null;
   private opened = 0;
+  /** Bumped each time a document finishes opening: whose data `data()` holds changed. */
+  private loaded = 0;
   private problem: string | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private writing: Promise<void> = Promise.resolve();
@@ -152,6 +156,10 @@ export class TestDataService {
   }
   data(): StudioTestData {
     return this.current;
+  }
+  /** Which opening `data()` comes from; it changes when another workflow or account opens. */
+  generation(): number {
+    return this.loaded;
   }
   place(): TestDataPlace {
     return this.where;
@@ -207,6 +215,7 @@ export class TestDataService {
       if (reading.ok) data = reading.data;
       else this.problem = UNREADABLE;
     }
+    this.loaded++;
     this.set(data);
   }
   /** Checks the entries at `pointers` and keeps the document if every one may be kept. */
@@ -342,6 +351,7 @@ export class TestDataService {
     this.version.update((value) => value + 1);
   }
   private keep(): void {
+    this.host.changed?.();
     if (!this.key) return;
     if (this.timer) clearTimeout(this.timer);
     this.timer = setTimeout(() => {
