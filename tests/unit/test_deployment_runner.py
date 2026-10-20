@@ -309,3 +309,30 @@ def test_only_an_adapter_that_removes_the_reviewed_members_registers_version_2(a
     destination = SimpleNamespace(target_id=uuid4(), adapter=adapter, capabilities=["observe", "scale_workers"])
     sent = runner_registration(destination)
     assert (sent.adapter, sent.adapter_version, sent.capabilities) == (adapter, version, ["observe", "scale_workers"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", ["WV-OPERATION-CAPACITY", "WV-REQUEST-CAPACITY"])
+async def test_a_report_the_platform_refuses_for_capacity_is_sent_again_unchanged(code, monkeypatch):
+    """A busy platform answers 429 to a report; the runner sends the same report again instead of reporting the
+    applied change as ambiguous."""
+    from firefly_weave.deployment_runner import runtime
+    from firefly_weave.sdk.errors import Problem, WeaveError
+
+    monkeypatch.setattr(runtime, "REPORT_RETRY_SECONDS", 0.01)
+    lease, policy = fixture()
+    client, adapter = Client(lease), Adapter(lease)
+    original = client.invoke
+    refused = []
+
+    async def busy(operation, **kwargs):
+        if operation == "deployment_runners.report" and kwargs["body"].state == "succeeded" and len(refused) < 2:
+            refused.append(kwargs["body"])
+            raise WeaveError(Problem(status=429, code=code, message="busy"))
+        return await original(operation, **kwargs)
+
+    client.invoke = busy
+    await OperationsRunner(client, policy, adapter).execute(lease)
+    assert [item.state for item in client.reports] == ["running", "verifying", "succeeded"]
+    assert {item.report_id for item in refused} == {client.reports[-1].report_id}
+    assert client.reports[-1].receipt.code == "applied"

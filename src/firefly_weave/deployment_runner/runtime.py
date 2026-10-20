@@ -22,7 +22,7 @@ import asyncio
 import re
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
-from typing import Protocol, cast
+from typing import Any, Protocol, cast
 from uuid import uuid4
 
 from firefly_weave.compiler.canonical import canonical_digest
@@ -33,8 +33,14 @@ from firefly_weave.contracts.deployments import (
     RunnerReport,
     SafeDeploymentReceipt,
 )
+from firefly_weave.definitions.models import CAPACITY_CODES
 from firefly_weave.deployment_runner.policy import DestinationPolicy
 from firefly_weave.sdk.client import WeaveClient
+from firefly_weave.sdk.errors import WeaveError
+
+# Capacity refusals of a report are retried with this first delay, doubling, within the window.
+REPORT_RETRY_SECONDS = 1.0
+REPORT_RETRY_WINDOW = 45.0
 
 
 class RunnerPolicyError(Exception):
@@ -165,6 +171,24 @@ class OperationsRunner:
         self.client, self.policy, self.adapter = client, policy, adapter
         self.renew_interval = renew_interval
 
+    async def send(self, operation: str, body: Any) -> Any:
+        """Send a report or a renewal; a busy platform's capacity refusal (429) sends the same request again.
+
+        The same body (the same report ID) goes out each time, for up to REPORT_RETRY_WINDOW seconds, less than a
+        lease's length, so an applied change is not reported as ambiguous for want of a slot.
+        """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + REPORT_RETRY_WINDOW
+        delay = REPORT_RETRY_SECONDS
+        while True:
+            try:
+                return await self.client.invoke(operation, body=body)
+            except WeaveError as error:
+                if error.status != 429 or error.code not in CAPACITY_CODES or loop.time() + delay > deadline:
+                    raise
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, 8 * REPORT_RETRY_SECONDS)
+
     async def execute(self, initial: DeploymentLease) -> None:
         lease = initial
         effects_started = False
@@ -183,14 +207,12 @@ class OperationsRunner:
                     "observation": observation,
                 }
             )
-            await self.client.invoke("deployment_runners.report", body=request)
+            await self.send("deployment_runners.report", request)
 
         async def renew() -> None:
             nonlocal lease
             async with renewal_lock:
-                refreshed = cast(
-                    DeploymentLease, await self.client.invoke("deployment_runners.renew", body=lease.proof)
-                )
+                refreshed = cast(DeploymentLease, await self.send("deployment_runners.renew", lease.proof))
                 if refreshed.proof != lease.proof:
                     raise RunnerPolicyError()
                 validate_lease(refreshed, self.policy)
