@@ -451,6 +451,23 @@ empty list completes the loop at once with the output `[]`.
   the yield key. Nothing new is stored for loops: iterations use the same run
   state, step results, tasks, human tasks, and deadlines as other steps.
 
+### Transactions in the graph
+
+A `transaction` step lowers like a block: a `transaction` node with `policy`
+(the defaults written out), an optional `businessKey`, a `transaction` edge
+(branch `body`) into its first step, and a branch output that joins
+`@join:<id>` with `mode: transaction`. Each step inside it that changes data
+carries `txn: {owner, mode, pivot?, holdSeconds?, phases}`; each phase
+(`confirm`, `cancel`, `compensate`) names the exact action or workflow
+dependency it uses, its `with`, and for an action the connection slot. Phases
+are not nodes and never sit on an edge. `pivot: true` marks the step that can't
+be undone, and the transaction's `afterPivot` lists the steps reached only after
+it. Undo inputs are guarded with `undo_input` (actions) and `call_input`
+(workflows). Importing an artifact checks the same rules again, so an artifact
+that moves a step out of order is refused. A transaction needs
+`flow.transaction`, and a runtime that does not run it opens
+`WV-RUNTIME-ARTIFACT` at the transaction instead of running its steps.
+
 ## Import an artifact
 
 `import_artifact(bytes_or_text_or_object, *, limits=ArtifactLimits(), features=None)`
@@ -627,6 +644,21 @@ is not classified. Safe ordinary artifacts keep their canonical digests.
 | `WV-COMP-CALL_DEPTH` at `…/uses` | The chain of calls this call starts is deeper than 8 (`max_call_depth`), or never ends | Call a workflow that starts fewer calls of its own |
 | `WV-COMP-CALL_MODE` at `…/onFailure` | `onFailure` is set on a call with `mode: detach` | Remove `onFailure`, or set `mode: wait` |
 | `WV-COMP-REFERENCE_PRESENCE` reading `/steps/<call>/output/output` | A call with `onFailure: continue` has a child output only when the child succeeded | Read it with `coalesce`, or branch on `/steps/<call>/output/status` first |
+| `WV-COMP-TXN_UNDECLARED` at a step | A step inside a transaction changes data and does not say how it is undone | Add `confirm` and `cancel`, `compensate`, or `irreversible: true` (the suggested edit); a `read_only` action needs none |
+| `WV-COMP-TXN_ORDER` at `…/compensate` or `…/confirm` | A step that can be undone runs after one that can't, on some path | Apply the suggested edit, which moves the step that can't be undone to the end of the transaction |
+| `WV-COMP-TXN_PIVOT_PLACEMENT` | The step that can't be undone sits in a loop, or in a parallel branch beside branches that change data | Move it out of the loop or the parallel step |
+| `WV-COMP-TXN_AFTER_PIVOT_UNSAFE` | An action after the step that can't be undone is `non_idempotent` | Move it after the transaction, or use an action that is safe to retry |
+| `WV-COMP-TXN_AFTER_PIVOT_PURE` (info), `WV-COMP-TXN_AFTER_PIVOT_WAIT` (warning) | A step after the point of no return can fail, or wait, with nothing left to undo | Nothing to fix; consider moving the step after the transaction |
+| `WV-COMP-TXN_UNDO_SIDE_EFFECT` at `…/uses` | A confirm, cancel or compensate action is not `idempotent` or `idempotency_key` | Use an action that is safe to retry |
+| `WV-COMP-TXN_CALL_TIMEOUT` at `…/uses` | A workflow called inside a transaction has no `spec.timeoutSeconds` | Publish a version of that workflow with `timeoutSeconds` |
+| `WV-COMP-TXN_HOLD_PIVOT` at `…/holdSeconds` | A reservation is held for less than the step that can't be undone may take, plus 30 seconds | Apply the suggested `holdSeconds` |
+| `WV-COMP-TXN_HOLD_WAIT` (warning) | A wait, signal or human task before the point of no return can outlast the shortest reservation | Shorten the wait, or hold the reservations longer |
+| `WV-COMP-TXN_CANCEL_OUTPUT` at `…/ref` | A `cancel` reads its own step's output, which is missing when the reservation never went through | Identify the reservation by the step's inputs or `/participant/operationKey` |
+| `WV-COMP-TXN_RESERVE_PAIR`, `WV-COMP-TXN_UNDO_FORMS` | `confirm` without `cancel` (or the reverse), `holdSeconds` without them, or two ways of undoing one step | Keep exactly one choice |
+| `WV-COMP-TXN_OUTSIDE`, `_NESTED`, `_DETACH`, `_SCOPE` | Undo fields outside a transaction, a transaction inside another, a call that doesn't wait inside one, or `/participant` and `/transaction` read outside an undo | Move the step into or out of the transaction as the message says |
+| `WV-COMP-TXN_SIZE` | Loops inside the transaction could make it include more than 1,000 steps that change data | Apply the suggested `maxItems` |
+| `WV-COMP-TXN_NOTHING_TO_UNDO` (warning) | No step in the transaction can be undone | Nothing to fix if that is intended |
+| `WV-COMP-ACTION_DEFINITE_TRANSIENT` at `…/definiteFailures/N` | An action lists a temporary failure code as definite | Remove the code; temporary failures never prove that nothing was applied |
 | `WV-COMP-LOOP_ITEMS` at `…/items` | A loop's `items` can never be a list | Point `items` at a list, such as an array field of the input or of a step's output |
 | `WV-COMP-UNKNOWN_COMPATIBILITY` at `…/items` | The compiler cannot prove that `items` is a list; the run checks it | Declare the field as an array where it comes from |
 | `WV-COMP-LOOP_SCOPE` at `…/ref` | `/item`, `/index`, or `/loops/<id>` is read outside a loop body, in the loop's own `items`, or names a loop that does not enclose the expression | Read loop data only inside the loop's body; use `/loops/<id>/item` for an enclosing loop |

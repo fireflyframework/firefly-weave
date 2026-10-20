@@ -211,9 +211,10 @@ helps if you know process modeling from another tool:
 | `fail` | **Fail** | Error end event | Required business-error `code` (a name such as `customer-not-found`) and a nonempty `message` |
 | `forEach` | **Loop over items** | Multi-instance subprocess | Required `items` (an expression that gives a list) and `body: {steps, output}`; optional `concurrency` (default 1), `maxItems` (default 1000), and `collect` (`all`, the default, or `nonNull`). The defaults are written into the stored document |
 | `callWorkflow` | **Call a workflow** | Call activity | Required `uses` (exact workflow reference) and `with` (input expression); optional `mode` (`wait`, the default, or `detach`), `onFailure` (`stop` or `continue`, only with `wait`), and `businessKey` expression |
+| `transaction` | **Transaction** | Transaction subprocess with compensation | Required nonempty `steps` and `output`; optional `businessKey` expression and `policy` (`holdSeconds`, `undoRetry`, `undoTimeoutSeconds`). Each step inside it that changes data says how it is undone; see [Transactions](#transactions) |
 
-Weave is not a BPMN engine and does not import BPMN files. Loops and calls to
-other workflows are part of the language; compensation is not.
+Weave is not a BPMN engine and does not import BPMN files. Loops, calls to
+other workflows, and transactions are part of the language.
 
 **New language constructs.** `forEach`, `callWorkflow`, `concat`, and `join`
 each need a language feature: `flow.forEach`, `flow.callWorkflow`, `text.concat`,
@@ -294,6 +295,58 @@ call that is a workflow's last step still starts its child after the caller
 finished. There is no call-level timeout: the child's own `timeoutSeconds` and
 the caller's bound the call.
 
+### Transactions
+
+A `transaction` step groups steps that change other systems, so that either all
+of them succeed or what they did is undone. Each `action` or waiting
+`callWorkflow` step inside it says how it is undone, with exactly one of:
+
+| Choice | Fields on the step | Meaning |
+| --- | --- | --- |
+| Reserve, then confirm | `confirm` and `cancel`; optional `holdSeconds` (30 to 86,400) | The step holds something. Weave confirms it once the transaction goes ahead, or cancels it if anything fails first |
+| An action that reverses it | `compensate` | If anything later fails, Weave runs this to reverse the step |
+| Can't be undone | `irreversible: true` | Once this step runs the transaction can't go back, so it must be the last step that changes data |
+
+`confirm`, `cancel` and `compensate` are each `{kind: action, uses, with}` (with
+an optional `connection` slot, which defaults to the step's) or
+`{kind: callWorkflow, uses, with}`, which always waits for its result. Their
+`with` sees what the step saw, the step's own output, and two more roots:
+`/participant/operationKey` (the step's operation key) and
+`/participant/outcome` (`done` or `unknown`), and `/transaction/id` and
+`/transaction/businessKey`. A `cancel` must work even when the reservation never
+went through, so it cannot read its own step's output; a `compensate` reads it
+as possibly missing. A transaction's `policy` defaults to holding reservations
+for 900 seconds, retrying each undo up to 10 times (2 to 300 seconds apart), and
+giving up on an undo after one day. After the step, only
+`/steps/<transaction id>/output` is visible.
+
+The compiler checks every path through the transaction before it publishes:
+
+- A step that changes data and says nothing is an error
+  (`WV-COMP-TXN_UNDECLARED`); a `read_only` action needs no choice.
+- No step that can be undone may follow one that can't (`WV-COMP-TXN_ORDER`,
+  with a suggested edit that moves the step that can't be undone last), and the
+  step that can't be undone may not sit in a loop or beside parallel steps that
+  change data (`WV-COMP-TXN_PIVOT_PLACEMENT`).
+- After it, every action must be safe to retry (`WV-COMP-TXN_AFTER_PIVOT_UNSAFE`).
+- Confirm, cancel and compensate actions must be `idempotent` or
+  `idempotency_key` (`WV-COMP-TXN_UNDO_SIDE_EFFECT`), and every workflow called
+  inside a transaction must set `timeoutSeconds` (`WV-COMP-TXN_CALL_TIMEOUT`).
+- Reservations must be held at least as long as the step that can't be undone
+  may take, plus 30 seconds (`WV-COMP-TXN_HOLD_PIVOT`, with the hold to set).
+- Transactions do not nest, a call inside one must wait for its result, and the
+  undo fields are refused outside a transaction.
+
+The full list, with warnings for waits that can outlast reservations and for
+steps after the point of no return, is in the
+[compiler reference](reference/compiler.md#troubleshooting). Transactions need
+the language feature `flow.transaction`. This version compiles and checks them,
+and a workflow that calls a workflow to undo a step pins that workflow at
+activation like any call; the platform does not run transactions yet, so it
+refuses to publish, import, or activate a workflow that has one
+(`WV-IR-UNSUPPORTED`). The full example is
+[move-between-systems](../examples/language/move-between-systems.workflow.yaml).
+
 **Human tasks** need an environment assignment binding at activation, and
 completing one requires the current claim and task permission. A workflow with a
 human task compiles to IR version `weave/ir-v1alpha2` or higher, because the
@@ -319,6 +372,7 @@ definition; they are not legal on a workflow step.
 | `timeoutSeconds` | No | Positive whole-run timeout; omit it for no workflow-wide timeout |
 | `connections` | No (default `{}`) | **Connection slots**: named requirements `{connector: <exact ref>, required: <bool>}`; `required` defaults to `true`. Each slot is bound to an integration connection at activation |
 | `callable` | No | Lets other workflows call this exact version with `callWorkflow`: `{}` allows any workflow in the project, and `{allowedCallers: [order-intake]}` allows only the named workflows (1 to 100 unique names). Studio will write it from a **Called by a workflow** trigger; the manifest marks the field `pending` until then |
+| `eventTrigger` | No | Lets platform events start this workflow: `events` (1 to 12 unique types, such as `transaction.in_doubt`) and an optional `from` list of source workflow names. The run's input is the `platform-event-v1` schema that `weave schema export` writes. This version defines the field but does not compile it yet (`WV-COMP-UNSUPPORTED_FEATURE`, feature `flow.eventTrigger`) |
 
 A callable workflow, and a loop over a list that builds text for each item:
 
@@ -361,6 +415,8 @@ An **action** is a published, versioned definition of one external call. Its
 | `retry` | No | Defaults to `maxAttempts: 1`, `initialDelaySeconds: 1`, `maxDelaySeconds: 30`; attempts include the first one, and the maximum delay cannot be smaller than the initial delay |
 | `connection` | No | The connection requirement, same shape as a workflow slot |
 | `routing` | No | `{queue}` selects a named worker queue |
+| `definiteFailures` | No | Up to 32 unique failure codes that mean nothing was applied, such as `VALIDATION`; a temporary code (`TRANSIENT`, `UNAVAILABLE`, `RATE_LIMITED`, `TIMEOUT`, or `LLM_*`) is refused (`WV-COMP-ACTION_DEFINITE_TRANSIENT`). Inside a transaction, a step that failed with one of these codes is not undone |
+| `transactionAware` | No | `true` when the implementation reports explicitly that a failure applied nothing (`effect: none` in the worker protocol) |
 
 **The declared side effect governs retries.** It decides whether automatic and
 operator retries are allowed. It does not prove that the external system really
@@ -508,6 +564,8 @@ backend is absent. The `integration` and `e2e` pytest markers are registered.
 | `null` is rejected for an optional field | Optional fields may be omitted but not set to null | Remove the field |
 | A step's `retry` or `timeoutSeconds` is rejected | Retry and per-attempt timeout belong to the action definition | Move them to the action; use `spec.timeoutSeconds` for a workflow-wide timeout |
 | `WV-COMP-UNSUPPORTED_FEATURE` | The document uses a construct whose language feature this compiler does not compile; the message names the feature | Upgrade the CLI or SDK that compiles it, or replace the construct with steps this compiler supports |
+| `WV-IR-UNSUPPORTED` when publishing a workflow with a `transaction` step | This platform compiles transactions but does not run them yet; `result.missing_features` is `["flow.transaction"]` | Keep the workflow as a draft and validate it; publish it on a platform that lists `flow.transaction` |
+| `WV-COMP-TXN_UNDECLARED` | A step inside a transaction changes data and does not say how it is undone | Add `confirm` and `cancel`, `compensate`, or `irreversible: true`; Studio offers the three choices |
 | `WV-IR-UNSUPPORTED` when publishing a workflow with `callWorkflow` | The platform you publish to is older and does not list `flow.callWorkflow` in its language manifest; `result.missing_features` is `["flow.callWorkflow"]` | Upgrade that platform, or keep the workflow as a draft until it lists the feature; the called workflow itself publishes normally |
 | `WV-CALL-START` or `WV-CALL-DEPTH` on a run | A waiting call could not start its child: the pinned activation or its version was retired, the calling run's principal no longer holds `run.start`, the input no longer fits the called version, or the chain of calls is deeper than 8 | Fix the cause, then resolve the incident with `retry_safe` to try a new child, `accept_reconciled_result` with the call's output, or `terminate` |
 | `WV-CALL-INTERRUPTED` on a run | The child of a waiting call that stops on failure was cancelled or timed out | `retry_safe` starts a new child run; only its result is used |
