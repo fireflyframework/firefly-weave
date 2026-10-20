@@ -43,6 +43,7 @@ from firefly_weave.contracts.studio_documents import (
     StudioDocumentKind,
     StudioDocumentSave,
     StudioDocumentTooLarge,
+    StudioTestData,
     parse_test_data,
 )
 from firefly_weave.contracts.values import JsonObject
@@ -72,7 +73,12 @@ def holds_nul(document: object) -> bool:
     return False
 
 
-def run_data(document: JsonObject) -> tuple[bool, list[UUID]]:
+def compact_bytes(document: object) -> bytes:
+    """A document as Studio sends it and as its size is measured: compact UTF-8, characters unescaped."""
+    return json.dumps(document, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+
+
+def run_data(document: JsonObject | StudioTestData) -> tuple[bool, list[UUID]]:
     """Whether a test-data document holds data recorded from runs, and the environments of those runs.
 
     Read from the typed entries only (the test input, pins, signals, human answers, AI turns and called-workflow
@@ -80,7 +86,7 @@ def run_data(document: JsonObject) -> tuple[bool, list[UUID]]:
     ``output``, and a value may hold a field named ``runEnvironmentId``. A document that doesn't parse raises: run
     data is never guessed.
     """
-    data = parse_test_data(json.dumps(document, ensure_ascii=False).encode("utf-8"))
+    data = document if isinstance(document, StudioTestData) else parse_test_data(compact_bytes(document))
     entries: list[Any] = [data.input]
     for section in (data.pins, data.signals, data.humans, data.ai_turns):
         entries.extend((section or {}).values())
@@ -167,26 +173,27 @@ class StudioDocumentService:
             self._require(principal, scope, kind, list(row["source_environment_ids"]), write=False, context=context)
             return self._view(row)
 
-    def _document(self, kind: StudioDocumentKind, document: JsonObject) -> JsonObject:
+    def _document(self, kind: StudioDocumentKind, document: JsonObject) -> StudioTestData | None:
+        """Checks a document's characters, size and format; a test-data document comes back parsed, once."""
         if holds_nul(document):
             # PostgreSQL's jsonb can't store U+0000: refused in words, not as a storage failure.
             raise CatalogError(422, "WV-STUDIO-DOCUMENT-SCHEMA", "Studio documents can't hold the NUL character")
-        raw = json.dumps(document, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        # Measured as sent, never as re-serialized here: escaped characters or spaces would inflate it.
+        raw = compact_bytes(document)
         if len(raw) > STUDIO_DOCUMENT_MAX_BYTES[kind]:
             raise CatalogError(413, "WV-STUDIO-DOCUMENT-SIZE", "Studio document is too large")
-        if kind == "test-data":
-            try:
-                parse_test_data(raw)
-            except StudioDocumentTooLarge:
-                raise CatalogError(413, "WV-STUDIO-DOCUMENT-SIZE", "Studio document is too large") from None
-            except ValidationError:
-                raise CatalogError(422, "WV-STUDIO-DOCUMENT-SCHEMA", "Test data does not match its format") from None
-        return document
+        if kind != "test-data":
+            return None
+        try:
+            return parse_test_data(raw)
+        except StudioDocumentTooLarge:
+            raise CatalogError(413, "WV-STUDIO-DOCUMENT-SIZE", "Studio document is too large") from None
+        except ValidationError:
+            raise CatalogError(422, "WV-STUDIO-DOCUMENT-SCHEMA", "Test data does not match its format") from None
 
     async def _classify(
-        self, tx: Any, repository: DefinitionRepository, draft_document: JsonObject, raw: JsonObject
+        self, tx: Any, repository: DefinitionRepository, draft_document: JsonObject, data: StudioTestData
     ) -> None:
-        data = parse_test_data(json.dumps(raw).encode("utf-8"))
         catalog = await repository.snapshot(await self.definitions.compiler_capabilities(tx))
         secret: list[str] = []
         unclassified: list[str] = []
@@ -220,12 +227,10 @@ class StudioDocumentService:
         context: AuditContext,
     ) -> StudioDocument:
         scope = project_scope(scope)
-        document = self._document(kind, body.document)
-        try:
-            found, environments = run_data(document) if kind == "test-data" else (False, [])
-        except ValidationError:
-            # Run data is never guessed: a document whose entries don't parse is refused.
-            raise CatalogError(422, "WV-STUDIO-DOCUMENT-SCHEMA", "Test data does not match its format") from None
+        document = body.document
+        # Parsed once (refused when it doesn't parse: run data is never guessed), and read from that parse.
+        parsed = self._document(kind, document)
+        found, environments = run_data(parsed) if parsed is not None else (False, [])
         self._require(actor, scope, kind, environments, write=True, context=context)
         async with self.definitions.transaction(scope, None) as tx:
             await lock(tx, f"draft:{scope.tenant_id}:{scope.project_id}:{draft}")
@@ -254,8 +259,8 @@ class StudioDocumentService:
             merged = sorted({*stored, *environments}, key=str)
             principal = await load_principal(tx.session, actor.id)
             self._require(principal, scope, kind, merged, write=True, context=context)
-            if kind == "test-data":
-                await self._classify(tx, repository, drafts[0]["document"], document)
+            if parsed is not None:
+                await self._classify(tx, repository, drafts[0]["document"], parsed)
             revision = (current["revision"] if current else 0) + 1
             contains = found or bool(current and current["contains_run_data"])
             await repository.execute(

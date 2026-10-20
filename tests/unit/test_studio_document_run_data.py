@@ -87,3 +87,14 @@ def test_each_kind_needs_its_capabilities():
     assert service._capabilities("canvas", write=True) == ("definition.write",)
     assert service._capabilities("test-data", write=False) == ("simulate",)
     assert service._capabilities("test-data", write=True) == ("simulate", "definition.write")
+
+
+@pytest.mark.parametrize(
+    "value",
+    [{"note": "数" * 300_000}, {"note": "😀" * 200_000}, {"items": [0] * 500_000}],
+    ids=["cjk", "emoji", "many-items"],
+)
+def test_a_document_under_the_limit_is_measured_as_sent(value):
+    # Escaped non-ASCII or spaced separators would take these past 1 MiB.
+    found = run_data(document(input={"value": value, "source": "manual"}))
+    assert found == (False, [])

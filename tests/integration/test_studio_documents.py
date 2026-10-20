@@ -439,3 +439,22 @@ async def test_values_are_checked_against_the_draft_as_it_is_now(author, headers
         client, project_url, headers, identifier, document_of(input={"value": {"apiKey": "k-1"}, "source": "manual"})
     )
     assert refused.status_code == 422 and refused.json()["code"] == "WV-STUDIO-DOCUMENT-SECRET", refused.text
+
+
+@pytest.mark.parametrize(
+    "value",
+    [{"note": "数" * 300_000}, {"note": "😀" * 200_000}],
+    ids=["cjk", "emoji"],
+)
+async def test_a_document_under_the_limit_saves_whatever_its_characters(author, headers, project_url, value):
+    identifier = await draft(author, headers, project_url)
+    document = document_of(input={"value": value, "source": "manual"})
+    # Sent the way Studio sends it: compact JSON, characters unescaped.
+    body = json.dumps({"draft_revision": 1, "document": document}, ensure_ascii=False, separators=(",", ":"))
+    assert len(json.dumps(document, ensure_ascii=False, separators=(",", ":")).encode()) <= 1_048_576
+    response = await author[0].put(
+        url(project_url, identifier, "test-data"),
+        headers={**headers, "Content-Type": "application/json"},
+        content=body.encode(),
+    )
+    assert response.status_code == 201, response.text
