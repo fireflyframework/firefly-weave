@@ -177,6 +177,11 @@ describe("formula previews", () => {
       value: 1,
     });
   });
+  it("reads an object field named literal as a field, not as a literal", () => {
+    expect(
+      referencesOf({ object: { literal: { ref: "/steps/check/output" } } }),
+    ).toEqual(["/steps/check/output"]);
+  });
   it("reads a literal that looks like a reference as data, not as a read", () => {
     const literal = { literal: { ref: "/input/password" } };
     expect(referencesOf(literal)).toEqual([]);

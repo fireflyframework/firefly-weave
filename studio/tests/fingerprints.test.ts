@@ -453,3 +453,72 @@ describe("renaming a step", () => {
     ).toBe("upstream");
   });
 });
+
+describe("fingerprints in nested loops", () => {
+  const nested = (
+    fetchWith: unknown,
+    bodyReads: unknown,
+    innerItems: unknown = { ref: "/item/lines" },
+  ): Step[] =>
+    [
+      { id: "fetch", kind: "action", uses: "crm.list@1.0.0", with: fetchWith },
+      {
+        id: "outer",
+        kind: "forEach",
+        items: { ref: "/steps/fetch/output" },
+        concurrency: 1,
+        body: {
+          steps: [
+            {
+              id: "inner",
+              kind: "forEach",
+              items: innerItems,
+              concurrency: 1,
+              body: {
+                steps: [
+                  {
+                    id: "send",
+                    kind: "action",
+                    uses: "mail.send@1.0.0",
+                    with: bodyReads,
+                  },
+                ],
+                output: { literal: null },
+              },
+            },
+          ],
+          output: { literal: null },
+        },
+      },
+    ] as unknown as Step[];
+  const stale = (before: Step[], after: Step[]) => {
+    const was = fingerprints(inputs(before)).get("send")!;
+    return staleReason(
+      {
+        configHash: was.config,
+        contractHash: was.contract,
+        upstreamHash: was.upstream,
+      },
+      fingerprints(inputs(after)).get("send"),
+    );
+  };
+  it("follow what the outer loop goes over through the inner loop's items", () => {
+    for (const reads of [{ ref: "/item" }, { ref: "/loops/outer/item" }])
+      expect(
+        stale(
+          nested({ literal: {} }, reads),
+          nested({ literal: { all: true } }, reads),
+        ),
+        JSON.stringify(reads),
+      ).toBe("upstream");
+  });
+  it("bind /item to the innermost loop", () => {
+    const reads = { ref: "/item" };
+    expect(
+      stale(
+        nested({ literal: {} }, reads),
+        nested({ literal: {} }, reads, { ref: "/item/other" }),
+      ),
+    ).toBe("upstream");
+  });
+});

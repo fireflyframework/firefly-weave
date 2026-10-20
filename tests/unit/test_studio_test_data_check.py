@@ -451,3 +451,17 @@ def test_the_host_keeps_the_first_copy_of_a_definition(tmp_path):
         headers = pair(browser)
         answer = browser.post("/studio/local/testdata/check", json=body(document, first, ACTION), headers=headers)
     assert answer.json() == {"entries": [{"path": "/pins/check", "ok": False, "code": "WV-SCHEMA-SECRET_VALUE"}]}
+
+
+def test_phase_entries_of_called_workflows_and_dotted_activations_stay_unresolved():
+    result = check_nested(
+        data(
+            # The callee's check step would accept this value: the phase runs another action, so it isn't checked.
+            workflows={"enrich@1.0.0": {"mocks": {"check#confirm": {"output": {"id": "t-1"}, "source": "manual"}}}},
+            pins={"check#2.cancel": {**PIN, "output": {"eligible": True}}, "check#2.1": {**PIN, "output": {}}},
+        )
+    )
+    assert result["/workflows/enrich@1.0.0/mocks/check#confirm"] == "WV-STUDIO-TESTDATA-UNRESOLVED"
+    assert result["/pins/check#2.cancel"] == "WV-STUDIO-TESTDATA-UNRESOLVED"
+    # An activation that ends in a number is the step itself.
+    assert result["/pins/check#2.1"] != "WV-STUDIO-TESTDATA-UNRESOLVED"
