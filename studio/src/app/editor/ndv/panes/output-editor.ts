@@ -59,15 +59,17 @@ let sequence = 0;
       <p class="output-editor-note" [id]="noteId">
         Paste data from an earlier run to reuse it.
       </p>
-      <button type="button" class="sm" (click)="cancel()">Cancel</button>
-      <button
-        type="button"
-        class="sm primary"
-        [disabled]="saving()"
-        (click)="save()"
-      >
-        Save
-      </button>
+      <div class="output-editor-buttons">
+        <button type="button" class="sm" (click)="cancel()">Cancel</button>
+        <button
+          type="button"
+          class="sm primary"
+          [disabled]="saving()"
+          (click)="save()"
+        >
+          Save
+        </button>
+      </div>
     </div>`,
   host: { class: "output-editor" },
 })

@@ -305,8 +305,21 @@ weave-input-pane .pane-count {
 .data-mapped {
   color: var(--success-ink);
 }
+/* A row with a value stays on one line: the value gives way first, then the name. */
+.data-row:has(> .data-sample) {
+  flex-wrap: nowrap;
+}
+.data-row:has(> .data-sample) > :is(.data-key, .data-kind) {
+  min-width: 0;
+}
+.data-row:has(> .data-sample) > .data-kind {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 /* A field's value from the test data, right-aligned and cut on one line. */
 .data-sample {
+  flex: 0 1 auto;
   margin-inline-start: auto;
   min-width: 0;
   max-width: 50%;
@@ -547,6 +560,13 @@ weave-input-pane.is-compact .pane-source-field::before {
   align-items: center;
   gap: var(--space-2);
 }
+/* Cancel and Save move together, to the row's end. */
+.output-editor-buttons {
+  display: flex;
+  flex: none;
+  gap: var(--space-2);
+  margin-inline-start: auto;
+}
 .output-editor-note {
   flex: 1 1 12rem;
   min-width: 0;
@@ -555,7 +575,7 @@ weave-input-pane.is-compact .pane-source-field::before {
   font: var(--type-small);
 }
 /* The 32 px action row (44 px on touch). */
-.step-details .output-editor-actions button {
+.step-details .output-editor-buttons button {
   flex: none;
   height: var(--sd-target);
   min-height: var(--sd-target);
