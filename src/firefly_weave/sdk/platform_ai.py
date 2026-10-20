@@ -879,6 +879,12 @@ def enable(
         )
         advance("online")
         model = _test_model(value)
+
+        def record_grant() -> None:
+            # Saved at once: a role granted here is never granted again, even after an administrator revokes it.
+            value["weave_ai_granted"] = True
+            advance()
+
         # Weave AI on this connection, unless someone already set Weave AI up; repeating it changes nothing.
         value["weave_ai"] = asyncio.run(
             _with_client(
@@ -888,7 +894,13 @@ def enable(
                 transport,
                 lambda: "weave_ai",
                 lambda client: setup.configure_weave_ai(
-                    client, value["connection_revision_id"], model, owner=_host_principal(directory), scope=scope
+                    client,
+                    value["connection_revision_id"],
+                    model,
+                    owner=_host_principal(directory),
+                    scope=scope,
+                    granted=value.get("weave_ai_granted") is True,
+                    record=record_grant,
                 ),
             )
         )

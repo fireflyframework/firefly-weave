@@ -350,21 +350,27 @@ async def configure_weave_ai(
     *,
     owner: str | None = None,
     scope: dict[str, str] | None = None,
+    granted: bool = False,
+    record: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     """Turn Weave AI on for the local connection, once; a configuration someone already chose is kept.
 
     Setting Weave AI up takes its manager role. The installation's own host principal (`owner`, a platform
-    administrator) gets it in the demo workspace the first time, as the first run grants it its other roles."""
+    administrator) gets it in the demo workspace once, on a refused read, as the first run grants it its other
+    roles; `record` notes that it was granted, and with `granted` it is never granted again, so a role an
+    administrator revoked stays revoked."""
     try:
         current = await _weave_ai_configuration(client)
     except WeaveError as error:
-        if error.status != 403 or owner is None or scope is None:
+        if error.status != 403 or owner is None or scope is None or granted:
             raise
         await client.grant(
             GrantRequest.model_validate_json(
                 json.dumps({"principal_id": owner, "grant": {"role": "lumi_manager", "scope": scope}})
             )
         )
+        if record is not None:
+            record()
         current = await _weave_ai_configuration(client)
     if current is not None:
         state = "unchanged" if str(current.connection_revision_id) == revision_id else "kept"

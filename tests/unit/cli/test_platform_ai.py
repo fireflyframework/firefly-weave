@@ -54,7 +54,7 @@ class Server:
     """The server steps, recorded; the HTTP operations behind them are tested on their own."""
 
     def __init__(self):
-        self.calls, self.connections, self.owners = [], set(), []
+        self.calls, self.connections, self.owners, self.granted = [], set(), [], []
         self.scope_visible = False
         self.answer = {
             "ok": True,
@@ -101,8 +101,11 @@ class Server:
         self.calls.append(("test", model))
         return dict(self.answer)
 
-    async def configure_weave_ai(self, client, revision_id, model, *, owner=None, scope=None):
+    async def configure_weave_ai(
+        self, client, revision_id, model, *, owner=None, scope=None, granted=False, record=None
+    ):
         self.owners.append(owner)
+        self.granted.append(granted)
         self.calls.append(("weave_ai", revision_id, model))
         state = "unchanged" if ("weave_ai", revision_id, model) in self.calls[:-1] else "configured"
         return {"state": state, "provider": "openai-chat", "model": model}
@@ -1056,4 +1059,27 @@ def test_enable_sets_weave_ai_up_as_the_installation_owner(harness):
     path.write_text(json.dumps({"principal_id": owner, "provider_id": "local-keycloak"}))
     path.chmod(0o600)
     enable(h, verify=True)
-    assert h.server.owners == [owner]
+    assert h.server.owners == [owner] and h.server.granted == [False]
+
+
+def test_a_recorded_weave_ai_grant_is_never_made_again(harness):
+    h = harness
+    owner = str(uuid4())
+    path = h.directory / "bootstrap.json"
+    path.write_text(json.dumps({"principal_id": owner, "provider_id": "local-keycloak"}))
+    path.chmod(0o600)
+    real = h.server.configure_weave_ai
+
+    async def granting(client, revision_id, model, **kwargs):
+        if not kwargs["granted"]:
+            kwargs["record"]()
+        return await real(
+            client, revision_id, model, owner=kwargs["owner"], scope=kwargs["scope"], granted=kwargs["granted"]
+        )
+
+    h.server.configure_weave_ai = granting
+    platform_ai.setup.configure_weave_ai = granting
+    enable(h, verify=True)
+    assert saved(h)["weave_ai_granted"] is True
+    enable(h, verify=True)
+    assert h.server.granted == [False, True]

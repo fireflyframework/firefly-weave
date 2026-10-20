@@ -457,3 +457,37 @@ async def test_without_a_local_owner_a_refused_weave_ai_read_is_not_retried():
     with pytest.raises(WeaveError):
         await setup.configure_weave_ai(client, str(REVISION), "qwen3:4b")
     assert "admin.grant" not in client.operations()
+
+
+async def test_a_grant_already_made_is_never_made_again_after_an_administrator_revokes_it():
+    from firefly_weave.sdk.errors import WeaveError
+
+    owner = str(uuid4())
+    scope = {"tenant_id": str(uuid4()), "project_id": str(uuid4()), "environment_id": str(uuid4())}
+    client, recorded = ForbiddenUntilGranted(), []
+    await setup.configure_weave_ai(
+        client, str(REVISION), "qwen3:4b", owner=owner, scope=scope, record=lambda: recorded.append(True)
+    )
+    assert recorded == [True]
+    client.granted = False
+    with pytest.raises(WeaveError):
+        await setup.configure_weave_ai(client, str(REVISION), "qwen3:4b", owner=owner, scope=scope, granted=True)
+    assert [call[0] for call in client.calls].count("admin.grant") == 1
+
+
+async def test_only_a_refused_read_leads_to_the_grant():
+    from firefly_weave.contracts.public import Problem
+    from firefly_weave.sdk.errors import WeaveError
+
+    class Failing(ForbiddenUntilGranted):
+        async def invoke(self, operation, **kwargs):
+            if operation == "lumi.configuration.read":
+                raise WeaveError(Problem(status=500, code="WV-INTERNAL", message="Internal"))
+            return await super().invoke(operation, **kwargs)
+
+    owner = str(uuid4())
+    scope = {"tenant_id": str(uuid4()), "project_id": str(uuid4()), "environment_id": str(uuid4())}
+    client = Failing()
+    with pytest.raises(WeaveError):
+        await setup.configure_weave_ai(client, str(REVISION), "qwen3:4b", owner=owner, scope=scope)
+    assert "admin.grant" not in client.operations()
