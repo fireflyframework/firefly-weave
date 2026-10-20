@@ -212,6 +212,9 @@ async def _run_model(
         result: JsonValue
         if text_result(profile.output_schema):
             answer = await agent.run(prompt, output_type=str)
+            if answer.response.finish_reason == "length":
+                # The answer stopped at the output token limit: it is incomplete, and may end inside reasoning.
+                raise ConnectorFailure("LLM_LIMIT", "failed")
             result = without_thinking(answer.output).strip()
         else:
             if output_mode == "native" and not model.profile.get("supports_json_schema_output", False):

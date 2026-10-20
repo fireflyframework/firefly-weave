@@ -627,7 +627,7 @@ SUMMARY_SCHEMA = {
 TEXT_SCHEMA = {"type": "string", "maxLength": 20000}
 
 
-def chat_answer(content):
+def chat_answer(content, finish_reason="stop"):
     return httpx2.Response(
         200,
         json={
@@ -635,7 +635,9 @@ def chat_answer(content):
             "object": "chat.completion",
             "created": 0,
             "model": "qwen2.5:1.5b",
-            "choices": [{"index": 0, "message": {"role": "assistant", "content": content}, "finish_reason": "stop"}],
+            "choices": [
+                {"index": 0, "message": {"role": "assistant", "content": content}, "finish_reason": finish_reason}
+            ],
             "usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8},
         },
     )
@@ -747,6 +749,21 @@ async def test_thinking_before_a_text_result_is_never_returned(tmp_path):
         )
     assert output["result"] == "The order shipped."
     assert "private-reasoning-canary" not in json.dumps(output)
+
+
+@pytest.mark.parametrize(
+    "answer",
+    ["The answer was cut", "<think>partial private-reasoning-canary"],
+    ids=["a cut answer", "cut inside reasoning"],
+)
+async def test_a_text_result_cut_off_by_the_token_limit_fails(tmp_path, answer):
+    builder = recording_builder([], lambda _: chat_answer(answer, finish_reason="length"))
+    with po.installed(OLLAMA_ORIGINS), pytest.raises(ConnectorFailure) as failed:
+        await AgenticTaskHandler(OllamaTransport(), ollama_policy(tmp_path), model_builder=builder)(
+            ollama_lease(outputSchema=TEXT_SCHEMA)
+        )
+    assert (failed.value.code, failed.value.outcome) == ("LLM_LIMIT", "failed")
+    assert "private-reasoning-canary" not in repr(failed.value) and "cut" not in str(failed.value.args)
 
 
 async def test_a_text_result_still_meets_its_schema(tmp_path):
