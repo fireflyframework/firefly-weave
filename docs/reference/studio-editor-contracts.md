@@ -73,7 +73,7 @@ Role and category are the registry's `NodeRole` and `PanelCategory` values.
 | Kind | Role | Add a step category | Output can be pinned | Test data script |
 | --- | --- | --- | --- | --- |
 | `action` | `app` | `app` | Yes | — |
-| `llm` (AI task) | `ai-task` | `ai` | Yes | — |
+| `llm` (AI task) | `ai-task` | `ai` | Yes | `ai-turns` |
 | `decisionTable` | `rules` | `data` | No | — |
 | `transform` | `transform` | `data` | No | — |
 | `switch` (Decision) | `decision` | `flow` | No | — |
