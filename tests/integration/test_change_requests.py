@@ -1627,3 +1627,11 @@ async def test_a_draining_change_that_is_superseded_resumes_its_workers(ops, fle
     assert moved.drained == []
     for worker in fleet.workers:
         assert (await draining_state(ops, worker.id))[0] is False
+
+
+async def test_registering_the_same_release_again_returns_it_so_a_resumed_setup_creates_no_second_one(ops):
+    request = ReleaseRequest.model_validate(
+        ops.release.model_dump(mode="json", by_alias=True, exclude={"id"}), by_alias=True
+    )
+    again = await ops.workers.register_release(ops.people["workers"], ops.scope, request, context=AuditContext())
+    assert again.id == ops.release.id

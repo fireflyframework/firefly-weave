@@ -1490,12 +1490,11 @@ def stop(directory: Path) -> dict[str, Any]:
         if not (directory / "postgres.env").is_file() or not (directory / "identity.env").is_file():
             raise PlatformError("Setup did not reach dependency creation; no services need stopping.")
         if state.get("mode") == "docker":
-            from firefly_weave.sdk import platform_ai, platform_docker
+            from firefly_weave.sdk import platform_ai, platform_docker, platform_operations
 
+            platform_operations.stop_workers(state)
             platform_docker.stop(state)
             platform_ai.stop_services(state)
-            from firefly_weave.sdk import platform_operations
-
             platform_operations.stop_services(state)
         _run(
             state,

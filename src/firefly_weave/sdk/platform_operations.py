@@ -67,7 +67,9 @@ TASK_TYPE = "example-sleep@1.0.0"
 WORKER_CLIENT = "weave-operations-worker"
 RUNNER_CLIENT = "weave-operations-runner"
 CLIENTS = {WORKER_CLIENT: "application", RUNNER_CLIENT: "application"}
-STOP_GRACE = "240s"
+# Workers get this long to finish their tasks when stopped, by Compose and by platform stop alike.
+WORKER_STOP_SECONDS = 240
+STOP_GRACE = f"{WORKER_STOP_SECONDS}s"
 CAPABILITIES: tuple[DeploymentCapability, ...] = ("observe", "deploy", "update", "scale_workers", "restart_workers")
 STAGES = ("registry", "images", "identities", "release", "workers", "origins", "target", "runner", "ready")
 CONTAINER = "/run/weave-operations"
@@ -692,11 +694,17 @@ async def _api(
 def _build(state: dict[str, Any], name: str, arguments: list[str]) -> str:
     directory = Path(state["directory"])
     path = directory / f"operations-{name}-{os.urandom(4).hex()}.id"
-    local._run(
-        state, f"operations-{name}-build", [*_docker(state), "build", "--iidfile", str(path), *arguments], timeout=1800
-    )
-    built = read_file(path, 128).decode().strip()
-    path.unlink()
+    try:
+        local._run(
+            state,
+            f"operations-{name}-build",
+            [*_docker(state), "build", "--iidfile", str(path), *arguments],
+            timeout=1800,
+        )
+        built = read_file(path, 128).decode().strip()
+    finally:
+        # A failed build leaves no ID file behind in the installation.
+        path.unlink(missing_ok=True)
     if _IMAGE_ID.fullmatch(built) is None:
         raise local.PlatformError("Docker did not report an immutable image identity; nothing was started.")
     return built
@@ -948,6 +956,31 @@ def status(state: dict[str, Any]) -> dict[str, Any]:
 
 def doctor_notes() -> list[str]:
     return [DOCTOR_NOTE]
+
+
+def stop_workers(state: dict[str, Any]) -> None:
+    """Stop the fixture workers first, while the API is still up, so each can finish what it holds."""
+    value = receipt(Path(state["directory"]))
+    path = _path(state, "workers/compose.json")
+    if value is None or "workers/compose.json" not in (value.get("files") or {}) or not path.is_file():
+        return
+    verify_files(state, value)
+    local._run(
+        state,
+        "operations-workers-stop",
+        [
+            *_docker(state),
+            "compose",
+            "--file",
+            str(path),
+            "--project-name",
+            _project(state),
+            "stop",
+            "--timeout",
+            str(WORKER_STOP_SECONDS),
+        ],
+        timeout=WORKER_STOP_SECONDS + 60,
+    )
 
 
 def stop_services(state: dict[str, Any]) -> None:

@@ -434,3 +434,31 @@ def test_a_socket_group_that_is_not_a_number_stops_the_runner_setup(owned, answe
     runner.answers["operations-socket"] = answer
     with pytest.raises(platform.PlatformError, match="socket's group could not be read"):
         platform_operations._socket_group(state, {"runner_image": "weave-operations-runner@" + RUNNER_IMAGE_ID})
+
+
+def test_a_failed_image_build_leaves_no_image_id_file(operations):
+    case = operations
+
+    def broken(command):
+        Path(command[command.index("--iidfile") + 1]).write_text(WORKER_IMAGE_ID)
+        raise platform.PlatformError("build failed")
+
+    case.runner.answers["operations-worker-build"] = broken
+    with pytest.raises(platform.PlatformError):
+        enable(case)
+    assert list(case.directory.glob("operations-*.id")) == []
+
+
+def test_stop_lets_the_fixture_workers_finish_before_the_platform_stops(operations, monkeypatch):
+    from firefly_weave.sdk import platform_docker
+
+    case = operations
+    enable(case)
+    seen = []
+    monkeypatch.setattr(platform_docker, "stop", lambda state: seen.append(list(case.runner.names())))
+    platform.stop(case.directory)
+    (before_api,) = seen
+    assert "operations-workers-stop" in before_api
+    command = next(command for name, command in case.runner.calls if name == "operations-workers-stop")
+    assert command[command.index("--project-name") + 1] == f"weave-local-{OWNER}-workers"
+    assert command[-3:] == ["stop", "--timeout", "240"]
