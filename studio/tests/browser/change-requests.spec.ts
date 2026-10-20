@@ -48,7 +48,7 @@ const full = [
   "target.manage",
 ];
 /** Where the owner's screenshots go; kept out of the repository. */
-const shots = process.env.O3_SCREENSHOTS ?? "";
+const shots = process.env.WEAVE_E2E_OWNER_SHOTS ?? "";
 
 type Change = Record<string, unknown> & {
   id: string;
@@ -245,7 +245,7 @@ async function platform(
             resources: [
               {
                 name: "fixture-worker",
-                external_identity: "weave-o3-fixture-worker",
+                external_identity: "weave-local-workers-fixture-worker",
                 kind: "worker",
                 image: null,
                 replicas: state.observed,

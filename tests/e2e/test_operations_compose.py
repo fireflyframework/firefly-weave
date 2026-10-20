@@ -21,7 +21,8 @@ Run them with ``pytest -m real_operations`` and WEAVE_ACC_RUN_DIR set to an acce
 directory, the people, and one fixture worker on local-docker (J0.10). Without it every test is skipped. The run must
 live under this checkout's build/ directory and use the colima-weave-tests context. The journeys move local-docker
 through change requests only; the one container they start themselves (O-J9's fault-enabled fixture worker) carries
-the label weave.owner=o3 and is removed by name and label before the test ends. ``--stages down`` removes the rest.
+the label weave.owner=operations-e2e and is removed by name and label before the test ends. ``--stages down``
+removes the rest.
 """
 
 from __future__ import annotations
@@ -59,9 +60,10 @@ COMPONENT = "fixture-worker"
 TASK = "example-sleep@1.0.0"
 CHANGE_SECONDS = 900
 STALE_SECONDS = 180
-FAULT_CONTAINER = "weave-o3-fault-71"
-FAULT_LABEL = "weave.owner=o3"
+FAULT_LABEL = "weave.owner=operations-e2e"
 SUFFIX = uuid4().hex[:6]
+# One name per test run, so concurrent runs never share the fault worker.
+FAULT_CONTAINER = "weave-operations-fault-" + SUFFIX
 
 
 def _harness() -> Any:
@@ -535,7 +537,7 @@ async def test_o_j9_an_unknown_outcome_opens_an_incident_that_a_safe_retry_resol
             (incident,) = await auntil(incidents, lambda items: len(items) == 1, 300, "no incident")
         finally:
             labels = run.require(run.docker("inspect", "--format", "{{json .Config.Labels}}", FAULT_CONTAINER)).stdout
-            assert json.loads(labels).get("weave.owner") == "o3", "refusing to remove an unowned container"
+            assert json.loads(labels).get("weave.owner") == "operations-e2e", "refusing to remove an unowned container"
             run.require(run.docker("rm", "--force", FAULT_CONTAINER))
             for worker in own:
                 current = await call(operator, "workers.read", identifier=worker.id)
