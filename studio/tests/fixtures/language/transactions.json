@@ -1,0 +1,968 @@
+{
+  "generator": "scripts/language_fixtures.py",
+  "rule": "transaction vocabulary and offline diagnostics",
+  "phase_keys": [
+    {
+      "key": "hold#confirm",
+      "instance_key": "hold",
+      "phase": "confirm"
+    },
+    {
+      "key": "hold#cancel",
+      "instance_key": "hold",
+      "phase": "cancel"
+    },
+    {
+      "key": "add#undo",
+      "instance_key": "add",
+      "phase": "compensate"
+    },
+    {
+      "key": "hold[3]#cancel",
+      "instance_key": "hold[3]",
+      "phase": "cancel"
+    },
+    {
+      "key": "add[0][12]#undo",
+      "instance_key": "add[0][12]",
+      "phase": "compensate"
+    }
+  ],
+  "not_phase_keys": [
+    "hold",
+    "hold[3]",
+    "support#2",
+    "support#2.1",
+    "notify~2",
+    "hold#confirm.1"
+  ],
+  "states": [
+    "open",
+    "deciding",
+    "committing",
+    "completed",
+    "compensating",
+    "compensated",
+    "cancelled",
+    "in_doubt",
+    "reconciled",
+    "force_ended"
+  ],
+  "terminal_states": [
+    "cancelled",
+    "compensated",
+    "completed",
+    "force_ended",
+    "reconciled"
+  ],
+  "unsettled_states": [
+    "committing",
+    "compensating",
+    "deciding",
+    "in_doubt",
+    "open"
+  ],
+  "state_order": [
+    "in_doubt",
+    "compensating",
+    "deciding",
+    "force_ended",
+    "reconciled",
+    "compensated",
+    "cancelled",
+    "committing",
+    "open",
+    "completed"
+  ],
+  "undo_modes": [
+    "reserve",
+    "compensate",
+    "irreversible"
+  ],
+  "participant_statuses": [
+    "pending",
+    "dispatched",
+    "done",
+    "failed",
+    "unknown",
+    "skipped",
+    "cancelling",
+    "cancelled",
+    "cancel_stuck",
+    "undoing",
+    "undone",
+    "undo_stuck",
+    "confirming",
+    "confirmed",
+    "confirm_stuck"
+  ],
+  "event_types": [
+    "transaction.completed",
+    "transaction.compensated",
+    "transaction.cancelled",
+    "transaction.in_doubt",
+    "transaction.reconciled",
+    "transaction.force_ended"
+  ],
+  "cases": [
+    {
+      "name": "in order",
+      "document": {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {
+          "name": "transaction-cases",
+          "version": "1.0.0"
+        },
+        "spec": {
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "items"
+            ],
+            "additionalProperties": false
+          },
+          "outputSchema": {},
+          "steps": [
+            {
+              "id": "move",
+              "kind": "transaction",
+              "steps": [
+                {
+                  "id": "hold",
+                  "kind": "action",
+                  "uses": "hold-action@1.0.0",
+                  "with": {
+                    "object": {}
+                  },
+                  "confirm": {
+                    "kind": "action",
+                    "uses": "confirm-hold@1.0.0",
+                    "with": {
+                      "object": {}
+                    }
+                  },
+                  "cancel": {
+                    "kind": "action",
+                    "uses": "release-hold@1.0.0",
+                    "with": {
+                      "object": {}
+                    }
+                  }
+                },
+                {
+                  "id": "add",
+                  "kind": "action",
+                  "uses": "add-action@1.0.0",
+                  "with": {
+                    "object": {}
+                  },
+                  "compensate": {
+                    "kind": "action",
+                    "uses": "remove-quantity@1.0.0",
+                    "with": {
+                      "object": {}
+                    }
+                  }
+                },
+                {
+                  "id": "submit",
+                  "kind": "action",
+                  "uses": "submit-action@1.0.0",
+                  "with": {
+                    "object": {}
+                  },
+                  "irreversible": true
+                }
+              ],
+              "output": {
+                "literal": null
+              }
+            }
+          ],
+          "output": {
+            "literal": null
+          }
+        }
+      },
+      "diagnostics": []
+    },
+    {
+      "name": "a step that can be undone after one that can't",
+      "document": {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {
+          "name": "transaction-cases",
+          "version": "1.0.0"
+        },
+        "spec": {
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "items"
+            ],
+            "additionalProperties": false
+          },
+          "outputSchema": {},
+          "steps": [
+            {
+              "id": "move",
+              "kind": "transaction",
+              "steps": [
+                {
+                  "id": "hold",
+                  "kind": "action",
+                  "uses": "hold-action@1.0.0",
+                  "with": {
+                    "object": {}
+                  },
+                  "confirm": {
+                    "kind": "action",
+                    "uses": "confirm-hold@1.0.0",
+                    "with": {
+                      "object": {}
+                    }
+                  },
+                  "cancel": {
+                    "kind": "action",
+                    "uses": "release-hold@1.0.0",
+                    "with": {
+                      "object": {}
+                    }
+                  }
+                },
+                {
+                  "id": "submit",
+                  "kind": "action",
+                  "uses": "submit-action@1.0.0",
+                  "with": {
+                    "object": {}
+                  },
+                  "irreversible": true
+                },
+                {
+                  "id": "add",
+                  "kind": "action",
+                  "uses": "add-action@1.0.0",
+                  "with": {
+                    "object": {}
+                  },
+                  "compensate": {
+                    "kind": "action",
+                    "uses": "remove-quantity@1.0.0",
+                    "with": {
+                      "object": {}
+                    }
+                  }
+                }
+              ],
+              "output": {
+                "literal": null
+              }
+            }
+          ],
+          "output": {
+            "literal": null
+          }
+        }
+      },
+      "diagnostics": [
+        {
+          "code": "WV-COMP-TXN_ORDER",
+          "path": "/spec/steps/0/steps/2/compensate",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "name": "the step that can't be undone in a loop",
+      "document": {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {
+          "name": "transaction-cases",
+          "version": "1.0.0"
+        },
+        "spec": {
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "items"
+            ],
+            "additionalProperties": false
+          },
+          "outputSchema": {},
+          "steps": [
+            {
+              "id": "move",
+              "kind": "transaction",
+              "steps": [
+                {
+                  "id": "hold",
+                  "kind": "action",
+                  "uses": "hold-action@1.0.0",
+                  "with": {
+                    "object": {}
+                  },
+                  "confirm": {
+                    "kind": "action",
+                    "uses": "confirm-hold@1.0.0",
+                    "with": {
+                      "object": {}
+                    }
+                  },
+                  "cancel": {
+                    "kind": "action",
+                    "uses": "release-hold@1.0.0",
+                    "with": {
+                      "object": {}
+                    }
+                  }
+                },
+                {
+                  "id": "each",
+                  "kind": "forEach",
+                  "items": {
+                    "ref": "/input/items"
+                  },
+                  "maxItems": 10,
+                  "body": {
+                    "steps": [
+                      {
+                        "id": "submit",
+                        "kind": "action",
+                        "uses": "submit-action@1.0.0",
+                        "with": {
+                          "object": {}
+                        },
+                        "irreversible": true
+                      }
+                    ],
+                    "output": {
+                      "ref": "/item"
+                    }
+                  }
+                }
+              ],
+              "output": {
+                "literal": null
+              }
+            }
+          ],
+          "output": {
+            "literal": null
+          }
+        }
+      },
+      "diagnostics": [
+        {
+          "code": "WV-COMP-TXN_PIVOT_PLACEMENT",
+          "path": "/spec/steps/0/steps/1/body/steps/0",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "name": "a call that says nothing",
+      "document": {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {
+          "name": "transaction-cases",
+          "version": "1.0.0"
+        },
+        "spec": {
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "items"
+            ],
+            "additionalProperties": false
+          },
+          "outputSchema": {},
+          "steps": [
+            {
+              "id": "move",
+              "kind": "transaction",
+              "steps": [
+                {
+                  "id": "hold",
+                  "kind": "action",
+                  "uses": "hold-action@1.0.0",
+                  "with": {
+                    "object": {}
+                  },
+                  "confirm": {
+                    "kind": "action",
+                    "uses": "confirm-hold@1.0.0",
+                    "with": {
+                      "object": {}
+                    }
+                  },
+                  "cancel": {
+                    "kind": "action",
+                    "uses": "release-hold@1.0.0",
+                    "with": {
+                      "object": {}
+                    }
+                  }
+                },
+                {
+                  "id": "lookup",
+                  "kind": "callWorkflow",
+                  "uses": "notify-customer@1.0.0",
+                  "with": {
+                    "ref": "/input"
+                  }
+                }
+              ],
+              "output": {
+                "literal": null
+              }
+            }
+          ],
+          "output": {
+            "literal": null
+          }
+        }
+      },
+      "diagnostics": [
+        {
+          "code": "WV-COMP-TXN_UNDECLARED",
+          "path": "/spec/steps/0/steps/1",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "name": "cancel reads its own step",
+      "document": {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {
+          "name": "transaction-cases",
+          "version": "1.0.0"
+        },
+        "spec": {
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "items"
+            ],
+            "additionalProperties": false
+          },
+          "outputSchema": {},
+          "steps": [
+            {
+              "id": "move",
+              "kind": "transaction",
+              "steps": [
+                {
+                  "id": "hold",
+                  "kind": "action",
+                  "uses": "hold-action@1.0.0",
+                  "with": {
+                    "object": {}
+                  },
+                  "confirm": {
+                    "kind": "action",
+                    "uses": "confirm-hold@1.0.0",
+                    "with": {
+                      "object": {}
+                    }
+                  },
+                  "cancel": {
+                    "kind": "action",
+                    "uses": "release-hold@1.0.0",
+                    "with": {
+                      "object": {
+                        "id": {
+                          "ref": "/steps/hold/output/id"
+                        }
+                      }
+                    }
+                  }
+                }
+              ],
+              "output": {
+                "literal": null
+              }
+            }
+          ],
+          "output": {
+            "literal": null
+          }
+        }
+      },
+      "diagnostics": [
+        {
+          "code": "WV-COMP-TXN_CANCEL_OUTPUT",
+          "path": "/spec/steps/0/steps/0/cancel/with/object/id/ref",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "name": "confirm without cancel",
+      "document": {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {
+          "name": "transaction-cases",
+          "version": "1.0.0"
+        },
+        "spec": {
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "items"
+            ],
+            "additionalProperties": false
+          },
+          "outputSchema": {},
+          "steps": [
+            {
+              "id": "move",
+              "kind": "transaction",
+              "steps": [
+                {
+                  "id": "hold",
+                  "kind": "action",
+                  "uses": "hold-action@1.0.0",
+                  "with": {
+                    "object": {}
+                  },
+                  "confirm": {
+                    "kind": "action",
+                    "uses": "confirm-hold@1.0.0",
+                    "with": {
+                      "object": {}
+                    }
+                  }
+                }
+              ],
+              "output": {
+                "literal": null
+              }
+            }
+          ],
+          "output": {
+            "literal": null
+          }
+        }
+      },
+      "diagnostics": [
+        {
+          "code": "WV-COMP-TXN_RESERVE_PAIR",
+          "path": "/spec/steps/0/steps/0/confirm",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "name": "two ways to undo one step",
+      "document": {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {
+          "name": "transaction-cases",
+          "version": "1.0.0"
+        },
+        "spec": {
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "items"
+            ],
+            "additionalProperties": false
+          },
+          "outputSchema": {},
+          "steps": [
+            {
+              "id": "move",
+              "kind": "transaction",
+              "steps": [
+                {
+                  "id": "add",
+                  "kind": "action",
+                  "uses": "add-action@1.0.0",
+                  "with": {
+                    "object": {}
+                  },
+                  "irreversible": true,
+                  "compensate": {
+                    "kind": "action",
+                    "uses": "remove-quantity@1.0.0",
+                    "with": {
+                      "object": {}
+                    }
+                  }
+                }
+              ],
+              "output": {
+                "literal": null
+              }
+            }
+          ],
+          "output": {
+            "literal": null
+          }
+        }
+      },
+      "diagnostics": [
+        {
+          "code": "WV-COMP-TXN_UNDO_FORMS",
+          "path": "/spec/steps/0/steps/0/irreversible",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "name": "undo fields outside a transaction",
+      "document": {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {
+          "name": "transaction-cases",
+          "version": "1.0.0"
+        },
+        "spec": {
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "items"
+            ],
+            "additionalProperties": false
+          },
+          "outputSchema": {},
+          "steps": [
+            {
+              "id": "add",
+              "kind": "action",
+              "uses": "add-action@1.0.0",
+              "with": {
+                "object": {}
+              },
+              "compensate": {
+                "kind": "action",
+                "uses": "remove-quantity@1.0.0",
+                "with": {
+                  "object": {}
+                }
+              }
+            }
+          ],
+          "output": {
+            "literal": null
+          }
+        }
+      },
+      "diagnostics": [
+        {
+          "code": "WV-COMP-TXN_OUTSIDE",
+          "path": "/spec/steps/0/compensate",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "name": "a transaction inside a transaction",
+      "document": {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {
+          "name": "transaction-cases",
+          "version": "1.0.0"
+        },
+        "spec": {
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "items"
+            ],
+            "additionalProperties": false
+          },
+          "outputSchema": {},
+          "steps": [
+            {
+              "id": "move",
+              "kind": "transaction",
+              "steps": [
+                {
+                  "id": "hold",
+                  "kind": "action",
+                  "uses": "hold-action@1.0.0",
+                  "with": {
+                    "object": {}
+                  },
+                  "confirm": {
+                    "kind": "action",
+                    "uses": "confirm-hold@1.0.0",
+                    "with": {
+                      "object": {}
+                    }
+                  },
+                  "cancel": {
+                    "kind": "action",
+                    "uses": "release-hold@1.0.0",
+                    "with": {
+                      "object": {}
+                    }
+                  }
+                },
+                {
+                  "id": "inner",
+                  "kind": "transaction",
+                  "steps": [
+                    {
+                      "id": "add",
+                      "kind": "action",
+                      "uses": "add-action@1.0.0",
+                      "with": {
+                        "object": {}
+                      },
+                      "compensate": {
+                        "kind": "action",
+                        "uses": "remove-quantity@1.0.0",
+                        "with": {
+                          "object": {}
+                        }
+                      }
+                    }
+                  ],
+                  "output": {
+                    "literal": null
+                  }
+                }
+              ],
+              "output": {
+                "literal": null
+              }
+            }
+          ],
+          "output": {
+            "literal": null
+          }
+        }
+      },
+      "diagnostics": [
+        {
+          "code": "WV-COMP-TXN_NESTED",
+          "path": "/spec/steps/0/steps/1/kind",
+          "severity": "error"
+        }
+      ]
+    },
+    {
+      "name": "nothing to undo",
+      "document": {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {
+          "name": "transaction-cases",
+          "version": "1.0.0"
+        },
+        "spec": {
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "items"
+            ],
+            "additionalProperties": false
+          },
+          "outputSchema": {},
+          "steps": [
+            {
+              "id": "move",
+              "kind": "transaction",
+              "steps": [
+                {
+                  "id": "submit",
+                  "kind": "action",
+                  "uses": "submit-action@1.0.0",
+                  "with": {
+                    "object": {}
+                  },
+                  "irreversible": true
+                }
+              ],
+              "output": {
+                "literal": null
+              }
+            }
+          ],
+          "output": {
+            "literal": null
+          }
+        }
+      },
+      "diagnostics": [
+        {
+          "code": "WV-COMP-TXN_NOTHING_TO_UNDO",
+          "path": "/spec/steps/0",
+          "severity": "warning"
+        }
+      ]
+    },
+    {
+      "name": "undo roots outside an undo",
+      "document": {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {
+          "name": "transaction-cases",
+          "version": "1.0.0"
+        },
+        "spec": {
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "items"
+            ],
+            "additionalProperties": false
+          },
+          "outputSchema": {},
+          "steps": [
+            {
+              "id": "move",
+              "kind": "transaction",
+              "steps": [
+                {
+                  "id": "hold",
+                  "kind": "action",
+                  "uses": "hold-action@1.0.0",
+                  "with": {
+                    "object": {}
+                  },
+                  "confirm": {
+                    "kind": "action",
+                    "uses": "confirm-hold@1.0.0",
+                    "with": {
+                      "object": {}
+                    }
+                  },
+                  "cancel": {
+                    "kind": "action",
+                    "uses": "release-hold@1.0.0",
+                    "with": {
+                      "object": {}
+                    }
+                  }
+                }
+              ],
+              "output": {
+                "literal": null
+              }
+            },
+            {
+              "id": "key",
+              "kind": "transform",
+              "value": {
+                "ref": "/participant/operationKey"
+              }
+            }
+          ],
+          "output": {
+            "literal": null
+          }
+        }
+      },
+      "diagnostics": [
+        {
+          "code": "WV-COMP-TXN_SCOPE",
+          "path": "/spec/steps/1/value/ref",
+          "severity": "error"
+        }
+      ]
+    }
+  ]
+}

@@ -405,3 +405,34 @@ def test_explain_prints_a_call_with_its_called_workflow_and_mode(tmp_path):
     assert result.exit_code == 0, result.output
     assert "{ref: /input/orderId}" not in keyed.read_text().split("businessKey")[0]
     assert "    reads /input/orderId\n" in result.output
+
+
+def test_explain_prints_a_transaction_and_how_each_step_is_undone(tmp_path):
+    import yaml
+
+    from firefly_weave.compiler.catalog import FrozenDocument
+    from firefly_weave.contracts.definitions import load_definition
+
+    fixture = yaml.safe_load(Path("tests/fixtures/transactions/catalog.yaml").read_text())
+    definitions = []
+    for item in fixture["definitions"]:
+        document = load_definition(item).model_dump(by_alias=True)
+        definitions.append({"document": document, "digest": FrozenDocument.from_value(document).digest})
+    lock = tmp_path / "transactions.lock.json"
+    lock.write_text(json.dumps({"definitions": definitions, "tasks": fixture["tasks"], "adapters": [], "schemas": {}}))
+    example = Path("examples/language/move-between-systems.workflow.yaml")
+    result = invoke("workflow", "explain", example, "--catalog", lock)
+    assert result.exit_code == 0, result.output
+    for expected in (
+        "move (transaction)",
+        " holdSeconds=900\n",
+        " undo=reserve holdSeconds=600 cancel=source-system.release-hold@1.0.0",
+        " confirm=source-system.confirm-hold@1.0.0\n",
+        " undo=compensate compensate=reverse-target-addition@1.0.0\n",
+        " uses=orders.submit-order@1.0.0 undo=irreversible decides\n",
+        "    reads /participant/operationKey\n",
+        "    reads /steps/hold/output/holdId\n",
+        "move -> hold (transaction branch=body)",
+        "  /spec/steps/0/steps/0/cancel/with undo_input schema=",
+    ):
+        assert expected in result.output

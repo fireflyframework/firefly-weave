@@ -158,15 +158,24 @@ def workflow_steps(document: JsonValue) -> Iterator[tuple[JsonObject, str]]:
                         blocks.append((branch.get("steps"), pointer_child(location + "/branches", name) + "/steps"))
             elif kind == "forEach" and isinstance(step.get("body"), dict):
                 blocks.append((cast(JsonObject, step["body"]).get("steps"), location + "/body/steps"))
+            elif kind == "transaction":
+                blocks.append((step.get("steps"), location + "/steps"))
 
 
 def called_references(document: JsonValue) -> list[str]:
-    """The exact workflow references a workflow definition calls, in document order."""
-    return [
-        cast(str, step["uses"])
-        for step, _ in workflow_steps(document)
-        if step.get("kind") == "callWorkflow" and isinstance(step.get("uses"), str)
-    ]
+    """The exact workflow references a workflow definition calls, in document order.
+
+    Call steps count, and so do the workflows a step inside a transaction calls to confirm, cancel or reverse it.
+    """
+    found: list[str] = []
+    for step, _ in workflow_steps(document):
+        if step.get("kind") == "callWorkflow" and isinstance(step.get("uses"), str):
+            found.append(cast(str, step["uses"]))
+        for name in ("confirm", "cancel", "compensate"):
+            undo = step.get(name)
+            if isinstance(undo, dict) and undo.get("kind") == "callWorkflow" and isinstance(undo.get("uses"), str):
+                found.append(cast(str, undo["uses"]))
+    return found
 
 
 def detached_failure_paths(document: JsonValue) -> list[str]:

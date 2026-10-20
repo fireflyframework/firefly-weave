@@ -22,7 +22,11 @@ import { python, pythonAvailable } from "./python-path";
 import { describe, expect, it } from "vitest";
 import { propertyFields, supportedOperators } from "../src/app/property-grid";
 import { createStep, freshWorkflow, kinds } from "../src/app/model";
-import { readyKinds } from "../src/app/editor/language-manifest";
+import {
+  pendingStepFields,
+  readyKinds,
+  type LanguageManifest,
+} from "../src/app/editor/language-manifest";
 import { loadKindRegistrations } from "../src/app/editor/ndv/kinds";
 import { ndvRegistry } from "../src/app/editor/ndv/registry";
 import { loadLanguageManifest } from "./support/language-manifest";
@@ -101,7 +105,15 @@ describe.skipIf(!available)(
         // Identity is displayed separately; branch steps are managed on canvas.
         fields.add("id");
         fields.add("kind");
-        expect([...fields].sort(), kind).toEqual(schema.steps[kind].sort());
+        // Settings Studio does not edit yet (pending step fields) are left to source mode.
+        const pending = new Set(
+          pendingStepFields(manifest as unknown as LanguageManifest, kind),
+        );
+        expect([...fields].sort(), kind).toEqual(
+          (schema.steps[kind] as string[])
+            .filter((name) => !pending.has(name))
+            .sort(),
+        );
       }
     });
     it("covers ready workflow configuration and metadata without hiding fields in source mode", () => {

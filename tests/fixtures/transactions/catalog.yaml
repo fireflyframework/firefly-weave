@@ -1,0 +1,324 @@
+# Copyright 2026 Firefly Software Foundation.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# Author: Firefly Software Foundation
+# SPDX-License-Identifier: Apache-2.0
+
+# Actions, task capabilities and called workflows that the transaction tests compile against.
+definitions:
+- apiVersion: weave/v1alpha1
+  kind: Action
+  metadata:
+    name: source-system.hold-quantity
+    version: 1.0.0
+  spec:
+    implementation:
+      kind: worker
+      taskType: source-system-hold-quantity
+      taskVersion: 1.0.0
+    sideEffect: idempotency_key
+    timeoutSeconds: 30
+    inputSchema: &id003
+      type: object
+      properties:
+        quantity: &id002
+          type: integer
+          minimum: 1
+        reference: &id001
+          type: string
+          minLength: 1
+          maxLength: 200
+      required:
+      - quantity
+      - reference
+      additionalProperties: false
+    outputSchema: &id004
+      type: object
+      properties:
+        holdId:
+          type: string
+      required:
+      - holdId
+      additionalProperties: false
+- apiVersion: weave/v1alpha1
+  kind: Action
+  metadata:
+    name: source-system.confirm-hold
+    version: 1.0.0
+  spec:
+    implementation:
+      kind: worker
+      taskType: source-system-confirm-hold
+      taskVersion: 1.0.0
+    sideEffect: idempotent
+    timeoutSeconds: 30
+    inputSchema: &id005
+      type: object
+      properties:
+        holdId:
+          type: string
+      required:
+      - holdId
+      additionalProperties: false
+    outputSchema: &id006
+      type: object
+      properties: {}
+      required: []
+      additionalProperties: false
+- apiVersion: weave/v1alpha1
+  kind: Action
+  metadata:
+    name: source-system.release-hold
+    version: 1.0.0
+  spec:
+    implementation:
+      kind: worker
+      taskType: source-system-release-hold
+      taskVersion: 1.0.0
+    sideEffect: idempotent
+    timeoutSeconds: 30
+    inputSchema: &id007
+      type: object
+      properties:
+        reference: *id001
+        holdOperation:
+          type: string
+      required:
+      - reference
+      - holdOperation
+      additionalProperties: false
+    outputSchema: &id008
+      type: object
+      properties: {}
+      required: []
+      additionalProperties: false
+- apiVersion: weave/v1alpha1
+  kind: Action
+  metadata:
+    name: target-system.add-quantity
+    version: 1.0.0
+  spec:
+    implementation:
+      kind: worker
+      taskType: target-system-add-quantity
+      taskVersion: 1.0.0
+    sideEffect: non_idempotent
+    timeoutSeconds: 30
+    inputSchema: &id009
+      type: object
+      properties:
+        quantity: *id002
+        reference: *id001
+      required:
+      - quantity
+      - reference
+      additionalProperties: false
+    outputSchema: &id010
+      type: object
+      properties:
+        id:
+          type: string
+      required:
+      - id
+      additionalProperties: false
+    definiteFailures:
+    - VALIDATION
+- apiVersion: weave/v1alpha1
+  kind: Action
+  metadata:
+    name: target-system.remove-quantity
+    version: 1.0.0
+  spec:
+    implementation:
+      kind: worker
+      taskType: target-system-remove-quantity
+      taskVersion: 1.0.0
+    sideEffect: idempotency_key
+    timeoutSeconds: 30
+    inputSchema: &id011
+      type: object
+      properties:
+        reference: *id001
+        addOperation:
+          type: string
+      required:
+      - reference
+      - addOperation
+      additionalProperties: false
+    outputSchema: &id012
+      type: object
+      properties: {}
+      required: []
+      additionalProperties: false
+- apiVersion: weave/v1alpha1
+  kind: Action
+  metadata:
+    name: orders.submit-order
+    version: 1.0.0
+  spec:
+    implementation:
+      kind: worker
+      taskType: orders-submit-order
+      taskVersion: 1.0.0
+    sideEffect: non_idempotent
+    timeoutSeconds: 60
+    inputSchema: &id013
+      type: object
+      properties:
+        reference: *id001
+      required:
+      - reference
+      additionalProperties: false
+    outputSchema: &id014
+      type: object
+      properties:
+        orderId:
+          type: string
+      required:
+      - orderId
+      additionalProperties: false
+- apiVersion: weave/v1alpha1
+  kind: Action
+  metadata:
+    name: notify.send-message
+    version: 1.0.0
+  spec:
+    implementation:
+      kind: worker
+      taskType: notify-send-message
+      taskVersion: 1.0.0
+    sideEffect: idempotent
+    timeoutSeconds: 30
+    inputSchema: &id015
+      type: object
+      properties:
+        text:
+          type: string
+      required:
+      - text
+      additionalProperties: false
+    outputSchema: &id016
+      type: object
+      properties: {}
+      required: []
+      additionalProperties: false
+- apiVersion: weave/v1alpha1
+  kind: Action
+  metadata:
+    name: reports.lookup
+    version: 1.0.0
+  spec:
+    implementation:
+      kind: worker
+      taskType: reports-lookup
+      taskVersion: 1.0.0
+    sideEffect: read_only
+    timeoutSeconds: 30
+    inputSchema: &id017
+      type: object
+      properties:
+        reference: *id001
+      required:
+      - reference
+      additionalProperties: false
+    outputSchema: &id018
+      type: object
+      properties:
+        count:
+          type: integer
+      required:
+      - count
+      additionalProperties: false
+- apiVersion: weave/v1alpha1
+  kind: Workflow
+  metadata:
+    name: reverse-target-addition
+    version: 1.0.0
+  spec:
+    callable: {}
+    timeoutSeconds: 300
+    inputSchema:
+      type: object
+      properties:
+        reference: *id001
+        addOperation:
+          type: string
+      required:
+      - reference
+      - addOperation
+      additionalProperties: false
+    outputSchema: {}
+    steps: []
+    output:
+      literal: null
+- apiVersion: weave/v1alpha1
+  kind: Workflow
+  metadata:
+    name: reverse-without-limit
+    version: 1.0.0
+  spec:
+    callable: {}
+    inputSchema: {}
+    outputSchema: {}
+    steps: []
+    output:
+      literal: null
+tasks:
+- taskType: source-system-hold-quantity
+  taskVersion: 1.0.0
+  inputSchema: *id003
+  outputSchema: *id004
+  sideEffect: idempotency_key
+  timeoutSeconds: 30
+- taskType: source-system-confirm-hold
+  taskVersion: 1.0.0
+  inputSchema: *id005
+  outputSchema: *id006
+  sideEffect: idempotent
+  timeoutSeconds: 30
+- taskType: source-system-release-hold
+  taskVersion: 1.0.0
+  inputSchema: *id007
+  outputSchema: *id008
+  sideEffect: idempotent
+  timeoutSeconds: 30
+- taskType: target-system-add-quantity
+  taskVersion: 1.0.0
+  inputSchema: *id009
+  outputSchema: *id010
+  sideEffect: non_idempotent
+  timeoutSeconds: 30
+- taskType: target-system-remove-quantity
+  taskVersion: 1.0.0
+  inputSchema: *id011
+  outputSchema: *id012
+  sideEffect: idempotency_key
+  timeoutSeconds: 30
+- taskType: orders-submit-order
+  taskVersion: 1.0.0
+  inputSchema: *id013
+  outputSchema: *id014
+  sideEffect: non_idempotent
+  timeoutSeconds: 60
+- taskType: notify-send-message
+  taskVersion: 1.0.0
+  inputSchema: *id015
+  outputSchema: *id016
+  sideEffect: idempotent
+  timeoutSeconds: 30
+- taskType: reports-lookup
+  taskVersion: 1.0.0
+  inputSchema: *id017
+  outputSchema: *id018
+  sideEffect: read_only
+  timeoutSeconds: 30

@@ -307,7 +307,7 @@ Use this table to translate what you know:
 | Message throw or end event | **Call an action**, or an integration event subscription | A subscription notifies another system when a run's status changes |
 | Call activity, subprocess | **Call a workflow** (`callWorkflow`) | Starts the exact published version it names as a separate child run, then waits for its result or continues at once; see [Call another workflow](guides/call-workflows.md) |
 | Loop, multi-instance activity | **Loop over items** (`forEach`) | Runs its body once per element of a list, `concurrency` at a time, inside the same run, and collects one result per element in element order; see [loops at run time](reference/compiler.md#loops-at-run-time). A failure in one element stops the whole run, as in a Parallel |
-| Compensation | Not in the language | Model compensating Actions as ordinary steps; Weave never undoes an external effect |
+| Compensation, transaction subprocess | **Transaction** (`transaction`) | Each step inside it says how it is undone: reserve then confirm, an action that reverses it, or can't be undone; the compiler checks the order before publishing. This version compiles transactions and does not run them yet; see [Transactions](contracts.md#transactions) |
 | Instance migration | Not available | A running run keeps its version; new runs use the new activation |
 | Process monitoring, cockpit | **Runs**, history, and incidents in Studio and the CLI; logs, metrics, and traces | Studio draws a run's graph and marks its current step **Now**; see [follow and manage runs](guides/studio.md#save-publish-activate-and-run), [execution management](guides/execution-management.md), and [observability](operations/observability.md) |
 

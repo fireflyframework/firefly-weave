@@ -68,6 +68,27 @@ const compilerCodes = [
   "CALL_RECURSION",
   "CALL_DEPTH",
   "CALL_MODE",
+  "TXN_ORDER",
+  "TXN_PIVOT_PLACEMENT",
+  "TXN_AFTER_PIVOT_UNSAFE",
+  "TXN_AFTER_PIVOT_PURE",
+  "TXN_AFTER_PIVOT_WAIT",
+  "TXN_UNDO_SIDE_EFFECT",
+  "TXN_RESERVE_PAIR",
+  "TXN_UNDO_FORMS",
+  "TXN_CANCEL_OUTPUT",
+  "TXN_OUTSIDE",
+  "TXN_NESTED",
+  "TXN_DETACH",
+  "TXN_AGENT",
+  "TXN_UNDECLARED",
+  "TXN_HOLD_WAIT",
+  "TXN_SIZE",
+  "TXN_NOTHING_TO_UNDO",
+  "TXN_CALL_TIMEOUT",
+  "TXN_HOLD_PIVOT",
+  "TXN_SCOPE",
+  "ACTION_DEFINITE_TRANSIENT",
 ].map((code) => `WV-COMP-${code}`);
 
 describe("plain-language diagnostic copy", () => {
@@ -84,6 +105,16 @@ describe("plain-language diagnostic copy", () => {
       expect(view.code).toBe(code);
       expect(view.technical).toBe("Definition violates the contract.");
     }
+  });
+  it("reads correctly for a Fail step and for a step that can fail after the point of no return", () => {
+    const view = describeDiagnostic({
+      code: "WV-COMP-TXN_AFTER_PIVOT_PURE",
+      severity: "info",
+      message: "stop fails the transaction after submit.",
+    });
+    expect(view.text).toBe(
+      "After the step that can't be undone, nothing can be undone, so if this step fails, or is a Fail step, the transaction is left in doubt.",
+    );
   });
   it("names the call settings by their Studio labels for CALL_MODE", () => {
     const view = describeDiagnostic({

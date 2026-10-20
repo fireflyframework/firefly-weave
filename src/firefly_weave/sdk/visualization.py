@@ -39,6 +39,7 @@ LABELS = {
     "parallel": "Run branches",
     "forEach": "Loop over items",
     "callWorkflow": "Call a workflow",
+    "transaction": "Transaction",
     "branch-output": "Collect branch result",
     "join": "Continue after branches",
     "fail": "Stop with a failure",
@@ -52,6 +53,7 @@ NODE_FILLS = {
     "switch": "#FFF0D8",
     "parallel": "#FFF0D8",
     "forEach": "#FFF0D8",
+    "transaction": "#FFF0D8",
     "join": "#FFF0D8",
 }
 TASK_FILL = "#FFFFFF"
