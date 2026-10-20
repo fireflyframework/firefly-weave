@@ -176,10 +176,11 @@ is retained as evidence; it is not counted as a successful model run.
 
 ## What is not included
 
-- **BPMN.** Weave does not import or export BPMN files. Compensation and error
-  boundary events are not part of the workflow language. **Loop over items**
-  and **Call a workflow** cover repeated work and subprocesses (see
-  [Steps](contracts.md#steps)).
+- **BPMN.** Weave does not import or export BPMN files. Error boundary events
+  are not part of the workflow language. **Loop over items** and **Call a
+  workflow** cover repeated work and subprocesses, and **Transaction** declares
+  how each step is undone; this version compiles transactions but does not run
+  them yet (see [Steps](contracts.md#steps)).
   [Coming from BPM/BPMN](concepts.md#coming-from-bpmbpmn) lists the alternatives.
 - **Named enterprise adapters.** SAP and Oracle are not offered as executable
   named adapters. Reaching a system through a generic connector does not certify

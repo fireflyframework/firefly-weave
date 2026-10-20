@@ -51,6 +51,7 @@ def test_committed_fixtures_are_what_the_generator_writes_today():
         "scope.json",
         "template-segments.json",
         "text-conversion.json",
+        "transactions.json",
     ]
     for name, text in rendered.items():
         assert (FIXTURES / name).read_text(encoding="utf-8") == text, name
@@ -90,6 +91,29 @@ def test_text_conversion_cases_follow_ecmascript_number_formatting(case):
 @pytest.mark.parametrize("case", fixture("scope.json")["cases"], ids=lambda case: case["name"])
 def test_scope_cases_are_what_scope_at_returns(case):
     assert scope_at(case["document"], case["path"]).model_dump(mode="json", by_alias=True) == case["result"]
+
+
+@pytest.mark.parametrize("case", fixture("transactions.json")["cases"], ids=lambda case: case["name"])
+def test_transaction_cases_are_what_offline_validation_reports(case):
+    from firefly_weave.compiler.api import validate_authoring
+
+    result = validate_authoring(case["document"], format="object")
+    reported = [
+        {"code": d.code, "path": d.path, "severity": d.severity}
+        for d in result.diagnostics
+        if d.code != "WV-COMP-CATALOG_PENDING"
+    ]
+    assert reported == case["diagnostics"]
+
+
+def test_transaction_phase_keys_are_canonical_instance_keys():
+    from firefly_weave.contracts.transactions import split_phase
+
+    shared = fixture("transactions.json")
+    for case in shared["phase_keys"]:
+        assert split_instance(case["key"]).node_id == case["instance_key"].partition("[")[0]
+        assert split_phase(case["key"]) == (case["instance_key"], case["phase"])
+    assert all(split_phase(key) is None for key in shared["not_phase_keys"])
 
 
 def test_manifest_snapshot_is_the_served_manifest():

@@ -80,10 +80,10 @@ every request needs a bearer access token plus a current grant in that scope.
 | --- | --- | --- |
 | Admit an immutable release | `/worker-releases` | A deployer sends `image_digest`, the exact `capabilities`, and optionally `credential_capabilities` and trusted `connector_bindings`; returns the release ID |
 | Register an instance | `/workers` | `release_id`, the exact `task_types`, and `capacity`; returns a worker ID owned by the authenticated principal |
-| Claim | `/tasks/claim` | `worker_id` and `limit` (1 to 100); returns zero or more `TaskLease` values |
+| Claim | `/tasks/claim` | `worker_id` and `limit` (1 to 100), and optionally `worker: {release, transaction_aware}`; returns zero or more `TaskLease` values |
 | Renew | `/tasks/heartbeat` | The current `LeaseProof`; returns the lease with its new expiry |
 | Complete | `/tasks/complete` | `lease`, a unique `completion_id`, and an `output` that matches the schema; returns the committed receipt |
-| Fail | `/tasks/fail` | `lease` and an `error` with `completion_id`, a bounded `code`, and an `outcome` (`not_started`, `failed`, or `unknown`) |
+| Fail | `/tasks/fail` | `lease` and an `error` with `completion_id`, a bounded `code`, an `outcome` (`not_started`, `failed`, or `unknown`), and optionally `effect` (`none` when the failure applied nothing; `unknown`, the default, otherwise) |
 | Credentials | `/tasks/credentials` | A live `lease`, the bound `connection_revision_id`, and a `slot`; returns a short-lived lease with `Cache-Control: no-store` |
 
 For example, after a deployer admits the example release, registration sends:
@@ -136,6 +136,17 @@ when recovery creates a new generation.
   receipt; changing the output conflicts (HTTP 409, `WV-COMPLETION-CONFLICT`).
 - A lost completion response is ambiguous. Do not run the handler again to
   compensate.
+- **Saying that nothing was applied.** Inside a transaction, a step whose
+  failure applied nothing needs no undo. A failure says so with `effect: none`,
+  together with `outcome` `not_started` or `failed`; `effect: none` with
+  `outcome: unknown` is refused (HTTP 422, `WV-COMPLETION-EFFECT`). A worker
+  release declares that it reports this on purpose with
+  `worker: {release, transaction_aware: true}` on its claims, and a connector
+  action with `transactionAware: true`. The claim's `release` is the same
+  release ID that registration sends as `release_id`; the two fields name it
+  differently. The platform accepts these fields now and uses them once it runs
+  transactions; a report from any other release counts as unknown, so the step
+  is undone to be safe.
 
 **Example.** The target records a customer, and the worker crashes before Weave
 accepts the completion. Recovery issues generation 2 of the same task. Its
@@ -275,6 +286,7 @@ without rerunning the handler.
 | HTTP 401, `WV-UNAUTHENTICATED` | The worker's token expired, has the wrong audience, or its identity is not linked | Get a fresh token; ask an administrator to link the worker's identity |
 | HTTP 403, `WV-FORBIDDEN` | The principal lacks the grant for this operation in this environment, or the worker ID belongs to another principal | Ask for the `worker` role; use a worker ID that this principal registered |
 | HTTP 409, `WV-LEASE` | The lease expired, a newer generation exists, or the worker instance is unknown or revoked | Stop the handler and never resend with another proof; recovery issues a new attempt. After a revocation, register a new instance |
+| HTTP 422, `WV-COMPLETION-EFFECT` | A failure said both `outcome: unknown` and `effect: none` | Send `effect: none` only when the handler knows nothing was applied, with `outcome` `not_started` or `failed` |
 | HTTP 409, `WV-COMPLETION-CONFLICT` | A `completion_id` was reused with a different body | Resend the exact original body, or use a new completion ID only for a genuinely new outcome |
 | HTTP 409, `WV-RELEASE-CONFLICT` | Admission reused an image digest with a different release request | Build a new image, or resend the exact original request, which returns the existing release |
 | HTTP 429, `WV-REQUEST-CAPACITY` or `WV-OPERATION-CAPACITY` | The platform is at capacity | Nothing; the SDK retries within the limits above |

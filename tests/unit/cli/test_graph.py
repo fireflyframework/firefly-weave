@@ -348,3 +348,26 @@ def test_graph_labels_every_compiled_node_kind():
     kinds = {kind for model in get_args(union) for kind in get_args(model.model_fields["kind"].annotation)}
     assert "decisionTable" in kinds
     assert kinds - set(LABELS) == set()
+
+
+def test_graph_draws_a_compiled_transaction_without_running_it(tmp_path):
+    import yaml
+
+    from firefly_weave.compiler.catalog import CatalogSnapshot
+    from firefly_weave.contracts.definitions import load_definition
+
+    fixture = yaml.safe_load(Path("tests/fixtures/transactions/catalog.yaml").read_text())
+    catalog = CatalogSnapshot.from_definitions(
+        [load_definition(item) for item in fixture["definitions"]], tasks=fixture["tasks"]
+    )
+    example = Path("examples/language/move-between-systems.workflow.yaml").read_text()
+    result = compile_source(example, format="yaml", catalog=catalog)
+    assert result.ok and result.artifact is not None
+    path = tmp_path / "compiled.json"
+    path.write_bytes(result.artifact.to_bytes())
+    for format in ("text", "mermaid", "svg"):
+        drawn = CliRunner().invoke(cli, ["workflow", "graph", str(path), "--format", format, "--output", "json"])
+        assert drawn.exit_code == 0, drawn.output
+        assert "Transaction" in json.loads(drawn.output)["content"]
+    text = CliRunner().invoke(cli, ["workflow", "graph", str(path)]).output
+    assert "[move] Transaction\n" in text and "transaction: body --> [hold]" in text

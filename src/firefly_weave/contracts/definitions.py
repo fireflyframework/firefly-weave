@@ -25,6 +25,18 @@ from pydantic.json_schema import JsonSchemaValue, SkipJsonSchema
 
 from firefly_weave.contracts.language_features import DEFAULT_LOOP_MAX_ITEMS
 from firefly_weave.contracts.llm import LLMProfile
+from firefly_weave.contracts.transactions import (
+    DEFAULT_HOLD_SECONDS,
+    DEFAULT_UNDO_ATTEMPTS,
+    DEFAULT_UNDO_INITIAL_DELAY_SECONDS,
+    DEFAULT_UNDO_MAX_DELAY_SECONDS,
+    DEFAULT_UNDO_TIMEOUT_SECONDS,
+    MAX_HOLD_SECONDS,
+    MAX_UNDO_TIMEOUT_SECONDS,
+    MIN_HOLD_SECONDS,
+    MIN_UNDO_TIMEOUT_SECONDS,
+    PlatformEventType,
+)
 from firefly_weave.contracts.values import MAX_SAFE_INTEGER, JsonData, JsonObject, JsonObjectData, UnicodeString
 
 SEMVER_PATTERN = (
@@ -42,6 +54,8 @@ type VersionedReference = Annotated[UnicodeString, Field(pattern=rf"^{NAME_PATTE
 type JsonPointer = Annotated[UnicodeString, Field(pattern=r"^(?:/(?:[^~/]|~[01])*)*$")]
 type PositiveInt = Annotated[int, Field(gt=0, le=MAX_SAFE_INTEGER)]
 type SideEffect = Literal["read_only", "idempotent", "idempotency_key", "non_idempotent"]
+# A worker or connector failure code, as TaskError reports it.
+type FailureCode = Annotated[UnicodeString, Field(pattern=r"^[A-Z][A-Z0-9_-]{0,63}$")]
 type OperatorName = Literal[
     "eq",
     "ne",
@@ -196,6 +210,59 @@ class ActionSpec(ContractModel):
     routing: OmissionOnly[WorkerRouting] = Field(
         default=None, exclude_if=_is_absent, json_schema_extra=_omit_absent_default
     )
+    # Failure codes that mean nothing was applied, from any release; transient codes are refused when compiled.
+    definite_failures: list[FailureCode] = Field(
+        default_factory=list,
+        alias="definiteFailures",
+        max_length=32,
+        exclude_if=lambda value: not value,
+        json_schema_extra={"uniqueItems": True},
+    )
+    # The implementation reports explicitly when a failure applied nothing (TaskError.effect).
+    transaction_aware: bool = Field(default=False, alias="transactionAware", exclude_if=lambda value: not value)
+
+    @model_validator(mode="after")
+    def unique_definite_failures(self) -> ActionSpec:
+        if len(set(self.definite_failures)) != len(self.definite_failures):
+            raise ValueError("definiteFailures must be unique")
+        return self
+
+
+type HoldSeconds = Annotated[int, Field(ge=MIN_HOLD_SECONDS, le=MAX_HOLD_SECONDS)]
+
+
+class ActionUndo(ContractModel):
+    """An action that confirms, cancels or reverses a step; its connection defaults to the step's."""
+
+    kind: Literal["action"]
+    uses: VersionedReference
+    input: Expression = Field(alias="with")
+    connection: OmissionOnly[ResourceName] = Field(
+        default=None, exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+
+
+class CallUndo(ContractModel):
+    """A called workflow that confirms, cancels or reverses a step; it always waits for its result."""
+
+    kind: Literal["callWorkflow"]
+    uses: VersionedReference
+    input: Expression = Field(alias="with")
+
+
+type UndoOperation = Annotated[ActionUndo | CallUndo, Field(discriminator="kind")]
+
+
+def _undo_forms(step: ActionStep | CallWorkflowStep) -> None:
+    """At most one way to undo a step: reserve (confirm and cancel), compensate, or irreversible."""
+    if (step.confirm is None) != (step.cancel is None):
+        raise ValueError("confirm and cancel go together")
+    if step.compensate is not None and step.confirm is not None:
+        raise ValueError("compensate excludes confirm and cancel")
+    if step.irreversible is not None and (step.confirm is not None or step.compensate is not None):
+        raise ValueError("irreversible excludes confirm, cancel and compensate")
+    if step.hold_seconds is not None and step.confirm is None:
+        raise ValueError("holdSeconds applies only to a step that is confirmed or cancelled")
 
 
 class ActionStep(ContractModel):
@@ -206,6 +273,27 @@ class ActionStep(ContractModel):
     connection: OmissionOnly[ResourceName] = Field(
         default=None, exclude_if=_is_absent, json_schema_extra=_omit_absent_default
     )
+    # How the step is undone inside a transaction; all omitted outside one.
+    confirm: OmissionOnly[UndoOperation] = Field(
+        default=None, exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+    cancel: OmissionOnly[UndoOperation] = Field(
+        default=None, exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+    compensate: OmissionOnly[UndoOperation] = Field(
+        default=None, exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+    irreversible: OmissionOnly[Literal[True]] = Field(
+        default=None, exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+    hold_seconds: OmissionOnly[HoldSeconds] = Field(
+        default=None, alias="holdSeconds", exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+
+    @model_validator(mode="after")
+    def one_undo_form(self) -> ActionStep:
+        _undo_forms(self)
+        return self
 
 
 class LLMStep(ContractModel):
@@ -355,12 +443,73 @@ class CallWorkflowStep(ContractModel):
     business_key: OmissionOnly[Expression] = Field(
         default=None, alias="businessKey", exclude_if=_is_absent, json_schema_extra=_omit_absent_default
     )
+    # How the call is undone inside a transaction; all omitted outside one, and only for a call that waits.
+    confirm: OmissionOnly[UndoOperation] = Field(
+        default=None, exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+    cancel: OmissionOnly[UndoOperation] = Field(
+        default=None, exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+    compensate: OmissionOnly[UndoOperation] = Field(
+        default=None, exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+    irreversible: OmissionOnly[Literal[True]] = Field(
+        default=None, exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+    hold_seconds: OmissionOnly[HoldSeconds] = Field(
+        default=None, alias="holdSeconds", exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
 
     @model_validator(mode="after")
     def failure_needs_wait(self) -> CallWorkflowStep:
         if self.mode == "detach" and self.on_failure is not None:
             raise ValueError("onFailure applies only when the call waits for its result")
+        _undo_forms(self)
+        undo = (self.confirm, self.cancel, self.compensate, self.irreversible)
+        if self.mode == "detach" and any(value is not None for value in undo):
+            raise ValueError("Only a call that waits for its result can be undone")
         return self
+
+
+class UndoRetryPolicy(ContractModel):
+    """How often Weave retries one confirm, cancel or undo; the defaults favor finishing over speed."""
+
+    max_attempts: PositiveInt = Field(default=DEFAULT_UNDO_ATTEMPTS, alias="maxAttempts")
+    initial_delay_seconds: PositiveInt = Field(default=DEFAULT_UNDO_INITIAL_DELAY_SECONDS, alias="initialDelaySeconds")
+    max_delay_seconds: PositiveInt = Field(default=DEFAULT_UNDO_MAX_DELAY_SECONDS, alias="maxDelaySeconds")
+
+    @model_validator(mode="after")
+    def delay_is_capped(self) -> UndoRetryPolicy:
+        if self.max_delay_seconds < self.initial_delay_seconds:
+            raise ValueError("maxDelaySeconds must be at least initialDelaySeconds")
+        return self
+
+
+class TransactionPolicy(ContractModel):
+    # Defaults are materialized in the canonical document once a policy is supplied, like retry.
+    hold_seconds: HoldSeconds = Field(default=DEFAULT_HOLD_SECONDS, alias="holdSeconds")
+    undo_retry: UndoRetryPolicy = Field(default_factory=UndoRetryPolicy, alias="undoRetry")
+    undo_timeout_seconds: int = Field(
+        default=DEFAULT_UNDO_TIMEOUT_SECONDS,
+        ge=MIN_UNDO_TIMEOUT_SECONDS,
+        le=MAX_UNDO_TIMEOUT_SECONDS,
+        alias="undoTimeoutSeconds",
+    )
+
+
+class TransactionStep(ContractModel):
+    """Run ``steps`` so that either all of them succeed, or what they did is undone."""
+
+    id: ResourceName
+    kind: Literal["transaction"]
+    business_key: OmissionOnly[Expression] = Field(
+        default=None, alias="businessKey", exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+    policy: OmissionOnly[TransactionPolicy] = Field(
+        default=None, exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+    steps: list[Step] = Field(min_length=1)
+    output: Expression
 
 
 type Step = Annotated[
@@ -375,7 +524,8 @@ type Step = Annotated[
     | HumanTaskStep
     | FailStep
     | ForEachStep
-    | CallWorkflowStep,
+    | CallWorkflowStep
+    | TransactionStep,
     Field(discriminator="kind"),
 ]
 
@@ -399,6 +549,23 @@ class CallableSpec(ContractModel):
         return self
 
 
+class EventTriggerSpec(ContractModel):
+    """A workflow's opt-in to being started by platform events; omitted ``from`` means any source workflow."""
+
+    events: list[PlatformEventType] = Field(min_length=1, max_length=12, json_schema_extra={"uniqueItems": True})
+    source_workflows: OmissionOnly[CallerNames] = Field(
+        default=None, alias="from", exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+
+    @model_validator(mode="after")
+    def unique_entries(self) -> EventTriggerSpec:
+        if len(set(self.events)) != len(self.events):
+            raise ValueError("events must be unique")
+        if self.source_workflows is not None and len(set(self.source_workflows)) != len(self.source_workflows):
+            raise ValueError("from must be unique")
+        return self
+
+
 class WorkflowSpec(ContractModel):
     input_schema: JsonObjectData = Field(alias="inputSchema")
     output_schema: JsonObjectData = Field(alias="outputSchema")
@@ -413,6 +580,9 @@ class WorkflowSpec(ContractModel):
     output: Expression
     callable: OmissionOnly[CallableSpec] = Field(
         default=None, exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+    event_trigger: OmissionOnly[EventTriggerSpec] = Field(
+        default=None, alias="eventTrigger", exclude_if=_is_absent, json_schema_extra=_omit_absent_default
     )
 
 
@@ -491,6 +661,7 @@ for _model in (
     ParallelStep,
     ForEachStep,
     CallWorkflowStep,
+    TransactionStep,
 ):
     _model.model_rebuild()
 

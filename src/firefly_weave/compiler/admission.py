@@ -234,6 +234,14 @@ def admit_artifact(executable: JsonObject) -> None:
     if isinstance(graph, dict):
         schemas = cast(JsonObject, executable["schemas"])
         for node in cast(list[JsonObject], graph["nodes"]):
+            # The confirm, cancel and compensate of a step inside a transaction bind their own inputs.
+            participation = node.get("txn")
+            phases = cast(JsonObject, participation.get("phases", {})) if isinstance(participation, dict) else {}
+            for phase in phases.values():
+                phase = cast(JsonObject, phase)
+                kind = "Action" if phase["kind"] == "action" else "Workflow"
+                used = next(r for r in resources.values() if r.kind == kind and r.digest == phase["dependency"])
+                admit_authoring({"kind": phase["kind"], "uses": used.reference, "with": phase["with"]}, catalog)
             if node["kind"] == "action":
                 action = next(r for r in resources.values() if r.kind == "Action" and r.digest == node["dependency"])
                 admit_authoring({"kind": "action", "uses": action.reference, "with": node["with"]}, catalog)

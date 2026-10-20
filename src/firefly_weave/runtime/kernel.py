@@ -45,6 +45,7 @@ from firefly_weave.compiler.ir import (
     SignalNode,
     StartNode,
     SwitchNode,
+    TransactionNode,
     TransformNode,
     WaitNode,
     WorkflowIR,
@@ -882,6 +883,9 @@ def _advance_owned(
                     update={"output": {"code": node.code, "message": node.message}}
                 )
                 return checkpoint(result.model_copy(update={"state": current_state}))
+            elif isinstance(node, TransactionNode):
+                # Import refuses transactions until this runtime runs them; never run their steps unprotected.
+                raise KernelError("WV-RUNTIME-ARTIFACT")
             elif isinstance(node, CallWorkflowNode):
                 if current in current_state.active:
                     raise KernelError("WV-RUNTIME-ACTIVATION")

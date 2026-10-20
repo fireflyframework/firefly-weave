@@ -20,6 +20,33 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+- The workflow language gains **transactions**. A `transaction` step groups
+  steps that change other systems, and each of them says how it is undone:
+  `confirm` and `cancel` (reserve, then confirm), `compensate` (an action or a
+  called workflow that reverses it), or `irreversible: true`. The compiler checks
+  every path before publishing: a step that changes data must say how it is
+  undone (`WV-COMP-TXN_UNDECLARED`), nothing that can be undone may follow a step
+  that can't (`WV-COMP-TXN_ORDER`, with a suggested edit), undo actions must be
+  safe to retry, called workflows need `timeoutSeconds`, and reservations must
+  outlast the step that can't be undone (`WV-COMP-TXN_HOLD_PIVOT`), among other
+  `WV-COMP-TXN_*` rules; importing an artifact checks the ordering, placement,
+  undo and hold rules again. Undo steps read
+  `/participant/operationKey`, `/participant/outcome`, `/transaction/id` and
+  `/transaction/businessKey`. Transactions compile to the `flow.transaction`
+  feature, which this platform does not run yet: it refuses to publish, import or
+  activate a workflow with a transaction (`WV-IR-UNSUPPORTED`), and workflows
+  without one compile to the same bytes as before. Also new: actions may declare
+  `definiteFailures` (codes that mean nothing was applied) and
+  `transactionAware`; a worker failure may report `effect: none`, and
+  `effect: none` with `outcome: unknown` is refused (`422 WV-COMPLETION-EFFECT`);
+  claims accept `worker: {release, transaction_aware}`; workflows may declare
+  `spec.eventTrigger`, which this version defines but does not compile yet; and
+  `weave schema export` writes `platform-event-v1`. `weave workflow explain` and
+  `weave workflow graph` show transactions. The language manifest gains
+  `step_fields` and new feature names, so upgrade CLIs and SDKs together with
+  the server: an earlier CLI or SDK can't read this server's manifest, while
+  this CLI or SDK still reads an earlier server's (see
+  [language manifest compatibility](docs/operations/upgrades.md#language-manifest-compatibility)).
 - Operations work out of the box on the local Docker platform, and every
   infrastructure change can go through a reviewed **change request**. `weave
   platform up` starts a local registry, admits the sleep fixture worker

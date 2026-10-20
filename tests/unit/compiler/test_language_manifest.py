@@ -48,13 +48,19 @@ def test_feature_vocabulary_is_frozen():
         "ai.agent",
         "ai.memory",
         "flow.callWorkflow",
+        "flow.eventTrigger",
         "flow.forEach",
+        "flow.transaction",
         "text.concat",
         "text.join",
     )
-    assert dict(KIND_FEATURES) == {"forEach": "flow.forEach", "callWorkflow": "flow.callWorkflow"}
+    assert dict(KIND_FEATURES) == {
+        "forEach": "flow.forEach",
+        "callWorkflow": "flow.callWorkflow",
+        "transaction": "flow.transaction",
+    }
     assert dict(OPERATOR_FEATURES) == {"concat": "text.concat", "join": "text.join"}
-    assert dict(WORKFLOW_FIELD_FEATURES) == {"callable": "flow.callWorkflow"}
+    assert dict(WORKFLOW_FIELD_FEATURES) == {"callable": "flow.callWorkflow", "eventTrigger": "flow.eventTrigger"}
 
 
 def test_every_definition_construct_has_exactly_one_manifest_entry():
@@ -110,7 +116,11 @@ def test_schema_references_and_blocks_resolve_in_the_exported_workflow_schema():
         model = workflow["$defs"][entry.schema_ref.removeprefix("workflow.schema.json#/$defs/")]
         assert model["properties"]["kind"]["const"] == entry.kind
         for block in entry.blocks:
-            assert block.path.removeprefix("/") in model["properties"]
+            # An empty path is the step itself, which holds the block's steps and output.
+            if block.path:
+                assert block.path.removeprefix("/") in model["properties"]
+            else:
+                assert {"steps", "output"} <= model["properties"].keys()
 
 
 def test_limits_follow_their_sources():
@@ -199,11 +209,29 @@ def test_manifest_round_trips_and_its_schema_is_exported():
     }
 
 
+def test_a_manifest_from_a_server_without_step_fields_still_reads():
+    older = language_manifest().model_dump(mode="json")
+    del older["step_fields"]
+    older["step_kinds"] = [entry for entry in older["step_kinds"] if entry["kind"] != "transaction"]
+    older["workflow_fields"] = [entry for entry in older["workflow_fields"] if entry["name"] != "eventTrigger"]
+    manifest = LanguageManifest.model_validate(older)
+    assert manifest.step_fields == []
+    assert "step_fields" in manifest.model_dump(mode="json")
+
+
 def test_new_constructs_stay_pending_until_studio_ships_them():
     manifest = language_manifest()
-    assert {entry.kind for entry in manifest.step_kinds if entry.studio == "pending"} == {"forEach", "callWorkflow"}
+    assert {entry.kind for entry in manifest.step_kinds if entry.studio == "pending"} == {
+        "forEach",
+        "callWorkflow",
+        "transaction",
+    }
     assert {entry.name for entry in manifest.operators if entry.studio == "pending"} == {"concat", "join"}
-    assert {entry.name for entry in manifest.workflow_fields if entry.studio == "pending"} == {"callable"}
+    assert {entry.name for entry in manifest.workflow_fields if entry.studio == "pending"} == {
+        "callable",
+        "eventTrigger",
+    }
+    assert {entry.name for entry in manifest.step_fields if entry.studio == "pending"} == {"undo"}
 
 
 def test_loop_and_join_entries_match_the_spec_example():

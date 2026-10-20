@@ -27,7 +27,7 @@ from firefly_weave.compiler.catalog import FrozenDocument
 from firefly_weave.compiler.expressions import measure_value
 from firefly_weave.compiler.ir import COMPARISON_IR_VERSION, IR_VERSION, Executable, IRGraph, workflow_requirements
 from firefly_weave.compiler.llm import llm_input
-from firefly_weave.contracts.definitions import ContractModel
+from firefly_weave.contracts.definitions import ContractModel, TransactionPolicy
 from firefly_weave.contracts.limits import Limits
 from firefly_weave.contracts.values import JsonObject, JsonValue
 
@@ -49,6 +49,8 @@ class ArtifactLimits(ContractModel):
 
 
 DEFAULT_ARTIFACT_LIMITS = ArtifactLimits()
+# A transaction's policy when its definition supplies none: the defaults, written out in the artifact.
+TRANSACTION_POLICY: JsonObject = TransactionPolicy().model_dump(by_alias=True)
 _EXECUTABLE: TypeAdapter[Executable] = TypeAdapter(Executable)
 
 
@@ -118,7 +120,7 @@ class _Lowerer:
             following = steps[i + 1].id if i + 1 < len(steps) else successor
             value = step.definition.value
             base: JsonObject = {"id": step.id, "kind": step.kind, "scope": list(step.scope), "path": step.path}
-            if step.kind in {"switch", "parallel", "forEach"}:
+            if step.kind in {"switch", "parallel", "forEach", "transaction"}:
                 join_id = "@join:" + step.id
                 branch_ids: list[JsonValue] = []
                 branches: list[JsonValue] = []
@@ -145,9 +147,9 @@ class _Lowerer:
                     if step.kind == "parallel":
                         branches.append({"name": branch.name, "target": target})
                         self.edge(step.id, target, "fork", branch.name)
-                    elif step.kind == "forEach":
+                    elif step.kind in {"forEach", "transaction"}:
                         base["target"] = target
-                        self.edge(step.id, target, "each", branch.name)
+                        self.edge(step.id, target, "each" if step.kind == "forEach" else "transaction", branch.name)
                     elif branch.name == "default":
                         default = target
                         self.edge(step.id, target, "default", "default")
@@ -161,7 +163,9 @@ class _Lowerer:
                         "scope": list(step.scope),
                         "path": step.path,
                         "owner": step.id,
-                        "mode": {"parallel": "all", "forEach": "each"}.get(step.kind, "selected"),
+                        "mode": {"parallel": "all", "forEach": "each", "transaction": "transaction"}.get(
+                            step.kind, "selected"
+                        ),
                         "branches": branch_ids,
                         "completes": step.completes,
                     }
@@ -171,6 +175,12 @@ class _Lowerer:
                     base.update({"branches": branches, "concurrency": value["concurrency"]})
                 elif step.kind == "forEach":
                     base.update({key: value[key] for key in ("items", "concurrency", "maxItems", "collect")})
+                elif step.kind == "transaction":
+                    base["policy"] = value.get("policy", TRANSACTION_POLICY)
+                    base.update({key: value[key] for key in ("businessKey",) if key in value})
+                    after = dict(self.result.after_pivot).get(step.id, ())
+                    if after:
+                        base["afterPivot"] = list(after)
                 else:
                     base.update({"cases": branches, "default": default})
                 if step.completes:
@@ -218,10 +228,34 @@ class _Lowerer:
                     )
                 else:
                     base.update({k: v for k, v in value.items() if k not in {"id", "kind"}})
+                if step.participation is not None:
+                    base["txn"] = self.participation(step)
                 if step.completes:
                     self.edge(step.id, following)
             self.node(base)
         return entry
+
+    def participation(self, step: AnalyzedStep) -> JsonObject:
+        """How a participant is undone, with each phase pinned to the exact definition it uses."""
+        assert step.participation is not None
+        value = dict(step.participation.value)
+        phases: JsonObject = {}
+        for name, phase in cast(JsonObject, value.get("phases", {})).items():
+            phase = cast(JsonObject, phase)
+            table = self.actions if phase["kind"] == "action" else self.workflows
+            pinned: JsonObject = {
+                "kind": phase["kind"],
+                "dependency": table[cast(str, phase["uses"])],
+                "with": phase["with"],
+            }
+            if "connection" in phase:
+                pinned["connection"] = phase["connection"]
+            phases[name] = pinned
+        if phases:
+            value["phases"] = phases
+        if step.id in self.result.pivots:
+            value["pivot"] = True
+        return value
 
     def run(self) -> JsonObject:
         if not self.result.ok or self.result.definition is None:

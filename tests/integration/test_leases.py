@@ -130,6 +130,29 @@ async def test_failure_is_durable_and_never_silently_retried(
         assert data["output"]["outcome"] == "unknown"
 
 
+async def test_a_failure_cannot_both_be_unknown_and_have_applied_nothing(
+    task_service, transaction_factory, queued_task, worker_ids, access_db
+):
+    from firefly_weave.contracts.workers import TaskError
+    from firefly_weave.definitions.models import CatalogError
+
+    async with transaction_factory() as tx:
+        lease = (await task_service.claim(tx, worker_ids[0], 1))[0]
+    contradictory = TaskError(completion_id=uuid4(), code="VALIDATION", outcome="unknown", effect="none")
+    async with transaction_factory() as tx:
+        with pytest.raises(CatalogError) as refused:
+            await task_service.fail(tx, lease.proof, contradictory)
+    assert (refused.value.status, refused.value.code) == (422, "WV-COMPLETION-EFFECT")
+    async with access_db[1]() as tx:
+        assert await tx.scalar(text("SELECT count(*) FROM completion_receipts")) == 0
+    definite = TaskError(completion_id=uuid4(), code="VALIDATION", outcome="failed", effect="none")
+    async with transaction_factory() as tx:
+        assert (await task_service.fail(tx, lease.proof, definite)).status == "failed"
+    async with access_db[1]() as tx:
+        data = await tx.scalar(text("SELECT data FROM run_events WHERE type='task_failed'"))
+        assert (data["output"]["outcome"], data["output"]["effect"]) == ("failed", "none")
+
+
 async def test_current_principal_required_for_accepted_replay(
     task_service, transaction_factory, queued_task, worker_ids, worker_setup, access_db
 ):

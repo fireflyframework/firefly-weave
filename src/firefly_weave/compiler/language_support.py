@@ -26,11 +26,18 @@ from dataclasses import dataclass
 from typing import Final, cast
 
 from firefly_weave.compiler.source_map import pointer_child
-from firefly_weave.contracts.language_features import KIND_FEATURES, OPERATOR_FEATURES, LanguageFeature
+from firefly_weave.contracts.language_features import (
+    KIND_FEATURES,
+    OPERATOR_FEATURES,
+    STEP_FIELD_FEATURES,
+    UNDO_KINDS,
+    WORKFLOW_FIELD_FEATURES,
+    LanguageFeature,
+)
 from firefly_weave.contracts.values import JsonObject, JsonValue
 
 COMPILED_FEATURES: Final[frozenset[LanguageFeature]] = frozenset(
-    {"flow.callWorkflow", "flow.forEach", "text.concat", "text.join"}
+    {"flow.callWorkflow", "flow.forEach", "flow.transaction", "text.concat", "text.join"}
 )
 
 # Expression positions per step kind; blocks are walked separately.
@@ -42,6 +49,7 @@ _EXPRESSIONS: Final[dict[str, tuple[str, ...]]] = {
     "humanTask": ("title", "context"),
     "forEach": ("items",),
     "callWorkflow": ("with", "businessKey"),
+    "transaction": ("businessKey",),
 }
 
 
@@ -67,6 +75,9 @@ def unsupported_uses(document: JsonObject) -> list[UnsupportedUse]:
     if not isinstance(spec, dict):
         return found
     if document.get("kind") == "Workflow":
+        for name, workflow_feature in WORKFLOW_FIELD_FEATURES.items():
+            if name in spec and workflow_feature not in COMPILED_FEATURES:
+                found.append(UnsupportedUse(f"/spec/{name}", f"The {name} field", workflow_feature))
         blocks: deque[tuple[JsonValue, str]] = deque([(spec.get("steps"), "/spec/steps")])
         expressions.append((spec.get("output"), "/spec/output"))
         while blocks:
@@ -82,6 +93,12 @@ def unsupported_uses(document: JsonObject) -> list[UnsupportedUse]:
                 for name in _EXPRESSIONS.get(str(kind), ()):
                     if name in step:
                         expressions.append((step[name], f"{location}/{name}"))
+                for name, field_feature in STEP_FIELD_FEATURES.items() if kind in UNDO_KINDS else ():
+                    if name in step and field_feature not in COMPILED_FEATURES:
+                        found.append(UnsupportedUse(f"{location}/{name}", f"The {name} field", field_feature))
+                    undo = step.get(name)
+                    if isinstance(undo, dict) and "with" in undo:
+                        expressions.append((undo["with"], f"{location}/{name}/with"))
                 for branch, branch_path in _branches(step, location):
                     if "when" in branch:
                         expressions.append((branch["when"], branch_path + "/when"))
@@ -97,7 +114,7 @@ def unsupported_uses(document: JsonObject) -> list[UnsupportedUse]:
             expressions.append((spec["defaultOutput"], "/spec/defaultOutput"))
     for expression, path in expressions:
         found.extend(_operators(expression, path))
-    return sorted(found, key=lambda use: _order(use.path))
+    return sorted(found, key=lambda use: path_order(use.path))
 
 
 def _branches(step: JsonObject, path: str) -> list[tuple[JsonObject, str]]:
@@ -116,6 +133,9 @@ def _branches(step: JsonObject, path: str) -> list[tuple[JsonObject, str]]:
                 result.append((branch, pointer_child(path + "/branches", name)))
     elif kind == "forEach" and isinstance(step.get("body"), dict):
         result.append((cast(JsonObject, step["body"]), path + "/body"))
+    elif kind == "transaction":
+        # The transaction step is its own block: its steps and output sit beside its other fields.
+        result.append((step, path))
     return result
 
 
@@ -144,7 +164,7 @@ def _operators(expression: JsonValue, path: str) -> list[UnsupportedUse]:
     return found
 
 
-def _order(path: str) -> tuple[tuple[int, int, str], ...]:
+def path_order(path: str) -> tuple[tuple[int, int, str], ...]:
     """Sort key: ASCII-digit segments by length and then text, other segments after them as text.
 
     For digit strings without leading zeros, length then text is numeric order. Nothing calls ``int()``, whose digit

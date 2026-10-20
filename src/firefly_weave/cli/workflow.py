@@ -44,6 +44,7 @@ from firefly_weave.compiler.ir import (
     EndNode,
     ForEachNode,
     SwitchNode,
+    TransactionNode,
     TransformNode,
 )
 from firefly_weave.compiler.parser import parse_source
@@ -92,6 +93,16 @@ def _explain(artifact: CompiledArtifact) -> None:
             if isinstance(node, CallWorkflowNode):
                 failure = f" onFailure={node.on_failure}" if node.on_failure is not None else ""
                 detail = f" uses={dependencies[node.dependency].reference} mode={node.mode}{failure}"
+            if isinstance(node, TransactionNode):
+                detail = f" holdSeconds={node.policy.hold_seconds}"
+                if node.after_pivot:
+                    detail += " afterPivot=" + ",".join(node.after_pivot)
+            if isinstance(node, ActionNode | CallWorkflowNode) and node.txn is not None:
+                detail += f" undo={node.txn.mode}" + (" decides" if node.txn.pivot else "")
+                if node.txn.hold_seconds is not None:
+                    detail += f" holdSeconds={node.txn.hold_seconds}"
+                for name, phase in node.txn.phases.items():
+                    detail += f" {name}={dependencies[phase.dependency].reference}"
             click.echo(f"  {node.id} ({node.kind}) {location}{detail}")
             expressions: list[Expression] = []
             if isinstance(node, ActionNode):
@@ -108,6 +119,10 @@ def _explain(artifact: CompiledArtifact) -> None:
                 expressions.append(node.input)
                 if node.business_key is not None:
                     expressions.append(node.business_key)
+            elif isinstance(node, TransactionNode) and node.business_key is not None:
+                expressions.append(node.business_key)
+            if isinstance(node, ActionNode | CallWorkflowNode) and node.txn is not None:
+                expressions.extend(phase.input for phase in node.txn.phases.values())
             for expression in expressions:
                 for reference in _references(expression):
                     click.echo(f"    reads {reference}")

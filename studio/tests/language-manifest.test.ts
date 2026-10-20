@@ -17,6 +17,7 @@ SPDX-License-Identifier: Apache-2.0
 */
 import { describe, expect, it } from "vitest";
 import {
+  pendingStepFields,
   readyKinds,
   type LanguageManifest,
 } from "../src/app/editor/language-manifest";
@@ -54,5 +55,47 @@ describe("language manifest marks", () => {
       ],
     };
     expect(readyKinds(manifest)).toEqual(["action"]);
+  });
+});
+
+describe("shared step settings", () => {
+  const manifest: LanguageManifest = {
+    version: "weave/language-manifest-v1",
+    language_version: "weave/v1alpha1",
+    ir_versions: [],
+    features: [],
+    limits: {},
+    operators: [],
+    workflow_fields: [],
+    step_kinds: [],
+    step_fields: [
+      {
+        name: "undo",
+        feature: "flow.transaction",
+        kinds: ["action", "callWorkflow"],
+        values: ["reserve", "compensate", "irreversible"],
+        paths: {
+          reserve: ["/confirm", "/cancel", "/holdSeconds"],
+          compensate: ["/compensate"],
+          irreversible: ["/irreversible"],
+        },
+        only_inside: "transaction",
+        studio: "pending",
+      },
+    ],
+  };
+  it("lists the fields of pending settings for the kinds that hold them", () => {
+    expect(pendingStepFields(manifest, "action")).toEqual([
+      "confirm",
+      "cancel",
+      "holdSeconds",
+      "compensate",
+      "irreversible",
+    ]);
+    expect(pendingStepFields(manifest, "transform")).toEqual([]);
+  });
+  it("reads a manifest from a platform without shared settings", () => {
+    const { step_fields: _, ...older } = manifest;
+    expect(pendingStepFields(older, "action")).toEqual([]);
   });
 });
