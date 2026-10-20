@@ -25,6 +25,7 @@ from pydantic import AwareDatetime, ConfigDict, Field
 
 from firefly_weave.contracts.definitions import ContractModel
 from firefly_weave.contracts.diagnostics import Diagnostic
+from firefly_weave.contracts.language_features import MAX_CALL_DEPTH
 from firefly_weave.contracts.values import JsonData, JsonObjectData
 from firefly_weave.runtime.kernel import KernelCursor
 from firefly_weave.runtime.models import Deadline, RunState, RuntimeEvent
@@ -54,6 +55,8 @@ class DebugLimits:
     continue_boundaries: int = 10_000
     virtual_seconds: int = 366 * 86400
     lifetime_seconds: int = 3600
+    # How deep called workflows nest inside a session, like the chain of calls a platform starts.
+    call_depth: int = MAX_CALL_DEPTH
 
 
 class Boundary(ContractModel):
@@ -61,6 +64,8 @@ class Boundary(ContractModel):
     event_type: str | None = None
     node_id: str | None = None
     node_kind: str | None = None
+    # The called workflow's frame the boundary ran in; omitted in the simulated workflow itself.
+    frame: str | None = Field(default=None, exclude_if=lambda v: v is None)
 
 
 class SignalReceipt(ContractModel):
@@ -68,6 +73,33 @@ class SignalReceipt(ContractModel):
     name: str
     payload: JsonData
     accepted_at: AwareDatetime
+
+
+class CalledWorkflow(ContractModel):
+    """A called workflow version a session can run: its compiled artifact and the mocks used inside it."""
+
+    artifact: JsonObjectData | None = Field(default=None, exclude_if=lambda v: v is None)
+    mocks: JsonObjectData = Field(default_factory=dict)
+
+
+class FrameState(ContractModel):
+    """The simulated run of one call: ``key`` joins the instance keys of the calls from the simulated workflow."""
+
+    model_config = ConfigDict(frozen=False)
+    key: str
+    workflow: str
+    call_node: str
+    mode: Literal["wait", "detach"]
+    on_failure: Literal["stop", "continue"] | None = Field(default=None, exclude_if=lambda v: v is None)
+    # None when the session has no artifact for a detached call's workflow: the call is not simulated.
+    state: RunState | None = Field(default=None, exclude_if=lambda v: v is None)
+    cursor: KernelCursor | None = Field(default=None, exclude_if=lambda v: v is None)
+    pending: list[RuntimeEvent] = Field(default_factory=list)
+    signals: list[SignalReceipt] = Field(default_factory=list)
+    deadlines: list[Deadline] = Field(default_factory=list)
+    events: list[RuntimeEvent] = Field(default_factory=list)
+    # The event that carries this run's outcome to the calling frame, once it ended.
+    result: UUID | None = Field(default=None, exclude_if=lambda v: v is None)
 
 
 class DebugState(ContractModel):
@@ -90,6 +122,9 @@ class DebugState(ContractModel):
     fact_count: int = Field(default=0, ge=0)
     command_count: int = Field(default=0, ge=0)
     virtual_seconds: int = Field(default=0, ge=0)
+    # Omitted for sessions without called workflows, so stored sessions keep their bytes.
+    workflows: dict[str, CalledWorkflow] = Field(default_factory=dict, exclude_if=lambda v: not v)
+    frames: list[FrameState] = Field(default_factory=list, exclude_if=lambda v: not v)
 
 
 class LoopView(ContractModel):
@@ -117,6 +152,21 @@ class SelectedScope(ContractModel):
     loops: dict[str, LoopPosition]
 
 
+class FrameView(ContractModel):
+    """One call's simulated run; ``status`` is ``not_simulated`` for a detached call without its workflow."""
+
+    key: str
+    workflow: str
+    call_node: str
+    mode: Literal["wait", "detach"]
+    run_id: UUID | None = Field(default=None, exclude_if=lambda v: v is None)
+    status: str
+    selected_node: str | None
+    active_nodes: list[str]
+    variables: JsonObjectData
+    loops: list[LoopView] = Field(default_factory=list, exclude_if=lambda v: not v)
+
+
 class DebugView(ContractModel):
     status: str
     selected_node: str | None
@@ -131,21 +181,29 @@ class DebugView(ContractModel):
     # Omitted for workflows without loops, so their views keep their shape.
     loops: list[LoopView] = Field(default_factory=list, exclude_if=lambda v: not v)
     selected_scope: SelectedScope | None = Field(default=None, exclude_if=lambda v: v is None)
+    # Omitted for workflows without simulated calls; top-level fields keep describing the simulated workflow.
+    frames: list[FrameView] = Field(default_factory=list, exclude_if=lambda v: not v)
+    selected_frame: str | None = Field(default=None, exclude_if=lambda v: v is None)
 
 
 class DebugCreate(ContractModel):
     artifact: JsonObjectData
     mocks: JsonObjectData = Field(default_factory=dict)
+    workflows: dict[str, CalledWorkflow] = Field(default_factory=dict)
+    # Load the published version of every called workflow ``workflows`` gives no artifact for.
+    resolve_workflows: bool = False
     input: JsonData = None
     now: AwareDatetime
 
 
 class DebugCommand(ContractModel):
-    kind: Literal["next", "continue", "signal", "human_decision", "advance_time", "breakpoints"]
+    kind: Literal["next", "continue", "step_out", "signal", "human_decision", "advance_time", "breakpoints"]
     name: str | None = None
     payload: JsonData = None
     seconds: int | None = Field(default=None, ge=0)
     node_ids: list[str] | None = None
+    # A called workflow's frame key for step_out, signal and human_decision; the simulated workflow when omitted.
+    frame: str | None = None
 
 
 class DebugSession(ContractModel):

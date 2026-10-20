@@ -58,6 +58,24 @@ SPDX-License-Identifier: Apache-2.0
   most 512 tokens, the instructions ask for a brief answer, Ollama endpoints get
   a frequency penalty, and an answer that starts repeating itself is stopped
   early with `WV-LUMI-OUTPUT` and advice to use a larger model or less history.
+- Simulations and debug sessions run workflow calls. A waiting **Call a
+  workflow** step takes a mock for its whole result under `node:CALL_ID` (or
+  `node:notify[2]` for one iteration): the called workflow's output, or the
+  `{status, runId, output, error}` envelope with `onFailure: continue`. Without
+  a mock, a request whose new `workflows` field gives the called version's
+  artifact runs that workflow in a frame with its own mocks, and its outcome
+  reaches the caller as in a real run; a detached call's frame runs too, or is
+  listed as `not_simulated`. The debugger view adds `frames` and
+  `selected_frame`, boundaries inside a called workflow carry `frame`, and all
+  three are omitted when no call ran. `next` steps into called workflows, a
+  breakpoint such as `notify/record` stops inside one, the new `step_out`
+  command returns to the caller, and `signal` and `human_decision` take a
+  `frame`. Server sessions accept `"resolve_workflows": true` to load published
+  versions (with `catalog.read`), and `weave workflow simulate` takes
+  `--workflow REF=ARTIFACT.json` and prints one line per called workflow. New
+  codes: `WV-DEBUG-WORKFLOW` and `WV-DEBUG-FRAME`. A waiting call without a mock
+  or its workflow still answers `WV-DEBUG-MISSING_MOCK`, now with a hint.
+  Upgrade the SDK together with the server to read debug views with frames.
 - The AI task in step details takes its model connection first. **Model** lists
   the approved models of every AI connection you may use, grouped by connection;
   choosing one writes the step's own AI settings, the `ai` connection slot and
