@@ -305,7 +305,7 @@ of them succeed or what they did is undone. Each `action` or waiting
 | --- | --- | --- |
 | Reserve, then confirm | `confirm` and `cancel`; optional `holdSeconds` (30 to 86,400) | The step holds something. Weave confirms it once the transaction goes ahead, or cancels it if anything fails first |
 | An action that reverses it | `compensate` | If anything later fails, Weave runs this to reverse the step |
-| Can't be undone | `irreversible: true` | Once this step runs the transaction can't go back, so it must be the last step that changes data |
+| Can't be undone | `irreversible: true` | Once this step runs the transaction can't go back, so no step that can be undone may follow it |
 
 `confirm`, `cancel` and `compensate` are each `{kind: action, uses, with}` (with
 an optional `connection` slot, which defaults to the step's when the undo
