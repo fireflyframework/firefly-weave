@@ -143,8 +143,14 @@ test("test data and the canvas persist across reload and a second browser profil
   );
   await page.locator('[data-step="shape"]').first().click();
   await page.keyboard.press("Shift+S");
-  await page.keyboard.insertText("Kept on the platform");
+  // Typed once the new note's text box has focus.
+  const text = page.getByRole("textbox", { name: "Note text" });
+  await expect(text).toBeFocused();
+  await text.fill("Kept on the platform");
   await page.keyboard.press("Escape");
+  await expect(page.locator(".sticky-note-body")).toHaveText(
+    "Kept on the platform",
+  );
   expect((await canvas).status()).toBeLessThan(300);
   await shot(page, "td-02-saved");
 
