@@ -434,12 +434,37 @@ class Simulator:
             selected_frame=current[0] if current is not None and current[0] else None,
         ).model_copy(deep=True)
 
-    def _stops_at(self, key: str) -> bool:
-        """A breakpoint stops every instance of its step, or the one instance it names."""
-        return key in self.data.breakpoints or node_of(key) in self.data.breakpoints
+    def _stops_at(self, path: str) -> bool:
+        """A breakpoint stops every instance of its step, or the one instance it names, in every frame its path
+        names: ``enrich/validate`` stops in each run of the call ``enrich``, ``enrich[1]/validate`` in one.
+        """
+        if path in self.data.breakpoints:
+            return True
+        keys = path.split("/")
+        for breakpoint in self.data.breakpoints:
+            parts = breakpoint.split("/")
+            if len(parts) == len(keys) and all(
+                part == key or part == node_of(key) for part, key in zip(parts, keys, strict=True)
+            ):
+                return True
+        return False
+
+    def _breakpoint(self, path: str) -> bool:
+        """Whether ``path`` names a step: in the simulated workflow, or through calls whose workflow the session has."""
+        *calls, key = path.split("/")
+        prepared = self._prepared
+        for segment in calls:
+            node = _instance_node(prepared, segment)
+            if not isinstance(node, CallWorkflowNode):
+                return False
+            called = self._workflows.get(called_workflow(prepared.ir, node)[0])
+            if called is None:
+                return False
+            prepared = called.prepared
+        return _instance_node(prepared, key) is not None
 
     def set_breakpoints(self, node_ids: set[str]) -> None:
-        if any(_instance_node(self._prepared, key) is None for key in node_ids):
+        if not all(self._breakpoint(key) for key in node_ids):
             raise DebugError("WV-DEBUG-BREAKPOINT")
 
         def change() -> None:
@@ -457,21 +482,46 @@ class Simulator:
         return self._mutate(step)
 
     def continue_until_breakpoint(self) -> DebugView:
+        return self._mutate(lambda: self._run_until(lambda: False))
+
+    def step_out(self, frame: str | None = None) -> DebugView:
+        """Run until a called workflow's frame returns: its outcome reached the calling frame, or it ended without
+        one to deliver. Breakpoints still stop on the way. Without ``frame``, the frame of the next boundary.
+        """
+
         def run() -> None:
-            skip = self.data.paused
-            self.data.paused = None
-            for _ in range(self.limits.continue_boundaries):
-                selected = self._selected()
-                if selected is not None and self._stops_at(selected) and selected != skip:
-                    self.data.paused = selected
-                    return
-                skip = None
-                if not self._step():
-                    return
-                self._checkpoint()
-            # The command work ceiling pauses without undoing useful bounded progress.
+            current = self._current()
+            key = frame if frame is not None else current[0] if current is not None else ""
+            target = cast(FrameState, self._run(key)) if key else None
+            if target is None:
+                raise DebugError("WV-DEBUG-FRAME")
+            self._run_until(lambda: self._returned(target.key))
 
         return self._mutate(run)
+
+    def _returned(self, key: str) -> bool:
+        frame = cast(FrameState, self._run(key))
+        if frame.state is None or frame.state.status not in TERMINAL:
+            return False
+        caller = self._run(_parent(key))
+        return frame.result is None or any(event.id == frame.result for event in caller.events)
+
+    def _run_until(self, done: Callable[[], bool]) -> None:
+        """Process boundaries until ``done``, a breakpoint, no more work, or the command's work ceiling."""
+        skip = self.data.paused
+        self.data.paused = None
+        for _ in range(self.limits.continue_boundaries):
+            if done():
+                return
+            selected = self._selected_path()
+            if selected is not None and self._stops_at(selected) and selected != skip:
+                self.data.paused = selected
+                return
+            skip = None
+            if not self._step():
+                return
+            self._checkpoint()
+        # The command work ceiling pauses without undoing useful bounded progress.
 
     def _checkpoint(self) -> None:
         """Check the session limits while a command continues, like run admission: every 64 boundaries, or sooner
@@ -780,10 +830,12 @@ class Simulator:
             return self.next()
         if command.kind == "continue":
             return self.continue_until_breakpoint()
+        if command.kind == "step_out":
+            return self.step_out(command.frame)
         if command.kind == "human_decision" and command.name is not None:
-            return self.human_decision(command.name, command.payload)
+            return self.human_decision(command.name, command.payload, frame=command.frame)
         if command.kind == "signal" and command.name is not None:
-            return self.signal(command.name, command.payload)
+            return self.signal(command.name, command.payload, frame=command.frame)
         if command.kind == "advance_time" and command.seconds is not None:
             return self.advance_time(command.seconds)
         if command.kind == "breakpoints" and command.node_ids is not None:

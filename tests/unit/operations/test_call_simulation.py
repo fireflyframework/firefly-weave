@@ -26,7 +26,7 @@ import pytest
 from firefly_weave.compiler.api import CompiledArtifact, compile_source
 from firefly_weave.compiler.catalog import CatalogSnapshot
 from firefly_weave.contracts.definitions import load_definition
-from firefly_weave.operations.debug.models import CalledWorkflow, DebugError, DebugLimits
+from firefly_weave.operations.debug.models import CalledWorkflow, DebugCommand, DebugError, DebugLimits
 from firefly_weave.operations.debug.simulator import Simulator, frame_run_id
 
 NOW = datetime(2026, 10, 20, tzinfo=UTC)
@@ -516,3 +516,120 @@ def test_the_simulator_imports_no_server_packages():
     )
     result = subprocess.run([sys.executable, "-I", "-c", probe], capture_output=True, text=True, check=True)
     assert result.stdout.strip() == "[]"
+
+
+def test_a_session_steps_into_a_call_stops_inside_it_and_steps_out_with_its_output():
+    after = {"id": "after", "kind": "transform", "value": {"ref": "/steps/enrich/output/tier"}}
+    artifact = caller([call(), after], {"ref": "/steps/after/output"})
+    simulator = Simulator(artifact, mocks={}, input={"customerId": "c-1"}, now=NOW, workflows=enrich_called())
+    simulator.set_breakpoints({"enrich/validate"})
+    paused = simulator.continue_until_breakpoint()
+    assert (paused.status, paused.selected_frame, paused.selected_node) == ("paused", "enrich", None)
+    assert (paused.frames[0].selected_node, paused.active_nodes) == ("validate", ["enrich"])
+    back = simulator.step_out()
+    # The caller accepted the outcome and is about to run `after`; its run status changes once the event ends.
+    assert (back.status, back.selected_frame, back.selected_node) == ("waiting", None, "after")
+    assert back.variables["steps"]["enrich"]["output"] == {"tier": "gold", "score": 5}
+    assert (back.frames[0].status, back.boundary.event_type, back.boundary.frame) == (
+        "succeeded",
+        "call_completed",
+        None,
+    )
+    assert simulator.continue_until_breakpoint().variables["output"] == "gold"
+
+
+def test_next_steps_into_the_deepest_frame_with_work_and_back_out():
+    artifact = caller([call()], {"ref": "/steps/enrich/output"})
+    simulator = Simulator(artifact, mocks={}, input={"customerId": "c-1"}, now=NOW, workflows=enrich_called())
+    trace = []
+    while (view := simulator.next()).status not in {"succeeded", "failed"}:
+        trace.append((view.boundary.frame, view.boundary.event_type or view.boundary.node_id, view.selected_frame))
+    assert trace[:4] == [
+        (None, "started", None),
+        (None, "@start", None),
+        (None, "enrich", None),
+        ("enrich", "started", "enrich"),
+    ]
+    assert trace[-1] == (None, "call_completed", None)
+    with pytest.raises(DebugError, match="WV-DEBUG-FRAME"):
+        simulator.step_out()
+
+
+def looping_caller():
+    audit = call("audit", uses="hold@1.0.0", mode="detach") | {"with": {"object": {"customerId": {"literal": "x"}}}}
+    return caller([each_customer(), audit], {"ref": "/steps/each/output"}, ENRICH, HOLD, input_schema=CUSTOMERS)
+
+
+@pytest.mark.parametrize("breakpoint", ["enrich/validate", "enrich[1]/validate", "enrich/pick", "enrich", "enrich[9]"])
+def test_breakpoints_name_steps_inside_called_workflows(breakpoint):
+    simulator = Simulator(looping_caller(), mocks={}, input={"customers": ["a"]}, now=NOW, workflows=enrich_called())
+    simulator.set_breakpoints({breakpoint})
+
+
+@pytest.mark.parametrize(
+    "breakpoint",
+    [
+        "validate",  # not a step of the simulated workflow
+        "enrich/missing",
+        "each/validate",  # a loop is not a call
+        "enrich[10]/validate",  # beyond the loop's maxItems
+        "enrich/validate/x",  # validate is not a call
+        "audit/release",  # the session has no artifact for hold@1.0.0
+        "enrich//validate",
+        "/validate",
+    ],
+)
+def test_breakpoints_inside_called_workflows_must_name_a_reachable_step(breakpoint):
+    simulator = Simulator(looping_caller(), mocks={}, input={"customers": ["a"]}, now=NOW, workflows=enrich_called())
+    with pytest.raises(DebugError, match="WV-DEBUG-BREAKPOINT"):
+        simulator.set_breakpoints({breakpoint})
+
+
+def test_an_iteration_breakpoint_stops_inside_one_frame_and_a_step_breakpoint_inside_every_frame():
+    simulator = Simulator(
+        looping_caller(), mocks={}, input={"customers": ["a", "b", "c"]}, now=NOW, workflows=enrich_called()
+    )
+    simulator.set_breakpoints({"enrich[1]/validate"})
+    assert simulator.continue_until_breakpoint().selected_frame == "enrich[1]"
+    assert simulator.continue_until_breakpoint().status == "succeeded"
+    every = Simulator(
+        looping_caller(), mocks={}, input={"customers": ["a", "b", "c"]}, now=NOW, workflows=enrich_called()
+    )
+    every.set_breakpoints({"enrich/validate"})
+    stops = [every.continue_until_breakpoint().selected_frame for _ in range(4)]
+    assert stops == ["enrich[0]", "enrich[1]", "enrich[2]", None]
+
+
+def test_step_out_stops_at_a_breakpoint_before_the_frame_returns():
+    simulator = Simulator(
+        caller([call()], {"ref": "/steps/enrich/output"}),
+        mocks={},
+        input={"customerId": "c-1"},
+        now=NOW,
+        workflows=enrich_called(),
+    )
+    simulator.set_breakpoints({"enrich/validate", "enrich/pick"})
+    simulator.continue_until_breakpoint()
+    inside = simulator.step_out()
+    assert (inside.status, inside.selected_frame, inside.frames[0].selected_node) == ("paused", "enrich", "pick")
+    out = simulator.command(DebugCommand(kind="step_out"))
+    assert (out.selected_frame, out.boundary.event_type) == (None, "call_completed")
+
+
+def test_signals_and_step_out_reach_the_frame_they_name():
+    artifact = caller([call(uses="hold@1.0.0")], {"ref": "/steps/enrich/output"}, HOLD)
+    workflows = {"hold@1.0.0": CalledWorkflow(artifact=artifact_of(HOLD))}
+    simulator = Simulator(artifact, mocks={}, input={"customerId": "c-1"}, now=NOW, workflows=workflows)
+    simulator.continue_until_breakpoint()
+    with pytest.raises(DebugError, match="WV-DEBUG-SIGNAL"):
+        simulator.command(DebugCommand(kind="signal", name="release", payload={}))
+    with pytest.raises(DebugError, match="WV-DEBUG-FRAME"):
+        simulator.command(DebugCommand(kind="signal", name="release", payload={}, frame="other"))
+    simulator.command(DebugCommand(kind="signal", name="release", payload={}, frame="enrich"))
+    out = simulator.command(DebugCommand(kind="step_out", frame="enrich"))
+    assert (out.frames[0].status, out.variables["steps"]["enrich"]["output"]) == (
+        "succeeded",
+        {"tier": "held", "score": 0},
+    )
+    with pytest.raises(DebugError, match="WV-DEBUG-FRAME"):
+        simulator.command(DebugCommand(kind="human_decision", name="review", payload={}, frame="missing"))

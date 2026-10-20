@@ -195,11 +195,13 @@ class DebugCreate(ContractModel):
 
 
 class DebugCommand(ContractModel):
-    kind: Literal["next", "continue", "signal", "human_decision", "advance_time", "breakpoints"]
+    kind: Literal["next", "continue", "step_out", "signal", "human_decision", "advance_time", "breakpoints"]
     name: str | None = None
     payload: JsonData = None
     seconds: int | None = Field(default=None, ge=0)
     node_ids: list[str] | None = None
+    # A called workflow's frame key for step_out, signal and human_decision; the simulated workflow when omitted.
+    frame: str | None = None
 
 
 class DebugSession(ContractModel):
