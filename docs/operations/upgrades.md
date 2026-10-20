@@ -582,10 +582,14 @@ Upgrade runners soon after the server anyway: a runner of the previous release
 cannot run restart jobs (it never registers `restart_workers`, so it never claims
 them), and it is never offered a scale-down that removes workers, because it would
 let Compose choose the containers instead of removing the reviewed members.
-**Scale-downs wait until the target's runner is upgraded**: an upgraded runner
-registers adapter version 2, which promises to remove exactly the reviewed
-members, and only such a runner claims a scale-down's apply job. A job nobody
-claims is cancelled at its deadline, and its change request can be planned again. CLIs and SDKs of the previous release cannot read
+**Scale-downs wait until the target's runner is upgraded**: an upgraded Compose
+runner registers adapter version 2, which promises to remove exactly the reviewed
+members, and only such a runner claims a scale-down's apply job. Any plan that
+lowers a worker component's replicas is a scale-down, whether it scales, updates
+or deploys. Kubernetes and Container Apps runners register version 1 until their
+adapters remove the reviewed members too, so they do not take scale-downs yet. A
+job nobody claims is cancelled at its deadline, the workers its change drained go
+back to work, and the change request can be planned again. CLIs and SDKs of the previous release cannot read
 a restart plan, a target that offers `restart_workers`, or a target whose
 environment manager turned off the second approver; upgrade them with the server.
 
