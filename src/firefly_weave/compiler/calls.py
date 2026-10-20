@@ -82,6 +82,8 @@ class CallGraph:
 
     catalog: CatalogSnapshot
     _calls: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    # Longest chains already computed; every workflow on a finished walk is final, so later calls reuse them.
+    _depths: dict[str, int] = field(default_factory=dict)
 
     def calls(self, reference: str) -> tuple[str, ...]:
         """The exact references ``reference`` calls; none when the catalog lacks it."""
@@ -105,7 +107,10 @@ class CallGraph:
 
     def depth(self, start: str) -> int | None:
         """The longest chain of calls ``start`` makes (0 when it calls nothing); ``None`` when calls form a cycle."""
-        state: dict[str, bool] = {start: False}
+        if start in self._depths:
+            return self._depths[start]
+        state: dict[str, bool] = {reference: True for reference in self._depths}
+        state[start] = False
         order: list[str] = []
         stack: list[tuple[str, Iterator[str]]] = [(start, iter(self.calls(start)))]
         while stack:
@@ -120,7 +125,7 @@ class CallGraph:
                 stack.append((callee, iter(self.calls(callee))))
             elif not state[callee]:
                 return None
-        depths: dict[str, int] = {}
+        depths = self._depths
         for reference in order:
             depths[reference] = max((depths[callee] + 1 for callee in self.calls(reference)), default=0)
         return depths[start]

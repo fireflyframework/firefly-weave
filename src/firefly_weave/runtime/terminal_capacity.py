@@ -182,6 +182,10 @@ async def persist_terminal(
         at=event.timestamp,
         run=row["id"],
     )
+    from firefly_weave.runtime.calls import caller_ended, child_ended
+
+    await caller_ended(repository, row["id"], event.timestamp)
+    await child_ended(repository, row["id"], event.type, None, None, event.timestamp)
     if row.get("artifact"):
         try:
             artifact = await execute_pure(partial(import_artifact, row["artifact"]), control=True)

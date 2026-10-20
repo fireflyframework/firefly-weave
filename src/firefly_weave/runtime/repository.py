@@ -32,6 +32,7 @@ from firefly_weave.operations.facts import FactRepository, RunStartFacts, author
 from firefly_weave.operations.outbox import OutboxService
 from firefly_weave.persistence.uow import Transaction
 from firefly_weave.runtime.models import (
+    CallIntent,
     ControlCommand,
     Deadline,
     HumanTaskIntent,
@@ -44,6 +45,12 @@ from firefly_weave.runtime.models import (
 RUN_FETCH_BYTES = 128 * 1024 * 1024
 
 SCOPE = "tenant_id=:tenant AND project_id=:project AND environment_id=:environment"
+# A run's retry source and, for a child run, the call that started it.
+RUN_LINKS = (
+    "(SELECT parent_run_id FROM run_retry_links l WHERE l.run_id=runs.id) AS parent_run_id,"
+    "(SELECT jsonb_build_object('run_id',c.caller_run_id,'node_id',c.node_id,'generation',c.generation,"
+    "'mode',c.mode,'depth',c.depth) FROM run_call_links c WHERE c.run_id=runs.id) AS call_link"
+)
 
 
 def loop_activity(result: Transition) -> tuple[int, int, int]:
@@ -110,8 +117,8 @@ class RuntimeRepository:
             (
                 await self.tx.session.execute(
                     text(
-                        f"SELECT runs.*, (SELECT parent_run_id FROM run_retry_links l WHERE l.run_id=runs.id) "
-                        f"AS parent_run_id FROM runs WHERE {SCOPE} AND id=:id" + (" FOR UPDATE" if lock else "")
+                        f"SELECT runs.*, {RUN_LINKS} FROM runs WHERE {SCOPE} AND id=:id"
+                        + (" FOR UPDATE" if lock else "")
                     ),
                     {**self.params, "id": identifier},
                 )
@@ -123,6 +130,24 @@ class RuntimeRepository:
             raise CatalogError(404, "WV-NOT-FOUND", "Run not found")
         if lock:
             self.tx.session.info["weave_runtime_candidate"] = identifier
+        return dict(row)
+
+    async def locked_run(self, identifier: UUID) -> dict[str, Any] | None:
+        """Lock a run unless another transaction holds it; None when it is busy (or does not exist)."""
+        await self._bounded_run(identifier)
+        row = (
+            (
+                await self.tx.session.execute(
+                    text(f"SELECT runs.*, {RUN_LINKS} FROM runs WHERE {SCOPE} AND id=:id FOR UPDATE SKIP LOCKED"),
+                    {**self.params, "id": identifier},
+                )
+            )
+            .mappings()
+            .first()
+        )
+        if row is None:
+            return None
+        self.tx.session.info["weave_runtime_candidate"] = identifier
         return dict(row)
 
     async def require_work(self, identifier: UUID, state: dict[str, Any]) -> None:
@@ -281,6 +306,9 @@ class RuntimeRepository:
                     deadline=command.deadline,
                 )
         if isinstance(view, RunView):
+            from firefly_weave.runtime.calls import record_calls
+
+            await record_calls(self, view, result, event.timestamp)
             await self.record_evidence(view, event, result, task_timing)
         if event.type == "task_completed":
             await self.execute(
@@ -327,6 +355,12 @@ class RuntimeRepository:
                 run=view.id,
             )
             await self.execute(f"UPDATE run_deadlines SET consumed=true WHERE {SCOPE} AND run_id=:run", run=view.id)
+            from firefly_weave.runtime.calls import caller_ended, child_ended
+
+            await caller_ended(self, view.id, event.timestamp)
+            await child_ended(
+                self, view.id, result.state.status, result.state.output, result.state.incident, event.timestamp
+            )
 
         await FactRepository(self.tx).project_run(view, event, result)
         await self.outbox.append(
@@ -482,7 +516,10 @@ class RuntimeRepository:
             "(SELECT n->>'name' FROM jsonb_array_elements(CASE WHEN "
             "jsonb_typeof(runs.artifact->'executable'->'graph'->'nodes')='array' "
             "THEN runs.artifact->'executable'->'graph'->'nodes' ELSE '[]'::jsonb END) n "
-            "WHERE runs.state->'active' ? (n->>'id'))))) "
+            "WHERE runs.state->'active' ? (n->>'id')))) "
+            # A waiting call whose child ended is delivered under this run's lock (index run_calls_undelivered).
+            "OR EXISTS (SELECT 1 FROM run_calls c WHERE c.caller_run_id=runs.id AND c.mode='wait' "
+            "AND NOT c.delivered AND c.status IN ('succeeded','failed','cancelled','timed_out'))) "
             "AND (id NOT IN (SELECT run_id FROM run_policy_blocks UNION SELECT run_id FROM "
             "runtime_capacity_blocks WHERE active) OR EXISTS "
             "(SELECT 1 FROM run_deadlines d WHERE d.run_id=runs.id AND NOT d.consumed "
@@ -582,6 +619,8 @@ class RuntimeRepository:
         """Bind optional safe facts in the accepted-event transaction, never amend old rows."""
         from firefly_weave.compiler.api import import_artifact
         from firefly_weave.contracts.operations import (
+            CallFact,
+            CallReceipt,
             DeadlineFact,
             HumanDecisionReceipt,
             HumanTaskFact,
@@ -676,6 +715,52 @@ class RuntimeRepository:
                     DeadlineFact(
                         wait_id=due[0]["id"], node_id=command.node_id, deadline=command.deadline, name=command.name
                     )
+                )
+
+        async def call_fact(node_id: object, generation: int | None = None) -> tuple[CallFact, dict[str, Any]] | None:
+            rows = await self.rows(
+                f"SELECT * FROM run_calls WHERE {SCOPE} AND caller_run_id=:run AND node_id=:node "
+                "AND (cast(:generation AS integer) IS NULL OR generation=:generation) ORDER BY generation DESC LIMIT 1",
+                run=view.id,
+                node=node_id,
+                generation=generation,
+            )
+            if not rows:
+                return None
+            row = rows[0]
+            fact = CallFact(
+                call_id=row["id"],
+                node_id=row["node_id"],
+                generation=row["generation"],
+                mode=row["mode"],
+                workflow_reference=row["workflow_reference"],
+            )
+            return fact, row
+
+        for command in result.commands:
+            if isinstance(command, CallIntent):
+                issued = await call_fact(command.node_id, 0)
+                assert issued is not None
+                evidence.issued_calls.append(issued[0])
+        if (
+            event.type == "incident_resolved"
+            and event.data.get("kind") == "retry_safe"
+            and (retried := await call_fact(event.data.get("node_id"))) is not None
+            and retried[1]["status"] == "requested"
+        ):
+            evidence.issued_calls.append(retried[0])
+        generation = event.data.get("generation")
+        if event.type in {"call_completed", "incident_opened"} and isinstance(generation, int):
+            received = await call_fact(event.data.get("node_id"), generation)
+            ended = {"succeeded", "failed", "cancelled", "timed_out", "rejected"}
+            if received is not None and received[1]["status"] in ended:
+                fact, row = received
+                evidence = evidence.model_copy(
+                    update={
+                        "call_receipt": CallReceipt(
+                            call=fact, child_run_id=row["child_run_id"], status=row["status"], code=row["code"]
+                        )
+                    }
                 )
         if event.type == "human_completed":
             human_rows = await self.rows(

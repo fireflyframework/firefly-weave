@@ -457,8 +457,8 @@ empty list completes the loop at once with the output `[]`.
 re-checks an artifact before you trust it:
 
 - Input size, and an IR version and language features the platform runs.
-  `features` defaults to the platform's own (`text.concat` and `text.join` in
-  this version). Anything else, including an unknown feature name, raises
+  `features` defaults to the platform's own (`flow.callWorkflow`,
+  `flow.forEach`, `text.concat` and `text.join` in this version). Anything else, including an unknown feature name, raises
   `UnsupportedIR` (a `ValueError` whose `missing` names the missing features and
   is empty when the IR version itself is unknown). Activation and catalog reads
   answer it as `WV-IR-UNSUPPORTED`, and compatibility scans as `ir_unsupported`.

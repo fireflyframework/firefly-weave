@@ -26,6 +26,7 @@ from typing import cast
 from pydantic import Field
 
 from firefly_weave.compiler.api import CompiledArtifact
+from firefly_weave.compiler.calls import BUSINESS_KEY_SCHEMA, CALL_ERROR_SCHEMA, call_output_schema
 from firefly_weave.compiler.decision_tables import DecisionFailure, evaluate_decision_table
 from firefly_weave.compiler.expressions import DEFAULT_LIMITS, ExpressionFailure, evaluate, measure_value, value_shape
 from firefly_weave.compiler.ir import (
@@ -84,6 +85,7 @@ from firefly_weave.runtime.control import (
 )
 from firefly_weave.runtime.models import (
     BranchState,
+    CallIntent,
     ControlCommand,
     Deadline,
     HumanTaskIntent,
@@ -101,6 +103,9 @@ from firefly_weave.runtime.models import (
 class KernelError(ValueError):
     pass
 
+
+# Run statuses after which a run accepts no further work.
+RUN_TERMINAL = frozenset({"succeeded", "failed", "cancelled", "timed_out"})
 
 # Loop outputs are collected under the default payload budget, like every evaluated value.
 LOOP_OUTPUT_BYTES = DEFAULT_LIMITS.max_payload_bytes
@@ -213,7 +218,7 @@ def prepare(artifact: CompiledArtifact) -> PreparedWorkflow:
             intents[loop.id] = sum(
                 2 if isinstance(node, HumanTaskNode) else 1
                 for node in body
-                if isinstance(node, (ActionNode, WaitNode, SignalNode, HumanTaskNode, ForEachNode))
+                if isinstance(node, (ActionNode, WaitNode, SignalNode, HumanTaskNode, ForEachNode, CallWorkflowNode))
             )
             if any(isinstance(node, (SwitchNode, ParallelNode, ForEachNode)) for node in body):
                 nested.add(loop.id)
@@ -259,6 +264,45 @@ def action_schemas(
 
         schemas.append(llm_output_schema(node.llm_profile.model_dump(mode="json", by_alias=True)))
     return schemas
+
+
+def called_workflow(ir: WorkflowIR, node: CallWorkflowNode) -> tuple[str, JsonObject]:
+    """The reference and the definition spec of the workflow version a call starts, from its interface dependency."""
+    dependency = next(d for d in ir.dependencies if d.kind == "Workflow" and d.digest == node.dependency)
+    return dependency.reference, cast(JsonObject, dependency.document["spec"])
+
+
+def call_result(ir: WorkflowIR, node: CallWorkflowNode, data: JsonObject) -> JsonValue | None:
+    """The output a ``call_completed`` event gives its call step, or None when the run fails with the child.
+
+    The child's output is validated against the called workflow's own output schema before it is used or wrapped
+    in the envelope of a call that continues on failure; error objects carry a code and a message.
+    """
+    output_schema = cast(JsonObject, called_workflow(ir, node)[1]["outputSchema"])
+    value = data.get("output")
+    if data.get("reconciled") is True:
+        # An operator's reconciled result: the called workflow's output, or the whole envelope when it continues.
+        validate(ir, call_output_schema(node.mode, node.on_failure, output_schema), value)
+        return value
+    status, child = data.get("status"), data.get("child_run_id")
+    if not isinstance(child, str):
+        raise KernelError("WV-RUNTIME-EVENT")
+    if status == "succeeded":
+        validate(ir, output_schema, value)
+        if node.on_failure != "continue":
+            return value
+        envelope: JsonObject = {"status": status, "runId": child, "output": value}
+    elif status in {"failed", "cancelled", "timed_out"}:
+        validate(ir, CALL_ERROR_SCHEMA, value)
+        if node.on_failure != "continue":
+            if status != "failed":
+                raise KernelError("WV-RUNTIME-EVENT")
+            return None
+        envelope = {"status": status, "runId": child, "error": value}
+    else:
+        raise KernelError("WV-RUNTIME-EVENT")
+    validate(ir, call_output_schema(node.mode, node.on_failure, output_schema), envelope)
+    return envelope
 
 
 def validate_action(
@@ -583,6 +627,7 @@ def _advance_owned(
         queue.clear()
 
     def accept(completion: RuntimeEvent) -> None:
+        nonlocal current, current_state
         identifier = completion.data.get("node_id")
         if not isinstance(identifier, str) or identifier not in current_state.active:
             raise KernelError("WV-RUNTIME-EVENT")
@@ -594,6 +639,21 @@ def _advance_owned(
             current_state.active.remove(identifier)
             current_state.waits.pop(identifier)
             start_iterations(identifier.partition("~")[0])
+            return
+        if isinstance(node, CallWorkflowNode) and completion.type == "call_completed":
+            value = call_result(ir, node, completion.data)
+            if value is None:
+                # A waiting call that stops on failure fails the run with the child's code and message.
+                current = identifier
+                failure = cast(JsonObject, completion.data["output"])
+                terminate("failed", cast(str, failure["code"]))
+                current_state = current_state.model_copy(update={"output": failure})
+                return
+            if node.on_failure != "continue":
+                guard(node.path, "call_output", value)
+            complete(node, identifier, value)
+            current_state.active.remove(identifier)
+            queue.append(successor(identifier))
             return
         if isinstance(node, WaitNode) and completion.type == "wait_elapsed":
             due = current_state.waits.get(identifier)
@@ -646,6 +706,8 @@ def _advance_owned(
                 deferred = current_state.deferred_results
                 current_state = current_state.model_copy(update={"deferred_results": [], "status": "waiting"})
                 for completion in deferred:
+                    if current_state.status in RUN_TERMINAL:
+                        break
                     accept(completion)
                 return checkpoint(result.model_copy(update={"state": current_state}), done=not queue)
             if event.type == "cancelled":
@@ -671,7 +733,16 @@ def _advance_owned(
                     }
                 )
                 if kind == "accept_reconciled_result":
-                    completion = event.model_copy(update={"type": "task_completed"})
+                    if isinstance(nodes[node_of(prior.node_id)], CallWorkflowNode):
+                        # A reconciled call result arrives as the child's successful completion.
+                        completion = event.model_copy(
+                            update={
+                                "type": "call_completed",
+                                "data": {**event.data, "status": "succeeded", "reconciled": True},
+                            }
+                        )
+                    else:
+                        completion = event.model_copy(update={"type": "task_completed"})
                     if any(e.data.get("node_id") == prior.node_id for e in current_state.deferred_results):
                         raise KernelError("WV-RUNTIME-EVENT")
                     current_state.deferred_results.append(completion)
@@ -681,6 +752,8 @@ def _advance_owned(
                 deferred = current_state.deferred_results
                 current_state = current_state.model_copy(update={"deferred_results": []})
                 for completion in deferred:
+                    if current_state.status in RUN_TERMINAL:
+                        break
                     accept(completion)
             elif event.type == "timed_out":
                 deadline = event.data.get("deadline")
@@ -733,6 +806,8 @@ def _advance_owned(
                     deferred = current_state.deferred_results
                     current_state = current_state.model_copy(update={"deferred_results": []})
                     for completion in deferred:
+                        if current_state.status in RUN_TERMINAL:
+                            break
                         accept(completion)
                 else:
                     code = "WV-TASK-FAILED" if event.type == "task_failed" else event.data.get("code")
@@ -808,9 +883,36 @@ def _advance_owned(
                 )
                 return checkpoint(result.model_copy(update={"state": current_state}))
             elif isinstance(node, CallWorkflowNode):
-                # This runtime does not start child runs: import refuses workflows that call others, and a call
-                # that still arrives here stops behind an incident instead of being skipped.
-                raise KernelError("WV-RUNTIME-ARTIFACT")
+                if current in current_state.active:
+                    raise KernelError("WV-RUNTIME-ACTIVATION")
+                reference, callee = called_workflow(ir, node)
+                value = mapping(node, current, cast(JsonObject, node.input.model_dump(by_alias=True)))
+                # The called workflow's own input schema, even for an artifact compiled without the guard.
+                validate(ir, cast(JsonObject, callee["inputSchema"]), value)
+                guard(node.path + "/with", "call_input", value)
+                business_key = None
+                if node.business_key is not None:
+                    business_key = mapping(node, current, cast(JsonObject, node.business_key.model_dump(by_alias=True)))
+                    validate(ir, BUSINESS_KEY_SCHEMA, business_key)
+                waits = node.mode == "wait"
+                result.commands.append(
+                    CallIntent(
+                        node_id=current,
+                        workflow_digest=node.dependency,
+                        workflow_reference=reference,
+                        input=value,
+                        mode=node.mode,
+                        on_failure=(node.on_failure or "stop") if waits else None,
+                        business_key=cast(str | None, business_key),
+                    )
+                )
+                if waits:
+                    current_state.active.append(current)
+                    result.steps.append(StepChange(node_id=current, status="waiting"))
+                else:
+                    # A detached call continues at once; its child starts after this transition commits.
+                    complete(node, current, None)
+                    queue.append(successor(current))
             elif isinstance(node, (SwitchNode, ParallelNode)):
                 if current in current_state.joins:
                     raise KernelError("WV-RUNTIME-ACTIVATION")

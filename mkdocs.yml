@@ -98,6 +98,7 @@ nav:
       - Author, check, and simulate workflows: guides/workflow-authoring.md
       - Publish and run with the CLI: guides/cli-tutorial.md
       - Add human approvals: guides/human-tasks.md
+      - Call another workflow: guides/call-workflows.md
       - Work with files: guides/files.md
       - Connect FTP and cloud drives: guides/file-connectors.md
       - Evaluate decision tables: reference/decision-tables.md

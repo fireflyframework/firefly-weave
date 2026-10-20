@@ -20,6 +20,30 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+- Workflows can call other workflows. A **Call a workflow** step starts the
+  exact version it names as a separate child run of the pinned activation, under
+  the calling run's principal, which must still hold `run.start`. A waiting call
+  returns the child's output, or with `onFailure: continue` a
+  `{status, runId, output, error}` envelope; with `stop`, a failed child fails the
+  caller with the child's code, and a cancelled or timed-out child opens
+  `WV-CALL-INTERRUPTED`. A call that cannot start opens `WV-CALL-START` (or
+  `WV-CALL-DEPTH`); `retry_safe` starts a new child, and only the newest child's
+  result is used. Cancelling a caller cancels its waiting children and theirs;
+  detached children keep running, also after their caller finished. The platform
+  now lists `flow.callWorkflow` and `callWorkflow`, publishes, imports and
+  activates workflows that call others, and records `call_completed` events that
+  replay from the caller's own history. New: `RunView.caller`,
+  `GET …/runs/{id}/calls` (`weave runs calls`, `run_calls()` in the SDK),
+  `weave definitions activations create --pin-current-calls`, the `weave.calls`
+  counter with `call.dispatch` and `call.delivery` queue ages, and the "Call
+  another workflow" guide. Migration `0033_language_workflow_calls` adds two empty
+  tables and changes no existing row; it adds the call rules to run purging and
+  charges call rows to each run's reserved control capacity, so cancelling or
+  timing out a run that takes part in a call still works at a full byte quota,
+  as for any other run. A run cannot be purged while its calls run or before its result
+  reached its caller (`WV-RUN-PURGE-BLOCKED`). Upgrade CLIs and SDKs together
+  with the server: older clients reject the new `call_completed` event type and
+  `caller` field when they validate history and runs.
 - With the new editor, Mapped values in step details are **formulas** such as
   `input.amount > 1000 and exists(input.email)`: suggestions from the data the
   field can read, references as pills, plain-word messages that never block

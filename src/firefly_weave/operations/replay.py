@@ -23,10 +23,12 @@ from uuid import UUID
 from pydantic import ValidationError
 
 from firefly_weave.compiler.api import CompiledArtifact, import_artifact
-from firefly_weave.compiler.ir import ActionNode, HumanTaskNode, IRNode, SignalNode
+from firefly_weave.compiler.calls import call_output_schema
+from firefly_weave.compiler.ir import ActionNode, CallWorkflowNode, HumanTaskNode, IRNode, SignalNode
 from firefly_weave.contracts.definitions import ActionDefinition, load_definition
 from firefly_weave.contracts.instance_keys import node_of
 from firefly_weave.contracts.operations import (
+    CallFact,
     DeadlineFact,
     HumanTaskFact,
     RecordedEvidence,
@@ -37,6 +39,7 @@ from firefly_weave.contracts.operations import (
 from firefly_weave.operations.exports import bounded_size, event_node, lock_digest, safe_event, transition_digest
 from firefly_weave.operations.redaction import project
 from firefly_weave.runtime.kernel import (
+    called_workflow,
     deadline_order,
     duration_steps,
     transition,
@@ -44,7 +47,7 @@ from firefly_weave.runtime.kernel import (
     validate_action,
     workflow,
 )
-from firefly_weave.runtime.models import Deadline, HumanTaskIntent, RunState, RuntimeEvent, TaskIntent
+from firefly_weave.runtime.models import CallIntent, Deadline, HumanTaskIntent, RunState, RuntimeEvent, TaskIntent
 
 MAX_EVENTS = 10_000
 MAX_BYTES = 64 * 1024 * 1024
@@ -90,6 +93,9 @@ def replay(artifact: CompiledArtifact, events: tuple[RuntimeEvent, ...]) -> Repl
     deadlines: dict[str, DeadlineFact] = {}
     attempts: dict[str, tuple[int, str]] = {}
     eligible_at: dict[str, datetime] = {}
+    # The latest call row issued for each call step instance, and every call row seen.
+    calls: dict[str, CallFact] = {}
+    call_ids: set[UUID] = set()
     nodes = {n.id: n for n in ir.graph.nodes}
     duration_nodes = duration_steps(ir)
     expected_lock = lock_digest(artifact)
@@ -160,7 +166,26 @@ def replay(artifact: CompiledArtifact, events: tuple[RuntimeEvent, ...]) -> Repl
             node = event_node(nodes, node_id)
             receipt_id = UUID(str(event.data["receipt_id"])) if event.type == "incident_resolved" else event.id
             require(receipt_id not in accepted_receipts, "WV-REPLAY-DUPLICATE-RECEIPT")
-            if event.type in {"task_completed", "task_failed", "incident_opened", "recovery_scheduled"}:
+            if event.type in {"call_completed", "incident_opened"} and isinstance(node, CallWorkflowNode):
+                require(node_id in state.active, "WV-REPLAY-EVENT")
+                call_receipt = evidence.call_receipt
+                require(call_receipt is not None, "WV-REPLAY-CALL-PROVENANCE", missing=True)
+                assert call_receipt is not None
+                require(
+                    call_receipt.call == calls.get(node_id)
+                    and call_receipt.call.generation == event.data.get("generation"),
+                    "WV-REPLAY-CALL",
+                )
+                if event.type == "call_completed":
+                    require(
+                        call_receipt.status == event.data.get("status")
+                        and call_receipt.child_run_id is not None
+                        and str(call_receipt.child_run_id) == event.data.get("child_run_id"),
+                        "WV-REPLAY-CALL",
+                    )
+                else:
+                    require(isinstance(event.data.get("code"), str) and bool(event.data["code"]), "WV-REPLAY-EVENT")
+            elif event.type in {"task_completed", "task_failed", "incident_opened", "recovery_scheduled"}:
                 require(isinstance(node, ActionNode) and node_id in state.active, "WV-REPLAY-EVENT")
                 receipt = evidence.task_receipt
                 require(receipt is not None, "WV-REPLAY-TASK-PROVENANCE", missing=True)
@@ -233,7 +258,9 @@ def replay(artifact: CompiledArtifact, events: tuple[RuntimeEvent, ...]) -> Repl
                         and prior.generation == event.data.get("generation"),
                         "WV-REPLAY-EVENT",
                     )
-                if kind == "retry_safe":
+                if kind == "retry_safe" and isinstance(node, CallWorkflowNode):
+                    require(node_id in calls, "WV-REPLAY-CALL")
+                elif kind == "retry_safe":
                     generation = event.data.get("generation")
                     require(
                         type(generation) is int and generation == attempts.get(node_id, (0, ""))[0],
@@ -242,7 +269,12 @@ def replay(artifact: CompiledArtifact, events: tuple[RuntimeEvent, ...]) -> Repl
                     assert isinstance(generation, int)
                     attempts[node_id] = (generation, "retired")
                     eligible_at[node_id] = event.timestamp
-                if kind == "accept_reconciled_result":
+                if kind == "accept_reconciled_result" and isinstance(node, CallWorkflowNode):
+                    require("output" in event.data, "WV-REPLAY-EVENT")
+                    output = called_workflow(ir, node)[1]["outputSchema"]
+                    schema = call_output_schema(node.mode, node.on_failure, output)  # type: ignore[arg-type]
+                    validate(ir, schema, event.data["output"])
+                elif kind == "accept_reconciled_result":
                     require("output" in event.data and isinstance(node, ActionNode), "WV-REPLAY-EVENT")
                     assert isinstance(node, ActionNode)
                     definition = load_definition(
@@ -288,6 +320,28 @@ def replay(artifact: CompiledArtifact, events: tuple[RuntimeEvent, ...]) -> Repl
                     "WV-REPLAY-HUMAN-ISSUANCE",
                 )
                 human_tasks[issued_human.node_id] = issued_human
+            expected = [
+                (c.node_id, 0, c.mode, c.workflow_reference) for c in result.commands if isinstance(c, CallIntent)
+            ]
+            if (
+                event.type == "incident_resolved"
+                and event.data.get("kind") == "retry_safe"
+                and isinstance(node, CallWorkflowNode)
+            ):
+                prior_call = calls[node_id]
+                expected.append((node_id, prior_call.generation + 1, prior_call.mode, prior_call.workflow_reference))
+            issued_calls = evidence.issued_calls
+            require(len(issued_calls) <= len(expected), "WV-REPLAY-CALL-ISSUANCE")
+            require(len(issued_calls) == len(expected), "WV-REPLAY-CALL-ISSUANCE", missing=True)
+            for issued_call, (call_node, call_generation, mode, reference) in zip(issued_calls, expected, strict=True):
+                require(
+                    (issued_call.node_id, issued_call.generation, issued_call.mode, issued_call.workflow_reference)
+                    == (call_node, call_generation, mode, reference)
+                    and issued_call.call_id not in call_ids,
+                    "WV-REPLAY-CALL-ISSUANCE",
+                )
+                calls[call_node] = issued_call
+                call_ids.add(issued_call.call_id)
             task_commands = [c for c in result.commands if isinstance(c, TaskIntent)]
             deadline_commands = [c for c in result.commands if isinstance(c, Deadline)]
             require(

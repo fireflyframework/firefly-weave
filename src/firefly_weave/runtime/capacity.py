@@ -213,5 +213,6 @@ def admit_transition(result: Transition) -> None:
     logical_size(result, TRANSITION_BYTES)
     logical_size(result.state, STATE_BYTES)
     commands = result.commands
-    if sum(getattr(command, "kind", None) in {"task", "human_task", "deadline"} for command in commands) > MAX_INTENTS:
+    intents = {"task", "human_task", "deadline", "call"}
+    if sum(getattr(command, "kind", None) in intents for command in commands) > MAX_INTENTS:
         raise RuntimeCapacityError()

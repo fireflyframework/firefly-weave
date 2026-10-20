@@ -51,6 +51,39 @@ class RunListFilters(ContractModel):
         return "runs:" + hashlib.sha256(raw).hexdigest()
 
 
+class RunCaller(ContractModel):
+    """The call that started a child run: the calling run, its call step and instance, and the call generation."""
+
+    run_id: UUID
+    node_id: str
+    instance_key: str
+    iteration: list[int] = Field(default_factory=list)
+    generation: int = Field(ge=0)
+    mode: Literal["wait", "detach"]
+    depth: int = Field(ge=1)
+
+
+class RunCallView(ContractModel):
+    """One call a run made; read the child run for its input and output."""
+
+    id: UUID
+    node_id: str
+    instance_key: str
+    iteration: list[int] = Field(default_factory=list)
+    generation: int = Field(ge=0)
+    mode: Literal["wait", "detach"]
+    workflow: str
+    activation_id: UUID
+    status: Literal[
+        "requested", "started", "succeeded", "failed", "cancelled", "timed_out", "rejected", "abandoned", "superseded"
+    ]
+    child_run_id: UUID | None = None
+    code: str | None = None
+    requested_at: AwareDatetime
+    started_at: AwareDatetime | None = None
+    ended_at: AwareDatetime | None = None
+
+
 class RunView(ContractModel):
     id: UUID
     activation: Activation
@@ -60,6 +93,7 @@ class RunView(ContractModel):
     business_key: str | None = None
     parent_run_id: UUID | None = None
     external_effects_may_continue: bool = False
+    caller: RunCaller | None = Field(default=None, exclude_if=lambda v: v is None)
 
 
 class SignalRequest(ContractModel):
@@ -79,6 +113,10 @@ class RecoveryReport(ContractModel):
     incidents: int = 0
     timed_out: int = 0
     elapsed: int = 0
+    # Child runs started for calls, calls that could not start, and child runs cancelled because their caller ended.
+    calls_started: int = Field(default=0, exclude_if=lambda v: not v)
+    calls_rejected: int = Field(default=0, exclude_if=lambda v: not v)
+    calls_cancelled: int = Field(default=0, exclude_if=lambda v: not v)
 
 
 class UnavailableRunAcknowledgment(ContractModel):

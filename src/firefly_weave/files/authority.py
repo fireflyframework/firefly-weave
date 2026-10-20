@@ -82,6 +82,26 @@ async def require_run_files(tx: Transaction, run_id: UUID, value: JsonValue) -> 
             raise CatalogError(422, "WV-FILE-REFERENCE", "File is not ready or authorized for this execution")
 
 
+async def admit_run_files(tx: Transaction, source_run: UUID, target_run: UUID, value: JsonValue) -> None:
+    """Link files already admitted to one run to another run of the same environment.
+
+    A call's input passes its files to the child run, and a child's result passes its files to the calling run;
+    the run's own admission is the authority, so no principal's file.read is checked again.
+    """
+    refs = references(value)
+    if not refs:
+        return
+    await require_run_files(tx, source_run, value)
+    repository = FileRepository(tx)
+    for identifier in refs:
+        await repository.execute(
+            "INSERT INTO weave_run_files(tenant_id,project_id,environment_id,run_id,file_id) "
+            "VALUES(:tenant,:project,:environment,:run,:file) ON CONFLICT(run_id,file_id) DO NOTHING",
+            run=target_run,
+            file=identifier,
+        )
+
+
 async def admit_human_files(
     tx: Transaction, task: dict[str, Any], value: JsonValue, actor: Principal, *, context: AuditContext
 ) -> None:

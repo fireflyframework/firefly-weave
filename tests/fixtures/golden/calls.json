@@ -1,0 +1,3424 @@
+{
+ "generator": "scripts/golden_calls.py",
+ "sources": [
+  {
+   "artifact": {
+    "diagnostics": [
+     {
+      "code": "WV-COMP-UNKNOWN_COMPATIBILITY",
+      "hint": null,
+      "message": "Schema containment is unproved; runtime validation is required.",
+      "path": "/spec/steps/0/businessKey",
+      "related": [],
+      "severity": "warning",
+      "source": {
+       "column": 500,
+       "endColumn": 528,
+       "endLine": 1,
+       "file": "scripts/golden_calls.py#golden-call-wait",
+       "line": 1
+      },
+      "stage": "semantic",
+      "suggestedEdit": null
+     }
+    ],
+    "digest": "91a3c258d05c8aaf227339e208178607a0174ec9772f277cae0b2f9ad10223b2",
+    "executable": {
+     "apiVersion": "weave/v1alpha1",
+     "connections": {},
+     "dependencies": [
+      {
+       "digest": "a92e82183cc65da73682eddb2a5211fb0b1c6c80790cfe04f09dfb7896a0480a",
+       "document": {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {
+         "name": "golden-enrich",
+         "version": "1.0.0"
+        },
+        "spec": {
+         "callable": {},
+         "connections": {},
+         "inputSchema": {
+          "additionalProperties": false,
+          "properties": {
+           "customerId": {
+            "type": "string"
+           }
+          },
+          "required": [
+           "customerId"
+          ],
+          "type": "object"
+         },
+         "output": {
+          "ref": "/steps/pick/output"
+         },
+         "outputSchema": {
+          "additionalProperties": false,
+          "properties": {
+           "tier": {
+            "type": "string"
+           }
+          },
+          "required": [
+           "tier"
+          ],
+          "type": "object"
+         },
+         "steps": [
+          {
+           "id": "pick",
+           "kind": "transform",
+           "value": {
+            "object": {
+             "tier": {
+              "literal": "gold"
+             }
+            }
+           }
+          }
+         ]
+        }
+       },
+       "kind": "Workflow",
+       "reference": "golden-enrich@1.0.0"
+      }
+     ],
+     "features": [
+      "flow.callWorkflow"
+     ],
+     "graph": {
+      "edges": [
+       {
+        "branch": null,
+        "kind": "next",
+        "source": "enrich",
+        "target": "@end"
+       },
+       {
+        "branch": null,
+        "kind": "next",
+        "source": "@start",
+        "target": "enrich"
+       }
+      ],
+      "entry": "@start",
+      "exit": "@end",
+      "nodes": [
+       {
+        "id": "@start",
+        "kind": "start",
+        "path": "/spec",
+        "scope": []
+       },
+       {
+        "id": "@end",
+        "kind": "end",
+        "output": {
+         "ref": "/steps/enrich/output/tier"
+        },
+        "path": "/spec/output",
+        "scope": []
+       },
+       {
+        "businessKey": {
+         "ref": "/input/customerId"
+        },
+        "dependency": "a92e82183cc65da73682eddb2a5211fb0b1c6c80790cfe04f09dfb7896a0480a",
+        "id": "enrich",
+        "kind": "callWorkflow",
+        "mode": "wait",
+        "path": "/spec/steps/0",
+        "scope": [],
+        "with": {
+         "object": {
+          "customerId": {
+           "ref": "/input/customerId"
+          }
+         }
+        }
+       }
+      ]
+     },
+     "guards": [
+      {
+       "path": "/spec/inputSchema",
+       "purpose": "workflow_input",
+       "schemaRef": "2660aa52584a8f2e72e6caf93eb6d83e1fd55c402fb0acced6810db2254d8a58"
+      },
+      {
+       "path": "/spec/steps/0/with",
+       "purpose": "call_input",
+       "schemaRef": "87c04f8dbfaa4629af7c7d2d3905f05fced1925492af044d86cfd7f8b712da8b"
+      },
+      {
+       "path": "/spec/steps/0/businessKey",
+       "purpose": "compatibility",
+       "schemaRef": "52ba84a4bbf396ba7a35cd1190963c82865bfd272f0b6020865087e04c5283d5"
+      },
+      {
+       "path": "/spec/steps/0",
+       "purpose": "call_output",
+       "schemaRef": "478f35770cba246edbd4093610501b767543bd6e8ce9fa797c6ef21187bade0e"
+      },
+      {
+       "path": "/spec/output",
+       "purpose": "workflow_output",
+       "schemaRef": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      }
+     ],
+     "inputSchema": "2660aa52584a8f2e72e6caf93eb6d83e1fd55c402fb0acced6810db2254d8a58",
+     "irVersion": "weave/ir-v1alpha4",
+     "kind": "Workflow",
+     "metadata": {
+      "name": "golden-call-wait",
+      "version": "1.0.0"
+     },
+     "outputSchema": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+     "schemas": {
+      "2660aa52584a8f2e72e6caf93eb6d83e1fd55c402fb0acced6810db2254d8a58": {
+       "properties": {
+        "customerId": {
+         "maxLength": 200,
+         "type": "string"
+        },
+        "customers": {
+         "items": {
+          "type": "string"
+         },
+         "type": "array"
+        }
+       },
+       "required": [
+        "customerId"
+       ],
+       "type": "object"
+      },
+      "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a": {},
+      "478f35770cba246edbd4093610501b767543bd6e8ce9fa797c6ef21187bade0e": {
+       "additionalProperties": false,
+       "properties": {
+        "tier": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "tier"
+       ],
+       "type": "object"
+      },
+      "52ba84a4bbf396ba7a35cd1190963c82865bfd272f0b6020865087e04c5283d5": {
+       "maxLength": 200,
+       "minLength": 1,
+       "type": "string"
+      },
+      "87c04f8dbfaa4629af7c7d2d3905f05fced1925492af044d86cfd7f8b712da8b": {
+       "additionalProperties": false,
+       "properties": {
+        "customerId": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "customerId"
+       ],
+       "type": "object"
+      }
+     },
+     "timeoutSeconds": null
+    },
+    "omittedCount": 0,
+    "schemaTruncated": false,
+    "sourceHash": "ec02c821d4d5150b95b06fcaa6f68182470774bae58e92ebf6a52a9cae1b8d2a",
+    "sourceMap": {
+     "": {
+      "column": 1,
+      "endColumn": 580,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-wait",
+      "line": 1
+     },
+     "/apiVersion": {
+      "column": 16,
+      "endColumn": 32,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-wait",
+      "line": 1
+     },
+     "/kind": {
+      "column": 42,
+      "endColumn": 52,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-wait",
+      "line": 1
+     },
+     "/metadata": {
+      "column": 66,
+      "endColumn": 114,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-wait",
+      "line": 1
+     },
+     "/metadata/name": {
+      "column": 75,
+      "endColumn": 93,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-wait",
+      "line": 1
+     },
+     "/metadata/version": {
+      "column": 106,
+      "endColumn": 113,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-wait",
+      "line": 1
+     },
+     "/spec": {
+      "column": 124,
+      "endColumn": 579,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-wait",
+      "line": 1
+     },
+     "/spec/inputSchema": {
+      "column": 140,
+      "endColumn": 315,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-wait",
+      "line": 1
+     },
+     "/spec/inputSchema/properties": {
+      "column": 173,
+      "endColumn": 286,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-wait",
+      "line": 1
+     },
+     "/spec/inputSchema/properties/customerId": {
+      "column": 188,
+      "endColumn": 224,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-wait",
+      "line": 1
+     },
+     "/spec/inputSchema/properties/customerId/maxLength": {
+      "column": 220,
+      "endColumn": 223,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-wait",
+      "line": 1
+     },
+     "/spec/inputSchema/properties/customerId/type": {
+      "column": 197,
+      "endColumn": 205,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-wait",
+      "line": 1
+     },
+     "/spec/inputSchema/properties/customers": {
+      "column": 239,
+      "endColumn": 285,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-wait",
+      "line": 1
+     },
+     "/spec/inputSchema/properties/customers/items": {
+      "column": 266,
+      "endColumn": 284,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-wait",
+      "line": 1
+     },
+     "/spec/inputSchema/properties/customers/items/type": {
+      "column": 275,
+      "endColumn": 283,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-wait",
+      "line": 1
+     },
+     "/spec/inputSchema/properties/customers/type": {
+      "column": 248,
+      "endColumn": 255,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-wait",
+      "line": 1
+     },
+     "/spec/inputSchema/required": {
+      "column": 300,
+      "endColumn": 314,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-wait",
+      "line": 1
+     },
+     "/spec/inputSchema/required/0": {
+      "column": 301,
+      "endColumn": 313,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-wait",
+      "line": 1
+     },
+     "/spec/inputSchema/type": {
+      "column": 149,
+      "endColumn": 157,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-wait",
+      "line": 1
+     },
+     "/spec/output": {
+      "column": 542,
+      "endColumn": 578,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-wait",
+      "line": 1
+     },
+     "/spec/output/ref": {
+      "column": 550,
+      "endColumn": 577,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-wait",
+      "line": 1
+     },
+     "/spec/outputSchema": {
+      "column": 333,
+      "endColumn": 335,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-wait",
+      "line": 1
+     },
+     "/spec/steps": {
+      "column": 346,
+      "endColumn": 530,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-wait",
+      "line": 1
+     },
+     "/spec/steps/0": {
+      "column": 347,
+      "endColumn": 529,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-wait",
+      "line": 1
+     },
+     "/spec/steps/0/businessKey": {
+      "column": 500,
+      "endColumn": 528,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-wait",
+      "line": 1
+     },
+     "/spec/steps/0/businessKey/ref": {
+      "column": 508,
+      "endColumn": 527,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-wait",
+      "line": 1
+     },
+     "/spec/steps/0/id": {
+      "column": 354,
+      "endColumn": 362,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-wait",
+      "line": 1
+     },
+     "/spec/steps/0/kind": {
+      "column": 372,
+      "endColumn": 386,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-wait",
+      "line": 1
+     },
+     "/spec/steps/0/uses": {
+      "column": 396,
+      "endColumn": 417,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-wait",
+      "line": 1
+     },
+     "/spec/steps/0/with": {
+      "column": 427,
+      "endColumn": 483,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-wait",
+      "line": 1
+     },
+     "/spec/steps/0/with/object": {
+      "column": 438,
+      "endColumn": 482,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-wait",
+      "line": 1
+     },
+     "/spec/steps/0/with/object/customerId": {
+      "column": 453,
+      "endColumn": 481,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-wait",
+      "line": 1
+     },
+     "/spec/steps/0/with/object/customerId/ref": {
+      "column": 461,
+      "endColumn": 480,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-wait",
+      "line": 1
+     }
+    }
+   },
+   "name": "golden-call-wait",
+   "scenarios": [
+    {
+     "input": {
+      "customerId": "c-1"
+     },
+     "name": "succeeded",
+     "stream": [
+      {
+       "digest": "e032720206b15acd8ad4bf44bedbbec48ac569ff03f6f92860c164242e354f2f",
+       "event": {
+        "data": {},
+        "id": "35866ba8-19f1-5d50-a5cc-076f12c86a41",
+        "sequence": 1,
+        "timestamp": "2026-10-08T00:00:00Z",
+        "type": "started"
+       },
+       "transition": {
+        "commands": [
+         {
+          "business_key": "c-1",
+          "input": {
+           "customerId": "c-1"
+          },
+          "kind": "call",
+          "mode": "wait",
+          "node_id": "enrich",
+          "on_failure": "stop",
+          "workflow_digest": "a92e82183cc65da73682eddb2a5211fb0b1c6c80790cfe04f09dfb7896a0480a",
+          "workflow_reference": "golden-enrich@1.0.0"
+         }
+        ],
+        "state": {
+         "accepted_sequence": 1,
+         "active": [
+          "enrich"
+         ],
+         "branches": {},
+         "deferred_results": [],
+         "incident": null,
+         "incidents": {},
+         "input": {
+          "customerId": "c-1"
+         },
+         "joins": {},
+         "output": null,
+         "status": "waiting",
+         "steps": {},
+         "waits": {}
+        },
+        "steps": [
+         {
+          "node_id": "enrich",
+          "output": null,
+          "status": "waiting"
+         }
+        ]
+       }
+      },
+      {
+       "digest": "e87fc1754029a34a5a4be4cc0d9b7455ed35e6c5227fb17d2c019d5c50c1b57a",
+       "event": {
+        "data": {
+         "child_run_id": "0b7e5a3c-6f1d-4c8a-9e2b-5d4f3a2c1b0e",
+         "generation": 0,
+         "node_id": "enrich",
+         "output": {
+          "tier": "gold"
+         },
+         "status": "succeeded"
+        },
+        "id": "ed6c40c0-63df-504c-8a98-03c0a3ecbd2c",
+        "sequence": 2,
+        "timestamp": "2026-10-08T00:00:01Z",
+        "type": "call_completed"
+       },
+       "transition": {
+        "commands": [],
+        "state": {
+         "accepted_sequence": 2,
+         "active": [],
+         "branches": {},
+         "deferred_results": [],
+         "incident": null,
+         "incidents": {},
+         "input": {
+          "customerId": "c-1"
+         },
+         "joins": {},
+         "output": "gold",
+         "status": "succeeded",
+         "steps": {
+          "enrich": {
+           "output": {
+            "tier": "gold"
+           }
+          }
+         },
+         "waits": {}
+        },
+        "steps": [
+         {
+          "node_id": "enrich",
+          "output": {
+           "tier": "gold"
+          },
+          "status": "completed"
+         }
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "input": {
+      "customerId": "c-1"
+     },
+     "name": "child-failed",
+     "stream": [
+      {
+       "digest": "e032720206b15acd8ad4bf44bedbbec48ac569ff03f6f92860c164242e354f2f",
+       "event": {
+        "data": {},
+        "id": "b05fcbf0-31cc-5ad3-b9b8-a615f4969ab4",
+        "sequence": 1,
+        "timestamp": "2026-10-08T00:00:00Z",
+        "type": "started"
+       },
+       "transition": {
+        "commands": [
+         {
+          "business_key": "c-1",
+          "input": {
+           "customerId": "c-1"
+          },
+          "kind": "call",
+          "mode": "wait",
+          "node_id": "enrich",
+          "on_failure": "stop",
+          "workflow_digest": "a92e82183cc65da73682eddb2a5211fb0b1c6c80790cfe04f09dfb7896a0480a",
+          "workflow_reference": "golden-enrich@1.0.0"
+         }
+        ],
+        "state": {
+         "accepted_sequence": 1,
+         "active": [
+          "enrich"
+         ],
+         "branches": {},
+         "deferred_results": [],
+         "incident": null,
+         "incidents": {},
+         "input": {
+          "customerId": "c-1"
+         },
+         "joins": {},
+         "output": null,
+         "status": "waiting",
+         "steps": {},
+         "waits": {}
+        },
+        "steps": [
+         {
+          "node_id": "enrich",
+          "output": null,
+          "status": "waiting"
+         }
+        ]
+       }
+      },
+      {
+       "digest": "52982ce08f00c3f18a2faa4d4b6aff85af0473b4eaec6456793068ca7bbf0e99",
+       "event": {
+        "data": {
+         "child_run_id": "0b7e5a3c-6f1d-4c8a-9e2b-5d4f3a2c1b0e",
+         "generation": 0,
+         "node_id": "enrich",
+         "output": {
+          "code": "NO_CUSTOMER",
+          "message": "Unknown customer."
+         },
+         "status": "failed"
+        },
+        "id": "813f1d3f-06c9-58b0-b8fe-410ad08f3b5b",
+        "sequence": 2,
+        "timestamp": "2026-10-08T00:00:01Z",
+        "type": "call_completed"
+       },
+       "transition": {
+        "commands": [
+         {
+          "branch": null,
+          "kind": "revoke_leases",
+          "node_id": "enrich"
+         },
+         {
+          "branch": null,
+          "kind": "terminate",
+          "node_id": "enrich"
+         }
+        ],
+        "state": {
+         "accepted_sequence": 2,
+         "active": [],
+         "branches": {},
+         "deferred_results": [],
+         "incident": "NO_CUSTOMER",
+         "incidents": {},
+         "input": {
+          "customerId": "c-1"
+         },
+         "joins": {},
+         "output": {
+          "code": "NO_CUSTOMER",
+          "message": "Unknown customer."
+         },
+         "status": "failed",
+         "steps": {},
+         "waits": {}
+        },
+        "steps": []
+       }
+      }
+     ]
+    },
+    {
+     "input": {
+      "customerId": "c-1"
+     },
+     "name": "interrupted-then-retried",
+     "stream": [
+      {
+       "digest": "e032720206b15acd8ad4bf44bedbbec48ac569ff03f6f92860c164242e354f2f",
+       "event": {
+        "data": {},
+        "id": "9715f2cd-10f6-5389-baeb-ee60e8a52502",
+        "sequence": 1,
+        "timestamp": "2026-10-08T00:00:00Z",
+        "type": "started"
+       },
+       "transition": {
+        "commands": [
+         {
+          "business_key": "c-1",
+          "input": {
+           "customerId": "c-1"
+          },
+          "kind": "call",
+          "mode": "wait",
+          "node_id": "enrich",
+          "on_failure": "stop",
+          "workflow_digest": "a92e82183cc65da73682eddb2a5211fb0b1c6c80790cfe04f09dfb7896a0480a",
+          "workflow_reference": "golden-enrich@1.0.0"
+         }
+        ],
+        "state": {
+         "accepted_sequence": 1,
+         "active": [
+          "enrich"
+         ],
+         "branches": {},
+         "deferred_results": [],
+         "incident": null,
+         "incidents": {},
+         "input": {
+          "customerId": "c-1"
+         },
+         "joins": {},
+         "output": null,
+         "status": "waiting",
+         "steps": {},
+         "waits": {}
+        },
+        "steps": [
+         {
+          "node_id": "enrich",
+          "output": null,
+          "status": "waiting"
+         }
+        ]
+       }
+      },
+      {
+       "digest": "5b5cc50d5e13f30d81292e1bd6f86f1d2ed412b9465fc345d51d4ccc29522ad7",
+       "event": {
+        "data": {
+         "code": "WV-CALL-INTERRUPTED",
+         "generation": 0,
+         "node_id": "enrich"
+        },
+        "id": "eb551315-3c6a-5d85-86b7-f8a6d5cfdd4f",
+        "sequence": 2,
+        "timestamp": "2026-10-08T00:00:01Z",
+        "type": "incident_opened"
+       },
+       "transition": {
+        "commands": [],
+        "state": {
+         "accepted_sequence": 2,
+         "active": [
+          "enrich"
+         ],
+         "branches": {},
+         "deferred_results": [],
+         "incident": "WV-CALL-INTERRUPTED",
+         "incidents": {
+          "enrich:0": {
+           "code": "WV-CALL-INTERRUPTED",
+           "generation": 0,
+           "node_id": "enrich"
+          }
+         },
+         "input": {
+          "customerId": "c-1"
+         },
+         "joins": {},
+         "output": null,
+         "status": "suspended",
+         "steps": {},
+         "waits": {}
+        },
+        "steps": []
+       }
+      },
+      {
+       "digest": "acc2ce88bb9a95f37bd4e7a878c48fe6cce3fec75d30c718a010a5963a3c6734",
+       "event": {
+        "data": {
+         "generation": 0,
+         "incident_key": "enrich:0",
+         "kind": "retry_safe",
+         "node_id": "enrich"
+        },
+        "id": "e50c5964-5580-546f-b3eb-9c7aba54c381",
+        "sequence": 3,
+        "timestamp": "2026-10-08T00:00:02Z",
+        "type": "incident_resolved"
+       },
+       "transition": {
+        "commands": [],
+        "state": {
+         "accepted_sequence": 3,
+         "active": [
+          "enrich"
+         ],
+         "branches": {},
+         "deferred_results": [],
+         "incident": null,
+         "incidents": {},
+         "input": {
+          "customerId": "c-1"
+         },
+         "joins": {},
+         "output": null,
+         "status": "waiting",
+         "steps": {},
+         "waits": {}
+        },
+        "steps": []
+       }
+      },
+      {
+       "digest": "c65d48baf299bb33035d0c60caa944b1ff764d12aeeb28ee9df6ebf311ed8f45",
+       "event": {
+        "data": {
+         "child_run_id": "4c2d8e1f-7a3b-4f6e-8d9c-1a2b3c4d5e6f",
+         "generation": 1,
+         "node_id": "enrich",
+         "output": {
+          "tier": "silver"
+         },
+         "status": "succeeded"
+        },
+        "id": "520deafe-489f-5a78-9312-0092b942940f",
+        "sequence": 4,
+        "timestamp": "2026-10-08T00:00:03Z",
+        "type": "call_completed"
+       },
+       "transition": {
+        "commands": [],
+        "state": {
+         "accepted_sequence": 4,
+         "active": [],
+         "branches": {},
+         "deferred_results": [],
+         "incident": null,
+         "incidents": {},
+         "input": {
+          "customerId": "c-1"
+         },
+         "joins": {},
+         "output": "silver",
+         "status": "succeeded",
+         "steps": {
+          "enrich": {
+           "output": {
+            "tier": "silver"
+           }
+          }
+         },
+         "waits": {}
+        },
+        "steps": [
+         {
+          "node_id": "enrich",
+          "output": {
+           "tier": "silver"
+          },
+          "status": "completed"
+         }
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "input": {
+      "customerId": "c-1"
+     },
+     "name": "start-refused-then-reconciled",
+     "stream": [
+      {
+       "digest": "e032720206b15acd8ad4bf44bedbbec48ac569ff03f6f92860c164242e354f2f",
+       "event": {
+        "data": {},
+        "id": "7221bedd-acc1-55c2-89ce-9f8d9b40fb55",
+        "sequence": 1,
+        "timestamp": "2026-10-08T00:00:00Z",
+        "type": "started"
+       },
+       "transition": {
+        "commands": [
+         {
+          "business_key": "c-1",
+          "input": {
+           "customerId": "c-1"
+          },
+          "kind": "call",
+          "mode": "wait",
+          "node_id": "enrich",
+          "on_failure": "stop",
+          "workflow_digest": "a92e82183cc65da73682eddb2a5211fb0b1c6c80790cfe04f09dfb7896a0480a",
+          "workflow_reference": "golden-enrich@1.0.0"
+         }
+        ],
+        "state": {
+         "accepted_sequence": 1,
+         "active": [
+          "enrich"
+         ],
+         "branches": {},
+         "deferred_results": [],
+         "incident": null,
+         "incidents": {},
+         "input": {
+          "customerId": "c-1"
+         },
+         "joins": {},
+         "output": null,
+         "status": "waiting",
+         "steps": {},
+         "waits": {}
+        },
+        "steps": [
+         {
+          "node_id": "enrich",
+          "output": null,
+          "status": "waiting"
+         }
+        ]
+       }
+      },
+      {
+       "digest": "281f4141847537167584d52ebe96bb5aae50b8dcb5654e30d1006165441ff864",
+       "event": {
+        "data": {
+         "code": "WV-CALL-START",
+         "generation": 0,
+         "node_id": "enrich"
+        },
+        "id": "efec1fd3-3231-59d9-abcb-6ae0396e0293",
+        "sequence": 2,
+        "timestamp": "2026-10-08T00:00:01Z",
+        "type": "incident_opened"
+       },
+       "transition": {
+        "commands": [],
+        "state": {
+         "accepted_sequence": 2,
+         "active": [
+          "enrich"
+         ],
+         "branches": {},
+         "deferred_results": [],
+         "incident": "WV-CALL-START",
+         "incidents": {
+          "enrich:0": {
+           "code": "WV-CALL-START",
+           "generation": 0,
+           "node_id": "enrich"
+          }
+         },
+         "input": {
+          "customerId": "c-1"
+         },
+         "joins": {},
+         "output": null,
+         "status": "suspended",
+         "steps": {},
+         "waits": {}
+        },
+        "steps": []
+       }
+      },
+      {
+       "digest": "3b2a871cdd03c829273d8f528a9222ae964b74fef32dff66807c32834d5b29be",
+       "event": {
+        "data": {
+         "generation": 0,
+         "incident_key": "enrich:0",
+         "kind": "accept_reconciled_result",
+         "node_id": "enrich",
+         "output": {
+          "tier": "bronze"
+         }
+        },
+        "id": "c87e21e5-c5c9-59c8-a1b2-39ce01784d51",
+        "sequence": 3,
+        "timestamp": "2026-10-08T00:00:02Z",
+        "type": "incident_resolved"
+       },
+       "transition": {
+        "commands": [],
+        "state": {
+         "accepted_sequence": 3,
+         "active": [],
+         "branches": {},
+         "deferred_results": [],
+         "incident": null,
+         "incidents": {},
+         "input": {
+          "customerId": "c-1"
+         },
+         "joins": {},
+         "output": "bronze",
+         "status": "succeeded",
+         "steps": {
+          "enrich": {
+           "output": {
+            "tier": "bronze"
+           }
+          }
+         },
+         "waits": {}
+        },
+        "steps": [
+         {
+          "node_id": "enrich",
+          "output": {
+           "tier": "bronze"
+          },
+          "status": "completed"
+         }
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "input": {
+      "customerId": "c-1"
+     },
+     "name": "too-deep-then-terminated",
+     "stream": [
+      {
+       "digest": "e032720206b15acd8ad4bf44bedbbec48ac569ff03f6f92860c164242e354f2f",
+       "event": {
+        "data": {},
+        "id": "588bdba4-ab02-53d9-81c8-31535507f53a",
+        "sequence": 1,
+        "timestamp": "2026-10-08T00:00:00Z",
+        "type": "started"
+       },
+       "transition": {
+        "commands": [
+         {
+          "business_key": "c-1",
+          "input": {
+           "customerId": "c-1"
+          },
+          "kind": "call",
+          "mode": "wait",
+          "node_id": "enrich",
+          "on_failure": "stop",
+          "workflow_digest": "a92e82183cc65da73682eddb2a5211fb0b1c6c80790cfe04f09dfb7896a0480a",
+          "workflow_reference": "golden-enrich@1.0.0"
+         }
+        ],
+        "state": {
+         "accepted_sequence": 1,
+         "active": [
+          "enrich"
+         ],
+         "branches": {},
+         "deferred_results": [],
+         "incident": null,
+         "incidents": {},
+         "input": {
+          "customerId": "c-1"
+         },
+         "joins": {},
+         "output": null,
+         "status": "waiting",
+         "steps": {},
+         "waits": {}
+        },
+        "steps": [
+         {
+          "node_id": "enrich",
+          "output": null,
+          "status": "waiting"
+         }
+        ]
+       }
+      },
+      {
+       "digest": "d2889baeadef69982a2f69a2d527f89ab7374e245e47db87dad8a7c85e545b89",
+       "event": {
+        "data": {
+         "code": "WV-CALL-DEPTH",
+         "generation": 0,
+         "node_id": "enrich"
+        },
+        "id": "c8dbcbe9-b445-521b-b5be-09f560b66d58",
+        "sequence": 2,
+        "timestamp": "2026-10-08T00:00:01Z",
+        "type": "incident_opened"
+       },
+       "transition": {
+        "commands": [],
+        "state": {
+         "accepted_sequence": 2,
+         "active": [
+          "enrich"
+         ],
+         "branches": {},
+         "deferred_results": [],
+         "incident": "WV-CALL-DEPTH",
+         "incidents": {
+          "enrich:0": {
+           "code": "WV-CALL-DEPTH",
+           "generation": 0,
+           "node_id": "enrich"
+          }
+         },
+         "input": {
+          "customerId": "c-1"
+         },
+         "joins": {},
+         "output": null,
+         "status": "suspended",
+         "steps": {},
+         "waits": {}
+        },
+        "steps": []
+       }
+      },
+      {
+       "digest": "f5ab52908d1102bef4fc405f27cff4e90ffb33ab5e0b424949a4fc2560c0572b",
+       "event": {
+        "data": {
+         "generation": 0,
+         "incident_key": "enrich:0",
+         "kind": "terminate",
+         "node_id": "enrich"
+        },
+        "id": "7541699b-d360-5d8b-8b28-12fc0cf3940a",
+        "sequence": 3,
+        "timestamp": "2026-10-08T00:00:02Z",
+        "type": "incident_resolved"
+       },
+       "transition": {
+        "commands": [
+         {
+          "branch": null,
+          "kind": "revoke_leases",
+          "node_id": "enrich"
+         },
+         {
+          "branch": null,
+          "kind": "terminate",
+          "node_id": "enrich"
+         }
+        ],
+        "state": {
+         "accepted_sequence": 3,
+         "active": [],
+         "branches": {},
+         "deferred_results": [],
+         "incident": null,
+         "incidents": {},
+         "input": {
+          "customerId": "c-1"
+         },
+         "joins": {},
+         "output": null,
+         "status": "cancelled",
+         "steps": {},
+         "waits": {}
+        },
+        "steps": []
+       }
+      }
+     ]
+    }
+   ],
+   "source": "scripts/golden_calls.py#golden-call-wait"
+  },
+  {
+   "artifact": {
+    "diagnostics": [],
+    "digest": "79f7ccdc793e97eec7224526aea90dbed9b5cff878c419ec47f89dd10c3c718d",
+    "executable": {
+     "apiVersion": "weave/v1alpha1",
+     "connections": {},
+     "dependencies": [
+      {
+       "digest": "a92e82183cc65da73682eddb2a5211fb0b1c6c80790cfe04f09dfb7896a0480a",
+       "document": {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {
+         "name": "golden-enrich",
+         "version": "1.0.0"
+        },
+        "spec": {
+         "callable": {},
+         "connections": {},
+         "inputSchema": {
+          "additionalProperties": false,
+          "properties": {
+           "customerId": {
+            "type": "string"
+           }
+          },
+          "required": [
+           "customerId"
+          ],
+          "type": "object"
+         },
+         "output": {
+          "ref": "/steps/pick/output"
+         },
+         "outputSchema": {
+          "additionalProperties": false,
+          "properties": {
+           "tier": {
+            "type": "string"
+           }
+          },
+          "required": [
+           "tier"
+          ],
+          "type": "object"
+         },
+         "steps": [
+          {
+           "id": "pick",
+           "kind": "transform",
+           "value": {
+            "object": {
+             "tier": {
+              "literal": "gold"
+             }
+            }
+           }
+          }
+         ]
+        }
+       },
+       "kind": "Workflow",
+       "reference": "golden-enrich@1.0.0"
+      }
+     ],
+     "features": [
+      "flow.callWorkflow"
+     ],
+     "graph": {
+      "edges": [
+       {
+        "branch": null,
+        "kind": "next",
+        "source": "enrich",
+        "target": "@end"
+       },
+       {
+        "branch": null,
+        "kind": "next",
+        "source": "@start",
+        "target": "enrich"
+       }
+      ],
+      "entry": "@start",
+      "exit": "@end",
+      "nodes": [
+       {
+        "id": "@start",
+        "kind": "start",
+        "path": "/spec",
+        "scope": []
+       },
+       {
+        "id": "@end",
+        "kind": "end",
+        "output": {
+         "ref": "/steps/enrich/output/status"
+        },
+        "path": "/spec/output",
+        "scope": []
+       },
+       {
+        "dependency": "a92e82183cc65da73682eddb2a5211fb0b1c6c80790cfe04f09dfb7896a0480a",
+        "id": "enrich",
+        "kind": "callWorkflow",
+        "mode": "wait",
+        "onFailure": "continue",
+        "path": "/spec/steps/0",
+        "scope": [],
+        "with": {
+         "object": {
+          "customerId": {
+           "ref": "/input/customerId"
+          }
+         }
+        }
+       }
+      ]
+     },
+     "guards": [
+      {
+       "path": "/spec/inputSchema",
+       "purpose": "workflow_input",
+       "schemaRef": "2660aa52584a8f2e72e6caf93eb6d83e1fd55c402fb0acced6810db2254d8a58"
+      },
+      {
+       "path": "/spec/steps/0/with",
+       "purpose": "call_input",
+       "schemaRef": "87c04f8dbfaa4629af7c7d2d3905f05fced1925492af044d86cfd7f8b712da8b"
+      },
+      {
+       "path": "/spec/steps/0",
+       "purpose": "call_output",
+       "schemaRef": "478f35770cba246edbd4093610501b767543bd6e8ce9fa797c6ef21187bade0e"
+      },
+      {
+       "path": "/spec/output",
+       "purpose": "workflow_output",
+       "schemaRef": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      }
+     ],
+     "inputSchema": "2660aa52584a8f2e72e6caf93eb6d83e1fd55c402fb0acced6810db2254d8a58",
+     "irVersion": "weave/ir-v1alpha4",
+     "kind": "Workflow",
+     "metadata": {
+      "name": "golden-call-continue",
+      "version": "1.0.0"
+     },
+     "outputSchema": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+     "schemas": {
+      "2660aa52584a8f2e72e6caf93eb6d83e1fd55c402fb0acced6810db2254d8a58": {
+       "properties": {
+        "customerId": {
+         "maxLength": 200,
+         "type": "string"
+        },
+        "customers": {
+         "items": {
+          "type": "string"
+         },
+         "type": "array"
+        }
+       },
+       "required": [
+        "customerId"
+       ],
+       "type": "object"
+      },
+      "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a": {},
+      "478f35770cba246edbd4093610501b767543bd6e8ce9fa797c6ef21187bade0e": {
+       "additionalProperties": false,
+       "properties": {
+        "tier": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "tier"
+       ],
+       "type": "object"
+      },
+      "87c04f8dbfaa4629af7c7d2d3905f05fced1925492af044d86cfd7f8b712da8b": {
+       "additionalProperties": false,
+       "properties": {
+        "customerId": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "customerId"
+       ],
+       "type": "object"
+      }
+     },
+     "timeoutSeconds": null
+    },
+    "omittedCount": 0,
+    "schemaTruncated": false,
+    "sourceHash": "7b1094a8722b6f5cb053f3fd5fca99b35b006c60133191e017b37fe4b0f3db92",
+    "sourceMap": {
+     "": {
+      "column": 1,
+      "endColumn": 566,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-continue",
+      "line": 1
+     },
+     "/apiVersion": {
+      "column": 16,
+      "endColumn": 32,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-continue",
+      "line": 1
+     },
+     "/kind": {
+      "column": 42,
+      "endColumn": 52,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-continue",
+      "line": 1
+     },
+     "/metadata": {
+      "column": 66,
+      "endColumn": 118,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-continue",
+      "line": 1
+     },
+     "/metadata/name": {
+      "column": 75,
+      "endColumn": 97,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-continue",
+      "line": 1
+     },
+     "/metadata/version": {
+      "column": 110,
+      "endColumn": 117,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-continue",
+      "line": 1
+     },
+     "/spec": {
+      "column": 128,
+      "endColumn": 565,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-continue",
+      "line": 1
+     },
+     "/spec/inputSchema": {
+      "column": 144,
+      "endColumn": 319,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-continue",
+      "line": 1
+     },
+     "/spec/inputSchema/properties": {
+      "column": 177,
+      "endColumn": 290,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-continue",
+      "line": 1
+     },
+     "/spec/inputSchema/properties/customerId": {
+      "column": 192,
+      "endColumn": 228,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-continue",
+      "line": 1
+     },
+     "/spec/inputSchema/properties/customerId/maxLength": {
+      "column": 224,
+      "endColumn": 227,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-continue",
+      "line": 1
+     },
+     "/spec/inputSchema/properties/customerId/type": {
+      "column": 201,
+      "endColumn": 209,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-continue",
+      "line": 1
+     },
+     "/spec/inputSchema/properties/customers": {
+      "column": 243,
+      "endColumn": 289,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-continue",
+      "line": 1
+     },
+     "/spec/inputSchema/properties/customers/items": {
+      "column": 270,
+      "endColumn": 288,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-continue",
+      "line": 1
+     },
+     "/spec/inputSchema/properties/customers/items/type": {
+      "column": 279,
+      "endColumn": 287,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-continue",
+      "line": 1
+     },
+     "/spec/inputSchema/properties/customers/type": {
+      "column": 252,
+      "endColumn": 259,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-continue",
+      "line": 1
+     },
+     "/spec/inputSchema/required": {
+      "column": 304,
+      "endColumn": 318,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-continue",
+      "line": 1
+     },
+     "/spec/inputSchema/required/0": {
+      "column": 305,
+      "endColumn": 317,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-continue",
+      "line": 1
+     },
+     "/spec/inputSchema/type": {
+      "column": 153,
+      "endColumn": 161,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-continue",
+      "line": 1
+     },
+     "/spec/output": {
+      "column": 526,
+      "endColumn": 564,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-continue",
+      "line": 1
+     },
+     "/spec/output/ref": {
+      "column": 534,
+      "endColumn": 563,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-continue",
+      "line": 1
+     },
+     "/spec/outputSchema": {
+      "column": 337,
+      "endColumn": 339,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-continue",
+      "line": 1
+     },
+     "/spec/steps": {
+      "column": 350,
+      "endColumn": 514,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-continue",
+      "line": 1
+     },
+     "/spec/steps/0": {
+      "column": 351,
+      "endColumn": 513,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-continue",
+      "line": 1
+     },
+     "/spec/steps/0/id": {
+      "column": 358,
+      "endColumn": 366,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-continue",
+      "line": 1
+     },
+     "/spec/steps/0/kind": {
+      "column": 376,
+      "endColumn": 390,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-continue",
+      "line": 1
+     },
+     "/spec/steps/0/onFailure": {
+      "column": 502,
+      "endColumn": 512,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-continue",
+      "line": 1
+     },
+     "/spec/steps/0/uses": {
+      "column": 400,
+      "endColumn": 421,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-continue",
+      "line": 1
+     },
+     "/spec/steps/0/with": {
+      "column": 431,
+      "endColumn": 487,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-continue",
+      "line": 1
+     },
+     "/spec/steps/0/with/object": {
+      "column": 442,
+      "endColumn": 486,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-continue",
+      "line": 1
+     },
+     "/spec/steps/0/with/object/customerId": {
+      "column": 457,
+      "endColumn": 485,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-continue",
+      "line": 1
+     },
+     "/spec/steps/0/with/object/customerId/ref": {
+      "column": 465,
+      "endColumn": 484,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-continue",
+      "line": 1
+     }
+    }
+   },
+   "name": "golden-call-continue",
+   "scenarios": [
+    {
+     "input": {
+      "customerId": "c-1"
+     },
+     "name": "child-timed-out",
+     "stream": [
+      {
+       "digest": "3540acb2d4916b240a0c4d000998096261ef1db67315e44acc37385c7f25b30e",
+       "event": {
+        "data": {},
+        "id": "2afd8b99-c439-5316-af63-86b5ae93629c",
+        "sequence": 1,
+        "timestamp": "2026-10-08T00:00:00Z",
+        "type": "started"
+       },
+       "transition": {
+        "commands": [
+         {
+          "input": {
+           "customerId": "c-1"
+          },
+          "kind": "call",
+          "mode": "wait",
+          "node_id": "enrich",
+          "on_failure": "continue",
+          "workflow_digest": "a92e82183cc65da73682eddb2a5211fb0b1c6c80790cfe04f09dfb7896a0480a",
+          "workflow_reference": "golden-enrich@1.0.0"
+         }
+        ],
+        "state": {
+         "accepted_sequence": 1,
+         "active": [
+          "enrich"
+         ],
+         "branches": {},
+         "deferred_results": [],
+         "incident": null,
+         "incidents": {},
+         "input": {
+          "customerId": "c-1"
+         },
+         "joins": {},
+         "output": null,
+         "status": "waiting",
+         "steps": {},
+         "waits": {}
+        },
+        "steps": [
+         {
+          "node_id": "enrich",
+          "output": null,
+          "status": "waiting"
+         }
+        ]
+       }
+      },
+      {
+       "digest": "b4081e61fbf686da5362e2d110c2ad7ba22c6942b27f62efa034b5e7a98faae1",
+       "event": {
+        "data": {
+         "child_run_id": "0b7e5a3c-6f1d-4c8a-9e2b-5d4f3a2c1b0e",
+         "generation": 0,
+         "node_id": "enrich",
+         "output": {
+          "code": "WV-RUN-TIMED_OUT",
+          "message": "The called run timed out."
+         },
+         "status": "timed_out"
+        },
+        "id": "6bfd6706-daad-5c94-bbdf-c08efa0dbb2a",
+        "sequence": 2,
+        "timestamp": "2026-10-08T00:00:01Z",
+        "type": "call_completed"
+       },
+       "transition": {
+        "commands": [],
+        "state": {
+         "accepted_sequence": 2,
+         "active": [],
+         "branches": {},
+         "deferred_results": [],
+         "incident": null,
+         "incidents": {},
+         "input": {
+          "customerId": "c-1"
+         },
+         "joins": {},
+         "output": "timed_out",
+         "status": "succeeded",
+         "steps": {
+          "enrich": {
+           "output": {
+            "error": {
+             "code": "WV-RUN-TIMED_OUT",
+             "message": "The called run timed out."
+            },
+            "runId": "0b7e5a3c-6f1d-4c8a-9e2b-5d4f3a2c1b0e",
+            "status": "timed_out"
+           }
+          }
+         },
+         "waits": {}
+        },
+        "steps": [
+         {
+          "node_id": "enrich",
+          "output": {
+           "error": {
+            "code": "WV-RUN-TIMED_OUT",
+            "message": "The called run timed out."
+           },
+           "runId": "0b7e5a3c-6f1d-4c8a-9e2b-5d4f3a2c1b0e",
+           "status": "timed_out"
+          },
+          "status": "completed"
+         }
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "input": {
+      "customerId": "c-1"
+     },
+     "name": "child-succeeded",
+     "stream": [
+      {
+       "digest": "3540acb2d4916b240a0c4d000998096261ef1db67315e44acc37385c7f25b30e",
+       "event": {
+        "data": {},
+        "id": "41fa87a7-ad73-5998-8287-6e8b1465c922",
+        "sequence": 1,
+        "timestamp": "2026-10-08T00:00:00Z",
+        "type": "started"
+       },
+       "transition": {
+        "commands": [
+         {
+          "input": {
+           "customerId": "c-1"
+          },
+          "kind": "call",
+          "mode": "wait",
+          "node_id": "enrich",
+          "on_failure": "continue",
+          "workflow_digest": "a92e82183cc65da73682eddb2a5211fb0b1c6c80790cfe04f09dfb7896a0480a",
+          "workflow_reference": "golden-enrich@1.0.0"
+         }
+        ],
+        "state": {
+         "accepted_sequence": 1,
+         "active": [
+          "enrich"
+         ],
+         "branches": {},
+         "deferred_results": [],
+         "incident": null,
+         "incidents": {},
+         "input": {
+          "customerId": "c-1"
+         },
+         "joins": {},
+         "output": null,
+         "status": "waiting",
+         "steps": {},
+         "waits": {}
+        },
+        "steps": [
+         {
+          "node_id": "enrich",
+          "output": null,
+          "status": "waiting"
+         }
+        ]
+       }
+      },
+      {
+       "digest": "92d8b99c93add66fa354905d1933c4e6a714d0b83ad43240ca1bf679f9adb4bb",
+       "event": {
+        "data": {
+         "child_run_id": "0b7e5a3c-6f1d-4c8a-9e2b-5d4f3a2c1b0e",
+         "generation": 0,
+         "node_id": "enrich",
+         "output": {
+          "tier": "gold"
+         },
+         "status": "succeeded"
+        },
+        "id": "58fa597f-451f-5554-a445-53edc9ec441e",
+        "sequence": 2,
+        "timestamp": "2026-10-08T00:00:01Z",
+        "type": "call_completed"
+       },
+       "transition": {
+        "commands": [],
+        "state": {
+         "accepted_sequence": 2,
+         "active": [],
+         "branches": {},
+         "deferred_results": [],
+         "incident": null,
+         "incidents": {},
+         "input": {
+          "customerId": "c-1"
+         },
+         "joins": {},
+         "output": "succeeded",
+         "status": "succeeded",
+         "steps": {
+          "enrich": {
+           "output": {
+            "output": {
+             "tier": "gold"
+            },
+            "runId": "0b7e5a3c-6f1d-4c8a-9e2b-5d4f3a2c1b0e",
+            "status": "succeeded"
+           }
+          }
+         },
+         "waits": {}
+        },
+        "steps": [
+         {
+          "node_id": "enrich",
+          "output": {
+           "output": {
+            "tier": "gold"
+           },
+           "runId": "0b7e5a3c-6f1d-4c8a-9e2b-5d4f3a2c1b0e",
+           "status": "succeeded"
+          },
+          "status": "completed"
+         }
+        ]
+       }
+      }
+     ]
+    }
+   ],
+   "source": "scripts/golden_calls.py#golden-call-continue"
+  },
+  {
+   "artifact": {
+    "diagnostics": [],
+    "digest": "2c2d6e84b541618513feef94ea8eaa0140a242994b92e849d1380b3d39d7279e",
+    "executable": {
+     "apiVersion": "weave/v1alpha1",
+     "connections": {},
+     "dependencies": [
+      {
+       "digest": "a92e82183cc65da73682eddb2a5211fb0b1c6c80790cfe04f09dfb7896a0480a",
+       "document": {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {
+         "name": "golden-enrich",
+         "version": "1.0.0"
+        },
+        "spec": {
+         "callable": {},
+         "connections": {},
+         "inputSchema": {
+          "additionalProperties": false,
+          "properties": {
+           "customerId": {
+            "type": "string"
+           }
+          },
+          "required": [
+           "customerId"
+          ],
+          "type": "object"
+         },
+         "output": {
+          "ref": "/steps/pick/output"
+         },
+         "outputSchema": {
+          "additionalProperties": false,
+          "properties": {
+           "tier": {
+            "type": "string"
+           }
+          },
+          "required": [
+           "tier"
+          ],
+          "type": "object"
+         },
+         "steps": [
+          {
+           "id": "pick",
+           "kind": "transform",
+           "value": {
+            "object": {
+             "tier": {
+              "literal": "gold"
+             }
+            }
+           }
+          }
+         ]
+        }
+       },
+       "kind": "Workflow",
+       "reference": "golden-enrich@1.0.0"
+      }
+     ],
+     "features": [
+      "flow.callWorkflow"
+     ],
+     "graph": {
+      "edges": [
+       {
+        "branch": null,
+        "kind": "next",
+        "source": "audit",
+        "target": "@end"
+       },
+       {
+        "branch": null,
+        "kind": "next",
+        "source": "@start",
+        "target": "audit"
+       }
+      ],
+      "entry": "@start",
+      "exit": "@end",
+      "nodes": [
+       {
+        "id": "@start",
+        "kind": "start",
+        "path": "/spec",
+        "scope": []
+       },
+       {
+        "id": "@end",
+        "kind": "end",
+        "output": {
+         "literal": "sent"
+        },
+        "path": "/spec/output",
+        "scope": []
+       },
+       {
+        "dependency": "a92e82183cc65da73682eddb2a5211fb0b1c6c80790cfe04f09dfb7896a0480a",
+        "id": "audit",
+        "kind": "callWorkflow",
+        "mode": "detach",
+        "path": "/spec/steps/0",
+        "scope": [],
+        "with": {
+         "object": {
+          "customerId": {
+           "ref": "/input/customerId"
+          }
+         }
+        }
+       }
+      ]
+     },
+     "guards": [
+      {
+       "path": "/spec/inputSchema",
+       "purpose": "workflow_input",
+       "schemaRef": "2660aa52584a8f2e72e6caf93eb6d83e1fd55c402fb0acced6810db2254d8a58"
+      },
+      {
+       "path": "/spec/steps/0/with",
+       "purpose": "call_input",
+       "schemaRef": "87c04f8dbfaa4629af7c7d2d3905f05fced1925492af044d86cfd7f8b712da8b"
+      },
+      {
+       "path": "/spec/output",
+       "purpose": "workflow_output",
+       "schemaRef": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      }
+     ],
+     "inputSchema": "2660aa52584a8f2e72e6caf93eb6d83e1fd55c402fb0acced6810db2254d8a58",
+     "irVersion": "weave/ir-v1alpha4",
+     "kind": "Workflow",
+     "metadata": {
+      "name": "golden-call-detach",
+      "version": "1.0.0"
+     },
+     "outputSchema": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+     "schemas": {
+      "2660aa52584a8f2e72e6caf93eb6d83e1fd55c402fb0acced6810db2254d8a58": {
+       "properties": {
+        "customerId": {
+         "maxLength": 200,
+         "type": "string"
+        },
+        "customers": {
+         "items": {
+          "type": "string"
+         },
+         "type": "array"
+        }
+       },
+       "required": [
+        "customerId"
+       ],
+       "type": "object"
+      },
+      "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a": {},
+      "87c04f8dbfaa4629af7c7d2d3905f05fced1925492af044d86cfd7f8b712da8b": {
+       "additionalProperties": false,
+       "properties": {
+        "customerId": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "customerId"
+       ],
+       "type": "object"
+      }
+     },
+     "timeoutSeconds": null
+    },
+    "omittedCount": 0,
+    "schemaTruncated": false,
+    "sourceHash": "149563b9630d5994de4ebdbddf22206572b5b32198995545f22156aca60ade6b",
+    "sourceMap": {
+     "": {
+      "column": 1,
+      "endColumn": 537,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-detach",
+      "line": 1
+     },
+     "/apiVersion": {
+      "column": 16,
+      "endColumn": 32,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-detach",
+      "line": 1
+     },
+     "/kind": {
+      "column": 42,
+      "endColumn": 52,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-detach",
+      "line": 1
+     },
+     "/metadata": {
+      "column": 66,
+      "endColumn": 116,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-detach",
+      "line": 1
+     },
+     "/metadata/name": {
+      "column": 75,
+      "endColumn": 95,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-detach",
+      "line": 1
+     },
+     "/metadata/version": {
+      "column": 108,
+      "endColumn": 115,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-detach",
+      "line": 1
+     },
+     "/spec": {
+      "column": 126,
+      "endColumn": 536,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-detach",
+      "line": 1
+     },
+     "/spec/inputSchema": {
+      "column": 142,
+      "endColumn": 317,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-detach",
+      "line": 1
+     },
+     "/spec/inputSchema/properties": {
+      "column": 175,
+      "endColumn": 288,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-detach",
+      "line": 1
+     },
+     "/spec/inputSchema/properties/customerId": {
+      "column": 190,
+      "endColumn": 226,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-detach",
+      "line": 1
+     },
+     "/spec/inputSchema/properties/customerId/maxLength": {
+      "column": 222,
+      "endColumn": 225,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-detach",
+      "line": 1
+     },
+     "/spec/inputSchema/properties/customerId/type": {
+      "column": 199,
+      "endColumn": 207,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-detach",
+      "line": 1
+     },
+     "/spec/inputSchema/properties/customers": {
+      "column": 241,
+      "endColumn": 287,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-detach",
+      "line": 1
+     },
+     "/spec/inputSchema/properties/customers/items": {
+      "column": 268,
+      "endColumn": 286,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-detach",
+      "line": 1
+     },
+     "/spec/inputSchema/properties/customers/items/type": {
+      "column": 277,
+      "endColumn": 285,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-detach",
+      "line": 1
+     },
+     "/spec/inputSchema/properties/customers/type": {
+      "column": 250,
+      "endColumn": 257,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-detach",
+      "line": 1
+     },
+     "/spec/inputSchema/required": {
+      "column": 302,
+      "endColumn": 316,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-detach",
+      "line": 1
+     },
+     "/spec/inputSchema/required/0": {
+      "column": 303,
+      "endColumn": 315,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-detach",
+      "line": 1
+     },
+     "/spec/inputSchema/type": {
+      "column": 151,
+      "endColumn": 159,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-detach",
+      "line": 1
+     },
+     "/spec/output": {
+      "column": 516,
+      "endColumn": 535,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-detach",
+      "line": 1
+     },
+     "/spec/output/literal": {
+      "column": 528,
+      "endColumn": 534,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-detach",
+      "line": 1
+     },
+     "/spec/outputSchema": {
+      "column": 335,
+      "endColumn": 337,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-detach",
+      "line": 1
+     },
+     "/spec/steps": {
+      "column": 348,
+      "endColumn": 504,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-detach",
+      "line": 1
+     },
+     "/spec/steps/0": {
+      "column": 349,
+      "endColumn": 503,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-detach",
+      "line": 1
+     },
+     "/spec/steps/0/id": {
+      "column": 356,
+      "endColumn": 363,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-detach",
+      "line": 1
+     },
+     "/spec/steps/0/kind": {
+      "column": 373,
+      "endColumn": 387,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-detach",
+      "line": 1
+     },
+     "/spec/steps/0/mode": {
+      "column": 494,
+      "endColumn": 502,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-detach",
+      "line": 1
+     },
+     "/spec/steps/0/uses": {
+      "column": 397,
+      "endColumn": 418,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-detach",
+      "line": 1
+     },
+     "/spec/steps/0/with": {
+      "column": 428,
+      "endColumn": 484,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-detach",
+      "line": 1
+     },
+     "/spec/steps/0/with/object": {
+      "column": 439,
+      "endColumn": 483,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-detach",
+      "line": 1
+     },
+     "/spec/steps/0/with/object/customerId": {
+      "column": 454,
+      "endColumn": 482,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-detach",
+      "line": 1
+     },
+     "/spec/steps/0/with/object/customerId/ref": {
+      "column": 462,
+      "endColumn": 481,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-detach",
+      "line": 1
+     }
+    }
+   },
+   "name": "golden-call-detach",
+   "scenarios": [
+    {
+     "input": {
+      "customerId": "c-1"
+     },
+     "name": "detached",
+     "stream": [
+      {
+       "digest": "fea1b79a37ce304bef474b972f6d7fa2fb64d236d88073c66b5e08607a32d8a2",
+       "event": {
+        "data": {},
+        "id": "9ca40c54-30bc-5a11-8da6-7e9dda9af851",
+        "sequence": 1,
+        "timestamp": "2026-10-08T00:00:00Z",
+        "type": "started"
+       },
+       "transition": {
+        "commands": [
+         {
+          "input": {
+           "customerId": "c-1"
+          },
+          "kind": "call",
+          "mode": "detach",
+          "node_id": "audit",
+          "workflow_digest": "a92e82183cc65da73682eddb2a5211fb0b1c6c80790cfe04f09dfb7896a0480a",
+          "workflow_reference": "golden-enrich@1.0.0"
+         }
+        ],
+        "state": {
+         "accepted_sequence": 1,
+         "active": [],
+         "branches": {},
+         "deferred_results": [],
+         "incident": null,
+         "incidents": {},
+         "input": {
+          "customerId": "c-1"
+         },
+         "joins": {},
+         "output": "sent",
+         "status": "succeeded",
+         "steps": {
+          "audit": {
+           "output": null
+          }
+         },
+         "waits": {}
+        },
+        "steps": [
+         {
+          "node_id": "audit",
+          "output": null,
+          "status": "completed"
+         }
+        ]
+       }
+      }
+     ]
+    }
+   ],
+   "source": "scripts/golden_calls.py#golden-call-detach"
+  },
+  {
+   "artifact": {
+    "diagnostics": [
+     {
+      "code": "WV-COMP-REFERENCE_PRESENCE",
+      "hint": null,
+      "message": "Reference presence is unproved; runtime validation is required.",
+      "path": "/spec/steps/0/items",
+      "related": [],
+      "severity": "warning",
+      "source": {
+       "column": 390,
+       "endColumn": 417,
+       "endLine": 1,
+       "file": "scripts/golden_calls.py#golden-call-each",
+       "line": 1
+      },
+      "stage": "semantic",
+      "suggestedEdit": null
+     }
+    ],
+    "digest": "86c0847fe4509e60e804225359801212f00d99971a90a213761b8e82cb7ad510",
+    "executable": {
+     "apiVersion": "weave/v1alpha1",
+     "connections": {},
+     "dependencies": [
+      {
+       "digest": "a92e82183cc65da73682eddb2a5211fb0b1c6c80790cfe04f09dfb7896a0480a",
+       "document": {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {
+         "name": "golden-enrich",
+         "version": "1.0.0"
+        },
+        "spec": {
+         "callable": {},
+         "connections": {},
+         "inputSchema": {
+          "additionalProperties": false,
+          "properties": {
+           "customerId": {
+            "type": "string"
+           }
+          },
+          "required": [
+           "customerId"
+          ],
+          "type": "object"
+         },
+         "output": {
+          "ref": "/steps/pick/output"
+         },
+         "outputSchema": {
+          "additionalProperties": false,
+          "properties": {
+           "tier": {
+            "type": "string"
+           }
+          },
+          "required": [
+           "tier"
+          ],
+          "type": "object"
+         },
+         "steps": [
+          {
+           "id": "pick",
+           "kind": "transform",
+           "value": {
+            "object": {
+             "tier": {
+              "literal": "gold"
+             }
+            }
+           }
+          }
+         ]
+        }
+       },
+       "kind": "Workflow",
+       "reference": "golden-enrich@1.0.0"
+      }
+     ],
+     "features": [
+      "flow.callWorkflow",
+      "flow.forEach"
+     ],
+     "graph": {
+      "edges": [
+       {
+        "branch": null,
+        "kind": "next",
+        "source": "enrich",
+        "target": "@branch:each:0"
+       },
+       {
+        "branch": "body",
+        "kind": "join",
+        "source": "@branch:each:0",
+        "target": "@join:each"
+       },
+       {
+        "branch": "body",
+        "kind": "each",
+        "source": "each",
+        "target": "enrich"
+       },
+       {
+        "branch": null,
+        "kind": "next",
+        "source": "@join:each",
+        "target": "@end"
+       },
+       {
+        "branch": null,
+        "kind": "next",
+        "source": "@start",
+        "target": "each"
+       }
+      ],
+      "entry": "@start",
+      "exit": "@end",
+      "nodes": [
+       {
+        "id": "@start",
+        "kind": "start",
+        "path": "/spec",
+        "scope": []
+       },
+       {
+        "id": "@end",
+        "kind": "end",
+        "output": {
+         "ref": "/steps/each/output"
+        },
+        "path": "/spec/output",
+        "scope": []
+       },
+       {
+        "dependency": "a92e82183cc65da73682eddb2a5211fb0b1c6c80790cfe04f09dfb7896a0480a",
+        "id": "enrich",
+        "kind": "callWorkflow",
+        "mode": "wait",
+        "path": "/spec/steps/0/body/steps/0",
+        "scope": [
+         "each",
+         "body"
+        ],
+        "with": {
+         "object": {
+          "customerId": {
+           "ref": "/item"
+          }
+         }
+        }
+       },
+       {
+        "branch": "body",
+        "completes": true,
+        "id": "@branch:each:0",
+        "kind": "branch-output",
+        "output": {
+         "ref": "/steps/enrich/output/tier"
+        },
+        "owner": "each",
+        "path": "/spec/steps/0/body/output",
+        "scope": [
+         "each",
+         "body"
+        ]
+       },
+       {
+        "branches": [
+         "@branch:each:0"
+        ],
+        "completes": true,
+        "id": "@join:each",
+        "kind": "join",
+        "mode": "each",
+        "owner": "each",
+        "path": "/spec/steps/0",
+        "scope": []
+       },
+       {
+        "collect": "all",
+        "concurrency": 2,
+        "id": "each",
+        "items": {
+         "ref": "/input/customers"
+        },
+        "join": "@join:each",
+        "kind": "forEach",
+        "maxItems": 1000,
+        "path": "/spec/steps/0",
+        "scope": [],
+        "target": "enrich"
+       }
+      ]
+     },
+     "guards": [
+      {
+       "path": "/spec/inputSchema",
+       "purpose": "workflow_input",
+       "schemaRef": "2660aa52584a8f2e72e6caf93eb6d83e1fd55c402fb0acced6810db2254d8a58"
+      },
+      {
+       "path": "/spec/steps/0/items",
+       "purpose": "reference_presence",
+       "schemaRef": "681004346c78d5f384b654c986b4eda8fea28010db3be7da70b19aa0080f3ff9"
+      },
+      {
+       "path": "/spec/steps/0/body/steps/0/with",
+       "purpose": "call_input",
+       "schemaRef": "87c04f8dbfaa4629af7c7d2d3905f05fced1925492af044d86cfd7f8b712da8b"
+      },
+      {
+       "path": "/spec/steps/0/body/steps/0",
+       "purpose": "call_output",
+       "schemaRef": "478f35770cba246edbd4093610501b767543bd6e8ce9fa797c6ef21187bade0e"
+      },
+      {
+       "path": "/spec/steps/0/body/output",
+       "purpose": "branch_output",
+       "schemaRef": "00404e686415370f1711c4d7acfa2905444d3cf23cef2e10c47d445ebe690f96"
+      },
+      {
+       "path": "/spec/output",
+       "purpose": "workflow_output",
+       "schemaRef": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      }
+     ],
+     "inputSchema": "2660aa52584a8f2e72e6caf93eb6d83e1fd55c402fb0acced6810db2254d8a58",
+     "irVersion": "weave/ir-v1alpha4",
+     "kind": "Workflow",
+     "metadata": {
+      "name": "golden-call-each",
+      "version": "1.0.0"
+     },
+     "outputSchema": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+     "schemas": {
+      "00404e686415370f1711c4d7acfa2905444d3cf23cef2e10c47d445ebe690f96": {
+       "type": "string"
+      },
+      "2660aa52584a8f2e72e6caf93eb6d83e1fd55c402fb0acced6810db2254d8a58": {
+       "properties": {
+        "customerId": {
+         "maxLength": 200,
+         "type": "string"
+        },
+        "customers": {
+         "items": {
+          "type": "string"
+         },
+         "type": "array"
+        }
+       },
+       "required": [
+        "customerId"
+       ],
+       "type": "object"
+      },
+      "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a": {},
+      "478f35770cba246edbd4093610501b767543bd6e8ce9fa797c6ef21187bade0e": {
+       "additionalProperties": false,
+       "properties": {
+        "tier": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "tier"
+       ],
+       "type": "object"
+      },
+      "681004346c78d5f384b654c986b4eda8fea28010db3be7da70b19aa0080f3ff9": {
+       "items": {
+        "type": "string"
+       },
+       "type": "array"
+      },
+      "87c04f8dbfaa4629af7c7d2d3905f05fced1925492af044d86cfd7f8b712da8b": {
+       "additionalProperties": false,
+       "properties": {
+        "customerId": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "customerId"
+       ],
+       "type": "object"
+      }
+     },
+     "timeoutSeconds": null
+    },
+    "omittedCount": 0,
+    "schemaTruncated": false,
+    "sourceHash": "f9a589e614c886c1f252be6382dbb5ad0663a04247f0be0cb01512788c6d79ea",
+    "sourceMap": {
+     "": {
+      "column": 1,
+      "endColumn": 676,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-each",
+      "line": 1
+     },
+     "/apiVersion": {
+      "column": 16,
+      "endColumn": 32,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-each",
+      "line": 1
+     },
+     "/kind": {
+      "column": 42,
+      "endColumn": 52,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-each",
+      "line": 1
+     },
+     "/metadata": {
+      "column": 66,
+      "endColumn": 114,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-each",
+      "line": 1
+     },
+     "/metadata/name": {
+      "column": 75,
+      "endColumn": 93,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-each",
+      "line": 1
+     },
+     "/metadata/version": {
+      "column": 106,
+      "endColumn": 113,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-each",
+      "line": 1
+     },
+     "/spec": {
+      "column": 124,
+      "endColumn": 675,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-each",
+      "line": 1
+     },
+     "/spec/inputSchema": {
+      "column": 140,
+      "endColumn": 315,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-each",
+      "line": 1
+     },
+     "/spec/inputSchema/properties": {
+      "column": 173,
+      "endColumn": 286,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-each",
+      "line": 1
+     },
+     "/spec/inputSchema/properties/customerId": {
+      "column": 188,
+      "endColumn": 224,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-each",
+      "line": 1
+     },
+     "/spec/inputSchema/properties/customerId/maxLength": {
+      "column": 220,
+      "endColumn": 223,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-each",
+      "line": 1
+     },
+     "/spec/inputSchema/properties/customerId/type": {
+      "column": 197,
+      "endColumn": 205,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-each",
+      "line": 1
+     },
+     "/spec/inputSchema/properties/customers": {
+      "column": 239,
+      "endColumn": 285,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-each",
+      "line": 1
+     },
+     "/spec/inputSchema/properties/customers/items": {
+      "column": 266,
+      "endColumn": 284,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-each",
+      "line": 1
+     },
+     "/spec/inputSchema/properties/customers/items/type": {
+      "column": 275,
+      "endColumn": 283,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-each",
+      "line": 1
+     },
+     "/spec/inputSchema/properties/customers/type": {
+      "column": 248,
+      "endColumn": 255,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-each",
+      "line": 1
+     },
+     "/spec/inputSchema/required": {
+      "column": 300,
+      "endColumn": 314,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-each",
+      "line": 1
+     },
+     "/spec/inputSchema/required/0": {
+      "column": 301,
+      "endColumn": 313,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-each",
+      "line": 1
+     },
+     "/spec/inputSchema/type": {
+      "column": 149,
+      "endColumn": 157,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-each",
+      "line": 1
+     },
+     "/spec/output": {
+      "column": 645,
+      "endColumn": 674,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-each",
+      "line": 1
+     },
+     "/spec/output/ref": {
+      "column": 653,
+      "endColumn": 673,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-each",
+      "line": 1
+     },
+     "/spec/outputSchema": {
+      "column": 333,
+      "endColumn": 335,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-each",
+      "line": 1
+     },
+     "/spec/steps": {
+      "column": 346,
+      "endColumn": 633,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-each",
+      "line": 1
+     },
+     "/spec/steps/0": {
+      "column": 347,
+      "endColumn": 632,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-each",
+      "line": 1
+     },
+     "/spec/steps/0/body": {
+      "column": 445,
+      "endColumn": 631,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-each",
+      "line": 1
+     },
+     "/spec/steps/0/body/output": {
+      "column": 594,
+      "endColumn": 630,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-each",
+      "line": 1
+     },
+     "/spec/steps/0/body/output/ref": {
+      "column": 602,
+      "endColumn": 629,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-each",
+      "line": 1
+     },
+     "/spec/steps/0/body/steps": {
+      "column": 455,
+      "endColumn": 582,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-each",
+      "line": 1
+     },
+     "/spec/steps/0/body/steps/0": {
+      "column": 456,
+      "endColumn": 581,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-each",
+      "line": 1
+     },
+     "/spec/steps/0/body/steps/0/id": {
+      "column": 463,
+      "endColumn": 471,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-each",
+      "line": 1
+     },
+     "/spec/steps/0/body/steps/0/kind": {
+      "column": 481,
+      "endColumn": 495,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-each",
+      "line": 1
+     },
+     "/spec/steps/0/body/steps/0/uses": {
+      "column": 505,
+      "endColumn": 526,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-each",
+      "line": 1
+     },
+     "/spec/steps/0/body/steps/0/with": {
+      "column": 536,
+      "endColumn": 580,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-each",
+      "line": 1
+     },
+     "/spec/steps/0/body/steps/0/with/object": {
+      "column": 547,
+      "endColumn": 579,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-each",
+      "line": 1
+     },
+     "/spec/steps/0/body/steps/0/with/object/customerId": {
+      "column": 562,
+      "endColumn": 578,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-each",
+      "line": 1
+     },
+     "/spec/steps/0/body/steps/0/with/object/customerId/ref": {
+      "column": 570,
+      "endColumn": 577,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-each",
+      "line": 1
+     },
+     "/spec/steps/0/concurrency": {
+      "column": 434,
+      "endColumn": 435,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-each",
+      "line": 1
+     },
+     "/spec/steps/0/id": {
+      "column": 354,
+      "endColumn": 360,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-each",
+      "line": 1
+     },
+     "/spec/steps/0/items": {
+      "column": 390,
+      "endColumn": 417,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-each",
+      "line": 1
+     },
+     "/spec/steps/0/items/ref": {
+      "column": 398,
+      "endColumn": 416,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-each",
+      "line": 1
+     },
+     "/spec/steps/0/kind": {
+      "column": 370,
+      "endColumn": 379,
+      "endLine": 1,
+      "file": "scripts/golden_calls.py#golden-call-each",
+      "line": 1
+     }
+    }
+   },
+   "name": "golden-call-each",
+   "scenarios": [
+    {
+     "input": {
+      "customerId": "c-0",
+      "customers": [
+       "a",
+       "b",
+       "c"
+      ]
+     },
+     "name": "reverse-completions",
+     "stream": [
+      {
+       "digest": "da2f4456274bfced29c714a5739e8f1daf2d13dbd781be2b3d9e01dac906626c",
+       "event": {
+        "data": {},
+        "id": "ccc4c9a2-61a2-5f97-bdbb-0d83cbaa99a8",
+        "sequence": 1,
+        "timestamp": "2026-10-08T00:00:00Z",
+        "type": "started"
+       },
+       "transition": {
+        "commands": [
+         {
+          "branch": "body",
+          "index": 0,
+          "kind": "spawn_branch",
+          "node_id": "each"
+         },
+         {
+          "branch": "body",
+          "index": 1,
+          "kind": "spawn_branch",
+          "node_id": "each"
+         },
+         {
+          "input": {
+           "customerId": "a"
+          },
+          "kind": "call",
+          "mode": "wait",
+          "node_id": "enrich[0]",
+          "on_failure": "stop",
+          "workflow_digest": "a92e82183cc65da73682eddb2a5211fb0b1c6c80790cfe04f09dfb7896a0480a",
+          "workflow_reference": "golden-enrich@1.0.0"
+         },
+         {
+          "input": {
+           "customerId": "b"
+          },
+          "kind": "call",
+          "mode": "wait",
+          "node_id": "enrich[1]",
+          "on_failure": "stop",
+          "workflow_digest": "a92e82183cc65da73682eddb2a5211fb0b1c6c80790cfe04f09dfb7896a0480a",
+          "workflow_reference": "golden-enrich@1.0.0"
+         }
+        ],
+        "state": {
+         "accepted_sequence": 1,
+         "active": [
+          "enrich[0]",
+          "enrich[1]"
+         ],
+         "branches": {
+          "each/body[0]": {
+           "index": 0,
+           "name": "body",
+           "output": null,
+           "owner": "each",
+           "parent": null,
+           "status": "running",
+           "steps": {},
+           "target": "enrich",
+           "visible": {}
+          },
+          "each/body[1]": {
+           "index": 1,
+           "name": "body",
+           "output": null,
+           "owner": "each",
+           "parent": null,
+           "status": "running",
+           "steps": {},
+           "target": "enrich",
+           "visible": {}
+          }
+         },
+         "deferred_results": [],
+         "incident": null,
+         "incidents": {},
+         "input": {
+          "customerId": "c-0",
+          "customers": [
+           "a",
+           "b",
+           "c"
+          ]
+         },
+         "joins": {},
+         "loops": {
+          "each": {
+           "completed": 0,
+           "concurrency": 2,
+           "count": 3,
+           "items": [
+            "a",
+            "b",
+            "c"
+           ],
+           "join": "@join:each",
+           "next_index": 2,
+           "output_bytes": 0,
+           "outputs": {},
+           "owner": "each",
+           "running": [
+            0,
+            1
+           ],
+           "status": "running",
+           "visible": {},
+           "yields": 0
+          }
+         },
+         "output": null,
+         "status": "waiting",
+         "steps": {},
+         "waits": {}
+        },
+        "steps": [
+         {
+          "node_id": "enrich[0]",
+          "output": null,
+          "status": "waiting"
+         },
+         {
+          "node_id": "enrich[1]",
+          "output": null,
+          "status": "waiting"
+         }
+        ]
+       }
+      },
+      {
+       "digest": "72d8a19dc911ee79f6ffd0165c79398a922354a9002c6d23b7f3f400c4c352ec",
+       "event": {
+        "data": {
+         "child_run_id": "0b7e5a3c-6f1d-4c8a-9e2b-5d4f3a2c1b0e",
+         "generation": 0,
+         "node_id": "enrich[1]",
+         "output": {
+          "tier": "silver"
+         },
+         "status": "succeeded"
+        },
+        "id": "07227670-fc0b-5462-a31e-ab07af1d5995",
+        "sequence": 2,
+        "timestamp": "2026-10-08T00:00:01Z",
+        "type": "call_completed"
+       },
+       "transition": {
+        "commands": [
+         {
+          "branch": "body",
+          "index": 1,
+          "kind": "accept_output",
+          "node_id": "@branch:each:0[1]"
+         },
+         {
+          "branch": "body",
+          "index": 2,
+          "kind": "spawn_branch",
+          "node_id": "each"
+         },
+         {
+          "input": {
+           "customerId": "c"
+          },
+          "kind": "call",
+          "mode": "wait",
+          "node_id": "enrich[2]",
+          "on_failure": "stop",
+          "workflow_digest": "a92e82183cc65da73682eddb2a5211fb0b1c6c80790cfe04f09dfb7896a0480a",
+          "workflow_reference": "golden-enrich@1.0.0"
+         }
+        ],
+        "state": {
+         "accepted_sequence": 2,
+         "active": [
+          "enrich[0]",
+          "enrich[2]"
+         ],
+         "branches": {
+          "each/body[0]": {
+           "index": 0,
+           "name": "body",
+           "output": null,
+           "owner": "each",
+           "parent": null,
+           "status": "running",
+           "steps": {},
+           "target": "enrich",
+           "visible": {}
+          },
+          "each/body[2]": {
+           "index": 2,
+           "name": "body",
+           "output": null,
+           "owner": "each",
+           "parent": null,
+           "status": "running",
+           "steps": {},
+           "target": "enrich",
+           "visible": {}
+          }
+         },
+         "deferred_results": [],
+         "incident": null,
+         "incidents": {},
+         "input": {
+          "customerId": "c-0",
+          "customers": [
+           "a",
+           "b",
+           "c"
+          ]
+         },
+         "joins": {},
+         "loops": {
+          "each": {
+           "completed": 1,
+           "concurrency": 2,
+           "count": 3,
+           "items": [
+            "a",
+            "b",
+            "c"
+           ],
+           "join": "@join:each",
+           "next_index": 3,
+           "output_bytes": 8,
+           "outputs": {
+            "1": "silver"
+           },
+           "owner": "each",
+           "running": [
+            0,
+            2
+           ],
+           "status": "running",
+           "visible": {},
+           "yields": 0
+          }
+         },
+         "output": null,
+         "status": "waiting",
+         "steps": {},
+         "waits": {}
+        },
+        "steps": [
+         {
+          "node_id": "enrich[1]",
+          "output": {
+           "tier": "silver"
+          },
+          "status": "completed"
+         },
+         {
+          "node_id": "@branch:each:0[1]",
+          "output": "silver",
+          "status": "completed"
+         },
+         {
+          "node_id": "enrich[2]",
+          "output": null,
+          "status": "waiting"
+         }
+        ]
+       }
+      },
+      {
+       "digest": "57bb814d9bc84de32863787acaad3bdf00a48f09d6b4d1b119d643aac89ddca7",
+       "event": {
+        "data": {
+         "child_run_id": "4c2d8e1f-7a3b-4f6e-8d9c-1a2b3c4d5e6f",
+         "generation": 0,
+         "node_id": "enrich[2]",
+         "output": {
+          "tier": "bronze"
+         },
+         "status": "succeeded"
+        },
+        "id": "e7906fea-7399-572f-a0fc-8fef0002fc52",
+        "sequence": 3,
+        "timestamp": "2026-10-08T00:00:02Z",
+        "type": "call_completed"
+       },
+       "transition": {
+        "commands": [
+         {
+          "branch": "body",
+          "index": 2,
+          "kind": "accept_output",
+          "node_id": "@branch:each:0[2]"
+         }
+        ],
+        "state": {
+         "accepted_sequence": 3,
+         "active": [
+          "enrich[0]"
+         ],
+         "branches": {
+          "each/body[0]": {
+           "index": 0,
+           "name": "body",
+           "output": null,
+           "owner": "each",
+           "parent": null,
+           "status": "running",
+           "steps": {},
+           "target": "enrich",
+           "visible": {}
+          }
+         },
+         "deferred_results": [],
+         "incident": null,
+         "incidents": {},
+         "input": {
+          "customerId": "c-0",
+          "customers": [
+           "a",
+           "b",
+           "c"
+          ]
+         },
+         "joins": {},
+         "loops": {
+          "each": {
+           "completed": 2,
+           "concurrency": 2,
+           "count": 3,
+           "items": [
+            "a",
+            "b",
+            "c"
+           ],
+           "join": "@join:each",
+           "next_index": 3,
+           "output_bytes": 17,
+           "outputs": {
+            "1": "silver",
+            "2": "bronze"
+           },
+           "owner": "each",
+           "running": [
+            0
+           ],
+           "status": "running",
+           "visible": {},
+           "yields": 0
+          }
+         },
+         "output": null,
+         "status": "waiting",
+         "steps": {},
+         "waits": {}
+        },
+        "steps": [
+         {
+          "node_id": "enrich[2]",
+          "output": {
+           "tier": "bronze"
+          },
+          "status": "completed"
+         },
+         {
+          "node_id": "@branch:each:0[2]",
+          "output": "bronze",
+          "status": "completed"
+         }
+        ]
+       }
+      },
+      {
+       "digest": "cfb34ba4f9c34b7b7cbcd9b193214fce5e9c3e914bb2460b9afef6f66c809dca",
+       "event": {
+        "data": {
+         "child_run_id": "0b7e5a3c-6f1d-4c8a-9e2b-5d4f3a2c1b0e",
+         "generation": 0,
+         "node_id": "enrich[0]",
+         "output": {
+          "tier": "gold"
+         },
+         "status": "succeeded"
+        },
+        "id": "d646e85f-7831-571c-908e-98715675c844",
+        "sequence": 4,
+        "timestamp": "2026-10-08T00:00:03Z",
+        "type": "call_completed"
+       },
+       "transition": {
+        "commands": [
+         {
+          "branch": "body",
+          "index": 0,
+          "kind": "accept_output",
+          "node_id": "@branch:each:0[0]"
+         },
+         {
+          "branch": null,
+          "kind": "join",
+          "node_id": "@join:each"
+         }
+        ],
+        "state": {
+         "accepted_sequence": 4,
+         "active": [],
+         "branches": {},
+         "deferred_results": [],
+         "incident": null,
+         "incidents": {},
+         "input": {
+          "customerId": "c-0",
+          "customers": [
+           "a",
+           "b",
+           "c"
+          ]
+         },
+         "joins": {},
+         "loops": {
+          "each": {
+           "completed": 3,
+           "concurrency": 2,
+           "count": 3,
+           "items": [],
+           "join": "@join:each",
+           "next_index": 3,
+           "output_bytes": 24,
+           "outputs": {},
+           "owner": "each",
+           "running": [],
+           "status": "joined",
+           "visible": {},
+           "yields": 0
+          }
+         },
+         "output": [
+          "gold",
+          "silver",
+          "bronze"
+         ],
+         "status": "succeeded",
+         "steps": {
+          "each": {
+           "output": [
+            "gold",
+            "silver",
+            "bronze"
+           ]
+          }
+         },
+         "waits": {}
+        },
+        "steps": [
+         {
+          "node_id": "enrich[0]",
+          "output": {
+           "tier": "gold"
+          },
+          "status": "completed"
+         },
+         {
+          "node_id": "@branch:each:0[0]",
+          "output": "gold",
+          "status": "completed"
+         },
+         {
+          "node_id": "each",
+          "output": [
+           "gold",
+           "silver",
+           "bronze"
+          ],
+          "status": "completed"
+         },
+         {
+          "node_id": "@join:each",
+          "output": [
+           "gold",
+           "silver",
+           "bronze"
+          ],
+          "status": "completed"
+         }
+        ]
+       }
+      }
+     ]
+    }
+   ],
+   "source": "scripts/golden_calls.py#golden-call-each"
+  }
+ ]
+}
