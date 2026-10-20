@@ -142,7 +142,9 @@ the compact size, Weave AI answers in at most 512 tokens and asks the model to
 answer briefly. On an Ollama endpoint it also discourages repeated words and
 stops an answer as soon as it starts repeating itself. The person then sees
 `WV-LUMI-OUTPUT` with a suggestion to try a larger model or start a new
-conversation, so less history is sent.
+conversation, so less history is sent. The same check can stop an answer that
+is meant to repeat itself, such as a decision table with many identical rows or
+a long list of the same value; the answer is then not used, never applied.
 
 Small local models often fail to produce valid changes. On the compact size
 Weave AI sees an outline of your draft, so a change to an existing draft has
