@@ -468,6 +468,49 @@ class StudioController:
 
         return await local_work(work, slow="Finding the data for this field took too long; simplify the workflow")
 
+    @post_mapping("/studio/local/testdata/check")
+    async def check_test_data(self, request: Request) -> Response:
+        from firefly_weave.studio.local_contracts import CheckTestDataRequest
+
+        try:
+            body = CheckTestDataRequest.model_validate_json(await request.body())
+        except ValidationError:
+            return problem(
+                422,
+                "WV-STUDIO-REQUEST",
+                "Provide a bounded source, its format, its definitions and a test data document",
+            )
+
+        def work() -> Any:
+            from firefly_weave.compiler.catalog import CatalogSnapshot
+            from firefly_weave.compiler.parser import ParseFailure, parse_source
+            from firefly_weave.compiler.test_data import check_test_data
+            from firefly_weave.contracts.definitions import load_definition
+            from firefly_weave.studio.local_contracts import CheckTestDataEntry, CheckTestDataResult
+
+            try:
+                document = parse_source(body.source, format=body.format).value
+            except ParseFailure:
+                document = None
+            # A definition that doesn't load, or a second version of the same one, is left out: the
+            # entries that need it are then unresolved, never accepted.
+            loaded: dict[str, Any] = {}
+            for value in body.definitions:
+                try:
+                    model = load_definition(value)
+                except ValueError:
+                    continue
+                loaded.setdefault(f"{model.kind}:{model.metadata.name}@{model.metadata.version}", model)
+            catalog = CatalogSnapshot.from_definitions(loaded.values())
+            workflow = document if isinstance(document, dict) else {}
+            entries = [
+                CheckTestDataEntry(path=path, ok=code is None, code=code)
+                for path, code in check_test_data(workflow, body.testData, catalog)
+            ]
+            return CheckTestDataResult(entries=entries).model_dump(mode="json", by_alias=True, exclude_none=True)
+
+        return await local_work(work, slow="Checking this test data took too long; simplify the workflow")
+
     @post_mapping("/studio/local/openapi/inventory")
     async def openapi_inventory(self, request: Request) -> Response:
         from firefly_weave.sdk.openapi_import import inventory
