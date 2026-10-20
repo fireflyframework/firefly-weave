@@ -339,17 +339,17 @@ async def test_advance_marks_a_change_superseded_when_the_deployment_moved(ops):
 async def test_the_planner_needs_another_approver_through_both_approvals(ops):
     setup = await prepared(ops)
     planned = await awaiting(ops, setup, observed_count=0, replicas=3)
-    for low_level in (False, True):
-        with pytest.raises(CatalogError) as refused:
-            if low_level:
-                await ops.service.approve(
-                    planned.plan_id, PlanApprovalRequest(digest=planned.plan_digest), **ops.authority("planner")
-                )
-            else:
-                await ops.changes.approve(
-                    planned.id, ChangeRequestApprove(digest=planned.plan_digest), **ops.authority("planner")
-                )
-        assert (refused.value.status, refused.value.code) == (403, "WV-APPROVAL-SELF")
+    with pytest.raises(CatalogError) as refused:
+        await ops.changes.approve(
+            planned.id, ChangeRequestApprove(digest=planned.plan_digest), **ops.authority("planner")
+        )
+    assert (refused.value.status, refused.value.code) == (403, "WV-APPROVAL-SELF")
+    # The plan is the change request's: the low-level approval points there.
+    with pytest.raises(CatalogError) as owned:
+        await ops.service.approve(
+            planned.plan_id, PlanApprovalRequest(digest=planned.plan_digest), **ops.authority("planner")
+        )
+    assert (owned.value.status, owned.value.code) == (409, "WV-CHANGE-REQUEST")
     with pytest.raises(CatalogError) as wrong:
         await ops.changes.approve(planned.id, ChangeRequestApprove(digest="0" * 64), **ops.authority("approver"))
     assert (wrong.value.status, wrong.value.code) == (409, "WV-PLAN-STALE")
@@ -390,12 +390,12 @@ async def test_the_requester_cannot_approve_and_the_stricter_policy_applies(ops)
             planned.id, ChangeRequestApprove(digest=planned.plan_digest), **ops.authority("owner")
         )
     assert (refused.value.status, refused.value.code) == (403, "WV-APPROVAL-SELF")
-    # The low-level approval applies the change request's snapshot too.
+    # The low-level approval is not a way around it: the plan belongs to the change request.
     with pytest.raises(CatalogError) as low_level:
         await ops.service.approve(
             planned.plan_id, PlanApprovalRequest(digest=planned.plan_digest), **ops.authority("owner")
         )
-    assert (low_level.value.status, low_level.value.code) == (403, "WV-APPROVAL-SELF")
+    assert (low_level.value.status, low_level.value.code) == (409, "WV-CHANGE-REQUEST")
     approved = await ops.changes.approve(
         planned.id, ChangeRequestApprove(digest=planned.plan_digest), **ops.authority("approver")
     )
@@ -974,15 +974,15 @@ async def test_a_replaced_plan_keeps_its_change_request_and_its_requester_check(
     await rewrite(ops, created.id, stored)
     again = await ops.changes.replan(created.id, first.revision, **ops.authority("planner"))
     assert again.plan_id is None
-    # The first plan has not expired itself; it still belongs to the change request and its requester.
+    # The first plan has not expired itself; it still belongs to the change request, which alone approves.
     with pytest.raises(CatalogError) as refused:
         await ops.service.approve(
-            first.plan_id, PlanApprovalRequest(digest=first.plan_digest), **ops.authority("owner")
+            first.plan_id, PlanApprovalRequest(digest=first.plan_digest), **ops.authority("approver")
         )
-    assert (refused.value.status, refused.value.code) == (403, "WV-APPROVAL-SELF")
+    assert (refused.value.status, refused.value.code) == (409, "WV-CHANGE-REQUEST")
 
 
-async def test_the_stricter_policy_and_the_requester_apply_to_low_level_approve_and_apply(ops):
+async def test_the_stricter_policy_applies_and_the_low_level_commands_point_to_the_change_request(ops):
     # A change requested on a relaxed target, which an environment manager then makes strict.
     setup = await prepared(ops, policy=False, who="owner")
     created = await ops.changes.create(change(setup, replicas=3), uuid4().hex, **ops.authority("owner"))
@@ -1008,8 +1008,8 @@ async def test_the_stricter_policy_and_the_requester_apply_to_low_level_approve_
     planned = await ops.changes.advance(created.id, ready.revision, **ops.authority("planner"))
     # The target is now strict although the snapshot is not: the requester may not approve.
     with pytest.raises(CatalogError) as refused:
-        await ops.service.approve(
-            planned.plan_id, PlanApprovalRequest(digest=planned.plan_digest), **ops.authority("owner")
+        await ops.changes.approve(
+            planned.id, ChangeRequestApprove(digest=planned.plan_digest), **ops.authority("owner")
         )
     assert (refused.value.status, refused.value.code) == (403, "WV-APPROVAL-SELF")
     # An approval by the requester, as one written before approvals compared people, is refused again at apply.
@@ -1023,11 +1023,12 @@ async def test_the_stricter_policy_and_the_requester_apply_to_low_level_approve_
             ),
             {"owner": str(ops.people["owner"].id), "id": planned.plan_id},
         )
+    # Applying that plan directly is refused too: it belongs to its change request, which never approved it.
     with pytest.raises(CatalogError) as applied:
         await ops.service.apply(
             planned.plan_id, ApplyPlanRequest(digest=planned.plan_digest), uuid4().hex, **ops.authority("operator")
         )
-    assert (applied.value.status, applied.value.code) == (403, "WV-APPROVAL-SELF")
+    assert (applied.value.status, applied.value.code) == (409, "WV-CHANGE-REQUEST")
 
 
 async def test_a_draining_change_can_still_be_declined(ops, fleet):
@@ -1743,3 +1744,14 @@ async def test_a_change_that_needs_reconciliation_gives_back_its_drain(ops, flee
     assert (await draining_state(ops, first))[0] is False
     assert (await draining_state(ops, second))[0] is True
     assert [target for target, _, _ in await resumed_audit(ops, planned.id)] == [str(first)]
+
+
+async def test_a_declined_changes_plan_is_never_applied_directly(ops):
+    setup = await prepared(ops)
+    planned = await awaiting(ops, setup, observed_count=0, replicas=3)
+    await ops.changes.decline(planned.id, ChangeRequestDecision(reason="Not now"), **ops.authority("approver"))
+    with pytest.raises(CatalogError) as refused:
+        await ops.service.approve(
+            planned.plan_id, PlanApprovalRequest(digest=planned.plan_digest), **ops.authority("approver")
+        )
+    assert (refused.value.status, refused.value.code) == (409, "WV-CHANGE-REQUEST")

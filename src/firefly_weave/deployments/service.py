@@ -687,13 +687,13 @@ class DeploymentService:
 
     @staticmethod
     async def outside_change_request(repo: DeploymentRepository, plan: DeploymentPlan) -> None:
-        """409 WV-CHANGE-REQUEST when an active change request owns the plan: approving or applying it directly
-        would skip the change's drain, its force rule and its record of the job."""
+        """409 WV-CHANGE-REQUEST when a change request owns the plan: approving or applying it directly would skip
+        the change's drain, its force rule and its record of the job, or apply a change that was declined,
+        cancelled or replaced. Retention removes a change request long after its plans have expired."""
         rows = await repo.rows(
             "SELECT c.id FROM deployment_plans p JOIN deployment_change_requests c ON c.id=p.change_request_id "
             "AND c.tenant_id=p.tenant_id AND c.project_id=p.project_id AND c.environment_id=p.environment_id "
-            "WHERE p.tenant_id=:tenant AND p.project_id=:project AND p.environment_id=:environment AND p.id=:plan "
-            "AND c.ended_at IS NULL",
+            "WHERE p.tenant_id=:tenant AND p.project_id=:project AND p.environment_id=:environment AND p.id=:plan",
             plan=plan.id,
         )
         if rows:
