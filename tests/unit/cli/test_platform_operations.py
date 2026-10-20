@@ -246,6 +246,9 @@ def test_local_docker_lets_the_local_owner_plan_and_approve(operations):
 
 def test_no_operations_skips_the_step_and_status_says_so(owned, monkeypatch):
     directory, _, runner = owned
+    images = directory / "release" / "images"
+    images.mkdir(parents=True, exist_ok=True)
+    (images / "operations-worker.py").write_text("# fixture\n")
     called = []
     monkeypatch.setattr(platform_operations, "enable", lambda *args, **kwargs: called.append("enable"))
     monkeypatch.setattr(platform_operations, "prepare_provider", lambda state: called.append("provider"))
@@ -384,6 +387,9 @@ def test_every_generated_file_is_checked_before_platform_commands_use_it(operati
 
 def test_up_prepares_the_provider_before_starting_and_sets_operations_up_after(owned, monkeypatch):
     directory, _, _ = owned
+    images = directory / "release" / "images"
+    images.mkdir(parents=True, exist_ok=True)
+    (images / "operations-worker.py").write_text("# fixture\n")
     called = []
     monkeypatch.setattr(platform_operations, "prepare_provider", lambda state: called.append("provider"))
     monkeypatch.setattr(
@@ -522,3 +528,25 @@ def test_the_runner_keeps_docker_state_on_its_temporary_space(operations):
     assert any(item.startswith("/tmp:") for item in runner["tmpfs"])
     configuration = [item for item in runner["volumes"] if item["target"].endswith("/docker-config")]
     assert configuration and all(item["read_only"] for item in configuration)
+
+
+def test_up_on_an_installation_made_before_local_operations_skips_them_and_says_how_to_get_them(owned, monkeypatch):
+    """An installation keeps the release it was created from. One made before local operations has no fixture
+    worker to build, so up starts the platform, sets nothing up, and says so, instead of failing every time."""
+    directory, _, _ = owned
+    assert not (directory / "release" / "images" / "operations-worker.py").exists()
+    called = []
+    monkeypatch.setattr(platform_operations, "prepare_provider", lambda state: called.append("provider"))
+    monkeypatch.setattr(platform_operations, "enable", lambda *args, **kwargs: called.append("enable"))
+    monkeypatch.setattr(platform, "start", lambda directory, progress=None: None)
+    monkeypatch.setattr(platform, "demo", lambda directory: {"receipt": {"status": "succeeded"}})
+    result = platform.up(directory, Path("."), None)
+    assert called == []
+    assert result["operations"] == {
+        "stage": "unavailable",
+        "runner": "absent",
+        "target": "local-docker",
+        "hint": "This installation was created before local operations. Create a new installation to use them; "
+        "up --no-operations skips this note.",
+    }
+    assert platform_operations.status(platform._load(directory))["stage"] == "unavailable"

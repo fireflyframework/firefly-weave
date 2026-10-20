@@ -211,6 +211,9 @@ which on Docker Desktop and Colima means the virtual machine, and on Linux the
 host. `weave platform doctor` says so. Use it for development only, and skip it
 with `up --no-operations`; rerun `up` without the flag to add it later. A setup
 that stops part way resumes where it stopped on the next `up`.
+An installation made by an earlier release has no local operations to build:
+`up` starts it as before and prints `Operations: This installation was created
+before local operations…`. Create a new installation to use them.
 
 Local operations add development-only private-origin entries: the workers reach
 the API and the identity provider on the platform network, and sign in through

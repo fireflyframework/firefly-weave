@@ -789,7 +789,9 @@ def up(
         elif account:
             click.echo("Existing account retained: " + account["username"] + ". Its password was not reset.")
         operations = value.get("operations")
-        if operations:
+        if operations and operations.get("stage") == "unavailable":
+            click.echo("Operations: " + operations["hint"])
+        elif operations:
             click.echo(
                 "Operations: target local-docker, runner "
                 + operations["runner"]

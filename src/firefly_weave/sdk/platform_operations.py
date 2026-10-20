@@ -168,6 +168,22 @@ def _environment_url(scope: dict[str, str]) -> str:
 # Provider
 
 
+UNAVAILABLE_HINT = (
+    "This installation was created before local operations. Create a new installation to use them; "
+    "up --no-operations skips this note."
+)
+
+
+def available(state: dict[str, Any]) -> bool:
+    """Whether the installation's retained release can build local operations (releases before them cannot)."""
+    return (Path(state["directory"]) / "release" / "images" / "operations-worker.py").is_file()
+
+
+def unavailable() -> dict[str, Any]:
+    """What up and status report on an installation made before local operations."""
+    return {"stage": "unavailable", "runner": "absent", "target": TARGET, "hint": UNAVAILABLE_HINT}
+
+
 def prepare_provider(state: dict[str, Any]) -> bool:
     """Let the API accept the two operations clients; True when runtime.env changed (the API is recreated)."""
     path = Path(state["directory"]) / "runtime.env"
@@ -729,7 +745,8 @@ def _images(state: dict[str, Any], value: dict[str, Any], notice: Notice) -> Non
     context = Path(state["directory"]) / "release" / "images"
     if not (context / "operations-worker.py").is_file():
         raise local.PlatformError(
-            "The retained release has no operations fixture worker; create a new installation to use operations."
+            "The retained release has no operations fixture worker. Create a new installation to use operations, "
+            "or run up with --no-operations."
         )
     notice("Building the operations runner and the sleep fixture worker")
     if "runner_image" not in value:
@@ -949,6 +966,8 @@ def status(state: dict[str, Any]) -> dict[str, Any]:
     """The setup stage and the runner container's state; "skipped" before operations were enabled."""
     value = receipt(Path(state["directory"]))
     if value is None:
+        if not available(state):
+            return {key: item for key, item in unavailable().items() if key != "hint"}
         return {"stage": "skipped", "runner": "absent", "target": TARGET}
     output = local._run(
         state,

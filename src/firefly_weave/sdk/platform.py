@@ -2029,9 +2029,12 @@ def up(
             "Private origins are fixed when an installation is created; use a new --directory to change them."
         )
     with _exclusive(directory, ".up.lock", "Another platform up command is active."):
-        if operations:
-            from firefly_weave.sdk import platform_operations
+        from firefly_weave.sdk import platform_operations
 
+        # An installation keeps the release it was made from; one made before local operations cannot build them.
+        unavailable = operations and not platform_operations.available(state)
+        operations = operations and not unavailable
+        if operations:
             # The API accepts the operations clients only from the next start, so this comes first.
             platform_operations.prepare_provider(state)
         start(directory, progress)
@@ -2065,9 +2068,9 @@ def up(
                     account = {**account, "receipt_saved": False, "receipt_hint": _RECEIPT_NOT_SAVED}
                 result["account"] = account
         if operations:
-            from firefly_weave.sdk import platform_operations
-
             result["operations"] = platform_operations.enable(directory, _load(directory), progress or (lambda _: None))
+        elif unavailable:
+            result["operations"] = platform_operations.unavailable()
         return result
 
 
