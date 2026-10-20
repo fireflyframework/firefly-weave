@@ -376,6 +376,15 @@ describe("results", () => {
   it("treats a plain string schema as text, like the worker", () => {
     expect(isTextResult(TEXT_RESULT)).toBe(true);
     expect(isTextResult({ type: "string" })).toBe(true);
+    expect(
+      isTextResult({
+        type: "string",
+        title: "Summary",
+        description: "Two sentences.",
+        minLength: 1,
+        maxLength: 400,
+      }),
+    ).toBe(true);
     expect(isTextResult({ type: "string", enum: ["a"] })).toBe(false);
     expect(isTextResult({ type: "object", properties: {} })).toBe(false);
   });
@@ -398,6 +407,28 @@ const VALID_TURNS: unknown[] = [
   },
   { turns: [], configHash: "fnv1a64:0123456789abcdef" },
 ];
+/** Entries that break exactly one rule, with the place it is reported at. */
+const SINGLE_RULES: [unknown, string][] = [
+  [{ turns: [], source: "run" }, ""],
+  [{ turns: [], source: "test-call" }, ""],
+  [
+    {
+      turns: [],
+      runId: "3f2a6c1e-0d5b-4a63-9c1f-2b7e8d9a0b11",
+      runEnvironmentId: "9b1c2d3e-4f50-4a61-8b72-c3d4e5f60718",
+    },
+    "",
+  ],
+  [
+    {
+      turns: [],
+      source: "manual",
+      runId: "3f2a6c1e-0d5b-4a63-9c1f-2b7e8d9a0b11",
+    },
+    "",
+  ],
+  [{ turns: [], memory: [{ role: "user" }] }, "/memory/0"],
+];
 const INVALID_TURNS: unknown[] = [
   {},
   [],
@@ -415,6 +446,7 @@ const INVALID_TURNS: unknown[] = [
   { turns: [], source: "run", runId: "3f2a6c1e-0d5b-4a63-9c1f-2b7e8d9a0b11" },
   { turns: [], configHash: "fnv1a64:0123456789abcdef\n" },
   { turns: [], runId: "3f2a6c1e0d5b4a639c1f2b7e8d9a0b11" },
+  ...SINGLE_RULES.map(([entry]) => entry),
   ...[
     "12345678-1234-1234-1234-1234-5678-9012",
     "{3f2a6c1e-0d5b-4a63-9c1f-2b7e8d9a0b11}",
@@ -437,6 +469,8 @@ describe("recorded AI turns", () => {
     expect(aiTurnsProblem({ turns: [{ final: 1 }, { result: 2 }] })).toBe(
       "/turns/1",
     );
+    for (const [entry, place] of SINGLE_RULES)
+      expect(aiTurnsProblem(entry)).toBe(place);
   });
 });
 

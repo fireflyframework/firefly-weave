@@ -144,8 +144,9 @@ def test_only_ai_tasks_with_turns_get_a_mock():
         {"turns": [{"toolCalls": [{"name": "lookup_order", "arguments": {}}]}]},
         {"turns": [{"result": "Shipped."}]},
         {"turns": [{"final": "Shipped."}], "source": "run"},
+        {"turns": [{"final": "Shipped."}, {"final": "Again."}]},
     ],
-    ids=["a tool call first", "not a turn", "a run without its IDs"],
+    ids=["a tool call first", "not a turn", "a run without its IDs", "a final turn and another"],
 )
 def test_an_ai_task_entry_that_is_not_one_final_turn_is_refused(entry):
     with pytest.raises(DebugError, match="WV-DEBUG-MOCK-OUTPUT"):
