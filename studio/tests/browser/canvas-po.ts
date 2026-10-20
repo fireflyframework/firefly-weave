@@ -233,14 +233,14 @@ export async function openStoredWorkflow(
 ): Promise<CanvasPage> {
   await useNewEditor(page);
   await page.addInitScript((stored) => {
-    const key = `weave.localDraft.${stored.id}`;
+    const key = `local:weave.localDraft.${stored.id}`;
     if (localStorage.getItem(key)) return;
     const savedAt = "2026-10-13T09:00:00.000Z";
     const index = JSON.parse(
-      localStorage.getItem("weave.localDrafts.v1") ?? "[]",
+      localStorage.getItem("local:weave.localDrafts.v1") ?? "[]",
     );
     localStorage.setItem(
-      "weave.localDrafts.v1",
+      "local:weave.localDrafts.v1",
       JSON.stringify([
         { id: stored.id, name: "stored", version: "1.0.0", savedAt },
         ...index,

@@ -37,7 +37,12 @@ import type { ClipboardContent, PastePlan } from "./editor/state/clipboard";
 import type { TriggerKind } from "./editor/canvas/layout-ltr";
 import { DraftCanvases, type KeptWhere } from "./editor/state/draft-canvas";
 import { readImport } from "./import-files";
-import type { AccountScope } from "./editor/state/browser-store";
+import { uiKey, type AccountScope } from "./editor/state/browser-store";
+import {
+  bootStudioStorage,
+  flushStudioStorage,
+  studioStorage,
+} from "./editor/state/studio-storage";
 import {
   stepDetailsEnabled,
   type StepDetailsHost,
@@ -87,6 +92,8 @@ import {
   revocationNote,
   sessionUsable,
   signOutReport,
+  localDataKept,
+  localDataKeptNote,
   signedInText,
   stateLabel,
 } from "./connection";
@@ -254,6 +261,7 @@ type PlatformNoticeKind =
   | "revoked"
   | "workspace"
   | "sign-out-incomplete"
+  | "local-data-kept"
   | "signing-in"
   | "sign-in-failed"
   | "revocation";
@@ -294,21 +302,37 @@ const EDITOR_NAV_FULL_MIN = 900;
 /** The inspector's width: 360–480 px by default, at most 640 px. */
 const INSPECTOR_MIN = 360;
 const INSPECTOR_MAX = 640;
-const inspectorWidthKey = "weave.studio.inspectorWidth";
-const inspectorSectionsKey = "weave.studio.inspectorSections";
+const inspectorWidthKey = uiKey("weave.studio.inspectorWidth");
+const inspectorSectionsKey = uiKey("weave.studio.inspectorSections");
+/** The inspector width the person chose, if any is kept; otherwise the default. */
+function keptInspectorWidth() {
+  const kept = Number(stored(inspectorWidthKey));
+  return Number.isFinite(kept) && kept >= INSPECTOR_MIN && kept <= INSPECTOR_MAX
+    ? kept
+    : defaultInspectorWidth();
+}
 const defaultInspectorWidth = () =>
   Math.round(Math.min(480, Math.max(INSPECTOR_MIN, window.innerWidth * 0.25)));
+/** The inspector sections the person closed, by kind of step. */
+function keptSections(): Record<string, string[]> {
+  try {
+    const value = JSON.parse(stored(inspectorSectionsKey) ?? "{}");
+    return value && typeof value === "object" ? value : {};
+  } catch {
+    return {};
+  }
+}
 /** Reads a stored value; storage may be missing or refuse (privacy modes). */
 function stored(key: string): string | null {
   try {
-    return localStorage.getItem(key);
+    return studioStorage()?.getItem(key) ?? null;
   } catch {
     return null;
   }
 }
 function store(key: string, value: string) {
   try {
-    localStorage.setItem(key, value);
+    studioStorage()?.setItem(key, value);
   } catch {
     // Not kept: a convenience only.
   }
@@ -566,7 +590,7 @@ export class App implements CanvasHost {
   /** Visible outcomes: one toast at a time. */
   readonly toasts = inject(ToastService);
   private title = inject(Title);
-  /** Workflows kept on this computer (localStorage). */
+  /** Workflows kept on this computer (Studio's storage). */
   readonly localDrafts = new LocalDrafts();
   /** "On this computer", newest first; refreshed whenever it is shown. */
   localList: LocalDraftEntry[] = [];
@@ -654,15 +678,8 @@ export class App implements CanvasHost {
       : null;
   showPalette = false;
   paletteWidth = window.innerWidth <= 1440 ? 192 : 208;
-  /** The inspector's width; a width the person chose is kept in this browser. */
-  inspectorWidth = (() => {
-    const kept = Number(stored(inspectorWidthKey));
-    return Number.isFinite(kept) &&
-      kept >= INSPECTOR_MIN &&
-      kept <= INSPECTOR_MAX
-      ? kept
-      : defaultInspectorWidth();
-  })();
+  /** The inspector's width; a width the person chose is kept on this computer. */
+  inspectorWidth = keptInspectorWidth();
   readonly inspectorLimits = { min: INSPECTOR_MIN, max: INSPECTOR_MAX };
   /** Why a command the person pressed can't run; read under the toolbar. */
   commandNote = "";
@@ -1251,6 +1268,7 @@ export class App implements CanvasHost {
       const s = await this.api.pair();
       this.paired = s.paired;
       if (s.paired) {
+        await this.bootStorage();
         const designer = designerPath.exec(location.pathname);
         const route = viewFromPath(location.pathname);
         if (!designer && route && this.nav.some((n) => n.id === route.view))
@@ -1278,12 +1296,27 @@ export class App implements CanvasHost {
       this.cdr.markForCheck();
     }
   }
+  /**
+   * Before Studio reads what it keeps: the desktop fills its mirror from the
+   * host, and keys from before prefixes move once. Preferences read earlier
+   * are read again from there.
+   */
+  private async bootStorage() {
+    try {
+      await bootStudioStorage(this.api);
+    } catch {
+      // Nothing kept is lost: the keys stay where they were until the next start.
+    }
+    this.inspectorWidth = keptInspectorWidth();
+    this.closedSections = keptSections();
+  }
   async pair() {
     if (!this.pairCode.trim() || this.busy) return;
     this.busy = "pair";
     try {
       await this.api.pair(this.pairCode.trim());
       this.paired = true;
+      await this.bootStorage();
       this.pairCode = "";
       this.error = "";
       this.errorCode = "";
@@ -1698,9 +1731,7 @@ export class App implements CanvasHost {
       title: `Leave ${this.model.definition.metadata.name}?`,
       message: this.localDrafts.failed
         ? "Studio can't keep drafts in this browser. Save to file to keep your work."
-        : this.desktopShell
-          ? "It's kept under Workflows › On this computer until you quit Firefly Weave Studio. Save to file to keep a copy."
-          : "It's kept on this computer. You'll find it under Workflows › On this computer. Save to file to keep a copy you can share.",
+        : "It's kept on this computer. You'll find it under Workflows › On this computer. Save to file to keep a copy you can share.",
       confirmLabel: "Leave",
       cancelLabel: "Keep editing",
     });
@@ -1726,6 +1757,10 @@ export class App implements CanvasHost {
   /** The pending draft whose kept canvas is being read. */
   private draftCanvasReading: { draftId: string; opened: number } | null = null;
   /** The account a platform draft's canvas belongs to; null when it can't be told. */
+  /** Who run inputs remembered on this computer belong to. */
+  get runAccount(): AccountScope | null {
+    return this.accountScope();
+  }
   private accountScope(): AccountScope | null {
     const profile = this.profile;
     if (!profile?.tenantId || !profile.projectId) return null;
@@ -1904,6 +1939,7 @@ export class App implements CanvasHost {
     this.flushInspector();
     this.flushLocalSave();
     void this.flushDraftCanvas();
+    void flushStudioStorage();
     if (!this.unsavedWork) return;
     event.preventDefault();
     event.returnValue = "";
@@ -2974,14 +3010,7 @@ export class App implements CanvasHost {
    * open unless the person closed them for this kind of step; that choice
    * is kept in this browser.
    */
-  private closedSections: Record<string, string[]> = (() => {
-    try {
-      const value = JSON.parse(stored(inspectorSectionsKey) ?? "{}");
-      return value && typeof value === "object" ? value : {};
-    } catch {
-      return {};
-    }
-  })();
+  private closedSections: Record<string, string[]> = keptSections();
   sectionOpen(section: string) {
     const kind = this.selected?.step.kind ?? "workflow";
     return !(this.closedSections[kind] ?? []).includes(section);
@@ -8025,6 +8054,8 @@ export class App implements CanvasHost {
     const report = signOutReport(result);
     if (report === "incomplete")
       this.platformNotice = { kind: "sign-out-incomplete", name };
+    else if (localDataKept(result))
+      this.platformNotice = { kind: "local-data-kept", name };
     else if (report === "unconfirmed")
       this.platformNotice = { kind: "revocation", name };
   }
@@ -8286,6 +8317,7 @@ export class App implements CanvasHost {
         this.openWizard("server", { server: notice.server });
         break;
       case "sign-out-incomplete":
+      case "local-data-kept":
       case "revocation":
         this.platformNotice = null;
         break;
@@ -8323,6 +8355,8 @@ export class App implements CanvasHost {
         return `Choose a workspace on ${notice.name} to publish and run work.`;
       case "sign-out-incomplete":
         return `Studio removed ${notice.name || "the platform"}, but couldn't remove its sign-in from this computer's credential store.`;
+      case "local-data-kept":
+        return localDataKeptNote;
       case "revocation":
         return revocationNote;
       case "signing-in":

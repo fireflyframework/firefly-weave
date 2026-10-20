@@ -22,13 +22,13 @@ SPDX-License-Identifier: Apache-2.0
 // deletes them with every other key of that platform. Canvas data is never
 // a secret (the sidecar holds none).
 import {
-  browserBackend,
   connectedPrefix,
   purgeProfile,
   storeKey,
   type AccountScope,
   type StoreBackend,
 } from "./browser-store";
+import { studioBackend } from "./studio-storage";
 import { canvasBytes, emptyCanvas, type CanvasSidecar } from "./canvas-sidecar";
 
 /** Where a draft's canvas is kept: on this computer, or only while it is open. */
@@ -72,7 +72,7 @@ export class DraftCanvases {
   private readonly index = new Map<string, Map<string, Kept>>();
 
   constructor(
-    private readonly backend: StoreBackend = browserBackend(),
+    private readonly backend: StoreBackend = studioBackend(),
     private readonly now: () => number = Date.now,
   ) {}
 

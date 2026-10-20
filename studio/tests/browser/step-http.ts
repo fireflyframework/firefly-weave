@@ -71,9 +71,9 @@ export async function openHttpStep(
       const id = "2f6c1a40-0000-4000-8000-000000000001";
       const savedAt = "2026-10-11T10:04:00.000Z";
       // Only the first load stores the draft: a reload keeps Studio's own saves.
-      if (localStorage.getItem(`weave.localDraft.${id}`)) return;
+      if (localStorage.getItem(`local:weave.localDraft.${id}`)) return;
       localStorage.setItem(
-        `weave.localDraft.${id}`,
+        `local:weave.localDraft.${id}`,
         JSON.stringify({
           source,
           format: "yaml",
@@ -98,7 +98,7 @@ export async function openHttpStep(
         }),
       );
       localStorage.setItem(
-        "weave.localDrafts.v1",
+        "local:weave.localDrafts.v1",
         JSON.stringify([
           { id, name: "order-intake", version: "1.3.0", savedAt },
         ]),

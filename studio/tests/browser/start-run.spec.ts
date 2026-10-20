@@ -257,14 +257,21 @@ for (const viewport of [
         customerId: "C-7",
         auth: { user: "ana" },
       });
-      const stored = await page.evaluate(() =>
-        Object.keys(localStorage)
-          .filter((key) => key.startsWith("weave-studio-run-input:"))
-          .map((key) => localStorage.getItem(key) ?? ""),
+      // This workspace's IDs can't name an account's storage, so the input stays in memory only.
+      expect(
+        await page.evaluate(() =>
+          Object.keys(localStorage).filter((key) => key.includes("runInput")),
+        ),
+      ).toEqual([]);
+      await page
+        .getByRole("button", { name: "Start run", exact: true })
+        .click();
+      await selectChoice(
+        dialog(page).getByLabel("Version to run", { exact: true }),
+        "act-1",
       );
-      expect(stored).toEqual([
-        JSON.stringify({ customerId: "C-7", auth: { user: "ana" } }),
-      ]);
+      await expect(dialog(page).getByLabel("Customer ID")).toHaveValue("C-7");
+      await expect(dialog(page).getByLabel("User")).toHaveValue("ana");
     });
 
     test("JSON input and platform failures are explained in the dialog", async ({

@@ -18,7 +18,8 @@ SPDX-License-Identifier: Apache-2.0
 // Widths of step details' Input and Output panes: 28 % each by default,
 // never below 240 px, with Parameters never below 368 px. The person's
 // choice is kept as proportions under one ui: key.
-import { uiKey } from "../../state/browser-store";
+import { uiKey, type BrowserStorage } from "../../state/browser-store";
+import { studioStorage } from "../../state/studio-storage";
 
 export interface PaneWidths {
   input: number;
@@ -29,9 +30,9 @@ export const MIN_SIDE = 240;
 export const MIN_MAIN = 368;
 export const KEY_STEP = 16;
 
-const defaultStorage = (): Storage | null => {
+const defaultStorage = (): BrowserStorage | null => {
   try {
-    return typeof localStorage === "undefined" ? null : localStorage;
+    return studioStorage();
   } catch {
     return null;
   }

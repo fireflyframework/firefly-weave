@@ -71,7 +71,7 @@ async function reopenFromHome(page: Page, name: string) {
 const drafts = (page: Page) =>
   page.evaluate(() =>
     Object.keys(localStorage)
-      .filter((key) => key.startsWith("weave.localDraft."))
+      .filter((key) => key.startsWith("local:weave.localDraft."))
       .map((key) => localStorage.getItem(key) ?? "")
       .join(),
   );

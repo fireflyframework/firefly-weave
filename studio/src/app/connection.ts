@@ -164,6 +164,8 @@ export interface ConnectionResult {
   connection: ConnectionStatus;
   /** Sign out: whether the identity provider confirmed ending the sign-in. */
   remote_revocation?: Revocation | null;
+  /** Desktop: false when some of the platform's data stayed on this computer (removed at the next start). */
+  local_data_removed?: boolean;
   /** Remove: what happened to the platform's sign-in on this computer. */
   sign_out?: {
     credentials_removed?: boolean;
@@ -749,6 +751,13 @@ export function accountHint(value: unknown): AccountHint | null {
   return hint.subject || hint.display_name || hint.issuer || hint.provider_id
     ? hint
     : null;
+}
+/** Shown when some of a platform's data stayed on this computer after a sign-out or removal. */
+export const localDataKeptNote =
+  "Signed out, but some of this platform's data stayed on this computer. Studio removes it the next time it starts.";
+/** True when the host says some of the platform's data stayed on this computer. */
+export function localDataKept(result: unknown): boolean {
+  return record(result)?.["local_data_removed"] === false;
 }
 /** Shown when the identity provider did not confirm a sign-out. */
 export const revocationNote =

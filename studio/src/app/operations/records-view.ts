@@ -297,12 +297,6 @@ const icons: Record<ShownView, string> = {
           }
         </div>
       } @else {
-        @if (localTab() && desktop) {
-          <p class="notice local-quit-notice" data-tone="info">
-            The desktop app keeps these drafts only until you quit it. Open one
-            and use Save to file to keep a copy.
-          </p>
-        }
         <div
           class="resource-layout"
           [class.has-detail]="!!h.selectedRecord && v !== 'workflows'"
@@ -937,7 +931,7 @@ export class RecordsView {
     if (h.search) return "Try a different search.";
     if (this.localTab())
       return this.desktop
-        ? "Workflows you create here are kept until you quit Firefly Weave Studio. Save to file to keep a copy."
+        ? "Workflows you create here are kept on this computer until you publish them."
         : "Workflows you create here are kept in this browser until you publish them.";
     return {
       workflows: "Start from a blank canvas or a template.",

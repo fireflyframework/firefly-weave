@@ -31,7 +31,8 @@ import {
   type ResolveOptions,
 } from "../../../forms/core/resolve";
 import type { Step } from "../../../model";
-import { uiKey } from "../../state/browser-store";
+import { uiKey, type BrowserStorage } from "../../state/browser-store";
+import { studioStorage } from "../../state/studio-storage";
 
 export type DataView = "schema" | "table" | "json";
 export const VIEWS_KEY = uiKey("weave.ndv.views.v1");
@@ -41,9 +42,9 @@ const DEFAULT_VIEWS = {
 };
 const isView = (v: unknown): v is DataView =>
   v === "schema" || v === "table" || v === "json";
-const defaultStorage = (): Storage | null => {
+const defaultStorage = (): BrowserStorage | null => {
   try {
-    return typeof localStorage === "undefined" ? null : localStorage;
+    return studioStorage();
   } catch {
     return null;
   }

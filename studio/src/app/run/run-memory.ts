@@ -15,14 +15,20 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-// The last run input per workflow version, kept in this browser only. Values
-// the input schema marks secret or write-only are never kept.
+// The last run input per workflow version, kept on this computer under the
+// account's prefix (in memory only when no account can own it). Values the
+// input schema marks secret or write-only are never kept.
+import {
+  connectedPrefix,
+  storeKey,
+  type AccountScope,
+} from "../editor/state/browser-store";
+import { studioStorage } from "../editor/state/studio-storage";
 import type { Schema } from "../task-schema";
 
 type Json = Record<string, unknown>;
 const isRecord = (value: unknown): value is Json =>
   !!value && typeof value === "object" && !Array.isArray(value);
-const storagePrefix = "weave-studio-run-input:";
 
 const secretMark = (schema: Json) =>
   schema["x-secret"] === true || schema["writeOnly"] === true;
@@ -62,19 +68,33 @@ export function rememberable(schema: Schema, data: Json): Json {
   const kept = keepable(schema, data);
   return isRecord(kept) ? kept : {};
 }
-export function remembered(key: string): Json | null {
+const session = new Map<string, Json>();
+/** The account's key for one workflow version's last run input; null when no account can own it. */
+export async function runInputKey(
+  scope: AccountScope | null,
+  version: string,
+): Promise<string | null> {
+  const prefix = scope ? await connectedPrefix(scope).catch(() => null) : null;
+  return prefix && /^[A-Za-z0-9._-]+$/.test(version)
+    ? storeKey(prefix, `runInput.${version}`)
+    : null;
+}
+export function remembered(key: string | null): Json | null {
+  if (key === null) return session.get("") ?? null;
   try {
-    const value: unknown = JSON.parse(
-      localStorage.getItem(storagePrefix + key) ?? "null",
-    );
+    const value: unknown = JSON.parse(studioStorage()?.getItem(key) ?? "null");
     return isRecord(value) ? value : null;
   } catch {
     return null;
   }
 }
-export function remember(key: string, data: Json) {
+export function remember(key: string | null, data: Json) {
+  if (key === null) {
+    session.set("", data);
+    return;
+  }
   try {
-    localStorage.setItem(storagePrefix + key, JSON.stringify(data));
+    studioStorage()?.setItem(key, JSON.stringify(data));
   } catch {
     // Storage can be unavailable (private windows); the next run starts empty.
   }

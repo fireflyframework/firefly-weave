@@ -195,6 +195,7 @@ const isRecord = (value: unknown): value is Json =>
         [activations]="retry.activations"
         [labels]="retry.labels"
         [initialActivationId]="retry.initial"
+        [account]="h.runAccount"
         [initialInput]="retry.input"
         [initialKeys]="retry.keys"
         [versions]="h.workflowVersions"
