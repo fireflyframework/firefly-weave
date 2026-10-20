@@ -45,7 +45,7 @@ the desktop app never migrates a platform.
 | alpha13 | `0030_worker_presence` | No new schema migration. Workers retry explicit capacity rejections while they read task context or credentials, and an Agentic preparation timeout before provider execution counts as not started. Upgrade the Agentic and Files workers to 0.1.5 together with the server. |
 | alpha14 | `0030_worker_presence` | No new schema migration. Adds the detached Docker development platform (`weave platform up`); existing foreground installations keep working and are never converted. The Agentic and Files workers 0.1.6 pin this server version. |
 | alpha15 | `0030_worker_presence` | No new schema migration and no role change. Upgrade CLIs and SDKs together with the server, review native executor `capacity` and the legacy private-network settings before restarting, and finish runs that use text templates before any rollback to alpha14; see [what changes in alpha15](#what-changes-in-alpha15). The Agentic and Files workers 0.1.7 pin this server version. |
-| Unreleased | `0033_language_workflow_calls` | Three new migrations. `0033_language_workflow_calls` adds the empty `run_calls` and `run_call_links` tables, their indexes and scope policies, two purge rules (a run cannot be purged while its calls run or before its result reached its caller), and room in each run's reserved control capacity for the call rows its cancellation or timeout changes; it takes well under a second whatever the number of retained runs (under 0.15 s in every measurement on 10,000 and 50,000 runs). Finish or cancel runs that call other workflows before any rollback to a server without workflow calls. The other two migrations: `0031_operations_key_collation` only replaces two internal accounting functions: no table, data, or role changes. `0032_operations_facts` adds [scoped operational fact storage](#operational-fact-storage), a bounded historical backfill, and reserved capacity for terminal fact updates. Explicitly migrate the server before restarting it. Upgrade CLIs and SDKs together with the server, and upgrade the server before its deployment runners; see [incident list compatibility](#incident-list-compatibility), [worker identity compatibility](#worker-identity-compatibility) and [worker fleet compatibility](#worker-fleet-compatibility). `weave platform up --username` grants the local owner roles (developer, deployer, operator, viewer, task_participant, tenant_admin, lumi_manager, execution_manager, worker_operator, deployment_reader, deployment_planner, deployment_approver, deployment_operator); existing accounts keep their roles until `weave platform user grant` adds more. `weave platform user` is now a command group; `weave platform user --username` works as before. |
+| alpha16 | `0033_language_workflow_calls` | Three new migrations, no role change. `0031_operations_key_collation` only replaces two internal accounting functions. `0032_operations_facts` adds [scoped operational fact storage](#operational-fact-storage) with a bounded historical backfill; it holds its locks until it commits (17 s for 10,000 retained runs and 32 s for 50,000 in a rehearsal), so stop every writer first. `0033_language_workflow_calls` adds two empty tables and takes well under a second whatever the number of retained runs (under 0.15 s in every measurement on 10,000 and 50,000 runs). Explicitly migrate the server before restarting it. Upgrade CLIs and SDKs together with the server, upgrade the server before its deployment runners, and finish or cancel runs that use loops or call other workflows before any rollback; see [what changes in alpha16](#what-changes-in-alpha16). `weave platform up --username` grants new local accounts the local owner roles (developer, deployer, operator, viewer, task_participant, tenant_admin, lumi_manager, execution_manager, worker_operator, deployment_reader, deployment_planner, deployment_approver, deployment_operator); existing accounts keep their roles until `weave platform user grant` adds more. `weave platform user` is now a command group; `weave platform user --username` works as before. The Agentic and Files workers 0.1.8 pin this server version. |
 
 ![Schema, compatibility and execution acceptance gates](../diagrams/operations-upgrade.svg)
 
@@ -644,12 +644,50 @@ changes before you reopen traffic:
   0.1.0a15. A local platform still has [no in-place upgrade](#a-local-platform-has-no-in-place-upgrade):
   set up alpha15 from its own checkout in a new directory.
 
-## What changes after alpha15
+## What changes in alpha16
 
-These changes are not yet in a release. They add two schema migrations (the head
-becomes `0032_operations_facts`), no role, and no change to definition schemas or
-the stored digests of the built-in AI Connector, Action and task. Check them
-before you reopen traffic on a server that includes them:
+Alpha16 adds three schema migrations (the head becomes
+`0033_language_workflow_calls`), no role, and no change to definition schemas or
+the stored digests of the built-in AI Connector, Action and task. Follow the
+procedure above and migrate explicitly before you restart the server; a server
+that includes them refuses to start on the previous schema.
+
+- **Allow for the migration time.** `0031_operations_key_collation` replaces two
+  internal accounting functions in place and changes no table, data or role.
+  `0032_operations_facts` backfills [operational facts](#operational-fact-storage)
+  from every retained run in one transaction and holds its locks until it
+  commits: in a rehearsal on PostgreSQL 17 (4 CPUs, 8 GiB), it took 17 seconds
+  for 10,000 retained runs and 32 seconds for 50,000, and the database grew by
+  1.4 to 1.6 KB per retained run. Rehearse it on a restored copy to measure your
+  window. `0033_language_workflow_calls` adds the empty `run_calls` and
+  `run_call_links` tables, their indexes and scope policies, the call rules for
+  run purging, and room in each run's reserved control capacity for the call
+  rows its cancellation or timeout changes. It changes no existing row and took
+  under 0.15 seconds in every measurement, on 10,000 and on 50,000 retained runs.
+- **Upgrade CLIs and SDKs together with the server.** Workflow calls add the
+  `call_completed` history event and the `caller` field of runs, loops add the
+  human task `instance_key` and `iteration` fields and new capability fields,
+  and incident, worker and observation answers gain optional fields. Alpha15 and
+  earlier CLIs and SDKs check every answer against the fields and event types
+  they know, so they fail with `WV-WIRE` on these answers. The items below and
+  the compatibility sections above name each case.
+- **Upgrade the server before its deployment runners**, as described in
+  [worker identity compatibility](#worker-identity-compatibility).
+- **Finish or cancel runs that use calls or loops before any rollback.** Alpha15
+  lists neither `flow.callWorkflow` nor `flow.forEach`, so such runs wait until a
+  server that runs them takes over; see
+  [runs that need a newer server](#runs-that-need-a-newer-server). Rolling back
+  the database also means restoring the backup taken before the migration, as
+  [if the upgrade fails](#if-the-upgrade-fails) explains.
+- **Workers and local platforms.** The Agentic and Files workers 0.1.8 pin core
+  0.1.0a16. A local platform still has [no in-place upgrade](#a-local-platform-has-no-in-place-upgrade):
+  set up alpha16 from its own checkout in a new directory.
+- **Contributors.** The `Acceptance` workflow now runs Studio and security
+  journeys against a real platform on every pull request. Run the same `pr`
+  profile locally before you open one, as `tests/acceptance/README.md` in the
+  repository explains. Operators need no change for it.
+
+Check these changes before you reopen traffic:
 
 - **New AI operations are additive.** `ai_endpoints.list`, `ai_models.list`,
   `ai_readiness.read`, `ai_setup.publish`, `ai_setup.grant` and
