@@ -56,7 +56,15 @@ from firefly_weave.deployments.service import DeploymentService
 from firefly_weave.operations.ai_policy import APIAIPolicy
 from firefly_weave.operations.debug.store import DebugService
 from firefly_weave.operations.history import HistoryService
-from firefly_weave.operations.lumi_context import Shaped, choose_profile, input_budget, run_context, shape
+from firefly_weave.operations.lumi_context import (
+    Profile,
+    Shaped,
+    choose_profile,
+    input_budget,
+    output_tokens,
+    run_context,
+    shape,
+)
 from firefly_weave.operations.lumi_deployments import COLLECTIONS, deployment_context
 from firefly_weave.operations.lumi_gateway import LumiGatewayClient
 from firefly_weave.operations.run_views import RunViewService
@@ -88,6 +96,15 @@ def check_proposals(reply: LumiReply) -> LumiAnswer:
 
 
 @service
+def _answer_limit(config: LumiConfiguration, profile: Profile) -> LumiConfiguration:
+    """The configuration the gateway receives: the profile's answer limit replaces a larger configured one."""
+    limit = output_tokens(profile, config.profile.options.max_tokens)
+    if limit == config.profile.options.max_tokens:
+        return config
+    options = config.profile.options.model_copy(update={"max_tokens": limit})
+    return config.model_copy(update={"profile": config.profile.model_copy(update={"options": options})})
+
+
 class LumiService:
     def __init__(
         self,
@@ -255,7 +272,7 @@ class LumiService:
         schemas = cast(dict[str, JsonValue], export_schemas())
         return shape(
             profile,
-            input_budget(profile, tokens, config.profile.options.max_tokens),
+            input_budget(profile, tokens, output_tokens(profile, config.profile.options.max_tokens)),
             message=request.message,
             history=request.history,
             resources=resources,
@@ -285,7 +302,7 @@ class LumiService:
                     secret = await resolve_secret(lambda: self.connections.secrets.resolve(scope, handle))
                     credential = secret.value
                 reply = await self.gateway.ask(
-                    config,
+                    _answer_limit(config, shaped.profile),
                     request.model_copy(update={"history": shaped.history}),
                     shaped.context,
                     dict(connection.config),

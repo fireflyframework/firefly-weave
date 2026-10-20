@@ -602,6 +602,7 @@ ASK_CONFIGURATION = {
         (422, "LLM_UNREACHABLE", 503, "WV-LUMI-UNREACHABLE", "could not reach the model endpoint"),
         (422, "LLM_CONTEXT_LIMIT", 413, "WV-LUMI-CONTEXT-LIMIT", "too long for this model's context"),
         (422, "LLM_OUTPUT", 422, "WV-LUMI-OUTPUT", "did not match"),
+        (422, "LUMI_REPETITION", 422, "WV-LUMI-OUTPUT", "started repeating itself"),
         (422, "LLM_TIMEOUT", 504, "WV-LUMI-TIMEOUT", "did not answer within 180 seconds"),
         (504, "LUMI_TIMEOUT", 504, "WV-LUMI-TIMEOUT", "did not respond in time"),
         (422, "LLM_RATE_LIMITED", 429, "WV-LUMI-CAPACITY", "rate limiting"),

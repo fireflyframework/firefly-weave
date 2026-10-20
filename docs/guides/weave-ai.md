@@ -135,6 +135,13 @@ an outline, then attachments are left out from the last, then the oldest
 messages. Weave AI is told what was left out, never given a value cut in half.
 Choose another size with **Context size** on the **Weave AI** card.
 
+Small models can start repeating one sentence until they run out of room. On
+the compact size, Weave AI answers in at most 512 tokens and asks the model to
+answer briefly. On an Ollama endpoint it also discourages repeated words and
+stops an answer as soon as it starts repeating itself. The person then sees
+`WV-LUMI-OUTPUT` with a suggestion to try a larger model or start a new
+conversation, so less history is sent.
+
 A run attachment holds only the run's facts: the workflow's name and version,
 its status and times, failed steps with their error codes, the number of open
 incidents, and the last five steps with their status and time. Never its input,

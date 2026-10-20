@@ -39,6 +39,8 @@ type Profile = Literal["compact", "standard", "full"]
 type ProfileChoice = Literal["auto", "compact", "standard", "full"]
 
 COMPACT_INPUT_TOKENS = 4096
+# Small models on the compact profile loop more the longer they write; a shorter answer also fails sooner.
+COMPACT_MAX_TOKENS = 512
 COMPACT_BELOW = 16384
 STANDARD_UP_TO = 65536
 # The gateway's instructions and the reply format it sends with every request; the gateway tests keep them under it.
@@ -90,6 +92,11 @@ def choose_profile(context_tokens: int | None, chosen: ProfileChoice = "auto") -
     if context_tokens is None or context_tokens > STANDARD_UP_TO:
         return "full"
     return "compact" if context_tokens < COMPACT_BELOW else "standard"
+
+
+def output_tokens(profile: Profile, max_tokens: int) -> int:
+    """The answer's token limit for a profile: the configured limit, at most 512 on the compact profile."""
+    return min(max_tokens, COMPACT_MAX_TOKENS) if profile == "compact" else max_tokens
 
 
 def input_budget(profile: Profile, context_tokens: int | None, max_tokens: int) -> int | None:

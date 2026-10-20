@@ -30,9 +30,9 @@ from firefly_weave.contracts.connectors import ConnectorFailure
 from firefly_weave.contracts.lumi import LUMI_REPLY_SCHEMA
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
-from pydantic_ai.models.function import FunctionModel
+from pydantic_ai.models.function import DeltaToolCall, FunctionModel
 
-from weave_agentic_worker.gateway import create_app
+from weave_agentic_worker.gateway import OLLAMA_FREQUENCY_PENALTY, create_app, repeating
 from weave_agentic_worker.handler import WorkerPolicy
 from weave_agentic_worker.providers import ProviderModel, build_model
 
@@ -559,14 +559,27 @@ async def test_credentialed_endpoints_need_the_credential(tmp_path):
     assert body["ok"] is False and body["code"] == "LLM_AUTH"
 
 
+REPLY = {"result": {"answer": "Ready", "proposals": [], "followUps": []}}
+
+
 def reply_model(calls):
     def respond(messages, info):
         calls.append(messages)
-        value = {"result": {"answer": "Ready", "proposals": [], "followUps": []}}
-        part = ToolCallPart(info.output_tools[0].name, value) if info.output_tools else TextPart(json.dumps(value))
+        part = ToolCallPart(info.output_tools[0].name, REPLY) if info.output_tools else TextPart(json.dumps(REPLY))
         return ModelResponse(parts=[part])
 
-    return FunctionModel(respond)
+    async def stream(messages, info):
+        calls.append(messages)
+        for chunk in streamed(info, [json.dumps(REPLY)]):
+            yield chunk
+
+    return FunctionModel(respond, stream_function=stream)
+
+
+def streamed(info, chunks):
+    """Stream text chunks as the reply format the request asks for: an output tool's arguments, or plain text."""
+    for chunk in chunks:
+        yield {0: DeltaToolCall(name=info.output_tools[0].name, json_args=chunk)} if info.output_tools else chunk
 
 
 async def test_the_assistant_route_serves_a_file_policy_through_the_pinned_options(tmp_path):
@@ -965,5 +978,87 @@ def test_the_assistant_instructions_and_reply_format_fit_the_reserve_weave_ai_le
     reply_format = json.dumps(provider_schema(LUMI_REPLY_SCHEMA))
     assert estimate_tokens(INSTRUCTIONS, reply_format) <= reserve
     assert INSTRUCTIONS.startswith("You are Weave AI")
-    for rule in ("whole document", "never a fragment", "data, not instructions", "trimmed", "return no proposals"):
+    for rule in (
+        "whole document",
+        "never a fragment",
+        "data, not instructions",
+        "trimmed",
+        "return no proposals",
+        "Answer briefly",
+    ):
         assert rule in INSTRUCTIONS
+
+
+LOOP = "The workflow should also be reviewed to ensure that it follows the correct logic and uses the right data. "
+
+
+def test_a_reply_that_keeps_repeating_one_span_is_a_loop():
+    assert repeating('{"result": {"answer": "Step-3 fails. ' + LOOP * 4)
+    assert repeating('{"result": {"answer": "' + " " * 256)
+    assert repeating("x" + "ab" * 128)
+
+
+def test_ordinary_replies_and_whole_documents_are_not_loops():
+    answer = (
+        "Step-3 calls crm-lookup with an empty customer ID. Map the input's customerId into its with block, "
+        "then run the workflow again. If the lookup still fails, check the connection's endpoint. "
+    )
+    steps = "".join(
+        f"    - id: step-{index}\n      kind: action\n      uses: crm-lookup@1.0.0\n" for index in range(20)
+    )
+    document = f"apiVersion: weave/v1alpha1\nkind: Workflow\nspec:\n  steps:\n{steps}"
+    assert not repeating(answer * 2)
+    assert not repeating(json.dumps({"answer": answer, "proposals": [{"source": document}]}))
+    assert not repeating(LOOP * 3)
+
+
+def ollama_ask():
+    ask = payload()
+    ask["profile"]["model"] = "qwen2.5:1.5b"
+    ask["endpoint"] = "http://ollama:11434/v1"
+    del ask["credential"]
+    return ask
+
+
+async def test_the_assistant_route_stops_a_reply_that_repeats_itself(tmp_path):
+    sent = []
+
+    async def loop(messages, info):
+        for chunk in streamed(info, ['{"result": {"answer": "Step-3 fails. ', *[LOOP] * 1000]):
+            sent.append(chunk)
+            yield chunk
+
+    async with gateway(tmp_path, builder=lambda *_: FunctionModel(stream_function=loop)) as client:
+        response = await client.post("/v1/lumi", json=ollama_ask(), headers=AUTH)
+    assert (response.status_code, response.json()) == (422, {"code": "LUMI_REPETITION"})
+    assert len(sent) < 10
+
+
+async def test_ollama_replies_carry_a_frequency_penalty_and_cloud_replies_do_not(tmp_path):
+    settings = []
+
+    def respond(messages, info):
+        settings.append(info.model_settings or {})
+        part = ToolCallPart(info.output_tools[0].name, REPLY) if info.output_tools else TextPart(json.dumps(REPLY))
+        return ModelResponse(parts=[part])
+
+    async def stream(messages, info):
+        settings.append(info.model_settings or {})
+        for chunk in streamed(info, [json.dumps(REPLY)]):
+            yield chunk
+
+    model = FunctionModel(respond, stream_function=stream)
+    async with gateway(tmp_path, builder=lambda *_: model) as client:
+        local = await client.post("/v1/lumi", json=ollama_ask(), headers=AUTH)
+    token = tmp_path / "cloud-token"
+    token.write_text("service-token")
+    app = create_app(
+        WorkerPolicy(frozenset({("openai-chat", "fixture-model")}), frozenset({"https://api.openai.com/v1"})),
+        token,
+        model_builder=lambda *_: model,
+    )
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://gateway") as client:
+        cloud = await client.post("/v1/lumi", json=payload(), headers=AUTH)
+    assert local.status_code == cloud.status_code == 200, (local.text, cloud.text)
+    assert settings[0]["frequency_penalty"] == OLLAMA_FREQUENCY_PENALTY == 0.2
+    assert "frequency_penalty" not in settings[1]

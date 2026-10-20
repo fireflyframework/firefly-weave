@@ -37,6 +37,10 @@ SPDX-License-Identifier: Apache-2.0
   `WV-LUMI-MODEL-NOT-FOUND`, `WV-LUMI-UNREACHABLE`, `WV-LUMI-CONTEXT-LIMIT`,
   `WV-LUMI-OUTPUT` and `WV-LUMI-TIMEOUT`, with `WV-LUMI-CAPACITY` for busy and
   rate-limited providers, instead of `WV-LUMI-UNAVAILABLE` for all of them.
+- Weave AI keeps small local models from looping: compact requests answer in at
+  most 512 tokens, the instructions ask for a brief answer, Ollama endpoints get
+  a frequency penalty, and an answer that starts repeating itself is stopped
+  early with `WV-LUMI-OUTPUT` and advice to use a larger model or less history.
 - Workflows can call other workflows. A **Call a workflow** step starts the
   exact version it names as a separate child run of the pinned activation, under
   the calling run's principal, which must still hold `run.start`. A waiting call

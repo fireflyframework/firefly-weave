@@ -26,12 +26,14 @@ from firefly_weave.contracts.lumi import LumiMessage
 from firefly_weave.operations import lumi_context as context
 from firefly_weave.operations.lumi_context import (
     COMPACT_INPUT_TOKENS,
+    COMPACT_MAX_TOKENS,
     GATEWAY_RESERVE_TOKENS,
     GUIDE,
     choose_profile,
     estimate_tokens,
     input_budget,
     outline,
+    output_tokens,
     shape,
 )
 
@@ -58,6 +60,13 @@ def test_the_input_budget_leaves_room_for_the_answer_and_caps_the_compact_profil
     assert input_budget("compact", 4096, 1024) == 3072
     assert input_budget("standard", 32768, 1024) == 31744
     assert input_budget("full", None, 1024) is None
+
+
+def test_compact_models_answer_in_at_most_five_hundred_twelve_tokens():
+    assert output_tokens("compact", 1024) == COMPACT_MAX_TOKENS == 512
+    assert output_tokens("compact", 256) == 256
+    assert output_tokens("standard", 1024) == output_tokens("full", 1024) == 1024
+    assert input_budget("compact", 4096, output_tokens("compact", 1024)) == 3584
 
 
 def test_the_guide_and_the_gateway_text_fit_a_quarter_of_the_compact_budget():
@@ -334,5 +343,7 @@ async def test_asking_sizes_the_request_to_the_endpoints_context(monkeypatch):
     assert sent_context["profile"] == "compact" and "outline" in sent_context["draft"]
     assert len(sent_request.history) <= 4 and sent_request.history[-1] == HISTORY[-1]
     assert gateway.ask.await_args.kwargs["context_tokens"] == 8192
+    assert gateway.ask.await_args.args[0].profile.options.max_tokens == COMPACT_MAX_TOKENS
+    assert configuration.profile.options.max_tokens == 1024
     shaped = context.Shaped(context=sent_context, history=list(sent_request.history), profile="compact")
     assert sent_tokens(shaped, request.message) <= 4096

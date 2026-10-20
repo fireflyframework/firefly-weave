@@ -48,6 +48,7 @@ _PROBLEMS: dict[str, tuple[int, str]] = {
     "LLM_UNREACHABLE": (503, "WV-LUMI-UNREACHABLE"),
     "LLM_CONTEXT_LIMIT": (413, "WV-LUMI-CONTEXT-LIMIT"),
     "LLM_OUTPUT": (422, "WV-LUMI-OUTPUT"),
+    "LUMI_REPETITION": (422, "WV-LUMI-OUTPUT"),
     "LLM_TIMEOUT": (504, "WV-LUMI-TIMEOUT"),
     "LUMI_TIMEOUT": (504, "WV-LUMI-TIMEOUT"),
     "LLM_RATE_LIMITED": (429, "WV-LUMI-CAPACITY"),
@@ -60,6 +61,10 @@ _MESSAGES = {
     "LLM_CAPACITY": "Weave AI is busy; try again later",
     "LUMI_CAPACITY": "Weave AI is busy; try again later",
     "LUMI_LIMIT": "Selected context is too large",
+    "LUMI_REPETITION": (
+        "Weave AI's model started repeating itself, so its answer was stopped. Try a larger model, "
+        "or start a new conversation so less history is sent."
+    ),
 }
 
 
