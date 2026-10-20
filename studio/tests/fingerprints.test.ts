@@ -277,3 +277,112 @@ describe("fingerprints of steps inside a loop", () => {
     ).toBeNull();
   });
 });
+
+describe("fingerprints hold to what a step is", () => {
+  const pinOf = (
+    all: Map<string, { config: string; contract: string; upstream: string }>,
+    id: string,
+  ) => {
+    const now = all.get(id)!;
+    return {
+      configHash: now.config,
+      contractHash: now.contract,
+      upstreamHash: now.upstream,
+    };
+  };
+  const groups = (send: unknown): Step[] =>
+    [
+      {
+        id: "fan",
+        kind: "parallel",
+        branches: {
+          a: {
+            steps: [
+              {
+                id: "left",
+                kind: "action",
+                uses: "mail.send@1.0.0",
+                with: send,
+              },
+            ],
+            output: { literal: null },
+          },
+          b: { steps: [], output: { literal: null } },
+        },
+      },
+      {
+        id: "each",
+        kind: "forEach",
+        items: { literal: [1] },
+        concurrency: 1,
+        body: {
+          steps: [
+            {
+              id: "inner",
+              kind: "action",
+              uses: "mail.send@1.0.0",
+              with: send,
+            },
+          ],
+          output: { literal: null },
+        },
+      },
+    ] as unknown as Step[];
+  it("keep a parallel step's and a loop's settings apart from their children's", () => {
+    const before = fingerprints(inputs(groups({ literal: 1 })));
+    const after = fingerprints(inputs(groups({ literal: 2 })));
+    for (const id of ["fan", "each"]) {
+      expect(after.get(id)!.config, id).toBe(before.get(id)!.config);
+      expect(staleReason(pinOf(before, id), after.get(id)), id).toBe(
+        "upstream",
+      );
+    }
+  });
+  it("don't depend on the order of keys in what a step reads", () => {
+    const reads = (first: string, second: string): Step[] =>
+      [
+        { id: "a", kind: "transform", value: { literal: 1 } },
+        { id: "b", kind: "transform", value: { literal: 2 } },
+        {
+          id: "c",
+          kind: "transform",
+          value: {
+            object: Object.fromEntries([
+              [first, { ref: `/steps/${first === "x" ? "a" : "b"}/output` }],
+              [second, { ref: `/steps/${second === "x" ? "a" : "b"}/output` }],
+            ]),
+          },
+        },
+      ] as unknown as Step[];
+    expect(fingerprints(inputs(reads("x", "y"))).get("c")).toEqual(
+      fingerprints(inputs(reads("y", "x"))).get("c"),
+    );
+  });
+  it("mark a step out of date when what an earlier step calls changes", () => {
+    const before = fingerprints(inputs(base()));
+    const after = fingerprints(
+      inputs(base(), undefined, { lookup: "crm.lookup@2.0.0" }),
+    );
+    expect(staleReason(pinOf(before, "score"), after.get("score"))).toBe(
+      "upstream",
+    );
+  });
+  it("read escaped step IDs in references", () => {
+    const steps = (value: number): Step[] =>
+      [
+        { id: "a/b~c", kind: "transform", value: { literal: value } },
+        {
+          id: "read",
+          kind: "transform",
+          value: { ref: "/steps/a~1b~0c/output" },
+        },
+      ] as unknown as Step[];
+    const before = fingerprints(inputs(steps(1)));
+    expect(
+      staleReason(
+        pinOf(before, "read"),
+        fingerprints(inputs(steps(2))).get("read"),
+      ),
+    ).toBe("upstream");
+  });
+});
