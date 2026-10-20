@@ -186,7 +186,8 @@ export function llmSettings(step: Step): FormSpec {
           default: 120,
           max: 600,
           hint: "The step stops with an error after this time.",
-          ...afterModel,
+          readOnly: (step, ctx) =>
+            profileOf(ctx.workflow, step) ? null : "Choose a model first.",
         },
       ),
     ],

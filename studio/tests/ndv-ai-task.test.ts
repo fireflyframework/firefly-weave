@@ -229,8 +229,12 @@ describe("the AI task's parameters", () => {
 
 describe("the AI task's settings and canvas", () => {
   it("keeps the timeout on Settings, with the step's settings", () => {
-    expect(state("settings", task(false)).fields).toEqual([]);
+    const before = state("settings", task(false)).fields;
+    expect(before.map((f) => [f.spec.label, f.readOnly])).toEqual([
+      ["Timeout", "Choose a model first."],
+    ]);
     const [timeout] = state("settings", task(true)).fields;
+    expect(timeout.readOnly).toBeNull();
     expect(timeout.spec).toMatchObject({
       label: "Timeout",
       type: "duration",
