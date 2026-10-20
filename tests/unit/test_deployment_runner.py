@@ -336,3 +336,20 @@ async def test_a_report_the_platform_refuses_for_capacity_is_sent_again_unchange
     assert [item.state for item in client.reports] == ["running", "verifying", "succeeded"]
     assert {item.report_id for item in refused} == {client.reports[-1].report_id}
     assert client.reports[-1].receipt.code == "applied"
+
+
+@pytest.mark.asyncio
+async def test_a_failed_job_logs_where_it_failed_and_nothing_the_provider_said(caplog):
+    """An operator reading the runner's log learns the job, its outcome and the code location that refused it, never
+    a provider diagnostic."""
+    import logging
+
+    lease, policy = fixture()
+    client, adapter = Client(lease), Adapter(lease, fail=True)
+    with caplog.at_level(logging.WARNING, logger="weave.deployment_runner"):
+        await OperationsRunner(client, policy, adapter).execute(lease)
+    (record,) = [item for item in caplog.records if item.name == "weave.deployment_runner"]
+    message = record.getMessage()
+    assert str(lease.job.id) in message and "reconciliation required" in message
+    assert "RuntimeError at apply" in message
+    assert "private provider diagnostic" not in message

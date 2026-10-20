@@ -19,9 +19,12 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
+import traceback
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, Protocol, cast
 from uuid import uuid4
 
@@ -37,6 +40,20 @@ from firefly_weave.definitions.models import CAPACITY_CODES
 from firefly_weave.deployment_runner.policy import DestinationPolicy
 from firefly_weave.sdk.client import WeaveClient
 from firefly_weave.sdk.errors import WeaveError
+
+LOG = logging.getLogger("weave.deployment_runner")
+
+
+def failure_location(error: BaseException) -> str:
+    """The exception's class and the runner code that raised it: never its message, which may quote a provider."""
+    while isinstance(error, BaseExceptionGroup) and error.exceptions:
+        error = error.exceptions[0]
+    frames = traceback.extract_tb(error.__traceback__)
+    if not frames:
+        return type(error).__name__
+    frame = frames[-1]
+    return f"{type(error).__name__} at {frame.name} ({Path(frame.filename).name}:{frame.lineno})"
+
 
 # Capacity refusals of a report are retried with this first delay, doubling, within the window.
 REPORT_RETRY_SECONDS = 1.0
@@ -267,7 +284,13 @@ class OperationsRunner:
             # The durable lease expires to reconciliation if the caller is stopping;
             # don't delay cancellation with an unowned best-effort HTTP request.
             raise
-        except Exception:
+        except Exception as error:
+            LOG.warning(
+                "Job %s ended %s: %s",
+                lease.job.id,
+                "reconciliation required" if effects_started else "refused before any change",
+                failure_location(error),
+            )
             await report(
                 "reconciliation_required" if effects_started else "failed",
                 receipt=SafeDeploymentReceipt(
