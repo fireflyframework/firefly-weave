@@ -359,6 +359,9 @@ def create_app(
                     if entry.compat == "ollama":
                         # Small local models are the ones that loop: penalize repeats and stop a loop early.
                         settings["frequency_penalty"] = OLLAMA_FREQUENCY_PENALTY
+                        # Thinking models otherwise spend the answer limit thinking (qwen3:4b: 512 of 512 tokens,
+                        # no answer); models without thinking ignore it.
+                        settings["openai_reasoning_effort"] = "none"
                         guard = LoopGuard(model)
                         model = guard
                     try:

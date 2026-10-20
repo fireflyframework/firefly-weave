@@ -1081,7 +1081,9 @@ async def test_ollama_replies_carry_a_frequency_penalty_and_cloud_replies_do_not
         cloud = await client.post("/v1/lumi", json=payload(), headers=AUTH)
     assert local.status_code == cloud.status_code == 200, (local.text, cloud.text)
     assert settings[0]["frequency_penalty"] == OLLAMA_FREQUENCY_PENALTY == 0.2
-    assert "frequency_penalty" not in settings[1]
+    # Thinking models (qwen3) spend the whole answer limit thinking; Weave AI asks for none on Ollama.
+    assert settings[0]["openai_reasoning_effort"] == "none"
+    assert "frequency_penalty" not in settings[1] and "openai_reasoning_effort" not in settings[1]
 
 
 def test_the_gateway_counts_two_and_a_half_characters_per_token_like_the_api():
