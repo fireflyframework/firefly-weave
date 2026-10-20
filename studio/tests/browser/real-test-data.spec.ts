@@ -32,12 +32,14 @@ import { setTestInput } from "./formula-po";
 import {
   connectAndSignIn,
   expectNoCredentialsLeft,
+  heading,
   indicator,
   pair,
   removePlatform,
   session,
   setup,
   shot,
+  startWorking,
   uniqueName,
   useRealPlatformSuite,
 } from "./real-platform-support";
@@ -85,6 +87,25 @@ async function bridge(
     },
     { path, method, body, revision },
   );
+}
+/** Adds the platform on a host whose sign-in the computer already holds: it goes on to the workspace. */
+async function addPlatformSignedIn(page: Page, name: string) {
+  const { api } = setup();
+  await expect(heading(page)).toHaveText("How do you want to work?");
+  await page.getByRole("button", { name: "Connect to a platform" }).click();
+  await expect(heading(page)).toHaveText("Connect to a platform");
+  await page.getByLabel("Server address").fill(api);
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await expect(heading(page)).toHaveText("Review and trust", {
+    timeout: 30_000,
+  });
+  await page.getByLabel("Name", { exact: true }).fill(name);
+  await page
+    .getByRole("checkbox", {
+      name: "I trust this server and identity provider",
+    })
+    .check();
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
 }
 /** The trigger's Test event shows this Customer ID (the test data reads from the platform first). */
 async function expectCustomerId(page: Page, value: string) {
@@ -175,8 +196,10 @@ test("test data and the canvas persist across reload and a second browser profil
     { timeout: 30_000 },
   );
 
-  // 3. A second browser profile, its own host and sign-in: the same draft,
-  // from the platform (this profile's storage starts empty).
+  // 3. A second browser profile with its own host and configuration (its
+  // storage starts empty): the same draft comes from the platform. The
+  // computer's credential store already holds this account's sign-in, so the
+  // new host goes straight to the workspace.
   const other = await browser.newContext({
     viewport: { width: 1440, height: 900 },
   });
@@ -184,7 +207,13 @@ test("test data and the canvas persist across reload and a second browser profil
   await newEditor(second);
   const s2 = await session(second);
   await pair(second, s2.host!, "td-03-second-pairing");
-  await connectAndSignIn(second, name, person);
+  await addPlatformSignedIn(second, name);
+  await startWorking(second);
+  expect(
+    await second.evaluate(() =>
+      Object.keys(localStorage).filter((key) => key.startsWith("p")),
+    ),
+  ).toEqual([]);
   await second.goto(`${s2.host!.origin}/workflows/${draftId}/designer`);
   await expect(second.locator('[data-step="shape"]').first()).toBeVisible({
     timeout: 30_000,
@@ -200,13 +229,14 @@ test("test data and the canvas persist across reload and a second browser profil
   // refuses it from any client; no copy holds it anywhere.
   const canary = `canary-${randomBytes(6).toString("hex")}`;
   const draft = JSON.parse(
-    (await bridge(page, `${project}/drafts/${draftId}`)).text,
+    (await bridge(second, `${project}/drafts/${draftId}`)).text,
   ) as { revision: number };
   const stored = JSON.parse(
-    (await bridge(page, `${project}/drafts/${draftId}/studio/test-data`)).text,
+    (await bridge(second, `${project}/drafts/${draftId}/studio/test-data`))
+      .text,
   ) as { revision: number; document: Record<string, unknown> };
   const refused = await bridge(
-    page,
+    second,
     `${project}/drafts/${draftId}/studio/test-data`,
     "PUT",
     {
@@ -225,7 +255,7 @@ test("test data and the canvas persist across reload and a second browser profil
   expect(refused.text).toContain("WV-STUDIO-DOCUMENT-SECRET");
   expect(refused.text).not.toContain(canary);
   const after = await bridge(
-    page,
+    second,
     `${project}/drafts/${draftId}/studio/test-data`,
   );
   expect(after.text).not.toContain(canary);
@@ -234,29 +264,29 @@ test("test data and the canvas persist across reload and a second browser profil
       await view.evaluate(() => JSON.stringify(localStorage)),
     ).not.toContain(canary);
 
-  // 5. Sign out: no key of this platform stays on this computer.
-  await indicator(page).click();
-  await page
+  // 5. Sign out in the window that holds the session: no key of this
+  // platform stays in its storage.
+  await indicator(second).click();
+  await second
     .locator("#platform-menu")
     .getByRole("button", { name: "Sign out" })
     .click();
-  await page
+  await second
     .getByRole("dialog", { name: `Sign out of ${name}?` })
     .getByRole("button", { name: "Sign out" })
     .click();
-  await expect(indicator(page)).toContainText("Signed out", {
+  await expect(indicator(second)).toContainText("Signed out", {
     timeout: 30_000,
   });
   const prefix = `p${sha(name).slice(0, 16)}:`;
   expect(
-    (await page.evaluate(() => Object.keys(localStorage))).filter((key) =>
+    (await second.evaluate(() => Object.keys(localStorage))).filter((key) =>
       key.startsWith(prefix),
     ),
   ).toEqual([]);
-  await shot(page, "td-05-signed-out");
+  await shot(second, "td-05-signed-out");
 
-  // 6. Remove the platform from both profiles; no credential stays.
-  await removePlatform(page, name);
+  // 6. Remove the platform; no credential stays.
   await removePlatform(second, name);
   await other.close();
   expectNoCredentialsLeft();
