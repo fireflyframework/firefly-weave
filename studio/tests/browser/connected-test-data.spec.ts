@@ -66,6 +66,8 @@ interface Platform {
   documents: Map<string, { revision: number; document: unknown }>;
   /** Answers the next test-data save with this status and body instead. */
   refuse: { status: number; json: unknown }[];
+  /** The same for canvas saves. */
+  refuseCanvas?: { status: number; json: unknown }[];
 }
 
 async function platform(page: Page, state: Platform) {
@@ -142,7 +144,12 @@ async function platform(page: Page, state: Platform) {
           });
     const body = request.postDataJSON();
     state.saves.push({ kind, body });
-    const refusal = kind === "test-data" ? state.refuse.shift() : undefined;
+    const refusal =
+      kind === "test-data"
+        ? state.refuse.shift()
+        : kind === "canvas"
+          ? state.refuseCanvas?.shift()
+          : undefined;
     if (refusal) return route.fulfill(refusal);
     const next = (kept?.revision ?? 0) + 1;
     state.documents.set(kind, { revision: next, document: body.document });
@@ -365,4 +372,49 @@ test("an entry waiting for publishing stays on this computer and is left out of 
   expect(
     await page.evaluate((key) => localStorage.getItem(`${key}.local`), COPY),
   ).toBe('["/pins/check-customer"]');
+});
+
+test("Use theirs on a canvas Studio can't read keeps theirs on the platform and says so", async ({
+  page,
+}) => {
+  const state = fresh();
+  await openDraft(page, state);
+  // Someone else saved a canvas this Studio can't read; this first canvas save is stale.
+  const theirs = {
+    schemaVersion: 2,
+    kind: "weave.studio/canvas",
+    notes: "not a list",
+  };
+  state.documents.set("canvas", { revision: 5, document: theirs });
+  state.refuseCanvas = [
+    { status: 412, json: { status: 412, code: "WV-ETAG", message: "Changed" } },
+  ];
+  await page.locator('[data-step="check-customer"]').first().click();
+  await page.keyboard.press("Shift+S");
+  await page.keyboard.press("Escape");
+  const dialog = page.getByRole("dialog", {
+    name: "Someone else changed the canvas",
+  });
+  await expect(dialog).toBeVisible({ timeout: 6000 });
+  await dialog.getByRole("button", { name: "Use theirs" }).click();
+  await expect(
+    page.locator(".toast").filter({ hasText: "couldn't read" }),
+  ).toBeVisible();
+  // Later changes save the draft (at most every 10 s), never this canvas over theirs.
+  const canvasSaves = () =>
+    state.saves.filter((save) => save.kind === "canvas").length;
+  const before = canvasSaves();
+  const drafts = state.saves.filter((save) => save.kind === "draft").length;
+  await edit(page);
+  await expect
+    .poll(() => state.saves.filter((save) => save.kind === "draft").length, {
+      timeout: 15000,
+    })
+    .toBeGreaterThan(drafts);
+  await page.waitForTimeout(1500);
+  expect(canvasSaves()).toBe(before);
+  expect(state.documents.get("canvas")).toEqual({
+    revision: 5,
+    document: theirs,
+  });
 });

@@ -7026,6 +7026,8 @@ export class App implements CanvasHost {
     testData: string | null;
     canvas: string | null;
     canvasRevision?: number;
+    /** "Use theirs" on a canvas Studio can't read: theirs stays on the platform, and this canvas never saves over it. */
+    canvasHeld?: boolean;
   } = { draftId: "", testData: null, canvas: null };
   /** "Someone else changed the test data" (or the canvas): Keep mine or Use theirs. */
   documentConflict: {
@@ -7076,7 +7078,10 @@ export class App implements CanvasHost {
       if (!current()) return true;
     }
     // A canvas still being read from this computer isn't the draft's canvas yet.
-    if (this.draftCanvasPending?.draftId !== draftId) {
+    if (
+      this.draftCanvasPending?.draftId !== draftId &&
+      !this.platformDocs.canvasHeld
+    ) {
       const canvas = this.model.canvas;
       const text = canonicalJson(canvas);
       const nothing =
@@ -7206,6 +7211,14 @@ export class App implements CanvasHost {
       if (!read.problems.length) {
         model.amend(() => (model.canvas = read.canvas));
         this.tick.update((n) => n + 1);
+      } else {
+        // Theirs can't be shown: it stays on the platform untouched, and this layout stays here.
+        this.platformDocs.canvasHeld = true;
+        this.notify(
+          "Studio couldn't read the canvas saved on the platform, so it keeps that one there and this layout here. Layout changes to this draft aren't saved to the platform until you open it again.",
+          undefined,
+          "danger",
+        );
       }
       this.platformDocs.canvas = text;
       this.platformDocs.canvasRevision = conflict.theirs.revision;
