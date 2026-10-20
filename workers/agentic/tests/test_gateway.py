@@ -402,6 +402,10 @@ SHOWS = {
         "capabilities": ["completion"],
         "model_info": {"general.architecture": "gemma3", "gemma3.context_length": 32768},
     },
+    "qwen3:4b": {
+        "capabilities": ["completion", "tools", "thinking"],
+        "model_info": {"general.architecture": "qwen3", "qwen3.context_length": 40960},
+    },
 }
 AUTH = {"Authorization": "Bearer service-token"}
 
@@ -1088,9 +1092,28 @@ async def test_ollama_replies_carry_a_frequency_penalty_and_cloud_replies_do_not
         cloud = await client.post("/v1/lumi", json=payload(), headers=AUTH)
     assert local.status_code == cloud.status_code == 200, (local.text, cloud.text)
     assert settings[0]["frequency_penalty"] == OLLAMA_FREQUENCY_PENALTY == 0.2
-    # Thinking models (qwen3) spend the whole answer limit thinking; Weave AI asks for none on Ollama.
-    assert settings[0]["openai_reasoning_effort"] == "none"
+    # qwen2.5 does not think; Ollama 0.12.3 refuses reasoning_effort "none" for it (measured), so none is sent.
+    assert "openai_reasoning_effort" not in settings[0]
     assert "frequency_penalty" not in settings[1] and "openai_reasoning_effort" not in settings[1]
+
+
+async def test_a_thinking_ollama_model_is_asked_to_answer_without_thinking(tmp_path):
+    # qwen3:4b spent all 512 answer tokens thinking (Ollama 0.40.2); its capabilities name thinking.
+    settings = []
+
+    async def stream(messages, info):
+        settings.append(info.model_settings or {})
+        for chunk in streamed(info, [json.dumps(REPLY)]):
+            yield chunk
+
+    ask = ollama_ask()
+    ask["profile"]["model"] = "qwen3:4b"
+    policy = ollama_gateway_policy(tmp_path, models=["qwen3:4b"])
+    model = Counted(FunctionModel(stream_function=stream))
+    async with gateway(tmp_path, builder=lambda *_: model, policy=policy) as client:
+        response = await client.post("/v1/lumi", json=ask, headers=AUTH)
+    assert response.status_code == 200, response.text
+    assert settings[0]["openai_reasoning_effort"] == "none"
 
 
 def test_the_gateway_counts_two_and_a_half_characters_per_token_like_the_api():

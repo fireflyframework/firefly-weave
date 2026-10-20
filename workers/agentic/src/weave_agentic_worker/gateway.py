@@ -110,6 +110,8 @@ MAX_OTHER_PER_TOKEN = 2
 # within a few tokens (4,098 of 8,192, measured twice on Ollama 0.40.2).
 OLLAMA_CONTEXT_TOKENS = 8192
 CUT_MARGIN = 16
+# How long the gateway waits for Ollama to say whether a model thinks before it asks without the setting.
+THINKING_SECONDS = 5.0
 TEST_PROMPT = "Reply with the single word: ready"
 PROBE_PROMPT = "Call the ping tool with the value weave. Do not answer in text."
 PING = ToolDefinition(
@@ -293,6 +295,19 @@ def create_app(
             return transport_factory(entry)
         return PinnedModelTransport(entry, policy.origins, resolver=policy.resolver or resolve)
 
+    async def thinks(entry: PolicyEndpoint, name: str) -> bool:
+        """Whether Ollama lists thinking among the model's capabilities; False when it cannot tell."""
+        try:
+            async with httpx2.AsyncClient(
+                transport=transports(entry), trust_env=False, follow_redirects=False, timeout=THINKING_SECONDS
+            ) as client:
+                async with asyncio.timeout(THINKING_SECONDS):
+                    answer = await client.post(entry.origin + "/api/show", json={"model": name})
+            capabilities = answer.json().get("capabilities") if answer.status_code == 200 else None
+        except Exception:
+            return False
+        return isinstance(capabilities, list) and "thinking" in capabilities
+
     async def admitted(
         request: Request, body_type: type[BaseModel], route: Callable[[Any], Coroutine[Any, Any, JSONResponse]]
     ) -> JSONResponse:
@@ -373,9 +388,11 @@ def create_app(
                     if entry.compat == "ollama":
                         # Small local models are the ones that loop: penalize repeats and stop a loop early.
                         settings["frequency_penalty"] = OLLAMA_FREQUENCY_PENALTY
-                        # Thinking models otherwise spend the answer limit thinking (qwen3:4b: 512 of 512 tokens,
-                        # no answer); models without thinking ignore it.
-                        settings["openai_reasoning_effort"] = "none"
+                        if await thinks(entry, profile.model):
+                            # A thinking model otherwise spends the answer limit thinking (qwen3:4b: 512 of 512
+                            # tokens, no answer). Only thinking models get it: Ollama 0.12.3 refuses "none" for
+                            # a model that does not think.
+                            settings["openai_reasoning_effort"] = "none"
                         guard = LoopGuard(model)
                         model = guard
                     try:
