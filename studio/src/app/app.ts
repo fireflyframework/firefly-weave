@@ -175,6 +175,7 @@ import {
   kinds,
   ownerLabel,
   renamedSteps,
+  sequencesOf,
   StructuredCanvasAdapter,
   Workflow,
   Node,
@@ -443,6 +444,18 @@ const sideEffects: Record<string, string> = {
   idempotency_key: "Retried with an idempotency key",
   non_idempotent: "Not idempotent — never retried automatically",
 };
+/** Each step as it is in a definition, by ID: a deleted step's test data returns only to the same step. */
+function stepIdentities(
+  definition: Workflow,
+): (id: string) => string | undefined {
+  // Read now: the definition may change in place afterwards.
+  const found = new Map(
+    [...sequencesOf(definition).values()]
+      .flat()
+      .map((step) => [step.id, JSON.stringify(step)]),
+  );
+  return (id) => found.get(id);
+}
 /** No pinned steps (before the test data tools load). */
 const NO_PINS: ReadonlyMap<string, { stale: string | null }> = new Map();
 
@@ -2966,6 +2979,7 @@ export class App implements CanvasHost {
       return false;
     // Their inspector edits go with them.
     if (ids.includes(this.model.selected)) this.loadInspector();
+    const identities = stepIdentities(this.model.definition);
     this.perform(() =>
       one
         ? this.model.remove(one, { contents: contained > 0 })
@@ -2977,7 +2991,7 @@ export class App implements CanvasHost {
     }
     // Their test data goes with them; Undo (the toast's or the toolbar's) brings both back.
     const steps = this.model.stepIdSet();
-    const pruned = this.testData.prune((id) => steps.has(id));
+    const pruned = this.testData.prune((id) => steps.has(id), identities);
     const what = one || `${ids.length} steps`;
     const revision = this.model.revision;
     const withData = pruned.length
@@ -3659,9 +3673,10 @@ export class App implements CanvasHost {
     this.flushInspector();
     const before = this.model.definition;
     const steps = this.model.stepIdSet();
+    const identities = stepIdentities(before);
     this.model.undo();
     this.followRenames(renamedSteps(before, this.model.definition));
-    this.followSteps(steps);
+    this.followSteps(steps, identities);
     this.dirty = true;
     this.changed();
   }
@@ -3689,10 +3704,17 @@ export class App implements CanvasHost {
    * their deletion took, and steps it removed take theirs (kept to come
    * back), so the toolbar and the delete toast's Undo agree.
    */
-  private followSteps(before: ReadonlySet<string>) {
+  private followSteps(
+    before: ReadonlySet<string>,
+    previous: (id: string) => string | undefined,
+  ) {
     const after = this.model.stepIdSet();
-    this.testData.revive((id) => after.has(id));
-    this.testData.prune((id) => after.has(id) || !before.has(id));
+    // Only steps this Undo or Redo brought back, and only as they were.
+    void this.testData.revive(
+      (id) => after.has(id) && !before.has(id),
+      stepIdentities(this.model.definition),
+    );
+    this.testData.prune((id) => after.has(id) || !before.has(id), previous);
   }
   /** Steps an Undo or Redo renamed: entries in step details and their test data follow. */
   private followRenames(renames: { from: string; to: string }[]) {
@@ -3708,9 +3730,10 @@ export class App implements CanvasHost {
     this.cancelInspectorCommit();
     const before = this.model.definition;
     const steps = this.model.stepIdSet();
+    const identities = stepIdentities(before);
     this.model.redo();
     this.followRenames(renamedSteps(before, this.model.definition));
-    this.followSteps(steps);
+    this.followSteps(steps, identities);
     this.dirty = true;
     this.changed();
   }

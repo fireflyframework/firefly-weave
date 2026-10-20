@@ -365,15 +365,17 @@ describe("test data of deleted steps", () => {
     expect(Object.keys(service.data().pins ?? {})).toEqual(["score"]);
     // Undo brings the step back: its pin follows.
     steps = new Set(["score", "lookup"]);
-    expect(service.revive((id) => steps.has(id))).toEqual(["/pins/lookup"]);
+    expect(await service.revive((id) => steps.has(id))).toEqual([
+      "/pins/lookup",
+    ]);
     expect(service.data().pins?.["lookup"]).toEqual(pin({ id: 1 }));
     // Redo deletes it again; a second revive finds nothing more to bring.
     steps = new Set(["score"]);
     service.prune((id) => steps.has(id));
     expect(service.data().pins?.["lookup"]).toBeUndefined();
     steps = new Set(["score", "lookup"]);
-    service.revive((id) => steps.has(id));
-    expect(service.revive((id) => steps.has(id))).toEqual([]);
+    await service.revive((id) => steps.has(id));
+    expect(await service.revive((id) => steps.has(id))).toEqual([]);
     expect(service.data().pins?.["lookup"]).toEqual(pin({ id: 1 }));
   });
   it("never replaces a pin set since, and forgets the deleted on another opening", async () => {
@@ -389,10 +391,90 @@ describe("test data of deleted steps", () => {
       withPin(service.data(), "lookup", pin({ id: 2 }), ISO),
       [],
     );
-    expect(service.revive(() => true)).toEqual([]);
+    expect(await service.revive(() => true)).toEqual([]);
     expect(service.data().pins?.["lookup"]).toEqual(pin({ id: 2 }));
     service.prune(() => false);
     await service.open({ kind: "local", draftId: "d-2" });
-    expect(service.revive(() => true)).toEqual([]);
+    expect(await service.revive(() => true)).toEqual([]);
+  });
+});
+
+describe("reviving a deleted step's test data", () => {
+  it("brings it back only to the same step, never to another that took its ID", async () => {
+    const { value } = host();
+    const service = new TestDataService(value);
+    await service.open({ kind: "local", draftId: "d-1" });
+    await service.change(
+      withPin(emptyTestData(ISO), "notify", pin({ id: 1 }), ISO),
+      [],
+    );
+    service.prune(
+      () => false,
+      () => "notify as it was",
+    );
+    // Another step now has the ID: nothing comes back.
+    expect(
+      await service.revive(
+        () => true,
+        () => "lookup renamed",
+      ),
+    ).toEqual([]);
+    expect(service.data().pins?.["notify"]).toBeUndefined();
+    // That entry is gone for good: another step took the ID.
+    expect(
+      await service.revive(
+        () => true,
+        () => "notify as it was",
+      ),
+    ).toEqual([]);
+    // Deleted again, then the same step as it was comes back: so does its pin.
+    await service.change(
+      withPin(emptyTestData(ISO), "notify", pin({ id: 2 }), ISO),
+      [],
+    );
+    service.prune(
+      () => false,
+      () => "notify as it was",
+    );
+    expect(
+      await service.revive(
+        () => true,
+        () => "notify as it was",
+      ),
+    ).toEqual(["/pins/notify"]);
+  });
+  it("checks what it brings back, as any change: a value now secret stays out", async () => {
+    const { value } = host({ "/pins/notify": "WV-SCHEMA-SECRET_VALUE" });
+    const service = new TestDataService(value);
+    await service.open({ kind: "local", draftId: "d-1" });
+    await service.change(
+      withPin(emptyTestData(ISO), "notify", pin({ token: "x" }), ISO),
+      [],
+    );
+    service.prune(() => false);
+    expect(await service.revive(() => true)).toEqual([]);
+    expect(service.data().pins?.["notify"]).toBeUndefined();
+  });
+  it("forgets what deleted steps held once the platform's copy replaces this one", async () => {
+    const { value } = host();
+    const service = new TestDataService(value);
+    await service.open({ kind: "local", draftId: "d-1" });
+    await service.change(
+      withPin(emptyTestData(ISO), "notify", pin({ id: 1 }), ISO),
+      [],
+    );
+    service.prune(() => false);
+    service.syncFrom({
+      draft_id: "d-1",
+      kind: "test-data",
+      revision: 2,
+      draft_revision: 1,
+      document: emptyTestData(ISO),
+      contains_run_data: false,
+      source_environment_ids: [],
+      updated_at: ISO,
+      updated_by: "someone",
+    } as never);
+    expect(await service.revive(() => true)).toEqual([]);
   });
 });

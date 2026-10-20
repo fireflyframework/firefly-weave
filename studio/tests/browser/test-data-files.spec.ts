@@ -329,3 +329,44 @@ test("a test data file with pinned output for a step the workflow doesn't have l
     page.locator('[data-step="lookup"] .tile-badge').first(),
   ).toHaveAttribute("data-badge", /^pinned/);
 });
+
+test("an unrelated Undo never puts a deleted step's pin on another step that took its ID", async ({
+  page,
+}) => {
+  const details = await openTestDataFixture(page);
+  await details.open("notify");
+  const pane = await outputPane(details);
+  await pane.getByRole("button", { name: "Generate sample" }).click();
+  await expect(banner(pane)).toBeVisible();
+  await details.close();
+  await fitCanvas(page);
+  await page.locator('[data-step="notify"]').first().click();
+  await page.keyboard.press("Delete");
+  await expect(page.locator('[data-step="notify"]')).toHaveCount(0);
+  // Another step (lookup, never pinned) takes the free ID.
+  await details.open("lookup");
+  await details.dialog.getByRole("button", { name: "Rename lookup" }).click();
+  await details.dialog
+    .getByRole("textbox", { name: "Step name" })
+    .fill("notify");
+  await page.keyboard.press("Enter");
+  await expect(details.dialogFor("notify")).toBeVisible();
+  await details.close();
+  await expect(page.locator('[data-step="notify"] .tile-badge')).toHaveCount(0);
+  // An unrelated edit, then its Undo.
+  await details.open("score");
+  await details.dialog.getByRole("button", { name: "Rename score" }).click();
+  await details.dialog
+    .getByRole("textbox", { name: "Step name" })
+    .fill("total");
+  await page.keyboard.press("Enter");
+  await expect(details.dialogFor("total")).toBeVisible();
+  await details.close();
+  await command(page, "Undo");
+  await expect(page.locator('[data-step="score"]').first()).toBeVisible();
+  await page.waitForTimeout(500);
+  const badges = await page
+    .locator('[data-step="notify"] .tile-badge')
+    .evaluateAll((all) => all.map((b) => b.getAttribute("data-badge")));
+  expect(badges).toEqual([]);
+});

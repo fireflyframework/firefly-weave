@@ -152,7 +152,10 @@ export class TestDataService {
   private waiting = new Set<string>();
   private waitingKey: string | null = null;
   /** Entries pruned with their steps, by pointer, while this opening lasts. */
-  private readonly deleted = new Map<string, unknown>();
+  private readonly deleted = new Map<
+    string,
+    { entry: unknown; step: string | undefined }
+  >();
   /** Keys of accounts signed out since: a write queued for one never runs. */
   private readonly forgotten = new Set<string>();
   /** The platform revision this copy is based on. */
@@ -288,44 +291,76 @@ export class TestDataService {
     this.set(next);
     this.keep();
   }
-  prune(exists: (id: string) => boolean): string[] {
+  /**
+   * Drops the entries of steps that are gone, keeping them for an Undo that
+   * brings those steps back. `identityOf` names each step as it was (its
+   * definition), so only the same step gets them back.
+   */
+  prune(
+    exists: (id: string) => boolean,
+    identityOf: (stepId: string) => string | undefined = () => undefined,
+  ): string[] {
     const before = this.current;
     const { data, removed } = pruneEntries(before, exists, this.stamp());
     if (!removed.length) return [];
     // Kept for an Undo that brings the steps back (the toast's or the toolbar's).
     const left = new Set(entriesOf(data).map(({ path }) => path));
     for (const { path, entry } of entriesOf(before))
-      if (!left.has(path)) this.deleted.set(path, entry);
+      if (!left.has(path)) {
+        const at = locate(path);
+        const key = at && "key" in at ? at.key : null;
+        const step = key ? ownerOf(key, entry) : "";
+        this.deleted.set(path, { entry, step: identityOf(step) });
+      }
     this.set(data);
     this.keep();
     return removed;
   }
   /**
    * Steps came back (an Undo of their deletion, a Redo of their insertion):
-   * the entries their deletion took return, unless one was set since.
-   * Returns their pointers.
+   * the entries their deletion took return, unless one was set since or
+   * another step has the ID now (`identityOf` differs). They are checked as
+   * any change is; one refused (a value now secret) stays out. Returns the
+   * pointers brought back.
    */
-  revive(exists: (id: string) => boolean): string[] {
+  async revive(
+    exists: (id: string) => boolean,
+    identityOf: (stepId: string) => string | undefined = () => undefined,
+  ): Promise<string[]> {
     let next = this.current;
     const revived: string[] = [];
-    for (const [path, entry] of [...this.deleted]) {
+    for (const [path, kept] of [...this.deleted]) {
       const at = locate(path);
       const key = at && "key" in at ? at.key : null;
-      if (!key || !exists(ownerOf(key, entry))) continue;
+      const step = key ? ownerOf(key, kept.entry) : "";
+      if (!key || !exists(step)) continue;
       this.deleted.delete(path);
+      if (kept.step !== identityOf(step)) continue;
       if (entryAt(next, path) !== undefined) continue;
-      next = withEntry(next, path, entry);
+      next = withEntry(next, path, kept.entry);
       revived.push(path);
     }
-    if (!revived.length) return [];
-    this.set({ ...next, updatedAt: this.stamp() });
-    this.keep();
-    return revived;
+    let pending = revived;
+    while (pending.length) {
+      const outcome = await this.change(
+        { ...next, updatedAt: this.stamp() },
+        pending,
+      );
+      if (outcome.ok) return pending;
+      // One refused: it stays out, and the rest are checked again.
+      const refused = outcome.pointer;
+      if (!refused || !pending.includes(refused)) return [];
+      next = withEntry(next, refused, undefined);
+      pending = pending.filter((path) => path !== refused);
+    }
+    return [];
   }
   // --- the platform side (platform drafts) ---------------------------------
   /** The platform's document: it replaces this copy, except entries waiting for publishing. */
   syncFrom(document: StudioDocument | null): void {
     if (!document) return;
+    // Their copy replaces this one: what deleted steps held here is gone with it.
+    this.deleted.clear();
     const reading = readTestData(document.document);
     if (!reading.ok) {
       this.problem = UNREADABLE;
