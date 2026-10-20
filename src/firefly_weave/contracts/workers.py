@@ -229,11 +229,21 @@ class TaskError(ContractModel):
     completion_id: UUID
     code: str = Field(pattern=r"^[A-Z][A-Z0-9_-]{0,63}$")
     outcome: Literal["not_started", "failed", "unknown"] = "unknown"
+    # Whether anything was applied. "none" counts only from a transaction-aware release; "unknown" is never written.
+    effect: Literal["none", "unknown"] = Field(default="unknown", exclude_if=lambda value: value == "unknown")
+
+
+class ClaimWorker(ContractModel):
+    """The release a claiming worker runs, and whether it reports failures that applied nothing."""
+
+    release_id: UUID
+    transaction_aware: bool = False
 
 
 class ClaimRequest(ContractModel):
     worker_id: UUID
     limit: int = Field(ge=1, le=100)
+    worker: ClaimWorker | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class CompleteRequest(ContractModel):

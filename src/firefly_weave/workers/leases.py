@@ -36,6 +36,7 @@ from firefly_weave.connections.secrets import ScopedSecrets
 from firefly_weave.connections.service import ConnectionService
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.connectors import ConnectorInvocation
+from firefly_weave.contracts.transactions import TRANSACTION_MESSAGES
 from firefly_weave.contracts.values import JsonValue
 from firefly_weave.contracts.workers import (
     CompletionAcknowledgment,
@@ -276,6 +277,8 @@ class _TaskOperation:
         return await self._finish(tx, lease, completion_id, output, failed=False)
 
     async def fail(self, tx: Transaction, lease: LeaseProof, error: TaskError) -> CompletionAcknowledgment:
+        if error.effect == "none" and error.outcome == "unknown":
+            raise CatalogError(422, "WV-COMPLETION-EFFECT", TRANSACTION_MESSAGES["WV-COMPLETION-EFFECT"])
         return await self._finish(tx, lease, error.completion_id, error.model_dump(mode="json"), failed=True)
 
     async def _finish(

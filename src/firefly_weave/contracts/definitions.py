@@ -42,6 +42,8 @@ type VersionedReference = Annotated[UnicodeString, Field(pattern=rf"^{NAME_PATTE
 type JsonPointer = Annotated[UnicodeString, Field(pattern=r"^(?:/(?:[^~/]|~[01])*)*$")]
 type PositiveInt = Annotated[int, Field(gt=0, le=MAX_SAFE_INTEGER)]
 type SideEffect = Literal["read_only", "idempotent", "idempotency_key", "non_idempotent"]
+# A worker or connector failure code, as TaskError reports it.
+type FailureCode = Annotated[UnicodeString, Field(pattern=r"^[A-Z][A-Z0-9_-]{0,63}$")]
 type OperatorName = Literal[
     "eq",
     "ne",
@@ -196,6 +198,22 @@ class ActionSpec(ContractModel):
     routing: OmissionOnly[WorkerRouting] = Field(
         default=None, exclude_if=_is_absent, json_schema_extra=_omit_absent_default
     )
+    # Failure codes that mean nothing was applied, from any release; transient codes are refused when compiled.
+    definite_failures: list[FailureCode] = Field(
+        default_factory=list,
+        alias="definiteFailures",
+        max_length=32,
+        exclude_if=lambda value: not value,
+        json_schema_extra={"uniqueItems": True},
+    )
+    # The implementation reports explicitly when a failure applied nothing (TaskError.effect).
+    transaction_aware: bool = Field(default=False, alias="transactionAware", exclude_if=lambda value: not value)
+
+    @model_validator(mode="after")
+    def unique_definite_failures(self) -> ActionSpec:
+        if len(set(self.definite_failures)) != len(self.definite_failures):
+            raise ValueError("definiteFailures must be unique")
+        return self
 
 
 class ActionStep(ContractModel):
