@@ -107,6 +107,16 @@ test("test data and the canvas persist across reload and a second browser profil
   const { person, environment } = setup();
   const project = `/api/v1/tenants/${environment.tenant_id}/projects/${environment.project_id}`;
   await newEditor(page);
+  // Every draft and document save's answer, for the report when a step fails.
+  page.on("response", async (response) => {
+    const request = response.request();
+    if (request.method() !== "PUT" || !/\/drafts\//.test(response.url()))
+      return;
+    const body = await response.text().catch(() => "");
+    console.log(
+      `PUT ${new URL(response.url()).pathname.split("/").slice(-3).join("/")} ${response.status()} ${body.slice(0, 300)}`,
+    );
+  });
   const s = await session(page);
   const name = uniqueName("e2e-test-data");
   await pair(page, s.host!, "td-01-pairing");
