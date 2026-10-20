@@ -19,7 +19,13 @@ import { test, expect, type Page } from "@playwright/test";
 import { cpus, platform, arch } from "node:os";
 import { useNewEditor } from "./canvas-po";
 import { openStepFixture, withLanguageFeatures } from "./step-details-po";
-import { formulaText, formulasFixture, setTestInput } from "./formula-po";
+import {
+  formulaBox,
+  formulaText,
+  formulasFixture,
+  setTestInput,
+} from "./formula-po";
+import { calibrateFormulaWork } from "./formula-calibration";
 
 /** One frame at 60 Hz, in milliseconds. */
 const FRAME_BUDGET_MS = 16.7;
@@ -372,13 +378,37 @@ test(
   },
 );
 
+/** Keystroke to the painted preview, on a runner as fast as the reference. */
+const FORMULA_PREVIEW_BUDGET_MS = 50;
+/** The first keystrokes run cold code (JIT, first renders): not measured. */
+const FORMULA_WARMUP_KEYSTROKES = 3;
+/** Measured keystrokes: with 60, the p95 is the 57th, not the 2nd slowest. */
+const FORMULA_MEASURED_KEYSTROKES = 60;
+/**
+ * The calibration: Studio's formula parser and evaluator on the formula under
+ * test, timed in the same page before the keystrokes, with no DOM.
+ */
+const FORMULA_CALIBRATION = { rounds: 4000, runs: 9 };
+/**
+ * The calibration's median on a GitHub-hosted runner with an AMD EPYC 9V45,
+ * the fastest CPU those runners report.
+ */
+const FORMULA_CALIBRATION_REFERENCE_MS = 20;
+/**
+ * Shared runners differ about 1.8x in CPU speed (AMD EPYC 7763 against
+ * 9V45). A runner slower than the reference gets its own slowdown as
+ * headroom, up to 2x; a faster one gets none.
+ */
+const FORMULA_MAX_SPEED_ALLOWANCE = 2;
+
 test(
   "previews a formula within 50 ms of a keystroke",
   { tag: "@performance" },
   async ({ page }, info) => {
     test.setTimeout(120_000);
     await page.setViewportSize({ width: 1440, height: 900 });
-    await withLanguageFeatures(page);
+    const features = ["text.concat", "text.join"];
+    await withLanguageFeatures(page, features);
     const details = await openStepFixture(page, formulasFixture);
     await setTestInput(page, details, {
       "Customer ID": "c-1042",
@@ -390,6 +420,16 @@ test(
     await page.keyboard.press("End");
     const result = title.getByRole("region", { name: "Result of Title" });
     await expect(result).toContainText("Review order of 1500");
+    const text = await formulaBox(title).getAttribute("data-text");
+    expect(text, "the Title formula's text").toBeTruthy();
+    const calibration = await calibrateFormulaWork(page, {
+      text: text!,
+      context: { input: { customerId: "c-1042", amount: 1500 }, steps: {} },
+      features,
+      ...FORMULA_CALIBRATION,
+    });
+    // Every round must parse and evaluate, or the workload measures an error.
+    expect(calibration.evaluated).toBe(FORMULA_CALIBRATION.rounds);
     // From the keydown to the frame that shows the new value: the timer
     // stops once the Result reads the expected text, after the next
     // animation frame and the task that follows it (when the frame paints).
@@ -430,28 +470,50 @@ test(
         characterData: true,
       });
     });
-    for (const key of "abcdefghijklmnopqrst") {
-      await page.keyboard.press(key);
+    const keystrokes = FORMULA_WARMUP_KEYSTROKES + FORMULA_MEASURED_KEYSTROKES;
+    for (let index = 0; index < keystrokes; index++) {
+      await page.keyboard.press(String.fromCharCode(97 + (index % 26)));
       await page.waitForFunction(
         () => (window as unknown as { pressedAt: number }).pressedAt === 0,
       );
     }
-    const samples = await page.evaluate(
+    const all = await page.evaluate(
       () => (window as unknown as { previewMs: number[] }).previewMs,
     );
+    expect(all).toHaveLength(keystrokes);
+    const samples = all.slice(FORMULA_WARMUP_KEYSTROKES);
     const sorted = [...samples].sort((a, b) => a - b);
     const p95 = sorted[Math.ceil(sorted.length * 0.95) - 1];
+    const ratio = calibration.medianMs / FORMULA_CALIBRATION_REFERENCE_MS;
+    const allowance = Math.min(Math.max(ratio, 1), FORMULA_MAX_SPEED_ALLOWANCE);
+    const scaledP95 = p95 / allowance;
+    const round = (value: number) => Math.round(value * 10) / 10;
     const measurement = {
+      platform: platform(),
+      arch: arch(),
+      cpu: cpus()[0]?.model,
+      warmupKeystrokes: FORMULA_WARMUP_KEYSTROKES,
       keystrokes: samples.length,
-      p95Ms: Math.round(p95 * 10) / 10,
-      maxMs: Math.round(sorted[sorted.length - 1] * 10) / 10,
+      warmupMs: all.slice(0, FORMULA_WARMUP_KEYSTROKES).map(round),
+      medianMs: round(sorted[Math.floor(sorted.length / 2)]),
+      rawP95Ms: round(p95),
+      maxMs: round(sorted[sorted.length - 1]),
+      calibrationMs: round(calibration.medianMs),
+      calibrationRunsMs: calibration.runsMs.map(round),
+      referenceMs: FORMULA_CALIBRATION_REFERENCE_MS,
+      ratio: Math.round(ratio * 100) / 100,
+      allowance: Math.round(allowance * 100) / 100,
+      scaledP95Ms: round(scaledP95),
+      budgetMs: FORMULA_PREVIEW_BUDGET_MS,
     };
     await info.attach("formula-preview-measurement", {
       body: JSON.stringify(measurement),
       contentType: "application/json",
     });
     console.log(JSON.stringify(measurement));
-    expect(samples).toHaveLength(20);
-    expect(p95, "keystroke to preview, p95").toBeLessThanOrEqual(50);
+    expect(
+      scaledP95,
+      "keystroke to preview, p95 scaled to the reference runner",
+    ).toBeLessThanOrEqual(FORMULA_PREVIEW_BUDGET_MS);
   },
 );
