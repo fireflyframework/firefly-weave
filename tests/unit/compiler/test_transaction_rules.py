@@ -164,6 +164,13 @@ def test_after_the_point_of_no_return_only_work_that_is_safe_to_retry():
     assert analysis.after_pivot == ("notify", "audit", "summary", "approve", "follow")
 
 
+def test_a_timer_after_the_point_of_no_return_always_resumes_so_it_needs_no_note():
+    issues, _ = check(
+        reserve(0), irreversible(1), Other("pause", at(2), "wait", 5), Other("answer", at(3), "signal", 60)
+    )
+    assert issues == [("TXN_AFTER_PIVOT_WAIT", at(3), "warning")]
+
+
 def test_undo_steps_must_be_safe_to_retry_and_called_workflows_must_have_a_time_limit():
     path = at(0)
     unsafe = Participant(
@@ -233,7 +240,7 @@ def test_waits_and_pure_steps_name_the_first_step_that_cant_be_undone_in_step_or
     _, analysis = check(
         reserve(1, step="hold"),
         Choice("route", at(0), cases),
-        Other("pause", at(2), "wait", 5),
+        Other("answer", at(2), "signal", 5),
         Other("note", at(3), "llm"),
     )
     messages = {issue.code: issue.message for issue in analysis.issues}
@@ -389,7 +396,7 @@ def test_a_fail_step_after_the_point_of_no_return_is_noted_because_it_cant_roll_
     issues, analysis = check(reserve(0), irreversible(1), Other("stop", at(2), "fail"))
     assert issues == [("TXN_AFTER_PIVOT_PURE", at(2), "info")]
     assert analysis.issues[0].message == (
-        "If stop fails after submit, nothing can be undone and the transaction is left in doubt."
+        "stop fails the transaction after submit, which can't be undone, so the transaction is left in doubt."
     )
     assert analysis.after_pivot == ("stop",)
 
@@ -619,7 +626,8 @@ def _expected(body: Sequence):
                 held = sorted([hold for hold, _ in holds] + beside)
                 if not after and held and (node.wait_seconds is None or node.wait_seconds > held[0]):
                     found.add(("TXN_HOLD_WAIT", node.path))
-                if after:
+                # A timer always resumes; only a wait for someone else's answer can leave it in doubt.
+                if after and node.kind != "wait":
                     found.add(("TXN_AFTER_PIVOT_WAIT", node.path))
             elif node.kind in ("transform", "llm", "decisionTable", "action", "fail") and after:
                 found.add(("TXN_AFTER_PIVOT_PURE", node.path))

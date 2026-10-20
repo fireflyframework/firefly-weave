@@ -106,6 +106,16 @@ describe("plain-language diagnostic copy", () => {
       expect(view.technical).toBe("Definition violates the contract.");
     }
   });
+  it("reads correctly for a Fail step and for a step that can fail after the point of no return", () => {
+    const view = describeDiagnostic({
+      code: "WV-COMP-TXN_AFTER_PIVOT_PURE",
+      severity: "info",
+      message: "stop fails the transaction after submit.",
+    });
+    expect(view.text).toBe(
+      "After the step that can't be undone, nothing can be undone, so if this step fails, or is a Fail step, the transaction is left in doubt.",
+    );
+  });
   it("names the call settings by their Studio labels for CALL_MODE", () => {
     const view = describeDiagnostic({
       code: "WV-COMP-CALL_MODE",

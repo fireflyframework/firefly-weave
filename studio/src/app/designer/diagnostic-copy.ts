@@ -129,7 +129,7 @@ const compiler: Record<string, Copy> = {
     hint: "Move it after the transaction, or use an action that is safe to retry.",
   },
   TXN_AFTER_PIVOT_PURE: {
-    text: "If this step fails, nothing can be undone and the transaction is left in doubt.",
+    text: "After the step that can't be undone, nothing can be undone, so if this step fails, or is a Fail step, the transaction is left in doubt.",
     hint: "Consider moving it after the transaction.",
   },
   TXN_AFTER_PIVOT_WAIT: {

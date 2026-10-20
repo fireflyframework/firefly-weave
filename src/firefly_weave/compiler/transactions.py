@@ -54,6 +54,9 @@ RULE_MESSAGES: Final[dict[str, str]] = {
     "TXN_AFTER_PIVOT_PURE": (
         "If {step} fails after {pivot}, nothing can be undone and the transaction is left in doubt."
     ),
+    "TXN_AFTER_PIVOT_FAIL": (
+        "{step} fails the transaction after {pivot}, which can't be undone, so the transaction is left in doubt."
+    ),
     "TXN_AFTER_PIVOT_WAIT": (
         "{step} waits after {pivot}, which can't be undone; if nobody answers in time, the transaction is left in "
         "doubt."
@@ -96,7 +99,11 @@ RULE_MESSAGES: Final[dict[str, str]] = {
 }
 # The code each message key reports; two message keys share a code.
 RULE_CODES: Final[dict[str, str]] = {
-    key: {"TXN_HOLD_RESERVE": "TXN_RESERVE_PAIR", "TXN_HOLD_WAIT_UNBOUNDED": "TXN_HOLD_WAIT"}.get(key, key)
+    key: {
+        "TXN_HOLD_RESERVE": "TXN_RESERVE_PAIR",
+        "TXN_HOLD_WAIT_UNBOUNDED": "TXN_HOLD_WAIT",
+        "TXN_AFTER_PIVOT_FAIL": "TXN_AFTER_PIVOT_PURE",
+    }.get(key, key)
     for key in RULE_MESSAGES
 }
 _SAFE_UNDO: Final = frozenset({"idempotent", "idempotency_key"})
@@ -366,7 +373,7 @@ class _Walk:
         if step.kind == "fail":
             # A fail step rolls the transaction back, which after a point of no return it can't.
             if pivots:
-                self.add("TXN_AFTER_PIVOT_PURE", step.path, "info", step=step.id, pivot=pivots[0].id)
+                self.add("TXN_AFTER_PIVOT_FAIL", step.path, "info", step=step.id, pivot=pivots[0].id)
             return frozenset()
         if step.kind in _WAITS:
             holds = [hold for s in states if s.pivot is None and (hold := _shortest(s.hold, beside)) is not None]
@@ -374,7 +381,8 @@ class _Walk:
                 key = "TXN_HOLD_WAIT_UNBOUNDED" if step.wait_seconds is None else "TXN_HOLD_WAIT"
                 wait = duration_text(step.wait_seconds) if step.wait_seconds is not None else ""
                 self.add(key, step.path, "warning", step=step.id, wait=wait, hold=duration_text(min(holds)))
-            if pivots:
+            # A timer always resumes; only a wait for someone else's answer can leave the transaction in doubt.
+            if pivots and step.kind != "wait":
                 self.add("TXN_AFTER_PIVOT_WAIT", step.path, "warning", step=step.id, pivot=pivots[0].id)
         elif step.kind in _PURE and pivots:
             self.add("TXN_AFTER_PIVOT_PURE", step.path, "info", step=step.id, pivot=pivots[0].id)
