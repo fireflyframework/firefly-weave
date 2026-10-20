@@ -42,7 +42,7 @@ from firefly_weave import private_origins
 from firefly_weave.contracts.deployments import DeploymentCapability
 from firefly_weave.sdk import platform as local
 from firefly_weave.sdk import platform_ai_files as files
-from firefly_weave.sdk import platform_origins
+from firefly_weave.sdk import platform_docker, platform_origins
 from firefly_weave.sdk.deployment import DeploymentError, read_file, strict_json
 
 if TYPE_CHECKING:
@@ -748,6 +748,7 @@ def _images(state: dict[str, Any], value: dict[str, Any], notice: Notice) -> Non
             "The retained release has no operations fixture worker. Create a new installation to use operations, "
             "or run up with --no-operations."
         )
+    platform_docker.retained_build_context(Path(state["directory"]))
     notice("Building the operations runner and the sleep fixture worker")
     if "runner_image" not in value:
         value["runner_image"] = _build(state, "runner", ["--target", "runner", str(context)])

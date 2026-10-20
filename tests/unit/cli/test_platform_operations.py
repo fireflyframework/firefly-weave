@@ -73,6 +73,7 @@ def operations(owned, monkeypatch):
     context = directory / "release" / "images"
     context.mkdir(parents=True)
     (context / "operations-worker.py").write_text("# fixture\n")
+    release_receipt(directory)
 
     def build(command):
         path = Path(command[command.index("--iidfile") + 1])
@@ -121,6 +122,21 @@ def operations(owned, monkeypatch):
     monkeypatch.setattr(platform_operations, "_keycloak_clients", clients)
     monkeypatch.setattr(platform_ai_setup, "ensure_worker_scope", scope)
     return SimpleNamespace(directory=directory, runner=runner, api=api)
+
+
+def release_receipt(directory):
+    """The retained release receipt: the digest of every build input, here and beside the build context."""
+    import hashlib
+
+    context = directory / "release" / "images"
+    inputs = {
+        path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in sorted(context.iterdir())
+        if path.is_file() and path.name != "release.json"
+    }
+    document = json.dumps({"complete": True, "inputs": inputs})
+    (directory / "release" / "release.json").write_text(document)
+    (context / "release.json").write_text(document)
 
 
 def enable(case):
@@ -550,3 +566,13 @@ def test_up_on_an_installation_made_before_local_operations_skips_them_and_says_
         "up --no-operations skips this note.",
     }
     assert platform_operations.status(platform._load(directory))["stage"] == "unavailable"
+
+
+def test_operations_images_are_built_only_from_the_retained_release_inputs(operations):
+    """The runner and fixture images come from the retained release, checked against its receipt as the server
+    image is: a changed input stops the build before Docker sees it."""
+    case = operations
+    (case.directory / "release" / "images" / "operations-worker.py").write_text("# changed\n")
+    with pytest.raises(platform.PlatformError, match="Operations setup stopped at images"):
+        enable(case)
+    assert not any("build" in name for name in case.runner.names())

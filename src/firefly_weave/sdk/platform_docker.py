@@ -125,11 +125,8 @@ def _image(state: dict[str, Any]) -> str:
     return value
 
 
-def _build(state: dict[str, Any], notice: Callable[[str], None]) -> None:
-    if state.get("docker_image") is not None:
-        _image(state)
-        return
-    directory = Path(state["directory"])
+def retained_build_context(directory: Path) -> Path:
+    """Check every retained build input against the release receipt and return the build context."""
     release = strict_json(read_file(directory / "release/release.json", 65536))
     context = directory / "release/images"
     if not release.get("complete"):
@@ -139,6 +136,15 @@ def _build(state: dict[str, Any], notice: Callable[[str], None]) -> None:
             raise local.PlatformError("The retained Docker build inputs changed.")
     if strict_json(read_file(context / "release.json", 65536)) != release:
         raise local.PlatformError("The Docker build receipt differs from the retained release.")
+    return context
+
+
+def _build(state: dict[str, Any], notice: Callable[[str], None]) -> None:
+    if state.get("docker_image") is not None:
+        _image(state)
+        return
+    directory = Path(state["directory"])
+    context = retained_build_context(directory)
     notice("Building the retained server image for this Docker platform")
     receipt = directory / "api-image.id"
     if receipt.exists():
