@@ -30,7 +30,7 @@ from pydantic_ai.models.function import FunctionModel
 
 from weave_agentic_worker.egress import ModelEgressDenied
 from weave_agentic_worker.errors import classify
-from weave_agentic_worker.execution import estimate_tokens, provider_schema, run_model, text_result
+from weave_agentic_worker.execution import estimate_tokens, provider_schema, run_model, text_result, without_thinking
 
 REQUEST = httpx2.Request("POST", "http://ollama:11434/v1/chat/completions")
 
@@ -205,3 +205,34 @@ async def test_a_missing_model_inside_the_agent_is_classified():
     with pytest.raises(ConnectorFailure) as failed:
         await run_model(profile(), "Summarize", "text", FunctionModel(respond), {})
     assert (failed.value.code, failed.value.outcome) == ("LLM_MODEL_NOT_FOUND", "not_started")
+
+
+@pytest.mark.parametrize(
+    ("answer", "kept"),
+    [
+        ("<think>private-canary</think>\n\nThe order shipped.", "The order shipped."),
+        ("The order <think>private-canary</think>shipped.", "The order shipped."),
+        ("<think>a</think>One.<think>b</think> Two.", "One. Two."),
+        ("<think>a<think>private-canary</think>c</think>The order shipped.", "The order shipped."),
+        ("One.<think>a<think>b</think>c</think> Two.", "One. Two."),
+        ("c</think>The order shipped.", "The order shipped."),
+        ("<THINK>kept</THINK> as written.", "<THINK>kept</THINK> as written."),
+        ("No reasoning here.", "No reasoning here."),
+    ],
+    ids=["leading", "inside", "two blocks", "nested", "nested inside", "a nested remainder", "other case", "none"],
+)
+def test_closed_reasoning_is_removed_wherever_it_appears(answer, kept):
+    assert without_thinking(answer).strip() == kept
+
+
+@pytest.mark.parametrize(
+    "answer",
+    ["<think>private-canary</think>The order shipped.", "The order <think>private-canary</think>shipped."],
+)
+async def test_a_text_result_never_returns_reasoning_the_model_wrote_inline(answer):
+    def respond(messages, info):
+        return ModelResponse(parts=[TextPart(answer)])
+
+    output = await run_model(profile(), "Summarize", {}, FunctionModel(respond), {})
+    assert "private-canary" not in json.dumps(output)
+    assert output["result"] == "The order shipped."

@@ -124,8 +124,11 @@ class FormatRefused(Exception):
 
 # A string schema with only these keywords is a plain text answer: no output tool, no response format.
 _TEXT_KEYWORDS = frozenset({"type", "minLength", "maxLength", "title", "description"})
-# Some models write their reasoning inline before the answer; it is never returned or stored.
-_THINKING = re.compile(r"\A\s*<think>.*?</think>\s*", re.DOTALL)
+# Some models write their reasoning inline as <think>…</think>; it is never returned or stored. An innermost block
+# holds no other opening tag, so nested blocks are removed from the inside out.
+_THINKING = re.compile(r"<think>(?:(?!<think>).)*?</think>", re.DOTALL)
+# A closing tag left in the answer ends the rest of a nested block whose start the endpoint already removed.
+_REASONING_REMAINDER = re.compile(r"\A.*</think>", re.DOTALL)
 
 
 def text_result(schema: dict[str, Any]) -> bool:
@@ -134,7 +137,11 @@ def text_result(schema: dict[str, Any]) -> bool:
 
 
 def without_thinking(text: str) -> str:
-    return _THINKING.sub("", text, count=1)
+    """The answer without its closed ``<think>…</think>`` blocks, wherever they appear, nested ones included."""
+    previous = None
+    while previous != text:
+        previous, text = text, _THINKING.sub("", text)
+    return _REASONING_REMAINDER.sub("", text, count=1)
 
 
 def estimate_tokens(*parts: str) -> int:

@@ -739,9 +739,16 @@ async def test_a_text_result_is_asked_for_as_plain_text_in_every_mode(tmp_path, 
     assert "response_format" not in requests[0]
 
 
-async def test_thinking_before_a_text_result_is_never_returned(tmp_path):
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "<think>The customer seems upset; private-reasoning-canary.</think>\n\nThe order shipped.",
+        "<think>First <think>private-reasoning-canary</think> then private-reasoning-canary</think>The order shipped.",
+    ],
+    ids=["leading", "nested"],
+)
+async def test_thinking_before_a_text_result_is_never_returned(tmp_path, answer):
     requests = []
-    answer = "<think>The customer seems upset; private-reasoning-canary.</think>\n\nThe order shipped."
     builder = recording_builder(requests, lambda _: chat_answer(answer))
     with po.installed(OLLAMA_ORIGINS):
         output = await AgenticTaskHandler(OllamaTransport(), ollama_policy(tmp_path), model_builder=builder)(
