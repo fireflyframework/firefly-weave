@@ -160,3 +160,26 @@ def test_a_called_workflow_stuck_behind_an_incident_fails_the_command(tmp_path):
     assert "Simulation waiting;" in result.output
     assert "Called workflow outer (outer@1.0.0): suspended." in result.output
     assert "Called workflow outer/wait (hold@1.0.0): timed_out." in result.output
+
+
+def test_a_detached_call_stuck_behind_an_incident_does_not_fail_a_caller_that_succeeded(tmp_path):
+    caller = workflow(
+        "orders", [call("bg", "outer@1.0.0", mode="detach")], {"literal": {}}, output_schema={}, callable_=False
+    )
+    request = tmp_path / "request.json"
+    request.write_text(
+        json.dumps({"artifact": compiled(caller, OUTER), "input": {"customerId": "c-1"}, "now": "2026-10-20T00:00:00Z"})
+    )
+    outer, hold = tmp_path / "outer.json", tmp_path / "hold.json"
+    outer.write_text(json.dumps(compiled(OUTER, HOLD)))
+    hold.write_text(json.dumps(compiled(HOLD)))
+    commands = tmp_path / "commands.json"
+    commands.write_text(
+        json.dumps([{"kind": "continue"}, {"kind": "advance_time", "seconds": 3600}, {"kind": "continue"}])
+    )
+    result = simulate(
+        request, "--workflow", f"outer@1.0.0={outer}", "--workflow", f"hold@1.0.0={hold}", "--commands", commands
+    )
+    assert result.exit_code == 0, result.output
+    assert "Simulation succeeded;" in result.output
+    assert "Called workflow bg (outer@1.0.0): suspended." in result.output

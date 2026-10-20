@@ -108,8 +108,9 @@ def simulate(request_file: Path, commands: Path | None, called: tuple[str, ...],
         click.echo(view.model_dump_json())
     else:
         echo_view(view)
-    # A called workflow behind an incident never returns, so its caller waits for nothing.
-    if view.status in {"failed", "suspended", "timed_out"} or any(f.status == "suspended" for f in view.frames):
+    # A called workflow its caller waits for that is behind an incident never returns; a detached one fails nothing.
+    stuck = any(f.mode == "wait" and f.status == "suspended" for f in view.frames)
+    if view.status in {"failed", "suspended", "timed_out"} or stuck:
         raise SystemExit(1)
 
 
