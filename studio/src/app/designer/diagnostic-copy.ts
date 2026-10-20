@@ -121,7 +121,7 @@ const compiler: Record<string, Copy> = {
     hint: "Move the step that can't be undone to the end of the transaction.",
   },
   TXN_PIVOT_PLACEMENT: {
-    text: "A step that can't be undone can't be inside a loop or next to parallel steps that change data.",
+    text: "The step that decides the transaction, the first that can't be undone, can't be inside a loop or next to parallel steps that change data.",
     hint: "Move it out of the loop or the parallel step.",
   },
   TXN_AFTER_PIVOT_UNSAFE: {

@@ -326,8 +326,10 @@ The compiler checks every path through the transaction before it publishes:
   (`WV-COMP-TXN_UNDECLARED`); a `read_only` action needs no choice.
 - No step that can be undone may follow one that can't (`WV-COMP-TXN_ORDER`,
   with a suggested edit that moves the step that can't be undone last), and the
-  step that can't be undone may not sit in a loop or beside parallel steps that
-  change data (`WV-COMP-TXN_PIVOT_PLACEMENT`).
+  step that decides the transaction (the first that can't be undone) may not sit
+  in a loop or beside parallel steps that change data
+  (`WV-COMP-TXN_PIVOT_PLACEMENT`). After it, steps that can't be undone may
+  repeat or run side by side.
 - After it, every action must be safe to retry (`WV-COMP-TXN_AFTER_PIVOT_UNSAFE`).
 - Confirm, cancel and compensate actions must be `idempotent` or
   `idempotency_key` (`WV-COMP-TXN_UNDO_SIDE_EFFECT`), and every workflow called
