@@ -152,7 +152,7 @@ async def test_a_run_without_facts_yet_is_named_as_such():
     runs.steps.assert_not_awaited()
 
 
-def test_a_compact_request_outlines_a_saved_draft():
+def test_a_compact_request_sends_a_saved_draft_that_fits_whole_and_outlines_one_that_does_not():
     document = {
         "kind": "Workflow",
         "metadata": {"name": "n", "version": "1.0.0"},
@@ -162,7 +162,20 @@ def test_a_compact_request_outlines_a_saved_draft():
     compact = shape(
         "compact", 4096, message="m", history=[], resources=[saved], draft=None, selected_step=None, schemas={}
     )
-    assert compact.context["resources"][0]["data"] == {
+    # Like the inline draft: a change needs the values it changes.
+    assert compact.context["resources"] == [saved] and "trimmed" not in compact.context
+    large = {**document, "spec": {"steps": [{**document["spec"]["steps"][0], "with": {"literal": "private " * 2000}}]}}
+    outlined = shape(
+        "compact",
+        4096,
+        message="m",
+        history=[],
+        resources=[{**saved, "data": {"document": large, "revision": 4}}],
+        draft=None,
+        selected_step=None,
+        schemas={},
+    )
+    assert outlined.context["resources"][0]["data"] == {
         "outline": {
             "kind": "Workflow",
             "metadata": document["metadata"],
@@ -170,7 +183,7 @@ def test_a_compact_request_outlines_a_saved_draft():
         },
         "revision": 4,
     }
-    assert compact.context["trimmed"] == ["outlined"]
+    assert outlined.context["trimmed"] == ["outlined"]
     full = shape("full", None, message="m", history=[], resources=[saved], draft=None, selected_step=None, schemas={})
     assert full.context["resources"][0] == saved
 

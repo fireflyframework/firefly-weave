@@ -448,8 +448,12 @@ def shape(
     allowance = share(ATTACHMENT_SHARE)
     kept: list[JsonValue] = []
     for resource in resources:
-        if profile != "full" and isinstance(resource, dict) and resource.get("kind") == "draft":
-            # A saved draft is outlined like the inline one: its own steps, never their values.
+        room = allowance - _tokens(kept) if allowance is not None and kept else allowance
+        whole_fits = room is None or _tokens(resource) <= room
+        if profile == "standard" and len(json.dumps(resource, ensure_ascii=False).encode()) > STANDARD_DRAFT_BYTES:
+            whole_fits = False
+        if profile != "full" and isinstance(resource, dict) and resource.get("kind") == "draft" and not whole_fits:
+            # Like the inline draft, a saved draft goes whole when it fits and as an outline when it does not.
             data = cast(JsonObject, resource["data"])
             _note(trimmed, "outlined")
             shown = _bounded(outline(data["document"], selected_step), allowance, trimmed)
