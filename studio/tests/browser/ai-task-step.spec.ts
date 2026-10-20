@@ -175,6 +175,40 @@ for (const size of sizes)
       expect(requests.models).toBe(1);
     });
 
+    test("a model two AI connections serve stays chosen, with what it can do", async ({
+      page,
+    }) => {
+      const second = {
+        ...ollama,
+        connection_id: "33333333-3333-4333-8333-333333333333",
+        revision_id: "44444444-4444-4444-8444-444444444444",
+        name: "ollama-gpu",
+        label: "Ollama · ollama-gpu",
+      };
+      const details = await openStepFixture(
+        page,
+        yamlFile("support-inbox.yaml", workflow),
+        (p) => platform(p, { models: 0 }, [ollama, second]),
+      );
+      await details.open("summarize");
+      const model = details.field("model");
+      const combobox = model.getByRole("combobox", { name: "Model" });
+      await combobox.click();
+      const list = page.getByRole("listbox", { name: "Model options" });
+      await expect(list.getByText("Ollama · ollama-gpu")).toBeVisible();
+      await list
+        .getByRole("option", { name: /^qwen3:4b/ })
+        .nth(1)
+        .click();
+      await expect(combobox).toHaveValue("qwen3:4b");
+      await expect(combobox).toHaveAttribute(
+        "data-value",
+        /44444444-4444-4444-8444-444444444444/,
+      );
+      await expect(model.locator(".param-model-facts .pill")).toHaveCount(3);
+      await expect(model.locator(".param-model-notice")).toHaveCount(0);
+    });
+
     test("Set up AI opens the AI connection sheet over step details", async ({
       page,
     }) => {
@@ -251,7 +285,8 @@ for (const size of layoutSizes)
       const setUp = model.getByRole("button", { name: "Set up AI" });
       const action = await box(setUp);
       expect(action.y).toBeGreaterThanOrEqual(select.bottom - 0.5);
-      expect(action.height).toBeGreaterThanOrEqual(sizes.target);
+      // One control height: 36 px with a mouse, 44 px for touch.
+      expectAligned([action.height, sizes.control], "Set up AI height");
       expectAligned(
         [action.x, (await controlOf(model)).x],
         "Set up AI left edge",
@@ -273,12 +308,21 @@ for (const size of layoutSizes)
       const list = page.getByRole("listbox", { name: "Model options" });
       await expect(list.getByRole("option")).toHaveCount(2);
       const listBox = await box(list);
+      const opened = await box(model.locator(".choice-field"));
+      expectAligned([listBox.x, opened.x], "list and control left edges");
+      expect(
+        listBox.y >= opened.bottom - 0.5 || listBox.bottom <= opened.y + 0.5,
+        "the list does not cover the control",
+      ).toBe(true);
       expect(listBox.x).toBeGreaterThanOrEqual(-0.5);
       expect(listBox.right).toBeLessThanOrEqual(size.width + 0.5);
       expect(listBox.bottom).toBeLessThanOrEqual(size.height + 0.5);
       const rows = await boxes(list.getByRole("option"));
+      // A model and what it can do take two lines of one row height each at
+      // most: 32 px lines with a mouse, 44 px for touch.
       for (const row of rows)
         expect(row.height).toBeGreaterThanOrEqual(sizes.row - 0.5);
+      expect(rows[0].height).toBeLessThanOrEqual(2 * sizes.row + 0.5);
       expectAligned(
         [
           (await box(list.locator(".choice-group"))).x,
@@ -304,7 +348,18 @@ for (const size of layoutSizes)
         firstRow.map((tag) => tag.middle),
         "tag centers",
       );
+      // Pills are one height, with the same small gap above and below them.
+      expectAligned(
+        tags.map((tag) => tag.height),
+        "pill heights",
+      );
       const after = await box(setUp);
+      const pillsBottom = Math.max(...tags.map((tag) => tag.bottom));
+      expectAligned(
+        [tags[0].y - chosen.bottom, after.y - pillsBottom],
+        "gaps around the pills",
+      );
+      expect(tags[0].y - chosen.bottom).toBeLessThanOrEqual(8);
       expect(after.y).toBeGreaterThanOrEqual(
         Math.max(...tags.map((tag) => tag.bottom)) - 0.5,
       );

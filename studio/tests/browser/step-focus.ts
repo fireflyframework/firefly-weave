@@ -38,7 +38,8 @@ export async function focusStop(page: Page): Promise<FocusStop | null> {
     // A ring in the focus color may also be drawn around a smaller face
     // inside the target (the Fixed | Mapped radios, on ::before) or by the
     // field box around a picker's input (:focus-within), itself or its
-    // ::before (the input pane's source choice).
+    // ::before (the input pane's source choice, .pane-source-field, draws
+    // its field box there), up to three levels up.
     const probe = document.createElement("span");
     probe.style.color = "var(--focus)";
     dialog.append(probe);
