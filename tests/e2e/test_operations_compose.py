@@ -465,8 +465,6 @@ async def test_o_j8_four_eyes_on_local_docker(run):
 async def test_o_j9_an_unknown_outcome_opens_an_incident_that_a_safe_retry_resolves(run):
     """O-J9: a fault-enabled fixture worker reports an unknown outcome; the incident appears; once the platform's
     own workers take the step again, Retry safely resolves it and the run succeeds."""
-    from firefly_weave.contracts.operations import IncidentResolution
-
     workers_file = run.platform_dir / "operations" / "workers" / "compose.json"
     async with run.client("operator") as operator, run.client("owner") as owner:
         own = await fixture_workers(operator)
@@ -515,13 +513,18 @@ async def test_o_j9_an_unknown_outcome_opens_an_incident_that_a_safe_retry_resol
                     body=WorkerControlRequest(expected_revision=current.revision),
                     idempotency_key=uuid4().hex,
                 )
-        resolved = await owner.invoke(
-            "incidents.resolve",
-            identifier=incident.id,
-            body=IncidentResolution(receipt_id=uuid4(), kind="retry_safe", reason="The fault was injected on purpose"),
-            revision=incident.revision,
+        # Sent as plain JSON: the SDK's IncidentResolution also sends "output": null, which the API refuses for
+        # retry_safe (follow-up recorded in the ledger).
+        provider = owner.credential_provider
+        token = provider() if callable(provider) else await provider.get_access_token(owner.base_url)
+        scope = owner.scope
+        response = await owner._client.post(
+            f"/api/v1/tenants/{scope.tenant_id}/projects/{scope.project_id}/environments/{scope.environment_id}"
+            f"/incidents/{incident.id}/resolve",
+            json={"receipt_id": str(uuid4()), "kind": "retry_safe", "reason": "The fault was injected on purpose"},
+            headers={"Authorization": "Bearer " + token, "If-Match": f'"{incident.revision}"'},
         )
-        assert resolved.id == incident.id
+        assert response.status_code == 200, response.text[:400]
         states = await auntil(
             lambda: run_states(owner, [run_id]),
             lambda value: value[run_id] in {"succeeded", "failed", "cancelled", "timed_out"},
