@@ -286,8 +286,19 @@ test("the toolbar's Undo of a delete brings the pin back too, and Redo takes it 
   await expect(
     page.locator('[data-step="notify"] .tile-badge').first(),
   ).toHaveAttribute("data-badge", "pinned");
+  const kept = () =>
+    page.evaluate(() =>
+      Object.entries(localStorage)
+        .filter(([key]) => key.includes(":testData."))
+        .map(([, value]) => value)
+        .join(""),
+    );
+  // The Undo put the pin back in the kept test data.
+  await expect.poll(kept).toContain('"notify"');
   await command(page, "Redo");
   await expect(page.locator('[data-step="notify"]')).toHaveCount(0);
+  // The Redo takes it out again, not only off the canvas.
+  await expect.poll(kept).not.toContain('"notify"');
   // Mod+Z on the canvas is the same Undo.
   await page.getByLabel("Workflow canvas", { exact: true }).focus();
   await page.keyboard.press("ControlOrMeta+z");
