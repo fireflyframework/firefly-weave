@@ -39,6 +39,7 @@ from firefly_weave.contracts.deployments import (
     ObservedResource,
     ObserveRequest,
     PlanApprovalRequest,
+    PlanRequest,
     ReconcileJobRequest,
     RunnerClaimRequest,
     RunnerRegistration,
@@ -171,7 +172,7 @@ def members(count):
     ]
 
 
-def observed(count, *, listed=None):
+def observed(count, *, listed=None, image=IMAGE):
     return ObservationReport(
         complete=True,
         settled=True,
@@ -180,7 +181,7 @@ def observed(count, *, listed=None):
                 name=COMPONENT,
                 external_identity="weave-local-workers-" + COMPONENT,
                 kind="worker",
-                image=IMAGE,
+                image=image,
                 replicas=count,
                 ready_replicas=count,
                 version="1",
@@ -192,7 +193,7 @@ def observed(count, *, listed=None):
     )
 
 
-async def run_observation(ops, setup, count, *, listed=None):
+async def run_observation(ops, setup, count, *, listed=None, image=IMAGE):
     """The runner claims the queued observe job and reports what it saw."""
     authority = ops.authority("planner")
     lease = await ops.service.claim(RunnerClaimRequest(runner_id=setup.runner.id), **authority)
@@ -202,7 +203,7 @@ async def run_observation(ops, setup, count, *, listed=None):
             lease=lease.proof,
             report_id=uuid4(),
             state="succeeded",
-            observation=observed(count, listed=listed),
+            observation=observed(count, listed=listed, image=image),
             receipt=SafeDeploymentReceipt(code="observed"),
         ),
         **authority,
@@ -792,3 +793,57 @@ async def test_a_scale_down_that_leaves_a_removed_member_running_is_flagged(ops)
     )
     done = await ops.changes.read(change_request.id, **ops.authority("approver"))
     assert done.state == "succeeded" and done.warnings == ["WV-DRAIN-UNKNOWN", "WV-DRAIN-VICTIMS"]
+
+
+async def low_level_plan(ops, setup, *, intent, deployed, observed_count, image=IMAGE):
+    """A plan made with the low-level operations: the deployment at `deployed` replicas, the target observed."""
+    authority = ops.authority("planner")
+    current = await ops.service.read("deployments", setup.deployment.id, **authority)
+    if current.components[0].replicas != deployed:
+        update = current.model_dump(include={"target_id", "name", "ownership", "components"})
+        update["components"][0]["replicas"] = deployed
+        current = await ops.service.update_deployment(
+            current.id, DeploymentRequest.model_validate(update), current.revision, **authority
+        )
+    await ops.service.observe(ObserveRequest(target_id=setup.target.id), uuid4().hex, **authority)
+    job = await run_observation(ops, setup, observed_count, image=image)
+    return await ops.service.plan(
+        PlanRequest(
+            deployment_id=current.id,
+            deployment_revision=current.revision,
+            observation_id=job.observation_id,
+            intent=intent,
+        ),
+        uuid4().hex,
+        **authority,
+    )
+
+
+async def test_a_scale_down_plan_removes_exactly_the_highest_numbered_workers_and_drains_them(ops):
+    setup = await prepared(ops, replicas=3)
+    plan = await low_level_plan(ops, setup, intent="scale_workers", deployed=1, observed_count=3)
+    assert [step.remove_members for step in plan.steps] == [["c0ffee000003", "c0ffee000002"]]
+    assert plan.steps[0].component.replicas == 1
+    assert "worker_drain" in plan.risks
+
+
+async def test_a_scale_up_plan_removes_nobody_and_drains_nothing(ops):
+    setup = await prepared(ops, replicas=1)
+    plan = await low_level_plan(ops, setup, intent="scale_workers", deployed=3, observed_count=1)
+    assert [step.remove_members for step in plan.steps] == [[]]
+    assert "worker_drain" not in plan.risks
+
+
+async def test_a_restart_keeps_the_observed_image_and_count_and_drains(ops):
+    setup = await prepared(ops, replicas=3)
+    plan = await low_level_plan(ops, setup, intent="restart_workers", deployed=3, observed_count=3)
+    assert plan.intent == "restart_workers" and [step.action for step in plan.steps] == ["restart_workers"]
+    assert [step.remove_members for step in plan.steps] == [[]]
+    assert "worker_drain" in plan.risks
+    for deployed, count, image in ((3, 2, IMAGE), (3, 3, "registry.example/other@sha256:" + "c" * 64)):
+        other = await prepared(ops, replicas=deployed)
+        with pytest.raises(CatalogError) as refused:
+            await low_level_plan(
+                ops, other, intent="restart_workers", deployed=deployed, observed_count=count, image=image
+            )
+        assert (refused.value.status, refused.value.code) == (409, "WV-PLAN-STALE")
