@@ -74,6 +74,10 @@ class LumiConfigurationRequest(BaseModel):
     enabled: bool = True
     connection_revision_id: UUID
     profile: LumiProfile
+    # How much authoring context Weave AI sends: chosen from the model's context size, or set here.
+    context_profile: Literal["auto", "compact", "standard", "full"] = Field(
+        default="auto", exclude_if=lambda value: value == "auto"
+    )
 
 
 class LumiConfiguration(LumiConfigurationRequest):
@@ -127,6 +131,10 @@ class LumiAskRequest(BaseModel):
     draft: LumiDraft | None = Field(default=None, exclude_if=lambda value: value is None)
     history: list[LumiMessage] = Field(default_factory=list, max_length=16)
     attachments: list[LumiAttachment] = Field(default_factory=list, max_length=4)
+    # The step selected in the editor; a compact request sends it whole and outlines the rest of the draft.
+    selected_step: str | None = Field(
+        default=None, max_length=200, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$", exclude_if=lambda value: value is None
+    )
 
     @property
     def explanation_only(self) -> bool:

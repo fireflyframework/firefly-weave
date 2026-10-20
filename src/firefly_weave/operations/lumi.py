@@ -47,8 +47,10 @@ from firefly_weave.contracts.schema_export import export_schemas
 from firefly_weave.contracts.values import JsonValue
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.deployments.service import DeploymentService
+from firefly_weave.operations.ai_policy import APIAIPolicy
 from firefly_weave.operations.debug.store import DebugService
 from firefly_weave.operations.history import HistoryService
+from firefly_weave.operations.lumi_context import Shaped, choose_profile, input_budget, shape
 from firefly_weave.operations.lumi_deployments import COLLECTIONS, deployment_context
 from firefly_weave.operations.lumi_gateway import LumiGatewayClient
 from firefly_weave.persistence.uow import Transaction
@@ -63,10 +65,12 @@ class LumiService:
         debug: DebugService,
         gateway: LumiGatewayClient,
         deployments: DeploymentService,
+        policy: APIAIPolicy,
     ) -> None:
         self.connections, self.history, self.debug, self.gateway = connections, history, debug, gateway
         self.definitions = connections.definitions
         self.deployments = deployments
+        self.policy = policy
 
     async def _require(self, tx: Transaction, actor: Principal, capability: str, context: AuditContext) -> Principal:
         if tx.scope.environment_id is None:
@@ -166,7 +170,8 @@ class LumiService:
 
     async def _attachments(
         self, actor: Principal, scope: Scope, request: LumiAskRequest, context: AuditContext
-    ) -> JsonValue:
+    ) -> list[JsonValue]:
+        """The attached resources, read with the caller's own access; the inline draft is shaped separately."""
         result: list[JsonValue] = []
         project = scope.model_copy(update={"environment_id": None})
         for attachment in request.attachments:
@@ -194,25 +199,35 @@ class LumiService:
                         "diagnostics": [item.model_dump(mode="json") for item in session.view.diagnostics],
                     }
             result.append({"kind": attachment.kind, "id": str(attachment.id), "data": data})
-        if request.draft is not None:
-            result.append({"kind": "inline-source", "format": request.draft.format, "source": request.draft.source})
         measure_value(result)
-        if len(json.dumps(result, ensure_ascii=False).encode()) > 262144:
+        size = len(json.dumps(result, ensure_ascii=False).encode())
+        if size + (len(request.draft.source.encode()) if request.draft else 0) > 262144:
             raise CatalogError(413, "WV-LUMI-LIMIT", "Selected context is too large")
-        if request.explanation_only:
-            return {
-                "resources": result,
-                "purpose": "explain-operations",
-                "limitations": (
-                    "Saved snapshots only, not live cloud state or worker task capacity. "
-                    "Explain only; return no proposals."
-                ),
-            }
-        schemas = export_schemas()
-        return {
-            "resources": result,
-            "authoringSchemas": {key: schemas[key] for key in ("workflow", "action", "connector", "decisiontable")},
-        }
+        return result
+
+    def _context_tokens(self, connection: ConnectionRevision) -> int | None:
+        """The context size the AI policy records for the connection's endpoint, or None when it records none."""
+        policy = self.policy.current()
+        endpoint = connection.config.get("endpoint")
+        entry = policy.entry_for(endpoint) if policy is not None and isinstance(endpoint, str) else None
+        return entry.context_tokens if entry is not None else None
+
+    def _shape(
+        self, config: LumiConfiguration, request: LumiAskRequest, resources: list[JsonValue], tokens: int | None
+    ) -> Shaped:
+        profile = choose_profile(tokens, config.context_profile)
+        schemas = cast(dict[str, JsonValue], export_schemas())
+        return shape(
+            profile,
+            input_budget(profile, tokens, config.profile.options.max_tokens),
+            message=request.message,
+            history=request.history,
+            resources=resources,
+            draft=(request.draft.format, request.draft.source) if request.draft else None,
+            selected_step=request.selected_step,
+            schemas=schemas,
+            explanation_only=request.explanation_only,
+        )
 
     async def ask(self, actor: Principal, scope: Scope, request: LumiAskRequest, *, context: AuditContext) -> LumiReply:
         async with self.definitions.transaction(scope, None, mutation=False) as tx:
@@ -225,12 +240,20 @@ class LumiService:
         # No database transaction is held across secret resolution or model I/O.
         try:
             async with asyncio.timeout(config.profile.timeout_seconds):
-                attachments = await self._attachments(actor, scope, request, context)
+                tokens = self._context_tokens(connection)
+                shaped = self._shape(config, request, await self._attachments(actor, scope, request, context), tokens)
                 credential = None
                 if handle is not None:
                     secret = await resolve_secret(lambda: self.connections.secrets.resolve(scope, handle))
                     credential = secret.value
-                reply = await self.gateway.ask(config, request, attachments, dict(connection.config), credential)
+                reply = await self.gateway.ask(
+                    config,
+                    request.model_copy(update={"history": shaped.history}),
+                    shaped.context,
+                    dict(connection.config),
+                    credential,
+                    context_tokens=tokens,
+                )
                 async with self.definitions.transaction(scope, None, mutation=False) as tx:
                     actor = await self._require(tx, actor, "lumi.use", context)
                     current = await self._read(tx)

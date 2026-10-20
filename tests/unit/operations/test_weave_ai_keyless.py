@@ -35,6 +35,8 @@ from firefly_weave.operations import lumi as module
 from firefly_weave.operations.lumi import LumiService
 from firefly_weave.operations.lumi_gateway import LumiGatewayClient, LumiGatewaySettings
 
+NO_POLICY = SimpleNamespace(current=lambda: None)
+
 SCOPE = Scope(tenant_id=uuid4(), project_id=uuid4(), environment_id=uuid4())
 OLLAMA = po.PrivateOrigins(platform=po.PLATFORM).with_entries(
     [po.PrivateOrigin(origin="http://ollama:11434", purpose="model", networks=("10.246.21.0/24",), credentials="none")]
@@ -95,7 +97,7 @@ def service(secrets, gateway=None):
         yield SimpleNamespace(scope=SCOPE)
 
     connections = SimpleNamespace(definitions=SimpleNamespace(transaction=transaction), secrets=secrets)
-    return LumiService(connections, None, None, gateway, None)
+    return LumiService(connections, None, None, gateway, None, NO_POLICY)
 
 
 def test_a_keyless_local_connection_is_accepted_without_a_secret():
