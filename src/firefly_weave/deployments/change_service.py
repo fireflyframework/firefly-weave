@@ -40,6 +40,7 @@ from firefly_weave.contracts.deployments import (
     ChangeFailure,
     ChangeHistory,
     ChangeRequest,
+    ChangeRequestApply,
     ChangeRequestApprove,
     ChangeRequestCreate,
     ChangeRequestDecision,
@@ -50,23 +51,30 @@ from firefly_weave.contracts.deployments import (
     DeploymentObservation,
     DeploymentPlan,
     DesiredComponent,
+    DrainMember,
+    DrainProgress,
+    DrainProgressMember,
     ObservationReport,
     PlanRequest,
 )
+from firefly_weave.contracts.workers import WorkerControlRequest
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.deployments.change_requests import (
     ACTIVE,
     DEFAULT_PLAN_SECONDS,
     ENDED,
+    drains,
     effective,
     plan_lifetime,
     replannable,
+    require_drain_window,
     transition,
 )
 from firefly_weave.deployments.repository import SCOPE, DeploymentRepository
 from firefly_weave.deployments.service import DeploymentService
 from firefly_weave.persistence.idempotency import Idempotency
 from firefly_weave.persistence.uow import Transaction, UnitOfWork
+from firefly_weave.workers.service import WorkerService
 
 _ACTIVE_SQL = ",".join(f"'{state}'" for state in ACTIVE)
 # States whose plan is not applied yet: past the plan's expiry they read as expired.
@@ -152,10 +160,91 @@ async def _victims_left(
     return ["WV-DRAIN-VICTIMS"] if removed & remaining else []
 
 
+async def drain_set(
+    repo: DeploymentRepository, record: ChangeRequest, plan: DeploymentPlan
+) -> tuple[builtins.list[DrainMember], builtins.list[str]]:
+    """The workers a change drains before it applies, and WV-DRAIN-UNKNOWN when a member maps to none or several.
+
+    A scale-down drains the members its plan removes; a restart that drains first drains every observed member.
+    A member maps to the one current worker of the step's release whose reported host is the member's host, so a
+    worker of another release cannot make the platform drain this component by reporting the same host.
+    """
+    wanted: builtins.list[tuple[str, UUID]] = []
+    observation = await repo.get("observations", plan.observation_id, DeploymentObservation)
+    observed = {resource.name: resource for resource in observation.resources}
+    for step in plan.steps:
+        release = step.component.worker_release_id
+        if release is None:
+            continue
+        if step.action == "scale_workers":
+            hosts = step.remove_members
+        elif step.action == "restart_workers" and drains(record) and step.component.name in observed:
+            hosts = [member.host for member in observed[step.component.name].members]
+        else:
+            hosts = []
+        wanted += [(host, release) for host in hosts]
+    if not wanted:
+        return [], []
+    rows = await repo.rows(
+        "SELECT w.id,w.release_id,f.identity->>'host' AS host FROM worker_instances w JOIN worker_facts f "
+        "ON f.worker_id=w.id AND f.tenant_id=w.tenant_id AND f.project_id=w.project_id "
+        "AND f.environment_id=w.environment_id WHERE w.tenant_id=:tenant AND w.project_id=:project "
+        "AND w.environment_id=:environment AND NOT w.revoked AND f.identity->>'host'=ANY(cast(:hosts AS text[])) "
+        "ORDER BY w.id",
+        hosts=sorted({host for host, _ in wanted}),
+    )
+    members: builtins.list[DrainMember] = []
+    unknown = False
+    for host, release in wanted:
+        matches = [row["id"] for row in rows if row["host"] == host and row["release_id"] == release]
+        if len(matches) != 1:
+            unknown = True
+            continue
+        progress = await drain_progress(repo, [DrainMember(worker_id=matches[0], host=host, active_leases=0)])
+        members.append(DrainMember(worker_id=matches[0], host=host, active_leases=progress[0].active_leases))
+    return members[:100], ["WV-DRAIN-UNKNOWN"] if unknown else []
+
+
+async def drain_progress(
+    repo: DeploymentRepository, members: Sequence[DrainMember]
+) -> builtins.list[DrainProgressMember]:
+    """Each member's drain, presence and active leases now; a worker no longer registered counts as revoked."""
+    rows = await repo.rows(
+        "SELECT w.id,w.revoked,w.draining,CASE WHEN w.last_seen_at IS NULL THEN 'unknown' "
+        "WHEN w.last_seen_at>clock_timestamp()-interval '60 seconds' THEN 'recent' ELSE 'stale' END AS presence,"
+        "(SELECT count(*) FROM task_leases l WHERE l.tenant_id=w.tenant_id AND l.project_id=w.project_id "
+        "AND l.environment_id=w.environment_id AND l.owner=w.id AND l.status='active' "
+        "AND l.expires_at>clock_timestamp() AND l.deadline>clock_timestamp()) AS active_leases "
+        "FROM worker_instances w WHERE w.tenant_id=:tenant AND w.project_id=:project "
+        "AND w.environment_id=:environment AND w.id=ANY(cast(:ids AS uuid[]))",
+        ids=[member.worker_id for member in members],
+    )
+    found = {row["id"]: row for row in rows}
+    result = []
+    for member in members:
+        row = found.get(member.worker_id)
+        result.append(
+            DrainProgressMember(
+                worker_id=member.worker_id,
+                host=member.host,
+                active_leases=int(row["active_leases"]) if row else 0,
+                draining=bool(row and row["draining"]),
+                presence=row["presence"] if row else "unknown",
+                revoked=row is None or bool(row["revoked"]),
+            )
+        )
+    return result
+
+
+def drained(member: DrainProgressMember) -> bool:
+    """Draining with no active lease, offline, or revoked: removing it interrupts no work."""
+    return member.revoked or member.presence == "stale" or (member.draining and member.active_leases == 0)
+
+
 @service
 class ChangeRequestService:
-    def __init__(self, uow: UnitOfWork, deployments: DeploymentService):
-        self.uow, self.deployments = uow, deployments
+    def __init__(self, uow: UnitOfWork, deployments: DeploymentService, workers: WorkerService):
+        self.uow, self.deployments, self.workers = uow, deployments, workers
 
     async def able(self, tx: Transaction, actor: Principal, capability: str) -> None:
         """Refuse before any lookup unless both principals hold the capability for some target here."""
@@ -397,23 +486,18 @@ class ChangeRequestService:
                 moved = await move(repo, record, "failed", actor=actor.id, failure=failure)
                 await self.record(tx, actor, "deployment.plan", moved, context)
                 return moved
+            members, warnings = await drain_set(repo, record, plan)
             planned = record.model_copy(
                 update={
                     "plan_id": plan.id,
                     "plan_digest": plan.digest,
                     "plan_expires_at": plan.expires_at,
-                    "drain_set": await self.drain_set(repo, record, plan),
+                    "drain_set": members,
                 }
             )
-            moved = await move(repo, planned, "awaiting_approval", actor=actor.id)
+            moved = await move(repo, planned, "awaiting_approval", actor=actor.id, warnings=warnings)
             await self.record(tx, actor, "deployment.plan", moved, context)
             return moved
-
-    async def drain_set(
-        self, repo: DeploymentRepository, record: ChangeRequest, plan: DeploymentPlan
-    ) -> builtins.list[Any]:
-        """The workers a change drains before it applies; filled in when draining is served."""
-        return []
 
     async def approve(
         self,
@@ -475,6 +559,136 @@ class ChangeRequestService:
                 if job.state in {"queued", "claimed"}:
                     await self.deployments.stop_job(repo, job)
             await self.record(tx, actor, "deployment.plan", moved, context, {"reason": request.reason})
+            return moved
+
+    async def drain(
+        self, identifier: UUID, key: str, *, actor: Principal, scope: Scope, context: AuditContext
+    ) -> DrainProgress:
+        """Drain every worker of the drain set once; a drain starts only while the plan outlives it."""
+        async with self.uow.open(scope) as tx:
+            await self.able(tx, actor, "worker.drain")
+            repo = DeploymentRepository(tx)
+            record = await repo.get("change_requests", identifier, ChangeRequest, lock=True)
+            actor = await load_principal(tx.session, actor.id)
+            idem = Idempotency(
+                tx,
+                actor.id,
+                "deployment_change_requests.drain",
+                key,
+                {"scope": scope.model_dump(mode="json"), "change_request": str(identifier)},
+            )
+            if saved := await idem.replay():
+                return DrainProgress.model_validate_json(json.dumps(saved))
+            now = await repo.now()
+            state = effective(record, now).state
+            if state not in {"approved", "draining"}:
+                raise CatalogError(409, "WV-CHANGE-STATE", f"A change request cannot drain while {state}")
+            if state == "approved":
+                require_drain_window(record, now)
+            for member in await drain_progress(repo, record.drain_set):
+                if member.revoked or member.draining:
+                    continue
+                rows = await repo.rows(
+                    "SELECT control_revision FROM worker_instances WHERE tenant_id=:tenant AND project_id=:project "
+                    "AND environment_id=:environment AND id=:id FOR UPDATE",
+                    id=member.worker_id,
+                )
+                revision = rows[0]["control_revision"]
+                await self.workers.control(
+                    actor,
+                    scope,
+                    member.worker_id,
+                    WorkerControlRequest(expected_revision=revision),
+                    f"change-request:{record.id}:{member.worker_id}:{revision}",
+                    draining=True,
+                    context=context,
+                    tx=tx,
+                )
+            if record.state == "approved":
+                record = await move(repo, record, "draining", actor=actor.id)
+                await self.record(tx, actor, "worker.drain", record, context)
+            members = await drain_progress(repo, record.drain_set)
+            result = DrainProgress(
+                change_request=record, members=members, remaining=sum(not drained(member) for member in members)
+            )
+            await idem.save(result.model_dump(mode="json"))
+            return result
+
+    async def apply(
+        self,
+        identifier: UUID,
+        request: ChangeRequestApply,
+        key: str,
+        *,
+        actor: Principal,
+        scope: Scope,
+        context: AuditContext,
+    ) -> ChangeRequest:
+        """Apply the approved plan once every drained worker is idle, or after the drain timeout when forced."""
+        async with self.uow.open(scope) as tx:
+            repo, record, actor = await self.locked(tx, identifier, actor, "deployment.apply", context)
+            idem = Idempotency(
+                tx,
+                actor.id,
+                "deployment_change_requests.apply",
+                key,
+                {
+                    "scope": scope.model_dump(mode="json"),
+                    "change_request": str(identifier),
+                    **request.model_dump(mode="json"),
+                },
+            )
+            if saved := await idem.replay():
+                return ChangeRequest.model_validate_json(json.dumps(saved))
+            now = await repo.now()
+            state = effective(record, now).state
+            if state not in {"approved", "draining"} or record.plan_id is None:
+                raise CatalogError(409, "WV-CHANGE-STATE", f"A change request cannot be applied while {state}")
+            if request.digest != record.plan_digest:
+                raise CatalogError(409, "WV-PLAN-STALE", "The plan changed; review the current plan")
+            runners = await repo.rows(
+                f"SELECT id FROM deployment_runners WHERE {SCOPE} AND target_id=:target "
+                "AND NOT coalesce((payload->>'revoked')::boolean,false) "
+                "AND (payload->>'expires_at')::timestamptz>:now",
+                target=record.target_id,
+                now=now,
+            )
+            if not runners:
+                raise CatalogError(409, "WV-RUNNER-OFFLINE", "The target's runner is offline; start it and try again")
+            remaining = [member for member in await drain_progress(repo, record.drain_set) if not drained(member)]
+            if remaining:
+                started = next((entry.at for entry in reversed(record.history) if entry.state == "draining"), None)
+                timed_out = started is not None and (now - started).total_seconds() >= record.drain.timeout_seconds
+                if not request.force_after_timeout or not timed_out:
+                    raise CatalogError(
+                        409,
+                        "WV-DRAIN-PENDING",
+                        "Some drained workers are still busy; wait for them, or force after the drain timeout",
+                        result={
+                            "remaining": [
+                                DrainMember(
+                                    worker_id=member.worker_id, host=member.host, active_leases=member.active_leases
+                                ).model_dump(mode="json")
+                                for member in remaining
+                            ]
+                        },
+                    )
+                await self.deployments.authorize(tx, actor, "worker.drain", context, record.target_id)
+                await audit(
+                    tx.session,
+                    actor,
+                    "deployment.apply.forced",
+                    str(record.id),
+                    scope=scope,
+                    capability="worker.drain",
+                    context=context,
+                    details={"reason": request.force_reason, "remaining": len(remaining)},
+                )
+            plan = await repo.get("plans", record.plan_id, DeploymentPlan)
+            job = await self.deployments.apply_in(repo, plan, request.digest, actor, context)
+            moved = await move(repo, record.model_copy(update={"apply_job_id": job.id}), "applying", actor=actor.id)
+            await self.record(tx, actor, "deployment.apply", moved, context)
+            await idem.save(moved.model_dump(mode="json"))
             return moved
 
     async def unexpired(self, repo: DeploymentRepository, record: ChangeRequest) -> None:

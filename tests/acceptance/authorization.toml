@@ -60,6 +60,11 @@ capability = "connection.bind"
 capability = "deployment.plan"
 identifier = "random"
 
+[operations."deployment_change_requests.apply"]
+capability = "deployment.apply"
+identifier = "random"
+body = { digest = "0000000000000000000000000000000000000000000000000000000000000000" }
+
 [operations."deployment_change_requests.approve"]
 capability = "deployment.approve"
 identifier = "random"
@@ -78,6 +83,10 @@ body = { target_id = "random", deployment_id = "random", expected_deployment_rev
 capability = "deployment.approve"
 identifier = "random"
 body = { reason = "Authorization probe" }
+
+[operations."deployment_change_requests.drain"]
+capability = "worker.drain"
+identifier = "random"
 
 [operations."deployment_change_requests.list"]
 capability = "deployment.read"

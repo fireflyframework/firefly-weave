@@ -23,10 +23,12 @@ from starlette.datastructures import QueryParams
 from firefly_weave.api.transport import parse_query
 from firefly_weave.contracts.deployments import (
     ChangeRequest,
+    ChangeRequestApply,
     ChangeRequestApprove,
     ChangeRequestCreate,
     ChangeRequestDecision,
     ChangeRequestQuery,
+    DrainProgress,
 )
 from firefly_weave.contracts.surface import ENVIRONMENT, OPERATIONS, Page
 
@@ -73,6 +75,26 @@ STATES = [
             ChangeRequest,
             (200,),
             set(),
+        ),
+        (
+            "drain",
+            BASE + "/{identifier}/drain",
+            "POST",
+            "worker.drain",
+            None,
+            DrainProgress,
+            (200,),
+            {"idempotency"},
+        ),
+        (
+            "apply",
+            BASE + "/{identifier}/apply",
+            "POST",
+            "deployment.apply",
+            ChangeRequestApply,
+            ChangeRequest,
+            (201,),
+            {"idempotency"},
         ),
         (
             "replan",
@@ -122,7 +144,7 @@ def test_each_change_request_operation_has_its_path_capability_and_flags(
 def test_the_family_has_exactly_its_operations():
     assert sorted(name for name in OPERATIONS if name.startswith("deployment_change_requests.")) == sorted(
         "deployment_change_requests." + verb
-        for verb in ("create", "list", "read", "advance", "approve", "replan", "decline", "cancel")
+        for verb in ("create", "list", "read", "advance", "approve", "drain", "apply", "replan", "decline", "cancel")
     )
 
 

@@ -36,6 +36,7 @@ from firefly_weave.api.transport import (
 )
 from firefly_weave.contracts.deployments import (
     ChangeRequest,
+    ChangeRequestApply,
     ChangeRequestApprove,
     ChangeRequestCreate,
     ChangeRequestDecision,
@@ -120,6 +121,23 @@ class ChangeRequestController:
             **self.authority(request),
         )
         return JSONResponse(result.model_dump(mode="json"))
+
+    @operation("deployment_change_requests.drain")
+    async def drain(self, request: Request) -> JSONResponse:
+        result = await self.service.drain(
+            self.identifier(request), request.headers.get("Idempotency-Key", ""), **self.authority(request)
+        )
+        return JSONResponse(result.model_dump(mode="json"))
+
+    @operation("deployment_change_requests.apply")
+    async def apply(self, request: Request) -> JSONResponse:
+        result = await self.service.apply(
+            self.identifier(request),
+            ChangeRequestApply.model_validate_json(await request.body()),
+            request.headers.get("Idempotency-Key", ""),
+            **self.authority(request),
+        )
+        return JSONResponse(result.model_dump(mode="json"), status_code=201)
 
     @operation("deployment_change_requests.replan")
     async def replan(self, request: Request) -> JSONResponse:

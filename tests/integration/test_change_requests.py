@@ -27,6 +27,7 @@ from firefly_weave.access.audit import AuditContext
 from firefly_weave.access.authorization import AccessDenied
 from firefly_weave.access.models import Grant
 from firefly_weave.contracts.deployments import (
+    ChangeRequestApply,
     ChangeRequestApprove,
     ChangeRequestCreate,
     ChangeRequestDecision,
@@ -36,7 +37,9 @@ from firefly_weave.contracts.deployments import (
     ObservationReport,
     ObservedMember,
     ObservedResource,
+    ObserveRequest,
     PlanApprovalRequest,
+    ReconcileJobRequest,
     RunnerClaimRequest,
     RunnerRegistration,
     RunnerReport,
@@ -44,7 +47,7 @@ from firefly_weave.contracts.deployments import (
     TargetRequest,
     TargetUpdate,
 )
-from firefly_weave.contracts.workers import ReleaseRequest
+from firefly_weave.contracts.workers import InstanceRequest, ReleaseRequest, WorkerIdentity
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.deployments.change_service import ChangeRequestService
 from firefly_weave.deployments.service import DeploymentService
@@ -111,7 +114,7 @@ async def ops(services, access_db, provisioned, worker_runtime_fixture):
     )
 
 
-async def prepared(ops, *, replicas=0, policy=None, who="planner"):
+async def prepared(ops, *, replicas=0, policy=None, who="planner", release=None):
     """A Compose target with its runner and a deployment of one worker component."""
     service, authority = ops.service, ops.authority(who)
     request = {
@@ -143,7 +146,7 @@ async def prepared(ops, *, replicas=0, policy=None, who="planner"):
                     image=IMAGE,
                     configuration="current",
                     replicas=replicas,
-                    worker_release_id=ops.release.id,
+                    worker_release_id=release or ops.release.id,
                 )
             ],
         ),
@@ -505,3 +508,287 @@ async def test_change_requests_stay_in_their_environment_and_respect_target_gran
     assert by_target["items"] == []
     with pytest.raises((AccessDenied, CatalogError)):
         await ops.changes.read(created.id, **ops.authority("planner", at=ops.other))
+
+
+async def approved(ops, setup, *, observed_count, replicas, **values):
+    planned = await awaiting(ops, setup, observed_count=observed_count, replicas=replicas, **values)
+    assert planned.state == "awaiting_approval", planned.failure
+    return await ops.changes.approve(
+        planned.id, ChangeRequestApprove(digest=planned.plan_digest), **ops.authority("approver")
+    )
+
+
+async def placed(ops, worker, host):
+    """Record the host a worker reports, as its registration would."""
+    async with ops.access[1].begin() as session:
+        await session.execute(
+            text(
+                "UPDATE worker_facts SET identity=jsonb_build_object('host',cast(:host AS text),'runtime','container') "
+                "WHERE worker_id=:id"
+            ),
+            {"host": host, "id": worker},
+        )
+
+
+async def payload(ops, identifier):
+    async with ops.access[1]() as session:
+        return await session.scalar(
+            text("SELECT payload FROM deployment_change_requests WHERE id=:id"), {"id": identifier}
+        )
+
+
+async def rewrite(ops, identifier, document):
+    async with ops.access[1].begin() as session:
+        await session.execute(
+            text("UPDATE deployment_change_requests SET payload=cast(:payload AS jsonb) WHERE id=:id"),
+            {"payload": json.dumps(document), "id": identifier},
+        )
+
+
+async def control_revision(ops, worker):
+    async with ops.access[1]() as session:
+        return await session.scalar(text("SELECT control_revision FROM worker_instances WHERE id=:id"), {"id": worker})
+
+
+@pytest.fixture
+async def fleet(ops, worker_setup):
+    """Two registered workers of the deployment's release, reporting the hosts Compose numbers 2 and 3."""
+    instances = worker_setup[-1]
+    await placed(ops, instances[0].id, "c0ffee000002")
+    await placed(ops, instances[1].id, "c0ffee000003")
+    setup = await prepared(ops, replicas=3, release=instances[0].release_id)
+    return SimpleNamespace(setup=setup, workers=instances, worker_setup=worker_setup)
+
+
+async def test_drain_set_maps_removed_members_to_their_workers(ops, fleet):
+    planned = await awaiting(ops, fleet.setup, observed_count=3, replicas=1)
+    assert planned.drain.mode == "drain_first" and planned.warnings == []
+    assert {member.worker_id for member in planned.drain_set} == {worker.id for worker in fleet.workers}
+    assert {member.host for member in planned.drain_set} == {"c0ffee000002", "c0ffee000003"}
+
+
+async def test_a_member_whose_host_two_workers_claim_is_never_drained(ops, fleet):
+    _, _, workers, actor, scope, _, _ = fleet.worker_setup
+    twin = await workers.register_instance(
+        actor,
+        scope,
+        InstanceRequest(
+            release_id=fleet.workers[0].release_id,
+            task_types=["echo@1.2.0"],
+            capacity=1,
+            identity=WorkerIdentity(host="c0ffee000003", runtime="container"),
+        ),
+        context=AuditContext(),
+    )
+    # A worker of another release reporting a removed host is not a member of this component.
+    stranger = await ops.workers.register_instance(
+        ops.people["workers"],
+        ops.scope,
+        InstanceRequest(
+            release_id=ops.release.id,
+            task_types=["echo@1.2.0"],
+            capacity=1,
+            identity=WorkerIdentity(host="c0ffee000002", runtime="container"),
+        ),
+        context=AuditContext(),
+    )
+    planned = await awaiting(ops, fleet.setup, observed_count=3, replicas=1)
+    assert [member.worker_id for member in planned.drain_set] == [fleet.workers[0].id]
+    assert planned.warnings == ["WV-DRAIN-UNKNOWN"]
+    assert twin.id not in {member.worker_id for member in planned.drain_set}
+    assert stranger.id not in {member.worker_id for member in planned.drain_set}
+
+
+async def test_a_drain_needs_the_window_and_drains_each_worker_once(ops, fleet):
+    change_request = await approved(ops, fleet.setup, observed_count=3, replicas=1)
+    stored = await payload(ops, change_request.id)
+    original = stored["plan_expires_at"]
+    async with ops.access[1].begin() as session:
+        await session.execute(
+            text(
+                "UPDATE deployment_change_requests SET payload=jsonb_set(payload,'{plan_expires_at}',"
+                "to_jsonb(to_char(clock_timestamp() AT TIME ZONE 'UTC' + interval '300 seconds',"
+                '\'YYYY-MM-DD"T"HH24:MI:SS.US"Z"\'))) WHERE id=:id'
+            ),
+            {"id": change_request.id},
+        )
+    with pytest.raises(CatalogError) as refused:
+        await ops.changes.drain(change_request.id, "drain", **ops.authority("operator"))
+    assert (refused.value.status, refused.value.code) == (409, "WV-DRAIN-WINDOW")
+    await rewrite(ops, change_request.id, {**(await payload(ops, change_request.id)), "plan_expires_at": original})
+    with pytest.raises(AccessDenied):
+        await ops.changes.drain(change_request.id, "drain", **ops.authority("approver"))
+    first = await ops.changes.drain(change_request.id, "drain", **ops.authority("operator"))
+    assert first.change_request.state == "draining" and first.remaining == 0
+    assert {member.worker_id for member in first.members if member.draining} == {w.id for w in fleet.workers}
+    assert await ops.changes.drain(change_request.id, "drain", **ops.authority("operator")) == first
+    again = await ops.changes.drain(change_request.id, "again", **ops.authority("operator"))
+    assert again.change_request.state == "draining" and again.remaining == 0
+    for worker in fleet.workers:
+        assert await control_revision(ops, worker.id) == 2
+
+
+async def test_apply_waits_for_every_drained_worker_and_force_needs_the_timeout_and_a_reason(
+    ops, fleet, queued_task, task_service, transaction_factory
+):
+    async with transaction_factory() as tx:
+        lease = (await task_service.claim(tx, fleet.workers[0].id, 1))[0]
+    assert lease is not None
+    change_request = await approved(ops, fleet.setup, observed_count=3, replicas=1)
+    digest = change_request.plan_digest
+    with pytest.raises(CatalogError) as undrained:
+        await ops.changes.apply(
+            change_request.id, ChangeRequestApply(digest=digest), "apply", **ops.authority("operator")
+        )
+    assert (undrained.value.status, undrained.value.code) == (409, "WV-DRAIN-PENDING")
+    progress = await ops.changes.drain(change_request.id, "drain", **ops.authority("operator"))
+    assert progress.remaining == 1
+    with pytest.raises(CatalogError) as pending:
+        await ops.changes.apply(
+            change_request.id, ChangeRequestApply(digest=digest), "apply", **ops.authority("operator")
+        )
+    assert (pending.value.status, pending.value.code) == (409, "WV-DRAIN-PENDING")
+    assert [member["worker_id"] for member in pending.value.result["remaining"]] == [str(fleet.workers[0].id)]
+    forced = ChangeRequestApply(digest=digest, force_after_timeout=True, force_reason="The worker is stuck")
+    with pytest.raises(CatalogError) as early:
+        await ops.changes.apply(change_request.id, forced, "early", **ops.authority("operator"))
+    assert (early.value.status, early.value.code) == (409, "WV-DRAIN-PENDING")
+    # The drain timeout passes.
+    stored = await payload(ops, change_request.id)
+    for entry in stored["history"]:
+        if entry["state"] == "draining":
+            entry["at"] = "2000-01-01T00:00:00Z"
+    await rewrite(ops, change_request.id, stored)
+    with pytest.raises(AccessDenied):
+        await ops.changes.apply(change_request.id, forced, "planner", **ops.authority("planner"))
+    applying = await ops.changes.apply(change_request.id, forced, "forced", **ops.authority("operator"))
+    assert applying.state == "applying" and applying.apply_job_id is not None
+    job = await ops.service.read("jobs", applying.apply_job_id, **ops.authority("operator"))
+    assert (job.kind, job.plan_id) == ("apply", change_request.plan_id)
+    assert await ops.changes.apply(change_request.id, forced, "forced", **ops.authority("operator")) == applying
+    async with ops.access[1]() as session:
+        details = await session.scalar(
+            text("SELECT event->'details' FROM access_audit WHERE action='deployment.apply.forced' AND target=:id"),
+            {"id": str(change_request.id)},
+        )
+    assert details["reason"] == "The worker is stuck"
+
+
+async def test_apply_refuses_when_the_targets_runner_is_offline(ops):
+    setup = await prepared(ops)
+    change_request = await approved(ops, setup, observed_count=0, replicas=3)
+    async with ops.access[1].begin() as session:
+        await session.execute(
+            text(
+                "UPDATE deployment_runners SET payload=jsonb_set(payload,'{expires_at}','\"2000-01-01T00:00:00Z\"') "
+                "WHERE target_id=:target"
+            ),
+            {"target": setup.target.id},
+        )
+    with pytest.raises(CatalogError) as refused:
+        await ops.changes.apply(
+            change_request.id,
+            ChangeRequestApply(digest=change_request.plan_digest),
+            "apply",
+            **ops.authority("operator"),
+        )
+    assert (refused.value.status, refused.value.code) == (409, "WV-RUNNER-OFFLINE")
+    jobs = await ops.service.list("jobs", target_id=setup.target.id, **ops.authority("operator"))
+    assert [item["kind"] for item in jobs["items"]] == ["observe"]
+
+
+async def applying(ops, setup, *, observed_count=0, replicas=3):
+    change_request = await approved(ops, setup, observed_count=observed_count, replicas=replicas)
+    return await ops.changes.apply(
+        change_request.id,
+        ChangeRequestApply(digest=change_request.plan_digest),
+        uuid4().hex,
+        **ops.authority("operator"),
+    )
+
+
+async def test_a_change_request_follows_its_jobs_through_report_expiry_cancel_and_reconcile(ops):
+    runner = ops.authority("planner")
+    # The runner applies the change and verifies it.
+    setup = await prepared(ops)
+    change_request = await applying(ops, setup)
+    lease = await ops.service.claim(RunnerClaimRequest(runner_id=setup.runner.id), **runner)
+    assert lease.job.id == change_request.apply_job_id
+    for state in ("running", "verifying"):
+        await ops.service.report(RunnerReport(lease=lease.proof, report_id=uuid4(), state=state), **runner)
+    await ops.service.report(
+        RunnerReport(
+            lease=lease.proof,
+            report_id=uuid4(),
+            state="succeeded",
+            observation=observed(3),
+            receipt=SafeDeploymentReceipt(code="applied"),
+        ),
+        **runner,
+    )
+    done = await ops.changes.read(change_request.id, **ops.authority("approver"))
+    assert done.state == "succeeded" and done.warnings == []
+    async with ops.access[1]() as session:
+        assert await session.scalar(
+            text("SELECT ended_at IS NOT NULL FROM deployment_change_requests WHERE id=:id"), {"id": done.id}
+        )
+    # An apply job that is never claimed before its deadline is cancelled by expiry.
+    setup = await prepared(ops)
+    change_request = await applying(ops, setup)
+    async with ops.access[1].begin() as session:
+        await session.execute(
+            text(
+                "UPDATE deployment_jobs SET payload=jsonb_set(payload,'{deadline}','\"2000-01-01T00:00:00Z\"') "
+                "WHERE id=:id"
+            ),
+            {"id": change_request.apply_job_id},
+        )
+    assert await ops.service.claim(RunnerClaimRequest(runner_id=setup.runner.id), **runner) is None
+    expired = await ops.changes.read(change_request.id, **ops.authority("approver"))
+    assert (expired.state, expired.failure.code) == ("failed", "WV-JOB-CANCELLED")
+    # An operator cancelling a running apply leaves its effects unknown: the change needs reconciliation.
+    setup = await prepared(ops)
+    change_request = await applying(ops, setup)
+    lease = await ops.service.claim(RunnerClaimRequest(runner_id=setup.runner.id), **runner)
+    await ops.service.report(RunnerReport(lease=lease.proof, report_id=uuid4(), state="running"), **runner)
+    await ops.service.cancel(change_request.apply_job_id, JobCancelRequest(), **ops.authority("operator"))
+    unknown = await ops.changes.read(change_request.id, **ops.authority("approver"))
+    assert unknown.state == "reconciliation_required"
+    # Reconciling the job leaves the ended change request as it is.
+    await ops.service.observe(ObserveRequest(target_id=setup.target.id), uuid4().hex, **runner)
+    observation = await run_observation(ops, setup, 3)
+    await ops.service.reconcile(
+        change_request.apply_job_id,
+        ReconcileJobRequest(
+            plan_digest=change_request.plan_digest,
+            observation_id=observation.observation_id,
+            external_operation_stopped=True,
+        ),
+        **runner,
+    )
+    assert (await ops.changes.read(change_request.id, **ops.authority("approver"))).state == "reconciliation_required"
+
+
+async def test_a_scale_down_that_leaves_a_removed_member_running_is_flagged(ops):
+    setup = await prepared(ops, replicas=3)
+    change_request = await applying(ops, setup, observed_count=3, replicas=1)
+    assert change_request.drain_set == [] and change_request.warnings == ["WV-DRAIN-UNKNOWN"]
+    runner = ops.authority("planner")
+    lease = await ops.service.claim(RunnerClaimRequest(runner_id=setup.runner.id), **runner)
+    assert lease.plan.steps[0].remove_members == ["c0ffee000003", "c0ffee000002"]
+    for state in ("running", "verifying"):
+        await ops.service.report(RunnerReport(lease=lease.proof, report_id=uuid4(), state=state), **runner)
+    final = observed(1)
+    final = final.model_copy(update={"resources": [final.resources[0].model_copy(update={"members": members(3)[2:]})]})
+    await ops.service.report(
+        RunnerReport(
+            lease=lease.proof,
+            report_id=uuid4(),
+            state="succeeded",
+            observation=final,
+            receipt=SafeDeploymentReceipt(code="applied"),
+        ),
+        **runner,
+    )
+    done = await ops.changes.read(change_request.id, **ops.authority("approver"))
+    assert done.state == "succeeded" and done.warnings == ["WV-DRAIN-UNKNOWN", "WV-DRAIN-VICTIMS"]

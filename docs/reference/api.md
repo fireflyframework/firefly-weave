@@ -1115,6 +1115,8 @@ operation in the [full API reference](api-explorer.md); to generate a client,
 | `deployment_change_requests.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployment-change-requests/{identifier}` | deployment.read |
 | `deployment_change_requests.advance` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployment-change-requests/{identifier}/advance` | deployment.plan |
 | `deployment_change_requests.approve` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployment-change-requests/{identifier}/approve` | deployment.approve |
+| `deployment_change_requests.drain` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployment-change-requests/{identifier}/drain` | worker.drain |
+| `deployment_change_requests.apply` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployment-change-requests/{identifier}/apply` | deployment.apply |
 | `deployment_change_requests.replan` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployment-change-requests/{identifier}/replan` | deployment.plan |
 | `deployment_change_requests.decline` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployment-change-requests/{identifier}/decline` | deployment.approve |
 | `deployment_change_requests.cancel` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployment-change-requests/{identifier}/cancel` | deployment.plan |

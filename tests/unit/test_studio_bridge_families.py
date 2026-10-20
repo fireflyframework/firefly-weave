@@ -246,7 +246,18 @@ def test_every_operation_crosses_the_bridge_exactly_when_its_family_or_id_is_adm
         "runs.calls",
         *(
             "deployment_change_requests." + verb
-            for verb in ("create", "list", "read", "advance", "approve", "replan", "decline", "cancel")
+            for verb in (
+                "create",
+                "list",
+                "read",
+                "advance",
+                "approve",
+                "drain",
+                "apply",
+                "replan",
+                "decline",
+                "cancel",
+            )
         ),
     }
     assert approved_additions <= crossing
