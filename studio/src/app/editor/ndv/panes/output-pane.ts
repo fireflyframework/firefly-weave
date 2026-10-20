@@ -313,9 +313,24 @@ export class OutputPane {
   unpin() {
     this.problem.set("");
     this.session().controller.unpin(this.session().target);
+    this.focusPin();
   }
   keepPinned() {
     this.session().controller.keepPinned(this.session().target);
+    this.focusPin();
+  }
+  /**
+   * The control that started it may go (Generate sample once pinned, the
+   * banner's links as it changes): focus stays in step details, on the pin
+   * toggle, which stays in place.
+   */
+  private focusPin() {
+    setTimeout(() => {
+      if (this.lifetime.destroyed) return;
+      this.element.nativeElement
+        .querySelector<HTMLElement>(".pane-pin")
+        ?.focus({ preventScroll: true });
+    });
   }
   async generate() {
     const session = this.session();
@@ -328,8 +343,10 @@ export class OutputPane {
     }
     if (this.session() !== session) return;
     this.problem.set(refused ?? "");
-    if (!refused)
+    if (!refused) {
       session.announce(`Pinned a sample output for ${session.target}.`);
+      this.focusPin();
+    }
   }
   /** Set test output and Edit output: the JSON editor, with the pinned value or {}. */
   setOutput() {

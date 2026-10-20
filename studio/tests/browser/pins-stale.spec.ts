@@ -221,3 +221,40 @@ for (const size of [
       expect(await clippedText(details.dialog)).toEqual([]);
     });
   });
+
+for (const size of [
+  { tag: "1440x900", width: 1440, height: 900 },
+  { tag: "600x500", width: 600, height: 500 },
+  { tag: "360x640", width: 360, height: 640 },
+])
+  test.describe(`pin focus at ${size.tag}`, () => {
+    test.use({ viewport: { width: size.width, height: size.height } });
+    test("Generate sample, Unpin and Keep pinned leave focus on the pin toggle", async ({
+      page,
+    }) => {
+      const details = await openTestDataFixture(page);
+      await details.open("notify");
+      const pane = await outputPane(details);
+      const toggle = pane.locator(".pane-pin");
+      await pane.getByRole("button", { name: "Generate sample" }).focus();
+      await page.keyboard.press("Enter");
+      await expect(banner(pane)).toBeVisible();
+      await expect(toggle).toBeFocused();
+      await banner(pane).getByRole("button", { name: "Unpin" }).focus();
+      await page.keyboard.press("Enter");
+      await expect(banner(pane)).toHaveCount(0);
+      await expect(toggle).toBeFocused();
+      // Out of date, then Keep pinned from the banner.
+      await pane.getByRole("button", { name: "Generate sample" }).focus();
+      await page.keyboard.press("Enter");
+      await expect(banner(pane)).toBeVisible();
+      await details.close();
+      await changeScore(page);
+      await details.open("notify");
+      const again = await outputPane(details);
+      await banner(again).getByRole("button", { name: "Keep pinned" }).focus();
+      await page.keyboard.press("Enter");
+      await expect(banner(again)).toHaveAttribute("data-tone", "info");
+      await expect(again.locator(".pane-pin")).toBeFocused();
+    });
+  });
