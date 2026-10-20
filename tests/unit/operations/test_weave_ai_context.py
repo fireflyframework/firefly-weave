@@ -106,6 +106,12 @@ def test_the_gateway_text_and_the_guide_leave_two_thirds_of_the_compact_budget()
     # tokens, this guide at most 424. A change to the guide must be measured again before these numbers move.
     assert GATEWAY_RESERVE_TOKENS == 640 and GUIDE_TOKENS == 512
     assert len(GUIDE) == 1494 and GUIDE.startswith("Weave workflow guide (version 2).")
+    # The gateway recognizes this exact guide by its digest (GUIDE_SHA256 in the gateway) to count it as the reserve.
+    import hashlib
+
+    assert (
+        hashlib.sha256(GUIDE.encode()).hexdigest() == "3077fe887b0abbc25d36d50cb957460206cf0fff5713b8ce9ee7240a4bd7c816"
+    )
     assert GATEWAY_RESERVE_TOKENS + GUIDE_TOKENS + ENVELOPE_TOKENS <= COMPACT_INPUT_TOKENS / 3
 
 

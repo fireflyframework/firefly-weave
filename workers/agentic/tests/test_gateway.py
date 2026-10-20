@@ -1269,16 +1269,18 @@ async def test_ask_weave_ai_to_fix_reaches_the_model_through_the_real_route(tmp_
 
 
 def test_the_weave_ai_guide_counts_as_its_measured_reserve_and_any_other_text_by_the_estimate():
-    from weave_agentic_worker.gateway import GUIDE_HEADER, GUIDE_TOKENS, RESERVE_TOKENS, request_tokens
+    from firefly_weave.operations.lumi_context import GUIDE
 
-    # Guide version 2 counted at most 424 tokens on llama3.2:3b, qwen3:4b and qwen2.5:1.5b (measured).
-    assert GUIDE_TOKENS == 512 and GUIDE_HEADER == "Weave workflow guide (version 2)."
-    guide = GUIDE_HEADER + " A workflow is YAML." * 80
-    with_guide = request_tokens("Why?", [], {"profile": "compact", "guide": guide})
+    from weave_agentic_worker.gateway import GUIDE_SHA256, GUIDE_TOKENS, RESERVE_TOKENS, request_tokens
+
+    # Guide version 2 counted at most 424 tokens on llama3.2:3b, qwen3:4b and qwen2.5:1.5b (measured); only that
+    # exact text is counted as the reserve.
+    assert GUIDE_TOKENS == 512 and GUIDE_SHA256 == "3077fe887b0abbc25d36d50cb957460206cf0fff5713b8ce9ee7240a4bd7c816"
+    with_guide = request_tokens("Why?", [], {"profile": "compact", "guide": GUIDE})
     without = request_tokens("Why?", [], {"profile": "compact"})
     assert with_guide == without + GUIDE_TOKENS
-    other = "Weave workflow guide (version 3)." + " A workflow is YAML." * 80
-    assert request_tokens("Why?", [], {"profile": "compact", "guide": other}) > without + GUIDE_TOKENS
+    imitation = "Weave workflow guide (version 2)." + " A workflow is YAML." * 400
+    assert request_tokens("Why?", [], {"profile": "compact", "guide": imitation}) > without + GUIDE_TOKENS
     assert without == RESERVE_TOKENS + conservative_tokens(
         json.dumps({"prompt": "Why?", "context": {"history": [], "attachments": {"profile": "compact"}}})
     )

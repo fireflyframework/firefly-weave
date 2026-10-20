@@ -24,6 +24,7 @@ namespace on the local developer platform.
 """
 
 import asyncio
+import hashlib
 import hmac
 import json
 import os
@@ -113,7 +114,8 @@ LOOP_CHECK_EVERY = 64
 # the API leaves this reserve for them (GATEWAY_RESERVE_TOKENS in its Weave AI context).
 RESERVE_TOKENS = 640
 # Weave AI's guide (version 2) counted at most 424 tokens on the same models; the API counts it as this reserve too.
-GUIDE_HEADER = "Weave workflow guide (version 2)."
+# Only that exact text, recognized by its digest, is counted so; any other guide is estimated like the rest.
+GUIDE_SHA256 = "3077fe887b0abbc25d36d50cb957460206cf0fff5713b8ce9ee7240a4bd7c816"
 GUIDE_TOKENS = 512
 OLLAMA_CONTEXT_TOKENS = 8192
 # How long the gateway waits for Ollama to say whether a model thinks before it asks without the setting.
@@ -188,7 +190,7 @@ def request_tokens(message: str, history: list[Any], attachments: Any) -> int:
     counted = attachments
     guide_tokens = 0
     guide = attachments.get("guide") if isinstance(attachments, dict) else None
-    if isinstance(guide, str) and guide.startswith(GUIDE_HEADER):
+    if isinstance(guide, str) and hashlib.sha256(guide.encode()).hexdigest() == GUIDE_SHA256:
         counted = {key: value for key, value in attachments.items() if key != "guide"}
         guide_tokens = GUIDE_TOKENS
     prompt = json.dumps(
