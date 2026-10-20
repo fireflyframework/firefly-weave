@@ -161,6 +161,53 @@ describe("the AI task's parameters", () => {
     expect(byId["temperature"].default).toBeUndefined();
     expect(byId["reasoning"]).toMatchObject({ default: "none" });
   });
+  it("reads settings only this step uses as its own, whatever their name", () => {
+    // A renamed step keeps the settings named after its old ID.
+    const renamed = task(true);
+    renamed.step.id = "triage";
+    const own = state("form", renamed);
+    const share = own.addable.find((o) => o.spec.id === "share")!.spec;
+    expect(share.default).toBe("summarize");
+    expect(share.choices![0]).toEqual({
+      value: "summarize",
+      label: "This step only",
+    });
+    expect(own.fields.map((f) => f.spec.id)).toEqual(["model", "prompt"]);
+    // Settings named "<step>-2" because "<step>" was taken are this step's too.
+    const taken = task(false, {
+      summarize: { ...settings, model: "qwen2.5:1.5b" },
+      "summarize-2": settings,
+    });
+    taken.step["profile"] = "summarize-2";
+    taken.workflow.spec.steps.push({
+      ...createStep("llm", "triage"),
+      profile: "summarize",
+    });
+    const second = state("form", taken);
+    expect(second.fields.map((f) => f.spec.id)).toEqual(["model", "prompt"]);
+    expect(
+      second.addable.find((o) => o.spec.id === "share")!.spec.choices,
+    ).toEqual([
+      { value: "summarize-2", label: "This step only" },
+      { value: "summarize", label: "summarize · qwen2.5:1.5b" },
+    ]);
+  });
+  it("offers settings of its own when it shares another step's", () => {
+    const sharing = task(false, { triage: settings });
+    sharing.step["profile"] = "triage";
+    sharing.workflow.spec.steps.push({
+      ...createStep("llm", "triage"),
+      profile: "triage",
+    });
+    const share = state("form", sharing).fields.find(
+      (f) => f.spec.id === "share",
+    )!.spec;
+    expect(share.default).toBe("summarize");
+    expect(share.choices![0]).toEqual({
+      value: "summarize",
+      label: "This step only",
+    });
+  });
   it("offers this step's own settings or another AI step's to share", () => {
     const shared = task(true, {
       triage: { ...settings, model: "qwen2.5:1.5b" },

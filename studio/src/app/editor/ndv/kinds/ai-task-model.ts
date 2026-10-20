@@ -139,6 +139,40 @@ function freeName(profiles: Record_, id: string): string {
   return name;
 }
 
+/** The settings a new AI task points at until a model is chosen. */
+export const DEFAULT_PROFILE = "default";
+
+/** Whether the step's settings exist and no other AI step points at them. */
+export function ownsSettings(workflow: Workflow, step: Step): boolean {
+  return (
+    !!profileOf(workflow, step) &&
+    stepsSharing(workflow, profileNameOf(step)).every((id) => id === step.id)
+  );
+}
+/**
+ * What "This step only" points the step at: its own settings, whatever their
+ * name; a step without settings keeps its name; a step that shares another
+ * step's settings gets a free name after it (a model is then chosen again).
+ */
+export function ownSettingsName(workflow: Workflow, step: Step): string {
+  if (!profileOf(workflow, step) || ownsSettings(workflow, step))
+    return profileNameOf(step);
+  return freeName(profilesOf(workflow), step.id);
+}
+
+/** What the Model field says when other AI steps use the same settings, or "". */
+export function sharingNote(workflow: Workflow, step: Step): string {
+  if (!profileOf(workflow, step)) return "";
+  const others = stepsSharing(workflow, profileNameOf(step)).filter(
+    (id) => id !== step.id,
+  ).length;
+  if (!others) return "";
+  const steps = others === 1 ? "1 other AI step" : `${others} other AI steps`;
+  return profileNameOf(step) === DEFAULT_PROFILE
+    ? `Uses the default settings, like ${steps}. Choosing a model gives this step its own.`
+    : `Shared with ${steps}. A new model changes theirs too.`;
+}
+
 /** The changes one model choice makes, as one undo step. */
 export function chooseModel(
   workflow: Workflow,
@@ -146,8 +180,12 @@ export function chooseModel(
   choice: ModelChoice,
   boundTo: BoundTo = () => null,
 ): FormChange[] {
-  const current = profileOf(workflow, step);
   const profiles = profilesOf(workflow);
+  // Settings named default that other AI steps also use are where a new AI
+  // task starts, not a choice to share them: the step gets its own instead.
+  const startedShared =
+    profileNameOf(step) === DEFAULT_PROFILE && !ownsSettings(workflow, step);
+  const current = startedShared ? null : profileOf(workflow, step);
   // A step without settings gets its own, named after it (another name when taken).
   const name = current ? profileNameOf(step) : freeName(profiles, step.id);
   if (!current && Object.keys(profiles).length >= MAX_PROFILES)

@@ -25,6 +25,7 @@ import type { Choice, FormSpec, KindContext, ParamSpec } from "../../registry";
 import {
   DEFAULT_MAX_TOKENS,
   TEXT_RESULT,
+  ownSettingsName,
   profileNameOf,
   profileOf,
   profilesOf,
@@ -57,10 +58,11 @@ const afterModel: Pick<ParamSpec, "showWhen" | "hiddenReason" | "whenHidden"> =
 
 function shareChoices(step: Step, ctx: KindContext): Choice[] {
   const profiles = profilesOf(ctx.workflow);
+  const own = ownSettingsName(ctx.workflow, step);
   return [
-    { value: step.id, label: "This step only" },
+    { value: own, label: "This step only" },
     ...Object.entries(profiles)
-      .filter(([name]) => name !== step.id)
+      .filter(([name]) => name !== own)
       .map(([name, profile]) => {
         const model = (profile as Record<string, unknown> | null)?.["model"];
         return {
@@ -162,8 +164,8 @@ export function llmForm(step: Step, ctx: KindContext): FormSpec {
         path: ["profile"],
         type: "select",
         label: "Share settings with other AI steps",
-        // A step without settings reads as not sharing until it has some.
-        default: profileOf(ctx.workflow, step) ? step.id : profileNameOf(step),
+        // Settings only this step uses read as not shared, whatever their name.
+        default: ownSettingsName(ctx.workflow, step),
         whenRemoved: "default",
         choices: shareChoices(step, ctx),
         hint: "Steps that share settings use the same model and options.",

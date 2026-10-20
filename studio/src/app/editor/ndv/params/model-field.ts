@@ -41,6 +41,7 @@ import {
   modelOptions,
   parseModelValue,
   profileOf,
+  sharingNote,
   type BoundTo,
   type ConnectionModels,
 } from "../kinds/ai-task-model";
@@ -214,7 +215,9 @@ export class ModelField {
   notice(): string {
     if (!this.session().host.profile) return OFFLINE;
     if (this.failure) return this.failure;
-    return this.groups && !this.groups.length ? NONE : "";
+    if (this.groups && !this.groups.length) return NONE;
+    const { workflow, step } = this.session().subject();
+    return step ? sharingNote(workflow, step) : "";
   }
   canSetUp(): boolean {
     const host = this.session().host;

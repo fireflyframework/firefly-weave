@@ -32,6 +32,7 @@ import {
   modelValue,
   profileNameOf,
   profileOf,
+  sharingNote,
   stepsSharing,
   type ConnectionModels,
 } from "../src/app/editor/ndv/kinds/ai-task-model";
@@ -266,6 +267,57 @@ describe("choosing a model", () => {
       "ai-ollama-local-2": { connector: AI_CONNECTOR, required: true },
     });
     expect(taken.spec.steps[0]["connection"]).toBe("ai-ollama-local-2");
+  });
+  it("gives a new AI task its own settings beside settings named default", () => {
+    const { workflow, step } = withTask();
+    const classic = {
+      provider: "anthropic",
+      model: "claude-x",
+      options: { max_tokens: 4000 },
+      outputSchema: { type: "object", properties: {} },
+    };
+    workflow.spec["llmProfiles"] = { default: classic };
+    workflow.spec.steps.unshift({ ...createStep("llm", "triage") });
+    expect(step["profile"]).toBe("default");
+    const next = applied(
+      workflow,
+      step,
+      chooseModel(workflow, step, choice(ollama, "qwen3:4b")),
+    );
+    expect(next.spec["llmProfiles"]).toEqual({
+      default: classic,
+      summarize: {
+        provider: "openai-chat",
+        model: "qwen3:4b",
+        options: { max_tokens: DEFAULT_MAX_TOKENS },
+        outputSchema: TEXT_RESULT,
+      },
+    });
+    expect(next.spec.steps.map((s: Step) => [s.id, s["profile"]])).toEqual([
+      ["triage", "default"],
+      ["summarize", "summarize"],
+    ]);
+  });
+  it("says when the settings are shared, and what a new model changes", () => {
+    const { workflow, step } = withTask();
+    expect(sharingNote(workflow, step)).toBe("");
+    workflow.spec["llmProfiles"] = {
+      default: { provider: "anthropic", model: "claude-x" },
+      triage: { provider: "anthropic", model: "claude-x" },
+    };
+    workflow.spec.steps.unshift({ ...createStep("llm", "triage") });
+    expect(sharingNote(workflow, step)).toBe(
+      "Uses the default settings, like 1 other AI step. Choosing a model gives this step its own.",
+    );
+    step["profile"] = "triage";
+    workflow.spec.steps[0]["profile"] = "triage";
+    workflow.spec.steps.push({
+      ...createStep("llm", "reply"),
+      profile: "triage",
+    });
+    expect(sharingNote(workflow, step)).toBe(
+      "Shared with 2 other AI steps. A new model changes theirs too.",
+    );
   });
   it("changes every AI task that shares the settings", () => {
     const { workflow, step } = withTask();
