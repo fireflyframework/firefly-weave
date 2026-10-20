@@ -55,6 +55,11 @@ Changed: …
 Status: weave platform --directory /path/to/.local/platform ai status
 ```
 
+`enable` also turns Weave AI on for `ollama-local` with the tested model,
+1,024 output tokens and three minutes per answer, unless Weave AI is already set
+up; then it keeps that configuration and says so (`weave_ai` in
+`--output json` is `configured`, `unchanged` or `kept`).
+
 The `Changed:` line names what this run set up or updated; a repeated command
 that finds nothing to do prints `No changes.` instead. A `Warning:` line appears
 when something needs your attention, such as a lowered context size.
@@ -110,7 +115,12 @@ local endpoints use no credential. **Save connection**, choose a model (Studio s
 installed) and **Test connection**. A first test of a local model can take up to two minutes while the model loads;
 **Cancel** stops it.
 
-Weave AI can't use a connection without a key yet, so on a local platform every item but **Weave AI** turns ready.
+On the **Weave AI** card, choose `ollama-local` and a model, then **Save Weave AI settings**; Weave AI uses the keyless connection without a credential, and every item turns ready.
+
+A keyless connection reaches only an origin a platform operator approved in the private-origin file, on loopback or
+private networks (RFC 1918, CGNAT such as Tailscale, or IPv6 ULA), never a public host. An approved Ollama on another
+machine of your LAN or tailnet is reached over plain HTTP, so the draft, run facts and questions Weave AI sends cross
+that network unencrypted; approve such an origin only for a network you trust.
 
 ## Choose a model
 
@@ -119,6 +129,15 @@ Weave AI can't use a connection without a key yet, so on a local platform every 
 | Default offered when no model is served | `qwen3:4b` | about 2.5 GB |
 | Quick checks and continuous integration | `qwen2.5:1.5b` | about 1.0 GB |
 | A model without tool calling, to see that error | `gemma3:270m` | about 0.3 GB |
+
+Weave AI asks a thinking model such as `qwen3:4b` to answer without thinking,
+which needs **Ollama 0.40 or later**. Ollama 0.12.3 refuses that setting for
+every model, so on an older Ollama Weave AI does not send it, and a thinking
+model may spend its whole answer thinking: Weave AI then says to upgrade Ollama
+or choose a model that does not think. With `--ollama host`, upgrade the Ollama
+you run. A container installation moves to Ollama 0.40.6 on the next
+`weave platform ai enable`, which keeps its `ollama-models` volume and the models
+in it.
 
 ```sh
 # Pull another model, then list what the endpoint serves.
@@ -180,10 +199,21 @@ task to the worker release. `weave platform ai status --output json` reports bot
 as `connection_revision_id` and `release_id`.
 
 Keep `options.max_tokens` at 4,096 or less: a larger value fails with
-`LLM_OPTIONS`. The worker estimates the prompt, the context and the result fields
-at about four characters per token, adds `max_tokens`, and fails with
-`LLM_CONTEXT_LIMIT` before any request when the sum does not fit the policy's
-context size, instead of letting Ollama cut the prompt silently.
+`LLM_OPTIONS`. The worker counts the prompt, the context and the result fields
+conservatively (ordinary words at about 2.5 characters per token; identifiers,
+digits and runs of two or more punctuation marks at one token per character;
+text outside ASCII, such as Chinese or emoji, at one token per UTF-8 byte),
+adds `max_tokens`, and
+fails with `LLM_CONTEXT_LIMIT` before any request when the sum does not fit the
+policy's context size, instead of letting Ollama cut the prompt silently. When
+Ollama reports fewer prompt tokens than the whole prompt can count, the answer
+is not used and the step fails with `LLM_CONTEXT_LIMIT` too. These checks cover
+the task's first model call: the later calls of a reasoning pattern, or the
+retry that puts the result format in the prompt, are not checked again. The
+count stays below the model's only for text ordinary prompts do not hold: words
+of random letters (up to 1.3 times the count) and long runs of spaces or tabs. When Ollama reports no
+prompt count at all, that check cannot run: the worker logs a warning
+(`weave_agentic_worker.prompts`) and uses the answer.
 
 ## Test the connection
 
@@ -304,6 +334,18 @@ limit; call `ai_connections.test` for the reason.
 | `WV-AI-GATEWAY-MISSING` | 503 | The API has no AI gateway | Run `weave platform ai enable`, or ask an operator to deploy the gateway |
 | `WV-AI-GATEWAY-UNAVAILABLE` | 503 | The AI gateway did not answer, or its answer was not valid | Run `weave platform ai status` and read the `ai-gateway` container logs |
 | `WV-AI-GATEWAY-TIMEOUT` | 504 | The AI gateway did not answer in time | Retry; a model is slow on its first load |
+
+Asking Weave AI can answer with these codes; the message names the model and the endpoint, never provider text:
+
+| Problem code | Status | What it means | What to do |
+| --- | --- | --- | --- |
+| `WV-LUMI-MODEL-NOT-FOUND` | 422 | The model is not installed on the endpoint | Pull it with `ollama pull`, or choose another model on the Weave AI card |
+| `WV-LUMI-UNREACHABLE` | 503 | Weave could not reach the model endpoint | Check that Ollama is running |
+| `WV-LUMI-CONTEXT-LIMIT` | 413 | The request does not fit the model's context | Attach less, or choose a model with a larger context |
+| `WV-LUMI-OUTPUT` | 422 | The model's answer did not match Weave AI's reply format | Ask again; a larger model answers more reliably |
+| `WV-LUMI-TIMEOUT` | 504 | The model did not answer in time | Retry; a local model is slow on its first load |
+| `WV-LUMI-CAPACITY` | 429 | Weave AI or the provider is busy | Retry shortly |
+| `WV-LUMI-UNAVAILABLE` | 503 | Weave AI is not configured, the gateway refused the request, or the model is not approved | Run `weave platform ai status`; check the Weave AI card |
 
 Activating a workflow and the setup operations can answer with these codes:
 

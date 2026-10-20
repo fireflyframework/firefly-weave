@@ -580,3 +580,144 @@ async def test_discovery_transport_ignores_environment_proxies(tmp_path, monkeyp
         await client.models({"endpoint": "https://cloud.example/v1"}, None, provider="openai-chat")
     ).discovery == "ok"
     assert options[0]["trust_env"] is False and options[0]["follow_redirects"] is False
+
+
+ASK_CONFIGURATION = {
+    "enabled": True,
+    "connection_revision_id": "77777777-7777-4777-8777-777777777777",
+    "revision": 1,
+    "profile": {
+        "provider": "openai-chat",
+        "model": "qwen3:4b",
+        "options": {"max_tokens": 1024},
+        "timeoutSeconds": 180,
+    },
+}
+
+
+@pytest.mark.parametrize(
+    ("status", "code", "status_out", "problem", "text"),
+    [
+        (422, "LLM_MODEL_NOT_FOUND", 422, "WV-LUMI-MODEL-NOT-FOUND", "qwen3:4b is not installed on"),
+        (422, "LLM_UNREACHABLE", 503, "WV-LUMI-UNREACHABLE", "could not reach the model endpoint"),
+        (422, "LLM_CONTEXT_LIMIT", 413, "WV-LUMI-CONTEXT-LIMIT", "too long for this model's context"),
+        (422, "LLM_OUTPUT", 422, "WV-LUMI-OUTPUT", "did not match"),
+        (422, "LUMI_REPETITION", 422, "WV-LUMI-OUTPUT", "started repeating itself"),
+        (422, "LUMI_TRUNCATED", 413, "WV-LUMI-CONTEXT-LIMIT", "could not hold the whole request"),
+        (422, "LUMI_THINKING", 422, "WV-LUMI-OUTPUT", "Upgrade Ollama to 0.40 or later"),
+        (422, "LLM_TIMEOUT", 504, "WV-LUMI-TIMEOUT", "did not answer within 180 seconds"),
+        (504, "LUMI_TIMEOUT", 504, "WV-LUMI-TIMEOUT", "did not respond in time"),
+        (422, "LLM_RATE_LIMITED", 429, "WV-LUMI-CAPACITY", "rate limiting"),
+        (429, "LUMI_CAPACITY", 429, "WV-LUMI-CAPACITY", "busy"),
+        (413, "LUMI_LIMIT", 413, "WV-LUMI-LIMIT", "too large"),
+        (422, "LLM_POLICY", 503, "WV-LUMI-UNAVAILABLE", "not approved for this endpoint"),
+        (401, "LUMI_AUTH", 503, "WV-LUMI-UNAVAILABLE", "Weave AI is unavailable"),
+        (500, "secret-canary", 503, "WV-LUMI-UNAVAILABLE", "Weave AI is unavailable"),
+    ],
+)
+async def test_gateway_codes_become_weave_ai_problems(tmp_path, status, code, status_out, problem, text):
+    from firefly_weave.contracts.lumi import LUMI_REPLY_SCHEMA, LumiAskRequest, LumiConfiguration
+
+    token = tmp_path / "token"
+    token.write_text("service-token")
+    client = LumiGatewayClient(
+        LumiGatewaySettings(endpoint="https://trusted.invalid/v1/lumi", token_file=str(token)),
+        transport=httpx.MockTransport(lambda request: httpx.Response(status, json={"code": code})),
+    )
+    configuration = LumiConfiguration.model_validate(
+        {**ASK_CONFIGURATION, "profile": {**ASK_CONFIGURATION["profile"], "outputSchema": LUMI_REPLY_SCHEMA}}
+    )
+    with pytest.raises(CatalogError) as failed:
+        await client.ask(
+            configuration, LumiAskRequest(message="Explain"), {}, {"endpoint": "http://ollama:11434/v1"}, None
+        )
+    assert (failed.value.status, failed.value.code) == (status_out, problem)
+    assert text in failed.value.message and "secret-canary" not in failed.value.message
+    assert client.active == 0
+
+
+async def refused_with(tmp_path, body):
+    from firefly_weave.contracts.lumi import LUMI_REPLY_SCHEMA, LumiAskRequest, LumiConfiguration
+
+    token = tmp_path / "token"
+    token.write_text("service-token")
+    client = LumiGatewayClient(
+        LumiGatewaySettings(endpoint="https://trusted.invalid/v1/lumi", token_file=str(token)),
+        transport=httpx.MockTransport(lambda request: httpx.Response(422, content=body)),
+    )
+    configuration = LumiConfiguration.model_validate(
+        {**ASK_CONFIGURATION, "profile": {**ASK_CONFIGURATION["profile"], "outputSchema": LUMI_REPLY_SCHEMA}}
+    )
+    with pytest.raises(CatalogError) as failed:
+        await client.ask(
+            configuration, LumiAskRequest(message="Explain"), {}, {"endpoint": "http://ollama:11434/v1"}, None
+        )
+    return failed.value
+
+
+@pytest.mark.parametrize("code", ["llm_timeout", "LLM TIMEOUT", "LLM_TIMEOUT\n", "L" * 65])
+async def test_a_refusal_code_outside_the_code_pattern_reads_as_unavailable(tmp_path, code):
+    from firefly_weave.operations.lumi_gateway import _PROBLEMS
+
+    _PROBLEMS[code] = (504, "WV-LUMI-TIMEOUT")
+    try:
+        problem = await refused_with(tmp_path, json.dumps({"code": code}).encode())
+    finally:
+        del _PROBLEMS[code]
+    assert (problem.status, problem.code) == (503, "WV-LUMI-UNAVAILABLE")
+
+
+async def test_a_refusal_body_over_four_kibibytes_is_not_read_for_its_code(tmp_path):
+    body = json.dumps({"code": "LLM_TIMEOUT", "padding": "x" * 4096}).encode()
+    problem = await refused_with(tmp_path, body)
+    assert (problem.status, problem.code) == (503, "WV-LUMI-UNAVAILABLE")
+    small = await refused_with(tmp_path, json.dumps({"code": "LLM_TIMEOUT"}).encode())
+    assert small.code == "WV-LUMI-TIMEOUT"
+
+
+def test_a_context_limit_without_a_known_size_says_so_without_a_number():
+    from firefly_weave.contracts.lumi import LUMI_REPLY_SCHEMA, LumiConfiguration
+    from firefly_weave.operations.lumi_gateway import weave_ai_problem
+
+    configuration = LumiConfiguration.model_validate(
+        {**ASK_CONFIGURATION, "profile": {**ASK_CONFIGURATION["profile"], "outputSchema": LUMI_REPLY_SCHEMA}}
+    )
+    unknown = weave_ai_problem("LLM_CONTEXT_LIMIT", configuration, "http://ollama:11434/v1")
+    assert unknown.message == "The prompt is too long for this model's context."
+    known = weave_ai_problem("LLM_CONTEXT_LIMIT", configuration, "http://ollama:11434/v1", 8192)
+    assert "8192" in known.message.replace(",", "")
+
+
+FORWARDED = [
+    {"message": "Fix the proposal", "fix": True, "draft": {"format": "yaml", "source": "a: 1"}},
+    {"message": "Why?", "draft": {"format": "yaml", "source": "a: 1"}, "selected_step": "step-3"},
+    {"message": "Why?", "attachments": [{"kind": "run", "id": "11111111-1111-4111-8111-111111111111"}]},
+    {"message": "Why?", "history": [{"role": "user", "content": "Earlier"}]},
+]
+
+
+@pytest.mark.parametrize("asked", FORWARDED, ids=["fix", "selected-step", "attachment", "history"])
+async def test_the_request_the_gateway_receives_is_one_it_accepts(tmp_path, asked):
+    from firefly_weave.contracts.lumi import LUMI_REPLY_SCHEMA, LumiAskRequest, LumiConfiguration
+
+    sent = []
+
+    def answer(request):
+        sent.append(json.loads(request.content))
+        return httpx.Response(200, json={"answer": "Ready", "proposals": [], "followUps": []})
+
+    token = tmp_path / "token"
+    token.write_text("service-token")
+    client = LumiGatewayClient(
+        LumiGatewaySettings(endpoint="https://trusted.invalid/v1/lumi", token_file=str(token)),
+        transport=httpx.MockTransport(answer),
+    )
+    configuration = LumiConfiguration.model_validate(
+        {**ASK_CONFIGURATION, "profile": {**ASK_CONFIGURATION["profile"], "outputSchema": LUMI_REPLY_SCHEMA}}
+    )
+    request = LumiAskRequest.model_validate(asked)
+    await client.ask(configuration, request, {}, {"endpoint": "http://ollama:11434/v1"}, None)
+    forwarded = sent[0]["request"]
+    # The gateway validates this part as the same request type; the shaped draft travels in the attachments.
+    assert LumiAskRequest.model_validate(forwarded).message == request.message
+    assert "draft" not in forwarded and "fix" not in forwarded

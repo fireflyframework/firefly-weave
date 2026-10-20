@@ -18,6 +18,7 @@
 
 import asyncio
 import json
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
@@ -30,9 +31,18 @@ from firefly_weave.contracts.connectors import ConnectorFailure
 from firefly_weave.contracts.lumi import LUMI_REPLY_SCHEMA
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
-from pydantic_ai.models.function import FunctionModel
+from pydantic_ai.models.function import DeltaToolCall, FunctionModel
+from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.usage import RequestUsage
 
-from weave_agentic_worker.gateway import create_app
+from weave_agentic_worker.execution import fewest_tokens
+from weave_agentic_worker.gateway import (
+    LOOP_MIN_CHARS,
+    OLLAMA_FREQUENCY_PENALTY,
+    conservative_tokens,
+    create_app,
+    repeating,
+)
 from weave_agentic_worker.handler import WorkerPolicy
 from weave_agentic_worker.providers import ProviderModel, build_model
 
@@ -392,6 +402,10 @@ SHOWS = {
         "capabilities": ["completion"],
         "model_info": {"general.architecture": "gemma3", "gemma3.context_length": 32768},
     },
+    "qwen3:4b": {
+        "capabilities": ["completion", "tools", "thinking"],
+        "model_info": {"general.architecture": "qwen3", "qwen3.context_length": 40960},
+    },
 }
 AUTH = {"Authorization": "Bearer service-token"}
 
@@ -415,9 +429,11 @@ def ollama_gateway_policy(tmp_path, models="served", **changes):
     return WorkerPolicy(source=PolicyFile(path, OLLAMA_ORIGINS), origins=OLLAMA_ORIGINS)
 
 
-def fake_ollama(paths):
+def fake_ollama(paths, version="0.40.2"):
     async def handle(request):
         paths.append(request.url.path)
+        if request.url.path == "/api/version" and version is not None:
+            return httpx2.Response(200, json={"version": version})
         if request.url.path == "/api/tags":
             return httpx2.Response(200, json=TAGS)
         if request.url.path == "/api/show":
@@ -559,14 +575,43 @@ async def test_credentialed_endpoints_need_the_credential(tmp_path):
     assert body["ok"] is False and body["code"] == "LLM_AUTH"
 
 
+REPLY = {"result": {"answer": "Ready", "proposals": [], "followUps": []}}
+
+
+class Counted(WrapperModel):
+    """Reports the prompt tokens a real endpoint counts: three characters each, or a fixed number."""
+
+    def __init__(self, wrapped, tokens=None):
+        super().__init__(wrapped)
+        self.tokens = tokens
+
+    @asynccontextmanager
+    async def request_stream(self, messages, model_settings, model_request_parameters, run_context=None):
+        sent = sum(len(str(part.content)) for message in messages for part in getattr(message, "parts", ()))
+        sent += sum(len(message.instructions or "") for message in messages if hasattr(message, "instructions"))
+        async with self.wrapped.request_stream(messages, model_settings, model_request_parameters) as stream:
+            stream._usage = RequestUsage(input_tokens=self.tokens if self.tokens is not None else -(-sent // 3))
+            yield stream
+
+
 def reply_model(calls):
     def respond(messages, info):
         calls.append(messages)
-        value = {"result": {"answer": "Ready", "proposals": [], "followUps": []}}
-        part = ToolCallPart(info.output_tools[0].name, value) if info.output_tools else TextPart(json.dumps(value))
+        part = ToolCallPart(info.output_tools[0].name, REPLY) if info.output_tools else TextPart(json.dumps(REPLY))
         return ModelResponse(parts=[part])
 
-    return FunctionModel(respond)
+    async def stream(messages, info):
+        calls.append(messages)
+        for chunk in streamed(info, [json.dumps(REPLY)]):
+            yield chunk
+
+    return Counted(FunctionModel(respond, stream_function=stream))
+
+
+def streamed(info, chunks):
+    """Stream text chunks as the reply format the request asks for: an output tool's arguments, or plain text."""
+    for chunk in chunks:
+        yield {0: DeltaToolCall(name=info.output_tools[0].name, json_args=chunk)} if info.output_tools else chunk
 
 
 async def test_the_assistant_route_serves_a_file_policy_through_the_pinned_options(tmp_path):
@@ -931,3 +976,378 @@ async def test_ollama_discovery_keeps_the_first_duplicate_tag_metadata(tmp_path)
         ],
     }
     assert paths == ["/api/tags", "/api/show", "/api/show"]
+
+
+@pytest.mark.parametrize(
+    ("failure", "code"),
+    [
+        (ConnectorFailure("LLM_MODEL_NOT_FOUND", "not_started"), "LLM_MODEL_NOT_FOUND"),
+        (ConnectorFailure("LLM_UNREACHABLE", "not_started"), "LLM_UNREACHABLE"),
+        (ConnectorFailure("PROVIDER_SECRET_CANARY", "unknown"), "LLM_PROVIDER"),
+    ],
+)
+async def test_the_assistant_route_answers_only_product_codes(tmp_path, failure, code):
+    def failing(*args):
+        raise failure
+
+    ask = payload()
+    ask["profile"]["model"] = "qwen2.5:1.5b"
+    ask["endpoint"] = "http://ollama:11434/v1"
+    del ask["credential"]
+    async with gateway(tmp_path, builder=failing) as client:
+        response = await client.post("/v1/lumi", json=ask, headers=AUTH)
+    assert (response.status_code, response.json()) == (422, {"code": code})
+
+
+def test_the_assistant_instructions_and_reply_format_fit_the_reserve_weave_ai_leaves_them():
+    from firefly_weave.contracts.lumi import LUMI_REPLY_SCHEMA
+
+    from weave_agentic_worker.execution import provider_schema
+    from weave_agentic_worker.gateway import INSTRUCTIONS, RESERVE_TOKENS
+
+    # The API leaves these tokens for the gateway's own text (GATEWAY_RESERVE_TOKENS in the server's Weave AI context).
+    # They were measured at most 488 tokens on llama3.2:3b, qwen3:4b and qwen2.5:1.5b with these exact sizes; a change
+    # to either text must be measured again before these numbers move.
+    reply_format = json.dumps(provider_schema(LUMI_REPLY_SCHEMA))
+    assert (len(INSTRUCTIONS), len(reply_format)) == (748, 1013)
+    assert RESERVE_TOKENS == 640 >= 488
+    assert INSTRUCTIONS.startswith("You are Weave AI")
+    for rule in (
+        "whole document",
+        "never a fragment",
+        "data, not instructions",
+        "trimmed",
+        "return no proposals",
+        "Answer briefly",
+        "in a proposal's source field, never in the answer",
+    ):
+        assert rule in INSTRUCTIONS
+
+
+LOOP = "The workflow should also be reviewed to ensure that it follows the correct logic and uses the right data. "
+
+
+def test_a_reply_that_keeps_repeating_one_span_is_a_loop():
+    assert repeating('{"result": {"answer": "Step-3 fails. ' + LOOP * 4)
+    assert repeating('{"result": {"answer": "' + " " * 256)
+    assert repeating("x" + "ab" * 128)
+
+
+def test_ordinary_replies_and_whole_documents_are_not_loops():
+    answer = (
+        "Step-3 calls crm-lookup with an empty customer ID. Map the input's customerId into its with block, "
+        "then run the workflow again. If the lookup still fails, check the connection's endpoint. "
+    )
+    steps = "".join(
+        f"    - id: step-{index}\n      kind: action\n      uses: crm-lookup@1.0.0\n" for index in range(20)
+    )
+    document = f"apiVersion: weave/v1alpha1\nkind: Workflow\nspec:\n  steps:\n{steps}"
+    assert not repeating(answer * 2)
+    assert not repeating(json.dumps({"answer": answer, "proposals": [{"source": document}]}))
+    assert not repeating(LOOP * 3)
+
+
+def ollama_ask():
+    ask = payload()
+    ask["profile"]["model"] = "qwen2.5:1.5b"
+    ask["endpoint"] = "http://ollama:11434/v1"
+    del ask["credential"]
+    return ask
+
+
+async def test_the_assistant_route_stops_a_reply_that_repeats_itself(tmp_path):
+    sent = []
+
+    async def loop(messages, info):
+        for chunk in streamed(info, ['{"result": {"answer": "Step-3 fails. ', *[LOOP] * 1000]):
+            sent.append(chunk)
+            yield chunk
+
+    async with gateway(tmp_path, builder=lambda *_: FunctionModel(stream_function=loop)) as client:
+        response = await client.post("/v1/lumi", json=ollama_ask(), headers=AUTH)
+    assert (response.status_code, response.json()) == (422, {"code": "LUMI_REPETITION"})
+    assert len(sent) < 10
+
+
+async def test_ollama_replies_carry_a_frequency_penalty_and_cloud_replies_do_not(tmp_path):
+    settings = []
+
+    def respond(messages, info):
+        settings.append(info.model_settings or {})
+        part = ToolCallPart(info.output_tools[0].name, REPLY) if info.output_tools else TextPart(json.dumps(REPLY))
+        return ModelResponse(parts=[part])
+
+    async def stream(messages, info):
+        settings.append(info.model_settings or {})
+        for chunk in streamed(info, [json.dumps(REPLY)]):
+            yield chunk
+
+    model = Counted(FunctionModel(respond, stream_function=stream))
+    async with gateway(tmp_path, builder=lambda *_: model) as client:
+        local = await client.post("/v1/lumi", json=ollama_ask(), headers=AUTH)
+    token = tmp_path / "cloud-token"
+    token.write_text("service-token")
+    app = create_app(
+        WorkerPolicy(frozenset({("openai-chat", "fixture-model")}), frozenset({"https://api.openai.com/v1"})),
+        token,
+        model_builder=lambda *_: model,
+    )
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://gateway") as client:
+        cloud = await client.post("/v1/lumi", json=payload(), headers=AUTH)
+    assert local.status_code == cloud.status_code == 200, (local.text, cloud.text)
+    assert settings[0]["frequency_penalty"] == OLLAMA_FREQUENCY_PENALTY == 0.2
+    # qwen2.5 does not think; Ollama 0.12.3 refuses reasoning_effort "none" for it (measured), so none is sent.
+    assert "openai_reasoning_effort" not in settings[0]
+    assert "frequency_penalty" not in settings[1] and "openai_reasoning_effort" not in settings[1]
+
+
+async def test_a_thinking_ollama_model_is_asked_to_answer_without_thinking(tmp_path):
+    # qwen3:4b spent all 512 answer tokens thinking (Ollama 0.40.2); its capabilities name thinking.
+    settings = []
+
+    async def stream(messages, info):
+        settings.append(info.model_settings or {})
+        for chunk in streamed(info, [json.dumps(REPLY)]):
+            yield chunk
+
+    ask = ollama_ask()
+    ask["profile"]["model"] = "qwen3:4b"
+    policy = ollama_gateway_policy(tmp_path, models=["qwen3:4b"])
+    model = Counted(FunctionModel(stream_function=stream))
+    async with gateway(tmp_path, builder=lambda *_: model, policy=policy) as client:
+        response = await client.post("/v1/lumi", json=ask, headers=AUTH)
+    assert response.status_code == 200, response.text
+    assert settings[0]["openai_reasoning_effort"] == "none"
+
+
+def test_the_gateway_counts_like_the_api():
+    assert conservative_tokens("hello world") == 4 and conservative_tokens("x" * 13) == 14
+    # Outside ASCII each character counts its UTF-8 bytes, like the API: measured 1.9 characters per token for
+    # Chinese and 0.33 for emoji on llama3.2:3b.
+    assert conservative_tokens("ababababab" + "é" + "中") == 4 + 2 + 3
+    assert conservative_tokens("中" * 5000) == 15000 >= 4838 and conservative_tokens("😀" * 3000) == 12000 >= 9206
+
+
+def test_the_fewest_tokens_a_whole_prompt_can_count_depends_on_its_script():
+    # No text measured took more than 4.6 ASCII characters per token or 2 other characters per token.
+    assert fewest_tokens("x" * 600) == 100 and fewest_tokens("中" * 100) == 50
+    assert fewest_tokens("x" * 600 + "中" * 100) == 150
+
+
+def test_a_short_repeated_tail_is_not_yet_a_loop():
+    assert LOOP_MIN_CHARS == 256
+    assert not repeating("x" + "ab" * 100) and repeating("x" + "ab" * 128)
+
+
+async def test_an_emoji_question_that_may_not_fit_is_refused_before_the_model(tmp_path):
+    calls = []
+    ask = ollama_ask()
+    # 3,000 emoji counted 9,206 tokens on llama3.2:3b; characters / 2.5 would have let it through.
+    ask["request"]["message"] = "😀" * 3000
+    async with gateway(tmp_path, builder=lambda *_: reply_model(calls)) as client:
+        response = await client.post("/v1/lumi", json=ask, headers=AUTH)
+    assert (response.status_code, response.json()) == (422, {"code": "LLM_CONTEXT_LIMIT"})
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    ("message", "counted"),
+    [
+        # Ollama 0.40.2 keeps about half the context when it cuts a prompt: 4,098 of 8,192, measured twice.
+        ("word " * 2400, 4098),
+        # Fewer tokens than 800 emoji (at least one per two characters) and the ASCII around them can count.
+        ("😀" * 800, 400),
+    ],
+    ids=["half-the-context", "fewer-than-the-script-allows"],
+)
+async def test_an_answer_to_a_prompt_ollama_cut_is_not_used(tmp_path, message, counted):
+    calls = []
+    ask = ollama_ask()
+    ask["request"]["message"] = message
+
+    def cut(*_):
+        model = reply_model(calls)
+        model.tokens = counted
+        return model
+
+    async with gateway(tmp_path, builder=cut) as client:
+        response = await client.post("/v1/lumi", json=ask, headers=AUTH)
+    assert (response.status_code, response.json()) == (422, {"code": "LUMI_TRUNCATED"})
+    assert len(calls) == 1
+
+
+async def test_an_ollama_entry_without_a_context_size_is_held_to_the_default_context(tmp_path):
+    calls = []
+    ask = ollama_ask()
+    ask["request"]["message"] = "word " * 4000
+    policy = ollama_gateway_policy(tmp_path, contextTokens=None)
+    async with gateway(tmp_path, builder=lambda *_: reply_model(calls), policy=policy) as client:
+        response = await client.post("/v1/lumi", json=ask, headers=AUTH)
+    assert (response.status_code, response.json()) == (422, {"code": "LLM_CONTEXT_LIMIT"})
+    assert calls == []
+
+
+async def test_a_request_that_may_not_fit_the_context_is_refused_before_the_model(tmp_path):
+    calls = []
+    ask = ollama_ask()
+    # Characters / 4 would fit 8,192 tokens with the answer; the conservative count does not.
+    ask["request"]["message"] = "word " * 3600
+    async with gateway(tmp_path, builder=lambda *_: reply_model(calls)) as client:
+        response = await client.post("/v1/lumi", json=ask, headers=AUTH)
+    assert (response.status_code, response.json()) == (422, {"code": "LLM_CONTEXT_LIMIT"})
+    assert calls == []
+
+
+async def test_an_answer_to_a_prompt_the_model_saw_only_part_of_is_not_used(tmp_path):
+    calls = []
+
+    def truncating(*_):
+        model = reply_model(calls)
+        model.tokens = 100
+        return model
+
+    async with gateway(tmp_path, builder=truncating) as client:
+        response = await client.post("/v1/lumi", json=ollama_ask(), headers=AUTH)
+    assert (response.status_code, response.json()) == (422, {"code": "LUMI_TRUNCATED"})
+    assert len(calls) == 1
+
+
+async def test_a_whole_prompt_the_estimate_overcounts_is_answered(tmp_path):
+    # Live on llama3.2:3b: a 1,000-character Chinese question counted 1,516 tokens, whole (the instructions' code word
+    # was in the answer), while the conservative count was 4,372, above half the 8,192-token context.
+    calls = []
+    ask = ollama_ask()
+    # With no guide in this request, 1,300 characters bring the conservative count above half the context, as live.
+    ask["request"]["message"] = "Explain this, then name the code word. " + ("请解释工作流" * 217)[:1300]
+
+    def whole(*_):
+        model = reply_model(calls)
+        model.tokens = 1516
+        return model
+
+    async with gateway(tmp_path, builder=whole) as client:
+        response = await client.post("/v1/lumi", json=ask, headers=AUTH)
+    assert response.status_code == 200, response.text
+
+
+async def test_ask_weave_ai_to_fix_reaches_the_model_through_the_real_route(tmp_path):
+    # The API's own client builds the body; the gateway's own route validates and answers it.
+    from firefly_weave.contracts.lumi import LumiAskRequest, LumiConfiguration
+    from firefly_weave.operations.lumi_gateway import LumiGatewayClient, LumiGatewaySettings
+
+    calls = []
+    token = tmp_path / "token"
+    token.write_text("service-token")
+    app = create_app(
+        ollama_gateway_policy(tmp_path),
+        token,
+        model_builder=lambda *_: reply_model(calls),
+        transport_factory=fake_ollama([]),
+    )
+    client = LumiGatewayClient(
+        LumiGatewaySettings(endpoint="https://gateway.invalid/v1/lumi", token_file=str(token)),
+        transport=httpx.ASGITransport(app=app),
+    )
+    configuration = LumiConfiguration.model_validate(
+        {
+            "enabled": True,
+            "connection_revision_id": "22222222-2222-4222-8222-222222222222",
+            "revision": 1,
+            "profile": {
+                "provider": "openai-chat",
+                "model": "qwen2.5:1.5b",
+                "options": {"max_tokens": 512},
+                "timeoutSeconds": 5,
+                "outputSchema": LUMI_REPLY_SCHEMA,
+            },
+        }
+    )
+    request = LumiAskRequest(message="Fix the proposal", fix=True, draft={"format": "yaml", "source": "a: 1"})
+    shaped = {"profile": "compact", "draft": {"format": "yaml", "source": "a: 1"}}
+    reply = await client.ask(configuration, request, shaped, {"endpoint": "http://ollama:11434/v1"}, None)
+    assert reply.answer == "Ready" and len(calls) == 1
+
+
+def test_the_weave_ai_guide_counts_as_its_measured_reserve_and_any_other_text_by_the_estimate():
+    from firefly_weave.operations.lumi_context import GUIDE
+
+    from weave_agentic_worker.gateway import GUIDE_SHA256, GUIDE_TOKENS, RESERVE_TOKENS, request_tokens
+
+    # Guide version 2 counted at most 424 tokens on llama3.2:3b, qwen3:4b and qwen2.5:1.5b (measured); only that
+    # exact text is counted as the reserve.
+    assert GUIDE_TOKENS == 512 and GUIDE_SHA256 == "3077fe887b0abbc25d36d50cb957460206cf0fff5713b8ce9ee7240a4bd7c816"
+    with_guide = request_tokens("Why?", [], {"profile": "compact", "guide": GUIDE})
+    without = request_tokens("Why?", [], {"profile": "compact"})
+    assert with_guide == without + GUIDE_TOKENS
+    imitation = "Weave workflow guide (version 2)." + " A workflow is YAML." * 400
+    assert request_tokens("Why?", [], {"profile": "compact", "guide": imitation}) > without + GUIDE_TOKENS
+    assert without == RESERVE_TOKENS + conservative_tokens(
+        json.dumps({"prompt": "Why?", "context": {"history": [], "attachments": {"profile": "compact"}}})
+    )
+
+
+async def test_on_ollama_before_0_40_a_count_at_half_the_context_is_not_read_as_a_cut(tmp_path):
+    # Ollama 0.12.3 keeps 5 tokens and fills the window when it cuts, so half the context means nothing there;
+    # the conservative pre-check is the guard.
+    calls = []
+    ask = ollama_ask()
+    ask["request"]["message"] = "word " * 2400
+
+    def counted(*_):
+        model = reply_model(calls)
+        model.tokens = 4098
+        return model
+
+    token = tmp_path / "token"
+    token.write_text("service-token")
+    app = create_app(
+        ollama_gateway_policy(tmp_path), token, model_builder=counted, transport_factory=fake_ollama([], "0.12.3")
+    )
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://gateway") as client:
+        response = await client.post("/v1/lumi", json=ask, headers=AUTH)
+    assert response.status_code == 200, response.text
+
+
+def thinking_gateway(tmp_path, version, chunks, settings):
+    async def stream(messages, info):
+        settings.append(info.model_settings or {})
+        for chunk in streamed(info, chunks):
+            yield chunk
+
+    token = tmp_path / "token"
+    token.write_text("service-token")
+    model = Counted(FunctionModel(stream_function=stream))
+    app = create_app(
+        ollama_gateway_policy(tmp_path, models=["qwen3:4b"]),
+        token,
+        model_builder=lambda *_: model,
+        transport_factory=fake_ollama([], version),
+    )
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://gateway")
+
+
+def thinking_ask():
+    ask = ollama_ask()
+    ask["profile"]["model"] = "qwen3:4b"
+    return ask
+
+
+@pytest.mark.parametrize(("version", "sent"), [("0.40.2", True), ("0.12.3", False), (None, False)])
+async def test_answering_without_thinking_is_asked_only_of_an_ollama_that_accepts_it(tmp_path, version, sent):
+    # Ollama 0.12.3 refuses reasoning_effort "none" for every model (measured); 0.40.2 and 0.40.6 accept it.
+    settings = []
+    async with thinking_gateway(tmp_path, version, [json.dumps(REPLY)], settings) as client:
+        response = await client.post("/v1/lumi", json=thinking_ask(), headers=AUTH)
+    assert response.status_code == 200, response.text
+    assert ("openai_reasoning_effort" in settings[0]) is sent
+
+
+async def test_a_thinking_model_that_fails_on_an_older_ollama_answers_with_an_upgrade_hint(tmp_path):
+    async with thinking_gateway(tmp_path, "0.12.3", ["not a reply"], []) as client:
+        response = await client.post("/v1/lumi", json=thinking_ask(), headers=AUTH)
+    assert (response.status_code, response.json()) == (422, {"code": "LUMI_THINKING"})
+
+
+def test_the_gateway_counts_a_newline_and_an_indent_as_a_token_each():
+    assert conservative_tokens("word\nword") == 2 + 1 + 2
+    assert conservative_tokens("word\n    word") == 2 + 1 + 1 + 2

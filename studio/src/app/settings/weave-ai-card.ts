@@ -39,6 +39,7 @@ import {
   modelOptions,
   weaveAiBody,
   weaveAiChoices,
+  CONTEXT_PROFILES,
   type WeaveAiDraft,
 } from "../integrations/ai-models-model";
 import {
@@ -118,14 +119,27 @@ import {
             [disabled]="busy || !chosen"
             (choose)="draft.model = $event"
           />
+          <weave-select
+            data-control
+            label="Context size"
+            [options]="contextProfiles"
+            [value]="draft.contextProfile ?? 'auto'"
+            [disabled]="busy"
+            (choose)="draft.contextProfile = $any($event)"
+          />
         </div>
         @if (connectionNote; as note) {
           <p class="notice" data-tone="info" role="note">{{ note }}</p>
         }
+        @if (chosen && local(chosen)) {
+          <p class="notice" data-tone="info" role="note">
+            Local models sometimes propose changes with problems. Check each
+            proposal's problems before you apply it, or use a larger model.
+          </p>
+        }
         @if (!usable.length) {
           <p class="notice" data-tone="info" role="note">
-            Weave AI needs an AI connection with a secret handle. Connections
-            without a key can't be used for Weave AI yet.
+            Weave AI needs an AI connection. Connect a provider above first.
           </p>
         }
         @if (error) {
@@ -164,14 +178,22 @@ import {
       margin: 0 0 var(--space-4);
       color: var(--muted);
     }
+    /* The three fields sit in one row when each gets 220 px, and stack
+       otherwise: never two in a row and one below. 692 px = 3 x 220 + 2 gaps. */
     .weave-ai-form {
       display: grid;
       gap: var(--space-4);
+      container: weave-ai-form / inline-size;
     }
     .weave-ai-fields {
       display: grid;
       gap: var(--space-4);
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      grid-template-columns: minmax(0, 1fr);
+    }
+    @container weave-ai-form (min-width: 692px) {
+      .weave-ai-fields {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
     }
     .card-actions {
       display: flex;
@@ -209,6 +231,7 @@ export class WeaveAiCard implements DoCheck, OnDestroy {
   current: LumiConfiguration | null = null;
   models: AiModels | null = null;
   draft: WeaveAiDraft = { enabled: true, connection: "", model: "" };
+  readonly contextProfiles = CONTEXT_PROFILES;
   /** The saved connection revision, read when the list may not hold it. */
   pinned: AiConnection | null = null;
   /** The saved connection revision could not be read. */
@@ -224,7 +247,7 @@ export class WeaveAiCard implements DoCheck, OnDestroy {
     const listed = this.connections().find((item) => item.id === id);
     if (listed) return listed;
     const newest = this.newest;
-    return newest && !keylessConnection(newest) ? newest : null;
+    return newest;
   }
   /** The newest revision of the saved connection, when the list has a newer one. */
   private get newest(): AiConnection | null {
@@ -237,14 +260,14 @@ export class WeaveAiCard implements DoCheck, OnDestroy {
     );
   }
   /** Why the saved connection is not the one shown, when it isn't. */
+  /** A local model without a key: its proposals are worth checking before they are applied. */
+  readonly local = keylessConnection;
   get connectionNote(): string {
     const id = this.draft.connection;
     if (!id || this.connections().some((item) => item.id === id)) return "";
     const newest = this.newest;
     if (newest && this.pinned)
-      return keylessConnection(newest)
-        ? `The newest revision of ${newest.name} (revision ${newest.revision}) has no key, and Weave AI can't use a connection without a key yet. Choose a connection with a key, then save.`
-        : `Weave AI uses revision ${this.pinned.revision} of ${this.pinned.name}; saving moves it to revision ${newest.revision}.`;
+      return `Weave AI uses revision ${this.pinned.revision} of ${this.pinned.name}; saving moves it to revision ${newest.revision}.`;
     if (this.pinnedMissing || (this.pinned && this.connections().length))
       return "Weave AI's connection is no longer available. Choose a connection, then save.";
     return "";
@@ -254,9 +277,7 @@ export class WeaveAiCard implements DoCheck, OnDestroy {
     return weaveAiChoices(this.connections());
   }
   get usable() {
-    return this.connections().filter(
-      (connection) => !keylessConnection(connection),
-    );
+    return this.connections();
   }
   get modelChoices() {
     return modelOptions(this.models?.models ?? []);
@@ -315,6 +336,7 @@ export class WeaveAiCard implements DoCheck, OnDestroy {
           enabled: current?.enabled ?? true,
           connection: current?.connection_revision_id ?? "",
           model: String(current?.profile?.["model"] ?? ""),
+          contextProfile: current?.context_profile ?? "auto",
         };
         this.modelsFor = "";
         const target = this.chosen;

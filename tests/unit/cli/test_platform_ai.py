@@ -54,7 +54,7 @@ class Server:
     """The server steps, recorded; the HTTP operations behind them are tested on their own."""
 
     def __init__(self):
-        self.calls, self.connections = [], set()
+        self.calls, self.connections, self.owners, self.granted = [], set(), [], []
         self.scope_visible = False
         self.answer = {
             "ok": True,
@@ -100,6 +100,15 @@ class Server:
     async def test_connection(self, client, revision_id, model):
         self.calls.append(("test", model))
         return dict(self.answer)
+
+    async def configure_weave_ai(
+        self, client, revision_id, model, *, owner=None, scope=None, granted=False, record=None
+    ):
+        self.owners.append(owner)
+        self.granted.append(granted)
+        self.calls.append(("weave_ai", revision_id, model))
+        state = "unchanged" if ("weave_ai", revision_id, model) in self.calls[:-1] else "configured"
+        return {"state": state, "provider": "openai-chat", "model": model}
 
     async def smoke(self, client, scope, *, release_id, revision_id, model):
         self.calls.append(("smoke", model))
@@ -207,6 +216,7 @@ def harness_fixture(owned, monkeypatch):
         "worker_principal",
         "ensure_connection",
         "wait_online",
+        "configure_weave_ai",
         "presence",
         "test_connection",
         "smoke",
@@ -360,7 +370,10 @@ def test_enable_runs_every_stage_in_order_and_saves_a_ready_receipt(harness):
     h = harness
     result = enable(h, verify=True)
     assert result["stage"] == "ready" and result["mode"] == "container"
-    assert result["endpoint"] == "http://ollama:11434/v1" and result["weave_ai"] == "not_available"
+    assert result["endpoint"] == "http://ollama:11434/v1"
+    assert result["weave_ai"] == {"state": "configured", "provider": "openai-chat", "model": MODEL}
+    assert ("weave_ai", REVISION, MODEL) in h.server.calls
+    assert h.server.calls.index(("weave_ai", REVISION, MODEL)) < h.server.calls.index(("test", MODEL))
     assert result["changed"] == [
         "ollama",
         "models",
@@ -417,6 +430,7 @@ def test_rerunning_enable_reports_no_changes(harness):
     builds = h.runner.names().count("ai-image-build")
     again = enable(h, confirm=platform_ai.refuse_confirmation)
     assert again["changed"] == [] and again["stage"] == "ready"
+    assert again["weave_ai"]["state"] == "unchanged"
     assert len(h.pulls) == 1 and h.runner.names().count("ai-image-build") == builds
 
 
@@ -737,7 +751,7 @@ def test_a_busy_connection_test_says_what_to_do(harness, monkeypatch, code, advi
     with pytest.raises(platform.PlatformError, match=advice) as refused:
         enable(h)
     assert code in str(refused.value) and "fix the cause" not in str(refused.value)
-    assert saved(h)["stage"] == "online"
+    assert saved(h)["stage"] == "weave_ai"
 
 
 @pytest.mark.parametrize(
@@ -1036,3 +1050,36 @@ def test_status_and_model_reads_refuse_a_docker_context_that_points_elsewhere(ha
     with pytest.raises(platform.PlatformError, match="different engine"):
         run()
     assert len(h.runner.calls) == calls and len(h.pulls) == 1
+
+
+def test_enable_sets_weave_ai_up_as_the_installation_owner(harness):
+    h = harness
+    owner = str(uuid4())
+    path = h.directory / "bootstrap.json"
+    path.write_text(json.dumps({"principal_id": owner, "provider_id": "local-keycloak"}))
+    path.chmod(0o600)
+    enable(h, verify=True)
+    assert h.server.owners == [owner] and h.server.granted == [False]
+
+
+def test_a_recorded_weave_ai_grant_is_never_made_again(harness):
+    h = harness
+    owner = str(uuid4())
+    path = h.directory / "bootstrap.json"
+    path.write_text(json.dumps({"principal_id": owner, "provider_id": "local-keycloak"}))
+    path.chmod(0o600)
+    real = h.server.configure_weave_ai
+
+    async def granting(client, revision_id, model, **kwargs):
+        if not kwargs["granted"]:
+            kwargs["record"]()
+        return await real(
+            client, revision_id, model, owner=kwargs["owner"], scope=kwargs["scope"], granted=kwargs["granted"]
+        )
+
+    h.server.configure_weave_ai = granting
+    platform_ai.setup.configure_weave_ai = granting
+    enable(h, verify=True)
+    assert saved(h)["weave_ai_granted"] is True
+    enable(h, verify=True)
+    assert h.server.granted == [False, True]

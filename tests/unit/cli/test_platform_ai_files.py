@@ -383,3 +383,12 @@ def test_unsafe_saved_generation_is_refused_without_overwriting_it(owned, secret
         files.write_settings(state, value)
     assert path.read_bytes() == original and (directory / "ai.json").read_bytes() == saved
     assert path.is_symlink() if unsafe == "symlink" else stat.S_IMODE(path.stat().st_mode) == 0o644
+
+
+def test_the_ollama_image_is_digest_pinned_and_accepts_answering_without_thinking():
+    import re
+
+    match = re.fullmatch(r"ollama/ollama:(\d+)\.(\d+)\.(\d+)@sha256:[0-9a-f]{64}", files.OLLAMA_IMAGE)
+    assert match is not None, files.OLLAMA_IMAGE
+    # Ollama 0.12.3 refused reasoning_effort "none"; 0.40 accepts it, which Weave AI sends to thinking models.
+    assert tuple(int(part) for part in match.groups()) >= (0, 40, 0)

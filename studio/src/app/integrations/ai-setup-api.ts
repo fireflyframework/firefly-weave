@@ -133,6 +133,8 @@ export interface LumiConfiguration {
   connection_revision_id: string;
   profile: Record<string, unknown>;
   revision: number;
+  /** Absent when Weave AI chooses the context size from the model. */
+  context_profile?: "auto" | "compact" | "standard" | "full";
 }
 export interface LumiStatus {
   configured: boolean;

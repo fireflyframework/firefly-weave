@@ -224,6 +224,7 @@ class AgenticTaskHandler:
                 settings,
                 context_tokens=entry.context_tokens,
                 output_mode=entry.output_mode,
+                ollama=entry.compat == "ollama",
             )
         finally:
             if isinstance(owned, ProviderModel):

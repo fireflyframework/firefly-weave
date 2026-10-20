@@ -107,3 +107,12 @@ def test_operations_context_is_identifier_only_and_explanation_only(kind):
         LumiAskRequest(message="Explain", attachments=[attachment], draft={"format": "yaml", "source": "private"})
     with pytest.raises(ValidationError):
         LumiAskRequest(message="Explain", attachments=[attachment, {"kind": "run", "id": str(uuid4())}])
+
+
+def test_a_fix_request_is_marked_and_carries_the_proposal_as_its_draft():
+    plain = LumiAskRequest(message="Why?")
+    assert plain.fix is False and "fix" not in plain.model_dump()
+    fix = LumiAskRequest(message="Fix it", fix=True, draft={"format": "yaml", "source": "a: 1"})
+    assert fix.model_dump()["fix"] is True
+    with pytest.raises(ValidationError):
+        LumiAskRequest(message="Fix it", fix=True)
