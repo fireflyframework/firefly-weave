@@ -285,3 +285,18 @@ async def test_a_run_the_caller_may_not_see_is_named_unavailable():
     resources = await service._attachments(SimpleNamespace(id=uuid4()), SCOPE, request, AuditContext())
     assert resources == [{"kind": "run", "id": str(RUN_ID), "data": {"status": "unavailable"}}]
     runs.steps.assert_not_awaited()
+
+
+async def test_the_selected_context_limit_counts_the_inline_draft():
+    from firefly_weave.definitions.models import CatalogError
+
+    read, _ = paged(STEPS)
+    runs = SimpleNamespace(summary=AsyncMock(return_value=summary()), steps=read)
+    service = LumiService(SimpleNamespace(definitions=None), None, None, None, None, None, runs)
+    attachments = [{"kind": "run", "id": RUN_ID}]
+    small = LumiAskRequest(message="Why?", attachments=attachments, draft={"format": "yaml", "source": "a: 1"})
+    assert await service._attachments(SimpleNamespace(id=uuid4()), SCOPE, small, AuditContext())
+    large = small.model_copy(update={"draft": small.draft.model_copy(update={"source": "a: " + "x" * 262000})})
+    with pytest.raises(CatalogError) as failed:
+        await service._attachments(SimpleNamespace(id=uuid4()), SCOPE, large, AuditContext())
+    assert (failed.value.status, failed.value.code) == (413, "WV-LUMI-LIMIT")

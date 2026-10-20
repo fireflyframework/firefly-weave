@@ -633,3 +633,55 @@ async def test_gateway_codes_become_weave_ai_problems(tmp_path, status, code, st
     assert (failed.value.status, failed.value.code) == (status_out, problem)
     assert text in failed.value.message and "secret-canary" not in failed.value.message
     assert client.active == 0
+
+
+async def refused_with(tmp_path, body):
+    from firefly_weave.contracts.lumi import LUMI_REPLY_SCHEMA, LumiAskRequest, LumiConfiguration
+
+    token = tmp_path / "token"
+    token.write_text("service-token")
+    client = LumiGatewayClient(
+        LumiGatewaySettings(endpoint="https://trusted.invalid/v1/lumi", token_file=str(token)),
+        transport=httpx.MockTransport(lambda request: httpx.Response(422, content=body)),
+    )
+    configuration = LumiConfiguration.model_validate(
+        {**ASK_CONFIGURATION, "profile": {**ASK_CONFIGURATION["profile"], "outputSchema": LUMI_REPLY_SCHEMA}}
+    )
+    with pytest.raises(CatalogError) as failed:
+        await client.ask(
+            configuration, LumiAskRequest(message="Explain"), {}, {"endpoint": "http://ollama:11434/v1"}, None
+        )
+    return failed.value
+
+
+@pytest.mark.parametrize("code", ["llm_timeout", "LLM TIMEOUT", "LLM_TIMEOUT\n", "L" * 65])
+async def test_a_refusal_code_outside_the_code_pattern_reads_as_unavailable(tmp_path, code):
+    from firefly_weave.operations.lumi_gateway import _PROBLEMS
+
+    _PROBLEMS[code] = (504, "WV-LUMI-TIMEOUT")
+    try:
+        problem = await refused_with(tmp_path, json.dumps({"code": code}).encode())
+    finally:
+        del _PROBLEMS[code]
+    assert (problem.status, problem.code) == (503, "WV-LUMI-UNAVAILABLE")
+
+
+async def test_a_refusal_body_over_four_kibibytes_is_not_read_for_its_code(tmp_path):
+    body = json.dumps({"code": "LLM_TIMEOUT", "padding": "x" * 4096}).encode()
+    problem = await refused_with(tmp_path, body)
+    assert (problem.status, problem.code) == (503, "WV-LUMI-UNAVAILABLE")
+    small = await refused_with(tmp_path, json.dumps({"code": "LLM_TIMEOUT"}).encode())
+    assert small.code == "WV-LUMI-TIMEOUT"
+
+
+def test_a_context_limit_without_a_known_size_says_so_without_a_number():
+    from firefly_weave.contracts.lumi import LUMI_REPLY_SCHEMA, LumiConfiguration
+    from firefly_weave.operations.lumi_gateway import weave_ai_problem
+
+    configuration = LumiConfiguration.model_validate(
+        {**ASK_CONFIGURATION, "profile": {**ASK_CONFIGURATION["profile"], "outputSchema": LUMI_REPLY_SCHEMA}}
+    )
+    unknown = weave_ai_problem("LLM_CONTEXT_LIMIT", configuration, "http://ollama:11434/v1")
+    assert unknown.message == "The prompt is too long for this model's context."
+    known = weave_ai_problem("LLM_CONTEXT_LIMIT", configuration, "http://ollama:11434/v1", 8192)
+    assert "8192" in known.message.replace(",", "")

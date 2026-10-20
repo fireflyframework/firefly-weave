@@ -511,3 +511,38 @@ def test_standard_attachments_are_capped_at_thirty_two_kibibytes():
     assert kept == resources[: len(kept)] and 0 < len(kept) < len(resources)
     assert len(json.dumps(kept, ensure_ascii=False).encode()) <= 32768
     assert shaped.context["trimmed"] == ["attachments"]
+
+
+LONG_HISTORY = [
+    LumiMessage(role="user" if index % 2 == 0 else "assistant", content=f"m{index} " * 150) for index in range(16)
+]
+
+
+def compact_history(message):
+    return shape(
+        "compact",
+        COMPACT_INPUT_TOKENS,
+        message=message,
+        history=LONG_HISTORY,
+        resources=[],
+        draft=None,
+        selected_step=None,
+        schemas={},
+    )
+
+
+def test_history_over_its_share_keeps_the_newest_messages():
+    shaped = compact_history("Why?")
+    assert 0 < len(shaped.history) < 4
+    assert shaped.history == LONG_HISTORY[-len(shaped.history) :]
+    assert "history" in shaped.context["trimmed"]
+
+
+def test_the_question_counts_against_the_conversations_share():
+    assert len(compact_history("Why? " * 150).history) < len(compact_history("Why?").history)
+
+
+def test_the_shares_of_the_draft_and_attachments_are_forty_and_twenty_percent():
+    from firefly_weave.operations.lumi_context import ATTACHMENT_SHARE, DRAFT_SHARE
+
+    assert (DRAFT_SHARE, ATTACHMENT_SHARE) == (0.40, 0.20)
