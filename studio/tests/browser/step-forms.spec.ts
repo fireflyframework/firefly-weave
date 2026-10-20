@@ -129,13 +129,13 @@ for (const size of sizes)
       await page.keyboard.press("Enter");
       await expect(
         details.dialog.getByText(
-          "The AI profile this step uses: its provider, model and options.",
+          /^The model that answers\. Choosing one also chooses its AI connection/,
         ),
       ).toBeVisible();
       await page.keyboard.press("Escape");
       await expect(
         details.dialog.getByText(
-          "The AI profile this step uses: its provider, model and options.",
+          /^The model that answers\. Choosing one also chooses its AI connection/,
         ),
       ).toBeHidden();
       await expect(details.dialog).toBeVisible();

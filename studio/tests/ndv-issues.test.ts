@@ -888,7 +888,9 @@ describe("unapplied template text", () => {
     expect(again.component.templateError()).toBe(
       "The formula ends too early. Close the placeholder with `}}`.",
     );
-    expect(session.issues()[0]).toMatchObject({
+    expect(
+      session.issues().find((issue) => issue.field?.spec.id === "prompt"),
+    ).toMatchObject({
       status: "Not applied",
       field: { spec: { id: "prompt" } },
     });

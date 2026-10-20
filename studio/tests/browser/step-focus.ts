@@ -37,7 +37,9 @@ export async function focusStop(page: Page): Promise<FocusStop | null> {
     const box = element.getBoundingClientRect();
     // A ring in the focus color may also be drawn around a smaller face
     // inside the target (the Fixed | Mapped radios, on ::before) or by the
-    // field box around a picker's input (:focus-within).
+    // field box around a picker's input (:focus-within), itself or its
+    // ::before (the input pane's source choice, .pane-source-field, draws
+    // its field box there), up to three levels up.
     const probe = document.createElement("span");
     probe.style.color = "var(--focus)";
     dialog.append(probe);
@@ -57,7 +59,12 @@ export async function focusStop(page: Page): Promise<FocusStop | null> {
       parent && depth < 3 && parent !== dialog;
       parent = parent.parentElement, depth++
     )
-      if (parent.matches(":focus-within") && rings(getComputedStyle(parent)))
+      if (
+        parent.matches(":focus-within") &&
+        [undefined, "::before", "::after"].some((part) =>
+          rings(getComputedStyle(parent!, part)),
+        )
+      )
         around = true;
     // Only a ring in the focus color counts, on the control itself too: a
     // shadow it wears at rest is no focus ring.

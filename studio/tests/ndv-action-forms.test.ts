@@ -634,8 +634,12 @@ describe("action form preservation", () => {
 
   it("keeps the AI task timeout with its profile", () => {
     const step = createStep("llm", "ai-1");
-    expect(ndvRegistry.kind("llm")!.settings!(step, ctx())).toEqual({
-      fields: [],
+    const [timeout] = ndvRegistry.kind("llm")!.settings!(step, ctx()).fields;
+    expect(timeout).toMatchObject({
+      id: "timeout",
+      scope: "workflow",
+      path: ["spec", "llmProfiles", "default", "timeoutSeconds"],
+      default: 120,
     });
   });
 });

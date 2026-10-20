@@ -23,6 +23,7 @@ import type { ContractGap } from "../../designer/contract-gaps";
 import type { SuggestedChange } from "../../designer/diagnostics-list";
 import type { StructuredCanvasAdapter } from "../../model";
 import type { InferSchema } from "../../forms/ui/schema-designer";
+import type { AiSheetRequest } from "../../integrations/ai-connection-sheet";
 import type { ToastAction } from "../../toast";
 import type { StepDetailsRequest } from "./step-details-service";
 import { editorNextEnabled } from "../state/editor-flag";
@@ -32,6 +33,10 @@ export interface StepDetailsHost {
   readonly tick: Signal<number>;
   readonly api: StudioApi;
   readonly profile: Profile | null;
+  /** Grows whenever an AI connection or its test changes; AI model lists reload on it. */
+  readonly aiSetupGeneration?: number;
+  /** Opens the AI connection side sheet (Set up AI). */
+  openAiConnectionDialog?(request?: AiSheetRequest): void;
   /** Account/workspace invalidation generation and stable principal identity. */
   readonly stepDataScope?: string;
   /** True while a simulation runs: the workflow can't change. */
