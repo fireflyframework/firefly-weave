@@ -1,0 +1,192 @@
+/*
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+*/
+import { describe, expect, it } from "vitest";
+import {
+  fingerprint,
+  fingerprints,
+  fnv1a64,
+  staleReason,
+  type FingerprintInputs,
+} from "../src/app/editor/state/fingerprints";
+import type { Step, Workflow } from "../src/app/model";
+
+const workflow = (steps: Step[]): Workflow =>
+  ({
+    apiVersion: "weave/v1alpha1",
+    kind: "Workflow",
+    metadata: { name: "orders", version: "1.0.0" },
+    spec: {
+      inputSchema: { type: "object" },
+      outputSchema: {},
+      steps,
+      output: { literal: null },
+    },
+  }) as unknown as Workflow;
+const base = (): Step[] => [
+  {
+    id: "lookup",
+    kind: "action",
+    uses: "crm.lookup@1.0.0",
+    with: { object: { id: { ref: "/input/customerId" } } },
+  },
+  {
+    id: "score",
+    kind: "action",
+    uses: "risk.score@2.0.0",
+    with: { ref: "/steps/lookup/output" },
+  },
+  {
+    id: "route",
+    kind: "switch",
+    cases: [
+      {
+        when: {
+          op: {
+            name: "gt",
+            args: [{ ref: "/steps/score/output/value" }, { literal: 5 }],
+          },
+        },
+        steps: [
+          {
+            id: "notify",
+            kind: "action",
+            uses: "mail.send@1.0.0",
+            with: { literal: {} },
+          },
+        ],
+        output: { literal: {} },
+      },
+    ],
+    default: { steps: [], output: { literal: {} } },
+  },
+  { id: "note", kind: "transform", value: { literal: "fixed" } },
+];
+const inputs = (
+  steps: Step[],
+  testInput: unknown = { customerId: "c-1" },
+  contracts: Record<string, string> = {},
+): FingerprintInputs => ({
+  workflow: workflow(steps),
+  testInput: testInput as FingerprintInputs["testInput"],
+  contractOf: (step) => contracts[step.id] ?? String(step["uses"] ?? ""),
+});
+
+describe("fingerprints", () => {
+  it("hash bytes as FNV-1a 64 does", () => {
+    expect(fnv1a64("")).toBe("cbf29ce484222325");
+    expect(fnv1a64("a")).toBe("af63dc4c8601ec8c");
+    expect(fnv1a64("foobar")).toBe("85944171f73967e8");
+    expect(fnv1a64("é😀")).toBe("52da6ebdce68376c");
+    expect(fingerprint({ b: 1, a: [true, null] })).toBe(
+      `fnv1a64:${fnv1a64('{"a":[true,null],"b":1}')}`,
+    );
+  });
+  it("cover every step, nested ones too, and don't change for the same workflow", () => {
+    const first = fingerprints(inputs(base()));
+    expect([...first.keys()].sort()).toEqual([
+      "lookup",
+      "note",
+      "notify",
+      "route",
+      "score",
+    ]);
+    expect(fingerprints(inputs(base()))).toEqual(first);
+  });
+  it("mark a step's own settings, then what it calls, then what it reads", () => {
+    const before = fingerprints(inputs(base()));
+    const pinOf = (id: string) => {
+      const now = before.get(id)!;
+      return {
+        configHash: now.config,
+        contractHash: now.contract,
+        upstreamHash: now.upstream,
+      };
+    };
+    const settings = base();
+    settings[0]["with"] = { object: { id: { ref: "/input/email" } } };
+    const changed = fingerprints(inputs(settings));
+    expect(staleReason(pinOf("lookup"), changed.get("lookup"))).toBe(
+      "settings",
+    );
+    // score reads lookup, so it is out of date once lookup changes.
+    expect(staleReason(pinOf("score"), changed.get("score"))).toBe("upstream");
+    // note reads nothing, so it stays current.
+    expect(staleReason(pinOf("note"), changed.get("note"))).toBeNull();
+    const contract = fingerprints(
+      inputs(base(), undefined, { lookup: "fnv1a64:0000000000000001" }),
+    );
+    expect(staleReason(pinOf("lookup"), contract.get("lookup"))).toBe(
+      "contract",
+    );
+  });
+  it("follow the test input only for steps that read it", () => {
+    const before = fingerprints(inputs(base(), { customerId: "c-1" }));
+    const after = fingerprints(inputs(base(), { customerId: "c-2" }));
+    expect(after.get("lookup")!.upstream).not.toBe(
+      before.get("lookup")!.upstream,
+    );
+    expect(after.get("score")!.upstream).not.toBe(
+      before.get("score")!.upstream,
+    );
+    expect(after.get("note")).toEqual(before.get("note"));
+  });
+  it("treat a group as its children's, without hashing them as its own settings", () => {
+    const before = fingerprints(inputs(base()));
+    const steps = base();
+    ((steps[2]["cases"] as { steps: Step[] }[])[0].steps[0] as Step)["with"] = {
+      literal: { to: "x" },
+    };
+    const after = fingerprints(inputs(steps));
+    expect(after.get("route")!.config).toBe(before.get("route")!.config);
+    expect(after.get("route")!.upstream).not.toBe(
+      before.get("route")!.upstream,
+    );
+    expect(after.get("notify")!.config).not.toBe(before.get("notify")!.config);
+  });
+  it("count a missing step as nothing, and a step that is gone as changed", () => {
+    const steps = base();
+    steps[1]["with"] = { ref: "/steps/gone/output" };
+    expect(fingerprints(inputs(steps)).get("score")).toBeDefined();
+    const pin = {
+      configHash: "fnv1a64:0",
+      contractHash: "fnv1a64:0",
+      upstreamHash: "fnv1a64:0",
+    };
+    expect(staleReason(pin as never, undefined)).toBe("settings");
+  });
+  it("hash 200 steps quickly", () => {
+    const many: Step[] = Array.from({ length: 200 }, (_, index) => ({
+      id: `step-${index}`,
+      kind: "action",
+      uses: "crm.lookup@1.0.0",
+      with: {
+        object: {
+          id: index
+            ? { ref: `/steps/step-${index - 1}/output/id` }
+            : { ref: "/input/id" },
+          note: { literal: "x".repeat(200) },
+        },
+      },
+    }));
+    fingerprints(inputs(many));
+    const started = performance.now();
+    for (let round = 0; round < 5; round++) fingerprints(inputs(many));
+    // The browser gate (10 ms) runs in the performance suite; here a generous bound catches a quadratic slip.
+    expect((performance.now() - started) / 5).toBeLessThan(50);
+  });
+});

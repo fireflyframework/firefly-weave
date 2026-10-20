@@ -63,6 +63,50 @@ function* walk(steps: readonly Step[], seen: Set<Step>): Generator<Step> {
   }
 }
 
+/** The step lists a step holds directly (none for most kinds). */
+export const childLists = (step: Step): Step[][] =>
+  Object.hasOwn(CONTAINERS, step.kind)
+    ? CONTAINERS[step.kind](step).filter((list) => list.length > 0)
+    : [];
+
+/** A branch with its steps replaced by their IDs. */
+const idsOf = (branch: unknown): unknown =>
+  isRecord(branch) && Array.isArray(branch["steps"])
+    ? { ...branch, steps: stepsOf(branch).map((step) => step.id) }
+    : branch;
+/**
+ * The step without the steps it holds: each list it declares becomes the
+ * list of their IDs (what the step itself is, apart from its children).
+ */
+export function withChildIds(step: Step): Step {
+  switch (step.kind as string) {
+    case "switch":
+      return {
+        ...step,
+        ...(Array.isArray(step["cases"])
+          ? { cases: step["cases"].map(idsOf) }
+          : {}),
+        ...("default" in step ? { default: idsOf(step["default"]) } : {}),
+      };
+    case "parallel":
+      return isRecord(step["branches"])
+        ? {
+            ...step,
+            branches: Object.fromEntries(
+              Object.entries(step["branches"]).map(([name, branch]) => [
+                name,
+                idsOf(branch),
+              ]),
+            ),
+          }
+        : step;
+    case "forEach":
+      return "body" in step ? { ...step, body: idsOf(step["body"]) } : step;
+    default:
+      return step;
+  }
+}
+
 /** Every step, nested ones included, depth-first. */
 export const allSteps = (steps: Step[]): Step[] => [...walk(steps, new Set())];
 
