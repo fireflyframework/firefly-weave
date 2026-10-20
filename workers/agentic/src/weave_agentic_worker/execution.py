@@ -39,7 +39,7 @@ from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.models import Model
 from pydantic_ai.usage import RunUsage, UsageLimits
 
-from weave_agentic_worker.errors import classify
+from weave_agentic_worker.errors import classify, format_refused
 
 
 def private_framework_logging() -> None:
@@ -74,6 +74,7 @@ class _BoundedAgent(FireflyAgent[Any, Any]):
                 default_temperature=None,
             ),
         )
+        self.max_calls = profile.max_calls
         self.shared_usage = RunUsage()
         self.shared_limits = UsageLimits(
             request_limit=profile.max_calls,
@@ -93,8 +94,32 @@ class _BoundedAgent(FireflyAgent[Any, Any]):
             self.failure = ConnectorFailure("LLM_LIMIT", "failed")
             raise self.failure from None
         except Exception as error:
+            if format_refused(error):
+                raise FormatRefused from None
             self.failure = classify(error)
             raise self.failure from None
+
+    async def run_structured(self, prompt: str, schema: dict[str, Any], output_mode: str) -> Any:
+        """One structured answer; a refused native format is asked once more with the format in the prompt."""
+        result = StructuredDict(schema, name="WeaveResult")
+        output_type = {"native": NativeOutput, "tool": ToolOutput, "prompted": PromptedOutput}[output_mode](result)
+        try:
+            return await self.run(prompt, output_type=output_type)
+        except FormatRefused:
+            # The endpoint answered 400 before generating anything. The refused request counts as one call.
+            self.shared_usage.requests += 1
+            if output_mode != "native" or self.shared_usage.requests >= self.max_calls:
+                self.failure = ConnectorFailure("LLM_PROVIDER", "unknown")
+                raise self.failure from None
+        try:
+            return await self.run(prompt, output_type=PromptedOutput(result))
+        except FormatRefused:
+            self.failure = ConnectorFailure("LLM_PROVIDER", "unknown")
+            raise self.failure from None
+
+
+class FormatRefused(Exception):
+    """The endpoint refused the requested response format (HTTP 400); nothing was generated."""
 
 
 # A string schema with only these keywords is a plain text answer: no output tool, no response format.
@@ -191,10 +216,7 @@ async def _run_model(
         else:
             if output_mode == "native" and not model.profile.get("supports_json_schema_output", False):
                 output_mode = "prompted"
-            output_type = {"native": NativeOutput, "tool": ToolOutput, "prompted": PromptedOutput}[output_mode](
-                StructuredDict(provider_schema(profile.output_schema), name="WeaveResult")
-            )
-            final = await agent.run(prompt, output_type=output_type)
+            final = await agent.run_structured(prompt, provider_schema(profile.output_schema), output_mode)
             result = final.output["result"]
         if validate_payload(profile.output_schema, result, {}):
             raise ConnectorFailure("LLM_OUTPUT", "failed")

@@ -39,6 +39,7 @@ from weave_agentic_worker.egress import ModelEgressDenied
 _MODEL_NOT_FOUND = re.compile(r"model .* not found", re.IGNORECASE)
 _NO_TOOLS = re.compile(r"does not support tools", re.IGNORECASE)
 _CONTEXT = re.compile(r"context_length_exceeded|maximum context length|context window", re.IGNORECASE)
+_RESPONSE_FORMAT = re.compile(r"response_format|json_schema", re.IGNORECASE)
 
 
 def failure(code: str, outcome: Literal["not_started", "failed", "unknown"] | None = None) -> ConnectorFailure:
@@ -62,6 +63,12 @@ def _body(value: object) -> str:
         return json.dumps(value)[:8192]
     except (TypeError, ValueError):
         return ""
+
+
+def format_refused(error: BaseException) -> bool:
+    """True when the endpoint refused the requested response format before generating anything (HTTP 400)."""
+    http = next((item for item in _chain(error) if isinstance(item, ModelHTTPError)), None)
+    return http is not None and http.status_code == 400 and bool(_RESPONSE_FORMAT.search(_body(http.body)))
 
 
 def classify(error: BaseException) -> ConnectorFailure:
