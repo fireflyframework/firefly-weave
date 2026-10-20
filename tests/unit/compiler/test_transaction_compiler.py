@@ -471,6 +471,20 @@ def test_import_refuses_a_call_inside_a_transaction_that_says_nothing():
         WorkflowIR.model_validate(value)
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("holdSeconds", 29), ("holdSeconds", 86_401), ("undoTimeoutSeconds", 59), ("undoTimeoutSeconds", 604_801)],
+)
+def test_import_refuses_a_transaction_policy_outside_the_definition_bounds(field, value):
+    artifact, nodes = _example_nodes()
+    nodes["move"]["policy"][field] = value
+    with pytest.raises(ValidationError):
+        WorkflowIR.model_validate(artifact)
+    for edge in (30, 86_400) if field == "holdSeconds" else (60, 604_800):
+        nodes["move"]["policy"][field] = edge
+        WorkflowIR.model_validate(artifact)
+
+
 def test_an_artifact_with_the_step_that_cant_be_undone_moved_first_is_refused_at_import():
     value = executable(compiled(EXAMPLE))
     nodes = {node["id"]: node for node in value["graph"]["nodes"]}

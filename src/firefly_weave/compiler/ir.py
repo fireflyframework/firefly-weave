@@ -56,7 +56,7 @@ from firefly_weave.contracts.definitions import (
 from firefly_weave.contracts.diagnostics import Diagnostic, SourceRange
 from firefly_weave.contracts.language_features import OPERATOR_FEATURES, LanguageFeature
 from firefly_weave.contracts.llm import LLMProfile
-from firefly_weave.contracts.transactions import UndoMode, UndoPhase
+from firefly_weave.contracts.transactions import MAX_UNDO_TIMEOUT_SECONDS, MIN_UNDO_TIMEOUT_SECONDS, UndoMode, UndoPhase
 from firefly_weave.contracts.values import MAX_SAFE_INTEGER, JsonObject, JsonObjectData, JsonValue, UnicodeString
 
 type Digest = Annotated[UnicodeString, Field(pattern=r"^[a-f0-9]{64}$")]
@@ -274,9 +274,13 @@ class ForEachNode(Node):
 
 
 class TransactionPolicyNode(ContractModel):
-    hold_seconds: PositiveInt = Field(alias="holdSeconds")
+    """The transaction policy written out at compile time, bounded as the definition's policy is."""
+
+    hold_seconds: HoldSeconds = Field(alias="holdSeconds")
     undo_retry: UndoRetryPolicy = Field(alias="undoRetry")
-    undo_timeout_seconds: PositiveInt = Field(alias="undoTimeoutSeconds")
+    undo_timeout_seconds: int = Field(
+        ge=MIN_UNDO_TIMEOUT_SECONDS, le=MAX_UNDO_TIMEOUT_SECONDS, alias="undoTimeoutSeconds"
+    )
 
 
 class TransactionNode(Node):
