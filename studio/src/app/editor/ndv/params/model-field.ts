@@ -40,6 +40,7 @@ import {
   currentModelValue,
   modelOptions,
   parseModelValue,
+  profileNameOf,
   profileOf,
   sharingNote,
   type BoundTo,
@@ -78,6 +79,12 @@ async function loadModels(api: StudioApi): Promise<ConnectionModels[]> {
     }),
   );
 }
+/**
+ * The connection revision last chosen for each set of AI settings, per account:
+ * when two connections serve one model, the field keeps showing the one chosen
+ * (the field is created again after every change).
+ */
+const chosenFor = new WeakMap<StudioApi, Map<string, string>>();
 const cache = new WeakMap<
   StudioApi,
   { generation: number; groups: Promise<ConnectionModels[]> }
@@ -138,8 +145,6 @@ export class ModelField {
   private groups: ConnectionModels[] | null = null;
   private failure = "";
   private loading: Promise<ConnectionModels[]> | null = null;
-  /** The connection revision last chosen here, when two connections serve one model. */
-  private chosen = "";
 
   private load(): ConnectionModels[] | null {
     const host = this.session().host;
@@ -203,7 +208,7 @@ export class ModelField {
           step,
           this.groups ?? [],
           this.boundTo(),
-          this.chosen,
+          chosenFor.get(this.session().host.api)?.get(profileNameOf(step)),
         )
       : "";
   }
@@ -253,7 +258,13 @@ export class ModelField {
         },
         this.boundTo(),
       );
-      this.chosen = group.connection.revision_id;
+      const name = changes.find((change) => change.path[1] === "llmProfiles")
+        ?.path[2];
+      if (typeof name === "string") {
+        const chosen = chosenFor.get(session.host.api) ?? new Map();
+        chosen.set(name, group.connection.revision_id);
+        chosenFor.set(session.host.api, chosen);
+      }
       session.commit(changes, this.spec().id);
     } catch (error) {
       if (error instanceof FormWriteError) session.host.notify(error.message);
