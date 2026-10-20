@@ -196,7 +196,7 @@ def containers(run) -> dict[str, str]:
     return {item[:12]: item for item in listed}
 
 
-async def lite_activation(client, release: str) -> Any:
+async def lite_activation(client, release: str, journey: str) -> Any:
     """order-review-lite for these journeys: one step that sleeps on the fixture worker."""
     from firefly_weave.contracts.catalog import ActivationRequest, PublicationRequest
 
@@ -204,7 +204,7 @@ async def lite_activation(client, release: str) -> Any:
     action = {
         "apiVersion": "weave/v1alpha1",
         "kind": "Action",
-        "metadata": {"name": "o-j-sleep-" + SUFFIX, "version": "1.0.0"},
+        "metadata": {"name": f"{journey}-sleep-{SUFFIX}", "version": "1.0.0"},
         "spec": {
             "implementation": {"kind": "worker", "taskType": "example-sleep", "taskVersion": "1.0.0"},
             **{key: manifest[key] for key in ("inputSchema", "outputSchema", "sideEffect")},
@@ -221,13 +221,13 @@ async def lite_activation(client, release: str) -> Any:
     workflow = {
         "apiVersion": "weave/v1alpha1",
         "kind": "Workflow",
-        "metadata": {"name": "o-j-lite-" + SUFFIX, "version": "1.0.0"},
+        "metadata": {"name": f"{journey}-lite-{SUFFIX}", "version": "1.0.0"},
         "spec": {
             "inputSchema": manifest["inputSchema"],
             "outputSchema": {"type": "object"},
             "timeoutSeconds": 600,
             "steps": [
-                {"id": "sleep", "kind": "action", "uses": f"o-j-sleep-{SUFFIX}@1.0.0", "with": {"ref": "/input"}}
+                {"id": "sleep", "kind": "action", "uses": f"{journey}-sleep-{SUFFIX}@1.0.0", "with": {"ref": "/input"}}
             ],
             "output": {"ref": "/steps/sleep/output"},
         },
@@ -323,7 +323,7 @@ async def test_o_j2_scale_up_run_twenty_tasks_then_scale_down_removing_the_drain
     async with run.client("operator") as operator, run.client("owner") as owner:
         await finished(operator, await requested(operator, "scale_workers", 3))
         await auntil(lambda: fixture_workers(operator), lambda items: len(items) == 3, 180, "three workers online")
-        activation = await lite_activation(owner, release_of(run))
+        activation = await lite_activation(owner, release_of(run), "o-j2")
         runs = await start_runs(owner, activation, [{"ms": 5000}] * 20)
         states = await auntil(
             lambda: run_states(owner, runs),
@@ -475,7 +475,7 @@ async def test_o_j9_an_unknown_outcome_opens_an_incident_that_a_safe_retry_resol
             )
         )
         try:
-            activation = await lite_activation(owner, release_of(run))
+            activation = await lite_activation(owner, release_of(run), "o-j9")
             (run_id,) = await start_runs(owner, activation, [{"ms": 0, "fail": "unknown"}])
 
             async def incidents():
