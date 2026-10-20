@@ -190,6 +190,8 @@ class DebugCreate(ContractModel):
     artifact: JsonObjectData
     mocks: JsonObjectData = Field(default_factory=dict)
     workflows: dict[str, CalledWorkflow] = Field(default_factory=dict)
+    # Load the published version of every called workflow ``workflows`` gives no artifact for.
+    resolve_workflows: bool = False
     input: JsonData = None
     now: AwareDatetime
 
