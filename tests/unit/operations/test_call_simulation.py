@@ -794,3 +794,19 @@ def test_mocks_of_the_calling_workflow_never_answer_steps_inside_a_called_workfl
         Simulator(
             artifact, mocks=mocks | {"node:validate": 5}, input={"customerId": "c-1"}, now=NOW, workflows=workflows
         )
+
+
+def test_a_called_workflow_with_a_feature_this_version_does_not_run_names_the_feature():
+    from firefly_weave.compiler.ir import UnsupportedIR
+
+    forged = artifact_of(ENRICH)
+    forged["executable"]["features"] = sorted([*forged["executable"].get("features", []), "flow.future"])
+    with pytest.raises(UnsupportedIR) as refused:
+        Simulator(
+            caller([call()], {"ref": "/steps/enrich/output"}),
+            mocks={},
+            input={"customerId": "c-1"},
+            now=NOW,
+            workflows={"enrich@1.0.0": CalledWorkflow(artifact=forged)},
+        )
+    assert "flow.future" in refused.value.missing

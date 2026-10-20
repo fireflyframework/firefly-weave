@@ -27,7 +27,15 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 from firefly_weave.compiler.api import CompiledArtifact, import_artifact
 from firefly_weave.compiler.calls import call_output_schema
 from firefly_weave.compiler.canonical import canonical_bytes, canonical_digest
-from firefly_weave.compiler.ir import ActionNode, CallWorkflowNode, HumanTaskNode, IRNode, SignalNode, WorkflowIR
+from firefly_weave.compiler.ir import (
+    ActionNode,
+    CallWorkflowNode,
+    HumanTaskNode,
+    IRNode,
+    SignalNode,
+    UnsupportedIR,
+    WorkflowIR,
+)
 from firefly_weave.contracts.definitions import ActionDefinition, load_definition
 from firefly_weave.contracts.diagnostics import Diagnostic
 from firefly_weave.contracts.instance_keys import InvalidInstanceKey, node_of, split_instance
@@ -195,6 +203,9 @@ class Simulator:
                             prepare(artifact),
                             dict(supplied[dependency.reference].mocks),
                         )
+                    except UnsupportedIR:
+                        # Answered as for the simulated workflow: the missing language features.
+                        raise
                     except ValueError:
                         raise DebugError("WV-DEBUG-WORKFLOW") from None
                     callee = item.ir
