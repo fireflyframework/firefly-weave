@@ -277,7 +277,7 @@ import { RefreshStatus } from "../refresh-status";
             [record]="change"
             [drain]="drainProgress"
             [targetName]="targetName(change.target_id)"
-            [viewer]="host.identity?.principal_id ?? null"
+            [viewer]="host.identity.principal_id"
             [targetStrict]="changeTargetStrict"
             [busy]="store.mutating"
             [can]="changeCan"

@@ -102,7 +102,9 @@ journey("J9", "security and negative paths", async (j) => {
             exact: true,
           }),
       ).toHaveCount(0);
-      await viewer.goto("/operate/clusters?tab=change-requests");
+      await viewer.goto(
+        new URL("/operate/clusters?tab=change-requests", viewer.url()).href,
+      );
       await expect(
         viewer.getByRole("heading", { name: "Clusters access is required" }),
       ).toBeVisible({ timeout: 30_000 });

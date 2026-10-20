@@ -77,6 +77,8 @@ async def probe(client: Any, row: Any, materialize: Any) -> tuple[int, str]:
             body=body,
             query=query,
             idempotency_key=f"j9-{uuid4().hex}" if spec.idempotency else None,
+            # Operations that need an expected revision get one: authorization answers before any lookup.
+            revision=1 if spec.revision == "required" else None,
         )
     except WeaveError as error:
         return error.status, error.code

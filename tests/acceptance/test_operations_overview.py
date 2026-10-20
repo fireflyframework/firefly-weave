@@ -423,21 +423,24 @@ async def lite_activation(platform: Platform, release: str) -> dict:
         )
 
 
-async def control(platform: Platform, worker: str, action: str) -> dict:
-    async with platform.client() as client:
-        current = await get(client, platform.environment + f"/workers/{worker}")
-        return await post(
-            client,
-            platform.environment + f"/workers/{worker}/{action}",
-            {"expected_revision": current["revision"]},
-            expected=200,
+async def control(run: Any, worker: str, action: str) -> Any:
+    """Drain or resume the fixture worker as the operator, who holds worker.drain (the host account does not)."""
+    from firefly_weave.contracts.workers import WorkerControlRequest
+
+    async with run.client("operator") as operator:
+        current = await operator.invoke("workers.read", identifier=UUID(worker))
+        return await operator.invoke(
+            "workers." + action,
+            identifier=UUID(worker),
+            body=WorkerControlRequest(expected_revision=current.revision),
+            idempotency_key=str(uuid4()),
         )
 
 
-async def drained_runs(platform: Platform, worker: str, release: str) -> dict:
+async def drained_runs(run: Any, platform: Platform, worker: str, release: str) -> dict:
     activation = await lite_activation(platform, release)
-    drained = await control(platform, worker, "drain")
-    assert drained["draining"] is True
+    drained = await control(run, worker, "drain")
+    assert drained.draining is True
     async with platform.client() as client:
         runs = [
             (
@@ -459,7 +462,7 @@ async def drained_runs(platform: Platform, worker: str, release: str) -> dict:
                 assert time.monotonic() < deadline, load
                 await asyncio.sleep(1)
         assert ages[1] > ages[0], ages
-        await control(platform, worker, "resume")
+        await control(run, worker, "resume")
         resumed = time.monotonic()
         while (await get(client, platform.environment + "/operations/summary"))["load"]["tasks_ready"]:
             assert time.monotonic() - resumed < 60, "ready tasks remain 60 s after the worker resumed"
@@ -479,7 +482,7 @@ async def drained_runs(platform: Platform, worker: str, release: str) -> dict:
 def test_j5_02_a_drained_worker_holds_ready_tasks_until_it_resumes(run):
     platform = Platform(run)
     worker, release = fixture_worker(run)
-    journey = asyncio.run(drained_runs(platform, worker, release))
+    journey = asyncio.run(drained_runs(run, platform, worker, release))
     (run.evidence / "operations-drain.json").write_text(json.dumps(journey, indent=2) + "\n", encoding="utf-8")
 
 
