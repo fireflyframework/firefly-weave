@@ -21,6 +21,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from pydantic import ValidationError
 from sqlalchemy import text
 
 from firefly_weave.access.audit import AuditContext
@@ -939,9 +940,26 @@ async def test_runners_and_clients_of_the_previous_release_still_read_plans_leas
     job = await ops.service.read("jobs", lease.job.id, **authority)
     released.DeploymentJob.model_validate_json(job.model_dump_json())
     released.DeploymentObservation.model_validate_json(lease.observation.model_dump_json())
-    strict = await prepared(ops)
-    released_target = strict.target.model_copy(update={"capabilities": ["observe", "deploy", "update"]})
-    released.DeploymentTarget.model_validate_json(released_target.model_dump_json())
+    # Targets as the server returns them: one without the new capability reads; one offering restarts, or
+    # whose environment manager turned off the second approver, does not (the documented limitation).
+    older = await ops.service.create_target(
+        TargetRequest(
+            name="older-" + uuid4().hex[:8],
+            adapter="docker-compose",
+            external_identity="owned-" + uuid4().hex[:8],
+            boundary="weave",
+            runner_principal_id=ops.people["planner"].id,
+            capabilities=["observe", "deploy", "update", "scale_workers"],
+        ),
+        uuid4().hex,
+        **authority,
+    )
+    served = await ops.service.read("targets", older.id, **authority)
+    released.DeploymentTarget.model_validate_json(served.model_dump_json())
+    for refused in (setup.target.id, (await prepared(ops)).target.id):
+        served = await ops.service.read("targets", refused, **authority)
+        with pytest.raises(ValidationError):
+            released.DeploymentTarget.model_validate_json(served.model_dump_json())
 
 
 async def test_a_replaced_plan_keeps_its_change_request_and_its_requester_check(ops):
@@ -1128,3 +1146,28 @@ async def test_only_a_runner_that_applies_the_reviewed_members_claims_a_scale_do
     )
     lease = await ops.service.claim(RunnerClaimRequest(runner_id=upgraded.id), **runner)
     assert lease is not None and lease.job.id == change_request.apply_job_id
+
+
+async def test_a_runner_without_restarts_never_claims_a_restart(ops):
+    setup = await prepared(ops, replicas=3)
+    runner = ops.authority("planner")
+    older = await ops.service.register_runner(
+        RunnerRegistration(
+            target_id=setup.target.id, adapter="docker-compose", capabilities=["observe", "update", "scale_workers"]
+        ),
+        **runner,
+    )
+    created = await ops.changes.create(
+        change(setup, intent="restart_workers", replicas=3), uuid4().hex, **ops.authority("planner")
+    )
+    await run_observation(ops, setup, 3)
+    ready = await ops.changes.read(created.id, **ops.authority("planner"))
+    planned = await ops.changes.advance(created.id, ready.revision, **ops.authority("planner"))
+    approved_change = await ops.changes.approve(
+        planned.id, ChangeRequestApprove(digest=planned.plan_digest), **ops.authority("approver")
+    )
+    await ops.service.revoke_runner(setup.runner.id, **ops.authority("owner"))
+    await ops.changes.apply(
+        approved_change.id, ChangeRequestApply(digest=planned.plan_digest), uuid4().hex, **ops.authority("operator")
+    )
+    assert await ops.service.claim(RunnerClaimRequest(runner_id=older.id), **runner) is None
