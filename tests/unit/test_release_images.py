@@ -75,3 +75,10 @@ def test_operations_worker_stage_runs_unprivileged():
     for path in (root / "Dockerfile", root / "docker/worker.Dockerfile"):
         copy = next(line for line in path.read_text().splitlines() if line.startswith("COPY --chmod=0644 *.whl"))
         assert "operations-worker.py" in copy and "operations-worker-manifest.json" in copy
+
+
+def test_the_build_context_admits_every_release_input():
+    root = Path(__file__).resolve().parents[2]
+    allowed = {line[1:] for line in (root / ".dockerignore").read_text().splitlines() if line.startswith("!")}
+    for name in ("operations-worker.py", "operations-worker-manifest.json", "main.py", "manifest.json"):
+        assert name in allowed, name
