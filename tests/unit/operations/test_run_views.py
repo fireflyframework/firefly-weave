@@ -19,7 +19,7 @@
 import json
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from starlette.requests import Request
@@ -35,7 +35,8 @@ from firefly_weave.definitions.models import CatalogError
 from firefly_weave.operations.run_views import RunViewService
 
 SCOPE = Scope(tenant_id=uuid4(), project_id=uuid4(), environment_id=uuid4())
-RUN = uuid4()
+# A fixed id keeps parametrized test ids identical across pytest-xdist workers.
+RUN = UUID("6f2c1a8e-3b4d-4e5f-9a7b-1c2d3e4f5a6b")
 CONTEXT = AuditContext()
 
 

@@ -87,8 +87,8 @@ an author cannot start runs unless you grant that too.
 | Operator | Inspect, pause, resume, retry, or cancel runs; resolve incidents; maintain the platform | `operator` and `viewer`; `execution_manager` to permanently delete run content | [Execution management](execution-management.md) and [incident operations](../reference/incident-operations.md) |
 
 On a local platform, `weave platform user` creates a development person with a
-practical starting set: `developer` on the demo project, and `deployer`,
-`operator`, `viewer`, and `task_participant` on the demo environment. That
+practical starting set: `developer` and `viewer` on the demo project, and
+`deployer`, `operator`, and `task_participant` on the demo environment. That
 person can author, publish, activate, run, inspect runs, and complete tasks, but
 cannot create integration connections without `tenant_admin`. See
 [Create a person who can sign in](local-platform.md#5-create-a-person-who-can-sign-in)
