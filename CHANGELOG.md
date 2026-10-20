@@ -20,6 +20,23 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+- Weave AI runs on a local Ollama model. It works on a keyless connection such as
+  `ollama-local`, sending no credential, and `weave platform ai enable` turns it
+  on with the tested model unless Weave AI is already set up. Each request is
+  sized to the model's context: compact (under 16k tokens) sends a short guide,
+  an outline of the draft with the selected step whole and the last four
+  messages in at most 4,096 tokens; standard and full send more. **Context
+  size** on the Weave AI card overrides the choice.
+- A run attached to a Weave AI question carries only its run facts (workflow,
+  status, times, failed steps with error codes, open incidents and the last five
+  steps), never its input, outputs or logs.
+- Weave AI's proposals are checked on the server; `lumi.ask` returns each with
+  `diagnostics`, its error count, and Studio offers **Ask Weave AI to fix**.
+  Clients that validate answers strictly must be upgraded with the server.
+- Asking Weave AI answers model failures with their own problem codes:
+  `WV-LUMI-MODEL-NOT-FOUND`, `WV-LUMI-UNREACHABLE`, `WV-LUMI-CONTEXT-LIMIT`,
+  `WV-LUMI-OUTPUT` and `WV-LUMI-TIMEOUT`, with `WV-LUMI-CAPACITY` for busy and
+  rate-limited providers, instead of `WV-LUMI-UNAVAILABLE` for all of them.
 - Workflows can call other workflows. A **Call a workflow** step starts the
   exact version it names as a separate child run of the pinned activation, under
   the calling run's principal, which must still hold `run.start`. A waiting call

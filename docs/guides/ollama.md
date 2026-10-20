@@ -55,6 +55,11 @@ Changed: …
 Status: weave platform --directory /path/to/.local/platform ai status
 ```
 
+`enable` also turns Weave AI on for `ollama-local` with the tested model,
+1,024 output tokens and three minutes per answer, unless Weave AI is already set
+up; then it keeps that configuration and says so (`weave_ai` in
+`--output json` is `configured`, `unchanged` or `kept`).
+
 The `Changed:` line names what this run set up or updated; a repeated command
 that finds nothing to do prints `No changes.` instead. A `Warning:` line appears
 when something needs your attention, such as a lowered context size.

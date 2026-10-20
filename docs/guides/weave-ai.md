@@ -96,6 +96,10 @@ explains the shared operator/administrator handoff.
    receives that included source and authorized context.
 3. Send the request and read the plain-text answer. If a proposed draft is
    useful, open it, review its source, and make any corrections you need.
+   The platform checks every proposal before Studio shows it; a proposal it
+   found problems in names them on its button ("2 problems"). Open it and
+   select **Ask Weave AI to fix** to send the problems, with the proposal, back
+   to Weave AI.
 4. Select **Validate proposal**. Address diagnostics before applying. A valid
    workflow proposal offers **Apply to local draft** only while the original
    local draft and source revision remain unchanged. If either changed, ask
@@ -112,6 +116,29 @@ workflow history. Managers configure Weave AI in the **Weave AI** card of
 the enabled flag, pinned connection revision, and model separately from workflow
 AI profiles. Studio supplies the fixed reply schema from the canonical contract;
 changing a workflow's AI profile does not configure Weave AI.
+
+## Fit the model's context
+
+Weave AI sizes each request to the model's context, which the AI policy records
+for the connection's endpoint (`contextTokens`):
+
+| Context size | When | What Weave AI sends |
+| --- | --- | --- |
+| Compact | Under 16k tokens, such as a local Ollama model | A short authoring guide, an outline of the draft (each step's ID, kind and action) with the selected step whole, attachments, and the last 4 messages, in at most 4,096 tokens |
+| Standard | 16k to 64k tokens | The guide, the workflow schema, the whole draft up to 32 KiB (an outline above that), attachments, and the last 8 messages |
+| Full | Over 64k tokens, or when the policy records no size | Every authoring schema, the whole draft, attachments, and the last 16 messages |
+
+Of the budget, at most a quarter goes to Weave AI's instructions, the reply
+format and the guide, 40% to the draft, 20% to attachments and 15% to the
+conversation. A part over its share is trimmed in that order: the draft becomes
+an outline, then attachments are left out from the last, then the oldest
+messages. Weave AI is told what was left out, never given a value cut in half.
+Choose another size with **Context size** on the **Weave AI** card.
+
+A run attachment holds only the run's facts: the workflow's name and version,
+its status and times, failed steps with their error codes, the number of open
+incidents, and the last five steps with their status and time. Never its input,
+outputs, logs, keys or hosts.
 
 ## Explain Operations records
 
@@ -286,7 +313,8 @@ conversation when identity or environment changes. All replies and proposed
 source are untrusted text/code, never rendered as HTML or automatically executed.
 
 The API resolves only the pinned connection's scoped secret handle and forwards
-the credential to the trusted gateway over TLS. The gateway must therefore be
+the credential to the trusted gateway over TLS; a keyless local connection sends
+no credential at all. The gateway must therefore be
 operated as a credential-bearing service. It independently checks an exact
 provider/model/endpoint policy, rejects expired invocation envelopes, and owns
 no persistent conversation or model session. Provider account retention policies
