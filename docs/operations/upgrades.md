@@ -558,6 +558,22 @@ evidence, and can block it permanently; a blocked run's tasks are never offered
 to workers again, even after you upgrade. Before you roll back to such a
 server, let every run that uses a language feature finish, or cancel it.
 
+## Language manifest compatibility
+
+The language manifest (`language.read`, `weave remote language`, and the
+Python SDK's `language()`) gains a `step_fields` list and the feature names
+`flow.transaction` and `flow.eventTrigger`. Clients read the manifest strictly,
+so **upgrade CLIs and SDKs together with the server**:
+
+- **Older clients, new server.** An earlier CLI or SDK refuses this server's
+  manifest because of the new list and feature names.
+- **New clients, older server.** This CLI or SDK refuses an earlier server's
+  manifest, which has no `step_fields` list.
+
+Studio reads `step_fields` as optional and works with both. Worker payloads
+are unaffected: a failure's `effect` and a claim's `worker` are left out unless
+a worker sends them, so existing workers keep working unchanged.
+
 ## Verify before admitting traffic
 
 Perform these checks in order for each project and execution path:

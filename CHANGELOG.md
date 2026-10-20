@@ -41,7 +41,11 @@ SPDX-License-Identifier: Apache-2.0
   claims accept `worker: {release, transaction_aware}`; workflows may declare
   `spec.eventTrigger`, which this version defines but does not compile yet; and
   `weave schema export` writes `platform-event-v1`. `weave workflow explain` and
-  `weave workflow graph` show transactions.
+  `weave workflow graph` show transactions. The language manifest gains
+  `step_fields` and new feature names, so upgrade CLIs and SDKs together with
+  the server: an earlier CLI or SDK can't read this server's manifest, and this
+  CLI or SDK can't read an earlier server's (see
+  [language manifest compatibility](docs/operations/upgrades.md#language-manifest-compatibility)).
 - The AI task in step details takes its model connection first. **Model** lists
   the approved models of every AI connection you may use, grouped by connection;
   choosing one writes the step's own AI settings, the `ai` connection slot and
