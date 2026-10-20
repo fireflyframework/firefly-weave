@@ -499,6 +499,32 @@ def test_import_refuses_a_transaction_policy_outside_the_definition_bounds(field
         WorkflowIR.model_validate(artifact)
 
 
+def test_import_refuses_a_call_that_is_undone_but_does_not_wait():
+    reverse = undo(
+        "reverse-target-addition@1.0.0",
+        {"object": {"reference": ref("/input/moveId"), "addOperation": ref("/participant/operationKey")}},
+        kind="callWorkflow",
+    )
+    call = {
+        "id": "fetch",
+        "kind": "callWorkflow",
+        "uses": "reverse-target-addition@1.0.0",
+        "mode": "wait",
+        "with": {"object": {"reference": ref("/input/moveId"), "addOperation": {"literal": "x"}}},
+        "compensate": reverse,
+    }
+    result = compiled(workflow(transaction(hold(), call, submit())))
+    assert result.ok, findings(result)
+    value = executable(result)
+    node = next(node for node in value["graph"]["nodes"] if node["id"] == "fetch")
+    WorkflowIR.model_validate(value)
+    node["mode"] = "detach"
+    for name in ("output", "onFailure"):
+        node.pop(name, None)
+    with pytest.raises(ValidationError, match="Only a call that waits for its result can be undone"):
+        WorkflowIR.model_validate(value)
+
+
 def test_an_artifact_with_the_step_that_cant_be_undone_moved_first_is_refused_at_import():
     value = executable(compiled(EXAMPLE))
     nodes = {node["id"]: node for node in value["graph"]["nodes"]}
