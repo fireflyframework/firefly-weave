@@ -18,7 +18,9 @@ SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from "vitest";
 import {
   MirroredStorage,
+  REPAIR_KEY,
   hostBackend,
+  recentRepair,
 } from "../src/app/editor/state/studio-storage";
 import type { StoreBackend } from "../src/app/editor/state/browser-store";
 
@@ -179,5 +181,20 @@ describe("a platform signed out", () => {
       ).toBe(false);
     }
     expect(signedOut).toEqual([]);
+  });
+});
+
+describe("the desktop's re-pairing reload", () => {
+  it("is kept under a prefixed key, and happens at most once a minute", () => {
+    const values = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => void values.set(key, value),
+    };
+    expect(REPAIR_KEY).toMatch(/^(local:|ui:|p[0-9a-f]{16}:)/);
+    expect(recentRepair(storage, 1_000_000)).toBe(false);
+    expect([...values.keys()]).toEqual([REPAIR_KEY]);
+    expect(recentRepair(storage, 1_030_000)).toBe(true);
+    expect(recentRepair(storage, 1_061_000)).toBe(false);
   });
 });

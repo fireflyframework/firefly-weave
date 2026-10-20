@@ -189,3 +189,20 @@ export const onStudioStorageDropped = (
 /** Pending desktop writes (on close, Save and quitting). */
 export const flushStudioStorage = (): Promise<boolean> =>
   mirror ? mirror.flush() : Promise.resolve(true);
+
+/** This window's last automatic re-pairing reload (sessionStorage), prefixed like every key Studio keeps. */
+export const REPAIR_KEY = "ui:weave.studioRepair";
+/**
+ * Records a desktop re-pairing reload in `storage`; true when one already
+ * happened in the last minute, so a reload never loops. Throws when the
+ * storage does.
+ */
+export function recentRepair(
+  storage: Pick<Storage, "getItem" | "setItem">,
+  now = Date.now(),
+): boolean {
+  const last = Number(storage.getItem(REPAIR_KEY) ?? 0);
+  if (now - last < 60000) return true;
+  storage.setItem(REPAIR_KEY, String(now));
+  return false;
+}

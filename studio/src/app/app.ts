@@ -47,6 +47,7 @@ import {
 import {
   bootStudioStorage,
   onStudioStorageDropped,
+  recentRepair,
   flushStudioStorage,
   studioBackend,
   studioStorage,
@@ -1420,15 +1421,11 @@ export class App implements CanvasHost {
   /** Records a desktop re-pairing reload; true when one already happened in the last minute. */
   private recentRepair() {
     try {
-      const key = "weave-studio-repair";
-      const last = Number(sessionStorage.getItem(key) ?? 0);
-      if (Date.now() - last < 60000) return true;
-      sessionStorage.setItem(key, String(Date.now()));
+      return recentRepair(sessionStorage);
     } catch {
       // Without storage a reload loop cannot be ruled out, so do not reload.
       return true;
     }
-    return false;
   }
   get profile() {
     return this.api.session.profile;

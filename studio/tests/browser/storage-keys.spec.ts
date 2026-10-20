@@ -44,6 +44,8 @@ test("every key Studio keeps on this computer is prefixed", async ({
     expect.arrayContaining(["ui:weave.editorNext", "ui:weave.ndv.views.v1"]),
   );
   for (const key of keys) expect(key, key).toMatch(PREFIXED);
+  const session = await page.evaluate(() => Object.keys(sessionStorage));
+  for (const key of session) expect(key, key).toMatch(PREFIXED);
 });
 
 test("keys from before prefixes move once, and old run inputs go", async ({
