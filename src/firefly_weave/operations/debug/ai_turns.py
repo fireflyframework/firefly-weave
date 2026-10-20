@@ -70,10 +70,14 @@ def ai_task_mocks(artifact: CompiledArtifact, entries: Mapping[str, object]) -> 
 def with_ai_turns(
     artifact: CompiledArtifact, mocks: Mapping[str, JsonValue], entries: Mapping[str, object]
 ) -> dict[str, JsonValue]:
-    """The session's mocks plus the AI tasks' saved turns; a pin on the instance or on its step wins."""
+    """The session's mocks plus the AI tasks' saved turns; a pin on the instance or on its step wins.
+
+    Pins are looked up in the session's own mocks, so a saved turn for the whole step never hides a saved turn
+    for one iteration, whatever order the entries come in.
+    """
     merged = dict(mocks)
     for key, mock in ai_task_mocks(artifact, entries).items():
         step = "node:" + node_of(key.removeprefix("node:"))
-        if key not in merged and step not in merged:
+        if key not in mocks and step not in mocks:
             merged[key] = mock
     return merged

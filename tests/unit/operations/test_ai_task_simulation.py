@@ -154,3 +154,75 @@ def test_an_ai_task_entry_that_is_not_one_final_turn_is_refused(entry):
 
 def test_a_key_outside_the_instance_key_grammar_is_ignored():
     assert ai_task_mocks(compiled(ai_task()), {"send mail": {"turns": [{"final": "x"}]}}) == {}
+
+
+def looped():
+    """A loop ``each`` over the input whose body runs the AI task ``summarize`` and collects its result."""
+    step, profile = ai_task()
+    loop = {
+        "id": "each",
+        "kind": "forEach",
+        "items": {"ref": "/input"},
+        "maxItems": 5,
+        "body": {"steps": [step], "output": {"ref": "/steps/summarize/output/result"}},
+    }
+    result = compile_source(
+        {
+            "apiVersion": "weave/v1alpha1",
+            "kind": "Workflow",
+            "metadata": {"name": "support", "version": "1.0.0"},
+            "spec": {
+                "inputSchema": {"type": "array", "items": {"type": "integer"}},
+                "outputSchema": {},
+                "connections": {"ai": {"connector": "weave-agentic-provider@1.0.0"}},
+                "llmProfiles": {"summarize": profile},
+                "steps": [loop],
+                "output": {"ref": "/steps/each/output"},
+            },
+        },
+        format="object",
+        catalog=catalog(),
+    )
+    assert result.ok, [d.code for d in result.diagnostics if d.severity == "error"]
+    return result.artifact
+
+
+def answers(artifact, mocks):
+    view = Simulator(artifact, mocks=mocks, input=[1, 2, 3], now=NOW).continue_until_breakpoint()
+    assert view.status == "succeeded"
+    return view.variables["output"]
+
+
+def pinned(text):
+    return {
+        "result": text,
+        "usage": {"requests": 1, "inputTokens": 9, "outputTokens": 2},
+        "provider": "openai-chat",
+        "model": "qwen3:4b",
+    }
+
+
+STEP_TURN = ("summarize", {"turns": [{"final": "Every."}]})
+ITERATION_TURN = ("summarize[1]", {"turns": [{"final": "Second."}]})
+
+
+@pytest.mark.parametrize(
+    "entries",
+    [dict([STEP_TURN, ITERATION_TURN]), dict([ITERATION_TURN, STEP_TURN])],
+    ids=["step first", "iteration first"],
+)
+def test_an_iteration_turn_overrides_the_step_turn_whatever_the_order(entries):
+    artifact = looped()
+    assert answers(artifact, with_ai_turns(artifact, {}, entries)) == ["Every.", "Second.", "Every."]
+
+
+def test_an_iteration_pin_wins_over_the_step_turn():
+    artifact = looped()
+    mocks = with_ai_turns(artifact, {"node:summarize[1]": pinned("Pinned.")}, dict([STEP_TURN]))
+    assert answers(artifact, mocks) == ["Every.", "Pinned.", "Every."]
+
+
+def test_a_step_pin_wins_over_an_iteration_turn():
+    artifact = looped()
+    mocks = with_ai_turns(artifact, {"node:summarize": pinned("Pinned.")}, dict([ITERATION_TURN]))
+    assert answers(artifact, mocks) == ["Pinned.", "Pinned.", "Pinned."]
