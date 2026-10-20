@@ -22,13 +22,17 @@ is one private file under ``<config dir>/studio-store/``, named by the SHA-256 o
 Windows refuses in file names) and holding ``{"key", "value"}``. Values are text Studio already serialized; the host
 never reads them. A saved platform's keys share its prefix, so signing out or removing it deletes them here.
 
-A purge deletes every entry it can read under the prefix, skips (and counts) what it can't read rather than stopping,
-and removes the temporary copies an interrupted write left behind. A purge that didn't finish is remembered in the
-folder and finished when Studio starts again, together with the keys of platforms that are no longer saved.
+Signing out of a platform or removing it writes a tombstone for its prefix in the folder, then purges: every entry
+under the prefix goes, and so does every entry nobody can read or attribute (a link is unlinked, never followed; a
+folder is removed without following links; an oversized file is unlinked) and every temporary copy an interrupted
+write left behind. Only counts are logged, never names or values. Studio refuses writes under a tombstoned prefix
+and, when it starts, purges every tombstoned prefix again; a sign-in to that platform lifts its tombstone. Keys of a
+platform that is neither saved nor tombstoned (an older Studio's name, say) are left alone and only counted.
 """
 
 import hashlib
 import json
+import logging
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -43,8 +47,8 @@ PREFIX: Final = re.compile(r"[A-Za-z0-9:._-]{0,256}")
 STORE_LIMIT: Final = 64 * 1024 * 1024
 # A value arrives in a request body, which the host bounds at 2 MiB; its file adds the key and quotes.
 FILE_LIMIT: Final = 2 * 1024 * 1024 + 4096
-# The prefixes whose purge didn't finish; a dot-file, so it is never listed as a key.
-PENDING: Final = ".pending-purges"
+# The prefixes of platforms signed out or removed; a dot-file, so it is never listed as a key.
+TOMBSTONES: Final = ".tombstones"
 PLATFORM_PREFIX: Final = re.compile(r"p[0-9a-f]{16}:")
 
 
@@ -56,16 +60,28 @@ class StoreUnavailable(Exception):
     code = "WV-STUDIO-STORE"
 
 
+_log = logging.getLogger(__name__)
+
+
 @dataclass(frozen=True)
 class Purge:
-    """What a purge did: entries removed, and entries it couldn't read (so couldn't attribute)."""
+    """What a purge did: the prefix's entries removed, unreadable entries discarded, and entries that stayed."""
 
     removed: int
-    unreadable: int
+    discarded: int = 0
+    failed: int = 0
 
     @property
     def complete(self) -> bool:
-        return self.unreadable == 0
+        return self.failed == 0
+
+
+@dataclass(frozen=True)
+class Startup:
+    """What starting the store did: each tombstoned prefix purged again, and keys of untracked platforms counted."""
+
+    purged: list[tuple[str, Purge]]
+    untracked: int
 
 
 def profile_prefix(name: str) -> str:
@@ -155,82 +171,112 @@ class LocalStore:
         except (OSError, ProfileError):
             raise StoreUnavailable() from None
 
-    def _pending(self, directory: int | None) -> list[str]:
+    def _tombstones(self, directory: int | None) -> list[str]:
         try:
-            raw = self.folder.read(directory, PENDING, 64 * 1024)
+            raw = self.folder.read(directory, TOMBSTONES, 64 * 1024)
             value = json.loads(raw or b"[]")
         except (OSError, ProfileError, ValueError):
             return []
         return sorted({item for item in value if isinstance(item, str) and item} if isinstance(value, list) else [])
 
-    def _remember(self, directory: int | None, prefixes: Iterable[str]) -> None:
+    def _set_tombstones(self, directory: int | None, prefixes: Iterable[str]) -> None:
         wanted = sorted(set(prefixes))
-        if wanted == self._pending(directory):
+        if wanted == self._tombstones(directory):
             return
         if wanted:
-            self.folder.write(directory, PENDING, json.dumps(wanted).encode("ascii"))
+            self.folder.write(directory, TOMBSTONES, json.dumps(wanted).encode("ascii"))
         else:
-            self.folder.remove(directory, PENDING)
+            self.folder.remove(directory, TOMBSTONES)
 
-    def pending(self) -> list[str]:
-        """The prefixes whose purge hasn't finished."""
+    def tombstones(self) -> list[str]:
+        """The prefixes of platforms signed out or removed and not signed in since."""
         try:
             with self.folder.reading() as directory:
-                return self._pending(directory)
+                return self._tombstones(directory)
         except FileNotFoundError:
             return []
         except (OSError, ProfileError):
             raise StoreUnavailable() from None
 
+    def forget(self, prefix: str) -> Purge:
+        """Sign-out or removal: tombstone the prefix, then purge it. Raises StoreUnavailable when the folder can't
+        be changed; the tombstone, once written, makes the next start purge again."""
+        if not prefix:
+            raise ValueError("A purge names a prefix")
+        try:
+            with self.folder.changing() as directory:
+                self._set_tombstones(directory, [*self._tombstones(directory), prefix])
+                return self._purge(directory, prefix)
+        except (OSError, ProfileError):
+            raise StoreUnavailable() from None
+
+    def remember(self, prefix: str) -> None:
+        """A sign-in lifts the platform's tombstone."""
+        try:
+            with self.folder.changing() as directory:
+                self._set_tombstones(directory, [item for item in self._tombstones(directory) if item != prefix])
+        except FileNotFoundError:
+            return
+        except (OSError, ProfileError):
+            raise StoreUnavailable() from None
+
     def purge(self, prefix: str) -> Purge:
-        """Deletes every readable key with this prefix and every left-over temporary copy; remembers an
-        incomplete purge so the next start finishes it. Raises StoreUnavailable when the folder can't be changed."""
+        """Deletes every key with this prefix, every entry nobody can read and every left-over temporary copy."""
         if not prefix:
             raise ValueError("A purge names a prefix")
         try:
             with self.folder.changing() as directory:
                 return self._purge(directory, prefix)
         except FileNotFoundError:
-            return Purge(0, 0)
+            return Purge(0)
         except (OSError, ProfileError):
-            self._note_unfinished(prefix)
             raise StoreUnavailable() from None
 
     def _purge(self, directory: int | None, prefix: str) -> Purge:
+        failed = 0
         # Writes hold the same lock, so a temporary copy seen here belongs to a write that never finished.
         for name in self.folder.temporaries(directory):
-            self.folder.remove(directory, name)
+            try:
+                self.folder.remove(directory, name)
+            except OSError:
+                failed += 1
         unreadable: list[str] = []
-        removed = 0
+        removed = discarded = 0
         for key, name in self._entries(directory, unreadable).items():
-            if key.startswith(prefix) and self.folder.remove(directory, name):
-                removed += 1
-        result = Purge(removed, len(unreadable))
-        others = [item for item in self._pending(directory) if item != prefix]
-        self._remember(directory, others if result.complete else [*others, prefix])
-        return result
+            if key.startswith(prefix):
+                try:
+                    removed += self.folder.remove(directory, name)
+                except OSError:
+                    failed += 1
+        # Nobody can attribute an entry Studio can't read: in Studio's own private folder it goes, unfollowed.
+        for name in unreadable:
+            try:
+                discarded += self.folder.discard(directory, name)
+            except OSError:
+                failed += 1
+        if discarded or failed:
+            _log.warning(
+                "Studio's store discarded %d unreadable entries; %d entries could not be removed", discarded, failed
+            )
+        return Purge(removed, discarded, failed)
 
-    def _note_unfinished(self, prefix: str) -> None:
+    def finish_purges(self, saved: Iterable[str] | None = None) -> Startup:
+        """At start-up: purge every tombstoned prefix again, and count the keys of platforms that are neither saved
+        (``saved`` holds their prefixes, when known) nor tombstoned; those are left alone."""
         try:
             with self.folder.changing() as directory:
-                self._remember(directory, [*self._pending(directory), prefix])
-        except (OSError, ProfileError):
-            pass
-
-    def finish_purges(self, saved: Iterable[str] | None) -> list[tuple[str, Purge]]:
-        """At start-up: finish the purges that didn't, and forget platforms that are no longer saved (the prefixes of
-        the saved ones; None when they aren't known, which only finishes the purges)."""
-        keep = set(saved) if saved is not None else None
-        try:
-            with self.folder.changing() as directory:
-                prefixes = set(self._pending(directory))
-                if keep is not None:
-                    for key in self._entries(directory):
-                        match = PLATFORM_PREFIX.match(key)
-                        if match and match.group(0) not in keep:
-                            prefixes.add(match.group(0))
-                return [(prefix, self._purge(directory, prefix)) for prefix in sorted(prefixes)]
+                tombstoned = self._tombstones(directory)
+                purged = [(prefix, self._purge(directory, prefix)) for prefix in tombstoned]
+                known = {*tombstoned, *(saved or ())}
+                untracked = 0
+                for key in self._entries(directory):
+                    match = PLATFORM_PREFIX.match(key)
+                    if match and match.group(0) not in known and saved is not None:
+                        untracked += 1
+                if untracked:
+                    _log.info("Studio's store holds %d keys of platforms it doesn't know; it leaves them", untracked)
+                return Startup(purged, untracked)
         except FileNotFoundError:
-            return []
+            return Startup([], 0)
         except (OSError, ProfileError):
             raise StoreUnavailable() from None

@@ -233,7 +233,7 @@ class StudioService:
             self._finish_purges()
 
     def _finish_purges(self) -> None:
-        """Finish purges an earlier run couldn't, and forget platforms that are no longer saved (best effort)."""
+        """Purge every platform signed out or removed (its tombstone) again, and refuse its keys until a sign-in."""
         from firefly_weave.sdk.profiles import ProfileError
         from firefly_weave.studio.local_store import StoreUnavailable, profile_prefix
 
@@ -245,6 +245,7 @@ class StudioService:
             except ProfileError:
                 saved = None
         with suppress(StoreUnavailable):
+            self.forgotten.update(self.local_store.tombstones())
             self.local_store.finish_purges(saved)
 
     def forget_profile_data(self, name: str) -> bool | None:
@@ -257,15 +258,20 @@ class StudioService:
         prefix = profile_prefix(name)
         self.forgotten.add(prefix)
         try:
-            return self.local_store.purge(prefix).complete
+            return self.local_store.forget(prefix).complete
         except StoreUnavailable:
             return False
 
     def remember_profile_data(self, name: str) -> None:
         """A sign-in to this platform lets Studio keep its data on this computer again."""
-        from firefly_weave.studio.local_store import profile_prefix
+        from firefly_weave.studio.local_store import StoreUnavailable, profile_prefix
 
-        self.forgotten.discard(profile_prefix(name))
+        prefix = profile_prefix(name)
+        self.forgotten.discard(prefix)
+        if self.local_store is not None:
+            # Best effort: a tombstone left behind only purges again at the next start.
+            with suppress(StoreUnavailable):
+                self.local_store.remember(prefix)
 
     def keeps(self, key: str) -> bool:
         """Whether Studio may write this key: never one of a platform signed out or removed since."""

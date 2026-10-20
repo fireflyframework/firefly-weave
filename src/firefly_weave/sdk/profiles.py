@@ -736,6 +736,28 @@ class PrivateFolder:
         listed = os.listdir(self.directory if directory is None else directory)
         return sorted(name for name in listed if not name.startswith(".") and not name.endswith(".lock"))
 
+    def discard(self, directory: int | None, name: str) -> bool:
+        """Remove an entry nobody can read without following it: a link is unlinked itself, a folder is removed
+        with its contents (``shutil.rmtree`` never follows links), anything else is unlinked."""
+        import shutil
+
+        try:
+            if directory is None:
+                path = self.directory / name
+                if path.is_dir() and not path.is_symlink():
+                    shutil.rmtree(path)
+                else:
+                    path.unlink()
+            else:
+                mode = os.stat(name, dir_fd=directory, follow_symlinks=False).st_mode
+                if stat.S_ISDIR(mode):
+                    shutil.rmtree(name, dir_fd=directory)
+                else:
+                    os.unlink(name, dir_fd=directory)
+        except FileNotFoundError:
+            return False
+        return True
+
     def temporaries(self, directory: int | None) -> list[str]:
         """Temporary copies a write left behind when its process ended before the rename (``.<name>.<hex>.tmp``)."""
         listed = os.listdir(self.directory if directory is None else directory)

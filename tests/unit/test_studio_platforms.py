@@ -1304,7 +1304,7 @@ def test_a_purge_that_could_not_finish_is_reported(platforms, tmp_path, path, mo
     with platforms.client(store_directory=folder) as browser:
         headers = pair(browser)
         connected(browser, headers)
-        monkeypatch.setattr(LocalStore, "purge", lambda self, prefix: Purge(removed=1, unreadable=1))
+        monkeypatch.setattr(LocalStore, "forget", lambda self, prefix: Purge(removed=1, failed=1))
         body = {"name": "Acme"} if path.endswith("remove") else {}
         answer = browser.post(path, headers=headers, json=body)
         assert answer.status_code == 200 and answer.json()["local_data_removed"] is False
@@ -1350,17 +1350,27 @@ def test_a_signed_out_platform_s_keys_are_not_written_again_until_it_signs_in(pl
         assert browser.put(f"/studio/local/store/{key}", headers=headers, json={"value": "{}"}).status_code == 204
 
 
-def test_starting_studio_forgets_platforms_that_are_no_longer_saved(platforms, tmp_path):
+def test_starting_studio_purges_signed_out_platforms_and_leaves_unknown_ones(platforms, tmp_path):
     from firefly_weave.studio.local_store import LocalStore, profile_prefix
 
     folder = tmp_path / "studio-store"
-    with platforms.client(store_directory=folder) as browser:
-        assert save(browser, pair(browser)).status_code == 200
     store = LocalStore(folder)
-    saved = profile_prefix("Acme") + "0123456789abcdef:t:p:testData.d-1"
-    store.put(saved, "{}")
-    store.put(profile_prefix("Gone") + "0123456789abcdef:t:p:testData.d-2", "{}")
+    key = profile_prefix("Acme") + "0123456789abcdef:t:p:testData.d-1"
+    unknown = profile_prefix("Gone") + "0123456789abcdef:t:p:testData.d-2"
+    with platforms.client(store_directory=folder) as browser:
+        headers = pair(browser)
+        connected(browser, headers)
+        assert browser.post("/studio/connection/logout", headers=headers, json={}).status_code == 200
+    # Written behind Studio's back after the sign-out, and a platform this Studio never knew.
+    store.put(key, "{}")
+    store.put(unknown, "{}")
     store.put("local:weave.localDraft.d-3", "{}")
-    with platforms.client(store_directory=folder):
-        pass
-    assert store.keys() == ["local:weave.localDraft.d-3", saved]
+    with platforms.client(store_directory=folder) as browser:
+        headers = pair(browser)
+        assert store.keys() == sorted(["local:weave.localDraft.d-3", unknown])
+        # The tombstone outlives the restart: the signed-out platform's keys wait for a sign-in.
+        late = browser.put(f"/studio/local/store/{key}", headers=headers, json={"value": "{}"})
+        assert late.status_code == 409
+        sign_in_with_browser(browser, headers)
+        assert browser.put(f"/studio/local/store/{key}", headers=headers, json={"value": "{}"}).status_code == 204
+    assert store.tombstones() == []
