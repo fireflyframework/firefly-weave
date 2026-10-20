@@ -21,6 +21,12 @@ caller's call row. Dispatch locks the caller's run row, then the call row, then 
 other transaction can see before commit. Delivery runs under the caller's run lock. A child that ends updates its
 caller's call row under the child's own run lock. The only acquisition against that order, the cancellation scan
 locking child runs, skips rows another transaction holds, so no transaction waits in a cycle.
+
+One accounting write also goes against that order: when a caller's own (uncontrolled) end changes a started call row,
+the row's reservation touch refreshes the child's reserve, so the caller's transaction updates the child's
+``operation_reservations`` row while a child's stop holds its reserve before it writes the caller's call row. That
+cannot deadlock: every mutating transaction of a project first takes the project's operation lock, and a call never
+crosses projects, so the two transactions never run at the same time.
 """
 
 import hashlib
@@ -360,17 +366,31 @@ class CallService:
         tx = repository.tx
         now = await repository.now()
         if row["mode"] == "wait" and caller["state"]["status"] in TERMINAL:
-            # A waiting call outlives nothing: its caller already ended.
-            await repository.execute(
-                "UPDATE run_calls SET status='cancelled',code='WV-RUN-CANCELLED',ended_at=:at,delivered=true "
-                f"WHERE {SCOPE} AND id=:id",
-                id=row["id"],
-                at=now,
-            )
-            count(repository, "wait", "cancelled")
+            # A waiting call outlives nothing: its caller already ended. Refused for now, it is ended by a later scan.
+            async def end() -> None:
+                await repository.execute(
+                    "UPDATE run_calls SET status='cancelled',code='WV-RUN-CANCELLED',ended_at=:at,delivered=true "
+                    f"WHERE {SCOPE} AND id=:id",
+                    id=row["id"],
+                    at=now,
+                )
+                count(repository, "wait", "cancelled")
+
+            await isolated(tx, end)
             return None
+
+        async def rejected(code: str) -> tuple[int, int] | None:
+            # An ordinary write on the caller: refused for now (a spent quota, a busy lock), the call stays requested
+            # and is rejected by a later scan, and the calls and the cancellations behind it still run.
+            done: list[int] = []
+
+            async def write() -> None:
+                done.append(await self._reject(repository, row, caller, code, now))
+
+            return (0, done[0]) if await isolated(tx, write) else None
+
         if row["depth"] > MAX_CALL_DEPTH:
-            return 0, await self._reject(repository, row, caller, "WV-CALL-DEPTH", now)
+            return await rejected("WV-CALL-DEPTH")
         child = ChildStart(
             row["id"], row["caller_run_id"], row["node_id"], row["generation"], row["mode"], row["depth"]
         )
@@ -392,20 +412,20 @@ class CallService:
             tx.session.info["weave_runtime_candidate"] = candidate
             return None
         except (AccessDenied, AuthenticationFailed):
-            return 0, await self._reject(repository, row, caller, "WV-CALL-START", now)
+            return await rejected("WV-CALL-START")
         except RuntimeCapacityError:
             # The child's own first transition is too big for any run: the same input and version never fit, so
             # retrying cannot help. The refusal belongs to the call, not to the caller, which must not be blocked.
             if failures is not None and marked is not None:
                 failures[:] = marked
             tx.session.info["weave_runtime_candidate"] = candidate
-            return 0, await self._reject(repository, row, caller, "WV-CALL-START", now)
+            return await rejected("WV-CALL-START")
         except CatalogError as error:
             if error.code in PERMANENT_CODES:
-                return 0, await self._reject(repository, row, caller, "WV-CALL-START", now)
+                return await rejected("WV-CALL-START")
             if capacity_rejected(error) or error.code in TRANSIENT_CODES or error.status in {429, 503}:
                 return None
-            return 0, await self._reject(repository, row, caller, "WV-CALL-START", now)
+            return await rejected("WV-CALL-START")
         return 1, 0
 
     async def _started(self, repository: RuntimeRepository, row: dict[str, Any], view: "RunView") -> None:

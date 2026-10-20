@@ -95,8 +95,9 @@ class RecoveryService:
         if not 1 <= limit <= 100:
             raise ValueError("Bounded recovery page required")
         totals = {name: 0 for name in RecoveryReport.model_fields}
-        # Cancelling the children of ended callers is terminal control, so it also runs while starts are refused.
-        kinds = ("terminal", "cancel") if terminal_only else ("deadline", "expired", "retry", "dispatch", "cancel")
+        # Cancelling the children of ended callers is terminal control, so it also runs while starts are refused, and
+        # it runs right after due deadlines: stopping work never waits behind task recovery or call starts.
+        kinds = ("terminal", "cancel") if terminal_only else ("deadline", "cancel", "expired", "retry", "dispatch")
         for kind in kinds:
             for _ in range(limit):
                 try:
