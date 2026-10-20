@@ -55,7 +55,12 @@ def upgrade():
     op.execute(
         f"CREATE POLICY exact_scope ON deployment_change_requests TO weave_app USING ({EXACT}) WITH CHECK ({EXACT})"
     )
-    # DELETE serves retention only: the operations loop removes ended change requests after 90 days.
+    # DELETE serves retention only: the operations loop removes ended change requests after 90 days. A restrictive
+    # policy keeps every active change request out of reach of a delete.
+    op.execute(
+        "CREATE POLICY ended_only ON deployment_change_requests AS RESTRICTIVE FOR DELETE TO weave_app "
+        "USING (ended_at IS NOT NULL)"
+    )
     op.execute("GRANT SELECT,INSERT,UPDATE,DELETE ON deployment_change_requests TO weave_app")
     op.execute("ANALYZE deployment_change_requests")
     # Who made each plan, kept beside the plan document so runners and clients of earlier releases still read

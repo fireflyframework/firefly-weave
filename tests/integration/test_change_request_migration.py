@@ -189,3 +189,18 @@ async def test_plans_gain_a_nullable_planner_and_change_request_beside_their_doc
         )
     assert tuple(column) == ("uuid", "YES", None)
     assert granted
+
+
+async def test_the_application_deletes_only_change_requests_that_ended(upgraded):
+    engine, ids = upgraded
+    async with engine.begin() as connection:
+        await scope_as_app(connection, ids)
+        active = await insert_change(connection, ids, state="awaiting_approval")
+        ended = await insert_change(connection, ids, state="declined", ended=True)
+    async with engine.begin() as connection:
+        await scope_as_app(connection, ids)
+        # Retention removes ended rows only: an active change request survives even an unfiltered delete.
+        removed = await connection.execute(text("DELETE FROM deployment_change_requests RETURNING id"))
+        assert removed.scalars().all() == [ended]
+        assert await connection.scalar(text("SELECT count(*) FROM deployment_change_requests")) == 1
+        assert await connection.scalar(text("SELECT id FROM deployment_change_requests")) == active
