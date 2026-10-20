@@ -161,14 +161,16 @@ def estimate_tokens(*parts: str) -> int:
 # token, but identifiers, hex, base64, digits and runs of random letters take as little as one character per token,
 # and text outside ASCII (Chinese, emoji) more than one token per character. So a chunk with a digit, a run of more
 # than 12 letters or more than one lower-to-upper case switch counts one token per character plus one for the space
-# before it; in other chunks a letter counts 0.4 tokens (0.7 inside a run of capitals) and any other character 0.6;
-# a newline or an indent counts one; and each character outside ASCII counts its UTF-8 bytes, since a byte-level
-# token covers at least one. One shape stays below the models' count: words of random lowercase letters separated by
-# spaces (0.8 of it), which ordinary text does not contain.
+# before it; in other chunks a letter counts 0.4 tokens (0.7 inside a run of capitals), a mark in a run of two or
+# more punctuation marks one, and a single mark 0.6; a newline or an indent counts one; and each character outside
+# ASCII counts its UTF-8 bytes, since a byte-level token covers at least one. Shapes that stay below the models'
+# count, none of which ordinary text contains: words of random letters (lowercase up to 1.26 times the estimate,
+# capitalized up to 1.30) and long runs of spaces or tabs, which count one token per run.
 _CHUNK = re.compile(r"\S+|\n|[ \t]{2,}")
 _LONG_LETTERS = re.compile(r"[A-Za-z]{13,}")
 _CASE_SWITCH = re.compile(r"[a-z][A-Z]")
 _CAPITALS = re.compile(r"[A-Z]{2,}")
+_MARKS = re.compile(r"[^A-Za-z0-9\s]{2,}")
 
 
 def conservative_tokens(*parts: str) -> int:
@@ -186,7 +188,9 @@ def conservative_tokens(*parts: str) -> int:
         else:
             letters = sum(c.isalpha() for c in text)
             capitals = sum(len(run) for run in _CAPITALS.findall(text))
-            total += -(-((letters - capitals) * 4 + capitals * 7 + (len(text) - letters) * 6) // 10)
+            marks = sum(len(run) for run in _MARKS.findall(text))
+            single = len(text) - letters - marks
+            total += marks + -(-((letters - capitals) * 4 + capitals * 7 + single * 6) // 10)
     return total
 
 

@@ -229,3 +229,26 @@ def test_a_missing_prompt_count_skips_the_cut_check_out_loud(caplog, counted):
     assert [record.getMessage() for record in caplog.records] == [
         "The model reported no prompt token count, so the check for a cut prompt was skipped."
     ]
+
+
+def punctuation_shapes():
+    """Shapes measured on Ollama 0.40.2 with llama3.2:3b, qwen3:4b and qwen2.5:1.5b, generated as they were measured."""
+    rng = random.Random(13)
+    runs = "".join(rng.choice("{}[]:,!#") for _ in range(3000))
+    words = " ".join(
+        rng.choice("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+        + "".join(rng.choice("abcdefghijklmnopqrstuvwxyz") for _ in range(rng.randint(2, 8)))
+        for _ in range(500)
+    )[:3000]
+    return {"punctuation-runs": runs, "capitalized-random-words": words}
+
+
+def test_punctuation_runs_count_a_token_per_mark_and_a_single_mark_less():
+    # Measured 1,782 tokens for 3,000 marks in runs; a single mark between words merges with them.
+    assert ESTIMATE(punctuation_shapes()["punctuation-runs"]) >= 1782
+    assert ESTIMATE("{}[]") == 4 and ESTIMATE("order,") == 3
+
+
+def test_random_capitalized_words_are_a_known_shape_below_the_models_count():
+    # Measured 1,538 tokens; like random lowercase words, ordinary text holds no such words.
+    assert ESTIMATE(punctuation_shapes()["capitalized-random-words"]) < 1538

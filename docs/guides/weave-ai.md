@@ -138,9 +138,11 @@ steps and attachments are left out from the last, then the oldest messages. Weav
 Choose another size with **Context size** on the **Weave AI** card.
 
 On Ollama, which cuts a request longer than the model's context without saying
-so, Weave AI counts each request conservatively (identifiers, digits and text
-outside ASCII densely) and refuses one that may not fit before the model, with
-`WV-LUMI-CONTEXT-LIMIT`. On Ollama 0.40 or later it also refuses an answer whose
+so, Weave AI counts each request conservatively (identifiers, digits,
+punctuation runs and text outside ASCII densely) and refuses one that may not
+fit before the model, with `WV-LUMI-CONTEXT-LIMIT`. The count stays below the
+model's only for text ordinary requests do not hold: words of random letters
+(up to 1.3 times the count) and long runs of spaces or tabs. On Ollama 0.40 or later it also refuses an answer whose
 prompt count shows the model saw only part of the request; an older Ollama cuts
 differently, so there the conservative count is the only guard.
 
