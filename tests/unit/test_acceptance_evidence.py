@@ -98,7 +98,7 @@ def test_journey_results_report_passes_partials_skips_and_gaps():
                 "id": "J0.3",
                 "status": "partial",
                 "seconds": 300.0,
-                "skipped_checks": [{"check": "J0.3/operations", "missing": ["compose-operations"]}],
+                "skipped_checks": [{"check": "J0.3/event-fixtures", "missing": ["quality-gates"]}],
             },
         ],
     )
@@ -117,7 +117,7 @@ def test_journey_results_report_passes_partials_skips_and_gaps():
     assert (first["criteria"], first["viewport"], first["status"]) == (["SC7"], "cli", "failed")
     steps = {step["n"]: step for step in first["steps"]}
     assert steps[1] == {"n": 1, "status": "passed", "seconds": 1.0}
-    assert steps[3]["status"] == "partial" and steps[3]["skipped_checks"][0]["check"] == "J0.3/operations"
+    assert steps[3]["status"] == "partial" and steps[3]["skipped_checks"][0]["check"] == "J0.3/event-fixtures"
     assert steps[2] == {"n": 2, "status": "not_run"}
     assert steps[5] == {"n": 5, "status": "not_run"}
     assert 12 not in steps and 13 not in steps
