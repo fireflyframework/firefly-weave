@@ -183,6 +183,20 @@ async def mutate(client, headers, env_url, task, command, payload, key):
     )
 
 
+async def admitted(send, attempts=20):
+    """Send again while the platform refuses for capacity, as a client does: such a refusal ran nothing.
+
+    Concurrent changes in one project queue on its operation lock for at most 250 ms; a slower holder (a cold
+    or loaded database) makes the other side answer 429 WV-OPERATION-CAPACITY instead of its real outcome.
+    """
+    for _ in range(attempts - 1):
+        response = await send()
+        if response.status_code != 429 or response.json().get("code") != "WV-OPERATION-CAPACITY":
+            return response
+        await asyncio.sleep(0.05)
+    return await send()
+
+
 @pytest.mark.parametrize("historical", [False, True])
 async def test_claim_complete_retry_and_conflicting_payload(
     client, headers, env_url, human_run, access_db, author, historical
@@ -374,16 +388,18 @@ async def test_completion_races_cancellation_under_run_lock(client, headers, env
     run, task = human_run
     assert (await mutate(client, headers, env_url, task, "claim", {"expected_revision": 1}, "claim")).status_code == 200
     complete, cancel = await asyncio.gather(
-        mutate(
-            client,
-            headers,
-            env_url,
-            task,
-            "complete",
-            {"expected_revision": 2, "decision": "approve", "data": {"note": "ok"}},
-            "complete",
+        admitted(
+            lambda: mutate(
+                client,
+                headers,
+                env_url,
+                task,
+                "complete",
+                {"expected_revision": 2, "decision": "approve", "data": {"note": "ok"}},
+                "complete",
+            )
         ),
-        client.post(f"{env_url}/runs/{run}/cancel", headers=headers, json={"reason": "Cancel"}),
+        admitted(lambda: client.post(f"{env_url}/runs/{run}/cancel", headers=headers, json={"reason": "Cancel"})),
     )
     assert sorted((complete.status_code, cancel.status_code)) == [200, 409], [complete.text, cancel.text]
     state = (await client.get(f"{env_url}/runs/{run}", headers=headers)).json()["state"]
@@ -393,7 +409,10 @@ async def test_completion_races_cancellation_under_run_lock(client, headers, env
     assert count == (1 if state["status"] == "succeeded" else 0)
 
 
-async def test_due_expiry_wins_concurrent_completion(client, headers, env_url, human_run, access_db, services, author):
+@pytest.mark.parametrize("held", [False, True], ids=["tick", "tick-holding-the-project-lock"])
+async def test_due_expiry_wins_concurrent_completion(
+    client, headers, env_url, human_run, access_db, services, author, held
+):
     from firefly_weave.persistence.uow import UnitOfWork
     from firefly_weave.runtime.deadlines import DeadlineService
 
@@ -401,24 +420,34 @@ async def test_due_expiry_wins_concurrent_completion(client, headers, env_url, h
     assert (await mutate(client, headers, env_url, task, "claim", {"expected_revision": 1}, "claim")).status_code == 200
     async with access_db[1].begin() as session:
         await session.execute(text("UPDATE run_deadlines SET deadline=clock_timestamp() WHERE node_id='review'"))
+    locked = asyncio.Event()
 
     async def expire():
         async with UnitOfWork(access_db[0]).open(author[2]) as tx:
-            return await services(access_db[0]).resolve(DeadlineService).tick(tx, 100)
+            locked.set()
+            result = await services(access_db[0]).resolve(DeadlineService).tick(tx, 100)
+            if held:
+                # A slow tick keeps the project's operation lock past a request's 250 ms lock wait.
+                await tx.session.execute(text("SELECT pg_sleep(0.6)"))
+            return result
 
-    complete, _ = await asyncio.gather(
-        mutate(
-            client,
-            headers,
-            env_url,
-            task,
-            "complete",
-            {"expected_revision": 2, "decision": "approve", "data": {"note": "ok"}},
-            "complete",
-        ),
-        expire(),
-    )
-    assert complete.status_code == 409, complete.text
+    async def complete():
+        if held:
+            await locked.wait()
+        return await admitted(
+            lambda: mutate(
+                client,
+                headers,
+                env_url,
+                task,
+                "complete",
+                {"expected_revision": 2, "decision": "approve", "data": {"note": "ok"}},
+                "complete",
+            )
+        )
+
+    completed, _ = await asyncio.gather(complete(), expire())
+    assert completed.status_code == 409, completed.text
     assert (await client.get(f"{env_url}/runs/{run}", headers=headers)).json()["state"]["status"] == "timed_out"
     async with access_db[1]() as session:
         assert await session.scalar(text("SELECT count(*) FROM human_task_decisions")) == 0
