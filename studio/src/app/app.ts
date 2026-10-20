@@ -9857,7 +9857,8 @@ export class App implements CanvasHost {
       this.unknownCommand = false;
       if (p.path.includes("/human-tasks/")) this.selectedRecord = r;
       else if (p.path.includes("/email/")) this.emailSubmission = r;
-      if (p.path.includes("/drafts/")) {
+      // A draft save sets the revision and status only of its own draft, when it is the open one.
+      if (p.path.endsWith(`/drafts/${this.draftId}`)) {
         this.draftRevision = Number(r["revision"]);
         this.saveState =
           JSON.stringify((p.body as { document: unknown }).document) ===
