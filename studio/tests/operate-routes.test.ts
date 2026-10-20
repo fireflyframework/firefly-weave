@@ -117,6 +117,7 @@ describe("Operate routes", () => {
       "operate/clusters/deployments/:id",
       "operate/clusters/plans/:id",
       "operate/clusters/jobs/:id",
+      "operate/clusters/change-requests/:id",
     ]);
     expect(operateRoutes.every((route) => route.children?.length === 0)).toBe(
       true,

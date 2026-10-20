@@ -16,7 +16,9 @@
 
 """Current-authority member administration; never provisions CIAM passwords."""
 
+import hashlib
 import json
+from datetime import timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -28,6 +30,7 @@ from firefly_weave.access.audit import AuditContext
 from firefly_weave.access.models import Grant, Principal
 from firefly_weave.access.repository import load_principal
 from firefly_weave.access.service import AccessService, audit
+from firefly_weave.compiler.canonical import canonical_digest
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.members import (
     MemberBinding,
@@ -39,6 +42,9 @@ from firefly_weave.contracts.members import (
 )
 from firefly_weave.contracts.public import Page
 from firefly_weave.definitions.models import CatalogError
+
+# How long a principal creation key answers replays; older keys are removed and may be used again.
+PRINCIPAL_KEY_RETENTION = timedelta(days=7)
 
 
 @service
@@ -93,11 +99,64 @@ class MemberAdminService:
             )
 
     async def create_principal(
-        self, actor: Principal, request: PrincipalCreateRequest, *, context: AuditContext | None = None
+        self,
+        actor: Principal,
+        request: PrincipalCreateRequest,
+        *,
+        context: AuditContext | None = None,
+        idempotency_key: str | None = None,
     ) -> PrincipalRecord:
+        """Create a principal; with a key, the same administrator's repeated request answers the same principal."""
         context = context or AuditContext()
+        if idempotency_key is not None and not 1 <= len(idempotency_key) <= 200:
+            raise CatalogError(422, "WV-IDEMPOTENCY", "A bounded Idempotency-Key is required")
         async with self.access.sessions.begin() as session:
             actor = await self.platform(session, actor, context)
+            digest = canonical_digest(request.model_dump(mode="json"))
+            if idempotency_key is not None:
+                values = {"actor": actor.id, "operation": "principals.create", "key": idempotency_key}
+                namespace = f"principal-idempotency:{actor.id}:{idempotency_key}"
+                await session.execute(
+                    text("SELECT pg_advisory_xact_lock(:lock)"),
+                    {"lock": int.from_bytes(hashlib.sha256(namespace.encode()).digest()[:8], signed=True)},
+                )
+                await session.execute(
+                    text(
+                        "DELETE FROM principal_idempotency WHERE principal_id=:actor "
+                        "AND created_at<now()-make_interval(days=>:days)"
+                    ),
+                    {"actor": actor.id, "days": PRINCIPAL_KEY_RETENTION.days},
+                )
+                row = (
+                    (
+                        await session.execute(
+                            text(
+                                "SELECT request_hash,response FROM principal_idempotency WHERE principal_id=:actor "
+                                "AND operation=:operation AND idempotency_key=:key"
+                            ),
+                            values,
+                        )
+                    )
+                    .mappings()
+                    .first()
+                )
+                if row is not None:
+                    if row["request_hash"] != digest:
+                        raise CatalogError(
+                            409, "WV-IDEMPOTENCY-CONFLICT", "Idempotency key was used for another request"
+                        )
+                    created = PrincipalRecord.model_validate_json(json.dumps(row["response"]))
+                    # The replay names the principal it created, as it is now.
+                    current = (
+                        (
+                            await session.execute(
+                                text("SELECT id,kind,active FROM principals WHERE id=:id"), {"id": created.id}
+                            )
+                        )
+                        .mappings()
+                        .one()
+                    )
+                    return PrincipalRecord(**current)
             identifier = uuid4()
             await session.execute(
                 text("INSERT INTO principals(id,kind) VALUES(:id,:kind)"), {"id": identifier, "kind": request.kind}
@@ -112,7 +171,16 @@ class MemberAdminService:
                 context=context,
                 details={"kind": request.kind},
             )
-            return PrincipalRecord(id=identifier, kind=request.kind, active=True)
+            record = PrincipalRecord(id=identifier, kind=request.kind, active=True)
+            if idempotency_key is not None:
+                await session.execute(
+                    text(
+                        "INSERT INTO principal_idempotency(principal_id,operation,idempotency_key,request_hash,"
+                        "response) VALUES(:actor,:operation,:key,:hash,cast(:response AS jsonb))"
+                    ),
+                    {**values, "hash": digest, "response": record.model_dump_json()},
+                )
+            return record
 
     async def link_identity(
         self,

@@ -211,10 +211,14 @@ import { IncidentsPage } from "./operate/incidents/incidents-page";
 import { OverviewPage } from "./operate/overview/overview-page";
 import { RunsPage } from "./operate/runs/runs-page";
 import {
+  clustersRecordPath,
   navEntryVisible,
   viewFromPath,
   viewPath,
 } from "./operate/operate-routes";
+import { ApprovalWatch } from "./operate/clusters/approvals-inbox";
+import { approvable } from "./operate/clusters/change-request-model";
+import { Poller, browserEnvironment } from "./operate/operate-store";
 import { scopeKeyOf } from "./operate/operate-list";
 import { RecordsView } from "./operations/records-view";
 import { SettingsPage } from "./settings/settings-page";
@@ -1164,7 +1168,72 @@ export class App implements CanvasHost {
     fromWorkflow?: boolean;
   } | null = null;
   showTemplates = false;
+  /**
+   * The Clusters badge: change requests waiting for an approval this person
+   * can give, read every 15 s while they may approve anything, with a notice
+   * for each new one.
+   */
+  readonly approvalWatch = new ApprovalWatch((path) => this.api.request(path));
+  private readonly approvalPoller = new Poller(
+    () => this.watchApprovals(),
+    15000,
+    browserEnvironment,
+    () => !this.mayApprove,
+  );
+  private get mayApprove() {
+    return (
+      !!this.profile &&
+      !!this.identity &&
+      !this.signInEnded &&
+      this.identity.grants.some((grant) =>
+        grant.capabilities.includes("deployment.approve"),
+      )
+    );
+  }
+  /** Reads the badge again, for example right after an approval. */
+  refreshApprovals() {
+    return this.approvalPoller.refresh();
+  }
+  private async watchApprovals() {
+    if (!this.mayApprove) {
+      this.approvalWatch.clear();
+      return;
+    }
+    const viewer = this.identity?.principal_id;
+    const scope = this.api.environment;
+    const notice = await this.approvalWatch.load(scope, (row) =>
+      // The change's own policy decides here; the server also applies the
+      // target's, when it is stricter.
+      approvable(
+        row,
+        (capability, target) => this.can(capability, target),
+        viewer,
+        () => false,
+      ),
+    );
+    this.cdr.markForCheck();
+    if (notice)
+      this.notify(notice.text, {
+        label: "Review",
+        run: () => void this.openChangeRequest(notice.id),
+      });
+  }
+  /**
+   * A navigation entry's accessible name: its label, and for Clusters the changes waiting for this person's
+   * approval, so the name stays "Clusters" when the sidebar shows icons only.
+   */
+  navName(id: string, label: string): string | null {
+    const count = this.approvalWatch.count;
+    if (id !== "clusters" || !count) return null;
+    return `${label}, ${count} ${count === 1 ? "change waits" : "changes wait"} for your approval`;
+  }
+  /** Opens a change request on the Clusters page. */
+  async openChangeRequest(id: string) {
+    if (this.view !== "clusters") await this.navigate("clusters");
+    await this.router.navigateByUrl(clustersRecordPath("change-requests", id));
+  }
   constructor() {
+    this.approvalPoller.start(false);
     history.replaceState(
       { ...history.state, weavePosition: this.historyPosition },
       "",
@@ -1283,6 +1352,7 @@ export class App implements CanvasHost {
         // A reload or a link to a workflow brings it back first.
         if (designer) await this.restoreWorkflow(designer[1]);
         await this.verifyPlatform(true);
+        void this.approvalPoller.refresh();
         if (this.view !== "designer") await this.refresh();
         if (route?.id && this.view === "runs")
           await this.viewRun({ id: route.id });
@@ -1307,6 +1377,7 @@ export class App implements CanvasHost {
       this.connecting = false;
       this.cdr.markForCheck();
       await this.verifyPlatform(true);
+      void this.approvalPoller.refresh();
       // A workflow kept from before the session ended needs the catalog again.
       if (this.selected?.step.kind === "action") void this.loadActionCatalog();
       await this.refresh();

@@ -55,6 +55,50 @@ answers = [{ status = 422, code = "WV-AI-WORKER-MISSING" }]
 [operations."bindable_connections.list"]
 capability = "connection.bind"
 
+# Change requests: a permitted call names a random target, deployment or change request, so nothing changes.
+[operations."deployment_change_requests.advance"]
+capability = "deployment.plan"
+identifier = "random"
+
+[operations."deployment_change_requests.apply"]
+capability = "deployment.apply"
+identifier = "random"
+body = { digest = "0000000000000000000000000000000000000000000000000000000000000000" }
+
+[operations."deployment_change_requests.approve"]
+capability = "deployment.approve"
+identifier = "random"
+body = { digest = "0000000000000000000000000000000000000000000000000000000000000000" }
+
+[operations."deployment_change_requests.cancel"]
+capability = "deployment.plan"
+identifier = "random"
+body = { reason = "Authorization probe" }
+
+[operations."deployment_change_requests.create"]
+capability = "deployment.plan"
+body = { target_id = "random", deployment_id = "random", expected_deployment_revision = 1, intent = "restart_workers", components = ["fixture-worker"], title = "Authorization probe" }
+
+[operations."deployment_change_requests.decline"]
+capability = "deployment.approve"
+identifier = "random"
+body = { reason = "Authorization probe" }
+
+[operations."deployment_change_requests.drain"]
+capability = "worker.drain"
+identifier = "random"
+
+[operations."deployment_change_requests.list"]
+capability = "deployment.read"
+
+[operations."deployment_change_requests.read"]
+capability = "deployment.read"
+identifier = "random"
+
+[operations."deployment_change_requests.replan"]
+capability = "deployment.plan"
+identifier = "random"
+
 [operations."incidents.read"]
 capability = "incident.read"
 identifier = "random"

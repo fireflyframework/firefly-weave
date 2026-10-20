@@ -27,7 +27,9 @@ from firefly_weave.contracts.definitions import ContractModel
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.persistence.uow import Transaction
 
-COLLECTIONS = frozenset({"targets", "deployments", "observations", "plans", "approvals", "runners", "jobs", "reports"})
+COLLECTIONS = frozenset(
+    {"targets", "deployments", "observations", "plans", "approvals", "runners", "jobs", "reports", "change_requests"}
+)
 SCOPE = "tenant_id=:tenant AND project_id=:project AND environment_id=:environment"
 
 
@@ -75,13 +77,18 @@ class DeploymentRepository:
     ) -> None:
         table = self.table(collection)
         count = await self.tx.session.scalar(text(f"SELECT count(*) FROM {table} WHERE {SCOPE}"), self.bound)
+        # Change requests are kept 90 days after they end, so they share the larger bound of runner reports.
         maximum = (
-            100 if collection in {"targets", "deployments", "runners"} else 10000 if collection == "reports" else 1000
+            100
+            if collection in {"targets", "deployments", "runners"}
+            else 10000
+            if collection in {"reports", "change_requests"}
+            else 1000
         )
         if count is not None and count >= maximum:
             raise CatalogError(409, "WV-DEPLOYMENT-CAPACITY", "Deployment collection limit reached")
         values = extra or {}
-        allowed = {"state", "job_id", "runner_id", "request_hash"}
+        allowed = {"state", "job_id", "runner_id", "request_hash", "planned_by", "change_request_id"}
         if not set(values) <= allowed:
             raise ValueError("Invalid deployment persistence fields")
         encoded = payload.model_dump_json()
@@ -108,7 +115,7 @@ class DeploymentRepository:
         self, collection: str, identifier: UUID, payload: ContractModel, *, extra: dict[str, Any] | None = None
     ) -> None:
         values = extra or {}
-        allowed = {"state", "generation", "runner_id", "lease_token", "lease_expires_at"}
+        allowed = {"state", "generation", "runner_id", "lease_token", "lease_expires_at", "ended_at"}
         if not set(values) <= allowed:
             raise ValueError("Invalid deployment persistence fields")
         sets = "".join("," + key + "=:" + key for key in values)

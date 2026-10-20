@@ -244,3 +244,136 @@ async def test_revoked_lease_during_work_cancels_the_owned_effect():
     await OperationsRunner(client, policy, adapter, renew_interval=0.01).execute(lease)
     assert cancelled.is_set()
     assert client.reports[-1].state == "reconciliation_required"
+
+
+def test_a_restart_of_anything_but_a_worker_is_refused():
+    lease, policy = fixture()
+    api = ComponentSpec(
+        name="worker", kind="api", image=lease.plan.steps[0].component.image, configuration="current", replicas=1
+    )
+    target = lease.target.model_copy(
+        update={"adapter": "docker-compose", "capabilities": ["observe", "restart_workers"]}
+    )
+    plan = lease.plan.model_copy(
+        update={
+            "adapter": "docker-compose",
+            "intent": "restart_workers",
+            "steps": [PlanStep(action="restart_workers", component=api, expected_version="8")],
+        }
+    )
+    plan = plan.model_copy(update={"digest": canonical_digest(plan.model_dump(mode="json", exclude={"digest"}))})
+    job = lease.job.model_copy(update={"plan_digest": plan.digest})
+    deployment = lease.deployment.model_copy(update={"components": [api]})
+    compose = policy.model_copy(
+        update={
+            "adapter": "docker-compose",
+            "capabilities": ["observe", "restart_workers"],
+            "compose_file": "/srv/compose.yaml",
+            "lock_file": "/srv/runner.lock",
+            "components": [policy.components[0].model_copy(update={"kind": "api", "container": None})],
+        }
+    )
+    restart = lease.model_copy(update={"target": target, "plan": plan, "job": job, "deployment": deployment})
+    with pytest.raises(RunnerPolicyError):
+        validate_lease(restart, compose)
+    # The same lease restarting a worker passes the check.
+    worker = lease.plan.steps[0].component
+    allowed = plan.model_copy(
+        update={"steps": [PlanStep(action="restart_workers", component=worker, expected_version="8")]}
+    )
+    allowed = allowed.model_copy(
+        update={"digest": canonical_digest(allowed.model_dump(mode="json", exclude={"digest"}))}
+    )
+    validate_lease(
+        restart.model_copy(
+            update={
+                "plan": allowed,
+                "job": job.model_copy(update={"plan_digest": allowed.digest}),
+                "deployment": lease.deployment,
+            }
+        ),
+        compose.model_copy(update={"components": policy.components}),
+    )
+
+
+@pytest.mark.parametrize(
+    ("adapter", "version"), [("docker-compose", "2"), ("kubernetes", "1"), ("azure-container-apps", "1")]
+)
+def test_only_an_adapter_that_removes_the_reviewed_members_registers_version_2(adapter, version):
+    """Version 2 promises the scale-down rule: Compose removes exactly the reviewed members; the others do not yet."""
+    from types import SimpleNamespace
+    from uuid import uuid4
+
+    from firefly_weave.deployment_runner.application import runner_registration
+
+    destination = SimpleNamespace(target_id=uuid4(), adapter=adapter, capabilities=["observe", "scale_workers"])
+    sent = runner_registration(destination)
+    assert (sent.adapter, sent.adapter_version, sent.capabilities) == (adapter, version, ["observe", "scale_workers"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", ["WV-OPERATION-CAPACITY", "WV-REQUEST-CAPACITY"])
+async def test_a_report_the_platform_refuses_for_capacity_is_sent_again_unchanged(code, monkeypatch):
+    """A busy platform answers 429 to a report; the runner sends the same report again instead of reporting the
+    applied change as ambiguous."""
+    from firefly_weave.deployment_runner import runtime
+    from firefly_weave.sdk.errors import Problem, WeaveError
+
+    monkeypatch.setattr(runtime, "REPORT_RETRY_SECONDS", 0.01)
+    lease, policy = fixture()
+    client, adapter = Client(lease), Adapter(lease)
+    original = client.invoke
+    refused = []
+
+    async def busy(operation, **kwargs):
+        if operation == "deployment_runners.report" and kwargs["body"].state == "succeeded" and len(refused) < 2:
+            refused.append(kwargs["body"])
+            raise WeaveError(Problem(status=429, code=code, message="busy"))
+        return await original(operation, **kwargs)
+
+    client.invoke = busy
+    await OperationsRunner(client, policy, adapter).execute(lease)
+    assert [item.state for item in client.reports] == ["running", "verifying", "succeeded"]
+    assert {item.report_id for item in refused} == {client.reports[-1].report_id}
+    assert client.reports[-1].receipt.code == "applied"
+
+
+@pytest.mark.asyncio
+async def test_a_failed_job_logs_where_it_failed_and_nothing_the_provider_said(caplog):
+    """An operator reading the runner's log learns the job, its outcome and the code location that refused it, never
+    a provider diagnostic."""
+    import logging
+
+    lease, policy = fixture()
+    client, adapter = Client(lease), Adapter(lease, fail=True)
+    with caplog.at_level(logging.WARNING, logger="weave.deployment_runner"):
+        await OperationsRunner(client, policy, adapter).execute(lease)
+    (record,) = [item for item in caplog.records if item.name == "weave.deployment_runner"]
+    message = record.getMessage()
+    assert str(lease.job.id) in message and "reconciliation required" in message
+    assert "RuntimeError at apply" in message
+    assert "private provider diagnostic" not in message
+
+
+@pytest.mark.asyncio
+async def test_a_report_refused_for_any_other_reason_is_not_sent_again(monkeypatch):
+    """Only a capacity refusal is sent again; another 429 (or any refusal) fails the job as before."""
+    from firefly_weave.deployment_runner import runtime
+    from firefly_weave.sdk.errors import Problem, WeaveError
+
+    monkeypatch.setattr(runtime, "REPORT_RETRY_SECONDS", 0.01)
+    lease, policy = fixture()
+    client, adapter = Client(lease), Adapter(lease)
+    original = client.invoke
+    refused = []
+
+    async def limited(operation, **kwargs):
+        if operation == "deployment_runners.report" and kwargs["body"].state == "succeeded":
+            refused.append(kwargs["body"])
+            raise WeaveError(Problem(status=429, code="WV-RATE-LIMITED", message="slow down"))
+        return await original(operation, **kwargs)
+
+    client.invoke = limited
+    await OperationsRunner(client, policy, adapter).execute(lease)
+    assert len(refused) == 1
+    assert client.reports[-1].state == "reconciliation_required"

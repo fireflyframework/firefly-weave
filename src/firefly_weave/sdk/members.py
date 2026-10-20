@@ -41,8 +41,14 @@ class MembersClient:
             query["cursor"] = cursor
         return cast(Page[PrincipalRecord], await self.client.invoke("principals.list", query=query))
 
-    async def create_principal(self, request: PrincipalCreateRequest) -> PrincipalRecord:
-        return cast(PrincipalRecord, await self.client.invoke("principals.create", body=request))
+    async def create_principal(
+        self, request: PrincipalCreateRequest, *, idempotency_key: str | None = None
+    ) -> PrincipalRecord:
+        """Create a principal; repeating the same key answers the principal it created."""
+        return cast(
+            PrincipalRecord,
+            await self.client.invoke("principals.create", body=request, idempotency_key=idempotency_key),
+        )
 
     async def link_identity(self, identifier: UUID, request: PrincipalIdentityRequest) -> PrincipalIdentityResult:
         return cast(

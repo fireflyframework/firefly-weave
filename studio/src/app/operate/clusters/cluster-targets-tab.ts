@@ -23,8 +23,10 @@ import { toneAttribute } from "../../status-labels";
 import { OperateState } from "../operate-state";
 import { ClusterDeploymentList } from "./cluster-deployment-list";
 import { ClusterSection } from "./cluster-section";
+import type { Target } from "../../operations/deployment-contracts";
 import {
   adapterIcon,
+  approvalLine,
   runnerLine,
   runnerTone,
   targetRunner,
@@ -44,11 +46,41 @@ import {
           <p>Existing container runtimes and their explicit boundaries.</p>
         </div>
         @if (can("target.manage")) {
-          <button class="primary" (click)="startRegistration()">
-            Register target
+          <button
+            class="primary"
+            [attr.aria-expanded]="choosing"
+            aria-controls="add-target-choices"
+            (click)="choosing = !choosing"
+          >
+            Add target
           </button>
         }
       </div>
+      @if (choosing && can("target.manage")) {
+        <div class="target-chooser" id="add-target-choices">
+          <div class="chooser-option">
+            <strong>Docker on this computer</strong>
+            <span
+              >Added for you when the local platform starts. Look for
+              <em>local-docker</em> in the list below.</span
+            >
+          </div>
+          <div class="chooser-option">
+            <strong>Kubernetes</strong>
+            <span>Register a cluster and the runner that works inside it.</span>
+            <button type="button" (click)="register()">
+              Register a cluster
+            </button>
+          </div>
+          <details class="chooser-option">
+            <summary>Other</summary>
+            <span
+              >Register any other container runtime with its own runner.</span
+            >
+            <button type="button" (click)="register()">Register target</button>
+          </details>
+        </div>
+      }
       @if (!store.loaded("targets") && !store.errors.targets) {
         <p role="status">Loading targets…</p>
       }
@@ -79,13 +111,23 @@ import {
                 {{ item.name }}
               </button></span
             ><span>{{ adapterLabels[item.adapter] }} · {{ item.boundary }}</span
-            ><span>{{ item.disabled ? "Disabled" : "Registered" }}</span>
+            ><span>{{ item.disabled ? "Disabled" : "Registered" }}</span
+            ><span class="approval-line">{{ approvalLine(item) }}</span>
             @if (store.loaded("runners")) {
               <span
                 class="status-pill runner-line"
                 [attr.data-tone]="presenceTone(runner)"
                 >{{ line(runner) }}</span
               >
+            }
+            @if (host.can("deployment.plan", item.id) && !item.disabled) {
+              <button
+                type="button"
+                class="card-action"
+                (click)="page.openWizard(item.id)"
+              >
+                New change request
+              </button>
             }
           </li>
         } @empty {
@@ -111,6 +153,15 @@ import {
 })
 export class ClusterTargetsTab extends ClusterSection {
   readonly icon = adapterIcon;
+  /** Whether the Add target choices are open. */
+  choosing = false;
+  register() {
+    this.choosing = false;
+    return this.startRegistration();
+  }
+  approvalLine(target: Target) {
+    return approvalLine(target);
+  }
   runnerOf(targetId: string) {
     return targetRunner(this.store.runners, targetId);
   }

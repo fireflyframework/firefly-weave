@@ -54,11 +54,21 @@ async def operations(services, access_db, provisioned):
     return service, dict(actor=actor, scope=scope, context=AuditContext())
 
 
+@pytest.fixture
+async def approver(operations, access_db, provisioned):
+    admin, scopes = provisioned
+    principal = await access_db[2].create_principal(admin, "application")
+    for role in ("deployment_reader", "deployment_approver"):
+        await access_db[2].grant(admin, principal, Grant(role=role, scope=scopes[0]))
+    # Targets need a second person to approve unless an environment manager turns that off.
+    return dict(actor=await access_db[2].load_principal(principal), scope=scopes[0], context=AuditContext())
+
+
 def observation():
     return ObservationReport(resources=[], complete=True)
 
 
-async def test_observe_plan_approve_apply_is_fenced_and_idempotent(operations):
+async def test_observe_plan_approve_apply_is_fenced_and_idempotent(operations, approver):
     service, authority = operations
     target = await service.create_target(
         TargetRequest(
@@ -112,7 +122,7 @@ async def test_observe_plan_approve_apply_is_fenced_and_idempotent(operations):
         **authority,
     )
     assert await service.approval(plan.id, **authority) is None
-    approved = await service.approve(plan.id, PlanApprovalRequest(digest=plan.digest), **authority)
+    approved = await service.approve(plan.id, PlanApprovalRequest(digest=plan.digest), **approver)
     assert await service.approval(plan.id, **authority) == approved
     job = await service.apply(plan.id, ApplyPlanRequest(digest=plan.digest), "apply", **authority)
     assert await service.apply(plan.id, ApplyPlanRequest(digest=plan.digest), "apply", **authority) == job
@@ -152,7 +162,7 @@ async def test_observe_plan_approve_apply_is_fenced_and_idempotent(operations):
 
 
 @pytest.fixture
-async def prepared_operation(operations):
+async def prepared_operation(operations, approver):
     from types import SimpleNamespace
 
     service, authority = operations
@@ -207,10 +217,11 @@ async def prepared_operation(operations):
         "plan",
         **authority,
     )
-    await service.approve(plan.id, PlanApprovalRequest(digest=plan.digest), **authority)
+    await service.approve(plan.id, PlanApprovalRequest(digest=plan.digest), **approver)
     return SimpleNamespace(
         service=service,
         authority=authority,
+        approver=approver,
         target=target,
         runner=runner,
         deployment=deployment,
@@ -229,7 +240,7 @@ async def test_stale_desired_revision_and_revoked_approval_cannot_apply(prepared
     async with access_db[1].begin() as tx:
         await tx.execute(
             text("DELETE FROM role_bindings WHERE principal_id=:id AND role='deployment_approver'"),
-            {"id": s.authority["actor"].id},
+            {"id": s.approver["actor"].id},
         )
     with pytest.raises(AccessDenied):
         await s.service.apply(s.plan.id, ApplyPlanRequest(digest=s.plan.digest), "apply", **s.authority)

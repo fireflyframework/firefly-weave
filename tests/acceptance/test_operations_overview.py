@@ -28,6 +28,7 @@ import asyncio
 import hashlib
 import json
 import time
+from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -337,3 +338,235 @@ def test_j5_01_overview_and_operational_facts(run):
     (run.evidence / "operations-journey.json").write_text(
         json.dumps({"runs": journey["runs"], "statuses": "succeeded, suspended"}, indent=2) + "\n", encoding="utf-8"
     )
+
+
+# J5.2–J5.7 run on the fixture worker J0.10 started on local-docker. order-review-lite is this journey's own
+# one-step workflow on the fixture's example-sleep task: the reference catalog has no lite variant.
+LITE = "order-review-lite-" + SUFFIX
+LITE_ACTION = "order-review-lite-sleep-" + SUFFIX
+SLEEP_TASK = "example-sleep"
+FIXTURE_TTL_SECONDS = 60
+
+
+def fixture_worker(run: Any) -> tuple[str, str]:
+    """The fixture worker J0.10 brought online, and the release local operations admitted for it."""
+    worker = run.private_record("fixture-worker")["worker_id"]
+    release = json.loads((run.platform_dir / "operations.json").read_text(encoding="utf-8"))["release_id"]
+    return str(worker), str(release)
+
+
+async def lite_activation(platform: Platform, release: str) -> dict:
+    """Publish and activate order-review-lite: one step that sleeps on the fixture worker."""
+    manifest = json.loads(
+        (Path(__file__).resolve().parents[2] / "tests/fixtures/operations-worker/manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )["capabilities"][0]
+    async with platform.client() as client:
+        await post(
+            client,
+            platform.project + "/actions",
+            {
+                "format": "json",
+                "source": json.dumps(
+                    {
+                        "apiVersion": "weave/v1alpha1",
+                        "kind": "Action",
+                        "metadata": {"name": LITE_ACTION, "version": "1.0.0"},
+                        "spec": {
+                            "implementation": {"kind": "worker", "taskType": SLEEP_TASK, "taskVersion": "1.0.0"},
+                            **{key: manifest[key] for key in ("inputSchema", "outputSchema", "sideEffect")},
+                            "timeoutSeconds": manifest["timeoutSeconds"],
+                            "retry": {"maxAttempts": 1, "initialDelaySeconds": 1, "maxDelaySeconds": 1},
+                        },
+                    }
+                ),
+            },
+        )
+        version = await post(
+            client,
+            platform.project + "/workflows",
+            {
+                "format": "json",
+                "source": json.dumps(
+                    {
+                        "apiVersion": "weave/v1alpha1",
+                        "kind": "Workflow",
+                        "metadata": {"name": LITE, "version": "1.0.0"},
+                        "spec": {
+                            "inputSchema": manifest["inputSchema"],
+                            "outputSchema": {"type": "object"},
+                            "timeoutSeconds": 300,
+                            "steps": [
+                                {
+                                    "id": "sleep",
+                                    "kind": "action",
+                                    "uses": LITE_ACTION + "@1.0.0",
+                                    "with": {"ref": "/input"},
+                                }
+                            ],
+                            "output": {"ref": "/steps/sleep/output"},
+                        },
+                    }
+                ),
+            },
+        )
+        return await post(
+            client,
+            platform.environment + "/activations",
+            {
+                "scope": platform.scope,
+                "version_id": version["id"],
+                "artifact_digest": version["digest"],
+                "worker_release_ids": {SLEEP_TASK: release},
+            },
+        )
+
+
+async def control(run: Any, worker: str, action: str) -> Any:
+    """Drain or resume the fixture worker as the operator, who holds worker.drain (the host account does not)."""
+    from firefly_weave.contracts.workers import WorkerControlRequest
+
+    async with run.client("operator") as operator:
+        current = await operator.invoke("workers.read", identifier=UUID(worker))
+        return await operator.invoke(
+            "workers." + action,
+            identifier=UUID(worker),
+            body=WorkerControlRequest(expected_revision=current.revision),
+            idempotency_key=str(uuid4()),
+        )
+
+
+async def drained_runs(run: Any, platform: Platform, worker: str, release: str) -> dict:
+    activation = await lite_activation(platform, release)
+    drained = await control(run, worker, "drain")
+    assert drained.draining is True
+    async with platform.client() as client:
+        runs = [
+            (
+                await post(
+                    client, platform.environment + "/runs", {"activation_id": activation["id"], "input": {"ms": 500}}
+                )
+            )["id"]
+            for _ in range(5)
+        ]
+        # While the only worker drains, the five tasks wait and the oldest grows older.
+        ages = []
+        deadline = time.monotonic() + 60
+        while len(ages) < 2:
+            load = (await get(client, platform.environment + "/operations/summary"))["load"]
+            if load["tasks_ready"] >= 5 and load["oldest_ready_seconds"] is not None:
+                ages.append(load["oldest_ready_seconds"])
+                await asyncio.sleep(3)
+            else:
+                assert time.monotonic() < deadline, load
+                await asyncio.sleep(1)
+        assert ages[1] > ages[0], ages
+        await control(run, worker, "resume")
+        resumed = time.monotonic()
+        while (await get(client, platform.environment + "/operations/summary"))["load"]["tasks_ready"]:
+            assert time.monotonic() - resumed < 60, "ready tasks remain 60 s after the worker resumed"
+            await asyncio.sleep(1)
+        deadline = time.monotonic() + 120
+        while True:
+            listed = await get(client, platform.environment + "/run-summaries", workflow=LITE)
+            statuses = {item["id"]: item.get("status") for item in listed["items"]}
+            if all(statuses.get(run) == "succeeded" for run in runs):
+                break
+            assert time.monotonic() < deadline, statuses
+            await asyncio.sleep(1)
+    return {"runs": runs, "ages": ages}
+
+
+@pytest.mark.journey_step("J5.2")
+def test_j5_02_a_drained_worker_holds_ready_tasks_until_it_resumes(run):
+    platform = Platform(run)
+    worker, release = fixture_worker(run)
+    journey = asyncio.run(drained_runs(run, platform, worker, release))
+    (run.evidence / "operations-drain.json").write_text(json.dumps(journey, indent=2) + "\n", encoding="utf-8")
+
+
+def fixture_container(run: Any) -> str:
+    project = f"weave-local-{run.platform_state()['id']}-workers"
+    (container,) = run.require(
+        run.docker(
+            "ps",
+            "--quiet",
+            "--filter",
+            f"label=com.docker.compose.project={project}",
+            "--filter",
+            "label=com.docker.compose.service=fixture-worker",
+        )
+    ).stdout.split()
+    return container
+
+
+async def worker_view(platform: Platform, worker: str) -> dict:
+    async with platform.client() as client:
+        return await get(client, platform.environment + f"/workers/{worker}")
+
+
+@pytest.mark.journey_step("J5.3")
+def test_j5_03_workers_show_placement_load_contact_and_go_stale_when_their_container_stops(run):
+    platform = Platform(run)
+    worker, release = fixture_worker(run)
+    seen = asyncio.run(worker_view(platform, worker))
+    placement = seen.get("placement") or {}
+    assert (placement.get("target_name"), placement.get("component")) == ("local-docker", "fixture-worker"), seen
+    assert seen["release_id"] == release and seen["task_types"] == ["example-sleep@1.0.0"]
+    assert seen["capacity"] == 2 and 0 <= seen["active_leases"] <= seen["capacity"]
+    assert seen["presence"] == "recent"
+    from datetime import datetime
+
+    contact = datetime.fromisoformat(seen["observed_at"]) - datetime.fromisoformat(seen["last_seen_at"])
+    assert contact.total_seconds() <= 10, contact
+    # Stopped outside the runner, the worker stops reporting: stale after its TTL.
+    run.require(run.docker("stop", "--time", "30", fixture_container(run)))
+    deadline = time.monotonic() + FIXTURE_TTL_SECONDS + 60
+    while asyncio.run(worker_view(platform, worker))["presence"] != "stale":
+        assert time.monotonic() < deadline, "the stopped worker is not stale after its TTL"
+        time.sleep(3)
+
+    # The Workers page's offline filter lists it. The overview's Needs attention band lists an offline worker only
+    # while it still holds active leases, and this one finished its tasks when it was stopped.
+    async def offline() -> set[str]:
+        async with platform.client() as client:
+            listed = await get(client, platform.environment + "/workers", presence="stale", limit=100)
+        return {item["id"] for item in listed["items"]}
+
+    assert worker in asyncio.run(offline())
+
+
+async def incidents_inbox(platform: Platform) -> dict:
+    """J5.1's failed run left an active incident: the inbox lists it by filter; terminating it moves it to resolved."""
+    async with platform.client() as client:
+        active = await get(client, platform.environment + "/incidents", workflow=WORKFLOW, status="active")
+        (incident,) = [item for item in active["items"] if item["code"] == "WV-TASK-RETRIES-EXHAUSTED"]
+        coded = await get(client, platform.environment + "/incidents", code="WV-TASK-RETRIES-EXHAUSTED")
+        assert incident["id"] in {item["id"] for item in coded["items"]}
+        response = await client.post(
+            platform.environment + f"/incidents/{incident['id']}/resolve",
+            json={"receipt_id": str(uuid4()), "kind": "terminate", "reason": "Acceptance: the order was withdrawn"},
+            headers={"If-Match": f'"{incident["revision"]}"', "Idempotency-Key": str(uuid4())},
+        )
+        assert response.status_code == 200, response.text[:500]
+        deadline = time.monotonic() + 60
+        while True:
+            still = await get(client, platform.environment + "/incidents", workflow=WORKFLOW, status="active")
+            ended = {
+                item["id"]
+                for status in ("resolved", "closed")
+                for item in (await get(client, platform.environment + "/incidents", workflow=WORKFLOW, status=status))[
+                    "items"
+                ]
+            }
+            if incident["id"] not in {item["id"] for item in still["items"]} and incident["id"] in ended:
+                return {"incident": incident["id"]}
+            assert time.monotonic() < deadline, "the terminated incident did not move to resolved"
+            await asyncio.sleep(1)
+
+
+@pytest.mark.journey_step("J5.7")
+def test_j5_07_the_incidents_inbox_filters_and_resolves(run):
+    result = asyncio.run(incidents_inbox(Platform(run)))
+    (run.evidence / "operations-incidents.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")

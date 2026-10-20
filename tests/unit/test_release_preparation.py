@@ -112,3 +112,32 @@ def test_production_docker_targets_do_not_inherit_server_for_worker():
     assert "worker-requirements.txt" in worker
     assert "server-requirements.txt" not in worker
     assert "@sha256:" in main and "@sha256:" in worker
+
+
+def test_release_inputs_include_the_fixture_worker(tmp_path, monkeypatch):
+    spec = importlib.util.spec_from_file_location("prepare_release", ROOT / "scripts/prepare_release.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    def command(argv, **kwargs):
+        if any(str(arg).endswith("release_workers.py") for arg in argv):
+            (Path(argv[argv.index("--release") + 1]) / "workers.json").write_text("{}")
+            return b"prepared workers"
+        if "build" in argv:
+            artifacts = Path(argv[argv.index("--out-dir") + 1])
+            artifacts.mkdir()
+            (artifacts / f"firefly_weave-{VERSION}-py3-none-any.whl").write_bytes(b"exact wheel bytes")
+            with tarfile.open(artifacts / f"firefly_weave-{VERSION}.tar.gz", "w:gz"):
+                pass
+            return b"built"
+        return b"click==8.5.0 --hash=sha256:" + b"1" * 64 + b"\n"
+
+    monkeypatch.setattr(module, "run_command", command)
+    value = module.prepare(ROOT, tmp_path / "release")
+    context = tmp_path / "release/images"
+    for name, source in (
+        ("operations-worker.py", "tests/fixtures/operations-worker/main.py"),
+        ("operations-worker-manifest.json", "tests/fixtures/operations-worker/manifest.json"),
+    ):
+        assert (context / name).read_bytes() == (ROOT / source).read_bytes()
+        assert value["inputs"][name] == hashlib.sha256((ROOT / source).read_bytes()).hexdigest()
