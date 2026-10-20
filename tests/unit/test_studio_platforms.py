@@ -1391,3 +1391,43 @@ def test_a_platform_removed_and_added_again_keeps_its_data_only_after_a_new_sign
         sign_in_with_browser(browser, headers)
         assert browser.put(f"/studio/local/store/{key}", headers=headers, json={"value": "{}"}).status_code == 204
     assert LocalStore(folder).tombstones() == []
+
+
+def test_a_platform_signed_in_outside_studio_keeps_its_data_after_studio_s_next_identity_check(platforms, tmp_path):
+    from firefly_weave.studio.local_store import LocalStore, profile_prefix
+
+    folder = tmp_path / "studio-store"
+    key = profile_prefix("Acme") + "0123456789abcdef:t:p:testData.d-1"
+    with platforms.client(store_directory=folder) as browser:
+        headers = pair(browser)
+        connected(browser, headers)
+        credentials = {path: path.read_bytes() for path in platforms.credentials.glob("*.json")}
+        assert browser.post("/studio/connection/logout", headers=headers, json={}).status_code == 200
+        assert browser.put(f"/studio/local/store/{key}", headers=headers, json={"value": "{}"}).status_code == 409
+        # Signed in again from the command line: the credential is back, without Studio's sign-in.
+        for path, raw in credentials.items():
+            path.write_bytes(raw)
+            path.chmod(0o600)
+        checked = browser.get("/studio/api/api/v1/identity", headers=headers)
+        assert checked.status_code == 200, checked.text
+        assert browser.put(f"/studio/local/store/{key}", headers=headers, json={"value": "{}"}).status_code == 204
+    assert LocalStore(folder).tombstones() == []
+
+
+def test_a_refused_identity_check_lifts_no_tombstone(platforms, tmp_path):
+    from firefly_weave.studio.local_store import LocalStore, profile_prefix
+
+    folder = tmp_path / "studio-store"
+    key = profile_prefix("Acme") + "0123456789abcdef:t:p:testData.d-1"
+    with platforms.client(store_directory=folder) as browser:
+        headers = pair(browser)
+        connected(browser, headers)
+        credentials = {path: path.read_bytes() for path in platforms.credentials.glob("*.json")}
+        assert browser.post("/studio/connection/logout", headers=headers, json={}).status_code == 200
+        for path, raw in credentials.items():
+            path.write_bytes(raw)
+            path.chmod(0o600)
+        platforms.identity_status = 401
+        assert browser.get("/studio/api/api/v1/identity", headers=headers).status_code == 401
+        assert browser.put(f"/studio/local/store/{key}", headers=headers, json={"value": "{}"}).status_code == 409
+    assert LocalStore(folder).tombstones() == [profile_prefix("Acme")]

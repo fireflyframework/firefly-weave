@@ -459,7 +459,18 @@ class StudioService:
                         raise
                     # The browser left: nobody reads this answer, and the server logs no traceback for it.
                     return Response(status_code=CLIENT_GONE)
-            return await forward()
+            response = await forward()
+            if (
+                path == "/api/v1/identity"
+                and request.method == "GET"
+                and response.status_code == 200
+                and self.connection_generation == generation
+                and self.options.profile is profile
+            ):
+                # The platform knows this person again (a sign-in from the command line, say): Studio keeps the
+                # platform's data on this computer again.
+                await asyncio.to_thread(self.remember_profile_data, profile.name)
+            return response
         except (AuthError, CredentialError):
             return problem(401, "WV-AUTH-REQUIRED", "Sign in again with weave auth login using the selected profile")
         except (httpx.HTTPError, TimeoutError):
