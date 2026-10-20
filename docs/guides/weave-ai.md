@@ -126,15 +126,15 @@ for the connection's endpoint (`contextTokens`):
 
 | Context size | When | What Weave AI sends |
 | --- | --- | --- |
-| Compact | Under 16k tokens, such as a local Ollama model | A short authoring guide, the draft whole when it fits its share (otherwise an outline of each step's ID, kind and action with the selected step whole), attachments, and the last 4 messages, in at most 4,096 tokens |
+| Compact | Under 16k tokens, such as a local Ollama model, or an Ollama endpoint whose size the policy does not record (sized as 8,192 tokens) | A short authoring guide, the draft (typed or attached) whole when it fits its share (otherwise an outline of each step's ID, kind and action with the selected step whole), attachments, and the last 4 messages, in at most 4,096 tokens |
 | Standard | 16k to 64k tokens | The guide, the workflow schema, the whole draft up to 32 KiB (an outline above that), attachments, and the last 8 messages |
-| Full | Over 64k tokens, or when the policy records no size | Every authoring schema, the whole draft, attachments, and the last 16 messages |
+| Full | Over 64k tokens, or when the policy records no size for an endpoint other than Ollama | Every authoring schema, the whole draft, attachments, and the last 16 messages |
 
-Of the budget, at most a quarter goes to Weave AI's instructions, the reply
-format and the guide, 40% to the draft, 20% to attachments and 15% to the
-conversation. A part over its share is trimmed in that order: the draft becomes
-an outline, then attachments are left out from the last, then the oldest
-messages. Weave AI is told what was left out, never given a value cut in half.
+Weave AI's instructions, the reply format and the guide come first, at most a
+third of the compact budget. The draft, attachments and conversation share the
+rest, each held to at most 40%, 20% and 15% of the budget. A part over its share
+is trimmed in that order: the draft becomes an outline, then a run lists fewer
+steps and attachments are left out from the last, then the oldest messages. Weave AI is told what was left out, never given a value cut in half.
 Choose another size with **Context size** on the **Weave AI** card.
 
 Small models can start repeating one sentence until they run out of room. On

@@ -17,11 +17,13 @@
 """What Weave AI sends a model, sized to its context.
 
 A profile follows the model's context size (or the administrator's choice): compact under 16k tokens, standard up
-to 64k, full above. The input budget is the context minus the answer allowance, at most 4,096 tokens for compact.
-It is split: the gateway's own text, the reply format and the guide take at most a quarter, the draft 40%, the
-attachments 20% and the conversation 15%. A part over its share is trimmed in that order (the draft becomes an
-outline, then attachments are left out from the last, then the oldest messages), and the trimming is listed in
-``trimmed`` so the model can say what it did not see. Nothing is cut mid-value.
+to 64k, full above or when no size is known; an Ollama endpoint without a size is sized as 8,192 tokens (compact).
+The input budget is the context minus the answer allowance, at most 4,096 tokens for compact. The gateway's own
+text, the reply format and the guide come first, at most a third of the compact budget; the draft, the attachments
+and the conversation then share what is left, each held to at most 40%, 20% and 15% of the budget. A part over its
+share is trimmed in that order (the draft becomes an outline, then a run lists fewer steps and attachments are left
+out from the last, then the oldest messages), and the trimming is listed in ``trimmed`` so the model can say what
+it did not see. Nothing is cut mid-value.
 """
 
 import json
