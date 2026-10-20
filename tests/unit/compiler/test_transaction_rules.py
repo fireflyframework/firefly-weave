@@ -292,6 +292,44 @@ def test_the_hold_edit_covers_every_path_and_every_reservation():
     )
 
 
+def _holds(*elements) -> list[tuple[str, tuple | None]]:
+    _, analysis = check(*elements)
+    return [(issue.path, issue.edit) for issue in analysis.issues if issue.code == "TXN_HOLD_PIVOT"]
+
+
+def test_a_decision_that_changes_nothing_passes_the_hold_need_through_to_the_step_after_it():
+    case, default = at(1) + "/cases/0/steps", at(1) + "/default/steps"
+    route = Choice("route", at(1), (Sequence(case, (Other("note", at(0, case), "transform"),)), Sequence(default, ())))
+    assert _holds(reserve(0, 80), route, irreversible(2, timeout=60)) == [
+        (at(0) + "/holdSeconds", (at(0) + "/holdSeconds", 90))
+    ]
+
+
+def test_a_parallel_step_with_a_deciding_branch_hides_the_steps_after_it_from_earlier_holds():
+    left, right = at(1) + "/branches/a/steps", at(1) + "/branches/b/steps"
+    both = Fork(
+        "both",
+        at(1),
+        (
+            Sequence(left, (irreversible(0, step="send", base=left, timeout=60),)),
+            Sequence(right, (Other("note", at(0, right), "transform"),)),
+        ),
+    )
+    assert _holds(reserve(0, 600), both, irreversible(2, step="later", timeout=2_000)) == []
+
+
+def test_every_reservation_held_too_briefly_is_reported_whichever_comes_first():
+    shorter_first = _holds(reserve(0, 60, step="h1"), reserve(1, 70, step="h2"), irreversible(2, timeout=60))
+    assert shorter_first == [
+        (at(0) + "/holdSeconds", (at(0) + "/holdSeconds", 90)),
+        (at(1) + "/holdSeconds", (at(1) + "/holdSeconds", 90)),
+    ]
+
+
+def test_a_fail_step_ends_the_path_for_holds_so_steps_after_it_need_nothing():
+    assert _holds(reserve(0, 80), Other("stop", at(1), "fail"), irreversible(2, timeout=60)) == []
+
+
 def test_waits_before_the_decision_warn_when_they_can_outlast_reservations():
     issues, analysis = check(
         reserve(0, 900),
