@@ -860,6 +860,7 @@ class StudioConnectionService:
                 return profile_problem(error)
             if self.platform is not None and self.platform.name == removed.name:
                 await self._switch(None, None)
+        await asyncio.to_thread(self.studio.forget_profile_data, removed.name)
         outcome: dict[str, Any] = {"credentials_removed": False, "remote_revocation": "not_requested"}
         if request.sign_out:
             # Best effort and bounded; the network part runs without holding the connection lock.
@@ -896,6 +897,8 @@ class StudioConnectionService:
             return credential_problem()
         except TimeoutError:
             pass
+        if platform is not None:
+            await asyncio.to_thread(self.studio.forget_profile_data, platform.name)
         if platform is not None and self.store is not None:
             with suppress(ProfileError):
                 await asyncio.to_thread(self.store.set_account, platform.name, None)

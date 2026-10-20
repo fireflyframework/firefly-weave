@@ -31,7 +31,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from pyfly.container.stereotypes import rest_controller
 from pyfly.core.application import PyFlyApplication, pyfly_application
-from pyfly.web import delete_mapping, get_mapping, post_mapping, request_mapping
+from pyfly.web import delete_mapping, get_mapping, post_mapping, put_mapping, request_mapping
 from pyfly.web.adapters.starlette.app import create_app
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -92,6 +92,13 @@ class ValidationRequest(BaseModel):
     format: Literal["yaml", "json"]
     filename: str | None = Field(default=None, max_length=256)
     strict: bool = False
+
+
+class StoreValue(BaseModel):
+    """One value Studio keeps on this computer: text it already serialized."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    value: str
 
 
 class ScopeRequest(BaseModel):
@@ -467,6 +474,84 @@ class StudioController:
             return scope_at(document, body.path).model_dump(mode="json", by_alias=True)
 
         return await local_work(work, slow="Finding the data for this field took too long; simplify the workflow")
+
+    # --- the desktop store ----------------------------------------------------------------------------------------
+
+    def _store(self) -> Any:
+        return self.service.local_store
+
+    @get_mapping("/studio/local/store")
+    async def store_keys(self, request: Request) -> Response:
+        from firefly_weave.studio.local_store import PREFIX, StoreUnavailable
+
+        store = self._store()
+        if store is None:
+            return problem(404, "WV-STUDIO-STORE-OFF", "This Studio keeps its data in the browser.")
+        prefix = request.query_params.get("prefix", "")
+        if PREFIX.fullmatch(prefix) is None:
+            return problem(
+                422, "WV-STUDIO-REQUEST", "A prefix uses letters, digits, colons, dots, underscores or hyphens"
+            )
+        try:
+            keys = await asyncio.to_thread(store.keys, prefix)
+        except StoreUnavailable:
+            return problem(500, "WV-STUDIO-STORE", "Studio couldn't read what it keeps on this computer.")
+        return JSONResponse({"keys": keys}, headers={"Cache-Control": "no-store"})
+
+    @get_mapping("/studio/local/store/{key}")
+    async def store_read(self, request: Request) -> Response:
+        from firefly_weave.studio.local_store import KEY, StoreUnavailable
+
+        store, key = self._store(), request.path_params["key"]
+        if store is None:
+            return problem(404, "WV-STUDIO-STORE-OFF", "This Studio keeps its data in the browser.")
+        if KEY.fullmatch(key) is None:
+            return problem(422, "WV-STUDIO-REQUEST", "Keys use letters, digits, colons, dots, underscores or hyphens")
+        try:
+            value = await asyncio.to_thread(store.get, key)
+        except StoreUnavailable:
+            return problem(500, "WV-STUDIO-STORE", "Studio couldn't read what it keeps on this computer.")
+        if value is None:
+            return problem(404, "WV-STUDIO-STORE-KEY", "Nothing is kept under that key.")
+        return JSONResponse({"value": value}, headers={"Cache-Control": "no-store"})
+
+    @put_mapping("/studio/local/store/{key}")
+    async def store_write(self, request: Request) -> Response:
+        from firefly_weave.studio.local_store import KEY, StoreFull, StoreUnavailable
+
+        store, key = self._store(), request.path_params["key"]
+        if store is None:
+            return problem(404, "WV-STUDIO-STORE-OFF", "This Studio keeps its data in the browser.")
+        if KEY.fullmatch(key) is None:
+            return problem(422, "WV-STUDIO-REQUEST", "Keys use letters, digits, colons, dots, underscores or hyphens")
+        try:
+            body = StoreValue.model_validate_json(await request.body())
+        except ValidationError:
+            return problem(422, "WV-STUDIO-REQUEST", "Send the value as text")
+        try:
+            await asyncio.to_thread(store.put, key, body.value)
+        except StoreFull:
+            return problem(
+                413, "WV-STUDIO-STORE-FULL", "Studio keeps at most 64 MB on this computer; remove some drafts."
+            )
+        except StoreUnavailable:
+            return problem(500, "WV-STUDIO-STORE", "Studio couldn't keep this on this computer.")
+        return Response(status_code=204)
+
+    @delete_mapping("/studio/local/store/{key}")
+    async def store_remove(self, request: Request) -> Response:
+        from firefly_weave.studio.local_store import KEY, StoreUnavailable
+
+        store, key = self._store(), request.path_params["key"]
+        if store is None:
+            return problem(404, "WV-STUDIO-STORE-OFF", "This Studio keeps its data in the browser.")
+        if KEY.fullmatch(key) is None:
+            return problem(422, "WV-STUDIO-REQUEST", "Keys use letters, digits, colons, dots, underscores or hyphens")
+        try:
+            await asyncio.to_thread(store.delete, key)
+        except StoreUnavailable:
+            return problem(500, "WV-STUDIO-STORE", "Studio couldn't remove this from this computer.")
+        return Response(status_code=204)
 
     @post_mapping("/studio/local/testdata/check")
     async def check_test_data(self, request: Request) -> Response:

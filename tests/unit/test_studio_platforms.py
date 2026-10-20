@@ -1273,3 +1273,23 @@ async def test_switching_platforms_during_a_check_discards_the_old_identity(plat
         released.set()
         await asyncio.gather(pending, return_exceptions=True)
         await studio.close()
+
+
+@pytest.mark.parametrize("path", ["/studio/connection/logout", "/studio/connection/remove"])
+def test_signing_out_or_removing_forgets_what_this_computer_keeps_for_the_platform(platforms, tmp_path, path):
+    from firefly_weave.studio.local_store import LocalStore, profile_prefix
+
+    folder = tmp_path / "studio-store"
+    store = LocalStore(folder)
+    kept = profile_prefix("Acme") + "0123456789abcdef:t:p:testData.d-1"
+    store.put(kept, "{}")
+    store.put(profile_prefix("Other") + "0123456789abcdef:t:p:testData.d-2", "{}")
+    store.put("local:weave.localDraft.d-3", "{}")
+    with platforms.client(store_directory=folder) as browser:
+        headers = pair(browser)
+        connected(browser, headers)
+        body = {"name": "Acme"} if path.endswith("remove") else {}
+        assert browser.post(path, headers=headers, json=body).status_code == 200
+    left = store.keys()
+    assert kept not in left
+    assert len(left) == 2

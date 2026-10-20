@@ -31,14 +31,25 @@ import urllib.request
 from pathlib import Path
 from urllib.parse import urlsplit
 
+SMOKE_KEY = "local:weave.localDraft.smoke"
+SMOKE_VALUE = '{"source":"apiVersion: weave/v1alpha1","format":"yaml"}'
+
 
 async def check(binary: Path, expected_version: str | None = None) -> None:
     with tempfile.TemporaryDirectory(prefix="weave-smoke-") as private:
         Path(private).chmod(0o700)
-        await _check(binary, expected_version, Path(private) / "config")
+        await _check(binary, expected_version, Path(private) / "config", keep=SMOKE_VALUE)
+        # A second start with the same configuration finds what the first one kept.
+        await _check(binary, expected_version, Path(private) / "config", expect=SMOKE_VALUE)
 
 
-async def _check(binary: Path, expected_version: str | None, config_home: Path) -> None:
+async def _check(
+    binary: Path,
+    expected_version: str | None,
+    config_home: Path,
+    keep: str | None = None,
+    expect: str | None = None,
+) -> None:
     child = await asyncio.create_subprocess_exec(
         str(binary.resolve()),
         stdin=asyncio.subprocess.PIPE,
@@ -67,12 +78,15 @@ async def _check(binary: Path, expected_version: str | None, config_home: Path) 
             urllib.request.ProxyHandler({}), urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar())
         )
 
-        def request(path: str, payload: dict[str, object] | None = None, csrf: str | None = None) -> bytes:
+        def request(
+            path: str, payload: dict[str, object] | None = None, csrf: str | None = None, method: str | None = None
+        ) -> bytes:
             headers = {"Origin": origin, "Content-Type": "application/json"}
             if csrf:
                 headers["X-Weave-CSRF"] = csrf
             data = json.dumps(payload).encode() if payload is not None else None
-            with opener.open(urllib.request.Request(origin + path, data=data, headers=headers), timeout=10) as response:
+            prepared = urllib.request.Request(origin + path, data=data, headers=headers, method=method)
+            with opener.open(prepared, timeout=10) as response:
                 return bytes(response.read())
 
         assert b"<html" in request("/").lower()
@@ -90,11 +104,20 @@ async def _check(binary: Path, expected_version: str | None, config_home: Path) 
             )["validationOk"]
             is False
         )
+        csrf = pair["csrfToken"]
+        if keep is not None:
+            request("/studio/local/store/" + SMOKE_KEY, {"value": keep}, csrf, method="PUT")
+        if expect is not None:
+            assert json.loads(request("/studio/local/store/" + SMOKE_KEY))["value"] == expect, "Store lost a draft"
+            request("/studio/local/store/" + SMOKE_KEY, None, csrf, method="DELETE")
         assert child.stdin is not None
         child.stdin.write(b"STOP\n")
         await child.stdin.drain()
         assert await asyncio.wait_for(child.wait(), timeout=10) == 0
-        print("Frozen host readiness, assets, pairing, connection assistant, compiler and owned shutdown passed")
+        print(
+            "Frozen host readiness, assets, pairing, connection assistant, compiler and owned shutdown passed,"
+            " and the store keeps a draft across a restart"
+        )
     finally:
         if child.returncode is None:
             child.kill()

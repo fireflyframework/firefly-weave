@@ -24,6 +24,7 @@ import re
 import secrets
 import time
 from collections.abc import Callable, Mapping
+from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
@@ -175,6 +176,8 @@ class StudioOptions:
     reusable_pairing: bool = False
     # Client configuration, provider discovery and sign-in requests; None uses the network.
     sign_in_transport: Callable[[], httpx.AsyncBaseTransport] | None = field(default=None, repr=False)
+    # Desktop only: where Studio keeps what it would keep in browser storage; None keeps it in the browser.
+    store_directory: Path | None = None
 
     def __post_init__(self) -> None:
         if self.profile_store is not None and (self.profile is not None or self.token_provider is not None):
@@ -219,6 +222,17 @@ class StudioService:
         self.client = httpx.AsyncClient(
             timeout=30, follow_redirects=False, trust_env=False, transport=options.transport
         )
+        from firefly_weave.studio.local_store import LocalStore
+
+        self.local_store = LocalStore(options.store_directory) if options.store_directory is not None else None
+
+    def forget_profile_data(self, name: str) -> None:
+        """Sign-out and removal delete what this computer keeps for that platform (best effort; never raises)."""
+        from firefly_weave.studio.local_store import StoreUnavailable, profile_prefix
+
+        if self.local_store is not None:
+            with suppress(StoreUnavailable):
+                self.local_store.purge(profile_prefix(name))
 
     async def close(self) -> None:
         self.connection_generation += 1
