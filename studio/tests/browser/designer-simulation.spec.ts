@@ -647,5 +647,31 @@ test.describe("Simulate from test data", () => {
     expect(creates[0]["mocks"]).toEqual({
       "node:action-1": { eligible: true },
     });
+    // A newer pin replaces what the last simulation started from.
+    await simulationPanel(page)
+      .getByRole("button", { name: "Close simulation" })
+      .click();
+    await expect(simulationPanel(page)).toHaveCount(0);
+    await details.open("action-1");
+    await pane.getByRole("button", { name: "Edit output" }).click();
+    await editor.click();
+    await page.keyboard.press("ControlOrMeta+a");
+    await page.keyboard.press("Backspace");
+    await page.keyboard.insertText('{"eligible": false}');
+    await pane.getByRole("button", { name: "Save" }).click();
+    await expect(pane.locator(".pinned-banner")).toBeVisible();
+    await details.close();
+    await command(page, "Simulate");
+    await expect(setup).toBeVisible();
+    await setup.getByLabel(/customer ?id/i).fill("c-104");
+    await setup.getByRole("tab", { name: /Action results/ }).click();
+    await expect(
+      setup.locator('[data-node="action-1"]').getByLabel(/eligible/i),
+    ).not.toBeChecked();
+    await setup.getByRole("button", { name: "Start simulation" }).click();
+    await expect.poll(() => creates.length).toBe(2);
+    expect(creates[1]["mocks"]).toEqual({
+      "node:action-1": { eligible: false },
+    });
   });
 });
