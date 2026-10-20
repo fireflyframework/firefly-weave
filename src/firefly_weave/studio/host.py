@@ -517,25 +517,30 @@ class StudioController:
 
     @put_mapping("/studio/local/store/{key}")
     async def store_write(self, request: Request) -> Response:
-        from firefly_weave.studio.local_store import KEY, StoreFull, StoreUnavailable
+        from firefly_weave.studio.local_store import KEY, StoreFull, StoreSignedOut, StoreUnavailable
 
         store, key = self._store(), request.path_params["key"]
         if store is None:
             return problem(404, "WV-STUDIO-STORE-OFF", "This Studio keeps its data in the browser.")
         if KEY.fullmatch(key) is None:
             return problem(422, "WV-STUDIO-REQUEST", "Keys use letters, digits, colons, dots, underscores or hyphens")
+        signed_out = problem(
+            409,
+            "WV-STUDIO-STORE-SIGNED-OUT",
+            "You signed out of this platform; sign in again to keep its data on this computer.",
+        )
         if not self.service.keeps(key):
-            return problem(
-                409,
-                "WV-STUDIO-STORE-SIGNED-OUT",
-                "You signed out of this platform; sign in again to keep its data on this computer.",
-            )
+            return signed_out
         try:
             body = StoreValue.model_validate_json(await request.body())
         except ValidationError:
             return problem(422, "WV-STUDIO-REQUEST", "Send the value as text")
         try:
-            await asyncio.to_thread(store.put, key, body.value)
+            # Checked again inside the store lock: a sign-out while the body arrived wins.
+            refuse = lambda name: not self.service.keeps(name)  # noqa: E731
+            await asyncio.to_thread(lambda: store.put(key, body.value, guarded=True, refuse=refuse))
+        except StoreSignedOut:
+            return signed_out
         except StoreFull:
             return problem(
                 413, "WV-STUDIO-STORE-FULL", "Studio keeps at most 64 MB on this computer; remove some drafts."

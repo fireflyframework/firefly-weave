@@ -34,7 +34,7 @@ import hashlib
 import json
 import logging
 import re
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
@@ -58,6 +58,12 @@ class StoreFull(Exception):
 
 class StoreUnavailable(Exception):
     code = "WV-STUDIO-STORE"
+
+
+class StoreSignedOut(Exception):
+    """A guarded write for a platform signed out or removed since (its tombstone, or the caller's rule)."""
+
+    code = "WV-STUDIO-STORE-SIGNED-OUT"
 
 
 _log = logging.getLogger(__name__)
@@ -147,7 +153,9 @@ class LocalStore:
             raise StoreUnavailable()
         return entry["value"] if entry.get("key") == key and isinstance(entry.get("value"), str) else None
 
-    def put(self, key: str, value: str) -> None:
+    def put(self, key: str, value: str, *, guarded: bool = False, refuse: Callable[[str], bool] | None = None) -> None:
+        """Keeps one value. A guarded write (from Studio) is refused, inside the store lock, for a key under a
+        tombstoned prefix or one ``refuse`` names: a write in flight when its platform signs out never lands."""
         try:
             raw = json.dumps({"key": key, "value": value}, ensure_ascii=False).encode("utf-8")
         except UnicodeEncodeError:
@@ -155,11 +163,16 @@ class LocalStore:
         name = file_name(key)
         try:
             with self.folder.changing() as directory:
+                if guarded and (
+                    any(key.startswith(prefix) for prefix in self._tombstones(directory))
+                    or (refuse is not None and refuse(key))
+                ):
+                    raise StoreSignedOut()
                 used = sum(self.folder.size(directory, item) for item in self.folder.names(directory) if item != name)
                 if used + len(raw) > STORE_LIMIT:
                     raise StoreFull()
                 self.folder.write(directory, name, raw)
-        except StoreFull:
+        except (StoreFull, StoreSignedOut):
             raise
         except (OSError, ProfileError):
             raise StoreUnavailable() from None
@@ -236,8 +249,9 @@ class LocalStore:
         failed = 0
         # Writes hold the same lock, so a temporary copy seen here belongs to a write that never finished.
         for name in self.folder.temporaries(directory):
+            # A folder or a link named like a copy goes too, without following it.
             try:
-                self.folder.remove(directory, name)
+                self.folder.discard(directory, name)
             except OSError:
                 failed += 1
         unreadable: list[str] = []

@@ -1374,3 +1374,20 @@ def test_starting_studio_purges_signed_out_platforms_and_leaves_unknown_ones(pla
         sign_in_with_browser(browser, headers)
         assert browser.put(f"/studio/local/store/{key}", headers=headers, json={"value": "{}"}).status_code == 204
     assert store.tombstones() == []
+
+
+def test_a_platform_removed_and_added_again_keeps_its_data_only_after_a_new_sign_in(platforms, tmp_path):
+    from firefly_weave.studio.local_store import LocalStore, profile_prefix
+
+    folder = tmp_path / "studio-store"
+    key = profile_prefix("Acme") + "0123456789abcdef:t:p:testData.d-1"
+    with platforms.client(store_directory=folder) as browser:
+        headers = pair(browser)
+        connected(browser, headers)
+        assert browser.post("/studio/connection/remove", headers=headers, json={"name": "Acme"}).status_code == 200
+        assert save(browser, headers).status_code == 200
+        refused = browser.put(f"/studio/local/store/{key}", headers=headers, json={"value": "{}"})
+        assert refused.status_code == 409
+        sign_in_with_browser(browser, headers)
+        assert browser.put(f"/studio/local/store/{key}", headers=headers, json={"value": "{}"}).status_code == 204
+    assert LocalStore(folder).tombstones() == []

@@ -446,12 +446,12 @@ def _merge(existing: PlatformProfile | None, candidate: PlatformProfile) -> Plat
     )
 
 
-@service
 def _local_data(removed: bool | None) -> dict[str, bool]:
     """``local_data_removed`` for an answer: whether everything this computer kept for the platform went."""
     return {} if removed is None else {"local_data_removed": removed}
 
 
+@service
 class StudioConnectionService:
     def __init__(self, studio: StudioService) -> None:
         self.studio = studio

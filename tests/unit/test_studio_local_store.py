@@ -313,3 +313,36 @@ def test_a_purge_that_can_t_remove_an_entry_says_so(tmp_path, monkeypatch):
     monkeypatch.undo()
     assert store.tombstones() == [profile_prefix("acme")]
     assert store.finish_purges().purged[0][1].removed == 1
+
+
+@POSIX
+def test_a_folder_named_like_a_temporary_copy_never_stops_a_purge(tmp_path):
+    folder = tmp_path / "studio-store"
+    store = LocalStore(folder)
+    store.put(ACCOUNT + "testData.d-1", "{}")
+    (folder / ".x.json.0123.tmp").mkdir()
+    (folder / ".x.json.0123.tmp" / "inside").write_text("{}")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    os.symlink(outside, folder / ".y.json.0123.tmp")
+    purged = store.purge(profile_prefix("acme"))
+    assert (purged.removed, purged.complete) == (1, True)
+    assert not (folder / ".x.json.0123.tmp").exists()
+    assert not (folder / ".y.json.0123.tmp").is_symlink() and outside.is_dir()
+
+
+def test_a_guarded_write_under_a_tombstoned_prefix_is_refused_inside_the_lock(tmp_path):
+    folder = tmp_path / "studio-store"
+    store = LocalStore(folder)
+    key = ACCOUNT + "testData.d-1"
+    store.forget(profile_prefix("acme"))
+    with pytest.raises(local_store.StoreSignedOut):
+        store.put(key, "{}", guarded=True)
+    # A write refused by the caller's own rule, checked under the same lock.
+    with pytest.raises(local_store.StoreSignedOut):
+        store.put("local:a", "{}", guarded=True, refuse=lambda name: name == "local:a")
+    store.put("local:b", "{}", guarded=True)
+    assert store.keys() == ["local:b"]
+    store.remember(profile_prefix("acme"))
+    store.put(key, "{}", guarded=True)
+    assert store.keys() == ["local:b", key]
