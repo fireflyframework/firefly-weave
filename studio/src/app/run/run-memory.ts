@@ -33,7 +33,7 @@ const isRecord = (value: unknown): value is Json =>
 const secretMark = (schema: Json) =>
   schema["x-secret"] === true || schema["writeOnly"] === true;
 /** True when a schema marks a value secret or write-only anywhere inside it. */
-function mentionsSecret(schema: unknown, depth = 0): boolean {
+export function mentionsSecret(schema: unknown, depth = 0): boolean {
   // Deeper than any form Studio renders: assume the worst.
   if (depth > 64) return true;
   if (Array.isArray(schema))
