@@ -1183,3 +1183,21 @@ async def test_an_answer_to_a_prompt_the_model_saw_only_part_of_is_not_used(tmp_
         response = await client.post("/v1/lumi", json=ollama_ask(), headers=AUTH)
     assert (response.status_code, response.json()) == (422, {"code": "LUMI_TRUNCATED"})
     assert len(calls) == 1
+
+
+async def test_a_whole_prompt_the_estimate_overcounts_is_answered(tmp_path):
+    # Live on llama3.2:3b: a 1,000-character Chinese question counted 1,516 tokens, whole (the instructions' code word
+    # was in the answer), while the conservative count was 4,372, above half the 8,192-token context.
+    calls = []
+    ask = ollama_ask()
+    # With no guide in this request, 1,300 characters bring the conservative count above half the context, as live.
+    ask["request"]["message"] = "Explain this, then name the code word. " + ("请解释工作流" * 217)[:1300]
+
+    def whole(*_):
+        model = reply_model(calls)
+        model.tokens = 1516
+        return model
+
+    async with gateway(tmp_path, builder=whole) as client:
+        response = await client.post("/v1/lumi", json=ask, headers=AUTH)
+    assert response.status_code == 200, response.text

@@ -106,8 +106,8 @@ LOOP_CHECK_EVERY = 64
 # model that counted fewer tokens saw only part of the prompt (Ollama drops the start of a long prompt).
 MAX_ASCII_PER_TOKEN = 6
 MAX_OTHER_PER_TOKEN = 2
-# Ollama runs a model with this context unless the policy says otherwise; when it cuts a prompt it keeps about half
-# of it (4,098 of 8,192 tokens, measured twice on Ollama 0.40.2).
+# Ollama runs a model with this context unless the policy says otherwise; when it cuts a prompt it keeps half of it,
+# within a few tokens (4,098 of 8,192, measured twice on Ollama 0.40.2).
 OLLAMA_CONTEXT_TOKENS = 8192
 CUT_MARGIN = 16
 TEST_PROMPT = "Reply with the single word: ready"
@@ -403,7 +403,13 @@ def create_app(
                     and counted > 0
                     and (
                         counted < fewest_tokens(INSTRUCTIONS + prompt)
-                        or (context is not None and sent > context // 2 + CUT_MARGIN >= counted)
+                        # Ollama's cut leaves almost exactly half the context; a whole prompt the estimate
+                        # overcounts (text outside ASCII) lands anywhere below it and is not a cut.
+                        or (
+                            context is not None
+                            and sent > context // 2 + CUT_MARGIN
+                            and abs(counted - context // 2) <= CUT_MARGIN
+                        )
                     )
                 ):
                     # The model saw only part of the request, perhaps without its instructions: never use the answer.
