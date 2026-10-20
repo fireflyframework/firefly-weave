@@ -682,6 +682,10 @@ that includes them refuses to start on the previous schema.
 - **Workers and local platforms.** The Agentic and Files workers 0.1.8 pin core
   0.1.0a16. A local platform still has [no in-place upgrade](#a-local-platform-has-no-in-place-upgrade):
   set up alpha16 from its own checkout in a new directory.
+- **Contributors.** The `Acceptance` workflow now runs Studio and security
+  journeys against a real platform on every pull request. Run the same `pr`
+  profile locally before you open one, as `tests/acceptance/README.md` in the
+  repository explains. Operators need no change for it.
 
 Check these changes before you reopen traffic:
 

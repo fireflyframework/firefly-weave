@@ -507,6 +507,26 @@ SPDX-License-Identifier: Apache-2.0
 - The real-platform Operate checks wait past the capacity refusals Studio sends
   again, and the formula preview check measures its 50 ms budget the same way
   on every runner.
+- Run Studio and security journeys against the real platform on every pull
+  request and every push to `main`: Studio sign-in and brand at 1440x900 and
+  600x500, brand and naming in Studio, the CLI, the docs site and the
+  repository, every operation added since 0.1.0a14 answered by each person's
+  grants (`tests/acceptance/authorization.toml`), Activate and Publish refused
+  for a viewer, revocation, private-origin refusals, and a secret scan that
+  includes browser storage. Journeys sign people in through the real Studio
+  host and identity provider pages, and checks both before and during a run
+  refuse mocks, intercepted requests and injected state. Journey steps that
+  wait for later capabilities are reported as skipped, never as passed. The
+  `Acceptance` workflow stays fork-safe: read-only contents, no checkout
+  credentials and no secrets. `tests/acceptance/README.md` explains how to run
+  and write journeys.
+- The Acme test service refuses odd `Content-Length` values and deeply nested
+  JSON instead of dropping the connection.
+- The local platform guide, the configuration reference and two diagrams now
+  say that `--allow-private-origin` approves only the exact DNS-name origin of a
+  test service on the installation's egress network (addresses and `localhost`
+  are refused), and that an invalid mail or PostgreSQL private-network setting
+  stops startup.
 
 ### Versions and schema
 
