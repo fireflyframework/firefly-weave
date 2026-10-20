@@ -228,6 +228,8 @@ def verify(release: Path, output: Path) -> dict:
         "image_identity.py",
         "main.py",
         "manifest.json",
+        "operations-worker.py",
+        "operations-worker-manifest.json",
         "LICENSE",
         "NOTICE",
         *(name + "-requirements.txt" for name in closures),
