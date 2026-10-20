@@ -273,6 +273,8 @@ class Simulator:
         result._unchecked = result._unchecked_bytes = 0
         result._validate_mocks(result._prepared, data.mocks)
         called = result._called_workflows(dict(data.workflows))
+        if any(frame.state is not None and frame.workflow not in called for frame in data.frames):
+            raise DebugError("WV-DEBUG-WORKFLOW")
         result._workflows = {"": _Workflow("", result.artifact, result._prepared, data.mocks), **called}
         result.data = data
         result._bounded()

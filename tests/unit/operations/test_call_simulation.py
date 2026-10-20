@@ -703,3 +703,14 @@ def test_an_outcome_the_caller_never_accepts_is_abandoned_when_the_caller_ends()
     assert stored["pending"] == [] and "result" not in stored["frames"][0]
     assert all(event.type != "call_completed" for event in out.events)
     assert simulator.continue_until_breakpoint() == out
+
+
+def test_a_stored_frame_of_a_workflow_the_session_does_not_have_is_refused_on_restore():
+    artifact = caller([call(uses="hold@1.0.0")], {"ref": "/steps/enrich/output"}, HOLD)
+    workflows = {"hold@1.0.0": CalledWorkflow(artifact=artifact_of(HOLD))}
+    simulator = Simulator(artifact, mocks={}, input={"customerId": "c-1"}, now=NOW, workflows=workflows)
+    simulator.continue_until_breakpoint()
+    stored = json.loads(simulator.serialize())
+    stored["frames"][0]["workflow"] = "other@1.0.0"
+    with pytest.raises(DebugError, match="WV-DEBUG-WORKFLOW"):
+        Simulator.restore(json.dumps(stored))
