@@ -42,7 +42,32 @@ const MAX_SAFE = Number.MAX_SAFE_INTEGER;
 const UUID =
   /^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$/;
 const DATE_TIME =
-  /^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?(?:[Zz]|[+-][0-9]{2}:[0-9]{2})$/;
+  /^([0-9]{4})-([0-9]{2})-([0-9]{2})[Tt]([0-9]{2}):([0-9]{2}):([0-9]{2})(?:\.[0-9]+)?(?:[Zz]|[+-]([0-9]{2}):([0-9]{2}))$/;
+/** An RFC 3339 timestamp naming a real instant, as the platform reads it (no leap seconds, offsets under a day). */
+function instant(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  const parts = DATE_TIME.exec(value);
+  if (!parts) return false;
+  const [year, month, day, hour, minute, second] = parts
+    .slice(1, 7)
+    .map(Number) as [number, number, number, number, number, number];
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  const offsetHours = parts[7] === undefined ? 0 : Number(parts[7]);
+  const offsetMinutes = parts[8] === undefined ? 0 : Number(parts[8]);
+  return (
+    year >= 1 &&
+    month >= 1 &&
+    month <= 12 &&
+    day >= 1 &&
+    day <= days[month - 1]! &&
+    hour <= 23 &&
+    minute <= 59 &&
+    second <= 59 &&
+    offsetHours <= 23 &&
+    offsetMinutes <= 59
+  );
+}
 const HASH = /^fnv1a64:[0-9a-f]{16}$/;
 const FRAME =
   /^[A-Za-z0-9][A-Za-z0-9_.-]*(\[(0|[1-9][0-9]*)\])*(\/[A-Za-z0-9][A-Za-z0-9_.-]*(\[(0|[1-9][0-9]*)\])*)*$/;
@@ -154,7 +179,7 @@ function pin(value: unknown) {
     RUN,
   );
   sourceOf(item, SOURCES, true);
-  check(text(item["pinnedAt"], DATE_TIME));
+  check(instant(item["pinnedAt"]));
   for (const key of ["configHash", "contractHash", "upstreamHash"])
     hash(item, key, true);
   provenance(item);
@@ -270,7 +295,7 @@ export function readTestData(value: unknown): TestDataReading {
     );
     check(top["schemaVersion"] === 1);
     check(top["kind"] === "weave.studio/testData");
-    check(text(top["updatedAt"], DATE_TIME));
+    check(instant(top["updatedAt"]));
     if (present(top, "input")) entry(top["input"]);
     if (present(top, "pins")) keyed(top["pins"], 1000, pin);
     if (present(top, "signals")) keyed(top["signals"], 1000, signal);
