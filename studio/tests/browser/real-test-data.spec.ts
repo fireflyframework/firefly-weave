@@ -86,19 +86,17 @@ async function bridge(
     { path, method, body, revision },
   );
 }
-/** The trigger's Customer ID, as its Test event shows it. */
-async function customerId(page: Page) {
+/** The trigger's Test event shows this Customer ID (the test data reads from the platform first). */
+async function expectCustomerId(page: Page, value: string) {
   const details = new StepDetailsPage(page);
   await details.trigger().focus();
   await page.keyboard.press("Enter");
   const dialog = details.dialogFor("Manual form trigger");
   await expect(dialog).toBeVisible();
-  const value = await dialog
-    .locator(".sd-input")
-    .getByLabel("Customer ID", { exact: true })
-    .inputValue();
+  await expect(
+    dialog.locator(".sd-input").getByLabel("Customer ID", { exact: true }),
+  ).toHaveValue(value, { timeout: 30_000 });
   await details.close();
-  return value;
 }
 
 test("test data and the canvas persist across reload and a second browser profile; the platform refuses a secret and Studio keeps no copy; signing out leaves no data keys", async ({
@@ -152,7 +150,7 @@ test("test data and the canvas persist across reload and a second browser profil
   await expect(page.locator('[data-step="shape"]').first()).toBeVisible({
     timeout: 30_000,
   });
-  expect(await customerId(page)).toBe("c-1042");
+  await expectCustomerId(page, "c-1042");
   await expect(page.locator(".sticky-note-body")).toHaveCount(1);
 
   // 3. A second browser profile, its own host and sign-in: the same draft,
@@ -169,7 +167,7 @@ test("test data and the canvas persist across reload and a second browser profil
   await expect(second.locator('[data-step="shape"]').first()).toBeVisible({
     timeout: 30_000,
   });
-  expect(await customerId(second)).toBe("c-1042");
+  await expectCustomerId(second, "c-1042");
   await expect(second.locator(".sticky-note-body")).toHaveCount(1);
   await shot(second, "td-03-second-profile");
 
