@@ -35,6 +35,7 @@ import { dirname, join, resolve } from "node:path";
 import { parse } from "yaml";
 import {
   allCapabilities,
+  closeSheet,
   command,
   connected,
   newWorkflow,
@@ -56,7 +57,9 @@ import { DesignerPage, StepKind, stepLabels } from "./designer-po";
 import { publishDialog, withOwnedSteps } from "./owned-actions";
 import {
   addCommonStep,
+  fitCanvas,
   openStepFixture,
+  type StepDetailsPage,
   settingsGear,
   stepFixture,
   withLanguageFeatures,
@@ -70,6 +73,19 @@ import {
   suggestions,
 } from "./formula-po";
 import { showParameters } from "./step-geometry";
+import {
+  banner,
+  openTestDataFixture,
+  outputPane,
+  tileBadge,
+} from "./test-data-po";
+import {
+  edit as editDraft,
+  fresh as freshDraft,
+  openDraft,
+  testData as draftTestData,
+} from "./connected-test-data-po";
+import { applySource } from "./owned-actions";
 import {
   AI_CAPABILITIES,
   mockAiPlatform,
@@ -1563,6 +1579,29 @@ async function tourPanel(page: Page, id: string) {
 }
 
 type Scene = (tour: Tour) => Promise<void>;
+/** Generates and pins a step's sample output, then closes step details. */
+async function pinSample(details: StepDetailsPage, id: string) {
+  await details.open(id);
+  const pane = await outputPane(details);
+  await pane.getByRole("button", { name: "Generate sample" }).click();
+  await expect(banner(pane)).toBeVisible();
+  await details.close();
+}
+/** score reads another field of lookup: notify's pin goes out of date. */
+async function changeScoreMapping(page: Page) {
+  await closeSheet(page);
+  await page.getByRole("tab", { name: "Source", exact: true }).click();
+  const box = page.getByRole("textbox", { name: "Workflow source" });
+  const source = await box.inputValue();
+  await page.getByRole("tab", { name: "Designer", exact: true }).click();
+  await applySource(
+    page,
+    source.replace(
+      "/steps/lookup/output/tier",
+      "/steps/lookup/output/customerId",
+    ),
+  );
+}
 const scenes: Record<string, Scene> = {
   async lumi({ page, shot }) {
     await connected(page, {
@@ -1772,6 +1811,105 @@ const scenes: Record<string, Scene> = {
       end: ".sd-tabpanel:not([hidden])",
       tabs: 0,
     });
+  },
+  // Test data: pinned output, out of date, the editor, the question before
+  // closing, values in the Input pane, canvas badges and a conflict.
+  async "test-data-pinned"({ page, shot }) {
+    const details = await openTestDataFixture(page);
+    await details.open("lookup");
+    const pane = await outputPane(details);
+    await pane.getByRole("button", { name: "Generate sample" }).click();
+    await expect(banner(pane)).toBeVisible();
+    await pane.getByRole("radio", { name: "JSON" }).click();
+    await expect(pane.locator(".pane-json")).toContainText("customerId");
+    await shot("146-test-data-pinned", { tabs: 0 });
+  },
+  async "test-data-stale"({ page, shot }) {
+    const details = await openTestDataFixture(page);
+    await pinSample(details, "notify");
+    await changeScoreMapping(page);
+    await details.open("notify");
+    const pane = await outputPane(details);
+    await expect(banner(pane)).toContainText(
+      "Pinned output may be out of date",
+    );
+    await shot("147-test-data-stale", { tabs: 0 });
+  },
+  async "test-data-editor"({ page, shot }) {
+    const details = await openTestDataFixture(page);
+    await details.open("lookup");
+    const pane = await outputPane(details);
+    await pane.getByRole("button", { name: "Edit output" }).click();
+    const editor = pane.getByRole("textbox", { name: "Output of lookup" });
+    await editor.click();
+    await page.keyboard.press("ControlOrMeta+a");
+    await page.keyboard.press("Backspace");
+    await page.keyboard.insertText('{\n  "customerId": "c-1042",\n  "tier": }');
+    await pane.getByRole("button", { name: "Save" }).click();
+    await expect(pane.getByRole("alert")).toContainText("not valid JSON");
+    await shot("148-test-data-editor", { tabs: 0 });
+  },
+  async "test-data-guard"({ page, shot }) {
+    const details = await openTestDataFixture(page);
+    await details.open("lookup");
+    const pane = await outputPane(details);
+    await pane.getByRole("button", { name: "Edit output" }).click();
+    await pane.getByRole("textbox", { name: "Output of lookup" }).click();
+    await page.keyboard.insertText(" ");
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Escape");
+    await expect(
+      page.getByRole("alertdialog", {
+        name: "Save the output changes before closing?",
+      }),
+    ).toBeVisible();
+    await shot("149-test-data-guard", { tabs: 0 });
+  },
+  async "test-data-input"({ page, shot }) {
+    const details = await openTestDataFixture(page);
+    await setTestInput(page, details, {
+      "Customer ID": "c-1042",
+      Amount: "1500",
+    });
+    await details.open("lookup");
+    if (page.viewportSize()!.width < 768)
+      await details.dialog
+        .getByRole("tablist", { name: "Step details panes" })
+        .getByRole("tab", { name: "Input" })
+        .click();
+    const input = details.dialog.locator("weave-input-pane");
+    await expect(input.locator(".pane-source-tag")).toHaveText("Test input");
+    await expect(input.locator(".data-sample").first()).toBeVisible();
+    await shot("150-test-data-input", { tabs: 0 });
+  },
+  async "test-data-canvas-badges"({ page, shot }) {
+    const details = await openTestDataFixture(page);
+    await pinSample(details, "lookup");
+    await pinSample(details, "notify");
+    await changeScoreMapping(page);
+    await fitCanvas(page);
+    await expect(tileBadge(page, "notify")).toHaveAttribute(
+      "data-badge",
+      "pinned-stale",
+    );
+    await shot("151-test-data-canvas-badges", { tabs: 0 });
+  },
+  async "test-data-conflict"({ page, shot }) {
+    const state = freshDraft();
+    await openDraft(page, state, draftTestData({ customerId: "mine" }));
+    state.refuse.push({
+      status: 412,
+      json: { status: 412, code: "WV-ETAG", message: "Changed" },
+    });
+    state.documents.set("test-data", {
+      revision: 4,
+      document: draftTestData({ customerId: "theirs" }),
+    });
+    await editDraft(page);
+    await expect(
+      page.getByRole("dialog", { name: "Someone else changed the test data" }),
+    ).toBeVisible({ timeout: 15000 });
+    await shot("152-test-data-conflict", { tabs: 0 });
   },
   async "step-details-decision"({ page, shot }) {
     const details = await openStepFixture(page);

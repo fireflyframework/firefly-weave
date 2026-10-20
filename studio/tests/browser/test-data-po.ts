@@ -72,14 +72,14 @@ export const openTestDataFixture = (page: Page) =>
     return result;
   });
 
-/** The Output pane, shown (a tab below 768 px). */
+/** The Output pane, shown (a tab where the window shows one data pane). */
 export async function outputPane(details: StepDetailsPage): Promise<Locator> {
   const dialog = details.dialog;
-  if ((details.page.viewportSize()?.width ?? 1440) < 768)
-    await dialog
-      .getByRole("tablist", { name: "Step details panes" })
-      .getByRole("tab", { name: "Output" })
-      .click();
+  // A narrow sheet shows one pane, a medium window Input or Output: choose Output.
+  const tabs = dialog
+    .getByRole("tablist", { name: /^(Step details panes|Data)$/ })
+    .getByRole("tab", { name: "Output" });
+  if (await tabs.count()) await tabs.first().click();
   const pane = dialog.locator("weave-output-pane");
   await expect(pane).toBeVisible();
   return pane;
