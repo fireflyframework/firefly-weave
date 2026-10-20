@@ -133,7 +133,7 @@ class Project:
     def full(self, number):
         return next(item["id"] for item in self.containers if item["number"] == str(number))
 
-    def plan(self, action, replicas, *, remove=()):
+    def plan(self, action, replicas):
         now = datetime.now(UTC)
         members = [{key: value for key, value in item.items() if key != "number"} for item in self.containers]
         members.sort(key=lambda item: item["id"])
@@ -160,7 +160,6 @@ class Project:
                         replicas=replicas,
                         worker_release_id=uuid4(),
                     ),
-                    remove_members=list(remove),
                 )
             ],
             risks=["external_effects", "worker_drain"],
@@ -180,13 +179,13 @@ async def renewed():
     return None
 
 
-async def test_a_scale_down_stops_and_removes_exactly_the_reviewed_workers_then_keeps_the_others(tmp_path):
+async def test_a_scale_down_stops_and_removes_the_highest_numbered_workers_then_keeps_the_others(tmp_path):
     config = policy(tmp_path)
     project = Project(config, 3)
-    # The reviewed victims are the first and third containers, not the ones Compose would pick.
-    victims = [project.full(1), project.full(3)]
-    keep = project.full(2)
-    plan = project.plan("scale_workers", 1, remove=[project.host(1), project.host(3)])
+    # The reviewed rule names the highest container numbers, chosen from the state the plan was made on.
+    victims = [project.full(3), project.full(2)]
+    keep = project.full(1)
+    plan = project.plan("scale_workers", 1)
     project.calls.clear()
     result = await ComposeAdapter(config, command=project.command).apply(plan, renewed)
     assert [item["id"] for item in project.containers] == [keep]
@@ -206,20 +205,23 @@ async def test_a_scale_down_stops_and_removes_exactly_the_reviewed_workers_then_
     assert stop_kwargs["timeout"] > STOP_GRACE_SECONDS
 
 
-async def test_a_victim_that_is_not_a_live_member_of_the_service_stops_the_apply_before_any_change(tmp_path):
+async def test_a_worker_without_a_container_number_stops_the_apply_before_any_change(tmp_path):
     config = policy(tmp_path)
     project = Project(config, 2)
-    plan = project.plan("scale_workers", 1, remove=["0123456789ab"])
+    project.containers[1]["number"] = ""
+    plan = project.plan("scale_workers", 1)
     with pytest.raises(RunnerPolicyError):
         await ComposeAdapter(config, command=project.command).apply(plan, renewed)
     assert "stop" not in project.verbs() and "rm" not in project.verbs()
     assert len(project.containers) == 2
 
 
-async def test_a_scale_down_without_reviewed_victims_is_refused(tmp_path):
+async def test_a_scale_down_planned_on_another_state_is_refused(tmp_path):
     config = policy(tmp_path)
     project = Project(config, 3)
-    plan = project.plan("scale_workers", 1, remove=[project.host(3)])
+    plan = project.plan("scale_workers", 1)
+    # A worker exited after the plan was reviewed: the members the rule would pick are not the reviewed ones.
+    project.containers[0]["state"] = "exited"
     with pytest.raises(RunnerPolicyError):
         await ComposeAdapter(config, command=project.command).apply(plan, renewed)
     assert "stop" not in project.verbs()
@@ -277,7 +279,7 @@ async def test_a_scale_down_past_every_exited_container_removes_the_reviewed_run
     config = policy(tmp_path)
     project = Project(config, 4)
     project.containers[3]["state"] = "exited"
-    plan = project.plan("scale_workers", 2, remove=[project.host(3)])
+    plan = project.plan("scale_workers", 2)
     kept = [project.full(1), project.full(2)]
     removed = [project.full(3), project.full(4)]
     await ComposeAdapter(config, command=project.command).apply(plan, renewed)
@@ -294,10 +296,4 @@ async def test_a_scale_down_to_the_running_workers_never_needs_a_running_victim(
     keep = project.full(1)
     await ComposeAdapter(config, command=project.command).apply(project.plan("scale_workers", 1), renewed)
     assert [item["id"] for item in project.containers] == [keep]
-    # A running worker named on top of the exited ones would remove one too many.
-    project = Project(config, 3)
-    project.containers[2]["state"] = "exited"
-    plan = project.plan("scale_workers", 2, remove=[project.host(2)])
-    with pytest.raises(RunnerPolicyError):
-        await ComposeAdapter(config, command=project.command).apply(plan, renewed)
-    assert "rm" not in project.verbs()
+    assert all(keep not in argv for argv, _ in project.calls if "stop" in argv or "rm" in argv)

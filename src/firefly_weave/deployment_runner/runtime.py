@@ -139,7 +139,6 @@ def validate_lease(lease: DeploymentLease, policy: DestinationPolicy) -> None:
             or component.memory_mib > binding.max_memory_mib
             or not policy.allows_image(component.image)
             or (step.action in {"scale_workers", "restart_workers"} and component.kind != "worker")
-            or (step.remove_members and step.action != "scale_workers")
             or (step.expected_version is None and resource is not None)
             or (step.expected_version is not None and (resource is None or resource.version != step.expected_version))
         ):

@@ -75,7 +75,7 @@ from firefly_weave.deployments.change_requests import (
     transition,
 )
 from firefly_weave.deployments.repository import SCOPE, DeploymentRepository
-from firefly_weave.deployments.service import DeploymentService
+from firefly_weave.deployments.service import DeploymentService, plan_victims
 from firefly_weave.operations.outbox import OutboxService
 from firefly_weave.persistence.idempotency import Idempotency
 from firefly_weave.persistence.uow import Transaction, UnitOfWork
@@ -210,7 +210,7 @@ async def _victims_left(
     if job.plan_id is None or observation is None:
         return []
     plan = await repo.get("plans", job.plan_id, DeploymentPlan)
-    removed = {host for step in plan.steps for host in step.remove_members}
+    removed = {host for hosts in (await plan_victims(repo, plan)).values() for host in hosts}
     remaining = {member.host for resource in observation.resources for member in resource.members}
     return ["WV-DRAIN-VICTIMS"] if removed & remaining else []
 
@@ -227,12 +227,13 @@ async def drain_set(
     wanted: builtins.list[tuple[str, UUID]] = []
     observation = await repo.get("observations", plan.observation_id, DeploymentObservation)
     observed = {resource.name: resource for resource in observation.resources}
+    victims = await plan_victims(repo, plan)
     for step in plan.steps:
         release = step.component.worker_release_id
         if release is None:
             continue
         if step.action == "scale_workers":
-            hosts = step.remove_members
+            hosts = victims.get(step.component.name, [])
         elif step.action == "restart_workers" and drains(record) and step.component.name in observed:
             hosts = [member.host for member in observed[step.component.name].members]
         else:
@@ -547,6 +548,7 @@ class ChangeRequestService:
                     "plan_id": plan.id,
                     "plan_digest": plan.digest,
                     "plan_expires_at": plan.expires_at,
+                    "planned_by": actor.id,
                     "drain_set": members,
                 }
             )
@@ -782,6 +784,7 @@ class ChangeRequestService:
                     "plan_id": None,
                     "plan_digest": None,
                     "plan_expires_at": None,
+                    "planned_by": None,
                     "approval": None,
                     "drain_set": [],
                     "apply_job_id": None,

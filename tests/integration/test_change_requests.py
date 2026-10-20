@@ -26,7 +26,9 @@ from sqlalchemy import text
 from firefly_weave.access.audit import AuditContext
 from firefly_weave.access.authorization import AccessDenied
 from firefly_weave.access.models import Grant
+from firefly_weave.compiler.canonical import canonical_digest
 from firefly_weave.contracts.deployments import (
+    ApplyPlanRequest,
     ChangeRequestApply,
     ChangeRequestApprove,
     ChangeRequestCreate,
@@ -51,7 +53,9 @@ from firefly_weave.contracts.deployments import (
 from firefly_weave.contracts.workers import InstanceRequest, ReleaseRequest, WorkerIdentity
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.deployments.change_service import ChangeRequestService
-from firefly_weave.deployments.service import DeploymentService
+from firefly_weave.deployments.repository import DeploymentRepository
+from firefly_weave.deployments.service import DeploymentService, plan_victims
+from firefly_weave.persistence.uow import UnitOfWork
 from firefly_weave.workers.service import WorkerService
 
 pytestmark = pytest.mark.integration
@@ -113,6 +117,17 @@ async def ops(services, access_db, provisioned, worker_runtime_fixture):
         scope=scope,
         other=scopes[1],
     )
+
+
+async def victims(ops, plan):
+    """The running members each step of a scale-down plan removes, by the rule the server and runner share."""
+    async with UnitOfWork(ops.access[0]).open(ops.scope, mutation=False) as tx:
+        return await plan_victims(DeploymentRepository(tx), plan)
+
+
+async def planner(ops, plan_id):
+    async with ops.access[1]() as session:
+        return await session.scalar(text("SELECT planned_by FROM deployment_plans WHERE id=:id"), {"id": plan_id})
 
 
 async def prepared(ops, *, replicas=0, policy=None, who="planner", release=None):
@@ -296,7 +311,8 @@ async def test_advance_plans_with_the_caller_as_planner_and_waits_for_approval(o
     assert planned.state == "awaiting_approval" and planned.plan_id is not None
     plan = await ops.service.read("plans", planned.plan_id, **ops.authority("planner"))
     observation = await ops.service.read("observations", job.observation_id, **ops.authority("planner"))
-    assert plan.planned_by == ops.people["planner"].id and plan.digest == planned.plan_digest
+    assert planned.planned_by == ops.people["planner"].id and plan.digest == planned.plan_digest
+    assert await planner(ops, plan.id) == ops.people["planner"].id
     assert planned.plan_expires_at == plan.expires_at <= observation.expires_at
     assert [entry.state for entry in planned.history] == ["observing", "ready_to_plan", "awaiting_approval"]
 
@@ -777,7 +793,7 @@ async def test_a_scale_down_that_leaves_a_removed_member_running_is_flagged(ops)
     assert change_request.drain_set == [] and change_request.warnings == ["WV-DRAIN-UNKNOWN"]
     runner = ops.authority("planner")
     lease = await ops.service.claim(RunnerClaimRequest(runner_id=setup.runner.id), **runner)
-    assert lease.plan.steps[0].remove_members == ["c0ffee000003", "c0ffee000002"]
+    assert await victims(ops, lease.plan) == {COMPONENT: ["c0ffee000003", "c0ffee000002"]}
     for state in ("running", "verifying"):
         await ops.service.report(RunnerReport(lease=lease.proof, report_id=uuid4(), state=state), **runner)
     final = observed(1)
@@ -823,7 +839,7 @@ async def low_level_plan(ops, setup, *, intent, deployed, observed_count, image=
 async def test_a_scale_down_plan_removes_exactly_the_highest_numbered_workers_and_drains_them(ops):
     setup = await prepared(ops, replicas=3)
     plan = await low_level_plan(ops, setup, intent="scale_workers", deployed=1, observed_count=3)
-    assert [step.remove_members for step in plan.steps] == [["c0ffee000003", "c0ffee000002"]]
+    assert await victims(ops, plan) == {COMPONENT: ["c0ffee000003", "c0ffee000002"]}
     assert plan.steps[0].component.replicas == 1
     assert "worker_drain" in plan.risks
 
@@ -831,7 +847,7 @@ async def test_a_scale_down_plan_removes_exactly_the_highest_numbered_workers_an
 async def test_a_scale_up_plan_removes_nobody_and_drains_nothing(ops):
     setup = await prepared(ops, replicas=1)
     plan = await low_level_plan(ops, setup, intent="scale_workers", deployed=3, observed_count=1)
-    assert [step.remove_members for step in plan.steps] == [[]]
+    assert await victims(ops, plan) == {}
     assert "worker_drain" not in plan.risks
 
 
@@ -839,7 +855,7 @@ async def test_a_restart_keeps_the_observed_image_and_count_and_drains(ops):
     setup = await prepared(ops, replicas=3)
     plan = await low_level_plan(ops, setup, intent="restart_workers", deployed=3, observed_count=3)
     assert plan.intent == "restart_workers" and [step.action for step in plan.steps] == ["restart_workers"]
-    assert [step.remove_members for step in plan.steps] == [[]]
+    assert await victims(ops, plan) == {}
     assert "worker_drain" in plan.risks
     for deployed, count, image in ((3, 2, IMAGE), (3, 3, "registry.example/other@sha256:" + "c" * 64)):
         other = await prepared(ops, replicas=deployed)
@@ -873,5 +889,50 @@ async def test_a_scale_down_removes_exited_containers_first_and_is_never_stuck_o
         uuid4().hex,
         **authority,
     )
-    assert [step.remove_members for step in plan.steps] == [[]]
+    assert await victims(ops, plan) == {}
     assert "worker_drain" not in plan.risks
+
+
+def released_contracts():
+    """The deployment contracts runners, CLIs and SDKs of the release before change requests parse with."""
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[1] / "fixtures/contracts/deployments_before_change_requests.py"
+    spec = importlib.util.spec_from_file_location("deployments_before_change_requests", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+async def test_runners_and_clients_of_the_previous_release_still_read_plans_leases_and_targets(ops):
+    released = released_contracts()
+    setup = await prepared(ops, replicas=3, policy=False, who="owner")
+    plan = await low_level_plan(ops, setup, intent="scale_workers", deployed=1, observed_count=3)
+    assert await victims(ops, plan) == {COMPONENT: ["c0ffee000003", "c0ffee000002"]}
+    # The plan, and its digest as the earlier runner recomputes it, read exactly as before.
+    earlier = released.DeploymentPlan.model_validate_json(plan.model_dump_json())
+    assert earlier.model_dump_json() == plan.model_dump_json()
+    assert canonical_digest(earlier.model_dump(mode="json", exclude={"digest"})) == plan.digest
+    # A runner of the earlier release registers only the capabilities it knows, and claims the apply job.
+    authority = ops.authority("planner")
+    old_runner = await ops.service.register_runner(
+        RunnerRegistration(
+            target_id=setup.target.id, adapter="docker-compose", capabilities=["observe", "update", "scale_workers"]
+        ),
+        **authority,
+    )
+    await ops.service.revoke_runner(setup.runner.id, **ops.authority("owner"))
+    await ops.service.approve(plan.id, PlanApprovalRequest(digest=plan.digest), **ops.authority("approver"))
+    await ops.service.apply(plan.id, ApplyPlanRequest(digest=plan.digest), uuid4().hex, **authority)
+    lease = await ops.service.claim(RunnerClaimRequest(runner_id=old_runner.id), **authority)
+    assert lease is not None and lease.job.kind == "apply"
+    released.DeploymentLease.model_validate_json(lease.model_dump_json())
+    assert "restart_workers" not in lease.target.capabilities and "approval_policy" not in lease.target.model_dump()
+    # Jobs, observations and targets that keep the default policy read too.
+    job = await ops.service.read("jobs", lease.job.id, **authority)
+    released.DeploymentJob.model_validate_json(job.model_dump_json())
+    released.DeploymentObservation.model_validate_json(lease.observation.model_dump_json())
+    strict = await prepared(ops)
+    released_target = strict.target.model_copy(update={"capabilities": ["observe", "deploy", "update"]})
+    released.DeploymentTarget.model_validate_json(released_target.model_dump_json())

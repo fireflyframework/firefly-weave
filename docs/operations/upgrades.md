@@ -558,6 +558,33 @@ evidence, and can block it permanently; a blocked run's tasks are never offered
 to workers again, even after you upgrade. Before you roll back to such a
 server, let every run that uses a language feature finish, or cancel it.
 
+## Change request compatibility
+
+Servers with change requests (migration `0034_operations_change_requests`) keep
+what runners, CLIs and SDKs of the previous release read:
+
+- **Plans read as before.** A plan does not carry who made it or which workers a
+  scale-down removes. The server keeps the planner beside the plan, and the
+  members a scale-down removes follow from the plan's own observation by a fixed
+  rule (Compose: exited containers first, then the highest container numbers),
+  which the server and an upgraded runner both apply. Plan digests are
+  unchanged.
+- **Leases carry only what the runner registered.** A lease's target lists the
+  capabilities the claiming runner registered and no approval policy, so a runner
+  of the previous release keeps claiming observe, deploy, update and scale jobs.
+- **A second approver is required.** Every target registered before the upgrade
+  needs a second person to approve its plans. A plan made before the upgrade does
+  not record its planner, so on such a target it must be planned again before it
+  can be approved or applied (409 `WV-PLAN-STALE`). The rule compares accounts:
+  see [Who counts as a second approver](cluster-management.md).
+
+Upgrade runners soon after the server anyway: a runner of the previous release
+cannot run restart jobs (it never registers `restart_workers`, so it never claims
+them), and it scales down by letting Compose choose the containers instead of
+removing the reviewed members. CLIs and SDKs of the previous release cannot read
+a restart plan, a target that offers `restart_workers`, or a target whose
+environment manager turned off the second approver; upgrade them with the server.
+
 ## Verify before admitting traffic
 
 Perform these checks in order for each project and execution path:

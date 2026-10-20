@@ -29,6 +29,7 @@ from firefly_weave.access.models import Principal
 from firefly_weave.compiler.canonical import canonical_digest
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.deployments import (
+    ApprovalPolicy,
     Deployment,
     DeploymentJob,
     DeploymentLease,
@@ -110,11 +111,26 @@ class DeploymentLeases:
         await repo.update("runners", identifier, runner)
         return runner, target
 
+    @staticmethod
+    def for_runner(target: DeploymentTarget, runner: DeploymentRunner) -> DeploymentTarget:
+        """The target as this runner may act on it: the capabilities it registered, and no approval policy.
+
+        A runner of an earlier release registers only the capabilities it knows and parses leases with models
+        that forbid unknown values, so it never receives a capability or field it cannot read.
+        """
+        return target.model_copy(
+            update={
+                "capabilities": [item for item in target.capabilities if item in runner.capabilities],
+                "approval_policy": ApprovalPolicy(),
+            }
+        )
+
     async def context(
         self,
         repo: DeploymentRepository,
         job: DeploymentJob,
         target: DeploymentTarget,
+        runner: DeploymentRunner,
         proof: DeploymentLeaseProof,
         expires: datetime,
     ) -> DeploymentLease:
@@ -125,7 +141,7 @@ class DeploymentLeases:
             proof=proof,
             expires_at=expires,
             job=job,
-            target=target,
+            target=self.for_runner(target, runner),
             plan=plan,
             deployment=deployment,
             observation=observation,
@@ -173,6 +189,7 @@ class DeploymentLeases:
                 repo,
                 job,
                 target,
+                runner,
                 DeploymentLeaseProof(job_id=job.id, runner_id=runner.id, generation=generation, token=token),
                 expires,
             )
@@ -218,7 +235,8 @@ class DeploymentLeases:
                 raise CatalogError(409, "WV-RUNNER-FENCE", "Runner lease expired or job stopped")
             expires = min(now + timedelta(seconds=60), job.deadline)
             await repo.update("jobs", job.id, job, extra={"lease_expires_at": expires})
-            return await self.context(repo, job, target, proof, expires)
+            runner = await repo.get("runners", proof.runner_id, DeploymentRunner)
+            return await self.context(repo, job, target, runner, proof, expires)
 
     async def report(
         self, request: RunnerReport, *, actor: Principal, scope: Scope, context: AuditContext

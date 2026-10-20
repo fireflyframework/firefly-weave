@@ -34,9 +34,11 @@ from firefly_weave.compiler.canonical import canonical_digest
 from firefly_weave.contracts.deployments import (
     ComponentSpec,
     DeploymentPlan,
+    MemberSelectionError,
     ObservationReport,
     ObservedMember,
     ObservedResource,
+    scale_down_members,
 )
 from firefly_weave.contracts.values import JsonObject
 from firefly_weave.deployment_runner.command import run_command
@@ -293,8 +295,13 @@ class ComposeAdapter:
                 raise RunnerPolicyError()
             if step.action == "restart_workers" and component.replicas != fact.replicas:
                 raise RunnerPolicyError()
-            if step.remove_members or (step.action == "scale_workers" and fact.replicas > component.replicas):
-                victims += self._victims(step.remove_members, containers[component.name], fact.replicas, component)
+            if step.action == "scale_workers" and fact.replicas > component.replicas:
+                # The reviewed members, chosen by the plan's rule from this same observed state (its version).
+                try:
+                    hosts = scale_down_members(self.policy.adapter, fact, component.replicas)
+                except MemberSelectionError:
+                    raise RunnerPolicyError() from None
+                victims += self._victims(hosts, containers[component.name], fact.replicas, component)
             spec = override["services"].setdefault(component.name, {})
             spec.setdefault("labels", {})["firefly.weave.target"] = str(self.policy.target_id)
             spec.setdefault("deploy", {})["replicas"] = component.replicas

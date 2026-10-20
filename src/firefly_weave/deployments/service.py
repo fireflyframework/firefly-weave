@@ -47,6 +47,7 @@ from firefly_weave.contracts.deployments import (
     DeploymentRunner,
     DeploymentTarget,
     JobCancelRequest,
+    MemberSelectionError,
     ObservationReport,
     ObservedMember,
     ObservedResource,
@@ -62,6 +63,8 @@ from firefly_weave.contracts.deployments import (
     SafeDeploymentReceipt,
     TargetRequest,
     TargetUpdate,
+    removed_members,
+    scale_down_members,
 )
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.deployments.repository import SCOPE, DeploymentRepository
@@ -74,6 +77,26 @@ async def follow_job(repo: DeploymentRepository, job: DeploymentJob, *, observat
     from firefly_weave.deployments.change_service import follow_job as follow
 
     await follow(repo, job, observation=observation)
+
+
+async def plan_victims(repo: DeploymentRepository, plan: DeploymentPlan) -> dict[str, list[str]]:
+    """The running members each step of a scale-down plan removes, from the plan's own observation."""
+    if plan.intent != "scale_workers":
+        return {}
+    observation = await repo.get("observations", plan.observation_id, DeploymentObservation)
+    observed = {resource.name: resource for resource in observation.resources}
+    result = {}
+    for step in plan.steps:
+        fact = observed.get(step.component.name)
+        if fact is None or fact.replicas <= step.component.replicas:
+            continue
+        try:
+            hosts = scale_down_members(plan.adapter, fact, step.component.replicas)
+        except MemberSelectionError:
+            raise CatalogError(409, "WV-PLAN-STALE", "Observe the target again and plan the change again") from None
+        if hosts:
+            result[step.component.name] = hosts
+    return result
 
 
 MODELS: dict[str, type[ContractModel]] = {
@@ -307,13 +330,14 @@ class DeploymentService:
             requester = change.requested_by
         if not distinct:
             return
-        if plan.planned_by is None:
+        planner = await self.planner(repo, plan.id)
+        if planner is None:
             raise CatalogError(
                 409,
                 "WV-PLAN-STALE",
                 "Plan this change again: the plan does not record who made it, and this target needs a second approver",
             )
-        if approver in {plan.planned_by, requester}:
+        if approver in {planner, requester}:
             raise CatalogError(
                 403, "WV-APPROVAL-SELF", "You requested or planned this change. Another approver must review it."
             )
@@ -576,7 +600,6 @@ class DeploymentService:
                 action=request.intent,
                 component=c,
                 expected_version=by_name[c.name].version if c.name in by_name else None,
-                remove_members=removed.get(c.name, []),
             )
             for c in selected
         ]
@@ -602,51 +625,41 @@ class DeploymentService:
             risks=risks,
             created_at=now,
             expires_at=min(now + timedelta(seconds=request.ttl_seconds), observed.expires_at),
-            planned_by=actor.id,
         )
         draft = DeploymentPlan(**data, digest="0" * 64)
         result = draft.model_copy(
             update={"digest": canonical_digest(draft.model_dump(mode="json", exclude={"digest"}))}
         )
-        await repo.insert("plans", result.id, target.id, result, deployment_id=deployment.id)
+        await repo.insert(
+            "plans", result.id, target.id, result, deployment_id=deployment.id, extra={"planned_by": actor.id}
+        )
         await self.record(tx, actor, "deployment.plan", result.id, context)
         return result
 
-    @classmethod
-    def scale_down_members(
-        cls, target: DeploymentTarget, resource: ObservedResource, desired: int
-    ) -> builtins.list[str]:
-        """The running members a scale-down to `desired` removes.
-
-        Compose lists only running containers as members, and counts exited ones in its replicas: those go first,
-        need no drain, and are removed by the runner without being named, so an exited container never makes a
-        scale-down remove a running worker or wait for one that cannot be observed. Kubernetes lists every pod.
-        """
-        excess = resource.replicas - desired
-        if target.adapter == "docker-compose":
-            if resource.ready_replicas > len(resource.members):
-                # Ready containers are running ones, so members that cannot all be listed are unknown, not exited.
-                raise CatalogError(
-                    409, "WV-PLAN-STALE", "The observation does not list every worker; observe the target again"
-                )
-            excess -= max(0, resource.replicas - len(resource.members))
-        return cls.removed_members(target, resource.members, max(0, excess))
+    @staticmethod
+    def scale_down_members(target: DeploymentTarget, resource: ObservedResource, desired: int) -> builtins.list[str]:
+        """The running members a scale-down to `desired` removes (`scale_down_members` in the contracts)."""
+        try:
+            return scale_down_members(target.adapter, resource, desired)
+        except MemberSelectionError:
+            raise CatalogError(
+                409, "WV-PLAN-STALE", "The observation does not list every worker to remove; observe the target again"
+            ) from None
 
     @staticmethod
     def removed_members(target: DeploymentTarget, members: Sequence[ObservedMember], count: int) -> builtins.list[str]:
-        """The members a scale-down removes: Compose's highest numbers; Kubernetes' unready, then newest pods."""
-        if len(members) < count or any(m.ordinal is None for m in members) and target.adapter == "docker-compose":
+        """The `count` members a scale-down removes (`removed_members` in the contracts)."""
+        try:
+            return removed_members(target.adapter, members, count)
+        except MemberSelectionError:
             raise CatalogError(
                 409, "WV-PLAN-STALE", "The observation does not list every worker to remove; observe the target again"
-            )
-        if target.adapter == "docker-compose":
-            ordered = sorted(members, key=lambda m: (m.ordinal or 0, m.host), reverse=True)
-        else:
-            ordered = sorted(
-                members,
-                key=lambda m: (m.ready, -(m.started_at.timestamp() if m.started_at else float("inf")), m.host),
-            )
-        return [member.host for member in ordered[:count]]
+            ) from None
+
+    async def planner(self, repo: DeploymentRepository, plan_id: UUID) -> UUID | None:
+        """Who made the plan, kept beside it; None for plans made before the server recorded planners."""
+        rows = await repo.rows(f"SELECT planned_by FROM deployment_plans WHERE {SCOPE} AND id=:id", id=plan_id)
+        return rows[0]["planned_by"] if rows else None
 
     async def approve(
         self, identifier: UUID, request: PlanApprovalRequest, *, actor: Principal, scope: Scope, context: AuditContext

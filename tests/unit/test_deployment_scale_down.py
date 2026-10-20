@@ -18,12 +18,10 @@
 
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from uuid import UUID
 
 import pytest
-from pydantic import ValidationError
 
-from firefly_weave.contracts.deployments import ComponentSpec, ObservedMember, ObservedResource, PlanStep
+from firefly_weave.contracts.deployments import ObservedMember, ObservedResource
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.deployments.service import DeploymentService
 
@@ -99,22 +97,6 @@ def test_kubernetes_counts_a_pod_without_a_start_time_as_the_newest():
     unstarted = member("pending", minutes=0).model_copy(update={"started_at": None})
     members = [member("old", minutes=0), member("new", minutes=9), unstarted]
     assert DeploymentService.removed_members(SimpleNamespace(adapter="kubernetes"), members, 1) == ["pending"]
-
-
-def test_a_plan_step_names_each_removed_member_once():
-    with pytest.raises(ValidationError):
-        PlanStep(
-            action="scale_workers",
-            component=ComponentSpec(
-                name="worker",
-                kind="worker",
-                image="example.test/worker@sha256:" + "b" * 64,
-                configuration="current",
-                replicas=1,
-                worker_release_id=UUID(int=1),
-            ),
-            remove_members=["aaa", "aaa"],
-        )
 
 
 @pytest.mark.parametrize(

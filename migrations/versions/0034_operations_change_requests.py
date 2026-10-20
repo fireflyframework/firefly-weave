@@ -14,7 +14,7 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-"""Change requests: one reviewed infrastructure change per target, kept 90 days after it ends."""
+"""Change requests: one reviewed infrastructure change per target, kept 90 days after it ends; plan authors."""
 
 from alembic import op
 
@@ -58,6 +58,10 @@ def upgrade():
     # DELETE serves retention only: the operations loop removes ended change requests after 90 days.
     op.execute("GRANT SELECT,INSERT,UPDATE,DELETE ON deployment_change_requests TO weave_app")
     op.execute("ANALYZE deployment_change_requests")
+    # Who made each plan, kept beside the plan document so runners and clients of earlier releases still read
+    # it and its digest stays as it was. Plans made before this revision have none. A nullable column without a
+    # default is a catalog-only change.
+    op.execute("ALTER TABLE deployment_plans ADD COLUMN planned_by uuid")
     op.execute(f"UPDATE weave_schema_version SET version='{revision}'")
 
 

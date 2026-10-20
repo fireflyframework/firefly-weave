@@ -169,3 +169,21 @@ async def test_retention_finds_ended_changes_through_its_index(upgraded):
         )
         # The ended-time index or the scope index; never a scan of every environment's rows.
         assert "Seq Scan" not in plan and "Index" in plan, plan
+
+
+async def test_plans_gain_a_nullable_planner_beside_their_document(upgraded):
+    engine, _ = upgraded
+    async with engine.connect() as connection:
+        column = (
+            await connection.execute(
+                text(
+                    "SELECT data_type,is_nullable,column_default FROM information_schema.columns "
+                    "WHERE table_name='deployment_plans' AND column_name='planned_by'"
+                )
+            )
+        ).one()
+        granted = await connection.scalar(
+            text("SELECT has_column_privilege('weave_app','deployment_plans','planned_by','INSERT')")
+        )
+    assert tuple(column) == ("uuid", "YES", None)
+    assert granted

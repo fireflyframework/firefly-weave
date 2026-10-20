@@ -26,7 +26,6 @@ from sqlalchemy import text
 from firefly_weave.access.audit import AuditContext
 from firefly_weave.access.authorization import AccessDenied
 from firefly_weave.access.models import Grant
-from firefly_weave.compiler.canonical import canonical_digest
 from firefly_weave.contracts.deployments import (
     ApplyPlanRequest,
     ComponentSpec,
@@ -132,7 +131,11 @@ async def planned(people, *, who="planner", policy=None):
 
 async def test_a_plan_records_its_planner_and_its_planner_cannot_approve_it(people):
     target, plan = await planned(people)
-    assert plan.planned_by == people.people["planner"].id
+    async with people.access[1]() as session:
+        planner = await session.scalar(text("SELECT planned_by FROM deployment_plans WHERE id=:id"), {"id": plan.id})
+    assert planner == people.people["planner"].id
+    # The plan document itself does not name its planner, so runners of earlier releases still read it.
+    assert "planned_by" not in plan.model_dump(mode="json")
     assert target.approval_policy.distinct_approver
     with pytest.raises(CatalogError) as refused:
         await people.service.approve(plan.id, PlanApprovalRequest(digest=plan.digest), **people.authority("planner"))
@@ -198,17 +201,11 @@ async def test_changing_a_targets_policy_needs_an_environment_manager_and_is_aud
 
 async def test_a_plan_without_a_planner_must_be_planned_again_on_a_target_with_a_second_approver(people):
     target, plan = await planned(people)
-    legacy = plan.model_dump(mode="json", exclude={"planned_by", "digest"})
-    legacy["digest"] = canonical_digest(legacy)
+    # A plan made before the server recorded planners.
     async with people.access[1].begin() as session:
-        await session.execute(
-            text("UPDATE deployment_plans SET payload=cast(:payload AS jsonb) WHERE id=:id"),
-            {"payload": json.dumps(legacy), "id": plan.id},
-        )
+        await session.execute(text("UPDATE deployment_plans SET planned_by=NULL WHERE id=:id"), {"id": plan.id})
     with pytest.raises(CatalogError) as refused:
-        await people.service.approve(
-            plan.id, PlanApprovalRequest(digest=legacy["digest"]), **people.authority("approver")
-        )
+        await people.service.approve(plan.id, PlanApprovalRequest(digest=plan.digest), **people.authority("approver"))
     assert (refused.value.status, refused.value.code) == (409, "WV-PLAN-STALE")
 
 

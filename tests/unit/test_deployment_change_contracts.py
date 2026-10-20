@@ -83,30 +83,22 @@ def legacy_plan_document() -> dict:
     }
 
 
-def test_a_stored_plan_keeps_its_bytes_and_digest_without_a_planner_or_removed_members():
+def test_a_stored_plan_keeps_its_bytes_and_digest():
     document = legacy_plan_document()
     plan = DeploymentPlan.model_validate_json(json.dumps(document))
-    assert plan.planned_by is None
-    assert plan.steps[0].remove_members == []
-    dumped = plan.model_dump(mode="json")
-    assert "planned_by" not in dumped and "remove_members" not in dumped["steps"][0]
-    assert canonical_digest(dumped) == canonical_digest(document)
-
-
-def test_a_new_plan_names_its_planner_and_the_members_it_removes():
-    document = legacy_plan_document()
-    planner = uuid4()
-    document["planned_by"] = str(planner)
-    document["risks"] = ["external_effects", "worker_drain"]
-    document["steps"][0]["remove_members"] = ["0123456789ab", "ba9876543210"]
-    plan = DeploymentPlan.model_validate_json(json.dumps(document))
-    assert plan.planned_by == planner
-    assert plan.steps[0].remove_members == ["0123456789ab", "ba9876543210"]
     assert canonical_digest(plan.model_dump(mode="json")) == canonical_digest(document)
+
+
+def test_a_plan_document_never_carries_its_planner_or_the_members_it_removes():
+    # Runners and clients of earlier releases forbid unknown fields: both are kept beside the plan instead.
+    for field, value in (("planned_by", str(uuid4())),):
+        document = {**legacy_plan_document(), field: value}
+        with pytest.raises(ValidationError):
+            DeploymentPlan.model_validate_json(json.dumps(document))
+    document = legacy_plan_document()
+    document["steps"][0]["remove_members"] = ["0123456789ab"]
     with pytest.raises(ValidationError):
-        PlanStep(action="scale_workers", component=worker(), remove_members=["../escape"])
-    with pytest.raises(ValidationError):
-        PlanStep(action="scale_workers", component=worker(), remove_members=[f"h{index}" for index in range(101)])
+        DeploymentPlan.model_validate_json(json.dumps(document))
 
 
 def test_restart_is_an_intent_a_step_and_a_capability():

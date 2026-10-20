@@ -18,6 +18,7 @@
 
 import hashlib
 import json
+from collections.abc import Sequence
 from typing import Annotated, Literal, Self
 from uuid import UUID
 
@@ -195,14 +196,41 @@ class PlanStep(ContractModel):
     action: PlanIntent
     component: ComponentSpec
     expected_version: ExternalIdentity | None = None
-    # The members a scale-down removes, chosen when the plan is made; left out when empty.
-    remove_members: list[WorkerHost] = Field(default_factory=list, max_length=100, exclude_if=lambda v: not v)
 
-    @model_validator(mode="after")
-    def distinct_members(self) -> Self:
-        if len(set(self.remove_members)) != len(self.remove_members):
-            raise ValueError("Removed members must be distinct")
-        return self
+
+class MemberSelectionError(ValueError):
+    """The observation does not list every member a scale-down would choose from."""
+
+
+def removed_members(adapter: AdapterKind, members: Sequence[ObservedMember], count: int) -> list[str]:
+    """The `count` members to remove: Compose's highest container numbers; Kubernetes' not-ready pods first, then
+    the most recently started (a pod without a start time counts as the newest)."""
+    if len(members) < count or (adapter == "docker-compose" and any(m.ordinal is None for m in members)):
+        raise MemberSelectionError("The observation does not list every worker to remove")
+    if adapter == "docker-compose":
+        ordered = sorted(members, key=lambda m: (m.ordinal or 0, m.host), reverse=True)
+    else:
+        ordered = sorted(
+            members, key=lambda m: (m.ready, -(m.started_at.timestamp() if m.started_at else float("inf")), m.host)
+        )
+    return [member.host for member in ordered[:count]]
+
+
+def scale_down_members(adapter: AdapterKind, resource: ObservedResource, desired: int) -> list[str]:
+    """The running members a scale-down of `resource` to `desired` replicas removes.
+
+    The rule is part of what a plan means: the server applies it to the plan's observation and the runner to the
+    same observed state (the step's expected version), so the reviewed members never travel in the plan document.
+    Compose lists only running containers as members and counts exited ones in its replicas: exited containers go
+    first and need no drain, then the highest container numbers. Kubernetes lists every pod.
+    """
+    excess = resource.replicas - desired
+    if adapter == "docker-compose":
+        if resource.ready_replicas > len(resource.members):
+            # Ready containers are running ones, so members that cannot all be listed are unknown, not exited.
+            raise MemberSelectionError("The observation does not list every worker")
+        excess -= max(0, resource.replicas - len(resource.members))
+    return removed_members(adapter, resource.members, max(0, excess))
 
 
 class DeploymentPlan(ContractModel):
@@ -222,8 +250,6 @@ class DeploymentPlan(ContractModel):
     created_at: AwareDatetime
     expires_at: AwareDatetime
     digest: Digest
-    # Who made the plan; left out when unknown, so plans stored before it existed keep their digests.
-    planned_by: UUID | None = Field(default=None, exclude_if=lambda v: v is None)
 
 
 class PlanApprovalRequest(ContractModel):
@@ -448,6 +474,9 @@ class ChangeRequest(ChangeRequestCreate):
     plan_digest: Digest | None = None
     plan_expires_at: AwareDatetime | None = None
     approval: ChangeApproval | None = None
+    # Who made the current plan. Plans themselves do not carry it, so runners and clients of earlier releases
+    # still read them; the server keeps it beside each plan.
+    planned_by: UUID | None = None
     drain_set: list[DrainMember] = Field(default_factory=list, max_length=100)
     apply_job_id: UUID | None = None
     failure: ChangeFailure | None = None

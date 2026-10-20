@@ -88,7 +88,7 @@ class DeploymentRepository:
         if count is not None and count >= maximum:
             raise CatalogError(409, "WV-DEPLOYMENT-CAPACITY", "Deployment collection limit reached")
         values = extra or {}
-        allowed = {"state", "job_id", "runner_id", "request_hash"}
+        allowed = {"state", "job_id", "runner_id", "request_hash", "planned_by"}
         if not set(values) <= allowed:
             raise ValueError("Invalid deployment persistence fields")
         encoded = payload.model_dump_json()
