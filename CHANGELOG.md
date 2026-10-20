@@ -18,8 +18,27 @@ SPDX-License-Identifier: Apache-2.0
 
 # Changelog
 
-## Unreleased
+## 0.1.0a16
 
+### Workflow language
+
+- The compiler checks and compiles **Call a workflow** (`callWorkflow`) against
+  the exact published version it calls: that version must opt in with
+  `spec.callable` (any workflow, or only `allowedCallers`), `with` is checked
+  against its input schema, a `businessKey` must be text of 1 to 200 characters,
+  and the step returns the called workflow's output, a `{status, runId, output,
+  error}` envelope with `onFailure: continue`, or `null` with `mode: detach`. New
+  diagnostics `WV-COMP-UNKNOWN_WORKFLOW`, `CALL_NOT_CALLABLE`, `CALL_RECURSION`,
+  `CALL_DEPTH` (more than 8 calls deep, the new compiler limit
+  `max_call_depth`), and `CALL_MODE` point at the field to fix. The called
+  version is locked as an interface dependency: the caller's artifact carries
+  that version's definition, so its digest matches the published one, but
+  compiling, importing, and activating the caller read only its input and output
+  schemas. Activation takes `workflow_activation_ids`, one live
+  activation of each called version in the same environment, and refuses wrong
+  or missing pins with `422 WV-READINESS-CALL`. Workflows without calls compile to
+  the same bytes as before. `weave workflow explain` and `weave workflow graph` show calls,
+  and the SDK's `WorkflowBuilder.with_callable()` writes `spec.callable`.
 - Workflows can call other workflows. A **Call a workflow** step starts the
   exact version it names as a separate child run of the pinned activation, under
   the calling run's principal, which must still hold `run.start`. A waiting call
@@ -44,23 +63,51 @@ SPDX-License-Identifier: Apache-2.0
   reached its caller (`WV-RUN-PURGE-BLOCKED`). Upgrade CLIs and SDKs together
   with the server: older clients reject the new `call_completed` event type and
   `caller` field when they validate history and runs.
-- With the new editor, Mapped values in step details are **formulas** such as
-  `input.amount > 1000 and exists(input.email)`: suggestions from the data the
-  field can read, references as pills, plain-word messages that never block
-  typing (text that doesn't parse shows **Not applied** and keeps the last
-  formula), a standard form on blur, **Edit formula** beside the input's
-  fields, and drops at the pointer. Templates take any formula between
-  `{{ }}`. Under a Mapped field, `= value` and the **Result** panel show what it
-  gives with the trigger's test input, computed in the browser with the
-  platform's rules (held to them by `scripts/studio_expression_corpus.py`);
-  formulas reading secret values are never previewed, and previews send
-  nothing. **Call an API** shows the full address of its request. Studio now
-  includes CodeMirror (`@codemirror/state`, `@codemirror/view`, MIT), loaded
-  with the first formula field. See `docs/reference/formulas.md`.
-- Publish… and Simulate show why they stopped (for example, an account that
-  can't publish actions) as soon as Studio has loaded the code that publishes
-  the workflow's own actions, instead of waiting for another change on the
-  page.
+- The compiler checks and compiles **Loop over items** (`forEach`): `/item`,
+  `/index`, and `/loops/<id>/…` inside a loop body, a typed list of results after
+  it, `WV-COMP-LOOP_*` diagnostics for wrong items, scope, nesting, limits, and
+  signals in a body (with a suggested `maxItems` for a loop budget that is too
+  high), and an IR `forEach` node with an `each` edge and an `each` join that
+  requires the `flow.forEach` feature. A platform that does not list the
+  feature refuses to publish, import, or activate such a workflow with
+  `WV-IR-UNSUPPORTED`; workflows without loops compile to the same bytes as
+  before. The compiler limits add `max_loop_items`, `max_loop_depth`, and
+  `max_run_iterations`. Studio's local host answers `POST /studio/local/scope`
+  with the data a field may use, including the current loop item and position.
+- Loops run. A **Loop over items** (`forEach`) step runs its body once per
+  element, `concurrency` at a time, in one run, and its output lists one result
+  per element in element order, whatever order the iterations finish in. Each
+  iteration's steps, tasks, human tasks, waits, and incidents use their own
+  instance key (`send[2]`); a task incident in one iteration suspends the run, a
+  `fail` step in one fails it, and canceling ends every iteration. Finished
+  iterations are removed from the run state. An `items` value that is not a list,
+  more elements than `maxItems`, or results over the 1 MiB payload limit open
+  `WV-RUNTIME-LOOP-ITEMS`, `WV-RUNTIME-LOOP-LIMIT`, or `WV-RUNTIME-LOOP-OUTPUT`.
+  A long loop yields after 4,000 units of work in one event and continues about
+  one scanner poll later; the capabilities response reports the budget as
+  `operations.runtime.loop_units_per_turn`. The platform now lists
+  `flow.forEach` and `forEach` in its language manifest and capabilities, so it
+  publishes, imports, and activates workflows with loops. Debug sessions run
+  loops with the same reducer. New counters `weave.loop_iterations` (`status:
+  ok` for each collected result, `cancelled` for each iteration still running
+  when its run ends) and `weave.loop_yields`. Upgrade the CLI and SDK together with the server: older
+  clients do not know the human task `instance_key` and `iteration` fields or
+  the new capability fields.
+- Evaluating an expression inside a loop body and admitting a long event no
+  longer walk data that has not changed since the event started, so a loop's
+  cost grows linearly with its number of elements.
+- Run state, history, tasks, deadlines, and incidents name each run of a step by
+  its instance key, which equals the step ID outside loops, so existing workflows
+  keep byte-identical transitions and history. Deadline scans, incident
+  resolution, replay, exported history, and debug sessions find the step behind
+  any instance key.
+- Human task views add `instance_key` and `iteration` for tasks created inside a
+  loop iteration; both are omitted for every other task.
+- The capacity check of one event's work runs at its end and after every 64
+  steps or 1 MiB of new step output, instead of after every step. Work over
+  capacity is still refused, but the refusal can happen at a later step of the
+  same event, and when a later step of that event fails, the run opens that
+  step's incident instead.
 - Simulations and debug sessions address loop iterations. A mock under
   `node:send[2]` answers iteration 2 of `send` only and wins over `node:send`,
   which wins over `action:` mocks; a breakpoint on `send[2]` stops before that
@@ -80,6 +127,9 @@ SPDX-License-Identifier: Apache-2.0
   lists them in `result.missing_features` when a session is created, read or
   sent a command, and the CLI lists them in its message. Upgrade the SDK
   together with the server to read debug views of workflows with loops.
+
+### Runs, incidents, and workers
+
 - Serve bounded run summaries and classified step timelines with fresh scoped
   authorization. Timeline output remains optional; legacy timings stay unknown.
   Logs remain unavailable with HTTP 501.
@@ -166,13 +216,6 @@ SPDX-License-Identifier: Apache-2.0
   `registered_desc`, unknown times last. Cursors issued before the upgrade are
   refused, unknown query parameters are rejected, and an out-of-range `limit`
   answers `WV-VALIDATION` instead of `WV-PAGE`. Pages stay limited to 8 MiB.
-- Studio's Workers page asks the platform for current workers, last contact
-  first, and for every worker with **Show retired workers**. Earlier Studio
-  hosts and desktop apps get the
-  reduced default list from an upgraded server, because the Studio bridge
-  forwards answers unchanged: their Workers page lists only current workers, and
-  **Show revoked workers** shows none. Upgrade Studio and the desktop app with
-  the server.
 - Worker reads and lists add optional `placement` (target, deployment and
   component), matched from the latest complete, unexpired observation of the
   targets the reader may read, and `drained_at`, when the worker started
@@ -213,184 +256,9 @@ SPDX-License-Identifier: Apache-2.0
   and reads degraded after 3 failed cycles in a row or among the last 20. An
   outbox cycle that cannot start a delivery, because the platform is not ready
   or no delivery slot is free, is neither a success nor a failure.
-- Studio's host bridge forwards the environment summary, the telemetry
-  settings and `releases.usage`.
-- Studio's Operate area opens on a new Overview page. It shows the health of
-  the API, the database, the scheduler, the outbox, compatibility and
-  telemetry export, each with its details; the current load; workers,
-  clusters and incidents; and up to 20 items that need attention, most of
-  them linking to their record. It reads the summary every 15 seconds while
-  visible. A section you may not read names the permission it needs instead
-  of showing zeros.
-- Operate › Runs reads run summaries, newest first, with time range, workflow,
-  version, origin, status, test, handled-error, incident, top-level and
-  archive filters. The address keeps every filter except the business and
-  correlation keys. Load more continues the same list, Auto-refresh reads the
-  first page every 10 seconds, and up to 50 selected runs can be canceled or
-  retried together. A run's detail draws its steps with queue wait and run
-  time, groups loop iterations, links to called runs, shows a step's output
-  on request and follows a running run every 2 seconds. Starting, canceling,
-  retrying, archiving or restoring a run, or deleting its data, from the page
-  reads the list again at once, and a run started there shows first while
-  the list puts new runs first (with Oldest first it waits for its place).
-  The line under the title names the order in use.
-- Operate › Incidents filters on the platform by status, code, workflow,
-  step, opening range and test runs, with a choice of order, so a match
-  beyond the loaded pages shows. The address keeps the filters and the open
-  incident (`?incident=ID`), which opens from `incidents.read` even when no
-  loaded page lists it. The drawer shows the workflow, the full step instance,
-  the run's status and when the incident opened, marked estimated when the
-  upgrade inferred it and Unknown when it isn't known; Refresh incident reads
-  the incident itself.
-- Operate › Workers has Fleet and Releases tabs. Fleet filters on the platform
-  by status, draining, release, task type, target and host prefix (kept on the
-  page, never in the address) with a choice of order, shows each worker's
-  host, placement, versions and registration time, drains, resumes or revokes
-  up to 50 selected workers one by one, and **Retire offline workers…**
-  previews and then revokes offline workers that hold no work, 100 at a time.
-  Releases lists the admitted releases and, for one, its workers by state, the
-  activations that pin it and the deployments on targets you may read; it shows
-  the CLI command that admits a release and never admits one itself. On a narrow
-  screen both pages fold their filters behind **Filters (n)**, and every filter
-  checkbox is a 36 px target with a mouse and 44 px on touch.
-  A retirement whose answer arrives after its dialog closed, or after the
-  workspace or person changed, says what happened in a notice; a bulk action
-  stops sending when the person changes, and the host prefix is cleared for the
-  next person.
 
-- The compiler checks and compiles **Call a workflow** (`callWorkflow`) against
-  the exact published version it calls: that version must opt in with
-  `spec.callable` (any workflow, or only `allowedCallers`), `with` is checked
-  against its input schema, a `businessKey` must be text of 1 to 200 characters,
-  and the step returns the called workflow's output, a `{status, runId, output,
-  error}` envelope with `onFailure: continue`, or `null` with `mode: detach`. New
-  diagnostics `WV-COMP-UNKNOWN_WORKFLOW`, `CALL_NOT_CALLABLE`, `CALL_RECURSION`,
-  `CALL_DEPTH` (more than 8 calls deep, the new compiler limit
-  `max_call_depth`), and `CALL_MODE` point at the field to fix. The called
-  version is locked as an interface dependency: the caller's artifact carries
-  that version's definition, so its digest matches the published one, but
-  compiling, importing, and activating the caller read only its input and output
-  schemas. Activation takes `workflow_activation_ids`, one live
-  activation of each called version in the same environment, and refuses wrong
-  or missing pins with `422 WV-READINESS-CALL`. This platform does not start child
-  runs yet, so it refuses to publish, import, or activate a workflow that calls
-  another with `WV-IR-UNSUPPORTED`; workflows without calls compile to the same
-  bytes as before. `weave workflow explain` and `weave workflow graph` show calls,
-  and the SDK's `WorkflowBuilder.with_callable()` writes `spec.callable`.
-- Loops run. A **Loop over items** (`forEach`) step runs its body once per
-  element, `concurrency` at a time, in one run, and its output lists one result
-  per element in element order, whatever order the iterations finish in. Each
-  iteration's steps, tasks, human tasks, waits, and incidents use their own
-  instance key (`send[2]`); a task incident in one iteration suspends the run, a
-  `fail` step in one fails it, and canceling ends every iteration. Finished
-  iterations are removed from the run state. An `items` value that is not a list,
-  more elements than `maxItems`, or results over the 1 MiB payload limit open
-  `WV-RUNTIME-LOOP-ITEMS`, `WV-RUNTIME-LOOP-LIMIT`, or `WV-RUNTIME-LOOP-OUTPUT`.
-  A long loop yields after 4,000 units of work in one event and continues about
-  one scanner poll later; the capabilities response reports the budget as
-  `operations.runtime.loop_units_per_turn`. The platform now lists
-  `flow.forEach` and `forEach` in its language manifest and capabilities, so it
-  publishes, imports, and activates workflows with loops. Debug sessions run
-  loops with the same reducer. New counters `weave.loop_iterations` (`status:
-  ok` for each collected result, `cancelled` for each iteration still running
-  when its run ends) and `weave.loop_yields`. Upgrade the CLI and SDK together with the server: older
-  clients do not know the human task `instance_key` and `iteration` fields or
-  the new capability fields.
-- Evaluating an expression inside a loop body and admitting a long event no
-  longer walk data that has not changed since the event started, so a loop's
-  cost grows linearly with its number of elements.
-- The compiler checks and compiles **Loop over items** (`forEach`): `/item`,
-  `/index`, and `/loops/<id>/…` inside a loop body, a typed list of results after
-  it, `WV-COMP-LOOP_*` diagnostics for wrong items, scope, nesting, limits, and
-  signals in a body (with a suggested `maxItems` for a loop budget that is too
-  high), and an IR `forEach` node with an `each` edge and an `each` join that
-  requires the `flow.forEach` feature. A platform that does not list the
-  feature refuses to publish, import, or activate such a workflow with
-  `WV-IR-UNSUPPORTED`; workflows without loops compile to the same bytes as
-  before. The compiler limits add `max_loop_items`, `max_loop_depth`, and
-  `max_run_iterations`. Studio's local host answers `POST /studio/local/scope`
-  with the data a field may use, including the current loop item and position.
-- Starting a run no longer slows down as executions accumulate. The usage accounting that runs on every run start
-  and every change to quota-counted records read every reservation in the database, one per run ever started, and
-  now finds its reservation and allocation entries by primary key. Usage figures and limits are unchanged. New
-  migration `0031_operations_key_collation` replaces the two internal accounting functions in place and changes no
-  table, data or role; migrate the server explicitly before restarting it.
-- Studio has one place to set up AI: **Settings › AI models**. It shows provider cards, your AI connections, a
-  readiness checklist with **Publish**, **Authorize** and **Test connection**, and the Weave AI card. The AI
-  connection side sheet is the only AI connection form; it also opens from Build › Connections, an AI task and
-  Home's **Connect a model**. It offers plain HTTP only for endpoints a platform operator approved, asks for a secret
-  handle (never a key), lists the approved models the provider serves, and tests a model through the AI gateway with
-  tool support. The old AI setup wizard and the Weave AI settings in the Ask Weave AI panel are gone.
-- Studio waits up to 140 seconds for an AI connection test, so a local model loading for the first time no longer
-  fails the test early; canceling the test in Studio stops it on the platform.
-- `weave platform up --username` grants the new account the local owner roles, and
-  `weave platform user grant --username NAME --role ROLE` adds roles to an account the local platform created.
-- Run state, history, tasks, deadlines, and incidents name each run of a step by
-  its instance key, which equals the step ID outside loops, so existing workflows
-  keep byte-identical transitions and history. Deadline scans, incident
-  resolution, replay, exported history, and debug sessions find the step behind
-  any instance key.
-- Human task views add `instance_key` and `iteration` for tasks created inside a
-  loop iteration; both are omitted for every other task.
-- The capacity check of one event's work runs at its end and after every 64
-  steps or 1 MiB of new step output, instead of after every step. Work over
-  capacity is still refused, but the refusal can happen at a later step of the
-  same event, and when a later step of that event fails, the run opens that
-  step's incident instead.
-- Keep typing in the selected form field when deferred row autofocus completes.
-  Rapid row additions focus the newest item without overriding a later choice.
-- Update Studio's YAML parser to 2.8.3 so deeply nested documents produce a
-  parser diagnostic instead of an unexpected stack-overflow exception. Update
-  Vitest to 4.1.11 to include fixes for its development-server security advisories.
-- Add step details to Studio's new editor (**Settings → Preferences → Try the
-  new editor**, off by default). Double-click a step, or focus it and press
-  Enter, to configure it over the canvas with **Input**, **Parameters** and
-  **Output** panes, **Fixed | Mapped** fields, drag to map, **Settings** with
-  retries, timeouts and notes, and issues under the field they concern. The
-  trigger and End open their own details, and the gear opens **Workflow
-  settings**. **Add a step** lists **Call an API**, email and file steps under
-  **Action in an app**; each gets an action of its own, which **Publish…** and
-  **Simulate** publish first, after you confirm. A draft saved on a platform
-  keeps those actions' settings and step notes in this browser for your
-  account, and **Save draft** says so. With the new editor off, Studio keeps
-  the inspector.
-- Add **Add a step** to Studio's new editor: a panel on the right (the whole
-  window below 768 pixels) that every **+**, a dragged handle, N, / and the
-  toolbar open at that place. It starts with **What triggers this workflow?**
-  on an empty workflow and **What happens next?** afterwards, searches by
-  everyday words, opens apps on their actions and triggers, and keeps entries
-  the platform can't run visible with the reason. The new canvas also gets
-  trigger choices that are set up when you activate the workflow, copy and
-  paste of steps as YAML between workflows, sticky notes with Markdown, **Tidy
-  layout**, a step toolbar above the step, and a `.canvas.json` file that
-  **Save to file** writes and **Import workflow** reads. A draft on a platform
-  keeps its notes and trigger choices in this browser for your account.
-- With the new editor on or off, **Import workflow** starts a fresh Undo history
-  (opening a file is no longer a step you can undo, which emptied the canvas),
-  and a `.canvas.json` file chosen on its own is refused with a sentence that
-  asks for the workflow file too.
-- Studio's API builder measures pasted samples in bytes, so a large sample in a
-  script that takes several bytes per character gets the size message instead
-  of a request error.
-- Going Back to a workflow that was opened from a file and left unchanged now
-  says that Studio didn't keep a copy and how to open the file again, instead
-  of saying that the workflow may have been deleted.
-- Leaving **Source** with text you typed but haven't applied now asks **Apply
-  changes**, **Discard changes** or **Keep editing**, with the new editor on or
-  off: switching tabs, opening a step, running a command, going to another page,
-  browser Back, Undo and Redo, and a toast's **Undo** all ask first. Closing the
-  window uses the browser's own prompt.
-- Studio dialogs and toasts fit touch screens better: close and toast buttons
-  are at least 44 pixels on touch, dialog footers stack on narrow screens and
-  stay clear of the focused field, dialog headings line up with their close
-  button, and toasts no longer cover the page header or step details' top bars.
-- Studio loads the Clusters page, and the code behind **Publish…** and
-  **Simulate**, only when it is first used, so its first download is smaller.
-- The Studio host adds `GET /studio/contracts/connector-actions`, which returns
-  the built-in email and file connector actions, as Action documents, that
-  Studio's email and file steps copy into actions of their own. Its API action
-  builder (`POST /studio/local/http-action`) refuses a request larger than
-  1 MiB with 413 `WV-STUDIO-REQUEST`.
+### AI and connections
+
 - Run AI tasks on a local Ollama model: `weave platform ai enable --ollama auto|host|container`
   (or `--ollama-url URL`) sets up the AI gateway, the Agentic worker, a version 2 AI
   policy, development-only private-origin entries and a keyless `ollama-local`
@@ -440,6 +308,8 @@ SPDX-License-Identifier: Apache-2.0
   model list after the test, within the test's admission, so they answer later.
 - `connections.test` is cancelled when its client disconnects, for every connector
   type: the result and the `connection.test.completed` audit are not written.
+- AI connection tests are dated with the database clock, which readiness also
+  uses, so a test that just passed reads as healthy on every API process.
 - A new activation checks `connection.bind` for each bound connection revision on
   both the request's token and the caller's stored grants. A token whose stored
   grant was removed gets 403, and grants limited to specific revisions now bind
@@ -447,8 +317,14 @@ SPDX-License-Identifier: Apache-2.0
 - Replaying an activation `Idempotency-Key` now requires the caller's current
   `release.activate` grant: a caller whose grant was revoked gets 403 (or 401)
   instead of the stored 201 answer.
-- AI connection tests are dated with the database clock, which readiness also
-  uses, so a test that just passed reads as healthy on every API process.
+
+### Reliability under load
+
+- Starting a run no longer slows down as executions accumulate. The usage accounting that runs on every run start
+  and every change to quota-counted records read every reservation in the database, one per run ever started, and
+  now finds its reservation and allocation entries by primary key. Usage figures and limits are unchanged. New
+  migration `0031_operations_key_collation` replaces the two internal accounting functions in place and changes no
+  table, data or role; migrate the server explicitly before restarting it.
 - Event delivery keeps working after the platform becomes ready or withdraws
   readiness. Before, each delivery turn that the outbox started while the
   platform was not ready kept one of the process's four delivery slots. That
@@ -462,6 +338,190 @@ SPDX-License-Identifier: Apache-2.0
 - While the platform is not ready, the outbox waits for readiness instead of
   starting a delivery turn every second that is refused and logged as
   `Outbox turn failed` at ERROR.
+
+### Studio, desktop app, and CLI
+
+- Studio has an Operate area. The sidebar lists Home, then Build (Workflows,
+  Connections), Work (My tasks, Email) and Operate (Runs, Incidents, Workers,
+  Clusters), with Settings at the bottom. An Operate entry shows only when you
+  hold its capability in the workspace or on one of its resources, and the
+  server still authorizes every request. Operate pages live under `/operate/…`;
+  `/runs`, `/workers` and `/operations` redirect. **Clusters** (formerly
+  Operations) has Targets, Approvals, Jobs and Runners tabs, and its approvals
+  inbox counts down to each plan's expiry. **Resolve incident** offers Retry the
+  step, Accept a verified result or End the run. A run's detail can cancel the
+  run, retry it on the same version or a verified newer active version, send the
+  signal its waiting step expects, and export the first 1,000 events of its
+  history. Operate pages refresh only while visible and back off after failures.
+- Studio's Operate area opens on a new Overview page. It shows the health of
+  the API, the database, the scheduler, the outbox, compatibility and
+  telemetry export, each with its details; the current load; workers,
+  clusters and incidents; and up to 20 items that need attention, most of
+  them linking to their record. It reads the summary every 15 seconds while
+  visible. A section you may not read names the permission it needs instead
+  of showing zeros.
+- Operate › Runs reads run summaries, newest first, with time range, workflow,
+  version, origin, status, test, handled-error, incident, top-level and
+  archive filters. The address keeps every filter except the business and
+  correlation keys. Load more continues the same list, Auto-refresh reads the
+  first page every 10 seconds, and up to 50 selected runs can be canceled or
+  retried together. A run's detail draws its steps with queue wait and run
+  time, groups loop iterations, links to called runs, shows a step's output
+  on request and follows a running run every 2 seconds. Starting, canceling,
+  retrying, archiving or restoring a run, or deleting its data, from the page
+  reads the list again at once, and a run started there shows first while
+  the list puts new runs first (with Oldest first it waits for its place).
+  The line under the title names the order in use.
+- Operate › Incidents filters on the platform by status, code, workflow,
+  step, opening range and test runs, with a choice of order, so a match
+  beyond the loaded pages shows. The address keeps the filters and the open
+  incident (`?incident=ID`), which opens from `incidents.read` even when no
+  loaded page lists it. The drawer shows the workflow, the full step instance,
+  the run's status and when the incident opened, marked estimated when the
+  upgrade inferred it and Unknown when it isn't known; Refresh incident reads
+  the incident itself.
+- Operate › Workers has Fleet and Releases tabs. Fleet filters on the platform
+  by status, draining, release, task type, target and host prefix (kept on the
+  page, never in the address) with a choice of order, shows each worker's
+  host, placement, versions and registration time, drains, resumes or revokes
+  up to 50 selected workers one by one, and **Retire offline workers…**
+  previews and then revokes offline workers that hold no work, 100 at a time.
+  Releases lists the admitted releases and, for one, its workers by state, the
+  activations that pin it and the deployments on targets you may read; it shows
+  the CLI command that admits a release and never admits one itself. On a narrow
+  screen both pages fold their filters behind **Filters (n)**, and every filter
+  checkbox is a 36 px target with a mouse and 44 px on touch.
+  A retirement whose answer arrives after its dialog closed, or after the
+  workspace or person changed, says what happened in a notice; a bulk action
+  stops sending when the person changes, and the host prefix is cleared for the
+  next person.
+- Studio's Workers page asks the platform for current workers, last contact
+  first, and for every worker with **Show retired workers**. Earlier Studio
+  hosts and desktop apps get the
+  reduced default list from an upgraded server, because the Studio bridge
+  forwards answers unchanged: their Workers page lists only current workers, and
+  **Show revoked workers** shows none. Upgrade Studio and the desktop app with
+  the server.
+- Studio's host bridge forwards the environment summary, the telemetry
+  settings and `releases.usage`.
+- Add a left-to-right workflow canvas to Studio's new editor (**Settings →
+  Preferences → Try the new editor**, off by default), where the trigger,
+  actions, decisions, parallel paths and End each have their own shape. Insert a
+  step at a **+**, on an edge or on an empty path; select several steps by
+  clicking, with a selection box or with the keyboard; duplicate or delete them
+  in one Undo step; and pan, zoom, fit the view and use the minimap with the
+  mouse or the keyboard. Moving around the canvas never rewrites the workflow's
+  exported coordinates. Settings tabs have their own addresses.
+- Add step details to Studio's new editor (**Settings → Preferences → Try the
+  new editor**, off by default). Double-click a step, or focus it and press
+  Enter, to configure it over the canvas with **Input**, **Parameters** and
+  **Output** panes, **Fixed | Mapped** fields, drag to map, **Settings** with
+  retries, timeouts and notes, and issues under the field they concern. The
+  trigger and End open their own details, and the gear opens **Workflow
+  settings**. **Add a step** lists **Call an API**, email and file steps under
+  **Action in an app**; each gets an action of its own, which **Publish…** and
+  **Simulate** publish first, after you confirm. A draft saved on a platform
+  keeps those actions' settings and step notes in this browser for your
+  account, and **Save draft** says so. With the new editor off, Studio keeps
+  the inspector.
+- Add **Add a step** to Studio's new editor: a panel on the right (the whole
+  window below 768 pixels) that every **+**, a dragged handle, N, / and the
+  toolbar open at that place. It starts with **What triggers this workflow?**
+  on an empty workflow and **What happens next?** afterwards, searches by
+  everyday words, opens apps on their actions and triggers, and keeps entries
+  the platform can't run visible with the reason. The new canvas also gets
+  trigger choices that are set up when you activate the workflow, copy and
+  paste of steps as YAML between workflows, sticky notes with Markdown, **Tidy
+  layout**, a step toolbar above the step, and a `.canvas.json` file that
+  **Save to file** writes and **Import workflow** reads. A draft on a platform
+  keeps its notes and trigger choices in this browser for your account.
+- With the new editor, Mapped values in step details are **formulas** such as
+  `input.amount > 1000 and exists(input.email)`: suggestions from the data the
+  field can read, references as pills, plain-word messages that never block
+  typing (text that doesn't parse shows **Not applied** and keeps the last
+  formula), a standard form on blur, **Edit formula** beside the input's
+  fields, and drops at the pointer. Templates take any formula between
+  `{{ }}`. Under a Mapped field, `= value` and the **Result** panel show what it
+  gives with the trigger's test input, computed in the browser with the
+  platform's rules (held to them by `scripts/studio_expression_corpus.py`);
+  formulas reading secret values are never previewed, and previews send
+  nothing. **Call an API** shows the full address of its request. Studio now
+  includes CodeMirror (`@codemirror/state`, `@codemirror/view`, MIT), loaded
+  with the first formula field. See `docs/reference/formulas.md`.
+- Publish… and Simulate show why they stopped (for example, an account that
+  can't publish actions) as soon as Studio has loaded the code that publishes
+  the workflow's own actions, instead of waiting for another change on the
+  page.
+- With the new editor on or off, **Import workflow** starts a fresh Undo history
+  (opening a file is no longer a step you can undo, which emptied the canvas),
+  and a `.canvas.json` file chosen on its own is refused with a sentence that
+  asks for the workflow file too.
+- Studio's API builder measures pasted samples in bytes, so a large sample in a
+  script that takes several bytes per character gets the size message instead
+  of a request error.
+- Going Back to a workflow that was opened from a file and left unchanged now
+  says that Studio didn't keep a copy and how to open the file again, instead
+  of saying that the workflow may have been deleted.
+- Leaving **Source** with text you typed but haven't applied now asks **Apply
+  changes**, **Discard changes** or **Keep editing**, with the new editor on or
+  off: switching tabs, opening a step, running a command, going to another page,
+  browser Back, Undo and Redo, and a toast's **Undo** all ask first. Closing the
+  window uses the browser's own prompt.
+- Studio dialogs and toasts fit touch screens better: close and toast buttons
+  are at least 44 pixels on touch, dialog footers stack on narrow screens and
+  stay clear of the focused field, dialog headings line up with their close
+  button, and toasts no longer cover the page header or step details' top bars.
+- Studio loads the Clusters page, and the code behind **Publish…** and
+  **Simulate**, only when it is first used, so its first download is smaller.
+- The Studio host adds `GET /studio/contracts/connector-actions`, which returns
+  the built-in email and file connector actions, as Action documents, that
+  Studio's email and file steps copy into actions of their own. Its API action
+  builder (`POST /studio/local/http-action`) refuses a request larger than
+  1 MiB with 413 `WV-STUDIO-REQUEST`.
+- Studio has one place to set up AI: **Settings › AI models**. It shows provider cards, your AI connections, a
+  readiness checklist with **Publish**, **Authorize** and **Test connection**, and the Weave AI card. The AI
+  connection side sheet is the only AI connection form; it also opens from Build › Connections, an AI task and
+  Home's **Connect a model**. It offers plain HTTP only for endpoints a platform operator approved, asks for a secret
+  handle (never a key), lists the approved models the provider serves, and tests a model through the AI gateway with
+  tool support. The old AI setup wizard and the Weave AI settings in the Ask Weave AI panel are gone.
+- Studio waits up to 140 seconds for an AI connection test, so a local model loading for the first time no longer
+  fails the test early; canceling the test in Studio stops it on the platform.
+- `weave platform up --username` grants the new account the local owner roles, and
+  `weave platform user grant --username NAME --role ROLE` adds roles to an account the local platform created.
+- Keep typing in the selected form field when deferred row autofocus completes.
+  Rapid row additions focus the newest item without overriding a later choice.
+- Update Studio's YAML parser to 2.8.3 so deeply nested documents produce a
+  parser diagnostic instead of an unexpected stack-overflow exception. Update
+  Vitest to 4.1.11 to include fixes for its development-server security advisories.
+
+### Development and testing
+
+- Run the PostgreSQL integration suite in parallel
+  (`pytest tests/integration -n 4 --dist loadfile`): each test still gets its own
+  database, now cloned from a template migrated once.
+- Run Checks once per pull request commit and cancel a pull request's superseded
+  runs. Studio's browser tests run in five shards, with the performance tests on
+  their own runner.
+- The real-platform browser journeys no longer delete sign-ins they did not
+  create when their setup fails before reading the system credential store.
+- The real-platform Operate checks wait past the capacity refusals Studio sends
+  again, and the formula preview check measures its 50 ms budget the same way
+  on every runner.
+
+### Versions and schema
+
+- Bump the Python package and browser Studio bundle to `0.1.0a16` and the
+  desktop product to `0.1.0-alpha.16`; the native internal installer counter is
+  `0.1.16`.
+- Pin the Agentic and Files 0.1.8 packages to core 0.1.0a16. Both report where
+  they run when they register; the Agentic worker also adds the AI changes
+  above.
+- Schema revision becomes `0033_language_workflow_calls`, with three new
+  migrations: `0031_operations_key_collation`, `0032_operations_facts` and
+  `0033_language_workflow_calls`. No role is added or changed. See
+  [upgrade a platform safely](docs/operations/upgrades.md#what-changes-in-alpha16)
+  for the upgrade times, the behavior changes to check, and what to do before a
+  rollback.
 
 ## 0.1.0a15
 
