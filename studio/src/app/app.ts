@@ -8576,6 +8576,18 @@ export class App implements CanvasHost {
   pretty(value: unknown) {
     return JSON.stringify(value, null, 2);
   }
+  /**
+   * The account is known (from the API, or a saved platform's sign-in
+   * check): a platform draft opened before it gets its canvas, its test data
+   * and its recovery offer now.
+   */
+  private draftAfterIdentity() {
+    void this.restoreDraftCanvas();
+    if (this.view === "designer") this.openTestData();
+    const recovery = this.recoveryPending;
+    if (recovery && recovery.draftId === this.draftId)
+      void this.offerRecovery(recovery.draftId, recovery.revision);
+  }
   loadIdentity() {
     return this.trackIdentity(this.readIdentity());
   }
@@ -8587,11 +8599,7 @@ export class App implements CanvasHost {
         "/studio/api/api/v1/identity",
       );
       this.catalogAfterIdentity();
-      // A platform draft opened before the account was known gets its canvas now.
-      void this.restoreDraftCanvas();
-      const recovery = this.recoveryPending;
-      if (recovery?.draftId === this.draftId)
-        void this.offerRecovery(recovery.draftId, recovery.revision);
+      this.draftAfterIdentity();
     } catch (error) {
       const plain = describeError(error);
       if (
@@ -8741,6 +8749,7 @@ export class App implements CanvasHost {
       this.api.adopt(result.session);
       this.identity = result.identity;
       this.catalogAfterIdentity();
+      this.draftAfterIdentity();
       this.refreshRunTaskAfterIdentity();
       this.renewedStatus();
       this.platformNotice = result.workspace_revoked
@@ -9050,6 +9059,7 @@ export class App implements CanvasHost {
     this.api.adopt(result.session);
     this.identity = result.identity;
     this.catalogAfterIdentity();
+    this.draftAfterIdentity();
     this.platformNotice = null;
     this.renewedStatus();
     this.cdr.markForCheck();

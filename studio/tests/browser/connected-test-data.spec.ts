@@ -20,7 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 // a conflict, leave every copy on this computer when the platform refuses a
 // secret, and keep entries the platform can't classify yet on this computer.
 import { expect, test } from "@playwright/test";
-import { CanvasPage } from "./canvas-po";
+import { CanvasPage, useNewEditor } from "./canvas-po";
 import {
   COPY,
   PIN,
@@ -29,6 +29,12 @@ import {
   kept,
   openDraft,
   testData,
+  PROFILE,
+  PRINCIPAL,
+  draftId,
+  platform,
+  project,
+  tenant,
 } from "./connected-test-data-po";
 
 test("test data and the canvas save with the draft and come back on reload", async ({
@@ -235,4 +241,92 @@ test("Use theirs on a canvas Studio can't read keeps theirs on the platform and 
     revision: 5,
     document: theirs,
   });
+});
+
+test("a saved platform's draft gets its canvas from the platform once its sign-in is checked", async ({
+  page,
+}) => {
+  const state = fresh();
+  state.documents.set("canvas", {
+    revision: 3,
+    document: {
+      schemaVersion: 2,
+      kind: "weave.studio/canvas",
+      notes: [
+        {
+          id: "note-1a2b3c4d",
+          text: "Kept on the platform",
+          color: "blue",
+          x: 400,
+          y: 360,
+          width: 240,
+          height: 120,
+        },
+      ],
+    },
+  });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await useNewEditor(page);
+  await platform(page, state);
+  // A saved platform: the host checks the sign-in and answers the identity;
+  // Studio never asks the platform for it directly.
+  const session = {
+    paired: true,
+    csrfToken: "test-csrf",
+    version: "1",
+    mode: "connected",
+    connection: { configured: true, login_supported: true },
+    profile: {
+      name: PROFILE,
+      baseUrl: "https://weave.invalid",
+      tenantId: tenant,
+      projectId: project,
+      environmentId: "development",
+    },
+  };
+  const identity = {
+    principal_id: PRINCIPAL,
+    kind: "human",
+    grants: [
+      {
+        role: "test",
+        scope: {
+          tenant_id: tenant,
+          project_id: project,
+          environment_id: "development",
+        },
+        resources: [],
+        capabilities: ["catalog.read", "definition.write", "simulate"],
+      },
+    ],
+    workspaces: [],
+    truncated: false,
+  };
+  await page.route("**/studio/session", (route) =>
+    route.fulfill({ json: session }),
+  );
+  await page.route("**/studio/api/api/v1/identity", (route) =>
+    route.fulfill({
+      status: 404,
+      json: { status: 404, code: "WV-NOT-FOUND", message: "Not found" },
+    }),
+  );
+  await page.route("**/studio/connection/test", (route) =>
+    route.fulfill({
+      json: {
+        session,
+        identity,
+        workspaces: [],
+        truncated: false,
+        workspace_revoked: false,
+      },
+    }),
+  );
+  const checked = page.waitForResponse("**/studio/connection/test");
+  await page.goto(`/workflows/${draftId}/designer`);
+  await checked;
+  await new CanvasPage(page).ready();
+  await expect(page.locator(".sticky-note-body")).toHaveText(
+    "Kept on the platform",
+  );
 });

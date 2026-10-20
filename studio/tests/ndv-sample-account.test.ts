@@ -67,6 +67,7 @@ async function fixture() {
     closeSimulation() {},
     refreshConnectionStatus: async () => {},
     catalogAfterIdentity() {},
+    draftAfterIdentity() {},
     renewedStatus() {},
     refreshRunTaskAfterIdentity() {},
     loadIdentity: async () => {},
