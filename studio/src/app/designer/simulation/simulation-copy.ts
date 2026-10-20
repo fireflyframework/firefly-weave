@@ -47,6 +47,10 @@ export const debugMessages: Readonly<Record<string, string>> = {
     "This simulation expired. Start a new one to keep testing.",
   "WV-DEBUG-REQUEST":
     "The platform couldn't read this simulation request. Start a new simulation.",
+  "WV-DEBUG-WORKFLOW":
+    "A called workflow in this simulation isn't the exact version the step calls, or that version isn't published in this project. Publish the called workflow, or start again with the version the step names.",
+  "WV-DEBUG-FRAME":
+    "That called workflow isn't running in this simulation, or there is no called workflow to step out of. Pick one from the called workflows list.",
   "WV-VALIDATION":
     "Some values don't match the workflow's schemas. Check the input, the action results and any signal or decision data.",
   "WV-FORBIDDEN":
