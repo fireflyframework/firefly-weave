@@ -431,10 +431,9 @@ weave-input-pane.is-compact .pane-source-field::before {
   flex: none;
 }
 /* Pin output: a toggle beside the search, pressed in the info tone. */
-/* Edit output and Pin output end the sub-row, beside the Pinned tag and the count. */
+/* Pin output, then Edit output, end the sub-row beside the Pinned tag and the count. */
 .step-details button.pane-edit {
   flex: none;
-  margin-left: auto;
   width: var(--sd-target);
   min-width: var(--sd-target);
   height: var(--sd-target);
@@ -446,6 +445,7 @@ weave-input-pane.is-compact .pane-source-field::before {
 }
 .step-details button.pane-pin {
   flex: none;
+  margin-left: auto;
   width: var(--sd-target);
   min-width: var(--sd-target);
   height: var(--sd-target);

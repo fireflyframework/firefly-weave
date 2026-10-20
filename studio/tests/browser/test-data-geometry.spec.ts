@@ -76,15 +76,16 @@ for (const size of sizes)
         "sub-row",
         2,
       );
-      // One right edge per pane: the pin ends where the header's search ends.
+      // Pin, then Edit (the design's order); one right edge per pane: Edit ends where the header's search ends.
       const search = await box(pane.locator(".pane-search-toggle"));
-      expectAligned([pin.right, search.right], "pane right edge");
+      expectAligned([edit.right, search.right], "pane right edge");
       const content = await box(pane.locator(".pane-content"));
-      expect(pin.right).toBeLessThanOrEqual(content.right + 1);
+      expect(edit.right).toBeLessThanOrEqual(content.right + 1);
+      expect(pin.right).toBeLessThanOrEqual(edit.x);
       for (const [a, b] of [
         [tag, count],
-        [count, edit],
-        [edit, pin],
+        [count, pin],
+        [pin, edit],
       ])
         expect(intersects(a, b)).toBe(false);
       expect(await clippedText(details.dialog)).toEqual([]);

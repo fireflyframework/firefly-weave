@@ -217,7 +217,7 @@ for (const size of [
       const edit = await box(pane.locator(".pane-edit"));
       const pinButton = await box(pane.locator(".pane-pin"));
       expectAligned([tag.middle, edit.middle, pinButton.middle], "sub-row", 2);
-      expect(edit.right).toBeLessThanOrEqual(pinButton.x);
+      expect(pinButton.right).toBeLessThanOrEqual(edit.x);
       expect(await clippedText(details.dialog)).toEqual([]);
     });
   });

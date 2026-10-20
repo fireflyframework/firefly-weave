@@ -122,16 +122,6 @@ import { ndvRegistry, type Json } from "../registry";
       @if (canPin) {
         <button
           type="button"
-          class="icon-button pane-edit"
-          aria-label="Edit output"
-          title="Edit output"
-          [attr.aria-pressed]="editing()"
-          (click)="setOutput()"
-        >
-          <weave-icon name="edit" [size]="16" />
-        </button>
-        <button
-          type="button"
           class="icon-button pane-pin"
           [attr.aria-pressed]="!!pin"
           [attr.aria-label]="pin ? 'Unpin output' : 'Pin output'"
@@ -140,6 +130,16 @@ import { ndvRegistry, type Json } from "../registry";
           (click)="togglePin()"
         >
           <weave-icon [name]="pin ? 'unpin' : 'pin'" [size]="16" />
+        </button>
+        <button
+          type="button"
+          class="icon-button pane-edit"
+          aria-label="Edit output"
+          title="Edit output"
+          [attr.aria-pressed]="editing()"
+          (click)="setOutput()"
+        >
+          <weave-icon name="edit" [size]="16" />
         </button>
       }
     </div>
