@@ -331,10 +331,11 @@ caller finished; otherwise the call is listed with status `not_simulated`. A
 caller that ends cancels the frames it waits for, and theirs.
 
 **The request.** `workflows` maps each called version to its artifact and the
-mocks used inside it:
+mocks used inside it. In this sketch, `send-receipt@1.0.0` stands for a called
+workflow whose `send-mail` step runs an action:
 
 ```json
-{"workflows": {"notify-customer@1.0.0": {"artifact": {"executable": "..."}, "mocks": {"node:send-mail": {"id": "m-9"}}}}}
+{"workflows": {"send-receipt@1.0.0": {"artifact": {"executable": "..."}, "mocks": {"node:send-mail": {"id": "m-9"}}}}}
 ```
 
 Each artifact must be the version the call names, with the input and output
@@ -342,8 +343,10 @@ schemas the calling workflow was compiled against, and each entry must be a
 version some call reaches (`WV-DEBUG-WORKFLOW`). Mocks inside a frame use the
 same keys as top-level mocks, and apply to every run of that version. On a
 platform, `"resolve_workflows": true` loads the published version of every
-called workflow the request gives no artifact for; it needs the `catalog.read`
-capability as well as `simulate`. From the CLI, pass each artifact with
+called workflow the request gives no artifact for, following the calls of
+supplied and published versions alike; each must be the definition its caller
+was compiled against. It needs the `catalog.read` capability as well as
+`simulate`. From the CLI, pass each artifact with
 `--workflow REF=ARTIFACT.json`.
 
 **Stepping in and out.** Frames have keys: the call's instance key, joined with
@@ -433,7 +436,8 @@ started:
 Boundaries inside a called workflow carry `frame`. In text output, the CLI
 prints one line per frame, such as
 `Called workflow notify (notify-customer@1.0.0): succeeded.`, and exits `1`
-when a called workflow is `suspended`, because its caller would wait forever.
+when a called workflow its caller waits for is `suspended`, because that caller
+would wait forever. A suspended detached call does not fail the command.
 
 ## Use the Python library
 
@@ -601,7 +605,7 @@ fingerprints.
 | `WV-DEBUG-MISSING_MOCK`, status `failed` | An action has no mock (in Studio, **Skip this action** was selected) | Add a mock under one of the keys in the diagnostic's hint |
 | `WV-DEBUG-MISSING_MOCK` at a **Call a workflow** step | The step waits for another workflow, and the request has neither a mock for the call nor the called workflow's artifact | Add a `node:` mock for the call, or the artifact under `workflows` (`--workflow` in the CLI); see [Simulate workflow calls](#simulate-workflow-calls) |
 | `WV-DEBUG-MOCK-KEY` | A mock key names no action node or waiting call in this artifact, or no iteration of it (detached calls and `action:` keys for calls take no mocks) | Use `action:EXACT_REFERENCE`, `node:NODE_ID` or `node:INSTANCE_KEY` with one position per enclosing loop, below its `maxItems` |
-| `WV-DEBUG-WORKFLOW` | A `workflows` entry is not a version any call reaches, has no artifact, or its artifact is another version or has other input or output schemas; or `resolve_workflows` named a version this project never published | Compile the exact version the call names; on a platform, publish it or pass its artifact |
+| `WV-DEBUG-WORKFLOW` | A `workflows` entry is not a version any call reaches, has no artifact, or its artifact is another version or has other input or output schemas; `resolve_workflows` reached a version this project never published, or one whose published definition differs from the one its caller was compiled against; `resolve_workflows` was set in a request to the CLI, which has no published versions; or a stored session has a frame of a version it does not carry | Compile the exact version the call names; on a platform, publish it or pass its artifact; from the CLI, pass `--workflow` |
 | `WV-DEBUG-FRAME` | `step_out`, `signal` or `human_decision` named a frame that does not exist or is not simulated, or `step_out` had no called workflow to leave | Use a `key` from `frames` |
 | `WV-IR-UNSUPPORTED` (HTTP 422 on a server) | The workflow uses a language feature this version does not run; a server names it in `result.missing_features`, and `weave workflow simulate` in its message (`Missing language features: flow.forEach.`) | Upgrade the platform or CLI, or simulate on one that runs the feature |
 | `WV-DEBUG-MOCK-OUTPUT` | The mock does not match the action's output schema | Fix the mocked result |

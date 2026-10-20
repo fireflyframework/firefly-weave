@@ -40,7 +40,7 @@ from firefly_weave.operations.debug.simulator import Simulator
 @click.option(
     "--commands",
     type=click.Path(path_type=Path),
-    help="JSON array of next/continue/signal/advance_time/breakpoints commands.",
+    help="JSON array of next/continue/step_out/signal/human_decision/advance_time/breakpoints commands.",
 )
 @click.option(
     "--workflow",
