@@ -178,14 +178,22 @@ import {
       margin: 0 0 var(--space-4);
       color: var(--muted);
     }
+    /* The three fields sit in one row when each gets 220 px, and stack
+       otherwise: never two in a row and one below. 692 px = 3 x 220 + 2 gaps. */
     .weave-ai-form {
       display: grid;
       gap: var(--space-4);
+      container: weave-ai-form / inline-size;
     }
     .weave-ai-fields {
       display: grid;
       gap: var(--space-4);
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      grid-template-columns: minmax(0, 1fr);
+    }
+    @container weave-ai-form (min-width: 692px) {
+      .weave-ai-fields {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
     }
     .card-actions {
       display: flex;
