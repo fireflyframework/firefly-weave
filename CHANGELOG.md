@@ -29,7 +29,8 @@ SPDX-License-Identifier: Apache-2.0
   that can't (`WV-COMP-TXN_ORDER`, with a suggested edit), undo actions must be
   safe to retry, called workflows need `timeoutSeconds`, and reservations must
   outlast the step that can't be undone (`WV-COMP-TXN_HOLD_PIVOT`), among other
-  `WV-COMP-TXN_*` rules; importing an artifact checks them again. Undo steps read
+  `WV-COMP-TXN_*` rules; importing an artifact checks the ordering, placement,
+  undo and hold rules again. Undo steps read
   `/participant/operationKey`, `/participant/outcome`, `/transaction/id` and
   `/transaction/businessKey`. Transactions compile to the `flow.transaction`
   feature, which this platform does not run yet: it refuses to publish, import or

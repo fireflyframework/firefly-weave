@@ -463,8 +463,9 @@ dependency it uses, its `with`, and for an action the connection slot. Phases
 are not nodes and never sit on an edge. `pivot: true` marks the step that can't
 be undone, and the transaction's `afterPivot` lists the steps reached only after
 it. Undo inputs are guarded with `undo_input` (actions) and `call_input`
-(workflows). Importing an artifact checks the same rules again, so an artifact
-that moves a step out of order is refused. A transaction needs
+(workflows). Importing an artifact checks the ordering, placement, undo and hold
+rules again, so an artifact that moves a step out of order is refused; the
+size limit and what undo steps may read are checked when the workflow compiles. A transaction needs
 `flow.transaction`, and a runtime that does not run it opens
 `WV-RUNTIME-ARTIFACT` at the transaction instead of running its steps.
 
