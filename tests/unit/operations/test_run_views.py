@@ -160,6 +160,7 @@ def test_the_current_principal_check_cannot_be_called_without_the_token_check():
     # Only the read operations and the token check are public; each read runs both checks in order.
     assert {name for name in vars(RunViewService) if not name.startswith("_")} == {
         "summaries",
+        "summary",
         "steps",
         "logs",
         "precheck",
@@ -556,3 +557,20 @@ async def test_historical_stream_timeout_and_cancellation_close_cursor(monkeypat
             await task
         assert (failure.value.status, failure.value.code) == (429, "WV-RUNTIME-LIMIT")
     assert closed == [True]
+
+
+@pytest.mark.parametrize(
+    "token,current,opened",
+    [
+        (principal(None), principal("viewer"), 0),
+        (principal("viewer"), principal("viewer", active=False), 1),
+        (principal("viewer"), principal(None), 1),
+    ],
+)
+async def test_one_run_summary_needs_run_read_on_the_token_and_the_current_principal(
+    monkeypatch, token, current, opened
+):
+    service, unit = service_with(monkeypatch, current)
+    with pytest.raises(AccessDenied):
+        await service.summary(token, SCOPE, RUN, context=CONTEXT)
+    assert unit.opened == opened
