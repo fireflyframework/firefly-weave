@@ -183,3 +183,23 @@ def test_a_detached_call_stuck_behind_an_incident_does_not_fail_a_caller_that_su
     assert result.exit_code == 0, result.output
     assert "Simulation succeeded;" in result.output
     assert "Called workflow bg (outer@1.0.0): suspended." in result.output
+
+
+def test_workflow_options_keep_the_mocks_the_request_gives_for_that_version(tmp_path):
+    caller = workflow("orders", [call("outer", "outer@1.0.0")], {"ref": "/steps/outer/output"}, callable_=False)
+    request = tmp_path / "request.json"
+    request.write_text(
+        json.dumps(
+            {
+                "artifact": compiled(caller, OUTER),
+                "input": {"customerId": "c-1"},
+                "now": "2026-10-20T00:00:00Z",
+                "workflows": {"outer@1.0.0": {"mocks": {"node:wait": {"tier": "mocked"}}}},
+            }
+        )
+    )
+    outer = tmp_path / "outer.json"
+    outer.write_text(json.dumps(compiled(OUTER, HOLD)))
+    result = simulate(request, "--workflow", f"outer@1.0.0={outer}", "--output", "json")
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["variables"]["output"] == {"tier": "mocked"}

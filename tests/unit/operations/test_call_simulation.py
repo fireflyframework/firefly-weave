@@ -810,3 +810,104 @@ def test_a_called_workflow_with_a_feature_this_version_does_not_run_names_the_fe
             workflows={"enrich@1.0.0": CalledWorkflow(artifact=forged)},
         )
     assert "flow.future" in refused.value.missing
+
+
+def two_detached_holds(limits=None):
+    """A session whose workflow starts two detached runs of hold@1.0.0, `first` then `second`, both waiting."""
+    steps = [call("first", uses="hold@1.0.0", mode="detach"), call("second", uses="hold@1.0.0", mode="detach")]
+    workflows = {"hold@1.0.0": CalledWorkflow(artifact=artifact_of(HOLD))}
+    extra = {"limits": limits} if limits is not None else {}
+    simulator = Simulator(
+        caller(steps, {"literal": "sent"}, HOLD),
+        mocks={},
+        input={"customerId": "c-1"},
+        now=NOW,
+        workflows=workflows,
+        **extra,
+    )
+    view = simulator.continue_until_breakpoint()
+    assert (view.status, [(f.key, f.status) for f in view.frames]) == (
+        "succeeded",
+        [("first", "waiting"), ("second", "waiting")],
+    )
+    return simulator
+
+
+def test_frames_at_one_depth_run_in_the_order_their_calls_started():
+    simulator = two_detached_holds()
+    simulator.signal("release", {}, frame="second")
+    before = len(simulator.inspect().boundaries)
+    simulator.signal("release", {}, frame="first")
+    view = simulator.continue_until_breakpoint()
+    order = [b.frame for b in view.boundaries[before:] if b.frame]
+    # The signal to `second` came first, but `first` started first: it runs to its end before `second` moves.
+    last_first = max(index for index, frame in enumerate(order) if frame == "first")
+    assert order[0] == "first" and last_first < order.index("second")
+
+
+def test_step_out_of_a_detached_frame_stops_when_that_frame_ends():
+    simulator = two_detached_holds()
+    simulator.signal("release", {}, frame="first")
+    simulator.signal("release", {}, frame="second")
+    out = simulator.step_out("first")
+    assert [(f.key, f.status) for f in out.frames] == [("first", "succeeded"), ("second", "waiting")]
+
+
+def test_step_out_leaves_the_frame_it_names_not_the_frame_of_the_next_boundary():
+    simulator = two_detached_holds()
+    simulator.signal("release", {}, frame="first")
+    simulator.signal("release", {}, frame="second")
+    assert simulator.inspect().selected_frame == "first"
+    out = simulator.step_out("second")
+    assert [(f.key, f.status) for f in out.frames] == [("first", "succeeded"), ("second", "succeeded")]
+
+
+def test_calls_nest_exactly_as_deep_as_the_session_allows():
+    from firefly_weave.contracts.language_features import MAX_CALL_DEPTH
+
+    assert DebugLimits().call_depth == MAX_CALL_DEPTH
+    artifact = caller([call(uses="outer@1.0.0")], {"ref": "/steps/enrich/output"}, OUTER)
+    outer = json.loads(compiled(OUTER, ENRICH).to_bytes())
+    workflows = {"outer@1.0.0": CalledWorkflow(artifact=outer)} | enrich_called()
+    two = Simulator(
+        artifact, mocks={}, input={"customerId": "c-1"}, now=NOW, workflows=workflows, limits=DebugLimits(call_depth=2)
+    )
+    view = two.continue_until_breakpoint()
+    assert (view.status, [frame.key for frame in view.frames]) == ("succeeded", ["enrich", "enrich/enrich"])
+
+
+def test_pending_signals_count_across_frames():
+    simulator = two_detached_holds(DebugLimits(pending_signals=1))
+    simulator.signal("release", {}, frame="first")
+    with pytest.raises(DebugError, match="WV-DEBUG-LIMIT"):
+        simulator.signal("release", {}, frame="second")
+    roomy = two_detached_holds(DebugLimits(pending_signals=2))
+    roomy.signal("release", {}, frame="first")
+    roomy.signal("release", {}, frame="second")
+    with pytest.raises(DebugError, match="WV-DEBUG-LIMIT"):
+        Simulator.restore(roomy.serialize(), limits=DebugLimits(pending_signals=1))
+
+
+def test_a_called_artifact_must_take_the_input_the_calling_workflow_was_compiled_against():
+    wider = {**CUSTOMER, "properties": {**CUSTOMER["properties"], "region": {"type": "string"}}}
+    other_input = workflow("enrich", ENRICH["spec"]["steps"], ENRICH["spec"]["output"], input_schema=wider)
+    with pytest.raises(DebugError, match="WV-DEBUG-WORKFLOW"):
+        Simulator(
+            caller([call()], {"ref": "/steps/enrich/output"}),
+            mocks={},
+            input={"customerId": "c-1"},
+            now=NOW,
+            workflows={"enrich@1.0.0": CalledWorkflow(artifact=artifact_of(other_input), mocks={"node:validate": 5})},
+        )
+
+
+def test_a_cancelled_frame_keeps_no_events_deadlines_or_signals():
+    artifact = caller([call(uses="hold@1.0.0")], {"ref": "/steps/enrich/output"}, HOLD, timeout=60)
+    workflows = {"hold@1.0.0": CalledWorkflow(artifact=artifact_of(HOLD))}
+    simulator = Simulator(artifact, mocks={}, input={"customerId": "c-1"}, now=NOW, workflows=workflows)
+    simulator.continue_until_breakpoint()
+    assert json.loads(simulator.serialize())["frames"][0]["deadlines"]
+    simulator.advance_time(60)
+    assert simulator.continue_until_breakpoint().frames[0].status == "cancelled"
+    frame = json.loads(simulator.serialize())["frames"][0]
+    assert (frame["pending"], frame["deadlines"], frame["signals"]) == ([], [], [])
