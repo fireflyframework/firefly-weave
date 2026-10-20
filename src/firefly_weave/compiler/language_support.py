@@ -114,7 +114,7 @@ def unsupported_uses(document: JsonObject) -> list[UnsupportedUse]:
             expressions.append((spec["defaultOutput"], "/spec/defaultOutput"))
     for expression, path in expressions:
         found.extend(_operators(expression, path))
-    return sorted(found, key=lambda use: _order(use.path))
+    return sorted(found, key=lambda use: path_order(use.path))
 
 
 def _branches(step: JsonObject, path: str) -> list[tuple[JsonObject, str]]:
@@ -164,7 +164,7 @@ def _operators(expression: JsonValue, path: str) -> list[UnsupportedUse]:
     return found
 
 
-def _order(path: str) -> tuple[tuple[int, int, str], ...]:
+def path_order(path: str) -> tuple[tuple[int, int, str], ...]:
     """Sort key: ASCII-digit segments by length and then text, other segments after them as text.
 
     For digit strings without leading zeros, length then text is numeric order. Nothing calls ``int()``, whose digit
