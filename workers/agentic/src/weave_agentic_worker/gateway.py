@@ -268,7 +268,7 @@ def create_app(
                 reply = LumiReply.model_validate(output["result"])
                 return JSONResponse(reply.model_dump(by_alias=True))
             except ConnectorFailure as error:
-                return JSONResponse({"code": error.code}, status_code=422)
+                return JSONResponse({"code": _product_code(error.code)}, status_code=422)
             except TimeoutError:
                 return JSONResponse({"code": "LUMI_TIMEOUT"}, status_code=504)
             except Exception:

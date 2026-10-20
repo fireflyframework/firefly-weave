@@ -305,6 +305,18 @@ limit; call `ai_connections.test` for the reason.
 | `WV-AI-GATEWAY-UNAVAILABLE` | 503 | The AI gateway did not answer, or its answer was not valid | Run `weave platform ai status` and read the `ai-gateway` container logs |
 | `WV-AI-GATEWAY-TIMEOUT` | 504 | The AI gateway did not answer in time | Retry; a model is slow on its first load |
 
+Asking Weave AI can answer with these codes; the message names the model and the endpoint, never provider text:
+
+| Problem code | Status | What it means | What to do |
+| --- | --- | --- | --- |
+| `WV-LUMI-MODEL-NOT-FOUND` | 422 | The model is not installed on the endpoint | Pull it with `ollama pull`, or choose another model on the Weave AI card |
+| `WV-LUMI-UNREACHABLE` | 503 | Weave could not reach the model endpoint | Check that Ollama is running |
+| `WV-LUMI-CONTEXT-LIMIT` | 413 | The request does not fit the model's context | Attach less, or choose a model with a larger context |
+| `WV-LUMI-OUTPUT` | 422 | The model's answer did not match Weave AI's reply format | Ask again; a larger model answers more reliably |
+| `WV-LUMI-TIMEOUT` | 504 | The model did not answer in time | Retry; a local model is slow on its first load |
+| `WV-LUMI-CAPACITY` | 429 | Weave AI or the provider is busy | Retry shortly |
+| `WV-LUMI-UNAVAILABLE` | 503 | Weave AI is not configured, the gateway refused the request, or the model is not approved | Run `weave platform ai status`; check the Weave AI card |
+
 Activating a workflow and the setup operations can answer with these codes:
 
 | Problem code | Status | What it means | What to do |

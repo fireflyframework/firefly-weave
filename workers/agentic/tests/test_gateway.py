@@ -931,3 +931,24 @@ async def test_ollama_discovery_keeps_the_first_duplicate_tag_metadata(tmp_path)
         ],
     }
     assert paths == ["/api/tags", "/api/show", "/api/show"]
+
+
+@pytest.mark.parametrize(
+    ("failure", "code"),
+    [
+        (ConnectorFailure("LLM_MODEL_NOT_FOUND", "not_started"), "LLM_MODEL_NOT_FOUND"),
+        (ConnectorFailure("LLM_UNREACHABLE", "not_started"), "LLM_UNREACHABLE"),
+        (ConnectorFailure("PROVIDER_SECRET_CANARY", "unknown"), "LLM_PROVIDER"),
+    ],
+)
+async def test_the_assistant_route_answers_only_product_codes(tmp_path, failure, code):
+    def failing(*args):
+        raise failure
+
+    ask = payload()
+    ask["profile"]["model"] = "qwen2.5:1.5b"
+    ask["endpoint"] = "http://ollama:11434/v1"
+    del ask["credential"]
+    async with gateway(tmp_path, builder=failing) as client:
+        response = await client.post("/v1/lumi", json=ask, headers=AUTH)
+    assert (response.status_code, response.json()) == (422, {"code": code})

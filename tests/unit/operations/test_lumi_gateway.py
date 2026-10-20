@@ -580,3 +580,54 @@ async def test_discovery_transport_ignores_environment_proxies(tmp_path, monkeyp
         await client.models({"endpoint": "https://cloud.example/v1"}, None, provider="openai-chat")
     ).discovery == "ok"
     assert options[0]["trust_env"] is False and options[0]["follow_redirects"] is False
+
+
+ASK_CONFIGURATION = {
+    "enabled": True,
+    "connection_revision_id": "77777777-7777-4777-8777-777777777777",
+    "revision": 1,
+    "profile": {
+        "provider": "openai-chat",
+        "model": "qwen3:4b",
+        "options": {"max_tokens": 1024},
+        "timeoutSeconds": 180,
+    },
+}
+
+
+@pytest.mark.parametrize(
+    ("status", "code", "status_out", "problem", "text"),
+    [
+        (422, "LLM_MODEL_NOT_FOUND", 422, "WV-LUMI-MODEL-NOT-FOUND", "qwen3:4b is not installed on"),
+        (422, "LLM_UNREACHABLE", 503, "WV-LUMI-UNREACHABLE", "could not reach the model endpoint"),
+        (422, "LLM_CONTEXT_LIMIT", 413, "WV-LUMI-CONTEXT-LIMIT", "too long for this model's context"),
+        (422, "LLM_OUTPUT", 422, "WV-LUMI-OUTPUT", "did not match"),
+        (422, "LLM_TIMEOUT", 504, "WV-LUMI-TIMEOUT", "did not answer within 180 seconds"),
+        (504, "LUMI_TIMEOUT", 504, "WV-LUMI-TIMEOUT", "did not respond in time"),
+        (422, "LLM_RATE_LIMITED", 429, "WV-LUMI-CAPACITY", "rate limiting"),
+        (429, "LUMI_CAPACITY", 429, "WV-LUMI-CAPACITY", "busy"),
+        (413, "LUMI_LIMIT", 413, "WV-LUMI-LIMIT", "too large"),
+        (422, "LLM_POLICY", 503, "WV-LUMI-UNAVAILABLE", "not approved for this endpoint"),
+        (401, "LUMI_AUTH", 503, "WV-LUMI-UNAVAILABLE", "Weave AI is unavailable"),
+        (500, "secret-canary", 503, "WV-LUMI-UNAVAILABLE", "Weave AI is unavailable"),
+    ],
+)
+async def test_gateway_codes_become_weave_ai_problems(tmp_path, status, code, status_out, problem, text):
+    from firefly_weave.contracts.lumi import LUMI_REPLY_SCHEMA, LumiAskRequest, LumiConfiguration
+
+    token = tmp_path / "token"
+    token.write_text("service-token")
+    client = LumiGatewayClient(
+        LumiGatewaySettings(endpoint="https://trusted.invalid/v1/lumi", token_file=str(token)),
+        transport=httpx.MockTransport(lambda request: httpx.Response(status, json={"code": code})),
+    )
+    configuration = LumiConfiguration.model_validate(
+        {**ASK_CONFIGURATION, "profile": {**ASK_CONFIGURATION["profile"], "outputSchema": LUMI_REPLY_SCHEMA}}
+    )
+    with pytest.raises(CatalogError) as failed:
+        await client.ask(
+            configuration, LumiAskRequest(message="Explain"), {}, {"endpoint": "http://ollama:11434/v1"}, None
+        )
+    assert (failed.value.status, failed.value.code) == (status_out, problem)
+    assert text in failed.value.message and "secret-canary" not in failed.value.message
+    assert client.active == 0

@@ -35,12 +35,54 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from firefly_weave import private_origins
-from firefly_weave.contracts.ai import GatewayModelList
+from firefly_weave.contracts.ai import AI_ERRORS, GatewayModelList, ai_message
 from firefly_weave.contracts.lumi import LumiAskRequest, LumiConfiguration, LumiReply
 from firefly_weave.contracts.values import JsonValue
 from firefly_weave.definitions.models import CatalogError
 
 GATEWAY_REFUSED = "A plain HTTP AI gateway needs a private-origin model entry with loopback credentials."
+_CODE = re.compile(r"[A-Z][A-Z0-9_]{0,63}")
+# Gateway and model codes the API answers as their own Weave AI problems; any other is unavailable.
+_PROBLEMS: dict[str, tuple[int, str]] = {
+    "LLM_MODEL_NOT_FOUND": (422, "WV-LUMI-MODEL-NOT-FOUND"),
+    "LLM_UNREACHABLE": (503, "WV-LUMI-UNREACHABLE"),
+    "LLM_CONTEXT_LIMIT": (413, "WV-LUMI-CONTEXT-LIMIT"),
+    "LLM_OUTPUT": (422, "WV-LUMI-OUTPUT"),
+    "LLM_TIMEOUT": (504, "WV-LUMI-TIMEOUT"),
+    "LUMI_TIMEOUT": (504, "WV-LUMI-TIMEOUT"),
+    "LLM_RATE_LIMITED": (429, "WV-LUMI-CAPACITY"),
+    "LLM_CAPACITY": (429, "WV-LUMI-CAPACITY"),
+    "LUMI_CAPACITY": (429, "WV-LUMI-CAPACITY"),
+    "LUMI_LIMIT": (413, "WV-LUMI-LIMIT"),
+}
+_MESSAGES = {
+    "LUMI_TIMEOUT": "Weave AI did not respond in time",
+    "LLM_CAPACITY": "Weave AI is busy; try again later",
+    "LUMI_CAPACITY": "Weave AI is busy; try again later",
+    "LUMI_LIMIT": "Selected context is too large",
+}
+
+
+class GatewayRefused(Exception):
+    """The gateway answered with an error status and, when it sent one, a product code."""
+
+    def __init__(self, status: int, code: str) -> None:
+        super().__init__(code)
+        self.status, self.code = status, code
+
+
+def weave_ai_problem(
+    code: str, configuration: LumiConfiguration, endpoint: str, context_tokens: int | None = None
+) -> CatalogError:
+    """The Weave AI problem for a gateway or model code; its message is product copy, never provider text."""
+    status, problem = _PROBLEMS.get(code, (503, "WV-LUMI-UNAVAILABLE"))
+    message = _MESSAGES.get(code)
+    if message is None and code == "LLM_CONTEXT_LIMIT" and context_tokens is None:
+        message = "The prompt is too long for this model's context."
+    if message is None and code in AI_ERRORS:
+        n = configuration.profile.timeout_seconds if code == "LLM_TIMEOUT" else context_tokens or 0
+        message = ai_message(code, model=configuration.profile.model, endpoint=endpoint, n=n)
+    return CatalogError(status, problem, message or "Weave AI is unavailable")
 
 
 def _loopback(host: str | None) -> bool:
@@ -69,6 +111,20 @@ class LumiGatewaySettings(BaseModel):
                 # Sibling routes such as ``test`` resolve next to the endpoint's last segment, not under it.
                 raise ValueError("The AI gateway endpoint names its route without a trailing slash")
         return self
+
+
+async def _refusal_code(response: httpx.Response) -> str:
+    """The product code of a refusal, read from at most 4 KiB of its body; "" when it has none."""
+    raw = bytearray()
+    async for chunk in response.aiter_bytes():
+        raw.extend(chunk)
+        if len(raw) > 4096:
+            return ""
+    try:
+        code = json.loads(raw).get("code")
+    except (ValueError, AttributeError):
+        return ""
+    return code if isinstance(code, str) and _CODE.fullmatch(code) else ""
 
 
 class LumiGatewayClient:
@@ -119,7 +175,8 @@ class LumiGatewayClient:
             self._client(timeout) as client,
             client.stream("POST", url, json=body, headers={"Authorization": "Bearer " + token}) as response,
         ):
-            response.raise_for_status()
+            if response.status_code >= 300:
+                raise GatewayRefused(response.status_code, await _refusal_code(response))
             raw = bytearray()
             async for chunk in response.aiter_bytes():
                 if len(raw) + len(chunk) > limit:
@@ -134,6 +191,7 @@ class LumiGatewayClient:
         attachments: JsonValue,
         connection_config: dict[str, JsonValue],
         credential: str | None,
+        context_tokens: int | None = None,
     ) -> LumiReply:
         if not self.configured:
             raise CatalogError(503, "WV-LUMI-UNAVAILABLE", "Weave AI is not configured")
@@ -159,6 +217,9 @@ class LumiGatewayClient:
             return LumiReply.model_validate_json(raw)
         except TimeoutError:
             raise CatalogError(504, "WV-LUMI-TIMEOUT", "Weave AI did not respond in time") from None
+        except GatewayRefused as refused:
+            endpoint = str(connection_config.get("endpoint", "the endpoint"))
+            raise weave_ai_problem(refused.code, configuration, endpoint, context_tokens) from None
         except Exception:
             raise CatalogError(503, "WV-LUMI-UNAVAILABLE", "Weave AI is unavailable") from None
         finally:
