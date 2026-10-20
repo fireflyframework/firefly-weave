@@ -52,6 +52,8 @@ import {
 import { ownedActionsOf, unpublished } from "../ndv/owned/owned-store";
 import { emptyCanvas, type CanvasSidecar } from "./canvas-sidecar";
 import { instanceStep } from "./instance-keys";
+// Run data as test data reads it: from a run or a test call, or naming a run.
+import { runDerived } from "./test-data-ops";
 import type { PinEntry } from "./test-data";
 
 export const CLIPBOARD_HEADER = "# Firefly Weave steps. Paste into Studio.";
@@ -128,9 +130,6 @@ export interface PastePlan {
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === "object" && !Array.isArray(value);
-const runDerived = (entry: unknown) =>
-  isRecord(entry) &&
-  (entry["source"] === "run" || entry["source"] === "test-call");
 const holder = (steps: Step[]): Workflow => ({
   apiVersion: "",
   kind: "Workflow",
