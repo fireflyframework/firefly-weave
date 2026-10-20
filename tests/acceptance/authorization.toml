@@ -75,6 +75,10 @@ identifier = "random"
 [operations."run_summaries.list"]
 capability = "run.read"
 
+[operations."runs.calls"]
+capability = "run.read"
+identifier = "random"
+
 [operations."runs.logs"]
 capability = "run.read"
 identifier = "random"
