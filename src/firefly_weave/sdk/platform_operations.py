@@ -262,7 +262,7 @@ def workers_document(state: dict[str, Any], value: dict[str, Any]) -> dict[str, 
                 "volumes": [
                     files._bind(root / "config" / "worker-oauth.json", CONTAINER + "/config/worker-oauth.json"),
                     files._bind(_secret(state, value, secret), CONTAINER + "/secrets/" + secret),
-                    files._bind(value["origins_copy"], platform_origins.CONTAINER_PATH),
+                    files._bind(root / "config" / "worker-origins.json", platform_origins.CONTAINER_PATH),
                 ],
             }
         },
@@ -355,13 +355,14 @@ def _outputs(state: dict[str, Any], value: dict[str, Any]) -> dict[str, tuple[Pa
     """
     found: dict[str, tuple[Path, bytes, bool]] = {}
     config = _shared(state, "config")
-    if "release_id" in value and "origins_copy" in value:
+    if "release_id" in value and "subnet" in value:
         workers = _shared(state, "workers")
         found["workers/compose.json"] = (workers / "compose.json", files._json(workers_document(state, value)), False)
         # OAuth clients take plain HTTP on loopback only: the worker signs in through its own loopback relay,
         # which forwards to Keycloak on the platform network after checking the bridge entry.
         oauth = _oauth(KEYCLOAK_ORIGIN, WORKER_CLIENT, "worker-client-secret")
         found["config/worker-oauth.json"] = (config / "worker-oauth.json", files._json(oauth), False)
+        found["config/worker-origins.json"] = (config / "worker-origins.json", worker_origins(value), False)
     if "target_id" in value:
         found["config/runner.json"] = (config / "runner.json", files._json(runner_configuration(state, value)), False)
         oauth = _oauth(KEYCLOAK_ORIGIN, RUNNER_CLIENT, "runner-client-secret")
@@ -374,6 +375,14 @@ def _outputs(state: dict[str, Any], value: dict[str, Any]) -> dict[str, tuple[Pa
     if "registry_port" in value:
         found[COMPOSE] = (Path(state["directory"]) / COMPOSE, files._json(runner_document(state, value)), True)
     return found
+
+
+def worker_origins(value: dict[str, Any]) -> bytes:
+    """The workers' own private-origin file: the API and Keycloak on the platform network, and the loopback
+    sign-in entry their token relay serves. Never the runner's, AI's or the connector test entries."""
+    wanted = {(BRIDGE_API, "platform-api"), (BRIDGE_KEYCLOAK, "worker-auth"), (KEYCLOAK_ORIGIN, "worker-auth")}
+    own = [entry for entry in entries({}, value["subnet"]) if (entry.origin, entry.purpose) in wanted]
+    return private_origins.render(private_origins.PrivateOrigins(platform=private_origins.PLATFORM).with_entries(own))
 
 
 def _write_files(outputs: dict[str, tuple[Path, bytes, bool]]) -> bool:
@@ -874,13 +883,14 @@ def enable(
             advance("release")
 
             stage = "workers"
-            # The workers' copy of the private-origin file is named by its content; origins rewrites it.
+            # The workers' own private-origin file is written once origins records the platform network.
             advance("workers")
 
             stage = "origins"
             subnet = platform_ai._subnet(state)
             platform_origins.set_operations_entries(state, entries(state, subnet))
             value["origins_copy"] = str(platform_origins.container_copy(state))
+            value["subnet"] = subnet
             advance("origins")
 
             stage = "target"

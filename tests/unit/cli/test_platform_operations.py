@@ -462,3 +462,24 @@ def test_stop_lets_the_fixture_workers_finish_before_the_platform_stops(operatio
     command = next(command for name, command in case.runner.calls if name == "operations-workers-stop")
     assert command[command.index("--project-name") + 1] == f"weave-local-{OWNER}-workers"
     assert command[-3:] == ["stop", "--timeout", "240"]
+
+
+def test_the_workers_receive_only_their_own_private_origin_entries(operations):
+    from firefly_weave.sdk import platform_origins
+
+    case = operations
+    enable(case)
+    workers = json.loads((case.directory / "operations" / "workers" / "compose.json").read_text())
+    (service,) = workers["services"].values()
+    (policy,) = [item for item in service["volumes"] if item["target"] == platform_origins.CONTAINER_PATH]
+    document = json.loads(Path(policy["source"]).read_text())
+    assert document["platform"] == "local-development"
+    assert sorted((item["origin"], item["purpose"], item["credentials"]) for item in document["entries"]) == sorted(
+        [
+            (platform_operations.BRIDGE_API, "platform-api", "bridge"),
+            (platform_operations.BRIDGE_KEYCLOAK, "worker-auth", "bridge"),
+            (platform_operations.KEYCLOAK_ORIGIN, "worker-auth", "loopback"),
+        ]
+    )
+    value = json.loads((case.directory / "operations.json").read_text())
+    assert "config/worker-origins.json" in value["files"]
