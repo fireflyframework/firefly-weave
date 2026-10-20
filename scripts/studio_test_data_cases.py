@@ -16,7 +16,8 @@
 
 """Write the test data documents Studio's reader must accept or refuse exactly as the platform does.
 
-Each case is a document and whether ``parse_test_data`` accepts it; the generator asks the platform's models, so
+Each case is a document and whether the platform accepts it (``parse_test_data``, and no U+0000, which a save
+refuses); the generator asks the platform's models, so
 the expected answers are never written by hand. Studio's vitest suite reads every case with its own reader and
 expects the same answer.
 
@@ -34,6 +35,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from firefly_weave.contracts.studio_documents import StudioDocumentTooLarge, parse_test_data
+from firefly_weave.definitions.studio_documents import holds_nul
 
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "studio" / "tests" / "fixtures" / "test-data-cases.json"
@@ -245,6 +247,10 @@ CASES: tuple[tuple[str, Any], ...] = (
     ("a timestamp: lower-case t and z", {**MINIMAL, "updatedAt": "2026-10-07t10:00:00z"}),
     ("a timestamp: nine fraction digits", {**MINIMAL, "updatedAt": "2026-10-07T10:00:00.123456789Z"}),
     ("a pin timestamp on February 30", doc(pins={"send": {**PIN, "pinnedAt": "2026-02-30T10:02:00Z"}})),
+    # U+0000 anywhere: the platform refuses it.
+    ("a NUL in a value", doc(input={"value": "a\u0000b", "source": "manual"})),
+    ("a NUL in a value's key", doc(humans={"h": {"decision": "a", "data": {"a\u0000": 1}}})),
+    ("a NUL in a decision", doc(humans={"h": {"decision": "a\u0000", "data": {}}})),
     # The bounds of frames, callee references, AI memory and delays, each side.
     ("a frame of 1024 characters", doc(signals={"s": {"outcome": "timeout", "frame": "f" * 1024}})),
     ("a frame of 1025 characters", doc(signals={"s": {"outcome": "timeout", "frame": "f" * 1025}})),
@@ -258,6 +264,9 @@ CASES: tuple[tuple[str, Any], ...] = (
 
 
 def accepts(document: Any) -> bool:
+    # The platform stores test data in PostgreSQL, which can't hold U+0000: a save refuses it.
+    if holds_nul(document):
+        return False
     try:
         parse_test_data(json.dumps(document).encode("utf-8", "surrogatepass"))
     except (ValidationError, StudioDocumentTooLarge, UnicodeDecodeError, ValueError):

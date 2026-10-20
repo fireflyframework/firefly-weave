@@ -54,7 +54,7 @@ from firefly_weave.persistence.idempotency import lock
 _RUN_SOURCES = {"run", "test-call"}
 
 
-def _holds_nul(document: object) -> bool:
+def holds_nul(document: object) -> bool:
     """Whether any string or key of the document holds U+0000 (checked without recursion)."""
     stack: list[object] = [document]
     while stack:
@@ -168,7 +168,7 @@ class StudioDocumentService:
             return self._view(row)
 
     def _document(self, kind: StudioDocumentKind, document: JsonObject) -> JsonObject:
-        if _holds_nul(document):
+        if holds_nul(document):
             # PostgreSQL's jsonb can't store U+0000: refused in words, not as a storage failure.
             raise CatalogError(422, "WV-STUDIO-DOCUMENT-SCHEMA", "Studio documents can't hold the NUL character")
         raw = json.dumps(document, ensure_ascii=False, separators=(",", ":")).encode("utf-8")

@@ -22,7 +22,8 @@ SPDX-License-Identifier: Apache-2.0
 // same answers. A document Studio can't read is never half-used.
 //
 // Values follow the platform's JSON rules too: integers within ±(2^53 - 1),
-// finite numbers, text and keys without lone surrogates, and nesting at most
+// finite numbers, text and keys without lone surrogates or U+0000 (which the
+// platform's database can't store), and nesting at most
 // 200 levels below the document. Two differences are one-way and fail
 // closed, because a parsed value has lost its spelling: Studio refuses an
 // integer-valued number beyond 2^53 - 1 written as `1e20` (the platform reads
@@ -265,12 +266,13 @@ function jsonDomain(document: unknown) {
         Number.isFinite(value) &&
           (!Number.isInteger(value) || Math.abs(value) <= MAX_SAFE),
       );
-    else if (typeof value === "string") check(!lonely(value));
+    else if (typeof value === "string")
+      check(!lonely(value) && !value.includes("\u0000"));
     else if (Array.isArray(value))
       for (const item of value) stack.push([item, depth + 1]);
     else if (isRecord(value))
       for (const [key, item] of Object.entries(value)) {
-        check(!lonely(key));
+        check(!lonely(key) && !key.includes("\u0000"));
         stack.push([item, depth + 1]);
       }
   }
