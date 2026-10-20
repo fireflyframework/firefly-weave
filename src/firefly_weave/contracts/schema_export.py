@@ -179,6 +179,7 @@ def contract_models() -> dict[str, SchemaModel]:
         ReplayReport,
     )
     from firefly_weave.contracts.operations_summary import OperationsSummary, OperationsTelemetry
+    from firefly_weave.contracts.platform_events import PlatformEvent
     from firefly_weave.contracts.providers import (
         ProviderEvent,
         ProviderIngressResponse,
@@ -444,6 +445,7 @@ def contract_models() -> dict[str, SchemaModel]:
         "diagnostic": Diagnostic,
         "worker-implementation": WorkerImplementation,
         "worker-routing": WorkerRouting,
+        "platform-event-v1": PlatformEvent,
     }
 
 
