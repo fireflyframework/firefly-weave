@@ -26,6 +26,7 @@ import {
   setTestInput,
 } from "./formula-po";
 import { calibrateFormulaWork } from "./formula-calibration";
+import { timeFingerprintWork } from "./fingerprint-calibration";
 
 /** One frame at 60 Hz, in milliseconds. */
 const FRAME_BUDGET_MS = 16.7;
@@ -516,5 +517,70 @@ test(
       scaledP95,
       "keystroke to preview, p95 scaled to the reference runner",
     ).toBeLessThanOrEqual(FORMULA_PREVIEW_BUDGET_MS);
+  },
+);
+
+/** Fingerprints for 200 steps, on a runner as fast as the reference. */
+const FINGERPRINT_BUDGET_MS = 10;
+/** Calls before the measured ones warm the JIT. */
+const FINGERPRINT_WARMUP_CALLS = 10;
+/** Measured calls: with 60, the p95 is the 57th. */
+const FINGERPRINT_MEASURED_CALLS = 60;
+
+test(
+  "fingerprints 200 steps within 10 ms",
+  { tag: "@performance" },
+  async ({ page }, info) => {
+    test.setTimeout(120_000);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    // The real page: Studio's code is loaded and running when it is timed.
+    await openStepFixture(page, formulasFixture);
+    // The runner's speed, by the formula gate's calibration and reference.
+    const calibration = await calibrateFormulaWork(page, {
+      text: "{{ input.customerId }}",
+      context: { input: { customerId: "c-1042" }, steps: {} },
+      features: [],
+      ...FORMULA_CALIBRATION,
+    });
+    expect(calibration.evaluated).toBe(FORMULA_CALIBRATION.rounds);
+    const work = await timeFingerprintWork(page, {
+      steps: 200,
+      warmup: FINGERPRINT_WARMUP_CALLS,
+      calls: FINGERPRINT_MEASURED_CALLS,
+    });
+    // Every call hashed the 200 steps, or it measured something else.
+    expect(work.hashed).toBe(200);
+    expect(work.callsMs).toHaveLength(FINGERPRINT_MEASURED_CALLS);
+    const sorted = [...work.callsMs].sort((a, b) => a - b);
+    const p95 = sorted[Math.ceil(sorted.length * 0.95) - 1];
+    const ratio = calibration.medianMs / FORMULA_CALIBRATION_REFERENCE_MS;
+    const allowance = Math.min(Math.max(ratio, 1), FORMULA_MAX_SPEED_ALLOWANCE);
+    const scaledP95 = p95 / allowance;
+    const round = (value: number) => Math.round(value * 100) / 100;
+    const measurement = {
+      platform: platform(),
+      arch: arch(),
+      cpu: cpus()[0]?.model,
+      steps: 200,
+      calls: sorted.length,
+      medianMs: round(sorted[Math.floor(sorted.length / 2)]),
+      p95Ms: round(p95),
+      maxMs: round(sorted[sorted.length - 1]),
+      medianCalibrationMs: round(calibration.medianMs),
+      referenceMs: FORMULA_CALIBRATION_REFERENCE_MS,
+      ratio: round(ratio),
+      allowance: round(allowance),
+      scaledP95Ms: round(scaledP95),
+      budgetMs: FINGERPRINT_BUDGET_MS,
+    };
+    await info.attach("fingerprint-measurement", {
+      body: JSON.stringify(measurement),
+      contentType: "application/json",
+    });
+    console.log(JSON.stringify(measurement));
+    expect(
+      scaledP95,
+      "fingerprints of 200 steps, p95 scaled to the reference runner",
+    ).toBeLessThanOrEqual(FINGERPRINT_BUDGET_MS);
   },
 );
