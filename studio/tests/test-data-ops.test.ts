@@ -111,6 +111,35 @@ describe("test data changes", () => {
     expect(Object.keys(clean.pins ?? {})).toEqual(["send", "send[1]"]);
     expect(readTestData(clean).ok).toBe(true);
   });
+  it("counts a bare run ID as run data, and leaves run-derived mocks of called workflows out", () => {
+    expect(
+      runDerived({ output: {}, runId: "3f2a6c1e-0d5b-4a63-9c1f-2b7e8d9a0b11" }),
+    ).toBe(true);
+    expect(runDerived({ output: {}, source: "test-call" })).toBe(true);
+    const run = {
+      output: { id: "m-1" },
+      source: "run" as const,
+      runId: "3f2a6c1e-0d5b-4a63-9c1f-2b7e8d9a0b11",
+      runEnvironmentId: "9b1c2d3e-4f50-4a61-8b72-c3d4e5f60718",
+    };
+    const mocks = {
+      ...emptyTestData(NOW),
+      workflows: {
+        "notify@1.0.0": {
+          mocks: {
+            recorded: run,
+            typed: { output: { id: "m-2" }, source: "manual" as const },
+          },
+        },
+      },
+    };
+    expect(containsRunData(mocks)).toBe(true);
+    const clean = withoutRunData(mocks, NOW);
+    expect(Object.keys(clean.workflows?.["notify@1.0.0"]?.mocks ?? {})).toEqual(
+      ["typed"],
+    );
+    expect(containsRunData(clean)).toBe(false);
+  });
   it("lists every entry with its pointer", () => {
     expect(entriesOf(testData).map((item) => item.path)).toEqual([
       "/input",

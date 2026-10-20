@@ -268,3 +268,59 @@ def test_an_undo_phase_entry_is_unresolved_never_checked_against_the_step_it_und
         "/pins/check[2]#cancel": "WV-STUDIO-TESTDATA-UNRESOLVED",
         "/pins/token#undo": "WV-STUDIO-TESTDATA-UNRESOLVED",
     }
+
+
+SHAPES: dict[str, dict[str, Any]] = {
+    "behind-ref": {
+        "type": "object",
+        "$defs": {"token": {"type": "string", "x-secret": True}},
+        "properties": {"token": {"$ref": "#/$defs/token"}},
+    },
+    "behind-any-of": {"anyOf": [{"type": "object", "properties": {"token": {"type": "string", "writeOnly": True}}}]},
+    "behind-additional": {"type": "object", "additionalProperties": {"type": "string", "x-secret": True}},
+    "unknown-ref": {"type": "object", "properties": {"token": {"$ref": "#/$defs/missing"}}},
+}
+
+
+def shaped(name: str, schema: dict[str, Any]) -> dict[str, Any]:
+    return {
+        **ACTION,
+        "metadata": {"name": f"shapes.{name}", "version": "1.0.0"},
+        "spec": {**ACTION["spec"], "outputSchema": schema},
+    }
+
+
+@pytest.mark.parametrize(
+    ("shape", "code"),
+    [
+        ("behind-ref", "WV-SCHEMA-SECRET_VALUE"),
+        ("behind-any-of", "WV-SCHEMA-SECRET_VALUE"),
+        ("behind-additional", "WV-SCHEMA-SECRET_VALUE"),
+        # A value the platform can't classify is refused too, never accepted for want of a rule.
+        ("unknown-ref", "WV-SCHEMA-CLASSIFICATION"),
+    ],
+)
+def test_a_secret_hidden_in_the_schema_or_a_value_that_can_t_be_classified_is_refused(shape, code):
+    workflow = {
+        **WORKFLOW,
+        "spec": {
+            **WORKFLOW["spec"],
+            "steps": [{"id": "s", "kind": "action", "uses": f"shapes.{shape}@1.0.0", "with": {"literal": {}}}],
+        },
+    }
+    definition = shaped(shape, SHAPES[shape])
+    catalog = CatalogSnapshot.from_definitions([load_definition(definition)])
+    result = dict(check_test_data(workflow, data(pins={"s": {**PIN, "output": {"token": "abc"}}}), catalog))
+    assert result == {"/pins/s": code}
+
+
+@pytest.mark.parametrize("failure", [RecursionError, ArithmeticError])
+def test_a_value_too_deep_or_too_large_to_classify_is_refused(monkeypatch, failure):
+    from firefly_weave.compiler import test_data
+
+    def give_up(*args: Any) -> None:
+        raise failure()
+
+    monkeypatch.setattr(test_data, "classify", give_up)
+    result = check(data(pins={"check": {**PIN, "output": {"eligible": True}}}), ACTION)
+    assert result == {"/pins/check": "WV-SCHEMA-CLASSIFICATION"}
