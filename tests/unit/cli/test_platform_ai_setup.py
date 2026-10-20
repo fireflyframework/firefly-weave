@@ -341,3 +341,73 @@ async def test_a_failed_smoke_run_reports_the_model_code():
 def test_refusals_name_the_code_and_send_no_secret():
     error = setup.refused("connection", SimpleNamespace(code="WV-CONNECTION"))
     assert "WV-CONNECTION" in str(error) and "No secret was sent" in str(error)
+
+
+class WeaveAiClient(Client):
+    """Weave AI's configuration operations on top of the recorded ones."""
+
+    def __init__(self, configuration=None):
+        super().__init__()
+        self.configuration = configuration
+
+    async def invoke(self, operation, **kwargs):
+        if operation == "lumi.configuration.read":
+            self.calls.append((operation, None, None))
+            if self.configuration is None:
+                from firefly_weave.contracts.public import Problem
+                from firefly_weave.sdk.errors import WeaveError
+
+                raise WeaveError(Problem(status=404, code="WV-NOT-FOUND", message="Weave AI is not configured"))
+            return self.configuration
+        if operation == "lumi.configuration.write":
+            from firefly_weave.contracts.lumi import LumiConfiguration
+
+            self.calls.append((operation, kwargs["body"], kwargs.get("revision")))
+            revision = (kwargs.get("revision") or 0) + 1
+            self.configuration = LumiConfiguration(**kwargs["body"].model_dump(), revision=revision)
+            return self.configuration
+        return await super().invoke(operation, **kwargs)
+
+
+async def test_weave_ai_is_set_up_on_the_local_connection_once():
+    from firefly_weave.contracts.lumi import LUMI_REPLY_SCHEMA
+
+    client = WeaveAiClient()
+    first = await setup.configure_weave_ai(client, str(REVISION), "qwen3:4b")
+    assert first == {"state": "configured", "provider": "openai-chat", "model": "qwen3:4b"}
+    written = next(call[1] for call in client.calls if call[0] == "lumi.configuration.write")
+    assert written.connection_revision_id == REVISION and written.enabled
+    assert written.profile.model_dump(mode="json", by_alias=True, exclude_none=True) == {
+        "provider": "openai-chat",
+        "model": "qwen3:4b",
+        "options": {"max_tokens": 1024},
+        "reasoning": {"pattern": "none", "maxSteps": 6},
+        "maxCalls": 8,
+        "timeoutSeconds": 180,
+        "outputSchema": LUMI_REPLY_SCHEMA,
+    }
+    again = await setup.configure_weave_ai(client, str(REVISION), "qwen3:4b")
+    assert again == {"state": "unchanged", "provider": "openai-chat", "model": "qwen3:4b"}
+    assert [call[0] for call in client.calls].count("lumi.configuration.write") == 1
+
+
+async def test_weave_ai_someone_already_configured_is_kept():
+    from firefly_weave.contracts.lumi import LUMI_REPLY_SCHEMA, LumiConfiguration
+
+    chosen = LumiConfiguration.model_validate(
+        {
+            "enabled": False,
+            "connection_revision_id": uuid4(),
+            "revision": 4,
+            "profile": {
+                "provider": "openai-responses",
+                "model": "gpt-5-mini",
+                "options": {"max_tokens": 512},
+                "outputSchema": LUMI_REPLY_SCHEMA,
+            },
+        }
+    )
+    client = WeaveAiClient(chosen)
+    kept = await setup.configure_weave_ai(client, str(REVISION), "qwen3:4b")
+    assert kept == {"state": "kept", "provider": "openai-responses", "model": "gpt-5-mini"}
+    assert "lumi.configuration.write" not in client.operations()

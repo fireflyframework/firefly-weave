@@ -71,6 +71,7 @@ STAGES = (
     "connection",
     "services",
     "online",
+    "weave_ai",
     "verify",
     "ready",
 )
@@ -677,7 +678,7 @@ def _summary(directory: Path, value: dict[str, Any], **extra: Any) -> dict[str, 
         "connection": files.CONNECTION,
         "connection_revision_id": value.get("connection_revision_id"),
         "release_id": value.get("release_id"),
-        "weave_ai": "not_available",
+        "weave_ai": value.get("weave_ai", "not_available"),
         "test": value.get("last_test"),
         "warnings": _warnings(value),
         **extra,
@@ -724,7 +725,6 @@ def enable(
         if value.get("stage") == "disabled":
             value["stage"] = "preflight"
         value.update(format=FORMAT, scope=scope, mode=mode, ollama_origin=origin, endpoint=origin + "/v1")
-        value.update(weave_ai="not_available")
         value.setdefault("stage", "preflight")
         value.setdefault("approval", "served")
         changed: list[str] = []
@@ -869,6 +869,18 @@ def enable(
         )
         advance("online")
         model = _test_model(value)
+        # Weave AI on this connection, unless someone already set Weave AI up; repeating it changes nothing.
+        value["weave_ai"] = asyncio.run(
+            _with_client(
+                api,
+                local._host_token(state),
+                scope,
+                transport,
+                lambda: "weave_ai",
+                lambda client: setup.configure_weave_ai(client, value["connection_revision_id"], model),
+            )
+        )
+        advance("weave_ai")
         test = asyncio.run(
             _with_client(
                 api,
@@ -941,7 +953,7 @@ def status(directory: Path, *, transport: httpx.AsyncBaseTransport | None = None
         "connection_revision_id": value.get("connection_revision_id"),
         "gateway": {"state": _service_state(state, "ai-gateway")},
         "worker": {"state": _service_state(state, "agentic-worker"), "presence": "unknown", "last_seen_at": None},
-        "weave_ai": "not_available",
+        "weave_ai": value.get("weave_ai", "not_available"),
         "last_test": value.get("last_test"),
         "warnings": warnings,
     }
