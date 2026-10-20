@@ -2981,11 +2981,9 @@ export class App implements CanvasHost {
       this.cdr.markForCheck();
       return false;
     }
-    // Their test data goes with them; the toast's Undo brings both back.
-    const testBefore = this.testData.data();
+    // Their test data goes with them; Undo (the toast's or the toolbar's) brings both back.
     const steps = this.model.stepIdSet();
     const pruned = this.testData.prune((id) => steps.has(id));
-    const testVersion = this.testData.version();
     const what = one || `${ids.length} steps`;
     const revision = this.model.revision;
     const withData = pruned.length
@@ -3002,7 +3000,6 @@ export class App implements CanvasHost {
             `${one || "These steps"} can't come back from here: the workflow changed since. Use Undo in the toolbar.`,
           );
         if (done !== "undone") return;
-        if (pruned.length) this.testData.restore(testBefore, testVersion);
         this.notify(`Restored ${what}${withData}.`);
         if (one) this.focusStep(one);
       },
@@ -3667,8 +3664,10 @@ export class App implements CanvasHost {
     }
     this.flushInspector();
     const before = this.model.definition;
+    const steps = this.model.stepIdSet();
     this.model.undo();
     this.followRenames(renamedSteps(before, this.model.definition));
+    this.followSteps(steps);
     this.dirty = true;
     this.changed();
   }
@@ -3691,6 +3690,16 @@ export class App implements CanvasHost {
     this.undo();
     return "undone";
   }
+  /**
+   * After an Undo or Redo: steps that came back bring back the test data
+   * their deletion took, and steps it removed take theirs (kept to come
+   * back), so the toolbar and the delete toast's Undo agree.
+   */
+  private followSteps(before: ReadonlySet<string>) {
+    const after = this.model.stepIdSet();
+    this.testData.revive((id) => after.has(id));
+    this.testData.prune((id) => after.has(id) || !before.has(id));
+  }
   /** Steps an Undo or Redo renamed: entries in step details and their test data follow. */
   private followRenames(renames: { from: string; to: string }[]) {
     this.stepDetails.followRenames(renames);
@@ -3704,8 +3713,10 @@ export class App implements CanvasHost {
     }
     this.cancelInspectorCommit();
     const before = this.model.definition;
+    const steps = this.model.stepIdSet();
     this.model.redo();
     this.followRenames(renamedSteps(before, this.model.definition));
+    this.followSteps(steps);
     this.dirty = true;
     this.changed();
   }
@@ -4189,7 +4200,10 @@ export class App implements CanvasHost {
         next,
         waiting.map(([key]) => `/pins/${escape(key)}`),
       );
-      if (outcome.ok) break;
+      if (outcome.ok) {
+        this.markForeign(waiting.map(([key]) => key));
+        break;
+      }
       refusal ||= outcome.message;
       const refused = waiting.find(
         ([key]) => `/pins/${escape(key)}` === outcome.pointer,
@@ -7055,6 +7069,9 @@ export class App implements CanvasHost {
     const key = JSON.stringify([place, this.model.opened]);
     if (key === this.testDataKey) return false;
     this.testDataKey = key;
+    // Another workflow's test data: no pin here came from elsewhere yet.
+    this.foreignPins.clear();
+    this.foreignVersion++;
     // Failures are said where they happen; this only orders what waits.
     this.testDataOpening = (
       place.kind === "connected"
@@ -7070,9 +7087,21 @@ export class App implements CanvasHost {
     version: number;
     prints: ReadonlyMap<string, StepFingerprints>;
   } | null = null;
+  /**
+   * Pins pasted from the clipboard or loaded from a workflow's test data
+   * file while this workflow is open: stamped by another workflow, so out
+   * of date here until kept or pinned again. Their badge says so plainly.
+   */
+  private readonly foreignPins = new Set<string>();
+  private foreignVersion = 0;
+  private markForeign(keys: Iterable<string>) {
+    for (const key of keys) this.foreignPins.add(key);
+    this.foreignVersion++;
+  }
   private pinStatesMemo: {
     prints: ReadonlyMap<string, StepFingerprints>;
     data: StudioTestData;
+    foreign: number;
     states: ReadonlyMap<string, { stale: string | null }>;
   } | null = null;
   /** Each pinned step's stale words for the canvas (null when current). */
@@ -7080,12 +7109,26 @@ export class App implements CanvasHost {
     const prints = this.testDataPrints();
     const data = this.testData.data();
     const memo = this.pinStatesMemo;
-    if (memo && memo.prints === prints && memo.data === data)
+    if (
+      memo &&
+      memo.prints === prints &&
+      memo.data === data &&
+      memo.foreign === this.foreignVersion
+    )
       return memo.states;
     const states = new Map<string, { stale: string | null }>();
-    for (const [id, view] of pinsView(data, prints))
-      states.set(id, { stale: view.stale ? staleText(view.stale) : null });
-    this.pinStatesMemo = { prints, data, states };
+    for (const [id, view] of pinsView(data, prints)) {
+      // Kept, or pinned again here: it is this workflow's pin now.
+      if (!view.stale) this.foreignPins.delete(id);
+      states.set(id, {
+        stale: !view.stale
+          ? null
+          : this.foreignPins.has(id)
+            ? "pinned in another workflow; check it still fits"
+            : staleText(view.stale),
+      });
+    }
+    this.pinStatesMemo = { prints, data, foreign: this.foreignVersion, states };
     return states;
   }
   private simulationDataMemo: {
@@ -8473,9 +8516,10 @@ export class App implements CanvasHost {
       entriesOf(reading.data).map((entry) => entry.path),
     );
     if (!still()) return;
-    if (outcome.ok)
+    if (outcome.ok) {
+      this.markForeign(Object.keys(reading.data.pins ?? {}));
       this.notify("Loaded the test data saved with this workflow.");
-    else
+    } else
       this.notify(
         `The test data wasn't loaded: ${outcome.message}`,
         undefined,
@@ -10001,6 +10045,14 @@ export class App implements CanvasHost {
     const position = event.state?.weavePosition;
     if (this.restoringHistory && position === this.historyPosition) {
       this.restoringHistory = false;
+      return;
+    }
+    if (this.view === "designer" && this.stepDetails.outputEditDirty?.()) {
+      // An output edit in step details not saved yet: stay, ask, then go on.
+      const again = this.stayInHistory(position);
+      void this.stepDetails.askBeforeLeaving?.().then((go) => {
+        if (go) again();
+      });
       return;
     }
     if (this.view === "designer") {

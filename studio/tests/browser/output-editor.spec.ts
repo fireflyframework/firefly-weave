@@ -231,3 +231,24 @@ for (const size of [
       expect(await clippedText(guard(page))).toEqual([]);
     });
   });
+
+test.describe("leaving the designer with an unsaved output edit", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+  test("Back asks first; Keep editing stays, Discard leaves", async ({
+    page,
+  }) => {
+    const details = await openTestDataFixture(page);
+    const { editor } = await openEditor(details);
+    await replaceText(page, editor, '{"customerId": "unsaved"}');
+    await page.goBack();
+    await expect(guard(page)).toBeVisible();
+    await guard(page).getByRole("button", { name: "Keep editing" }).click();
+    await expect(page).toHaveURL(/\/designer$/);
+    await expect(editor).toContainText("unsaved");
+    await page.goBack();
+    await expect(guard(page)).toBeVisible();
+    await guard(page).getByRole("button", { name: "Discard" }).click();
+    await expect(page).not.toHaveURL(/\/designer$/);
+    await expect(details.dialog).toHaveCount(0);
+  });
+});

@@ -207,8 +207,20 @@ test("copying steps leaves out pins recorded from runs", async ({ page }) => {
   await expect(page.locator('[data-step="lookup-1"]').first()).toBeVisible();
   await expect(
     page.locator('[data-step="lookup-1"] .tile-badge').first(),
-    // Stamped by another workflow file: the pin may be out of date here.
-  ).toHaveAttribute("data-badge", /^pinned/);
+    // Stamped by another workflow file: out of date here, and said so plainly.
+  ).toHaveAttribute("data-badge", "pinned-stale");
+  await expect(
+    page.locator('[data-step="lookup-1"] [title]').first(),
+  ).toHaveAttribute(
+    "title",
+    /Pinned test data, out of date: pinned in another workflow; check it still fits/,
+  );
+  await expect(
+    page.locator('[data-step="lookup"] [title]').first(),
+  ).toHaveAttribute(
+    "title",
+    /Pinned test data, out of date: pinned in another workflow; check it still fits/,
+  );
   await expect(page.locator('[data-step="notify-1"] .tile-badge')).toHaveCount(
     0,
   );
@@ -246,6 +258,31 @@ test("undoing a rename moves the pin back, and deleting a step offers its pin ba
     .filter({ hasText: "Deleted notify and its pinned output." });
   await expect(toast).toHaveCount(1);
   await toast.getByRole("button", { name: "Undo" }).click();
+  await expect(
+    page.locator('[data-step="notify"] .tile-badge').first(),
+  ).toHaveAttribute("data-badge", "pinned");
+});
+
+test("the toolbar's Undo of a delete brings the pin back too, and Redo takes it again", async ({
+  page,
+}) => {
+  const details = await openTestDataFixture(page);
+  await details.open("notify");
+  const pane = await outputPane(details);
+  await pane.getByRole("button", { name: "Generate sample" }).click();
+  await expect(banner(pane)).toBeVisible();
+  await details.close();
+  await fitCanvas(page);
+  await page.locator('[data-step="notify"]').first().click();
+  await page.keyboard.press("Delete");
+  await expect(page.locator('[data-step="notify"]')).toHaveCount(0);
+  await command(page, "Undo");
+  await expect(
+    page.locator('[data-step="notify"] .tile-badge').first(),
+  ).toHaveAttribute("data-badge", "pinned");
+  await command(page, "Redo");
+  await expect(page.locator('[data-step="notify"]')).toHaveCount(0);
+  await command(page, "Undo");
   await expect(
     page.locator('[data-step="notify"] .tile-badge').first(),
   ).toHaveAttribute("data-badge", "pinned");

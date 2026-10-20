@@ -40,7 +40,9 @@ import { checkEntries, type CheckInputs } from "./test-data-check";
 import {
   TEST_DATA_TOO_LARGE,
   emptyTestData,
+  entriesOf,
   fitsTestData,
+  ownerOf,
   pruneEntries,
   renameEntries,
 } from "./test-data-ops";
@@ -148,6 +150,8 @@ export class TestDataService {
   /** Pointers of entries kept on this computer until the platform can classify them. */
   private waiting = new Set<string>();
   private waitingKey: string | null = null;
+  /** Entries pruned with their steps, by pointer, while this opening lasts. */
+  private readonly deleted = new Map<string, unknown>();
   /** Keys of accounts signed out since: a write queued for one never runs. */
   private readonly forgotten = new Set<string>();
   /** The platform revision this copy is based on. */
@@ -184,6 +188,7 @@ export class TestDataService {
     const key = await this.keyOf(place);
     const raw = key ? await this.host.backend.get(key) : null;
     if (opening !== this.opened) return;
+    this.deleted.clear();
     // Opened again for that account: it signed in again.
     if (key) this.forgotten.delete(key);
     this.where = key ? place : { kind: "memory" };
@@ -233,6 +238,7 @@ export class TestDataService {
     for (const key of [this.key, this.waitingKey])
       if (key && this.where.kind === "connected") this.forgotten.add(key);
     this.opened++;
+    this.deleted.clear();
     this.where = { kind: "memory" };
     this.key = null;
     this.waitingKey = null;
@@ -277,11 +283,38 @@ export class TestDataService {
     this.keep();
   }
   prune(exists: (id: string) => boolean): string[] {
-    const { data, removed } = pruneEntries(this.current, exists, this.stamp());
+    const before = this.current;
+    const { data, removed } = pruneEntries(before, exists, this.stamp());
     if (!removed.length) return [];
+    // Kept for an Undo that brings the steps back (the toast's or the toolbar's).
+    const left = new Set(entriesOf(data).map(({ path }) => path));
+    for (const { path, entry } of entriesOf(before))
+      if (!left.has(path)) this.deleted.set(path, entry);
     this.set(data);
     this.keep();
     return removed;
+  }
+  /**
+   * Steps came back (an Undo of their deletion, a Redo of their insertion):
+   * the entries their deletion took return, unless one was set since.
+   * Returns their pointers.
+   */
+  revive(exists: (id: string) => boolean): string[] {
+    let next = this.current;
+    const revived: string[] = [];
+    for (const [path, entry] of [...this.deleted]) {
+      const at = locate(path);
+      const key = at && "key" in at ? at.key : null;
+      if (!key || !exists(ownerOf(key, entry))) continue;
+      this.deleted.delete(path);
+      if (entryAt(next, path) !== undefined) continue;
+      next = withEntry(next, path, entry);
+      revived.push(path);
+    }
+    if (!revived.length) return [];
+    this.set({ ...next, updatedAt: this.stamp() });
+    this.keep();
+    return revived;
   }
   // --- the platform side (platform drafts) ---------------------------------
   /** The platform's document: it replaces this copy, except entries waiting for publishing. */

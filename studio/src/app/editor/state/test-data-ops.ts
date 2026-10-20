@@ -113,7 +113,7 @@ const frameOf = (entry: unknown): string =>
     ? (entry as { frame: string }).frame
     : "";
 /** The step of this workflow that an entry belongs to: its own, or the call that opens its frame. */
-function ownerOf(key: string, entry: unknown): string {
+export function ownerOf(key: string, entry: unknown): string {
   const frame = frameOf(entry);
   return instanceStep(frame ? frame.split("/")[0] : key);
 }

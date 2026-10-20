@@ -347,3 +347,52 @@ describe("test data across draft switches and sign-outs", () => {
     expect(kept.map(([, raw]) => JSON.parse(raw).input.value)).toEqual([1]);
   });
 });
+
+describe("test data of deleted steps", () => {
+  it("comes back when the steps come back, and goes again when they go", async () => {
+    const { value } = host();
+    const service = new TestDataService(value);
+    await service.open({ kind: "local", draftId: "d-1" });
+    const data = withPin(
+      withPin(emptyTestData(ISO), "lookup", pin({ id: 1 }), ISO),
+      "score",
+      pin({ tier: "gold" }),
+      ISO,
+    );
+    await service.change(data, []);
+    let steps = new Set(["score"]);
+    expect(service.prune((id) => steps.has(id))).toEqual(["lookup"]);
+    expect(Object.keys(service.data().pins ?? {})).toEqual(["score"]);
+    // Undo brings the step back: its pin follows.
+    steps = new Set(["score", "lookup"]);
+    expect(service.revive((id) => steps.has(id))).toEqual(["/pins/lookup"]);
+    expect(service.data().pins?.["lookup"]).toEqual(pin({ id: 1 }));
+    // Redo deletes it again; a second revive finds nothing more to bring.
+    steps = new Set(["score"]);
+    service.prune((id) => steps.has(id));
+    expect(service.data().pins?.["lookup"]).toBeUndefined();
+    steps = new Set(["score", "lookup"]);
+    service.revive((id) => steps.has(id));
+    expect(service.revive((id) => steps.has(id))).toEqual([]);
+    expect(service.data().pins?.["lookup"]).toEqual(pin({ id: 1 }));
+  });
+  it("never replaces a pin set since, and forgets the deleted on another opening", async () => {
+    const { value } = host();
+    const service = new TestDataService(value);
+    await service.open({ kind: "local", draftId: "d-1" });
+    await service.change(
+      withPin(emptyTestData(ISO), "lookup", pin({ id: 1 }), ISO),
+      [],
+    );
+    service.prune(() => false);
+    await service.change(
+      withPin(service.data(), "lookup", pin({ id: 2 }), ISO),
+      [],
+    );
+    expect(service.revive(() => true)).toEqual([]);
+    expect(service.data().pins?.["lookup"]).toEqual(pin({ id: 2 }));
+    service.prune(() => false);
+    await service.open({ kind: "local", draftId: "d-2" });
+    expect(service.revive(() => true)).toEqual([]);
+  });
+});

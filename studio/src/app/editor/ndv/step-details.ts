@@ -271,8 +271,10 @@ export class StepDetails {
           () => resolve(false),
         ),
       );
+    this.details.outputEditDirty = () => !!this.outputPane()?.editDirty();
     this.lifetime.onDestroy(() => {
       this.details.askBeforeLeaving = null;
+      this.details.outputEditDirty = null;
       // A question still open when step details goes keeps editing.
       this.guarding()?.keep?.();
     });
