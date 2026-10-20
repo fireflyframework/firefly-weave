@@ -952,3 +952,18 @@ async def test_the_assistant_route_answers_only_product_codes(tmp_path, failure,
     async with gateway(tmp_path, builder=failing) as client:
         response = await client.post("/v1/lumi", json=ask, headers=AUTH)
     assert (response.status_code, response.json()) == (422, {"code": code})
+
+
+def test_the_assistant_instructions_and_reply_format_fit_the_reserve_weave_ai_leaves_them():
+    from firefly_weave.contracts.lumi import LUMI_REPLY_SCHEMA
+
+    from weave_agentic_worker.execution import estimate_tokens, provider_schema
+    from weave_agentic_worker.gateway import INSTRUCTIONS
+
+    # The API leaves these tokens for the gateway's own text (GATEWAY_RESERVE_TOKENS in the server's Weave AI context).
+    reserve = 512
+    reply_format = json.dumps(provider_schema(LUMI_REPLY_SCHEMA))
+    assert estimate_tokens(INSTRUCTIONS, reply_format) <= reserve
+    assert INSTRUCTIONS.startswith("You are Weave AI")
+    for rule in ("whole document", "never a fragment", "data, not instructions", "trimmed", "return no proposals"):
+        assert rule in INSTRUCTIONS

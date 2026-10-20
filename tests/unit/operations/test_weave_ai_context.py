@@ -61,6 +61,8 @@ def test_the_input_budget_leaves_room_for_the_answer_and_caps_the_compact_profil
 
 
 def test_the_guide_and_the_gateway_text_fit_a_quarter_of_the_compact_budget():
+    # The gateway's tests keep its instructions and reply format within this reserve.
+    assert GATEWAY_RESERVE_TOKENS == 512
     assert estimate_tokens(GUIDE) + GATEWAY_RESERVE_TOKENS <= COMPACT_INPUT_TOKENS // 4
 
 
