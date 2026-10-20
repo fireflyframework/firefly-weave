@@ -289,6 +289,10 @@ export function drainStartedAt(record: ChangeRequest): number | null {
 }
 
 export interface ChangeActions {
+  /** Whether Apply plan is the main action now. */
+  applyFirst: boolean;
+  /** Whether the viewer may make the plan of a checked change. */
+  plan: boolean;
   cancel: boolean;
   replan: boolean;
   approve: "hidden" | "enabled" | "blocked";
@@ -334,6 +338,11 @@ export function changeActions(
       can("worker.drain") &&
       (state === "draining" || drainWindowOpen(record, now)),
     apply: ready && can("deployment.apply"),
+    // Apply is the main action once the workers are finishing, or when none must; before that it is Let workers
+    // finish, and an apply would only answer that they are still busy.
+    applyFirst: state === "draining" || record.drain_set.length === 0,
+    // Making the plan is an explicit action outside the wizard: whoever makes it can't approve it.
+    plan: state === "ready_to_plan" && can("deployment.plan"),
     force:
       state === "draining" &&
       started !== null &&

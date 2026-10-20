@@ -1277,3 +1277,149 @@ for (const viewport of viewports)
       }
     });
   });
+
+test.describe("the progress view for someone who did not request the change", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+
+  test("a checked change is planned only when this person chooses Plan this change", async ({
+    page,
+  }) => {
+    // Ana requested the change; this person opens it from a link while it is checked. Making its plan would make
+    // them its planner, who can't approve it, so the page never does it on its own.
+    const id = "c0000000-0000-4000-8000-0000000000f1";
+    const state = await platform(page, full, [
+      changeRecord({
+        id,
+        state: "ready_to_plan",
+        plan_id: null,
+        plan_digest: null,
+        plan_expires_at: null,
+        planned_by: null,
+      }),
+    ]);
+    await page.clock.install();
+    await page.goto(`/operate/clusters/change-requests/${id}`);
+    const progress = page.locator("weave-change-request-progress");
+    await expect(progress.locator(".change-summary .status-pill")).toHaveText(
+      "Making the plan",
+    );
+    // Two polls pass without a plan being made.
+    await page.clock.fastForward(5_000);
+    await page.clock.fastForward(5_000);
+    expect(
+      state.calls.filter((call) => call.path.endsWith("/advance")),
+    ).toEqual([]);
+    const plan = progress.getByRole("button", { name: "Plan this change" });
+    await expect(plan).toHaveAccessibleDescription(
+      "The target was checked. Whoever makes the plan can't approve it.",
+    );
+    await plan.click();
+    await expect
+      .poll(
+        () =>
+          state.calls.filter((call) => call.path.endsWith("/advance")).length,
+      )
+      .toBe(1);
+    expect(
+      state.calls.find((call) => call.path.endsWith("/advance"))!.headers[
+        "if-match"
+      ],
+    ).toBe('"1"');
+    await expect(progress.locator(".change-summary .status-pill")).toHaveText(
+      "Waiting for approval",
+    );
+    // This person made the plan: Approve plan is off, and says why to a screen reader.
+    const approve = progress.getByRole("button", { name: "Approve plan" });
+    await expect(approve).toBeDisabled();
+    await expect(approve).toHaveAccessibleDescription(
+      "You requested or planned this change. Another approver must review it.",
+    );
+  });
+
+  test("a direct link names the target and the plan's two deadlines", async ({
+    page,
+  }) => {
+    const id = "c0000000-0000-4000-8000-0000000000f2";
+    await platform(page, full, [
+      changeRecord({
+        id,
+        drain: { mode: "drain_first", timeout_seconds: 300 },
+        plan_expires_at: iso(840),
+      }),
+    ]);
+    await page.goto(`/operate/clusters/change-requests/${id}`);
+    const progress = page.locator("weave-change-request-progress");
+    await expect(progress.locator(".change-summary")).toContainText(
+      "local-docker",
+    );
+    // The plan expires in 14 minutes; the workers need 5 minutes and the hand-off 2, so approve within 7.
+    await expect(progress.locator(".progress-steps")).toContainText(
+      /Expires in 1[34]:\d\d · Approve within [67]:\d\d/,
+    );
+  });
+
+  test("before the workers finish, Let workers finish is the main action", async ({
+    page,
+  }) => {
+    const id = "c0000000-0000-4000-8000-0000000000f3";
+    await platform(page, full, [
+      changeRecord({
+        id,
+        state: "approved",
+        approval: { principal_id: ana, approved_at: iso(-5) },
+        drain: { mode: "drain_first", timeout_seconds: 300 },
+        drain_set: [{ worker_id: workerIds[0], host: "w-3", active_leases: 1 }],
+        plan_expires_at: iso(840),
+      }),
+    ]);
+    await page.goto(`/operate/clusters/change-requests/${id}`);
+    const progress = page.locator("weave-change-request-progress");
+    await expect(
+      progress.getByRole("button", { name: "Let workers finish" }),
+    ).toHaveClass(/primary/);
+    await expect(
+      progress.getByRole("button", { name: "Apply plan" }),
+    ).not.toHaveClass(/primary/);
+  });
+});
+
+for (const viewport of [
+  { width: 1440, height: 900 },
+  { width: 360, height: 640 },
+])
+  test(`progress dots sit on their step's first line at ${viewport.width}x${viewport.height}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize(viewport);
+    const id = "c0000000-0000-4000-8000-0000000000f4";
+    await platform(page, full, [changeRecord({ id })]);
+    await page.goto(`/operate/clusters/change-requests/${id}`);
+    const steps = page.locator(".progress-steps li");
+    await expect(steps.first()).toBeVisible();
+    const offsets = await steps.evaluateAll((items) =>
+      items.map((item) => {
+        const dot = item.querySelector(".step-dot")!.getBoundingClientRect();
+        const label = item
+          .querySelector(".step-text strong")!
+          .getBoundingClientRect();
+        return dot.top + dot.height / 2 - (label.top + label.height / 2);
+      }),
+    );
+    for (const offset of offsets)
+      expect(Math.abs(offset)).toBeLessThanOrEqual(1);
+  });
+
+test("with icons only, the Clusters entry keeps its name beside the count", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 360, height: 640 });
+  await platform(page, full, [changeRecord()]);
+  await page.goto("/operate/clusters");
+  await expect(page.locator(".nav-badge")).toHaveText("1", { timeout: 20_000 });
+  await expect(
+    page.getByRole("button", {
+      name: "Clusters, 1 change waits for your approval",
+      exact: true,
+    }),
+  ).toBeVisible();
+});

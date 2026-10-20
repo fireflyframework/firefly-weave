@@ -1218,6 +1218,15 @@ export class App implements CanvasHost {
         run: () => void this.openChangeRequest(notice.id),
       });
   }
+  /**
+   * A navigation entry's accessible name: its label, and for Clusters the changes waiting for this person's
+   * approval, so the name stays "Clusters" when the sidebar shows icons only.
+   */
+  navName(id: string, label: string): string | null {
+    const count = this.approvalWatch.count;
+    if (id !== "clusters" || !count) return null;
+    return `${label}, ${count} ${count === 1 ? "change waits" : "changes wait"} for your approval`;
+  }
   /** Opens a change request on the Clusters page. */
   async openChangeRequest(id: string) {
     if (this.view !== "clusters") await this.navigate("clusters");

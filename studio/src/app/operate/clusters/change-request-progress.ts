@@ -84,12 +84,10 @@ export interface ApplyChoice {
             }
             @if (step.label === "Plan ready" && step.state === "current") {
               @let time = countdown();
-              <small class="numeric" [attr.data-tone]="countdownTone(time.tone)"
-                >{{
-                  time.tone === "expired"
-                    ? "Expired"
-                    : "Expires in " + time.label
-                }}{{ time.note ? " · " + time.note : "" }}</small
+              <small
+                class="numeric"
+                [attr.data-tone]="countdownTone(time.tone)"
+                >{{ deadlineText(time) }}</small
               >
             }
           </span>
@@ -124,7 +122,7 @@ export interface ApplyChoice {
       <p class="notice" role="status">{{ warningText() }}</p>
     }
     @if (actions.approve === "blocked") {
-      <p class="hint four-eyes">{{ fourEyes }}</p>
+      <p class="hint four-eyes" id="change-four-eyes">{{ fourEyes }}</p>
     }
     @if (error) {
       <p class="notice" data-tone="danger" role="alert">
@@ -146,20 +144,43 @@ export interface ApplyChoice {
         ></textarea>
       </label>
     }
+    @if (actions.plan && !planningHere) {
+      <p class="hint" id="change-plan-note">
+        The target was checked. Whoever makes the plan can't approve it.
+      </p>
+    }
     <div class="actions progress-actions">
+      @if (actions.plan && !planningHere) {
+        <button
+          type="button"
+          class="primary"
+          aria-describedby="change-plan-note"
+          [disabled]="busy"
+          (click)="plan.emit()"
+        >
+          Plan this change
+        </button>
+      }
       @if (actions.approve !== "hidden") {
         <button
           type="button"
           class="primary"
           [disabled]="busy || actions.approve === 'blocked'"
-          [attr.aria-describedby]="null"
+          [attr.aria-describedby]="
+            actions.approve === 'blocked' ? 'change-four-eyes' : null
+          "
           (click)="approve.emit()"
         >
           Approve plan
         </button>
       }
       @if (actions.drain && state === "approved") {
-        <button type="button" [disabled]="busy" (click)="drainNow.emit()">
+        <button
+          type="button"
+          [class.primary]="!actions.applyFirst"
+          [disabled]="busy"
+          (click)="drainNow.emit()"
+        >
           Let workers finish
         </button>
       }
@@ -176,7 +197,7 @@ export interface ApplyChoice {
         } @else {
           <button
             type="button"
-            class="primary"
+            [class.primary]="actions.applyFirst"
             [disabled]="busy"
             (click)="apply.emit({ force: false, reason: '' })"
           >
@@ -236,6 +257,9 @@ export class ChangeRequestProgress {
   @Output() drainNow = new EventEmitter<void>();
   @Output() apply = new EventEmitter<ApplyChoice>();
   @Output() replan = new EventEmitter<void>();
+  @Output() plan = new EventEmitter<void>();
+  /** True while the page makes the plan itself (the change was just requested in the wizard). */
+  @Input() planningHere = false;
   readonly fourEyes = FOUR_EYES_COPY;
   readonly intentLabel = changeIntentLabel;
   forcing = false;
@@ -266,6 +290,22 @@ export class ChangeRequestProgress {
   }
   tone(state: ChangeRequest["state"]) {
     return toneAttribute(changeStateTone(state));
+  }
+  /** "Expires in 14:00 · Approve within 6:59" when workers finish first; "Expires in 9:42" otherwise. */
+  deadlineText(time: ReturnType<ChangeRequestProgress["countdown"]>) {
+    if (time.tone === "expired") return "Expired";
+    const expires = this.record.plan_expires_at
+      ? Math.max(
+          0,
+          Math.ceil(
+            (Date.parse(this.record.plan_expires_at) - this.now()) / 1000,
+          ),
+        )
+      : 0;
+    const clock = `${Math.floor(expires / 60)}:${String(expires % 60).padStart(2, "0")}`;
+    return time.note
+      ? `Expires in ${clock} · ${time.note}`
+      : `Expires in ${clock}`;
   }
   countdownTone(tone: string) {
     return tone === "neutral" || tone === "expired" ? null : tone;

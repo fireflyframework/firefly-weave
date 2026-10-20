@@ -288,6 +288,8 @@ import { RefreshStatus } from "../refresh-status";
             (drainNow)="drainChange()"
             (apply)="applyChange($event)"
             (replan)="replanChange()"
+            [planningHere]="plannedHere.has(change.id)"
+            (plan)="planChange()"
           />
         </section>
       } @else if (screen === "target" && target) {
@@ -402,6 +404,14 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
   changeFilter = "";
   changeTarget = "";
   private changeSequence = 0;
+  /**
+   * Change requests requested in this page's wizard: only for these does the page make the plan itself, as the
+   * wizard's last step. Anyone else who opens a checked change makes the plan by choosing Plan this change, since
+   * whoever makes the plan can't approve it.
+   */
+  readonly plannedHere = new Set<string>();
+  /** The open change's target, read with it, for its name on a direct link. */
+  private changeTargetRecord: Target | null = null;
   readonly changeCan = (capability: string) =>
     !!this.change && this.host.can(capability, this.change.target_id);
   readonly personNameFn = (id: string) => this.personName(id);
@@ -891,6 +901,9 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
   targetName(id: string) {
     return (
       this.store.targets.find((target) => target.id === id)?.name ??
+      (this.changeTargetRecord?.id === id
+        ? this.changeTargetRecord.name
+        : null) ??
       `Target ${shortId(id)}`
     );
   }
@@ -1420,9 +1433,11 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
       ]);
       if (seq !== this.detailSequence) return true;
       this.change = record;
-      if (target)
+      if (target) {
+        this.changeTargetRecord = target;
         this.changeTargetStrict =
           target.approval_policy?.distinct_approver !== false;
+      }
     } catch (error) {
       if (seq === this.detailSequence) this.showError(error);
       return false;
@@ -1430,6 +1445,7 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
     const record = this.change;
     if (
       record?.state === "ready_to_plan" &&
+      this.plannedHere.has(record.id) &&
       this.host.can("deployment.plan", record.target_id) &&
       !this.store.mutating
     ) {
@@ -1565,6 +1581,7 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
       request,
     );
     if (!result) return;
+    this.plannedHere.add(result.id);
     this.host.notify("Change request created. Checking the target first.");
     await this.openChange(result);
   }
@@ -1691,6 +1708,18 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
           ? { force_after_timeout: true, force_reason: choice.reason }
           : {}),
       },
+    );
+    if (result && this.change?.id === record.id) this.change = result;
+  }
+  /** Makes the plan of a checked change on an explicit click; whoever makes it can't approve it. */
+  async planChange() {
+    const record = this.change;
+    if (!record || record.state !== "ready_to_plan") return;
+    const result = await this.store.mutate<ChangeRequest>(
+      `deployment-change-requests/${record.id}/advance`,
+      undefined,
+      "POST",
+      record.revision,
     );
     if (result && this.change?.id === record.id) this.change = result;
   }

@@ -243,3 +243,53 @@ describe("a change that needs a check", () => {
     expect(last.detail).toContain("take new tasks again");
   });
 });
+
+describe("making the plan and the main action", () => {
+  const all = () => true;
+  it("offers Plan this change on a checked change to someone who may plan", () => {
+    const checked = change({
+      state: "ready_to_plan",
+      plan_id: null,
+      plan_digest: null,
+      plan_expires_at: null,
+    });
+    expect(changeActions(checked, all, "carmen", serverNow).plan).toBe(true);
+    expect(
+      changeActions(
+        checked,
+        (c) => c === "deployment.read",
+        "carmen",
+        serverNow,
+      ).plan,
+    ).toBe(false);
+    expect(changeActions(change(), all, "carmen", serverNow).plan).toBe(false);
+  });
+  it("makes Apply the main action only once the workers are finishing, or when none must", () => {
+    const drainSet = [{ worker_id: "w1", host: "h1", active_leases: 1 }];
+    const approved = change({
+      state: "approved",
+      drain: { mode: "drain_first", timeout_seconds: 300 },
+      drain_set: drainSet,
+      plan_expires_at: at(840),
+    });
+    expect(changeActions(approved, all, "carmen", serverNow).applyFirst).toBe(
+      false,
+    );
+    expect(
+      changeActions(
+        change({ ...approved, state: "draining" }),
+        all,
+        "carmen",
+        serverNow,
+      ).applyFirst,
+    ).toBe(true);
+    expect(
+      changeActions(
+        change({ state: "approved", drain_set: [] }),
+        all,
+        "carmen",
+        serverNow,
+      ).applyFirst,
+    ).toBe(true);
+  });
+});
