@@ -25,11 +25,14 @@ reads field aliases only. Entry keys are instance keys typed ``InstanceKeyText``
 
 import json
 import re
+from collections.abc import Callable, Iterator
 from datetime import datetime
 from pathlib import Path
-from typing import Annotated, Final, Literal, Self, cast
+from typing import Annotated, Any, Final, Literal, Self, cast
 from uuid import UUID
 
+from jsonschema import Draft202012Validator, validators
+from jsonschema.exceptions import ValidationError as SchemaViolation
 from pydantic import AwareDatetime, BeforeValidator, ConfigDict, Field, ValidationInfo, model_validator
 
 from firefly_weave.contracts.definitions import ContractModel, OmissionOnly, _is_absent, _omit_absent_default
@@ -275,6 +278,38 @@ def studio_test_data_schema() -> JsonObject:
     """The normative JSON Schema of a test-data document (a fresh copy on every call)."""
     text = (Path(__file__).parent / "schemas" / "studio-test-data-v1.json").read_text("utf-8")
     return cast(JsonObject, json.loads(text))
+
+
+def _ecmascript_pattern(
+    validator: Any, pattern: str, instance: object, schema: JsonObject
+) -> Iterator[SchemaViolation]:
+    # JSON Schema patterns are ECMAScript: a final "$" matches only at the very end, not before a newline.
+    anchored = re.sub(r"(?<!\\)\$$", r"\\Z", pattern)
+    if validator.is_type(instance, "string") and re.search(anchored, cast(str, instance)) is None:
+        yield SchemaViolation("does not match the pattern")
+
+
+_extend: Callable[..., Any] = validators.extend
+_TurnsValidator = _extend(Draft202012Validator, {"pattern": _ecmascript_pattern})
+
+
+def studio_ai_turns_schema() -> JsonObject:
+    """The JSON Schema of one recorded ``aiTurns`` entry (a fresh copy on every call)."""
+    text = (Path(__file__).parent / "schemas" / "studio-ai-turns-v1.json").read_text("utf-8")
+    return cast(JsonObject, json.loads(text))
+
+
+def ai_turns_problems(entry: object) -> list[str]:
+    """Where a recorded ``aiTurns`` entry breaks its schema, as JSON pointers; empty when it is valid.
+
+    Only places are reported, never values: recorded turns may hold customer data.
+    """
+    validator = _TurnsValidator(studio_ai_turns_schema(), format_checker=Draft202012Validator.FORMAT_CHECKER)
+    places = {
+        "".join(f"/{str(part).replace('~', '~0').replace('/', '~1')}" for part in error.absolute_path)
+        for error in validator.iter_errors(entry)
+    }
+    return sorted(places)
 
 
 def parse_test_data(raw: bytes) -> StudioTestData:

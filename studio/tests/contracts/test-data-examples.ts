@@ -71,7 +71,7 @@ export const testData: StudioTestData = {
   },
   aiTurns: {
     support: {
-      turns: [{ result: { text: "Your order shipped." } }],
+      turns: [{ final: { text: "Your order shipped." } }],
       autoApprove: true,
       source: "manual",
     },

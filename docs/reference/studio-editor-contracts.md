@@ -159,7 +159,7 @@ TypeScript types in `studio/src/app/editor/state/test-data.ts`.
 | `input` | The test input: `{value, source}` |
 | `pins` | Pinned outputs, with the time they were pinned (`pinnedAt`) and the fingerprints that mark them out of date (`configHash`, `contractHash`, `upstreamHash`) |
 | `signals`, `humans` | Scripts: a payload or a decision, or `{"outcome": "timeout"}` and `{"outcome": "expire"}`; an optional `frame` |
-| `aiTurns` | Recorded agent turns: `{turns, memory?, autoApprove?}` with their source and fingerprints; each item of `turns` is an object whose shape `urn:firefly-weave:schema:studio-ai-turns:v1` defines |
+| `aiTurns` | Recorded AI turns: `{turns, memory?, autoApprove?}` with their source and fingerprints. Each entry follows `urn:firefly-weave:schema:studio-ai-turns:v1` ([studio-ai-turns-v1.json](../../src/firefly_weave/contracts/schemas/studio-ai-turns-v1.json)): a turn is `{toolCalls: [{name, arguments}], text?}` or `{final, text?}`, with at most 33 turns and 16 calls a turn. An AI task replays one `final` turn |
 | `workflows` | Mocks for steps inside called workflows, by callee reference: `{"notify-customer@1.0.0": {"mocks": {...}}}` |
 | `waits` | `autoAdvance`, true when absent |
 
