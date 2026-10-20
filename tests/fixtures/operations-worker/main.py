@@ -35,6 +35,7 @@ from uuid import UUID
 import httpx
 
 from firefly_weave import private_origins
+from firefly_weave.contracts.connectors import ConnectorFailure
 from firefly_weave.sdk.transport import WorkerTransport
 from firefly_weave.sdk.worker import Worker
 from firefly_weave.sdk.worker_auth import ClientCredentialsTokenProvider, WorkerTokenAuth, private_transport
@@ -55,6 +56,12 @@ def capacity(environ: Mapping[str, str]) -> int:
 
 
 async def sleep(lease: Any) -> dict[str, int]:
+    if lease.input.get("fail") == "unknown":
+        # A test fault: report an outcome the platform cannot know, so it opens an incident. Only a fixture
+        # service started with WEAVE_FIXTURE_FAULTS=1 does; the platform's own workers refuse the input.
+        if os.environ.get("WEAVE_FIXTURE_FAULTS") != "1":
+            raise ValueError("Faults are off on this fixture worker")
+        raise ConnectorFailure("FIXTURE_FAULT", "unknown")
     milliseconds = int(lease.input["ms"])
     await asyncio.sleep(milliseconds / 1000)
     return {"slept_ms": milliseconds}

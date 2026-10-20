@@ -2,7 +2,7 @@
   "capabilities": [{
     "taskType": "example-sleep",
     "taskVersion": "1.0.0",
-    "inputSchema": {"type": "object", "properties": {"ms": {"type": "integer", "minimum": 0, "maximum": 60000}}, "required": ["ms"], "additionalProperties": false},
+    "inputSchema": {"type": "object", "properties": {"ms": {"type": "integer", "minimum": 0, "maximum": 60000}, "fail": {"type": "string", "enum": ["unknown"]}}, "required": ["ms"], "additionalProperties": false},
     "outputSchema": {"type": "object", "properties": {"slept_ms": {"type": "integer"}}, "required": ["slept_ms"], "additionalProperties": false},
     "sideEffect": "read_only",
     "timeoutSeconds": 120

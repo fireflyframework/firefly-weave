@@ -33,8 +33,8 @@ from firefly_weave.cli.remote import command, family, machine_result
 def operations() -> None:
     """Manage container destinations with reviewed plans and an outbound runner.
 
-    Observe a target, set desired components, create a plan, review and approve
-    its digest, then apply it. The runner keeps provider credentials locally.
+    Request a change, let the platform observe the target and plan it, approve
+    the plan, then apply it; or observe, plan, approve and apply step by step. The runner keeps provider credentials locally.
     `summary` and `telemetry` read the environment's platform health and the
     project's telemetry settings.
     """
@@ -47,6 +47,7 @@ for name, prefix in (
     ("plans", "deployment_plans"),
     ("jobs", "deployment_jobs"),
     ("runners", "deployment_runners"),
+    ("change-requests", "deployment_change_requests"),
 ):
     operations.add_command(family(name, prefix))
 operations.add_command(command("operations_summary.read", "summary"))

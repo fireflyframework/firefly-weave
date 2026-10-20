@@ -245,3 +245,30 @@ async def test_the_token_relay_carries_credentials_only_where_an_entry_allows_th
         assert await _ping(relay.sockets[0].getsockname()[1]) == b"pong:ping"
         relay.close()
     server.close()
+
+
+async def test_the_fixture_reports_an_unknown_outcome_only_when_faults_are_turned_on(monkeypatch):
+    """O-J9 opens an incident through the fixture: {"fail": "unknown"} reports an unknown outcome, and only on a
+    fixture service the journey started with WEAVE_FIXTURE_FAULTS=1; the platform's own workers never do."""
+    from firefly_weave.contracts.connectors import ConnectorFailure
+
+    module = fixture()
+    lease = SimpleNamespace(input={"ms": 0, "fail": "unknown"})
+    monkeypatch.delenv("WEAVE_FIXTURE_FAULTS", raising=False)
+    with pytest.raises(ValueError, match="Faults are off"):
+        await module.sleep(lease)
+    monkeypatch.setenv("WEAVE_FIXTURE_FAULTS", "1")
+    with pytest.raises(ConnectorFailure) as fault:
+        await module.sleep(lease)
+    assert (fault.value.code, fault.value.outcome) == ("FIXTURE_FAULT", "unknown")
+    assert await module.sleep(SimpleNamespace(input={"ms": 0})) == {"slept_ms": 0}
+
+
+def test_the_manifest_accepts_only_the_unknown_fault():
+    (capability,) = manifest()["capabilities"]
+    schema = capability["inputSchema"]
+    jsonschema.validate({"ms": 0, "fail": "unknown"}, schema)
+    jsonschema.validate({"ms": 10}, schema)
+    for wrong in ({"ms": 0, "fail": "boom"}, {"fail": "unknown"}):
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(wrong, schema)
