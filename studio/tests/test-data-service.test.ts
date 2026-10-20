@@ -555,4 +555,18 @@ describe("test data set before the account is known", () => {
     expect(await service.carryOver(async () => true)).toEqual([]);
     expect(service.data().input).toBeUndefined();
   });
+  it("forgets what deleted steps held when the account signs out", async () => {
+    const { value } = host();
+    const service = new TestDataService(value);
+    await service.open({ kind: "local", draftId: "d-1" });
+    await service.change(
+      withPin(emptyTestData(ISO), "notify", pin({ id: 1 }), ISO),
+      [],
+    );
+    service.prune(() => false);
+    service.forget();
+    // An Undo after the sign-out brings nothing of the old account back.
+    expect(await service.revive(() => true)).toEqual([]);
+    expect(service.data().pins).toBeUndefined();
+  });
 });
