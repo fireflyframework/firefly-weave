@@ -215,14 +215,31 @@ async def test_a_missing_model_inside_the_agent_is_classified():
         ("<think>a</think>One.<think>b</think> Two.", "One. Two."),
         ("<think>a<think>private-canary</think>c</think>The order shipped.", "The order shipped."),
         ("One.<think>a<think>b</think>c</think> Two.", "One. Two."),
-        ("c</think>The order shipped.", "The order shipped."),
         ("<THINK>kept</THINK> as written.", "<THINK>kept</THINK> as written."),
+        ("Use the </think> tag to end reasoning.", "Use the </think> tag to end reasoning."),
+        ("<think>a</think>Close with </think> please.", "Close with </think> please."),
         ("No reasoning here.", "No reasoning here."),
     ],
-    ids=["leading", "inside", "two blocks", "nested", "nested inside", "a nested remainder", "other case", "none"],
+    ids=[
+        "leading",
+        "inside",
+        "two blocks",
+        "nested",
+        "nested inside",
+        "other case",
+        "a closing tag in the answer",
+        "a closing tag after a block",
+        "none",
+    ],
 )
 def test_closed_reasoning_is_removed_wherever_it_appears(answer, kept):
     assert without_thinking(answer).strip() == kept
+
+
+def test_the_rest_of_a_split_reasoning_block_is_removed_only_after_a_split():
+    # The endpoint split off "<think>a<think>b</think>" as reasoning; the answer starts with the rest of the block.
+    assert without_thinking("c</think>The order shipped.", split=True).strip() == "The order shipped."
+    assert without_thinking("c</think>The order shipped.").strip() == "c</think>The order shipped."
 
 
 @pytest.mark.parametrize(

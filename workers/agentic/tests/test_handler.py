@@ -773,6 +773,16 @@ async def test_a_text_result_cut_off_by_the_token_limit_fails(tmp_path, answer):
     assert "private-reasoning-canary" not in repr(failed.value) and "cut" not in str(failed.value.args)
 
 
+async def test_a_closing_reasoning_tag_in_an_answer_is_kept(tmp_path):
+    answer = "Use the </think> tag to end reasoning."
+    builder = recording_builder([], lambda _: chat_answer(answer))
+    with po.installed(OLLAMA_ORIGINS):
+        output = await AgenticTaskHandler(OllamaTransport(), ollama_policy(tmp_path), model_builder=builder)(
+            ollama_lease(outputSchema=TEXT_SCHEMA)
+        )
+    assert output["result"] == answer
+
+
 async def test_a_text_result_still_meets_its_schema(tmp_path):
     builder = recording_builder([], lambda _: chat_answer("x" * 30))
     with po.installed(OLLAMA_ORIGINS), pytest.raises(ConnectorFailure) as failed:

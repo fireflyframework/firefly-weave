@@ -36,6 +36,7 @@ from fireflyframework_agentic.config import FireflyAgenticConfig
 from fireflyframework_agentic.reasoning.registry import reasoning_registry
 from pydantic_ai import NativeOutput, PromptedOutput, StructuredDict, ToolOutput
 from pydantic_ai.exceptions import UsageLimitExceeded
+from pydantic_ai.messages import ThinkingPart
 from pydantic_ai.models import Model
 from pydantic_ai.usage import RunUsage, UsageLimits
 
@@ -127,7 +128,8 @@ _TEXT_KEYWORDS = frozenset({"type", "minLength", "maxLength", "title", "descript
 # Some models write their reasoning inline as <think>…</think>; it is never returned or stored. An innermost block
 # holds no other opening tag, so nested blocks are removed from the inside out.
 _THINKING = re.compile(r"<think>(?:(?!<think>).)*?</think>", re.DOTALL)
-# A closing tag left in the answer ends the rest of a nested block whose start the endpoint already removed.
+# When the endpoint split reasoning off the answer, a closing tag left in the answer ends the rest of a nested
+# block whose start it removed. Without such a split, a closing tag is part of the answer.
 _REASONING_REMAINDER = re.compile(r"\A.*</think>", re.DOTALL)
 
 
@@ -136,12 +138,16 @@ def text_result(schema: dict[str, Any]) -> bool:
     return schema.get("type") == "string" and set(schema) <= _TEXT_KEYWORDS
 
 
-def without_thinking(text: str) -> str:
-    """The answer without its closed ``<think>…</think>`` blocks, wherever they appear, nested ones included."""
+def without_thinking(text: str, *, split: bool = False) -> str:
+    """The answer without its closed ``<think>…</think>`` blocks, wherever they appear, nested ones included.
+
+    ``split`` says the endpoint already split reasoning off this answer; then the rest of a nested block before a
+    closing tag is removed too.
+    """
     previous = None
     while previous != text:
         previous, text = text, _THINKING.sub("", text)
-    return _REASONING_REMAINDER.sub("", text, count=1)
+    return _REASONING_REMAINDER.sub("", text, count=1) if split else text
 
 
 def estimate_tokens(*parts: str) -> int:
@@ -222,7 +228,8 @@ async def _run_model(
             if answer.response.finish_reason == "length":
                 # The answer stopped at the output token limit: it is incomplete, and may end inside reasoning.
                 raise ConnectorFailure("LLM_LIMIT", "failed")
-            result = without_thinking(answer.output).strip()
+            split = any(isinstance(part, ThinkingPart) for part in answer.response.parts)
+            result = without_thinking(answer.output, split=split).strip()
         else:
             if output_mode == "native" and not model.profile.get("supports_json_schema_output", False):
                 output_mode = "prompted"
