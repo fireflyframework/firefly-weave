@@ -462,3 +462,10 @@ def test_a_selected_step_too_large_to_send_whole_is_named_with_a_note():
         "uses": "crm-lookup@1.3.0",
         "note": "This step is too large to send whole.",
     }
+
+
+def test_weave_ai_stays_a_registered_service_and_its_helpers_do_not():
+    from firefly_weave.operations import lumi
+
+    assert vars(lumi.LumiService).get("__pyfly_stereotype__") == "service"
+    assert "__pyfly_stereotype__" not in vars(lumi._answer_limit)

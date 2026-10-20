@@ -95,7 +95,6 @@ def check_proposals(reply: LumiReply) -> LumiAnswer:
     return LumiAnswer.model_validate({"answer": reply.answer, "proposals": checked, "followUps": reply.follow_ups})
 
 
-@service
 def _answer_limit(config: LumiConfiguration, profile: Profile) -> LumiConfiguration:
     """The configuration the gateway receives: the profile's answer limit replaces a larger configured one."""
     limit = output_tokens(profile, config.profile.options.max_tokens)
@@ -105,6 +104,7 @@ def _answer_limit(config: LumiConfiguration, profile: Profile) -> LumiConfigurat
     return config.model_copy(update={"profile": config.profile.model_copy(update={"options": options})})
 
 
+@service
 class LumiService:
     def __init__(
         self,
