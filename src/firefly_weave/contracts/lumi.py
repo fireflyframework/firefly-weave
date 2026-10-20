@@ -48,6 +48,22 @@ class LumiReply(BaseModel):
         return self
 
 
+class LumiCheckedProposal(LumiProposal):
+    # Error-severity findings when the platform checked the source; 0 when it is a valid document of its kind.
+    diagnostics: int = Field(ge=0)
+
+
+class LumiAnswer(BaseModel):
+    """What asking Weave AI returns: its reply, with every proposal checked by the platform."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True, populate_by_name=True)
+    answer: str = Field(min_length=1, max_length=20000)
+    proposals: list[LumiCheckedProposal] = Field(default_factory=list, max_length=5)
+    follow_ups: list[Annotated[str, Field(min_length=1, max_length=1000)]] = Field(
+        default_factory=list, max_length=5, alias="followUps"
+    )
+
+
 def reply_schema() -> JsonObjectData:
     schema = LumiReply.model_json_schema(by_alias=True)
     # A schema carried as const data must contain no refs for Pydantic's schema exporter.

@@ -110,10 +110,10 @@ from firefly_weave.contracts.incident_queries import IncidentQuery
 from firefly_weave.contracts.integration_events import DeliveryAttempt, DeliveryView, Subscription, SubscriptionRequest
 from firefly_weave.contracts.language import LanguageManifest
 from firefly_weave.contracts.lumi import (
+    LumiAnswer,
     LumiAskRequest,
     LumiConfiguration,
     LumiConfigurationRequest,
-    LumiReply,
     LumiStatus,
 )
 from firefly_weave.contracts.maintenance import RetentionApplication, RetentionPlan, RetentionRequest
@@ -781,7 +781,7 @@ OPERATIONS = {
             revision="optional",
         ),
         Operation("lumi.status", ENVIRONMENT + "/lumi/status", "GET", LumiStatus, "lumi.use"),
-        Operation("lumi.ask", ENVIRONMENT + "/lumi/ask", "POST", LumiReply, "lumi.use", request=LumiAskRequest),
+        Operation("lumi.ask", ENVIRONMENT + "/lumi/ask", "POST", LumiAnswer, "lumi.use", request=LumiAskRequest),
         Operation(
             "compatibility.read",
             PROJECT + "/operations/compatibility",

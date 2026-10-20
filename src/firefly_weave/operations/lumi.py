@@ -28,7 +28,9 @@ from firefly_weave.access.audit import AuditContext
 from firefly_weave.access.models import Principal
 from firefly_weave.access.repository import load_principal
 from firefly_weave.access.service import audit
+from firefly_weave.compiler.api import validate_authoring
 from firefly_weave.compiler.expressions import measure_value
+from firefly_weave.compiler.parser import parse_source
 from firefly_weave.connections.diagnostics import keyless_connection
 from firefly_weave.connections.repository import ConnectionRepository
 from firefly_weave.connections.secret_execution import resolve_secret
@@ -38,7 +40,9 @@ from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.agentic import AGENTIC_DESCRIPTOR, CONNECTOR_REFERENCE, validate_connection
 from firefly_weave.contracts.connectors import ConnectionRevision
 from firefly_weave.contracts.lumi import (
+    LumiAnswer,
     LumiAskRequest,
+    LumiCheckedProposal,
     LumiConfiguration,
     LumiConfigurationRequest,
     LumiReply,
@@ -57,6 +61,30 @@ from firefly_weave.operations.lumi_deployments import COLLECTIONS, deployment_co
 from firefly_weave.operations.lumi_gateway import LumiGatewayClient
 from firefly_weave.operations.run_views import RunViewService
 from firefly_weave.persistence.uow import Transaction
+
+# The document kind each proposal kind must hold.
+PROPOSAL_KINDS = {
+    "workflow": "Workflow",
+    "decisionTable": "DecisionTable",
+    "action": "Action",
+    "connector": "Connector",
+}
+
+
+def check_proposals(reply: LumiReply) -> LumiAnswer:
+    """The reply with each proposal's error count from the platform's own authoring check (no catalog needed)."""
+    checked = []
+    for proposal in reply.proposals:
+        result = validate_authoring(proposal.source, format=proposal.format)
+        errors = sum(1 for item in result.diagnostics if item.severity == "error")
+        try:
+            document = parse_source(proposal.source, format=proposal.format).value
+        except Exception:
+            document = None
+        if errors == 0 and (not isinstance(document, dict) or document.get("kind") != PROPOSAL_KINDS[proposal.kind]):
+            errors = 1
+        checked.append(LumiCheckedProposal(**proposal.model_dump(), diagnostics=errors))
+    return LumiAnswer.model_validate({"answer": reply.answer, "proposals": checked, "followUps": reply.follow_ups})
 
 
 @service
@@ -237,7 +265,9 @@ class LumiService:
             explanation_only=request.explanation_only,
         )
 
-    async def ask(self, actor: Principal, scope: Scope, request: LumiAskRequest, *, context: AuditContext) -> LumiReply:
+    async def ask(
+        self, actor: Principal, scope: Scope, request: LumiAskRequest, *, context: AuditContext
+    ) -> LumiAnswer:
         async with self.definitions.transaction(scope, None, mutation=False) as tx:
             actor = await self._require(tx, actor, "lumi.use", context)
             config = await self._read(tx)
@@ -269,7 +299,9 @@ class LumiService:
                         raise CatalogError(409, "WV-LUMI-REVISION", "Weave AI configuration changed; reply discarded")
                 # Recheck attachment permissions and simulation ownership before releasing output.
                 await self._attachments(actor, scope, request, context)
-                return reply.model_copy(update={"proposals": []}) if request.explanation_only else reply
+                if request.explanation_only:
+                    reply = reply.model_copy(update={"proposals": []})
+                return await asyncio.to_thread(check_proposals, reply)
         except TimeoutError:
             raise CatalogError(504, "WV-LUMI-TIMEOUT", "Weave AI did not respond in time") from None
         except SecretUnavailable:
