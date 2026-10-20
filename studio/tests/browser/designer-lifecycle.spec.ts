@@ -195,7 +195,9 @@ for (const viewport of [
       await newWorkflow(page);
       await toolbar(page).getByRole("button", { name: "More" }).click();
       const publish = page.getByRole("menuitem", { name: /^Publish…/ });
-      await expect(publish).toContainText(
+      // The reason is the item's own line (the acceptance journey J9.2 reads
+      // it there), whether or not the item is also disabled.
+      await expect(publish.locator("small")).toHaveText(
         "Your account can't publish workflows in this workspace.",
       );
       await publish.click();

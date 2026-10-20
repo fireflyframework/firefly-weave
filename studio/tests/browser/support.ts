@@ -23,6 +23,7 @@ export async function selectChoice(
   field: Locator,
   choice: string | { label?: string; value?: string; index?: number },
 ) {
+  // read-only audit: whether the field is a native select
   if (await field.evaluate((element) => element.tagName === "SELECT")) {
     await field.selectOption(choice);
     return;

@@ -145,10 +145,10 @@ the error never echoes a secret value; see
 | `WEAVE_SECRET_ROOT` | Absent | Enables the `file` secret provider rooted at this path; each `locator` names a file under it |
 | `WEAVE_PRIVATE_ORIGINS_FILE` | Absent | Absolute path to the read-only private-origin file that `weave platform` writes after consent. Each entry lets one purpose, such as `http-connector` or `event-delivery`, reach one exact origin at a private, loopback or CGNAT address inside its `networks`, over plain HTTP where the purpose allows it; entries show as "Development only". Public addresses need no entry. A file that is malformed, a symbolic link or writable by other users stops startup |
 | `WEAVE_HTTP_PRIVATE_NETWORKS` | `[]` | Legacy setting: at startup it maps, with a warning, to "Legacy setting" private-origin entries for HTTP connector actions and signed webhooks, with unchanged reach. Private, loopback and CGNAT destinations must fall inside these CIDRs; public addresses stay reachable over HTTP and HTTPS; link-local and metadata addresses (including `100.100.100.200`) are always refused. An invalid value (such as a CIDR with host bits set) or more than 128 networks stops startup |
-| `WEAVE_MAIL_PRIVATE_NETWORKS` | `[]` | JSON array of operator-approved private CIDRs for SMTP and IMAP; connection metadata cannot grant its own network access |
+| `WEAVE_MAIL_PRIVATE_NETWORKS` | `[]` | JSON array of operator-approved private CIDRs for SMTP and IMAP; connection metadata cannot grant its own network access. An invalid value or more than 128 networks stops startup. |
 | `WEAVE_MAIL_ALLOWED_PORTS` | `[25,465,587,143,993]` | JSON array of allowed SMTP and IMAP destination ports |
 | `WEAVE_MAIL_ALLOW_LOCAL_FIXTURE` | `false` | Test-only plaintext loopback allowance; keep it `false` for deployed mail services |
-| `WEAVE_POSTGRES_PRIVATE_NETWORKS` | `[]` | JSON private-network allowance for PostgreSQL connector targets |
+| `WEAVE_POSTGRES_PRIVATE_NETWORKS` | `[]` | JSON private-network allowance for PostgreSQL connector targets. An invalid value or more than 128 networks stops startup. |
 | `WEAVE_POSTGRES_PLAINTEXT_NETWORKS` | `[]` | Explicit plaintext PostgreSQL network exception |
 | `WEAVE_POSTGRES_CA_FILE` | Absent | Trusted CA file for PostgreSQL connector TLS |
 | `WEAVE_POSTGRES_MAX_CONNECTIONS` | `8`, range 1–64 | Connector connection bound |

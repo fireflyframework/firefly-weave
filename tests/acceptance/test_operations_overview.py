@@ -265,20 +265,31 @@ async def worker_journey(platform: Platform) -> dict:
     return {"runs": runs, "worker": worker["id"], "release": release["id"]}
 
 
+def incident_settled(incidents: dict, run_id: str) -> bool:
+    """Whether the run's incident has its final code. The worker's failure opens WV-TASK-FAILED, and the recovery
+    scan turns it into WV-TASK-RETRIES-EXHAUSTED once no retry is left; the run is suspended from the first code."""
+    return any(item["run_id"] == run_id and item["code"] == "WV-TASK-RETRIES-EXHAUSTED" for item in incidents["items"])
+
+
 async def operational_reads(platform: Platform, journey: dict) -> dict:
     """The run summaries, steps, incident and worker the journey left, as the operational reads report them."""
     runs = journey["runs"]
     async with platform.client() as client:
-        deadline = time.monotonic() + 60
+        # Long enough for the recovery scan to settle the failing run's incident.
+        deadline = time.monotonic() + 180
         while True:
             listed = await get(client, platform.environment + "/run-summaries", workflow=WORKFLOW)
             statuses = {item["id"]: item.get("status") for item in listed["items"]}
-            if statuses.get(runs["succeeds"]) == "succeeded" and statuses.get(runs["fails"]) == "suspended":
+            incidents = await get(client, platform.environment + "/incidents", workflow=WORKFLOW)
+            if (
+                statuses.get(runs["succeeds"]) == "succeeded"
+                and statuses.get(runs["fails"]) == "suspended"
+                and incident_settled(incidents, runs["fails"])
+            ):
                 break
-            assert time.monotonic() < deadline, statuses
+            assert time.monotonic() < deadline, (statuses, [item["code"] for item in incidents["items"]])
             await asyncio.sleep(1)
         steps = await get(client, platform.environment + f"/runs/{runs['succeeds']}/steps")
-        incidents = await get(client, platform.environment + "/incidents", workflow=WORKFLOW)
         workers = await get(client, platform.environment + "/workers", release_id=journey["release"])
         summary = await get(client, platform.environment + "/operations/summary")
     return {"listed": listed, "steps": steps, "incidents": incidents, "workers": workers, "summary": summary}
