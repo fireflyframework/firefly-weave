@@ -132,6 +132,16 @@ function stepCases(kind: Kind): Case[] {
   const workflow = freshWorkflow();
   const step = complete(kind);
   workflow.spec.steps.push(step);
+  // An AI task with a model: its options tune the settings the model wrote.
+  if (kind === "llm")
+    workflow.spec["llmProfiles"] = {
+      [String(step["profile"])]: {
+        provider: "openai-chat",
+        model: "qwen3:4b",
+        options: { max_tokens: 1024 },
+        outputSchema: { type: "string", maxLength: 20000 },
+      },
+    };
   const ctx = context(workflow);
   const descriptor = ndvRegistry.kind(kind)!;
   const roots = descriptor.fields(step).map((field) => field.path);
@@ -182,12 +192,13 @@ function pathResultCases(): Case[] {
 
 /**
  * Required by the language, with no value that would be valid to write back: a
- * name, a message, a table and a path's condition are the person's to give.
+ * name, a message, a table, a model and a path's condition are the person's to give.
  * Resetting them leaves what a new step has.
  */
 const NO_VALID_DEFAULT = [
   "decisionTable:table",
   "fail:message",
+  "llm:model",
   "signal:name",
   "switch:cases",
   "switch:paths",

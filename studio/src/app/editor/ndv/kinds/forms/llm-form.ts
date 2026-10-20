@@ -15,37 +15,75 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-// The AI task, until the AI step form replaces it: a model (the workflow's
-// AI profile) and a prompt; context and the action and connection behind it
-// are options.
-import type { Step } from "../../../../model";
-import type { FormSpec, KindContext } from "../../registry";
-import { isRecord } from "../shared";
 
-export function llmForm(_step: Step, ctx: KindContext): FormSpec {
-  const profiles = isRecord(ctx.workflow.spec["llmProfiles"])
-    ? ctx.workflow.spec["llmProfiles"]
-    : {};
+// The AI task: a model, chosen connection first, and a prompt. The model's
+// settings live in the workflow (`llmProfiles`), so the options that tune them
+// are workflow fields and wait until a model is chosen; the timeout is on
+// Settings.
+import type { Step } from "../../../../model";
+import type { Choice, FormSpec, KindContext, ParamSpec } from "../../registry";
+import {
+  DEFAULT_MAX_TOKENS,
+  TEXT_RESULT,
+  profileNameOf,
+  profileOf,
+  profilesOf,
+} from "../ai-task-model";
+import { durationParam } from "./shared";
+
+const REASONING: Choice[] = [
+  { value: "none", label: "None" },
+  { value: "react", label: "Reason and act" },
+  { value: "chain_of_thought", label: "Chain of thought" },
+  { value: "plan_and_execute", label: "Plan and execute" },
+  { value: "reflexion", label: "Reflect and revise" },
+  { value: "tree_of_thoughts", label: "Tree of thoughts" },
+  { value: "goal_decomposition", label: "Break the goal down" },
+];
+
+const settingsPath = (step: Step, ...rest: string[]) => [
+  "spec",
+  "llmProfiles",
+  profileNameOf(step),
+  ...rest,
+];
+/** Options that tune the step's settings appear once a model is chosen. */
+const afterModel: Pick<ParamSpec, "showWhen" | "hiddenReason" | "whenHidden"> =
+  {
+    showWhen: (step, ctx) => !!profileOf(ctx.workflow, step),
+    hiddenReason: () => "Choose a model first.",
+    whenHidden: "keep",
+  };
+
+function shareChoices(step: Step, ctx: KindContext): Choice[] {
+  const profiles = profilesOf(ctx.workflow);
+  return [
+    { value: step.id, label: "This step only" },
+    ...Object.entries(profiles)
+      .filter(([name]) => name !== step.id)
+      .map(([name, profile]) => {
+        const model = (profile as Record<string, unknown> | null)?.["model"];
+        return {
+          value: name,
+          label: typeof model === "string" ? `${name} · ${model}` : name,
+        };
+      }),
+  ];
+}
+
+export function llmForm(step: Step, ctx: KindContext): FormSpec {
   return {
     fields: [
       {
         id: "model",
-        path: ["profile"],
-        type: "select",
+        path: settingsPath(step, "model"),
+        scope: "workflow",
+        type: "model",
         label: "Model",
         required: true,
-        default: "default",
-        whenRemoved: "default",
-        choices: Object.entries(profiles).map(([name, profile]) => {
-          const model = isRecord(profile) ? profile["model"] : undefined;
-          return {
-            value: name,
-            label:
-              typeof model === "string" && model ? `${name} · ${model}` : name,
-          };
-        }),
+        hint: "Models are grouped by AI connection. The connection becomes the slot the step uses.",
         description:
-          "The AI profile this step uses: its provider, model and options.",
+          "The model that answers. Choosing one also chooses its AI connection; Studio adds the connection slot and the step's AI settings.",
       },
       {
         id: "prompt",
@@ -57,6 +95,7 @@ export function llmForm(_step: Step, ctx: KindContext): FormSpec {
         whenRemoved: "default",
         mapping: "both",
         templateCapable: true,
+        placeholder: "Summarize {{ the ticket text }} in two sentences.",
       },
     ],
     options: [
@@ -69,24 +108,85 @@ export function llmForm(_step: Step, ctx: KindContext): FormSpec {
         default: {},
         whenRemoved: "default",
         addLabel: "Add context field",
+        hint: "Data the model reads with the prompt.",
       },
       {
-        id: "action",
-        path: ["uses"],
-        type: "text",
-        label: "AI action version",
-        default: "weave-agentic-generate@1.0.0",
+        id: "result",
+        path: settingsPath(step, "outputSchema"),
+        scope: "workflow",
+        type: "schema",
+        label: "Structured result",
+        default: { ...TEXT_RESULT },
         whenRemoved: "default",
-        hint: "The published action that runs the AI worker.",
+        hint: "Fields the model fills in. Without them, the result is text.",
+        ...afterModel,
       },
       {
-        id: "connection",
-        path: ["connection"],
-        type: "connection",
-        label: "AI connection",
-        default: "ai",
+        id: "maxTokens",
+        path: settingsPath(step, "options", "max_tokens"),
+        scope: "workflow",
+        type: "number",
+        label: "Max output tokens",
+        default: DEFAULT_MAX_TOKENS,
+        min: 1,
+        max: 32768,
         whenRemoved: "default",
+        hint: "The longest answer the model may write.",
+        ...afterModel,
       },
+      {
+        id: "temperature",
+        path: settingsPath(step, "options", "temperature"),
+        scope: "workflow",
+        type: "number",
+        label: "Temperature",
+        min: 0,
+        max: 2,
+        placeholder: "Model default",
+        hint: "Lower answers are more predictable.",
+        ...afterModel,
+      },
+      {
+        id: "reasoning",
+        path: settingsPath(step, "reasoning", "pattern"),
+        scope: "workflow",
+        type: "select",
+        label: "Reasoning pattern",
+        default: "none",
+        choices: REASONING,
+        hint: "Extra model calls that work the answer out first.",
+        ...afterModel,
+      },
+      {
+        id: "share",
+        path: ["profile"],
+        type: "select",
+        label: "Share settings with other AI steps",
+        // A step without settings reads as not sharing until it has some.
+        default: profileOf(ctx.workflow, step) ? step.id : profileNameOf(step),
+        whenRemoved: "default",
+        choices: shareChoices(step, ctx),
+        hint: "Steps that share settings use the same model and options.",
+      },
+    ],
+  };
+}
+
+export function llmSettings(step: Step): FormSpec {
+  return {
+    fields: [
+      durationParam(
+        "timeout",
+        settingsPath(step, "timeoutSeconds"),
+        "Timeout",
+        {
+          scope: "workflow",
+          default: 120,
+          max: 600,
+          hint: "The step stops with an error after this time.",
+          ...afterModel,
+        },
+      ),
     ],
   };
 }

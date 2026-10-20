@@ -27,6 +27,22 @@ import type {
 import type { SelectOption } from "../../../forms/ui/select";
 import type { Step, Workflow } from "../../../model";
 import { FormWriteError, type FormChange } from "../params/value-io";
+import {
+  isRecord,
+  profileNameOf,
+  profileOf,
+  profilesOf,
+  type Record_,
+} from "./ai-task-setup";
+
+export {
+  SETUP,
+  aiTaskSetup,
+  deferredToSetup,
+  profileNameOf,
+  profileOf,
+  profilesOf,
+} from "./ai-task-setup";
 
 export const AI_CONNECTOR = "weave-agentic-provider@1.0.0";
 export const AI_ACTION = "weave-agentic-generate@1.0.0";
@@ -36,28 +52,11 @@ export const TEXT_RESULT = { type: "string", maxLength: 20000 } as const;
 export const DEFAULT_MAX_TOKENS = 1024;
 /** The language keeps at most this many sets of AI settings in one workflow. */
 export const MAX_PROFILES = 32;
-export const SETUP = "Choose a model";
 const TOO_MANY =
   "A workflow holds at most 32 sets of AI settings. Share the settings of another AI step instead.";
 /** Separates a connection revision and a model name in one select value. */
 const SEPARATOR = "\u0000";
 
-type Record_ = Record<string, unknown>;
-const isRecord = (value: unknown): value is Record_ =>
-  !!value && typeof value === "object" && !Array.isArray(value);
-
-export function profilesOf(workflow: Workflow): Record_ {
-  const profiles = workflow.spec["llmProfiles"];
-  return isRecord(profiles) ? profiles : {};
-}
-/** The settings an AI task reads: its own, or those it shares. */
-export function profileNameOf(step: Step): string {
-  return typeof step["profile"] === "string" ? step["profile"] : "";
-}
-export function profileOf(workflow: Workflow, step: Step): Record_ | null {
-  const profile = profilesOf(workflow)[profileNameOf(step)];
-  return isRecord(profile) ? profile : null;
-}
 /** The AI tasks that use one set of settings, in workflow order. */
 export function stepsSharing(workflow: Workflow, name: string): string[] {
   const found: string[] = [];
@@ -87,36 +86,6 @@ export function isTextResult(schema: unknown): boolean {
     schema["type"] === "string" &&
     Object.keys(schema).every((key) => TEXT_KEYWORDS.has(key))
   );
-}
-
-/** What an AI task still needs on the canvas: a model, until its settings exist. */
-export function aiTaskSetup(workflow: Workflow, step: Step): string {
-  return step.kind === "llm" && !profileOf(workflow, step) ? SETUP : "";
-}
-/**
- * True while an AI task has no model: the canvas lists the compiler's
- * messages about it (its missing settings and slot, an empty prompt) as the
- * setup it needs, under "Choose a model", instead of as errors.
- */
-export function deferredToSetup(workflow: Workflow, stepId: string): boolean {
-  const step = findStep(workflow.spec.steps, stepId);
-  return !!step && !!aiTaskSetup(workflow, step);
-}
-function findStep(value: unknown, id: string): Step | null {
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      const found = findStep(item, id);
-      if (found) return found;
-    }
-  } else if (isRecord(value)) {
-    if (value["id"] === id && typeof value["kind"] === "string")
-      return value as Step;
-    for (const child of Object.values(value)) {
-      const found = findStep(child, id);
-      if (found) return found;
-    }
-  }
-  return null;
 }
 
 /** One model on one AI connection. */
