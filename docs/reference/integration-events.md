@@ -58,8 +58,9 @@ workflow evidence.
 | `change_request.transition` | A change request moves to a new state, such as awaiting approval or applied | The change request's environment |
 
 A `change_request.transition` event carries the change request's ID and, in its
-payload, `change_state` and `revision` only: never its title, reason, people or
-plan. Read the change request itself for the rest. A subscription selects at most
+payload, `change_state` and `revision`; the payload's run fields `status` and
+`sequence` are present and `null`. It never carries the change's title, reason,
+people or plan. Read the change request itself for the rest. A subscription selects at most
 five event types.
 
 The event's `correlation_id` is the stable UUID of the source resource. The

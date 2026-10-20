@@ -236,6 +236,12 @@ never get one.
 
 ### Kubernetes
 
+Kubernetes and Container Apps runners register adapter version 1: they take no
+plan that lowers a worker component's replicas, because their adapters do not
+yet remove exactly the reviewed members. Such a job waits unclaimed and is
+cancelled at its deadline; the change request gives its drained workers back
+and can be planned again. Scale those components down outside Weave until then.
+
 The adapter manages **existing deployments**, not arbitrary resources. Each
 allowed deployment must have the matching local configuration alias in its pod
 template:
