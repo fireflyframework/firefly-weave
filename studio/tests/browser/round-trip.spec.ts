@@ -45,19 +45,10 @@ async function exported(page: Page, trigger: () => Promise<void>) {
     );
   return files;
 }
-async function reimport(
-  page: Page,
-  name: string,
-  content: string,
-  edited: boolean,
-) {
+async function reimport(page: Page, name: string, content: string) {
+  // A platform draft saves itself on the way out, so leaving asks nothing.
   await page.getByRole("button", { name: "Home", exact: true }).click();
-  // Leaving asks first only when the designer holds edits since it was opened.
-  if (edited)
-    await page
-      .getByRole("dialog")
-      .getByRole("button", { name: "Leave designer" })
-      .click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
   await page.locator("weave-home-dashboard input[type=file]").setInputFiles({
     name,
     mimeType: name.endsWith(".json") ? "application/json" : "text/yaml",
@@ -164,11 +155,11 @@ test("integration configuration survives YAML and JSON export, import and draft 
   const jsonSource = jsonFiles["untitled-workflow.json"];
   expect(JSON.parse(jsonSource)).toEqual(definition);
 
-  await reimport(page, "untitled-workflow.yaml", yamlSource, true);
+  await reimport(page, "untitled-workflow.yaml", yamlSource);
   await expectConfigured(page);
   expect(parse(await sourceText(page))).toEqual(definition);
 
-  await reimport(page, "untitled-workflow.json", jsonSource, false);
+  await reimport(page, "untitled-workflow.json", jsonSource);
   await expectConfigured(page);
   expect(JSON.parse(await sourceText(page))).toEqual(definition);
 
@@ -183,6 +174,6 @@ test("integration configuration survives YAML and JSON export, import and draft 
   await expect.poll(() => saved).not.toBeNull();
   expect(saved.document).toEqual(definition);
   await expect(page.locator(".editor-identity .status-chip")).toHaveText(
-    /Draft saved \d{2}:\d{2}/,
+    /^Saved \d{2}:\d{2}$/,
   );
 });

@@ -140,7 +140,7 @@ for (const viewport of [
       await (await primary(page)).click();
       await expect.poll(() => calls).toEqual(["save"]);
       await expect(await primary(page)).toHaveText("Publish…");
-      await expect(chip).toHaveText(/Draft saved \d{2}:\d{2}/);
+      await expect(chip).toHaveText(/^Saved \d{2}:\d{2}$/);
       await expect(page.locator(".toast")).toContainText("Draft saved.");
 
       await (await primary(page)).click();
@@ -235,7 +235,9 @@ test.describe("1280x720", () => {
       // Measure the settled bar: the status chip's longest steady text.
       await expect(page.locator(".status-chip")).toHaveAttribute(
         "title",
-        mode === "local" ? /Draft saved \d{2}:\d{2}/ : "Unsaved",
+        mode === "local"
+          ? /Draft saved \d{2}:\d{2}/
+          : /^(Unsaved|Saved \d{2}:\d{2}|Not saved: retry)$/,
       );
       const canvas = await page.locator(".canvas").boundingBox();
       const bar = await page.locator(".editor-bar").boundingBox();

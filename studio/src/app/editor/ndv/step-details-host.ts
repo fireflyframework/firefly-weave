@@ -75,6 +75,8 @@ export interface StepDetailsHost {
   blocker(command: "simulate"): string;
   /** Settles unapplied inspector edits; false when they can't be applied. */
   ensureApplied(): Promise<boolean>;
+  /** Saves a platform draft's pending edits now (closing step details); true when nothing is left. */
+  flushAutosave?(): Promise<boolean>;
   /**
    * Opens step details on a step, the trigger or End the way every opener
    * does: pending inspector edits are applied first and the step becomes the

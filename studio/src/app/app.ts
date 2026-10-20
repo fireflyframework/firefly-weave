@@ -37,12 +37,18 @@ import type { ClipboardContent, PastePlan } from "./editor/state/clipboard";
 import type { TriggerKind } from "./editor/canvas/layout-ltr";
 import { DraftCanvases, type KeptWhere } from "./editor/state/draft-canvas";
 import { readImport } from "./import-files";
-import { uiKey, type AccountScope } from "./editor/state/browser-store";
+import {
+  connectedPrefix,
+  storeKey,
+  uiKey,
+  type AccountScope,
+} from "./editor/state/browser-store";
 import {
   bootStudioStorage,
   flushStudioStorage,
   studioStorage,
 } from "./editor/state/studio-storage";
+import { Autosave } from "./editor/state/autosave";
 import {
   stepDetailsEnabled,
   type StepDetailsHost,
@@ -304,6 +310,13 @@ const INSPECTOR_MIN = 360;
 const INSPECTOR_MAX = 640;
 const inspectorWidthKey = uiKey("weave.studio.inspectorWidth");
 const inspectorSectionsKey = uiKey("weave.studio.inspectorSections");
+/** "12:04": local time, 24-hour, as Studio's other times. */
+const clockTime = (at: number) =>
+  new Date(at).toLocaleTimeString("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
 /** The inspector width the person chose, if any is kept; otherwise the default. */
 function keptInspectorWidth() {
   const kept = Number(stored(inspectorWidthKey));
@@ -1682,10 +1695,16 @@ export class App implements CanvasHost {
     const before = this.model.source;
     if (leaving && (!this.leaveInspector() || !(await this.settleSource())))
       return;
+    // A platform draft saves itself on the way out (waiting at most 2 s); only work still unsaved asks.
+    if (leaving && this.profile && this.dirty)
+      await Promise.race([
+        this.flushAutosave(),
+        new Promise((done) => setTimeout(done, 2000)),
+      ]);
     if (
       leaving &&
       this.dirty &&
-      this.saveState === "Unsaved" &&
+      (this.saveState === "Unsaved" || this.saveState === "Not saved") &&
       !(await this.confirmLeave(typed && this.model.source !== before))
     )
       return;
@@ -1741,6 +1760,9 @@ export class App implements CanvasHost {
   private keepLocally() {
     if (this.profile) {
       this.keepDraftCanvas();
+      // A platform draft saves itself, and this computer keeps a recovery copy meanwhile.
+      this.autosave.touch();
+      this.keepRecovery();
       return;
     }
     if (this.localTimer) clearTimeout(this.localTimer);
@@ -1939,6 +1961,8 @@ export class App implements CanvasHost {
     this.flushInspector();
     this.flushLocalSave();
     void this.flushDraftCanvas();
+    // Not awaited: the recovery copy covers what doesn't land.
+    void this.flushAutosave();
     void flushStudioStorage();
     if (!this.unsavedWork) return;
     event.preventDefault();
@@ -1984,6 +2008,7 @@ export class App implements CanvasHost {
     this.model = model;
     this.draftId = id;
     this.draftRevision = undefined;
+    this.autosave.cancel();
     this.published = null;
     this.activation = null;
     this.view = "designer";
@@ -2043,6 +2068,7 @@ export class App implements CanvasHost {
     void this.flushDraftCanvas();
     this.draftId = crypto.randomUUID();
     this.draftRevision = undefined;
+    this.autosave.cancel();
     this.published = record;
     this.draftCanvasPending = null;
     this.draftCanvasKept = "memory";
@@ -2065,7 +2091,12 @@ export class App implements CanvasHost {
     this.draftRevision = Number(detail["revision"]);
     this.published = null;
     this.saveState = "Draft saved";
-    // Opening is no change to keep (changed() above scheduled one): the kept canvas comes back instead.
+    // Opening is no change to save or keep (changed() above scheduled both).
+    this.autosave.cancel();
+    if (this.recoveryTimer) clearTimeout(this.recoveryTimer);
+    this.recoveryTimer = null;
+    void this.offerRecovery(this.draftId, this.draftRevision);
+    // The kept canvas comes back instead.
     if (this.draftCanvasTimer) clearTimeout(this.draftCanvasTimer);
     this.draftCanvasTimer = null;
     this.draftCanvasWrite = null;
@@ -2125,6 +2156,7 @@ export class App implements CanvasHost {
     });
     this.draftId = crypto.randomUUID();
     this.draftRevision = undefined;
+    this.autosave.cancel();
     this.view = "designer";
     void this.router.navigateByUrl(`/workflows/${this.draftId}/designer`);
     this.openTab();
@@ -2652,7 +2684,7 @@ export class App implements CanvasHost {
    * "Draft saved", "Kept on this computer", "Published 1.0.0" or
    * "Active in Production". Null for a new local workflow with no edits.
    */
-  get statusChip(): { text: string; tone: string } | null {
+  get statusChip(): { text: string; tone: string; retry?: boolean } | null {
     if (this.inspectorProblem) return { text: "Unsaved", tone: "warning" };
     const version = String(
       this.published?.["version"] ?? this.model.definition.metadata.version,
@@ -2666,9 +2698,11 @@ export class App implements CanvasHost {
         return { text: this.savedDraftLabel(), tone: "" };
       return null;
     }
-    if (this.busy === "save") return { text: "Saving…", tone: "" };
-    if (this.saveState === "Not saved")
-      return { text: "Not saved", tone: "danger" };
+    const autosave = this.autosave.state();
+    if (autosave === "saving" || this.busy === "save")
+      return { text: "Saving…", tone: "" };
+    if (autosave === "failed" || this.saveState === "Not saved")
+      return { text: "Not saved: retry", tone: "danger", retry: true };
     switch (this.lifecycle) {
       case "active":
         return {
@@ -2677,15 +2711,20 @@ export class App implements CanvasHost {
         };
       case "published":
         return { text: `Published ${version}`, tone: "info" };
-      case "saved":
-        return { text: this.savedDraftLabel(), tone: "" };
+      case "saved": {
+        const at = this.autosave.savedAt();
+        return {
+          text: at === null ? this.savedDraftLabel() : `Saved ${clockTime(at)}`,
+          tone: "",
+        };
+      }
       default:
         return { text: "Unsaved", tone: "warning" };
     }
   }
   private savedDraftLabel() {
     return this.draftSavedAt
-      ? `Draft saved ${new Date(this.draftSavedAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false })}`
+      ? `Draft saved ${clockTime(new Date(this.draftSavedAt).getTime())}`
       : "Draft saved";
   }
   /** The open workflow has a copy kept on this computer. */
@@ -4117,6 +4156,7 @@ export class App implements CanvasHost {
     if (tab !== this.tab) {
       if (!this.leaveInspector()) return false;
       if (this.tab === "Source" && !(await this.settleSource())) return false;
+      void this.flushAutosave();
     }
     this.tab = tab;
     if (tab === "Designer") this.outlineNotice = false;
@@ -6668,39 +6708,223 @@ export class App implements CanvasHost {
       return;
     }
     this.busy = "save";
-    this.saveState = "Saving";
-    const source = this.model.source;
     const model = this.model;
     try {
+      // Save is the autosave, now, with its outcome said out loud.
+      this.autosave.touch();
+      if (await this.autosave.flush()) {
+        const note = await this.draftNote(model, this.draftCanvasKept);
+        this.notify(note ? `Draft saved. ${note}` : "Draft saved.");
+      } else if (this.autosaveFailure) this.fail(this.autosaveFailure);
+    } finally {
+      this.cdr.markForCheck();
+      this.busy = "";
+    }
+  }
+  // --- autosave of platform drafts ---------------------------------------
+  /** Platform drafts save themselves 2 s after the last change, at most every 10 s. */
+  private readonly autosave = new Autosave(() => this.autosaveDraft());
+  /** Why the last autosave failed, when it wasn't a conflict (the compare flow shows those). */
+  private autosaveFailure: unknown = null;
+  /** Saves pending edits of a platform draft now (closing step details, switching tabs, leaving). */
+  flushAutosave(): Promise<boolean> {
+    return this.profile ? this.autosave.flush() : Promise.resolve(true);
+  }
+  /** "Not saved: retry". */
+  retrySave() {
+    this.autosave.touch();
+    void this.autosave.flush().then(() => this.cdr.markForCheck());
+  }
+  /** One save of the open platform draft, without a toast; false when it didn't save. */
+  private async autosaveDraft(): Promise<boolean> {
+    this.autosaveFailure = null;
+    if (!this.profile || this.published) return true;
+    this.flushInspector();
+    if (
+      this.model.readonly ||
+      this.model.unplaced.length ||
+      this.inspectorProblem ||
+      this.sourcePending
+    )
+      return false;
+    const source = this.model.source;
+    const draftId = this.draftId;
+    this.saveState = "Saving";
+    this.cdr.markForCheck();
+    try {
+      // A save whose answer never came is sent again first, with its own key, so it can't apply twice.
+      if (!(await this.settlePendingDraftSave(draftId))) return false;
       const result = await this.safeMutation<{
         id: string;
         revision: number;
         document: Workflow;
       }>(
-        `${this.api.project}/drafts/${this.draftId}`,
+        `${this.api.project}/drafts/${draftId}`,
         "PUT",
         { document: this.model.definition },
         this.draftRevision,
         "Save draft",
       );
+      if (draftId !== this.draftId) return true;
       this.draftRevision = result.revision;
-      this.saveState = source === this.model.source ? "Draft saved" : "Unsaved";
+      const unchanged = source === this.model.source;
+      this.saveState = unchanged ? "Draft saved" : "Unsaved";
       this.draftSavedAt = new Date().toISOString();
-      if (source === this.model.source) this.dirty = false;
+      if (unchanged) {
+        this.dirty = false;
+        this.forgetRecovery(draftId);
+      }
       this.error = "";
-      const note = await this.draftNote(model, await this.flushDraftCanvas());
-      this.notify(note ? `Draft saved. ${note}` : "Draft saved.");
+      await this.flushDraftCanvas();
+      return true;
     } catch (e) {
       this.saveState = "Not saved";
       if (e instanceof ApiError && e.status === 409) {
         this.conflict = { local: this.model.definition, server: e.detail };
         this.error =
           "Someone else saved this draft. Your version is still here. Compare them before you save.";
-      } else this.fail(e);
+      } else this.autosaveFailure = e;
+      return false;
     } finally {
       this.cdr.markForCheck();
-      this.busy = "";
     }
+  }
+  /** True once no save of this draft is waiting for an answer; false while another command's is. */
+  private async settlePendingDraftSave(draftId: string): Promise<boolean> {
+    const pending = this.pendingMutation;
+    if (!pending) return true;
+    if (
+      pending.method !== "PUT" ||
+      !pending.path.endsWith(`/drafts/${draftId}`)
+    )
+      return false;
+    const result = await this.api.mutate<Record<string, unknown>>(
+      pending.path,
+      pending.method,
+      pending.body,
+      pending.revision,
+      pending.key,
+    );
+    this.pendingMutation = null;
+    this.unknownCommand = false;
+    this.draftRevision = Number(result["revision"]);
+    return true;
+  }
+  // --- the recovery copy of a platform draft -------------------------------
+  private recoveryTimer: ReturnType<typeof setTimeout> | null = null;
+  private recoveryPending: { draftId: string; revision: number } | null = null;
+  /** Unsaved changes this computer kept for the draft being opened: Restore or Discard. */
+  recoveryOffer: {
+    key: string;
+    draftId: string;
+    source: string;
+    format: "yaml" | "json";
+    canvas: unknown;
+  } | null = null;
+  private async recoveryKey(draftId: string): Promise<string | null> {
+    const scope = this.accountScope();
+    const prefix = scope
+      ? await connectedPrefix(scope).catch(() => null)
+      : null;
+    return prefix ? storeKey(prefix, `recovery.${draftId}`) : null;
+  }
+  /** 800 ms after a change, this computer keeps the draft as it is now, under the account's prefix. */
+  private keepRecovery() {
+    if (this.recoveryTimer) clearTimeout(this.recoveryTimer);
+    const draftId = this.draftId;
+    this.recoveryTimer = setTimeout(() => {
+      this.recoveryTimer = null;
+      if (draftId !== this.draftId || !this.dirty) return;
+      const copy = {
+        savedAt: Date.now(),
+        draftRevision: this.draftRevision ?? null,
+        source: this.model.source,
+        format: this.model.format,
+        canvas: this.model.canvas,
+      };
+      void this.recoveryKey(draftId).then((key) => {
+        if (!key) return;
+        try {
+          studioStorage()?.setItem(key, JSON.stringify(copy));
+        } catch {
+          // Not kept: the platform has the last save.
+        }
+      });
+    }, 800);
+  }
+  private forgetRecovery(draftId: string) {
+    if (this.recoveryTimer) clearTimeout(this.recoveryTimer);
+    this.recoveryTimer = null;
+    void this.recoveryKey(draftId).then((key) => {
+      if (!key) return;
+      try {
+        studioStorage()?.removeItem(key);
+      } catch {
+        // Nothing to remove.
+      }
+    });
+  }
+  /**
+   * Opening a platform draft: a recovery copy of the same revision with other
+   * content is offered; one of an older revision is dropped (the platform
+   * moved on, and its own compare flow handles conflicts).
+   */
+  private async offerRecovery(draftId: string, revision: number) {
+    this.recoveryOffer = null;
+    const key = await this.recoveryKey(draftId);
+    if (draftId !== this.draftId) return;
+    // Before the account is known there is no key: ask again once it is.
+    this.recoveryPending = key ? null : { draftId, revision };
+    if (!key) return;
+    let copy: Record<string, unknown> | null = null;
+    try {
+      const value: unknown = JSON.parse(
+        studioStorage()?.getItem(key) ?? "null",
+      );
+      copy =
+        value && typeof value === "object" && !Array.isArray(value)
+          ? (value as Record<string, unknown>)
+          : null;
+    } catch {
+      copy = null;
+    }
+    if (!copy) return;
+    const source = copy["source"];
+    const format = copy["format"] === "json" ? "json" : "yaml";
+    if (
+      copy["draftRevision"] !== revision ||
+      typeof source !== "string" ||
+      source === this.model.source
+    ) {
+      studioStorage()?.removeItem(key);
+      return;
+    }
+    this.recoveryOffer = {
+      key,
+      draftId,
+      source,
+      format,
+      canvas: copy["canvas"],
+    };
+    this.cdr.markForCheck();
+  }
+  restoreRecovery() {
+    const offer = this.recoveryOffer;
+    this.recoveryOffer = null;
+    if (!offer || offer.draftId !== this.draftId) return;
+    this.perform(() =>
+      this.model.batch(() => {
+        this.model.setSource(offer.source, offer.format);
+        if (offer.canvas && typeof offer.canvas === "object")
+          this.model.updateCanvas(offer.canvas as never);
+      }),
+    );
+  }
+  discardRecovery() {
+    const offer = this.recoveryOffer;
+    this.recoveryOffer = null;
+    if (offer) studioStorage()?.removeItem(offer.key);
+    this.cdr.markForCheck();
   }
   /**
    * A platform draft holds the workflow only: what Save draft adds when the
@@ -7571,6 +7795,7 @@ export class App implements CanvasHost {
     this.draftId = crypto.randomUUID();
     this.openedFromFiles.add(this.draftId);
     this.draftRevision = undefined;
+    this.autosave.cancel();
     this.published = null;
     this.activation = null;
     this.model.setSource(
@@ -7646,6 +7871,9 @@ export class App implements CanvasHost {
       this.catalogAfterIdentity();
       // A platform draft opened before the account was known gets its canvas now.
       void this.restoreDraftCanvas();
+      const recovery = this.recoveryPending;
+      if (recovery?.draftId === this.draftId)
+        void this.offerRecovery(recovery.draftId, recovery.revision);
     } catch (error) {
       const plain = describeError(error);
       if (
@@ -8011,6 +8239,7 @@ export class App implements CanvasHost {
     if (this.draftRevision === undefined && !this.published) return;
     this.draftId = crypto.randomUUID();
     this.draftRevision = undefined;
+    this.autosave.cancel();
     this.published = null;
     this.activation = null;
     this.saveState = "Unsaved";

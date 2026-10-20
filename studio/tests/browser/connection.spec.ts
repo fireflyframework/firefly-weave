@@ -1379,14 +1379,25 @@ test.describe("startup and saved platforms", () => {
       platforms: [acmePlatform(), globexPlatform()],
       active: "Acme",
     });
+    // The first save lands; later ones are refused, so the second change stays unsaved.
+    let saves = 0;
     await page.route("**/drafts/*", (route) =>
-      route.fulfill({
-        json: {
-          id: "draft",
-          revision: 1,
-          document: route.request().postDataJSON()?.document,
-        },
-      }),
+      saves++ === 0
+        ? route.fulfill({
+            json: {
+              id: "draft",
+              revision: 1,
+              document: route.request().postDataJSON()?.document,
+            },
+          })
+        : route.fulfill({
+            status: 422,
+            json: {
+              status: 422,
+              code: "WV-VALIDATION",
+              message: "Not saved.",
+            },
+          }),
     );
     await expect(page.locator(".platform-indicator")).toHaveAccessibleName(
       /Signed in/,
@@ -1400,7 +1411,7 @@ test.describe("startup and saved platforms", () => {
       .click();
     await page.getByRole("button", { name: "Save draft" }).click();
     await expect(page.locator(".editor-identity .status-chip")).toHaveText(
-      /Draft saved \d{2}:\d{2}/,
+      /^Saved \d{2}:\d{2}$/,
     );
     await page
       .locator(".palette-step")

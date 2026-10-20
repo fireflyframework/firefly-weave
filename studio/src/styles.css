@@ -3002,6 +3002,59 @@ details.disclosure[open] > summary::before {
 .command-note:empty {
   display: none;
 }
+/* Unsaved changes of a platform draft kept on this computer: one row, the
+   icon, text and buttons sharing one center line. */
+.recovery-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 6px 16px;
+  border-bottom: 1px solid var(--neutral-bd);
+  background: var(--neutral-bg);
+  color: var(--text);
+  font: var(--type-small);
+  flex: none;
+}
+.recovery-note > weave-icon {
+  flex: none;
+  color: var(--muted);
+}
+.recovery-text {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+.recovery-actions {
+  display: inline-flex;
+  gap: 8px;
+  flex: none;
+}
+/* "Not saved: retry": the chip itself is the button. */
+.editor-identity button.status-chip {
+  min-height: 24px;
+  height: 24px;
+  padding: 0 8px;
+  border: 0;
+  background: var(--danger-bg);
+  color: var(--danger-ink);
+  font: var(--type-caption);
+  font-weight: 600;
+  cursor: pointer;
+}
+.editor-identity button.status-chip:hover {
+  background: var(--danger-bg);
+  text-decoration: underline;
+}
+.editor-identity button.status-chip:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+@media (max-width: 767px), (pointer: coarse) {
+  .editor-identity button.status-chip {
+    min-height: var(--control-touch);
+    height: var(--control-touch);
+  }
+}
 .editor-grid {
   --palette-w: 192px;
   --inspector-w: var(--panel-w);
@@ -4448,6 +4501,16 @@ kbd {
     height: 1px;
     overflow: hidden;
     clip-path: inset(50%);
+  }
+  /* The retry button keeps its touch target; its dot stays the chip's size. */
+  .editor-identity button.status-chip {
+    width: var(--control-touch);
+    min-width: var(--control-touch);
+    background: transparent;
+  }
+  .editor-identity button.status-chip::before {
+    width: 10px;
+    height: 10px;
   }
   .editor-toolbar .validate-label,
   .editor-toolbar .save-label,
