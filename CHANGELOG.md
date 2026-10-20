@@ -26,7 +26,12 @@ SPDX-License-Identifier: Apache-2.0
   sized to the model's context: compact (under 16k tokens) sends a short guide,
   the draft whole when it fits (otherwise an outline with the selected step
   whole) and the last four messages in at most 4,096 tokens; standard and full
-  send more. **Context size** on the Weave AI card overrides the choice.
+  send more. **Context size** on the Weave AI card overrides the choice. On
+  Ollama, which cuts a long prompt silently, Weave AI counts each request
+  conservatively (identifiers, digits and text outside ASCII densely) and refuses
+  one that may not fit before the model with `WV-LUMI-CONTEXT-LIMIT`; on Ollama
+  0.40 or later an answer whose prompt count shows the model saw only part of
+  the request is not used either.
 - A run attached to a Weave AI question carries only its run facts (workflow,
   status, times, failed steps with error codes, open incidents and the last five
   steps), never its input, outputs or logs.
@@ -41,11 +46,14 @@ SPDX-License-Identifier: Apache-2.0
   models such as `qwen3` to answer without thinking only on Ollama 0.40 or later,
   since Ollama 0.12.3 refuses that setting for every model; on an older Ollama a
   thinking model that cannot answer says to upgrade Ollama.
-- On Ollama, which cuts a long prompt silently, AI tasks count text outside
-  ASCII, such as Chinese or emoji, by its UTF-8 bytes when they check that a
-  prompt fits the model's context, and an answer to a prompt the model saw only
-  part of fails with `LLM_CONTEXT_LIMIT` instead of being returned. Other
-  endpoints refuse an oversized prompt themselves and keep the earlier count.
+- On Ollama, which cuts a long prompt silently, AI tasks count identifiers,
+  digits and text outside ASCII (such as Chinese or emoji) conservatively when
+  they check that a prompt fits the model's context, and an answer whose prompt
+  count is below what the whole prompt can count fails with `LLM_CONTEXT_LIMIT`
+  instead of being returned. The check covers the task's first model call; the
+  later calls of a reasoning pattern or of the retry with the format in the
+  prompt are not checked again. Other endpoints refuse an oversized prompt
+  themselves and keep the earlier count.
 - Weave AI keeps small local models from looping: compact requests answer in at
   most 512 tokens, the instructions ask for a brief answer, Ollama endpoints get
   a frequency penalty, and an answer that starts repeating itself is stopped

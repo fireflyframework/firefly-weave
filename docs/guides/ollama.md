@@ -199,13 +199,16 @@ task to the worker release. `weave platform ai status --output json` reports bot
 as `connection_revision_id` and `release_id`.
 
 Keep `options.max_tokens` at 4,096 or less: a larger value fails with
-`LLM_OPTIONS`. The worker estimates the prompt, the context and the result fields
-at about four characters per token for ASCII text and one token per UTF-8 byte for
-other text, such as Chinese or emoji, adds `max_tokens`, and fails with
-`LLM_CONTEXT_LIMIT` before any request when the sum does not fit the policy's
-context size, instead of letting Ollama cut the prompt silently. When Ollama
-reports fewer prompt tokens than the whole prompt can count, the answer is not
-used and the step fails with `LLM_CONTEXT_LIMIT` too. When Ollama reports no
+`LLM_OPTIONS`. The worker counts the prompt, the context and the result fields
+conservatively (ordinary words at about 2.5 characters per token; identifiers,
+digits and punctuation runs at one token per character; text outside ASCII,
+such as Chinese or emoji, at one token per UTF-8 byte), adds `max_tokens`, and
+fails with `LLM_CONTEXT_LIMIT` before any request when the sum does not fit the
+policy's context size, instead of letting Ollama cut the prompt silently. When
+Ollama reports fewer prompt tokens than the whole prompt can count, the answer
+is not used and the step fails with `LLM_CONTEXT_LIMIT` too. These checks cover
+the task's first model call: the later calls of a reasoning pattern, or the
+retry that puts the result format in the prompt, are not checked again. When Ollama reports no
 prompt count at all, that check cannot run: the worker logs a warning
 (`weave_agentic_worker.prompts`) and uses the answer.
 

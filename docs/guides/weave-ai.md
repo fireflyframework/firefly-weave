@@ -137,6 +137,13 @@ is trimmed in that order: the draft becomes an outline, then a run lists fewer
 steps and attachments are left out from the last, then the oldest messages. Weave AI is told what was left out, never given a value cut in half.
 Choose another size with **Context size** on the **Weave AI** card.
 
+On Ollama, which cuts a request longer than the model's context without saying
+so, Weave AI counts each request conservatively (identifiers, digits and text
+outside ASCII densely) and refuses one that may not fit before the model, with
+`WV-LUMI-CONTEXT-LIMIT`. On Ollama 0.40 or later it also refuses an answer whose
+prompt count shows the model saw only part of the request; an older Ollama cuts
+differently, so there the conservative count is the only guard.
+
 The policy's context size must match what the model really runs with. Ollama
 does not report the context it runs a model with until the model is loaded, so
 Weave AI cannot detect an Ollama on your computer started with a smaller
