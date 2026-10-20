@@ -65,6 +65,20 @@ INVALID = [
     ("a fingerprint of another kind", {"turns": [], "configHash": "sha256:00"}, "/configHash"),
     ("a fingerprint with a line break", {"turns": [], "configHash": "fnv1a64:0123456789abcdef\n"}, "/configHash"),
     ("a run ID without hyphens", {"turns": [], "runId": RUN_ID.replace("-", "")}, "/runId"),
+    *(
+        (
+            f"a run ID {name}",
+            {"turns": [], "source": "run", "runId": run_id, "runEnvironmentId": ENVIRONMENT_ID},
+            "/runId",
+        )
+        for name, run_id in [
+            ("with an extra group", "12345678-1234-1234-1234-1234-5678-9012"),
+            ("in braces", "{" + RUN_ID + "}"),
+            ("with a closing brace", RUN_ID + "}"),
+            ("as a URN", "urn:uuid:" + RUN_ID),
+            ("with non-ASCII digits", RUN_ID.replace("3", "\u0663")),
+        ]
+    ),
 ]
 
 

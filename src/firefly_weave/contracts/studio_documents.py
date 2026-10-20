@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Annotated, Any, Final, Literal, Self, cast
 from uuid import UUID
 
-from jsonschema import Draft202012Validator, validators
+from jsonschema import Draft202012Validator, FormatChecker, validators
 from jsonschema.exceptions import ValidationError as SchemaViolation
 from pydantic import AwareDatetime, BeforeValidator, ConfigDict, Field, ValidationInfo, model_validator
 
@@ -291,6 +291,10 @@ def _ecmascript_pattern(
 
 _extend: Callable[..., Any] = validators.extend
 _TurnsValidator = _extend(Draft202012Validator, {"pattern": _ecmascript_pattern})
+# The ``uuid`` format is the hyphenated 8-4-4-4-12 ASCII hexadecimal text Studio checks, and nothing else ``UUID()``
+# reads (braces, URNs, other digits or groupings).
+_TURNS_FORMATS = FormatChecker()
+_TURNS_FORMATS.checks("uuid")(lambda value: not isinstance(value, str) or _UUID_TEXT.fullmatch(value) is not None)
 
 
 def studio_ai_turns_schema() -> JsonObject:
@@ -304,7 +308,7 @@ def ai_turns_problems(entry: object) -> list[str]:
 
     Only places are reported, never values: recorded turns may hold customer data.
     """
-    validator = _TurnsValidator(studio_ai_turns_schema(), format_checker=Draft202012Validator.FORMAT_CHECKER)
+    validator = _TurnsValidator(studio_ai_turns_schema(), format_checker=_TURNS_FORMATS)
     places = {
         "".join(f"/{str(part).replace('~', '~0').replace('/', '~1')}" for part in error.absolute_path)
         for error in validator.iter_errors(entry)

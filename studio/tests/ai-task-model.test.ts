@@ -415,6 +415,18 @@ const INVALID_TURNS: unknown[] = [
   { turns: [], source: "run", runId: "3f2a6c1e-0d5b-4a63-9c1f-2b7e8d9a0b11" },
   { turns: [], configHash: "fnv1a64:0123456789abcdef\n" },
   { turns: [], runId: "3f2a6c1e0d5b4a639c1f2b7e8d9a0b11" },
+  ...[
+    "12345678-1234-1234-1234-1234-5678-9012",
+    "{3f2a6c1e-0d5b-4a63-9c1f-2b7e8d9a0b11}",
+    "3f2a6c1e-0d5b-4a63-9c1f-2b7e8d9a0b11}",
+    "urn:uuid:3f2a6c1e-0d5b-4a63-9c1f-2b7e8d9a0b11",
+    "\u0663f2a6c1e-0d5b-4a63-9c1f-2b7e8d9a0b11",
+  ].map((runId) => ({
+    turns: [],
+    source: "run",
+    runId,
+    runEnvironmentId: "9b1c2d3e-4f50-4a61-8b72-c3d4e5f60718",
+  })),
 ];
 
 describe("recorded AI turns", () => {
