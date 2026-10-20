@@ -300,6 +300,20 @@ def test_the_hold_edit_names_the_hold_that_outlasts_the_decision():
     assert (finding.suggested_edit.path, finding.suggested_edit.value) == (f"{BODY}/0/holdSeconds", 90)
 
 
+def test_a_reservation_without_its_own_hold_is_held_for_the_transactions_policy():
+    result = compiled(workflow(transaction(hold(), add(), submit(), policy={"holdSeconds": 60})))
+    [finding] = [d for d in result.diagnostics if d.code == "WV-COMP-TXN_HOLD_PIVOT"]
+    assert (finding.suggested_edit.path, finding.suggested_edit.value) == (f"{BODY}/0/holdSeconds", 90)
+    result = compiled(workflow(transaction(hold(), add(), submit(), policy={"holdSeconds": 90})))
+    assert result.ok, findings(result)
+    nodes = {node["id"]: node for node in executable(result)["graph"]["nodes"]}
+    assert nodes["hold"]["txn"]["holdSeconds"] == 90
+    pause = {"id": "pause", "kind": "wait", "durationSeconds": 200}
+    result = compiled(workflow(transaction(hold(), pause, add(), submit(), policy={"holdSeconds": 120})))
+    assert findings(result, "TXN_HOLD_WAIT") == [("TXN_HOLD_WAIT", f"{BODY}/1", "warning")]
+    assert findings(compiled(workflow(transaction(hold(), pause, add(), submit()))), "TXN_HOLD_WAIT") == []
+
+
 @pytest.mark.parametrize(
     ("step", "key", "path"),
     [
