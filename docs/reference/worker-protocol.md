@@ -142,9 +142,11 @@ when recovery creates a new generation.
   `outcome: unknown` is refused (HTTP 422, `WV-COMPLETION-EFFECT`). A worker
   release declares that it reports this on purpose with
   `worker: {release, transaction_aware: true}` on its claims, and a connector
-  action with `transactionAware: true`. The platform accepts these fields now and
-  uses them once it runs transactions; a report from any other release counts as
-  unknown, so the step is undone to be safe.
+  action with `transactionAware: true`. The claim's `release` is the same
+  release ID that registration sends as `release_id`; the two fields name it
+  differently. The platform accepts these fields now and uses them once it runs
+  transactions; a report from any other release counts as unknown, so the step
+  is undone to be safe.
 
 **Example.** The target records a customer, and the worker crashes before Weave
 accepts the completion. Recovery issues generation 2 of the same task. Its
