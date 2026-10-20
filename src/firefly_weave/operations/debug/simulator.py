@@ -23,8 +23,9 @@ from typing import cast
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from firefly_weave.compiler.api import CompiledArtifact, import_artifact
+from firefly_weave.compiler.calls import call_output_schema
 from firefly_weave.compiler.canonical import canonical_bytes
-from firefly_weave.compiler.ir import ActionNode, HumanTaskNode, IRNode, SignalNode, WorkflowIR
+from firefly_weave.compiler.ir import ActionNode, CallWorkflowNode, HumanTaskNode, IRNode, SignalNode, WorkflowIR
 from firefly_weave.contracts.definitions import ActionDefinition, load_definition
 from firefly_weave.contracts.diagnostics import Diagnostic
 from firefly_weave.contracts.instance_keys import InvalidInstanceKey, node_of, split_instance
@@ -45,6 +46,7 @@ from firefly_weave.runtime.control import enclosing_loops, loop_scope
 from firefly_weave.runtime.kernel import (
     _advance_owned,
     begin,
+    called_workflow,
     deadline_order,
     duration_steps,
     prepare,
@@ -56,6 +58,11 @@ from firefly_weave.runtime.models import CallIntent, Deadline, RunState, Runtime
 _DEFAULT_LIMITS = DebugLimits()
 
 TERMINAL = {"succeeded", "failed", "cancelled", "timed_out"}
+
+
+def frame_run_id(key: str) -> UUID:
+    """The simulated run of the call ``key``: stable across sessions, restores, the library, the CLI and servers."""
+    return uuid5(NAMESPACE_URL, f"firefly-weave/debug/v1/frame/{key}")
 
 
 def first_instance(ir: WorkflowIR, step_id: str) -> str:
@@ -128,6 +135,10 @@ class Simulator:
             if key.startswith("node:"):
                 # node:<step> mocks every instance of an action step; node:<instance key> mocks one of them.
                 step = self._instance_node(key.removeprefix("node:"))
+                if isinstance(step, CallWorkflowNode) and step.mode == "wait":
+                    # A waiting call's mock stands for the whole called run.
+                    self._validate_call_mock(step, value)
+                    continue
                 targets = [steps[step.id]] if step is not None and step.id in steps else []
             else:
                 targets = actions.get(key, [])
@@ -138,6 +149,22 @@ class Simulator:
                     validate_action(self.ir, definition, "output", value, node=node)
             except ValueError:
                 raise DebugError("WV-DEBUG-MOCK-OUTPUT") from None
+
+    def _validate_call_mock(self, node: CallWorkflowNode, value: JsonValue) -> None:
+        """The called workflow's output for a call that stops on failure, or the whole envelope when it continues."""
+        output = cast(JsonObject, called_workflow(self.ir, node)[1]["outputSchema"])
+        try:
+            validate(self.ir, call_output_schema(node.mode, node.on_failure, output), value)
+            if node.on_failure == "continue":
+                envelope = cast(JsonObject, value)
+                succeeded = envelope["status"] == "succeeded"
+                # A success carries the output and a child that did not succeed carries the error, as in real runs.
+                if ("output" in envelope) != succeeded or ("error" in envelope) == succeeded:
+                    raise ValueError("Inconsistent call envelope")
+                if succeeded:
+                    validate(self.ir, output, envelope["output"])
+        except ValueError:
+            raise DebugError("WV-DEBUG-MOCK-OUTPUT") from None
 
     @classmethod
     def restore(cls, serialized: str, *, limits: DebugLimits = _DEFAULT_LIMITS) -> "Simulator":
@@ -339,18 +366,24 @@ class Simulator:
                 if isinstance(command, Deadline):
                     d.deadlines.append(command)
                 elif isinstance(command, CallIntent) and command.mode == "wait":
-                    # Debug sessions do not start child runs; a detached call is simply not simulated.
-                    d.diagnostics = [
-                        Diagnostic(
-                            code="WV-DEBUG-MISSING_MOCK",
-                            severity="error",
-                            stage="evaluation",
-                            path="",
-                            message="A step that waits for another workflow cannot be simulated yet; "
-                            "simulate the called workflow on its own.",
-                        )
-                    ]
-                    return True
+                    candidates = list(dict.fromkeys(["node:" + command.node_id, "node:" + node_of(command.node_id)]))
+                    key = next((key for key in candidates if key in d.mocks), None)
+                    if key is None:
+                        d.diagnostics = [
+                            Diagnostic(
+                                code="WV-DEBUG-MISSING_MOCK",
+                                severity="error",
+                                stage="evaluation",
+                                path="",
+                                message="A step that waits for another workflow needs a mock or the called workflow.",
+                                hint="Add a mock under "
+                                + ", ".join(candidates)
+                                + f", or the artifact of {command.workflow_reference} under workflows.",
+                            )
+                        ]
+                        return True
+                    d.pending.append(self._event("call_completed", self._mocked_call(command, d.mocks[key])))
+                    self._grown(d.mocks[key])
                 elif isinstance(command, TaskIntent):
                     # A step mock applies to every instance of the step.
                     key = "node:" + command.node_id
@@ -376,6 +409,17 @@ class Simulator:
                     )
                     self._grown(d.mocks[key])
         return True
+
+    @staticmethod
+    def _mocked_call(command: CallIntent, value: JsonValue) -> JsonObject:
+        """The recorded outcome a mocked call delivers, shaped like the outcome of a real child run."""
+        data: JsonObject = {"node_id": command.node_id, "generation": 0}
+        if command.on_failure == "continue":
+            envelope = cast(JsonObject, value)
+            status = cast(str, envelope["status"])
+            outcome = envelope["output"] if status == "succeeded" else envelope["error"]
+            return data | {"child_run_id": envelope["runId"], "status": status, "output": outcome}
+        return data | {"child_run_id": str(frame_run_id(command.node_id)), "status": "succeeded", "output": value}
 
     def _eligible(self) -> RuntimeEvent | None:
         d = self.data
