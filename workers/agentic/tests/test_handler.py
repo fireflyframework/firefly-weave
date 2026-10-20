@@ -17,6 +17,7 @@
 """Real Agentic execution stays inside one fenced, bounded task."""
 
 import asyncio
+import contextlib
 import json
 import os
 from datetime import UTC, datetime, timedelta
@@ -617,6 +618,42 @@ def ollama_lease(**profile):
     return lease(model="qwen2.5:1.5b", **profile)
 
 
+SUMMARY_SCHEMA = {
+    "type": "object",
+    "properties": {"summary": {"type": "string"}},
+    "required": ["summary"],
+    "additionalProperties": False,
+}
+TEXT_SCHEMA = {"type": "string", "maxLength": 20000}
+
+
+def chat_answer(content, finish_reason="stop"):
+    return httpx2.Response(
+        200,
+        json={
+            "id": "chat-1",
+            "object": "chat.completion",
+            "created": 0,
+            "model": "qwen2.5:1.5b",
+            "choices": [
+                {"index": 0, "message": {"role": "assistant", "content": content}, "finish_reason": finish_reason}
+            ],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8},
+        },
+    )
+
+
+def recording_builder(requests, answer):
+    async def receive(request):
+        requests.append(json.loads(request.content))
+        return answer(len(requests))
+
+    def builder(spec, secret, timeout, options):
+        return build_model(spec, secret, timeout, options, transport=httpx2.MockTransport(receive))
+
+    return builder
+
+
 @pytest.mark.parametrize("mode", ["native", "tool", "prompted", "cloud-default"])
 async def test_policy_selects_the_result_format_on_the_provider_request(tmp_path, mode):
     requests = []
@@ -624,7 +661,7 @@ async def test_policy_selects_the_result_format_on_the_provider_request(tmp_path
     async def receive(request):
         body = json.loads(request.content)
         requests.append(body)
-        message = {"role": "assistant", "content": '{"result":"Summary"}'}
+        message = {"role": "assistant", "content": '{"result":{"summary":"Summary"}}'}
         if mode in {"tool", "cloud-default"}:
             message = {
                 "role": "assistant",
@@ -633,7 +670,10 @@ async def test_policy_selects_the_result_format_on_the_provider_request(tmp_path
                     {
                         "id": "call-1",
                         "type": "function",
-                        "function": {"name": body["tools"][0]["function"]["name"], "arguments": '{"result":"Summary"}'},
+                        "function": {
+                            "name": body["tools"][0]["function"]["name"],
+                            "arguments": '{"result":{"summary":"Summary"}}',
+                        },
                     }
                 ],
             }
@@ -660,22 +700,113 @@ async def test_policy_selects_the_result_format_on_the_provider_request(tmp_path
     transport = OllamaTransport() if mode != "cloud-default" else Transport()
     with po.installed(OLLAMA_ORIGINS):
         output = await AgenticTaskHandler(transport, policy, model_builder=builder)(
-            ollama_lease(outputSchema={"type": "string", "minLength": 1})
+            ollama_lease(outputSchema=SUMMARY_SCHEMA)
         )
-    assert output["result"] == "Summary"
+    assert output["result"] == {"summary": "Summary"}
     assert output["usage"]["requests"] == 1 and len(requests) == 1
     body = requests[0]
     assert body.get("max_tokens", body.get("max_completion_tokens")) == 256
     if mode == "native":
         assert body["response_format"]["type"] == "json_schema"
-        assert body["response_format"]["json_schema"]["schema"]["properties"]["result"]["type"] == "string"
+        assert body["response_format"]["json_schema"]["schema"]["properties"]["result"]["type"] == "object"
         assert not body.get("tools") and "tool_choice" not in body
     elif mode == "prompted":
         assert body["response_format"]["type"] == "json_object"
         assert not body.get("tools") and "tool_choice" not in body
     else:
-        assert body["tools"][0]["function"]["parameters"]["properties"]["result"]["type"] == "string"
+        assert body["tools"][0]["function"]["parameters"]["properties"]["result"]["type"] == "object"
         assert "response_format" not in body
+
+
+@pytest.mark.parametrize("mode", ["native", "tool", "prompted", "cloud-default"])
+async def test_a_text_result_is_asked_for_as_plain_text_in_every_mode(tmp_path, mode):
+    requests = []
+    builder = recording_builder(requests, lambda _: chat_answer("Two sentences about the ticket."))
+    policy = (
+        ollama_policy(tmp_path, structuredOutput=mode)
+        if mode != "cloud-default"
+        else WorkerPolicy(frozenset({("openai-chat", "qwen2.5:1.5b")}), frozenset({"https://api.openai.com/v1"}))
+    )
+    transport = OllamaTransport() if mode != "cloud-default" else Transport()
+    with po.installed(OLLAMA_ORIGINS):
+        output = await AgenticTaskHandler(transport, policy, model_builder=builder)(
+            ollama_lease(outputSchema=TEXT_SCHEMA)
+        )
+    assert output["result"] == "Two sentences about the ticket."
+    assert output["usage"] == {"requests": 1, "inputTokens": 5, "outputTokens": 3}
+    assert len(requests) == 1
+    assert not requests[0].get("tools") and "tool_choice" not in requests[0]
+    assert "response_format" not in requests[0]
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "<think>The customer seems upset; private-reasoning-canary.</think>\n\nThe order shipped.",
+        "<think>First <think>private-reasoning-canary</think> then private-reasoning-canary</think>The order shipped.",
+    ],
+    ids=["leading", "nested"],
+)
+async def test_thinking_before_a_text_result_is_never_returned(tmp_path, answer):
+    requests = []
+    builder = recording_builder(requests, lambda _: chat_answer(answer))
+    with po.installed(OLLAMA_ORIGINS):
+        output = await AgenticTaskHandler(OllamaTransport(), ollama_policy(tmp_path), model_builder=builder)(
+            ollama_lease(outputSchema=TEXT_SCHEMA)
+        )
+    assert output["result"] == "The order shipped."
+    assert "private-reasoning-canary" not in json.dumps(output)
+
+
+@pytest.mark.parametrize(
+    "answer",
+    ["The answer was cut", "<think>partial private-reasoning-canary"],
+    ids=["a cut answer", "cut inside reasoning"],
+)
+async def test_a_text_result_cut_off_by_the_token_limit_fails(tmp_path, answer):
+    builder = recording_builder([], lambda _: chat_answer(answer, finish_reason="length"))
+    with po.installed(OLLAMA_ORIGINS), pytest.raises(ConnectorFailure) as failed:
+        await AgenticTaskHandler(OllamaTransport(), ollama_policy(tmp_path), model_builder=builder)(
+            ollama_lease(outputSchema=TEXT_SCHEMA)
+        )
+    assert (failed.value.code, failed.value.outcome) == ("LLM_LIMIT", "failed")
+    assert "private-reasoning-canary" not in repr(failed.value) and "cut" not in str(failed.value.args)
+
+
+async def test_a_closing_reasoning_tag_in_an_answer_is_kept(tmp_path):
+    answer = "Use the </think> tag to end reasoning."
+    builder = recording_builder([], lambda _: chat_answer(answer))
+    with po.installed(OLLAMA_ORIGINS):
+        output = await AgenticTaskHandler(OllamaTransport(), ollama_policy(tmp_path), model_builder=builder)(
+            ollama_lease(outputSchema=TEXT_SCHEMA)
+        )
+    assert output["result"] == answer
+
+
+async def test_a_text_result_still_meets_its_schema(tmp_path):
+    builder = recording_builder([], lambda _: chat_answer("x" * 30))
+    with po.installed(OLLAMA_ORIGINS), pytest.raises(ConnectorFailure) as failed:
+        await AgenticTaskHandler(OllamaTransport(), ollama_policy(tmp_path), model_builder=builder)(
+            ollama_lease(outputSchema={"type": "string", "maxLength": 10})
+        )
+    assert (failed.value.code, failed.value.outcome) == ("LLM_OUTPUT", "failed")
+
+
+@pytest.mark.parametrize(
+    "schema",
+    [
+        {"type": "string", "enum": ["approve", "reject"]},
+        {"type": "string", "pattern": "^[A-Z]{3}$"},
+    ],
+)
+async def test_a_constrained_string_result_keeps_the_structured_request(tmp_path, schema):
+    requests = []
+    builder = recording_builder(requests, lambda _: chat_answer('{"result":"approve"}'))
+    with po.installed(OLLAMA_ORIGINS), contextlib.suppress(ConnectorFailure):
+        await AgenticTaskHandler(OllamaTransport(), ollama_policy(tmp_path), model_builder=builder)(
+            ollama_lease(outputSchema=schema)
+        )
+    assert requests[0]["response_format"]["type"] == "json_schema"
 
 
 async def test_native_policy_uses_prompted_output_before_calling_an_unsupported_model(tmp_path):
@@ -696,36 +827,79 @@ async def test_native_policy_uses_prompted_output_before_calling_an_unsupported_
     assert len(calls) == 1 and not calls[0].output_tools
 
 
-@pytest.mark.parametrize("answer,code", [("rejected-format", "LLM_PROVIDER"), ("invalid-result", "LLM_OUTPUT")])
-async def test_a_native_result_failure_does_not_repeat_the_request(tmp_path, answer, code):
+async def test_a_native_result_that_breaks_the_schema_is_not_asked_again(tmp_path):
     requests = []
-
-    async def receive(request):
-        requests.append(json.loads(request.content))
-        if answer == "rejected-format":
-            return httpx2.Response(400, json={"error": {"message": "response_format is unsupported"}})
-        return httpx2.Response(
-            200,
-            json={
-                "id": "chat-1",
-                "object": "chat.completion",
-                "created": 0,
-                "model": "qwen2.5:1.5b",
-                "choices": [
-                    {"index": 0, "message": {"role": "assistant", "content": '{"result":123}'}, "finish_reason": "stop"}
-                ],
-            },
-        )
-
-    def builder(spec, secret, timeout, options):
-        return build_model(spec, secret, timeout, options, transport=httpx2.MockTransport(receive))
-
+    builder = recording_builder(requests, lambda _: chat_answer('{"result":123}'))
     with po.installed(OLLAMA_ORIGINS), pytest.raises(ConnectorFailure) as failed:
         await AgenticTaskHandler(OllamaTransport(), ollama_policy(tmp_path), model_builder=builder)(
-            ollama_lease(outputSchema={"type": "string", "minLength": 1})
+            ollama_lease(outputSchema=SUMMARY_SCHEMA)
         )
-    assert failed.value.code == code and len(requests) == 1
+    assert failed.value.code == "LLM_OUTPUT" and len(requests) == 1
     assert requests[0]["response_format"]["type"] == "json_schema"
+
+
+FORMAT_REFUSED = httpx2.Response(400, json={"error": {"message": "response_format is unsupported"}})
+
+
+async def test_a_refused_response_format_is_asked_once_more_with_the_format_in_the_prompt(tmp_path):
+    requests = []
+    answers = {1: FORMAT_REFUSED, 2: chat_answer('{"result":{"summary":"Summary"}}')}
+    builder = recording_builder(requests, lambda count: answers[count])
+    with po.installed(OLLAMA_ORIGINS):
+        output = await AgenticTaskHandler(OllamaTransport(), ollama_policy(tmp_path), model_builder=builder)(
+            ollama_lease(outputSchema=SUMMARY_SCHEMA)
+        )
+    assert output["result"] == {"summary": "Summary"}
+    assert [body["response_format"]["type"] for body in requests] == ["json_schema", "json_object"]
+    # The refused request counts against the step's model calls.
+    assert output["usage"]["requests"] == 2
+
+
+async def test_a_step_with_one_model_call_does_not_ask_again(tmp_path):
+    requests = []
+    builder = recording_builder(requests, lambda _: FORMAT_REFUSED)
+    with po.installed(OLLAMA_ORIGINS), pytest.raises(ConnectorFailure) as failed:
+        await AgenticTaskHandler(OllamaTransport(), ollama_policy(tmp_path), model_builder=builder)(
+            ollama_lease(outputSchema=SUMMARY_SCHEMA, maxCalls=1)
+        )
+    assert failed.value.code == "LLM_PROVIDER" and len(requests) == 1
+
+
+@pytest.mark.parametrize(
+    "refusal",
+    [
+        httpx2.Response(400, json={"error": {"message": "invalid temperature"}}),
+        httpx2.Response(500, json={"error": {"message": "response_format failed"}}),
+    ],
+)
+async def test_other_refusals_are_not_asked_again(tmp_path, refusal):
+    requests = []
+    builder = recording_builder(requests, lambda _: refusal)
+    with po.installed(OLLAMA_ORIGINS), pytest.raises(ConnectorFailure) as failed:
+        await AgenticTaskHandler(OllamaTransport(), ollama_policy(tmp_path), model_builder=builder)(
+            ollama_lease(outputSchema=SUMMARY_SCHEMA)
+        )
+    assert failed.value.code == "LLM_PROVIDER" and len(requests) == 1
+
+
+async def test_a_second_refusal_ends_the_step(tmp_path):
+    requests = []
+    builder = recording_builder(requests, lambda _: FORMAT_REFUSED)
+    with po.installed(OLLAMA_ORIGINS), pytest.raises(ConnectorFailure) as failed:
+        await AgenticTaskHandler(OllamaTransport(), ollama_policy(tmp_path), model_builder=builder)(
+            ollama_lease(outputSchema=SUMMARY_SCHEMA)
+        )
+    assert failed.value.code == "LLM_PROVIDER" and len(requests) == 2
+
+
+async def test_tool_results_are_never_asked_again_in_another_format(tmp_path):
+    requests = []
+    builder = recording_builder(requests, lambda _: FORMAT_REFUSED)
+    with po.installed(OLLAMA_ORIGINS), pytest.raises(ConnectorFailure):
+        await AgenticTaskHandler(
+            OllamaTransport(), ollama_policy(tmp_path, structuredOutput="tool"), model_builder=builder
+        )(ollama_lease(outputSchema=SUMMARY_SCHEMA))
+    assert len(requests) == 1
 
 
 async def test_keyless_ollama_calls_never_request_a_credential(tmp_path):

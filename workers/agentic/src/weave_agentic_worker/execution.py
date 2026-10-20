@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from copy import deepcopy
 from typing import Any, cast
 
@@ -35,10 +36,11 @@ from fireflyframework_agentic.config import FireflyAgenticConfig
 from fireflyframework_agentic.reasoning.registry import reasoning_registry
 from pydantic_ai import NativeOutput, PromptedOutput, StructuredDict, ToolOutput
 from pydantic_ai.exceptions import UsageLimitExceeded
+from pydantic_ai.messages import ThinkingPart
 from pydantic_ai.models import Model
 from pydantic_ai.usage import RunUsage, UsageLimits
 
-from weave_agentic_worker.errors import classify
+from weave_agentic_worker.errors import classify, format_refused
 
 
 def private_framework_logging() -> None:
@@ -73,6 +75,7 @@ class _BoundedAgent(FireflyAgent[Any, Any]):
                 default_temperature=None,
             ),
         )
+        self.max_calls = profile.max_calls
         self.shared_usage = RunUsage()
         self.shared_limits = UsageLimits(
             request_limit=profile.max_calls,
@@ -92,8 +95,59 @@ class _BoundedAgent(FireflyAgent[Any, Any]):
             self.failure = ConnectorFailure("LLM_LIMIT", "failed")
             raise self.failure from None
         except Exception as error:
+            if format_refused(error):
+                raise FormatRefused from None
             self.failure = classify(error)
             raise self.failure from None
+
+    async def run_structured(self, prompt: str, schema: dict[str, Any], output_mode: str) -> Any:
+        """One structured answer; a refused native format is asked once more with the format in the prompt."""
+        result = StructuredDict(schema, name="WeaveResult")
+        output_type = {"native": NativeOutput, "tool": ToolOutput, "prompted": PromptedOutput}[output_mode](result)
+        try:
+            return await self.run(prompt, output_type=output_type)
+        except FormatRefused:
+            # The endpoint answered 400 before generating anything. The refused request counts as one call.
+            self.shared_usage.requests += 1
+            if output_mode != "native" or self.shared_usage.requests >= self.max_calls:
+                self.failure = ConnectorFailure("LLM_PROVIDER", "unknown")
+                raise self.failure from None
+        try:
+            return await self.run(prompt, output_type=PromptedOutput(result))
+        except FormatRefused:
+            self.failure = ConnectorFailure("LLM_PROVIDER", "unknown")
+            raise self.failure from None
+
+
+class FormatRefused(Exception):
+    """The endpoint refused the requested response format (HTTP 400); nothing was generated."""
+
+
+# A string schema with only these keywords is a plain text answer: no output tool, no response format.
+_TEXT_KEYWORDS = frozenset({"type", "minLength", "maxLength", "title", "description"})
+# Some models write their reasoning inline as <think>…</think>; it is never returned or stored. An innermost block
+# holds no other opening tag, so nested blocks are removed from the inside out.
+_THINKING = re.compile(r"<think>(?:(?!<think>).)*?</think>", re.DOTALL)
+# When the endpoint split reasoning off the answer, a closing tag left in the answer ends the rest of a nested
+# block whose start it removed. Without such a split, a closing tag is part of the answer.
+_REASONING_REMAINDER = re.compile(r"\A.*</think>", re.DOTALL)
+
+
+def text_result(schema: dict[str, Any]) -> bool:
+    """True when the result is plain text, asked for without an output tool or a response format."""
+    return schema.get("type") == "string" and set(schema) <= _TEXT_KEYWORDS
+
+
+def without_thinking(text: str, *, split: bool = False) -> str:
+    """The answer without its closed ``<think>…</think>`` blocks, wherever they appear, nested ones included.
+
+    ``split`` says the endpoint already split reasoning off this answer; then the rest of a nested block before a
+    closing tag is removed too.
+    """
+    previous = None
+    while previous != text:
+        previous, text = text, _THINKING.sub("", text)
+    return _REASONING_REMAINDER.sub("", text, count=1) if split else text
 
 
 def estimate_tokens(*parts: str) -> int:
@@ -116,7 +170,7 @@ async def run_model(
     if context_tokens is not None:
         # Ollama silently truncates a prompt beyond its context, so refuse it before any request.
         prompt = json.dumps({"prompt": user_prompt, "context": context}, ensure_ascii=False)
-        schema = json.dumps(provider_schema(profile.output_schema))
+        schema = "" if text_result(profile.output_schema) else json.dumps(provider_schema(profile.output_schema))
         if estimate_tokens(instructions, prompt, schema) + profile.options.max_tokens > context_tokens:
             raise ConnectorFailure("LLM_CONTEXT_LIMIT", "not_started")
     try:
@@ -168,13 +222,19 @@ async def _run_model(
                 },
                 ensure_ascii=False,
             )
-        if output_mode == "native" and not model.profile.get("supports_json_schema_output", False):
-            output_mode = "prompted"
-        output_type = {"native": NativeOutput, "tool": ToolOutput, "prompted": PromptedOutput}[output_mode](
-            StructuredDict(provider_schema(profile.output_schema), name="WeaveResult")
-        )
-        final = await agent.run(prompt, output_type=output_type)
-        result = final.output["result"]
+        result: JsonValue
+        if text_result(profile.output_schema):
+            answer = await agent.run(prompt, output_type=str)
+            if answer.response.finish_reason == "length":
+                # The answer stopped at the output token limit: it is incomplete, and may end inside reasoning.
+                raise ConnectorFailure("LLM_LIMIT", "failed")
+            split = any(isinstance(part, ThinkingPart) for part in answer.response.parts)
+            result = without_thinking(answer.output, split=split).strip()
+        else:
+            if output_mode == "native" and not model.profile.get("supports_json_schema_output", False):
+                output_mode = "prompted"
+            final = await agent.run_structured(prompt, provider_schema(profile.output_schema), output_mode)
+            result = final.output["result"]
         if validate_payload(profile.output_schema, result, {}):
             raise ConnectorFailure("LLM_OUTPUT", "failed")
         usage = agent.shared_usage

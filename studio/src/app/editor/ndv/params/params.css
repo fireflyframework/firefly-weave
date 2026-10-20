@@ -2359,3 +2359,34 @@ weave-formula-field > button.formula-expand {
     min-height: calc(2 * 20px + 2 * var(--space-3));
   }
 }
+
+/* An AI step's Model field: the list, what the model can do, Set up AI. */
+.param-model {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.param-model-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+/* Capabilities, not a status: no status dot. */
+.param-model-facts > .pill::before {
+  display: none;
+}
+/* The footer starts on the field's edge: a note, then Set up AI after it or,
+   when there is no room, below it. */
+.param-model-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: var(--space-3);
+  min-width: 0;
+}
+.param-model-notice {
+  color: var(--muted);
+  font: var(--type-caption);
+  overflow-wrap: anywhere;
+}
