@@ -987,6 +987,11 @@ const noNodes = (): SimulationNodes => ({
 export class SimulationPanel implements OnChanges {
   /** Compiled artifact JSON (compile result "artifact"); required to start. */
   artifact = input<Json | null>(null);
+  /** The workflow's test data: the editors start from its test input and pinned outputs (Ruling 21). */
+  testData = input<{
+    input?: unknown;
+    pins: Readonly<Record<string, unknown>>;
+  } | null>(null);
   /** The debug session returned by create or the last command; null in setup. */
   session = input<DebugSessionData | null>(null);
   /** True while the host waits for the platform; controls are disabled. */
@@ -1317,11 +1322,12 @@ export class SimulationPanel implements OnChanges {
   private prepare() {
     const plan = this.plan();
     const previous = this.inputEditor();
+    const fromTest = this.testData();
     const inputStart =
       previous &&
       JSON.stringify(previous.schema) === JSON.stringify(plan.inputSchema)
         ? previous.value
-        : (sampleValue(plan.inputSchema) ?? {});
+        : (fromTest?.input ?? sampleValue(plan.inputSchema) ?? {});
     this.inputEditor.set(new ValueEditor(plan.inputSchema, inputStart));
     const actions = new Map<string, ValueEditor>();
     for (const slot of plan.actions) {
@@ -1330,7 +1336,10 @@ export class SimulationPanel implements OnChanges {
         slot.nodeId,
         old && JSON.stringify(old.schema) === JSON.stringify(slot.outputSchema)
           ? old
-          : new ValueEditor(slot.outputSchema, sampleValue(slot.outputSchema)),
+          : new ValueEditor(
+              slot.outputSchema,
+              fromTest?.pins[slot.nodeId] ?? sampleValue(slot.outputSchema),
+            ),
       );
     }
     this.actionEditors = actions;

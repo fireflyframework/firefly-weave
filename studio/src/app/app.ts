@@ -58,7 +58,7 @@ import {
   saveStudioDocument,
 } from "./editor/state/studio-documents";
 import { CHECK_WORDS } from "./editor/state/test-data-check";
-import { entriesOf } from "./editor/state/test-data-ops";
+import { entriesOf, withoutPin } from "./editor/state/test-data-ops";
 import {
   TestDataService,
   type TestDataPlace,
@@ -68,7 +68,12 @@ import {
   fingerprints,
   type StepFingerprints,
 } from "./editor/state/fingerprints";
-import { contractOf, ownedContract } from "./editor/state/pins-stale";
+import {
+  contractOf,
+  ownedContract,
+  pinsView,
+  staleText,
+} from "./editor/state/pins-stale";
 import type {
   StudioDocument,
   StudioDocumentKind,
@@ -6989,6 +6994,74 @@ export class App implements CanvasHost {
     version: number;
     prints: ReadonlyMap<string, StepFingerprints>;
   } | null = null;
+  private pinStatesMemo: {
+    prints: ReadonlyMap<string, StepFingerprints>;
+    data: StudioTestData;
+    states: ReadonlyMap<string, { stale: string | null }>;
+  } | null = null;
+  /** Each pinned step's stale words for the canvas (null when current). */
+  pinStates(): ReadonlyMap<string, { stale: string | null }> {
+    const prints = this.testDataPrints();
+    const data = this.testData.data();
+    const memo = this.pinStatesMemo;
+    if (memo && memo.prints === prints && memo.data === data)
+      return memo.states;
+    const states = new Map<string, { stale: string | null }>();
+    for (const [id, view] of pinsView(data, prints))
+      states.set(id, { stale: view.stale ? staleText(view.stale) : null });
+    this.pinStatesMemo = { prints, data, states };
+    return states;
+  }
+  private simulationDataMemo: {
+    data: StudioTestData;
+    value: { input?: Json; pins: Record<string, Json> } | null;
+  } | null = null;
+  /** What the simulation's editors start from: the test input and each step's pinned output, or null. */
+  simulationTestData(): { input?: Json; pins: Record<string, Json> } | null {
+    this.testData.version();
+    const data = this.testData.data();
+    if (this.simulationDataMemo?.data === data)
+      return this.simulationDataMemo.value;
+    const pins: Record<string, Json> = {};
+    for (const [id, view] of pinsView(data, new Map()))
+      pins[id] = view.entry.output as Json;
+    const input = data.input?.value as Json | undefined;
+    const value =
+      input === undefined && !Object.keys(pins).length
+        ? null
+        : { ...(input === undefined ? {} : { input }), pins };
+    this.simulationDataMemo = { data, value };
+    return value;
+  }
+  /** P on the canvas and the step menu: unpins the pinned steps as one Undo; never makes data (Ruling 19). */
+  togglePins(ids: readonly string[]): void {
+    const pinned = ids.filter((id) => this.pinStates().has(id));
+    if (!pinned.length) {
+      this.notify("Set test output or generate a sample to pin it.");
+      return;
+    }
+    const service = this.testData;
+    const previous = service.data();
+    const at = new Date().toISOString();
+    let next = previous;
+    for (const id of pinned) next = withoutPin(next, id, at);
+    void service.change(next, []).then((outcome) => {
+      if (!outcome.ok) return this.notify(outcome.message, undefined, "danger");
+      const version = service.version();
+      this.notify(
+        pinned.length === 1
+          ? `Unpinned ${pinned[0]}.`
+          : `Unpinned ${pinned.length} steps.`,
+        {
+          label: "Undo",
+          run: () => {
+            if (!service.restore(outcome.previous, version))
+              this.notify("The test data changed since, so Undo did nothing.");
+          },
+        },
+      );
+    });
+  }
   testDataPrints(): ReadonlyMap<string, StepFingerprints> {
     const model = this.model;
     const version = this.testData.version();

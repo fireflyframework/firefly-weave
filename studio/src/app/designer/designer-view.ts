@@ -1221,6 +1221,7 @@ import type { App } from "../app";
         @defer (on immediate) {
           <weave-simulation-panel
             [artifact]="h.simulation.artifact"
+            [testData]="h.simulationTestData()"
             [session]="h.simulationSession"
             [busy]="h.busy !== ''"
             [error]="h.simulationError"

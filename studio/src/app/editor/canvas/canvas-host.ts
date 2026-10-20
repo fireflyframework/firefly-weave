@@ -101,6 +101,13 @@ export interface CanvasHost {
     content: ClipboardContent,
     at: Insertion,
   ): Promise<PastePlan | null>;
+  /**
+   * Each pinned step's stale words (null when current); a step that isn't
+   * here has no pin. The same map until test data or the workflow changes.
+   */
+  pinStates(): ReadonlyMap<string, { stale: string | null }>;
+  /** P and the menu, for pinnable steps: unpins the pinned ones as one Undo; others say how to pin. */
+  togglePins(ids: readonly string[]): void;
   /** Tidy layout: clears legacy positions and moves notes as one undo step, with a toast; false when refused. */
   tidyCanvas(next: CanvasSidecar | null): boolean;
 }
