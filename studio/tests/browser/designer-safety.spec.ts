@@ -156,10 +156,10 @@ for (const viewport of [
       await library(page);
       await newWorkflow(page);
       await insertStep(page, "Transform");
+      // The new step saves itself on the way out: leaving asks nothing.
       await page
         .getByRole("button", { name: "Workflows", exact: true })
         .click();
-      await page.getByRole("button", { name: "Leave designer" }).click();
       await openFromLibrary(page, "Published", "published-one");
       // Undo sits in the toolbar, or in More on narrow screens.
       const undo = page.getByRole("button", { name: "Undo" });

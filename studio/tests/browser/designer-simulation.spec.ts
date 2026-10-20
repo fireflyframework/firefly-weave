@@ -271,7 +271,15 @@ for (const viewport of [
       const { commands } = await simulator(page);
       let release = () => {};
       const held = new Promise<void>((resolve) => (release = resolve));
+      // The draft's own saves are refused until Save draft is pressed, so the
+      // workflow stays unsaved; that save is then held while the panel waits.
+      let holding = false;
       await page.route(`${project}/drafts/*`, async (r) => {
+        if (!holding)
+          return r.fulfill({
+            status: 422,
+            json: { status: 422, code: "WV-VALIDATION", message: "Not now." },
+          });
         await held;
         return r.fulfill({
           json: { id: "draft", revision: 1, document: {} },
@@ -301,6 +309,7 @@ for (const viewport of [
         await expect(simulation).not.toHaveAttribute("aria-modal", "true");
       }
       await save.scrollIntoViewIfNeeded();
+      holding = true;
       await save.click();
       if (modal)
         await simulation

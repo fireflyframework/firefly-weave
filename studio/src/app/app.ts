@@ -6772,7 +6772,7 @@ export class App implements CanvasHost {
   /** One save of the open platform draft, without a toast; false when it didn't save. */
   private async autosaveDraft(): Promise<boolean> {
     this.autosaveFailure = null;
-    if (!this.profile || this.published) return true;
+    if (!this.profile) return true;
     this.flushInspector();
     if (
       this.model.readonly ||
