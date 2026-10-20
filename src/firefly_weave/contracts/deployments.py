@@ -480,7 +480,8 @@ class ChangeRequest(ChangeRequestCreate):
     # still read them; the server keeps it beside each plan.
     planned_by: UUID | None = None
     drain_set: list[DrainMember] = Field(default_factory=list, max_length=100)
-    # The workers this change put into draining; they are resumed when it ends without applying.
+    # The workers this change put into draining and has not resumed: they are resumed when it ends without
+    # applying anything; after it succeeds only the workers its plan removed stay listed.
     drained: list[UUID] = Field(default_factory=list, max_length=100)
     apply_job_id: UUID | None = None
     failure: ChangeFailure | None = None

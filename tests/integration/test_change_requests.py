@@ -1335,3 +1335,143 @@ async def test_a_change_whose_drain_window_closed_can_be_planned_again(ops, flee
     again = await ops.changes.replan(change_request.id, change_request.revision, **ops.authority("planner"))
     assert again.state == "observing"
     assert [entry.state for entry in again.history][-2:] == ["failed", "observing"]
+
+
+async def drained_and_applying(ops, fleet):
+    """A 3 → 1 scale-down approved, both workers drained, and its apply job queued."""
+    change_request = await approved(ops, fleet.setup, observed_count=3, replicas=1)
+    await ops.changes.drain(change_request.id, uuid4().hex, **ops.authority("operator"))
+    return await ops.changes.apply(
+        change_request.id,
+        ChangeRequestApply(digest=change_request.plan_digest),
+        uuid4().hex,
+        **ops.authority("operator"),
+    )
+
+
+@pytest.mark.parametrize("ending", ["never_claimed", "precondition_failed"])
+async def test_a_change_that_fails_before_applying_anything_resumes_the_workers_it_drained(ops, fleet, ending):
+    workers = sorted(worker.id for worker in fleet.workers)
+    change_request = await drained_and_applying(ops, fleet)
+    assert [await draining_state(ops, worker) for worker in workers] == [(True, 2), (True, 2)]
+    runner = ops.authority("planner")
+    if ending == "never_claimed":
+        # The target's runner never claims the apply job before its deadline, as during an upgrade.
+        async with ops.access[1].begin() as session:
+            await session.execute(
+                text(
+                    "UPDATE deployment_jobs SET payload=jsonb_set(payload,'{deadline}','\"2000-01-01T00:00:00Z\"') "
+                    "WHERE id=:id"
+                ),
+                {"id": change_request.apply_job_id},
+            )
+        assert await ops.service.claim(RunnerClaimRequest(runner_id=fleet.setup.runner.id), **runner) is None
+        code = "WV-JOB-CANCELLED"
+    else:
+        lease = await ops.service.claim(RunnerClaimRequest(runner_id=fleet.setup.runner.id), **runner)
+        await ops.service.report(
+            RunnerReport(
+                lease=lease.proof,
+                report_id=uuid4(),
+                state="failed",
+                receipt=SafeDeploymentReceipt(code="precondition_failed"),
+            ),
+            **runner,
+        )
+        code = "WV-PRECONDITION-FAILED"
+    failed = await ops.changes.read(change_request.id, **ops.authority("approver"))
+    assert (failed.state, failed.failure.code) == ("failed", code)
+    assert [await draining_state(ops, worker) for worker in workers] == [(False, 3), (False, 3)]
+    assert [(target, principal) for target, principal, _ in await resumed_audit(ops, change_request.id)] == [
+        (str(worker), None) for worker in workers
+    ]
+    assert failed.drained == []
+
+
+async def test_a_replanned_change_never_leaves_its_earlier_drain_behind(ops, fleet):
+    """The first plan drains hosts 2 and 3; after host 3's container exits, the new plan removes it and host 2."""
+    workers = {worker.id: host for worker, host in zip(fleet.workers, ("c0ffee000002", "c0ffee000003"), strict=True)}
+    change_request = await drained_and_applying(ops, fleet)
+    runner = ops.authority("planner")
+    async with ops.access[1].begin() as session:
+        await session.execute(
+            text(
+                "UPDATE deployment_jobs SET payload=jsonb_set(payload,'{deadline}','\"2000-01-01T00:00:00Z\"') "
+                "WHERE id=:id"
+            ),
+            {"id": change_request.apply_job_id},
+        )
+    assert await ops.service.claim(RunnerClaimRequest(runner_id=fleet.setup.runner.id), **runner) is None
+    failed = await ops.changes.read(change_request.id, **ops.authority("planner"))
+    observing = await ops.changes.replan(change_request.id, failed.revision, **ops.authority("planner"))
+    # Three containers, of which host 3 has exited: the new plan removes it, then host 2.
+    await run_observation(ops, fleet.setup, 3, listed=2)
+    ready = await ops.changes.read(observing.id, **ops.authority("planner"))
+    planned = await ops.changes.advance(observing.id, ready.revision, **ops.authority("planner"))
+    assert planned.drained == []
+    assert {member.host for member in planned.drain_set} == {"c0ffee000002"}
+    approved_change = await ops.changes.approve(
+        planned.id, ChangeRequestApprove(digest=planned.plan_digest), **ops.authority("approver")
+    )
+    progress = await ops.changes.drain(approved_change.id, uuid4().hex, **ops.authority("operator"))
+    removed = next(worker for worker, host in workers.items() if host == "c0ffee000002")
+    kept = next(worker for worker, host in workers.items() if host == "c0ffee000003")
+    assert progress.change_request.drained == [removed]
+    assert (await draining_state(ops, kept))[0] is False
+    applied = await ops.changes.apply(
+        planned.id, ChangeRequestApply(digest=planned.plan_digest), uuid4().hex, **ops.authority("operator")
+    )
+    lease = await ops.service.claim(RunnerClaimRequest(runner_id=fleet.setup.runner.id), **runner)
+    assert lease.job.id == applied.apply_job_id
+    for state in ("running", "verifying"):
+        await ops.service.report(RunnerReport(lease=lease.proof, report_id=uuid4(), state=state), **runner)
+    await ops.service.report(
+        RunnerReport(
+            lease=lease.proof,
+            report_id=uuid4(),
+            state="succeeded",
+            observation=observed(1),
+            receipt=SafeDeploymentReceipt(code="applied"),
+        ),
+        **runner,
+    )
+    done = await ops.changes.read(planned.id, **ops.authority("planner"))
+    assert done.state == "succeeded"
+    assert (await draining_state(ops, kept))[0] is False
+
+
+async def test_a_successful_change_resumes_every_drained_worker_it_did_not_remove(ops, fleet):
+    """A restart that lets workers finish first removes nobody: after it, nobody it drained stays draining."""
+    workers = sorted(worker.id for worker in fleet.workers)
+    created = await ops.changes.create(
+        change(fleet.setup, intent="restart_workers", replicas=3, drain={"mode": "drain_first"}),
+        uuid4().hex,
+        **ops.authority("planner"),
+    )
+    await run_observation(ops, fleet.setup, 3)
+    ready = await ops.changes.read(created.id, **ops.authority("planner"))
+    planned = await ops.changes.advance(created.id, ready.revision, **ops.authority("planner"))
+    assert {member.worker_id for member in planned.drain_set} == set(workers)
+    approved_change = await ops.changes.approve(
+        planned.id, ChangeRequestApprove(digest=planned.plan_digest), **ops.authority("approver")
+    )
+    await ops.changes.drain(approved_change.id, uuid4().hex, **ops.authority("operator"))
+    await ops.changes.apply(
+        planned.id, ChangeRequestApply(digest=planned.plan_digest), uuid4().hex, **ops.authority("operator")
+    )
+    runner = ops.authority("planner")
+    lease = await ops.service.claim(RunnerClaimRequest(runner_id=fleet.setup.runner.id), **runner)
+    for state in ("running", "verifying"):
+        await ops.service.report(RunnerReport(lease=lease.proof, report_id=uuid4(), state=state), **runner)
+    await ops.service.report(
+        RunnerReport(
+            lease=lease.proof,
+            report_id=uuid4(),
+            state="succeeded",
+            observation=observed(3),
+            receipt=SafeDeploymentReceipt(code="applied"),
+        ),
+        **runner,
+    )
+    assert (await ops.changes.read(planned.id, **ops.authority("planner"))).state == "succeeded"
+    assert [await draining_state(ops, worker) for worker in workers] == [(False, 3), (False, 3)]

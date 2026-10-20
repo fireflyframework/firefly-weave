@@ -67,6 +67,7 @@ from firefly_weave.deployments.change_requests import (
     DEFAULT_PLAN_SECONDS,
     DRAIN_PLAN_MARGIN_SECONDS,
     ENDED,
+    REPLANNABLE_FAILURES,
     RETENTION,
     drains,
     effective,
@@ -101,8 +102,16 @@ async def move(
     now = await repo.now()
     moved = transition(record, state, actor=actor, at=now)
     moved = moved.model_copy(update={"failure": failure, "warnings": [*record.warnings, *warnings][:10]})
-    if state in _UNAPPLIED and moved.drained:
+    if moved.drained and (state in _UNAPPLIED or _nothing_applied(state, failure)):
         await resume_drained(repo, moved, actor)
+        moved = moved.model_copy(update={"drained": []})
+    elif moved.drained and state == "succeeded":
+        # Workers the plan removed are gone with their containers; every other drained worker goes back to work.
+        removed = await _removed_workers(repo, moved)
+        await resume_drained(
+            repo, moved.model_copy(update={"drained": [w for w in moved.drained if w not in removed]}), actor
+        )
+        moved = moved.model_copy(update={"drained": [w for w in moved.drained if w in removed]})
     await repo.update(
         "change_requests",
         moved.id,
@@ -115,6 +124,20 @@ async def move(
 
 # A change that ends in these states never applied, so the workers it drained go back to work.
 _UNAPPLIED: frozenset[ChangeState] = frozenset({"declined", "cancelled", "expired", "superseded"})
+
+
+def _nothing_applied(state: ChangeState, failure: ChangeFailure | None) -> bool:
+    """A failure that means the runner changed nothing: the plan no longer fit, or no runner took the job."""
+    return state == "failed" and failure is not None and failure.code in REPLANNABLE_FAILURES
+
+
+async def _removed_workers(repo: DeploymentRepository, record: ChangeRequest) -> set[UUID]:
+    """The drained workers whose containers the applied plan removed."""
+    if record.plan_id is None:
+        return set()
+    plan = await repo.get("plans", record.plan_id, DeploymentPlan)
+    hosts = {host for removed in (await plan_victims(repo, plan)).values() for host in removed}
+    return {member.worker_id for member in record.drain_set if member.host in hosts}
 
 
 async def resume_drained(repo: DeploymentRepository, record: ChangeRequest, actor: UUID | None) -> None:
