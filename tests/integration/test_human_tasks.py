@@ -275,7 +275,12 @@ async def test_pause_allows_fact_then_resume_continues(client, headers, env_url,
 async def test_concurrent_claim_accepts_once(client, headers, env_url, human_run):
     _, task = human_run
     responses = await asyncio.gather(
-        *(mutate(client, headers, env_url, task, "claim", {"expected_revision": 1}, f"claim-{i}") for i in range(2))
+        *(
+            admitted(
+                lambda i=i: mutate(client, headers, env_url, task, "claim", {"expected_revision": 1}, f"claim-{i}")
+            )
+            for i in range(2)
+        )
     )
     assert sorted(r.status_code for r in responses) == [200, 409], [r.text for r in responses]
 
@@ -377,7 +382,10 @@ async def test_concurrent_complete_records_one_immutable_decision(client, header
     assert (await mutate(client, headers, env_url, task, "claim", {"expected_revision": 1}, "claim")).status_code == 200
     payload = {"expected_revision": 2, "decision": "approve", "data": {"note": "ok"}}
     responses = await asyncio.gather(
-        *(mutate(client, headers, env_url, task, "complete", payload, f"complete-{i}") for i in range(2))
+        *(
+            admitted(lambda i=i: mutate(client, headers, env_url, task, "complete", payload, f"complete-{i}"))
+            for i in range(2)
+        )
     )
     assert sorted(r.status_code for r in responses) == [200, 409], [r.text for r in responses]
     async with access_db[1]() as session:
@@ -460,15 +468,17 @@ async def test_run_keys_filter_distinct_executions_and_bind_cursor(human_run, au
     activation = existing.json()["activation"]["id"]
     responses = await asyncio.gather(
         *[
-            client.post(
-                env_url + "/runs",
-                headers={**headers, "Idempotency-Key": "keyed-" + str(i)},
-                json={
-                    "activation_id": activation,
-                    "input": {},
-                    "business_key": "expense-42",
-                    "correlation_key": "thread-7",
-                },
+            admitted(
+                lambda i=i: client.post(
+                    env_url + "/runs",
+                    headers={**headers, "Idempotency-Key": "keyed-" + str(i)},
+                    json={
+                        "activation_id": activation,
+                        "input": {},
+                        "business_key": "expense-42",
+                        "correlation_key": "thread-7",
+                    },
+                )
             )
             for i in range(2)
         ]
