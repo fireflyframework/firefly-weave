@@ -1135,6 +1135,16 @@ operation in the [full API reference](api-explorer.md); to generate a client,
 | `deployment_runners.renew` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployment-runners/renew` | runner.renew |
 | `deployment_runners.report` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployment-runners/report` | runner.report |
 | `deployment_runners.revoke` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployment-runners/{identifier}/revoke` | target.manage |
+| `deployment_change_requests.create` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployment-change-requests` | deployment.plan |
+| `deployment_change_requests.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployment-change-requests` | deployment.read |
+| `deployment_change_requests.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployment-change-requests/{identifier}` | deployment.read |
+| `deployment_change_requests.advance` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployment-change-requests/{identifier}/advance` | deployment.plan |
+| `deployment_change_requests.approve` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployment-change-requests/{identifier}/approve` | deployment.approve |
+| `deployment_change_requests.drain` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployment-change-requests/{identifier}/drain` | worker.drain |
+| `deployment_change_requests.apply` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployment-change-requests/{identifier}/apply` | deployment.apply |
+| `deployment_change_requests.replan` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployment-change-requests/{identifier}/replan` | deployment.plan |
+| `deployment_change_requests.decline` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployment-change-requests/{identifier}/decline` | deployment.approve |
+| `deployment_change_requests.cancel` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/deployment-change-requests/{identifier}/cancel` | deployment.plan |
 | `workers.drain` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/workers/{identifier}/drain` | worker.drain |
 | `workers.resume` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/workers/{identifier}/resume` | worker.drain |
 

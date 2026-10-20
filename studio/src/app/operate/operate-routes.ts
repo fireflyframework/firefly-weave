@@ -37,10 +37,17 @@ export const clusterCollections = [
   "deployments",
   "plans",
   "jobs",
+  "change-requests",
 ] as const;
 export type ClusterCollection = (typeof clusterCollections)[number];
 /** The Clusters tabs, in order; Targets is the default. */
-export const clusterTabs = ["targets", "approvals", "jobs", "runners"] as const;
+export const clusterTabs = [
+  "targets",
+  "change-requests",
+  "approvals",
+  "jobs",
+  "runners",
+] as const;
 export type ClusterTab = (typeof clusterTabs)[number];
 
 /** The capability each Operate page needs somewhere in the workspace. */
@@ -133,7 +140,7 @@ export interface ClustersRoute {
 /** Reads "/operate/clusters/plans/ID" or "/operate/clusters?tab=approvals". */
 export function clustersRoute(pathname: string, search = ""): ClustersRoute {
   const match =
-    /^\/(?:operate\/clusters|operations)\/(targets|deployments|plans|jobs)\/([0-9a-f-]{36})$/.exec(
+    /^\/(?:operate\/clusters|operations)\/(targets|deployments|plans|jobs|change-requests)\/([0-9a-f-]{36})$/.exec(
       pathname,
     );
   const tab = new URLSearchParams(search).get("tab") ?? "";
@@ -192,8 +199,11 @@ export const legacyRedirects: Routes = [
   { path: "runs", redirectTo: "operate/runs", pathMatch: "full" },
   { path: "workers", redirectTo: "operate/workers", pathMatch: "full" },
   { path: "operations", redirectTo: "operate/clusters", pathMatch: "full" },
-  ...clusterCollections.map((collection) => ({
-    path: `operations/${collection}/:id`,
-    redirectTo: `operate/clusters/${collection}/:id`,
-  })),
+  // Change requests came after Operate, so they never had an old address.
+  ...clusterCollections
+    .filter((collection) => collection !== "change-requests")
+    .map((collection) => ({
+      path: `operations/${collection}/:id`,
+      redirectTo: `operate/clusters/${collection}/:id`,
+    })),
 ];

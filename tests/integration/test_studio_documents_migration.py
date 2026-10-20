@@ -27,8 +27,8 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from test_incident_migration import upgrade
 
 pytestmark = pytest.mark.integration
-PRIOR_HEAD = "0033_language_workflow_calls"
-HEAD = "0034_editor_studio_documents"
+PRIOR_HEAD = "0035_principal_idempotency"
+HEAD = "0036_editor_studio_documents"
 RUNS = text("SELECT to_jsonb(r)::text FROM runs r ORDER BY id")
 
 

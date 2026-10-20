@@ -88,5 +88,28 @@ journey("J9", "security and negative paths", async (j) => {
     );
     await j.shot(viewer, "viewer-cannot-publish");
     await viewer.keyboard.press("Escape");
+
+    // The viewer can't request, approve or apply infrastructure changes:
+    // Clusters is not in their navigation and, opened by its address, it
+    // names the access it needs and offers no change control. J9.1 sends the
+    // same commands as the viewer and the server answers 403.
+    await j.check("J9.2/operations-controls", async () => {
+      await expect(
+        viewer
+          .getByRole("navigation", { name: "Main navigation" })
+          .getByRole("button", {
+            name: "Clusters",
+            exact: true,
+          }),
+      ).toHaveCount(0);
+      const origin = viewer.url().split("/").slice(0, 3).join("/");
+      await viewer.goto(`${origin}/operate/clusters?tab=change-requests`);
+      await expect(
+        viewer.getByRole("heading", { name: "Clusters access is required" }),
+      ).toBeVisible({ timeout: 30_000 });
+      for (const name of ["New change request", "Approve plan", "Apply plan"])
+        await expect(viewer.getByRole("button", { name })).toHaveCount(0);
+      await j.shot(viewer, "viewer-has-no-change-controls");
+    });
   });
 });

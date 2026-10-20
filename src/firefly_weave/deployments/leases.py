@@ -29,6 +29,7 @@ from firefly_weave.access.models import Principal
 from firefly_weave.compiler.canonical import canonical_digest
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.deployments import (
+    ApprovalPolicy,
     Deployment,
     DeploymentJob,
     DeploymentLease,
@@ -110,11 +111,26 @@ class DeploymentLeases:
         await repo.update("runners", identifier, runner)
         return runner, target
 
+    @staticmethod
+    def for_runner(target: DeploymentTarget, runner: DeploymentRunner) -> DeploymentTarget:
+        """The target as this runner may act on it: the capabilities it registered, and no approval policy.
+
+        A runner of an earlier release registers only the capabilities it knows and parses leases with models
+        that forbid unknown values, so it never receives a capability or field it cannot read.
+        """
+        return target.model_copy(
+            update={
+                "capabilities": [item for item in target.capabilities if item in runner.capabilities],
+                "approval_policy": ApprovalPolicy(),
+            }
+        )
+
     async def context(
         self,
         repo: DeploymentRepository,
         job: DeploymentJob,
         target: DeploymentTarget,
+        runner: DeploymentRunner,
         proof: DeploymentLeaseProof,
         expires: datetime,
     ) -> DeploymentLease:
@@ -125,7 +141,7 @@ class DeploymentLeases:
             proof=proof,
             expires_at=expires,
             job=job,
-            target=target,
+            target=self.for_runner(target, runner),
             plan=plan,
             deployment=deployment,
             observation=observation,
@@ -151,6 +167,9 @@ class DeploymentLeases:
             capability = plan.intent if plan else "observe"
             if capability not in runner.capabilities or capability not in target.capabilities:
                 return None
+            if plan and runner.adapter_version == "1" and await self.removes_members(repo, plan):
+                # An earlier runner would let Compose choose which workers to remove; the scale-down waits.
+                return None
             if plan:
                 await self.service.valid_plan(repo, plan, plan.digest)
             generation = row["generation"] + 1
@@ -173,9 +192,22 @@ class DeploymentLeases:
                 repo,
                 job,
                 target,
+                runner,
                 DeploymentLeaseProof(job_id=job.id, runner_id=runner.id, generation=generation, token=token),
                 expires,
             )
+
+    @staticmethod
+    async def removes_members(repo: DeploymentRepository, plan: DeploymentPlan) -> bool:
+        """Whether applying the plan removes running or exited workers: any intent lowering a worker component."""
+        if plan.intent == "restart_workers":
+            return False
+        observation = await repo.get("observations", plan.observation_id, DeploymentObservation)
+        observed = {resource.name: resource.replicas for resource in observation.resources}
+        return any(
+            step.component.kind == "worker" and observed.get(step.component.name, 0) > step.component.replicas
+            for step in plan.steps
+        )
 
     async def checked(
         self,
@@ -218,7 +250,8 @@ class DeploymentLeases:
                 raise CatalogError(409, "WV-RUNNER-FENCE", "Runner lease expired or job stopped")
             expires = min(now + timedelta(seconds=60), job.deadline)
             await repo.update("jobs", job.id, job, extra={"lease_expires_at": expires})
-            return await self.context(repo, job, target, proof, expires)
+            runner = await repo.get("runners", proof.runner_id, DeploymentRunner)
+            return await self.context(repo, job, target, runner, proof, expires)
 
     async def report(
         self, request: RunnerReport, *, actor: Principal, scope: Scope, context: AuditContext
@@ -294,6 +327,7 @@ class DeploymentLeases:
             ):
                 raise CatalogError(422, "WV-JOB-RECEIPT", "Ambiguous effects must remain explicit")
             observation_id = None
+            observation: DeploymentObservation | None = None
             if request.observation:
                 data = dict(
                     **request.observation.model_dump(),
@@ -319,6 +353,10 @@ class DeploymentLeases:
                 }
             )
             await repo.update("jobs", job.id, result, extra={"state": request.state})
+            # The change request that owns this job moves in the same transaction as the job.
+            from firefly_weave.deployments.change_service import follow_job
+
+            await follow_job(repo, result, observation=observation)
             await repo.insert(
                 "reports",
                 request.report_id,

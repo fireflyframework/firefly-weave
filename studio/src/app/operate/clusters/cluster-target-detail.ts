@@ -18,6 +18,7 @@ SPDX-License-Identifier: Apache-2.0
 // One deployment target: its authority, runner setup, observation, runners and deployments.
 import { ChangeDetectionStrategy, Component } from "@angular/core";
 import { RunnerSetup } from "../../operations/runner-setup";
+import { OperateState } from "../operate-state";
 import { ClusterDeploymentList } from "./cluster-deployment-list";
 import { ClusterSection } from "./cluster-section";
 
@@ -25,7 +26,7 @@ import { ClusterSection } from "./cluster-section";
   selector: "weave-cluster-target-detail",
   standalone: true,
   changeDetection: ChangeDetectionStrategy.Eager,
-  imports: [RunnerSetup, ClusterDeploymentList],
+  imports: [RunnerSetup, ClusterDeploymentList, OperateState],
   styleUrl: "./clusters.css",
   template: `
     @if (target; as target) {
@@ -55,6 +56,33 @@ import { ClusterSection } from "./cluster-section";
           authority.
         </p>
         @if (can("target.manage")) {
+          @let strict = target.approval_policy?.distinct_approver !== false;
+          <div class="approval-setting">
+            <label class="switch-row"
+              ><input
+                type="checkbox"
+                role="switch"
+                name="distinct-approver"
+                [checked]="strict"
+                [disabled]="store.mutating"
+                (change)="page.setApprovalPolicy(checked($event))"
+              /><span
+                ><strong>A second person must approve changes</strong
+                ><small>{{
+                  strict
+                    ? "The person who asks for a change can't approve it."
+                    : "Turn on for shared environments."
+                }}</small></span
+              ></label
+            >
+            @if (page.approvalAccessDenied) {
+              <weave-operate-state
+                kind="access"
+                heading="You can't change who approves"
+                capability="environment.manage"
+              />
+            }
+          </div>
           <button [disabled]="store.mutating" (click)="editTargetAuthority()">
             Edit target authority
           </button>
@@ -66,6 +94,12 @@ import { ClusterSection } from "./cluster-section";
             (click)="observe()"
           >
             Observe target
+          </button>
+          <button
+            [disabled]="store.mutating || target.disabled"
+            (click)="page.openWizard(target.id)"
+          >
+            New change request
           </button>
         }
       </section>
@@ -166,4 +200,8 @@ import { ClusterSection } from "./cluster-section";
     }
   `,
 })
-export class ClusterTargetDetail extends ClusterSection {}
+export class ClusterTargetDetail extends ClusterSection {
+  checked(event: Event) {
+    return (event.target as HTMLInputElement).checked;
+  }
+}

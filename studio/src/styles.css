@@ -613,6 +613,46 @@ pre {
   width: 3px;
   border-radius: 2px;
 }
+/* A count beside a navigation entry (Clusters: changes waiting for your
+   approval). In the rail it sits on the icon's corner. */
+.nav-badge {
+  margin-left: auto;
+  align-self: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font: var(--type-caption);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 20px;
+  text-align: center;
+  box-sizing: border-box;
+}
+.collapsed .nav-badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 9px;
+  line-height: 18px;
+}
+@media (max-width: 1280px) {
+  :where(.shell:not(.nav-full)) .nav-badge {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 4px;
+    border-radius: 9px;
+    line-height: 18px;
+  }
+}
 .sidebar-bottom {
   margin-top: auto;
   padding-top: var(--space-4);

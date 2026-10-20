@@ -21,7 +21,7 @@ from __future__ import annotations
 import asyncio
 import signal
 from pathlib import Path
-from typing import Self, cast
+from typing import Any, Self, cast
 from urllib.parse import urlsplit
 
 from pydantic import Field, model_validator
@@ -99,6 +99,21 @@ class MountedToken:
         return _read_mount(self.path, 16384).strip()
 
 
+# Adapters that remove exactly the members a scale-down plan names (`scale_down_members`); only their runners
+# register adapter version 2, which the platform requires before it hands them a scale-down.
+REVIEWED_MEMBER_ADAPTERS = frozenset({"docker-compose"})
+
+
+def runner_registration(destination: Any) -> RunnerRegistration:
+    """What this runner registers: version 2 only where its adapter removes the reviewed members."""
+    return RunnerRegistration(
+        target_id=destination.target_id,
+        adapter=destination.adapter,
+        adapter_version="2" if destination.adapter in REVIEWED_MEMBER_ADAPTERS else "1",
+        capabilities=destination.capabilities,
+    )
+
+
 async def serve(config: RunnerConfiguration, *, once: bool = False) -> None:
     adapter = adapter_for(config.destination)
     provider: AsyncTokenProvider
@@ -112,11 +127,7 @@ async def serve(config: RunnerConfiguration, *, once: bool = False) -> None:
             DeploymentRunner,
             await client.invoke(
                 "deployment_runners.create",
-                body=RunnerRegistration(
-                    target_id=config.destination.target_id,
-                    adapter=config.destination.adapter,
-                    capabilities=config.destination.capabilities,
-                ),
+                body=runner_registration(config.destination),
             ),
         )
         runner = OperationsRunner(client, config.destination, adapter)

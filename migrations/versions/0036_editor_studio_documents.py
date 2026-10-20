@@ -18,8 +18,8 @@
 
 from alembic import op
 
-revision = "0034_editor_studio_documents"
-down_revision = "0033_language_workflow_calls"
+revision = "0036_editor_studio_documents"
+down_revision = "0035_principal_idempotency"
 
 TENANT = "tenant_id=nullif(current_setting('weave.tenant_id',true),'')::uuid"
 
@@ -47,7 +47,7 @@ def upgrade() -> None:
         "EXECUTE FUNCTION weave_usage_charge('tenant_id','project_id','draft_id','kind','revision')"
     )
     op.execute("ANALYZE studio_documents")
-    op.execute("UPDATE weave_schema_version SET version='0034_editor_studio_documents'")
+    op.execute("UPDATE weave_schema_version SET version='0036_editor_studio_documents'")
 
 
 def downgrade() -> None:

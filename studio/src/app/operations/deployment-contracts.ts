@@ -22,7 +22,8 @@ export type Capability =
   | "deploy"
   | "update"
   | "scale_workers"
-  | "drain_workers";
+  | "drain_workers"
+  | "restart_workers";
 export type JobState =
   | "queued"
   | "claimed"
@@ -37,6 +38,10 @@ export interface Scope {
   project_id: string | null;
   environment_id: string | null;
 }
+/** Whether a second person must approve; left out at its default (true). */
+export interface ApprovalPolicy {
+  distinct_approver: boolean;
+}
 export interface TargetRequest {
   name: string;
   adapter: Adapter;
@@ -44,11 +49,15 @@ export interface TargetRequest {
   boundary: string;
   runner_principal_id: string;
   capabilities: Capability[];
+  /** Absent means a second person must approve. */
+  approval_policy?: ApprovalPolicy;
 }
 export interface TargetUpdate {
   runner_principal_id: string;
   capabilities: Capability[];
   disabled: boolean;
+  /** Absent keeps the target's policy; changing it also needs environment.manage. */
+  approval_policy?: ApprovalPolicy;
 }
 export interface Target extends TargetRequest {
   id: string;
@@ -188,7 +197,8 @@ export interface Runner {
   principal_id: string;
   target_id: string;
   adapter: Adapter;
-  adapter_version: "1";
+  /** "2": the runner removes exactly the reviewed workers on a scale-down. */
+  adapter_version: "1" | "2";
   capabilities: Capability[];
   last_seen: string;
   expires_at: string;
@@ -225,4 +235,93 @@ export function observationState(
   if (!value) return "unknown";
   if (!value.complete) return "incomplete";
   return Date.parse(value.expires_at) > now ? "current" : "expired";
+}
+
+/** Change requests: one reviewed infrastructure change that outlives its plans. */
+export type ChangeIntent =
+  | "deploy"
+  | "update"
+  | "scale_workers"
+  | "restart_workers";
+export type ChangeState =
+  | "observing"
+  | "ready_to_plan"
+  | "awaiting_approval"
+  | "approved"
+  | "draining"
+  | "applying"
+  | "succeeded"
+  | "failed"
+  | "reconciliation_required"
+  | "expired"
+  | "declined"
+  | "cancelled"
+  | "superseded";
+/** What a change sets on one component; absent fields keep the deployment's value. */
+export interface DesiredComponent {
+  name: string;
+  replicas?: number;
+  image?: string;
+  worker_release_id?: string;
+  cpu_millis?: number;
+  memory_mib?: number;
+}
+export interface DrainSetting {
+  mode: "none" | "drain_first";
+  timeout_seconds: number;
+}
+export interface ChangeRequestCreate {
+  target_id: string;
+  deployment_id: string;
+  expected_deployment_revision: number;
+  intent: ChangeIntent;
+  components: string[];
+  desired?: DesiredComponent[];
+  drain: DrainSetting;
+  title: string;
+  reason: string;
+  plan_ttl_seconds?: number;
+}
+export interface DrainMember {
+  worker_id: string;
+  host: string;
+  active_leases: number;
+}
+export interface ChangeRequest
+  extends Omit<ChangeRequestCreate, "plan_ttl_seconds"> {
+  id: string;
+  scope: Scope;
+  revision: number;
+  requested_by: string;
+  created_at: string;
+  plan_ttl_seconds: number | null;
+  deployment_revision: number;
+  approval_policy: ApprovalPolicy;
+  state: ChangeState;
+  observation_job_id: string | null;
+  observation_id: string | null;
+  plan_id: string | null;
+  plan_digest: string | null;
+  plan_expires_at: string | null;
+  approval: { principal_id: string; approved_at: string } | null;
+  planned_by: string | null;
+  drain_set: DrainMember[];
+  drained: string[];
+  /** Each drained worker's control revision right after this change drained it. */
+  drained_revisions?: Record<string, number>;
+  apply_job_id: string | null;
+  failure: { code: string; message: string } | null;
+  warnings: string[];
+  history: { at: string; state: ChangeState; actor_id: string | null }[];
+}
+export interface DrainProgressMember extends DrainMember {
+  draining: boolean;
+  presence: "recent" | "stale" | "unknown";
+  revoked: boolean;
+}
+export interface DrainProgress {
+  /** Present only for someone who may read the change's target. */
+  change_request?: ChangeRequest;
+  members: DrainProgressMember[];
+  remaining: number;
 }

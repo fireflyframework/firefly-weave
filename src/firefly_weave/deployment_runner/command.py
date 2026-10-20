@@ -25,6 +25,10 @@ import signal
 from contextlib import suppress
 from pathlib import Path
 
+# The longest one command may run: within the runner's 600 s job budget, long enough to stop drained workers
+# with their 240 s grace.
+MAX_COMMAND_SECONDS = 600
+
 
 class CommandError(Exception):
     def __init__(self) -> None:
@@ -72,7 +76,7 @@ async def run_command(
         or any(not isinstance(value, str) or len(value) > 4096 or "\0" in value for value in argv)
         or not Path(argv[0]).is_absolute()
         or not math.isfinite(timeout)
-        or not 0 < timeout <= 120
+        or not 0 < timeout <= MAX_COMMAND_SECONDS
         or not 1 <= limit <= 1024 * 1024
         or (stdin is not None and len(stdin) > 256 * 1024)
     ):

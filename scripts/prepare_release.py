@@ -62,6 +62,10 @@ def prepare(root: Path, destination: Path) -> dict:
         "image_identity.py": read_file(root / "scripts/image_identity.py", 1024 * 1024),
         "main.py": read_file(root / "examples/worker/main.py", 1024 * 1024),
         "manifest.json": read_file(root / "examples/worker/manifest.json", 1024 * 1024),
+        "operations-worker.py": read_file(root / "tests/fixtures/operations-worker/main.py", 1024 * 1024),
+        "operations-worker-manifest.json": read_file(
+            root / "tests/fixtures/operations-worker/manifest.json", 1024 * 1024
+        ),
         "LICENSE": read_file(root / "LICENSE", 1024 * 1024),
         "NOTICE": read_file(root / "NOTICE", 1024 * 1024),
     }

@@ -117,7 +117,7 @@ class IncidentService:
             fingerprint = canonical_digest(
                 {
                     "revision": expected_revision,
-                    "request": request.model_dump(mode="json"),
+                    "request": request.recorded().model_dump(mode="json"),
                     "output_present": "output" in request.model_fields_set,
                 }
             )
@@ -251,7 +251,7 @@ class IncidentService:
                 id=incident_id,
                 actor=actor.id,
                 now=event.timestamp,
-                resolution=request.model_dump_json(),
+                resolution=request.recorded().model_dump_json(),
             )
             resolved = incident_view(
                 (await repository.rows(f"SELECT * FROM incidents WHERE {SCOPE} AND id=:id", id=incident_id))[0]

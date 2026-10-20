@@ -16,10 +16,17 @@
 
 """Operator requests and immutable incident resolution receipts."""
 
-from typing import Literal, Self
+from typing import Any, Literal, Self
 from uuid import UUID
 
-from pydantic import AwareDatetime, Field, field_validator, model_validator
+from pydantic import (
+    AwareDatetime,
+    Field,
+    SerializerFunctionWrapHandler,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.catalog import Digest
@@ -32,7 +39,9 @@ from firefly_weave.operations.redaction import Omission, SafeProjection
 from firefly_weave.runtime.models import RunState, RuntimeEvent
 
 
-class IncidentResolution(ContractModel):
+class RecordedResolution(ContractModel):
+    """A resolution as an incident keeps it: `output` is always written, null when it has none."""
+
     receipt_id: UUID
     kind: Literal["retry_safe", "accept_reconciled_result", "terminate"]
     reason: str = Field(min_length=1, max_length=2000)
@@ -45,6 +54,23 @@ class IncidentResolution(ContractModel):
         if value is not None and not value.strip():
             raise ValueError("A nonblank reason or evidence reference is required")
         return value
+
+
+class IncidentResolution(RecordedResolution):
+    """A resolution request. An unset `output` is left out (the API refuses any output, null included, for
+    retry_safe and terminate); an explicit null is sent, as accepting a null result needs."""
+
+    @model_serializer(mode="wrap")
+    def _unset_output_left_out(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        """An explicit null output (accepting a null result) is sent; an output nobody set is not."""
+        data: dict[str, Any] = handler(self)
+        if "output" not in self.model_fields_set:
+            data.pop("output", None)
+        return data
+
+    def recorded(self) -> RecordedResolution:
+        """The resolution as the incident keeps it, byte for byte as before requests left output out."""
+        return RecordedResolution.model_validate_json(self.model_dump_json())
 
 
 class IncidentWorkflow(ContractModel):
@@ -72,7 +98,7 @@ class IncidentView(ContractModel):
     revision: int
     actor_id: UUID | None = None
     resolved_at: AwareDatetime | None = None
-    resolution: IncidentResolution | None = None
+    resolution: RecordedResolution | None = None
     external_effects_may_continue: bool = False
     instance_key: InstanceKeyTextOrEmpty = Field(default="", exclude_if=lambda value: not value)
     opened_at: AwareDatetime | None = Field(default=None, exclude_if=lambda value: value is None)

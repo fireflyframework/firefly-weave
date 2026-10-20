@@ -19,7 +19,7 @@ SPDX-License-Identifier: Apache-2.0
 // Revoke. The server authorizes each read and command; Studio only leaves
 // out the buttons it would refuse.
 import { test, expect, Page } from "@playwright/test";
-import { connected } from "./support";
+import { connected, registerTarget } from "./support";
 
 const scope = {
   tenant_id: "tenant",
@@ -126,6 +126,7 @@ for (const viewport of [
       const tabs = page.getByRole("tablist", { name: "Clusters sections" });
       await expect(tabs.getByRole("tab")).toHaveText([
         "Targets",
+        "Change requests",
         "Approvals",
         "Jobs",
         "Runners",
@@ -495,9 +496,7 @@ test.describe("polling and failures", () => {
   }) => {
     const { count } = await polling(page, ["deployment.read", "target.manage"]);
     await expect(page.getByText("Updated just now")).toBeVisible();
-    await page
-      .getByRole("button", { name: "Register target", exact: true })
-      .click();
+    await registerTarget(page);
     await page.getByLabel("Target name").fill("draft-target");
     const reads = () => count("/deployment-");
     const before = reads();

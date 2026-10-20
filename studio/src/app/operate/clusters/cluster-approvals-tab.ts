@@ -15,8 +15,8 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-// The Approvals tab: plans waiting for an approval, soonest expiry first,
-// each with a countdown that ticks in the browser.
+// The Approvals tab: change requests and plans waiting for an approval, the
+// soonest to approve first, each with a countdown that ticks in the browser.
 import {
   ChangeDetectionStrategy,
   ChangeDetectorRef,
@@ -24,11 +24,34 @@ import {
   OnDestroy,
   inject,
 } from "@angular/core";
-import { toneAttribute } from "../../status-labels";
-import type { Plan } from "../../operations/deployment-contracts";
+import { toneAttribute, type Tone } from "../../status-labels";
+import type {
+  ChangeRequest,
+  Plan,
+} from "../../operations/deployment-contracts";
 import { OperateState } from "../operate-state";
+import { timeAbsolute, timeIso, timeRelative } from "../operate-time";
+import type { InboxEntry } from "./approvals-inbox";
+import {
+  FOUR_EYES_COPY,
+  blockedByFourEyes,
+  changeCountdown,
+  changeIntentLabel,
+  changeStateLabel,
+  effectiveState,
+  replannable,
+} from "./change-request-model";
 import { ClusterSection } from "./cluster-section";
 import { countdown, intentLabel, riskName } from "./cluster-model";
+
+/** What a row's countdown cell shows. */
+interface RowClock {
+  text: string;
+  note: string;
+  tone: Tone;
+  expired: boolean;
+  label: string;
+}
 
 @Component({
   selector: "weave-cluster-approvals-tab",
@@ -40,8 +63,8 @@ import { countdown, intentLabel, riskName } from "./cluster-model";
     <section class="operations-panel">
       <h2>Approvals</h2>
       <p class="hint">
-        Plans waiting for an approval, soonest expiry first. Approving signs the
-        exact digest; apply checks the approval and the target again.
+        Changes waiting for an approval, the soonest to approve first. Approving
+        signs the exact plan; applying checks the approval and the target again.
       </p>
       @let inbox = page.inbox;
       @if (inbox.error?.status === 403) {
@@ -58,13 +81,21 @@ import { countdown, intentLabel, riskName } from "./cluster-model";
           (retry)="page.poller.refresh()"
         />
       } @else if (!inbox.loaded) {
-        <weave-operate-state kind="loading" noun="plans" />
+        <weave-operate-state kind="loading" noun="approvals" />
       } @else {
         @if (store.errors.targets || store.errors.deployments) {
           <p role="alert">
             Target and deployment names could not be loaded.
             {{ store.errors.targets || store.errors.deployments }}
           </p>
+        }
+        @if (inbox.changeError; as failed) {
+          <weave-operate-state
+            kind="partial"
+            [message]="'Change requests could not be read. ' + failed.message"
+            [code]="failed.code"
+            (retry)="page.poller.refresh()"
+          />
         }
         @if (inbox.unchecked) {
           <weave-operate-state
@@ -73,11 +104,11 @@ import { countdown, intentLabel, riskName } from "./cluster-model";
             (retry)="page.poller.refresh()"
           />
         }
-        @if (!inbox.rows.length) {
+        @if (!inbox.entries.length) {
           <weave-operate-state
             kind="empty"
             heading="Nothing to approve"
-            text="Plans appear here while they wait for an approval. Create one from a deployment."
+            text="Changes appear here while they wait for an approval. Start one with New change request on a target."
           />
         } @else {
           <div
@@ -88,66 +119,115 @@ import { countdown, intentLabel, riskName } from "./cluster-model";
             <div role="rowgroup">
               <div class="table-head" role="row">
                 <span role="columnheader">Change</span
-                ><span role="columnheader">Expires in</span
+                ><span role="columnheader" data-wide>Requested by</span
+                ><span role="columnheader" class="end">Expires in</span
                 ><span role="columnheader" data-wide>Risks</span
-                ><span role="columnheader" data-wide>Digest</span
+                ><span role="columnheader" data-wide>Plan</span
+                ><span role="columnheader" data-wide>Checked</span
                 ><span role="columnheader"
                   ><span class="sr-only">Actions</span></span
                 >
               </div>
             </div>
             <div role="rowgroup">
-              @for (plan of inbox.rows; track plan.id) {
-                @let time = clock(plan);
+              @for (entry of inbox.entries; track entry.id) {
+                @let time = clock(entry);
                 <div
                   class="resource-row"
                   role="row"
                   [class.expired]="time.expired"
                 >
-                  <span role="cell" class="row-text"
-                    ><strong>{{ change(plan) }}</strong
-                    ><small>{{ page.targetName(plan.target_id) }}</small></span
-                  ><span role="cell" class="countdown"
-                    ><span
-                      class="status-pill numeric"
-                      [attr.data-tone]="tone(time.tone)"
-                      [attr.aria-label]="
-                        time.expired ? 'Expired' : 'Expires in ' + time.text
-                      "
-                      >{{ time.text }}</span
-                    >
+                  <span
+                    role="cell"
+                    class="change-cell"
+                    [attr.title]="subtitle(entry)"
+                    ><strong>{{ title(entry) }}</strong
+                    ><small>{{ where(entry) }}</small></span
+                  ><span role="cell" data-wide>{{ requester(entry) }}</span
+                  ><span role="cell" class="countdown end">
                     @if (time.note) {
                       <small>{{ time.note }}</small>
-                    }</span
-                  ><span role="cell" data-wide>{{ riskList(plan) }}</span
+                    }
+                    <span
+                      class="status-pill numeric"
+                      [attr.data-tone]="tone(time.tone)"
+                      [attr.aria-label]="time.label"
+                      >{{ time.text }}</span
+                    ></span
+                  ><span role="cell" data-wide class="risks">{{
+                    risks(entry)
+                  }}</span
                   ><span role="cell" data-wide
-                    ><code [attr.title]="plan.digest">{{
-                      plan.digest.slice(0, 12)
+                    ><code [attr.title]="digest(entry)">{{
+                      digest(entry).slice(0, 12)
                     }}</code></span
+                  ><span role="cell" data-wide class="numeric">
+                    @if (observedAt(entry); as observed) {
+                      <time
+                        [attr.datetime]="iso(observed)"
+                        [attr.title]="absolute(observed)"
+                        >{{ relative(observed) }}</time
+                      >
+                    } @else {
+                      Unknown
+                    }</span
                   ><span role="cell" class="approval-actions">
                     <button
                       type="button"
                       class="tertiary sm"
-                      [attr.aria-label]="'Review ' + change(plan)"
-                      (click)="openPlan(plan)"
+                      [attr.aria-label]="'Review ' + title(entry)"
+                      (click)="review(entry)"
                     >
                       Review
                     </button>
-                    @if (time.expired) {
+                    @if (entry.kind === "change") {
+                      @let record = entry.change;
+                      @let state = shown(record);
+                      @if (
+                        state === "awaiting_approval" &&
+                        canApprove(record.target_id)
+                      ) {
+                        @let blocked = fourEyes(record);
+                        <button
+                          type="button"
+                          class="primary sm"
+                          [attr.aria-label]="'Approve plan ' + record.title"
+                          [attr.title]="blocked ? fourEyesCopy : null"
+                          [attr.aria-description]="
+                            blocked ? fourEyesCopy : null
+                          "
+                          [disabled]="store.mutating || blocked"
+                          (click)="page.approveChange(record)"
+                        >
+                          Approve plan
+                        </button>
+                      } @else if (canReplan(record)) {
+                        <button
+                          type="button"
+                          class="sm"
+                          [disabled]="store.mutating"
+                          (click)="page.replanChange(record)"
+                        >
+                          Re-observe and re-plan
+                        </button>
+                      }
+                    } @else if (time.expired) {
                       <button
                         type="button"
                         class="sm"
-                        (click)="page.openDeploymentById(plan.deployment_id)"
+                        (click)="
+                          page.openDeploymentById(entry.plan.deployment_id)
+                        "
                       >
                         Open deployment
                       </button>
-                    } @else if (canApprove(plan)) {
+                    } @else if (canApprove(entry.plan.target_id)) {
                       <button
                         type="button"
                         class="primary sm"
-                        [attr.aria-label]="'Approve plan ' + change(plan)"
+                        [attr.aria-label]="'Approve plan ' + title(entry)"
                         [disabled]="store.mutating"
-                        (click)="page.approveFromInbox(plan)"
+                        (click)="page.approveFromInbox(entry.plan)"
                       >
                         Approve plan
                       </button>
@@ -159,7 +239,8 @@ import { countdown, intentLabel, riskName } from "./cluster-model";
           </div>
           @if (inbox.truncated) {
             <p class="hint">
-              Studio read the first 1,000 plans. Older plans are not checked.
+              Studio read the first 1,000 plans and change requests. Older ones
+              are not checked.
             </p>
           }
         }
@@ -169,25 +250,64 @@ import { countdown, intentLabel, riskName } from "./cluster-model";
 })
 export class ClusterApprovalsTab extends ClusterSection implements OnDestroy {
   private cdr = inject(ChangeDetectorRef);
-  // The countdowns tick between loads, on the very second each plan's end
+  readonly fourEyesCopy = FOUR_EYES_COPY;
+  // The countdowns tick between loads, on the very second each row's end
   // falls on, so "Expired" shows the moment a plan ends.
   private timer = setTimeout(() => this.tick(), 0);
   private tick() {
-    this.cdr.markForCheck();
     const now = Date.now();
-    const waits = (this.page?.inbox.rows ?? []).map((plan) => {
-      const left = Date.parse(plan.expires_at) - now;
+    this.page?.inbox.resort(now);
+    this.cdr.markForCheck();
+    const waits = (this.page?.inbox.entries ?? []).map((entry) => {
+      const left = entry.deadline - now;
       return left > 0 ? left % 1000 || 1000 : 1000;
     });
     this.timer = setTimeout(() => this.tick(), Math.min(1000, ...waits));
   }
-  clock(plan: Plan) {
-    return countdown(plan.expires_at);
+  clock(entry: InboxEntry): RowClock {
+    if (entry.kind === "plan") {
+      const time = countdown(entry.plan.expires_at);
+      return {
+        ...time,
+        label: time.expired ? "Expired" : "Expires in " + time.text,
+      };
+    }
+    const record = entry.change;
+    const state = effectiveState(record);
+    if (state === "approved")
+      return {
+        text: "Approved",
+        note: "",
+        tone: "success",
+        expired: false,
+        label: "Approved, ready to apply",
+      };
+    const time = changeCountdown(record);
+    const expired = time.tone === "expired";
+    return {
+      text: time.label,
+      // Draining changes count down to when the workers must start.
+      note: time.note.startsWith("Approve within")
+        ? "Approve within"
+        : time.note,
+      tone: time.tone === "expired" ? "neutral" : time.tone,
+      expired,
+      label: expired
+        ? "Expired"
+        : time.note.startsWith("Approve within")
+          ? time.note
+          : "Expires in " + time.label,
+    };
   }
-  tone(tone: Parameters<typeof toneAttribute>[0]) {
+  tone(tone: Tone) {
     return toneAttribute(tone);
   }
-  change(plan: Plan) {
+  shown(record: ChangeRequest) {
+    return effectiveState(record);
+  }
+  title(entry: InboxEntry) {
+    if (entry.kind === "change") return entry.change.title;
+    const plan = entry.plan;
     const deployment = this.store.deployments.find(
       (item) => item.id === plan.deployment_id,
     );
@@ -195,11 +315,91 @@ export class ClusterApprovalsTab extends ClusterSection implements OnDestroy {
       ? `${intentLabel(plan.intent)} · ${deployment.name}`
       : intentLabel(plan.intent);
   }
-  riskList(plan: Plan) {
+  subtitle(entry: InboxEntry) {
+    if (entry.kind === "plan")
+      return this.page.targetName(entry.plan.target_id);
+    const record = entry.change;
+    const state = effectiveState(record);
+    const parts = [
+      changeIntentLabel(record.intent),
+      this.page.targetName(record.target_id),
+    ];
+    if (state !== "awaiting_approval") parts.push(changeStateLabel(state));
+    return parts.join(" · ");
+  }
+  /** The target, and the state when it is not waiting for an approval. */
+  where(entry: InboxEntry) {
+    const target =
+      entry.kind === "plan" ? entry.plan.target_id : entry.change.target_id;
+    const parts = [this.page.targetName(target)];
+    if (entry.kind === "change") {
+      const state = effectiveState(entry.change);
+      if (state === "approved") parts.push(changeStateLabel(state));
+    }
+    return parts.join(" · ");
+  }
+  requester(entry: InboxEntry) {
+    return entry.kind === "change"
+      ? this.page.personName(entry.change.requested_by)
+      : "Plan only";
+  }
+  private planOf(entry: InboxEntry): Plan | null {
+    return entry.kind === "plan"
+      ? entry.plan
+      : (this.page.inbox.plan(entry.change.plan_id) ?? null);
+  }
+  risks(entry: InboxEntry) {
+    const plan = this.planOf(entry);
+    if (!plan) return "Unknown";
     return plan.risks.map(riskName).join(", ") || "None reported";
   }
-  canApprove(plan: Plan) {
-    return this.host.can("deployment.approve", plan.target_id);
+  digest(entry: InboxEntry) {
+    return entry.kind === "plan"
+      ? entry.plan.digest
+      : (entry.change.plan_digest ?? "");
+  }
+  /** When the plan's target was last checked. */
+  observedAt(entry: InboxEntry): string | null {
+    const id =
+      entry.kind === "plan"
+        ? entry.plan.observation_id
+        : entry.change.observation_id;
+    const observation = this.store.observations.find((item) => item.id === id);
+    if (observation) return observation.observed_at;
+    if (entry.kind === "change")
+      return (
+        entry.change.history.find((item) => item.state === "ready_to_plan")
+          ?.at ?? null
+      );
+    return null;
+  }
+  iso(value: string) {
+    return timeIso(value);
+  }
+  absolute(value: string) {
+    return timeAbsolute(value);
+  }
+  relative(value: string) {
+    return timeRelative(value);
+  }
+  canApprove(targetId: string) {
+    return this.host.can("deployment.approve", targetId);
+  }
+  fourEyes(record: ChangeRequest) {
+    return blockedByFourEyes(
+      record,
+      this.host.identity?.principal_id,
+      this.page.targetStrict(record.target_id),
+    );
+  }
+  canReplan(record: ChangeRequest) {
+    return (
+      this.host.can("deployment.plan", record.target_id) && replannable(record)
+    );
+  }
+  review(entry: InboxEntry) {
+    if (entry.kind === "change") return this.page.openChange(entry.change);
+    return this.openPlan(entry.plan);
   }
   uncheckedText(count: number) {
     return `${count} ${count === 1 ? "plan" : "plans"} could not be checked for an approval.`;

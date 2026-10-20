@@ -70,6 +70,11 @@ def worker_runtime_fixture(worker_runtime_fixture):
     return {**worker_runtime_fixture, "source": json.dumps(document)}
 
 
+async def no_upkeep(authority, deadline):
+    """Change request upkeep with nothing to do."""
+    return True
+
+
 @pytest.fixture
 async def refresh(operations_case, scheduler_url):
     """An operations loop on the execute-only scheduler login, cycled by the test instead of its poll task."""
@@ -82,6 +87,8 @@ async def refresh(operations_case, scheduler_url):
         health,
     )
     loop.engine = create_async_engine(scheduler_url)
+    # Change request upkeep is tested on its own (test_change_request_retention.py); these quanta time revalidation.
+    loop.maintain_changes = no_upkeep  # type: ignore[method-assign]
     # Quanta whose budget ran out: each can cut short at most the one refresh it was running.
     loop.cut_short = 0  # type: ignore[attr-defined]
     environment = loop._environment
@@ -962,6 +969,7 @@ async def test_a_policy_change_never_upgrades_a_decision_the_upgrade_withheld(
             health,
         )
         loop.engine = create_async_engine(logins["weave_scheduler"], hide_parameters=True)
+        loop.maintain_changes = no_upkeep  # type: ignore[method-assign]
         try:
             # The seeded tenant has two environments and each cycle visits one of them.
             for _ in range(4):

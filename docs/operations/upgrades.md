@@ -46,7 +46,7 @@ the desktop app never migrates a platform.
 | alpha14 | `0030_worker_presence` | No new schema migration. Adds the detached Docker development platform (`weave platform up`); existing foreground installations keep working and are never converted. The Agentic and Files workers 0.1.6 pin this server version. |
 | alpha15 | `0030_worker_presence` | No new schema migration and no role change. Upgrade CLIs and SDKs together with the server, review native executor `capacity` and the legacy private-network settings before restarting, and finish runs that use text templates before any rollback to alpha14; see [what changes in alpha15](#what-changes-in-alpha15). The Agentic and Files workers 0.1.7 pin this server version. |
 | alpha16 | `0033_language_workflow_calls` | Three new migrations, no role change. `0031_operations_key_collation` only replaces two internal accounting functions. `0032_operations_facts` adds [scoped operational fact storage](#operational-fact-storage) with a bounded historical backfill; it holds its locks until it commits (17 s for 10,000 retained runs and 32 s for 50,000 in a rehearsal), so stop every writer first. `0033_language_workflow_calls` adds two empty tables and takes well under a second whatever the number of retained runs (under 0.15 s in every measurement on 10,000 and 50,000 runs). Explicitly migrate the server before restarting it. Upgrade CLIs and SDKs together with the server, upgrade the server before its deployment runners, and finish or cancel runs that use loops or call other workflows before any rollback; see [what changes in alpha16](#what-changes-in-alpha16). `weave platform up --username` grants new local accounts the local owner roles (developer, deployer, operator, viewer, task_participant, tenant_admin, lumi_manager, execution_manager, worker_operator, deployment_reader, deployment_planner, deployment_approver, deployment_operator); existing accounts keep their roles until `weave platform user grant` adds more. `weave platform user` is now a command group; `weave platform user --username` works as before. The Agentic and Files workers 0.1.8 pin this server version. |
-| Unreleased | `0034_editor_studio_documents` | One new migration, no role change. `0034_editor_studio_documents` adds the empty `studio_documents` table (a platform draft's canvas and test data, the latest two revisions of each), its tenant policy and its usage accounting; it takes well under a second. Explicitly migrate the server before restarting it, and upgrade Studio together with the server: Studio saves a platform draft's canvas and test data through the new `studio_documents` operations. |
+| Unreleased | `0036_editor_studio_documents` | Three new migrations. `0034_operations_change_requests` adds the empty `deployment_change_requests` table and two nullable columns on `deployment_plans` (who made a plan, and the change request it was made for); `0035_principal_idempotency` adds the empty `principal_idempotency` table, so a repeated `Idempotency-Key` on principal creation answers the principal it created, in its current state, for seven days; the next keyed creation by the same administrator removes older keys. These two take constant time. Every existing target now needs a second approver: plans made before the upgrade must be planned again on such targets, and an environment manager can turn the rule off per target; see [change request compatibility](#change-request-compatibility). Upgrade the server first, then its deployment runners: an upgraded runner registers adapter version 2, which an earlier server refuses. `0036_editor_studio_documents` adds the empty `studio_documents` table (a platform draft's canvas and test data, the latest two revisions of each), its tenant policy and its usage accounting; it takes well under a second. Explicitly migrate the server before restarting it, and upgrade Studio together with the server: Studio saves a platform draft's canvas and test data through the new `studio_documents` operations. |
 
 ![Schema, compatibility and execution acceptance gates](../diagrams/operations-upgrade.svg)
 
@@ -558,6 +558,41 @@ language features.** It cannot recognize such a run, treats it as legacy
 evidence, and can block it permanently; a blocked run's tasks are never offered
 to workers again, even after you upgrade. Before you roll back to such a
 server, let every run that uses a language feature finish, or cancel it.
+
+## Change request compatibility
+
+Servers with change requests (migration `0034_operations_change_requests`) keep
+what runners, CLIs and SDKs of the previous release read:
+
+- **Plans read as before.** A plan does not carry who made it or which workers a
+  scale-down removes. The server keeps the planner beside the plan, and the
+  members a scale-down removes follow from the plan's own observation by a fixed
+  rule (Compose: exited containers first, then the highest container numbers),
+  which the server and an upgraded runner both apply. Plan digests are
+  unchanged.
+- **Leases carry only what the runner registered.** A lease's target lists the
+  capabilities the claiming runner registered and no approval policy, so a runner
+  of the previous release keeps claiming observe, deploy, update and scale jobs.
+- **A second approver is required.** Every target registered before the upgrade
+  needs a second person to approve its plans. A plan made before the upgrade does
+  not record its planner, so on such a target it must be planned again before it
+  can be approved or applied (409 `WV-PLAN-STALE`). The rule compares accounts:
+  see [Who counts as a second approver](cluster-management.md#who-counts-as-a-second-approver).
+
+Upgrade runners soon after the server anyway: a runner of the previous release
+cannot run restart jobs (it never registers `restart_workers`, so it never claims
+them), and it is never offered a scale-down that removes workers, because it would
+let Compose choose the containers instead of removing the reviewed members.
+**Scale-downs wait until the target's runner is upgraded**: an upgraded Compose
+runner registers adapter version 2, which promises to remove exactly the reviewed
+members, and only such a runner claims a scale-down's apply job. Any plan that
+lowers a worker component's replicas is a scale-down, whether it scales, updates
+or deploys. Kubernetes and Container Apps runners register version 1 until their
+adapters remove the reviewed members too, so they do not take scale-downs yet. A
+job nobody claims is cancelled at its deadline, the workers its change drained go
+back to work, and the change request can be planned again. CLIs and SDKs of the previous release cannot read
+a restart plan, a target that offers `restart_workers`, or a target whose
+environment manager turned off the second approver; upgrade them with the server.
 
 ## Verify before admitting traffic
 

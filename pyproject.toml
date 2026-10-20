@@ -149,6 +149,7 @@ markers = [
   "e2e: full product acceptance against real services",
   "acceptance: real-service acceptance journeys; run them through scripts/acceptance.py",
   "live_ai: calls a real Ollama model on a local Docker platform; set WEAVE_LIVE_AI_DIRECTORY to run them",
+  "real_operations: operations journeys on a kept acceptance run; set WEAVE_ACC_RUN_DIR to run them",
   "journey_step(step): the journeys.toml step a test implements, such as J0.3",
 ]
 
