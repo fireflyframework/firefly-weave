@@ -294,3 +294,18 @@ def test_a_restart_of_anything_but_a_worker_is_refused():
         ),
         compose.model_copy(update={"components": policy.components}),
     )
+
+
+@pytest.mark.parametrize(
+    ("adapter", "version"), [("docker-compose", "2"), ("kubernetes", "1"), ("azure-container-apps", "1")]
+)
+def test_only_an_adapter_that_removes_the_reviewed_members_registers_version_2(adapter, version):
+    """Version 2 promises the scale-down rule: Compose removes exactly the reviewed members; the others do not yet."""
+    from types import SimpleNamespace
+    from uuid import uuid4
+
+    from firefly_weave.deployment_runner.application import runner_registration
+
+    destination = SimpleNamespace(target_id=uuid4(), adapter=adapter, capabilities=["observe", "scale_workers"])
+    sent = runner_registration(destination)
+    assert (sent.adapter, sent.adapter_version, sent.capabilities) == (adapter, version, ["observe", "scale_workers"])
