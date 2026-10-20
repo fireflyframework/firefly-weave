@@ -520,22 +520,21 @@ def test_j5_03_workers_show_placement_load_contact_and_go_stale_when_their_conta
 
     contact = datetime.fromisoformat(seen["observed_at"]) - datetime.fromisoformat(seen["last_seen_at"])
     assert contact.total_seconds() <= 10, contact
-    # Stopped outside the runner, the worker stops reporting: stale after its TTL, and the overview asks for
-    # attention.
+    # Stopped outside the runner, the worker stops reporting: stale after its TTL.
     run.require(run.docker("stop", "--time", "30", fixture_container(run)))
     deadline = time.monotonic() + FIXTURE_TTL_SECONDS + 60
     while asyncio.run(worker_view(platform, worker))["presence"] != "stale":
         assert time.monotonic() < deadline, "the stopped worker is not stale after its TTL"
         time.sleep(3)
 
-    async def attention() -> list[dict]:
+    # The Workers page's offline filter lists it. The overview's Needs attention band lists an offline worker only
+    # while it still holds active leases, and this one finished its tasks when it was stopped.
+    async def offline() -> set[str]:
         async with platform.client() as client:
-            return list((await get(client, platform.environment + "/operations/summary"))["attention"])
+            listed = await get(client, platform.environment + "/workers", presence="stale", limit=100)
+        return {item["id"] for item in listed["items"]}
 
-    deadline = time.monotonic() + 60
-    while not any(item["kind"] == "worker" and item["id"] == worker for item in asyncio.run(attention())):
-        assert time.monotonic() < deadline, "the stale worker is not listed under Needs attention"
-        time.sleep(3)
+    assert worker in asyncio.run(offline())
 
 
 async def incidents_inbox(platform: Platform) -> dict:
