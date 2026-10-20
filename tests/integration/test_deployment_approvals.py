@@ -144,6 +144,10 @@ async def test_a_plan_records_its_planner_and_its_planner_cannot_approve_it(peop
         plan.id, PlanApprovalRequest(digest=plan.digest), **people.authority("approver")
     )
     assert approval.principal_id == people.people["approver"].id
+    # Approving again after someone else did is still refused to the planner, before the stored approval is replayed.
+    with pytest.raises(CatalogError) as again:
+        await people.service.approve(plan.id, PlanApprovalRequest(digest=plan.digest), **people.authority("planner"))
+    assert (again.value.status, again.value.code) == (403, "WV-APPROVAL-SELF")
     # The person who planned it may apply once someone else approved.
     job = await people.service.apply(
         plan.id, ApplyPlanRequest(digest=plan.digest), "apply", **people.authority("planner")
@@ -197,6 +201,17 @@ async def test_changing_a_targets_policy_needs_an_environment_manager_and_is_aud
     assert kept.approval_policy.distinct_approver
     changed = await people.service.update_target(target.id, update, kept.revision, **people.authority("owner"))
     assert not changed.approval_policy.distinct_approver
+    async with people.access[1]() as session:
+        audited = (
+            await session.execute(
+                text(
+                    "SELECT principal_id,event->'details' FROM access_audit "
+                    "WHERE target=:target AND action='deployment_target.approval_policy'"
+                ),
+                {"target": str(target.id)},
+            )
+        ).all()
+    assert [tuple(row) for row in audited] == [(people.people["owner"].id, {"distinct_approver": False})]
 
 
 async def test_a_plan_without_a_planner_must_be_planned_again_on_a_target_with_a_second_approver(people):

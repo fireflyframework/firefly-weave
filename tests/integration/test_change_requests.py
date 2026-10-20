@@ -956,3 +956,51 @@ async def test_a_replaced_plan_keeps_its_change_request_and_its_requester_check(
             first.plan_id, PlanApprovalRequest(digest=first.plan_digest), **ops.authority("owner")
         )
     assert (refused.value.status, refused.value.code) == (403, "WV-APPROVAL-SELF")
+
+
+async def test_the_stricter_policy_and_the_requester_apply_to_low_level_approve_and_apply(ops):
+    # A change requested on a relaxed target, which an environment manager then makes strict.
+    setup = await prepared(ops, policy=False, who="owner")
+    created = await ops.changes.create(change(setup, replicas=3), uuid4().hex, **ops.authority("owner"))
+    assert not created.approval_policy.distinct_approver
+    await ops.service.update_target(
+        setup.target.id,
+        TargetUpdate.model_validate_json(
+            json.dumps(
+                {
+                    "runner_principal_id": str(setup.target.runner_principal_id),
+                    "capabilities": CAPABILITIES,
+                    "approval_policy": {"distinct_approver": True},
+                }
+            )
+        ),
+        setup.target.revision,
+        **ops.authority("owner"),
+    )
+    cancelled = await ops.changes.read(created.id, **ops.authority("owner"))
+    await ops.changes.replan(created.id, cancelled.revision, **ops.authority("owner"))
+    await run_observation(ops, setup, 0)
+    ready = await ops.changes.read(created.id, **ops.authority("owner"))
+    planned = await ops.changes.advance(created.id, ready.revision, **ops.authority("planner"))
+    # The target is now strict although the snapshot is not: the requester may not approve.
+    with pytest.raises(CatalogError) as refused:
+        await ops.service.approve(
+            planned.plan_id, PlanApprovalRequest(digest=planned.plan_digest), **ops.authority("owner")
+        )
+    assert (refused.value.status, refused.value.code) == (403, "WV-APPROVAL-SELF")
+    # An approval by the requester, as one written before approvals compared people, is refused again at apply.
+    async with ops.access[1].begin() as session:
+        await session.execute(
+            text(
+                "INSERT INTO deployment_approvals(id,tenant_id,project_id,environment_id,target_id,deployment_id,"
+                "payload) SELECT id,tenant_id,project_id,environment_id,target_id,deployment_id,"
+                "jsonb_build_object('plan_id',id,'digest',payload->>'digest','principal_id',cast(:owner AS text),"
+                "'approved_at',clock_timestamp()) FROM deployment_plans WHERE id=:id"
+            ),
+            {"owner": str(ops.people["owner"].id), "id": planned.plan_id},
+        )
+    with pytest.raises(CatalogError) as applied:
+        await ops.service.apply(
+            planned.plan_id, ApplyPlanRequest(digest=planned.plan_digest), uuid4().hex, **ops.authority("operator")
+        )
+    assert (applied.value.status, applied.value.code) == (403, "WV-APPROVAL-SELF")

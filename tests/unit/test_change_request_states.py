@@ -182,5 +182,7 @@ def test_only_precondition_failures_may_be_planned_again():
     assert states.replannable(record("superseded"))
     assert states.replannable(record("failed", failure={"code": "WV-PLAN-STALE", "message": "Target changed"}))
     assert states.replannable(record("failed", failure={"code": "WV-PRECONDITION-FAILED", "message": "Changed"}))
+    assert states.replannable(record("failed", failure={"code": "WV-DRAIN-WINDOW", "message": "Too late"}))
+    assert states.replannable(record("failed", failure={"code": "WV-JOB-CANCELLED", "message": "Cancelled"}))
     assert not states.replannable(record("failed", failure={"code": "WV-PROVIDER-FAILED", "message": "Refused"}))
     assert not states.replannable(record("declined"))
