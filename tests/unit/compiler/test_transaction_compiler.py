@@ -26,7 +26,7 @@ import yaml
 from pydantic import ValidationError
 
 from firefly_weave.compiler.api import compile_source, import_artifact, validate_authoring
-from firefly_weave.compiler.catalog import CatalogSnapshot
+from firefly_weave.compiler.catalog import CatalogResource, CatalogSnapshot, FrozenDocument
 from firefly_weave.compiler.ir import UnsupportedIR, WorkflowIR
 from firefly_weave.compiler.language_support import COMPILED_FEATURES
 from firefly_weave.compiler.parser import parse_source
@@ -391,6 +391,83 @@ def test_an_artifact_that_breaks_the_rules_is_refused_at_import(mutation):
     value = executable(compiled(EXAMPLE))
     mutation({node["id"]: node for node in value["graph"]["nodes"]})
     with pytest.raises(ValidationError):
+        WorkflowIR.model_validate(value)
+
+
+def _redigest(value: dict, reference: str, kind: str, change) -> None:
+    """Change a locked dependency document and every digest that points at it, as a forger would."""
+    dependency = next(item for item in value["dependencies"] if item["reference"] == reference)
+    change(dependency["document"])
+    digest = CatalogResource(kind, reference, FrozenDocument.from_value(dependency["document"])).digest
+    for node in value["graph"]["nodes"]:
+        if node.get("dependency") == dependency["digest"]:
+            node["dependency"] = digest
+        for phase in node.get("txn", {}).get("phases", {}).values():
+            if phase["dependency"] == dependency["digest"]:
+                phase["dependency"] = digest
+    dependency["digest"] = digest
+
+
+def _example_nodes() -> tuple[dict, dict]:
+    value = executable(compiled(EXAMPLE))
+    return value, {node["id"]: node for node in value["graph"]["nodes"]}
+
+
+def test_import_rechecks_that_reservations_outlast_the_step_that_cant_be_undone():
+    value, nodes = _example_nodes()
+    nodes["hold"]["txn"]["holdSeconds"] = 31
+    with pytest.raises(ValidationError, match="publish-time rule"):
+        WorkflowIR.model_validate(value)
+
+
+def test_import_rechecks_that_undo_actions_are_safe_to_retry():
+    value, _ = _example_nodes()
+    _redigest(
+        value,
+        "source-system.release-hold@1.0.0",
+        "Action",
+        lambda document: document["spec"].update(sideEffect="non_idempotent"),
+    )
+    with pytest.raises(ValidationError, match="publish-time rule"):
+        WorkflowIR.model_validate(value)
+
+
+def test_import_refuses_an_undo_workflow_that_does_not_allow_this_caller():
+    value, _ = _example_nodes()
+    _redigest(
+        value,
+        "reverse-target-addition@1.0.0",
+        "Workflow",
+        lambda document: document["spec"].update(callable={"allowedCallers": ["someone-else"]}),
+    )
+    with pytest.raises(ValidationError, match="does not allow calls from this workflow"):
+        WorkflowIR.model_validate(value)
+
+
+def test_import_refuses_an_undo_action_bound_to_an_unknown_connection():
+    value, nodes = _example_nodes()
+    nodes["hold"]["txn"]["phases"]["cancel"]["connection"] = "nowhere"
+    with pytest.raises(ValidationError, match="Unresolved or incompatible action connection"):
+        WorkflowIR.model_validate(value)
+
+
+def test_import_refuses_a_call_inside_a_transaction_that_says_nothing():
+    reverse = undo(
+        "target-system.remove-quantity@1.0.0",
+        {"object": {"reference": ref("/input/moveId"), "addOperation": ref("/participant/operationKey")}},
+    )
+    call = {
+        "id": "fetch",
+        "kind": "callWorkflow",
+        "uses": "reverse-target-addition@1.0.0",
+        "with": {"object": {"reference": ref("/input/moveId"), "addOperation": ref("/input/moveId")}},
+        "compensate": reverse,
+    }
+    result = compiled(workflow(transaction(hold(), call, add(), submit())))
+    assert result.ok, findings(result)
+    value = executable(result)
+    next(node for node in value["graph"]["nodes"] if node["id"] == "fetch").pop("txn")
+    with pytest.raises(ValidationError, match="must say how it is undone"):
         WorkflowIR.model_validate(value)
 
 
