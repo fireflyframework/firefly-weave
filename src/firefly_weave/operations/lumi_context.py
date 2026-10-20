@@ -371,9 +371,11 @@ def shape(
         whole: JsonObject = {"format": format, "source": source}
         fits = share(DRAFT_SHARE)
         small = len(source.encode()) <= STANDARD_DRAFT_BYTES and (fits is None or _tokens(whole) <= fits)
-        # A fix needs the values it must fix: a proposal to fix is sent whole whenever it fits its share.
+        # A change needs the values it changes: compact sends a draft whole whenever it fits its share (measured on
+        # qwen3:4b: 0 of 5 valid changes from an outline, 4 of 5 from the whole draft), and a proposal to fix is
+        # sent whole on every profile when it fits. Only a draft over its share is outlined.
         fits_whole = fits is None or _tokens(whole) <= fits
-        if profile == "full" or (profile == "standard" and small) or (fix and fits_whole):
+        if profile == "full" or (profile == "standard" and small) or ((fix or profile == "compact") and fits_whole):
             context["draft"] = whole
         else:
             document = _parsed(format, source)

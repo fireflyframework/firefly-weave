@@ -294,18 +294,22 @@ def test_over_budget_parts_are_trimmed_in_order_and_said_so():
     assert sent_tokens(shaped, "Explain") <= 3072
 
 
-def test_a_draft_that_does_not_parse_is_left_out_with_a_note():
-    shaped = shape(
-        "compact",
-        4096,
-        message="Help",
-        history=[],
-        resources=[],
-        draft=("yaml", "steps: [unclosed"),
-        selected_step=None,
-        schemas={"workflow": {}},
-    )
-    assert shaped.context["draft"] == {"note": "The draft does not parse yet, so only its errors can be discussed."}
+def test_a_draft_that_does_not_parse_is_sent_whole_when_it_fits_and_left_out_with_a_note_when_not():
+    def shaped(source):
+        return shape(
+            "compact",
+            4096,
+            message="Help",
+            history=[],
+            resources=[],
+            draft=("yaml", source),
+            selected_step=None,
+            schemas={"workflow": {}},
+        ).context["draft"]
+
+    assert shaped("steps: [unclosed") == {"format": "yaml", "source": "steps: [unclosed"}
+    note = {"note": "The draft does not parse yet, so only its errors can be discussed."}
+    assert shaped("steps: [unclosed " + "x" * 20000) == note
 
 
 def test_operations_explanations_send_no_authoring_context():
@@ -623,8 +627,9 @@ def test_a_fix_request_sends_a_proposal_that_fits_whole():
     shaped = fix_shape(source)
     assert shaped.context["draft"] == {"format": "yaml", "source": source}
     assert "trimmed" not in shaped.context
-    # Without the fix flag the same draft is outlined, as decision 4 rules for ordinary requests.
-    assert "outline" in fix_shape(source, fix=False).context["draft"]
+    # An ordinary compact request sends a draft that fits whole too (0 of 5 valid changes from an outline, 4 of 5
+    # from the whole draft on qwen3:4b).
+    assert fix_shape(source, fix=False).context["draft"] == {"format": "yaml", "source": source}
 
 
 def test_a_fix_request_too_large_to_send_whole_sends_the_diagnosed_steps_and_the_problems():
@@ -750,6 +755,24 @@ async def test_a_fix_request_sends_the_faulty_value_to_the_model_on_a_compact_en
     _, spy = await ask_through_the_service(monkeypatch, request, LumiReply(answer="Fixed."))
     sent = spy.await_args.args[2]
     assert sent["profile"] == "compact" and "objct" in sent["draft"]["source"]
-    ordinary = request.model_copy(update={"fix": False})
+    large = broken_proposal(steps=200).replace("value: {}", "value: {objct: 1}")
+    ordinary = request.model_copy(update={"fix": False, "draft": request.draft.model_copy(update={"source": large})})
     _, spy = await ask_through_the_service(monkeypatch, ordinary, LumiReply(answer="Explained."))
+    # A draft too large for its share is outlined, so the value of a step that is not selected is not sent.
     assert "objct" not in json.dumps(spy.await_args.args[2])
+
+
+def test_a_compact_request_sends_a_draft_that_fits_whole():
+    small = draft(3)
+    shaped = shape(
+        "compact",
+        COMPACT_INPUT_TOKENS,
+        message="Add a step after step-2",
+        history=[],
+        resources=[],
+        draft=("yaml", small),
+        selected_step=None,
+        schemas={},
+    )
+    assert shaped.context["draft"] == {"format": "yaml", "source": small}
+    assert "trimmed" not in shaped.context
