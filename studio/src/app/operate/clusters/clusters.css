@@ -281,3 +281,441 @@ dd {
     grid-template-columns: minmax(0, 1fr) auto;
   }
 }
+
+/* Target cards: who approves, and a change request from the card. */
+.approval-line {
+  font: var(--type-caption);
+  font-weight: 400;
+  color: var(--muted);
+}
+.resource-cards .card-action {
+  justify-self: start;
+}
+/* Add target: three ways in, the last folded away. */
+.target-chooser {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+.chooser-option {
+  display: grid;
+  align-content: start;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  min-width: 0;
+}
+.chooser-option span {
+  color: var(--muted);
+  font: var(--type-small);
+}
+.chooser-option button {
+  justify-self: start;
+}
+.chooser-option summary {
+  font-weight: 600;
+  cursor: pointer;
+  min-height: var(--control-sm);
+  display: flex;
+  align-items: center;
+}
+details.chooser-option[open] summary {
+  margin-bottom: var(--space-2);
+}
+/* The Approvals switch on a target: as tall as a control. */
+.approval-setting {
+  margin: var(--space-4) 0;
+}
+.switch-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--control-md);
+  cursor: pointer;
+}
+.switch-row input {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+.switch-row span {
+  display: grid;
+  min-width: 0;
+}
+.switch-row small {
+  font: var(--type-caption);
+  font-weight: 400;
+  color: var(--muted);
+}
+
+/* Change requests: one line per change, 36 px rows with a mouse. */
+.change-table {
+  --cols: minmax(200px, 1fr) 160px 180px minmax(120px, 0.6fr) 120px 110px;
+}
+.change-table .table-head,
+.change-table .resource-row {
+  grid-template-columns: var(--cols);
+}
+.change-table .resource-row,
+.approval-table .resource-row {
+  position: relative;
+  min-height: var(--control-md);
+  padding-block: 0;
+}
+.change-table [role="cell"],
+.approval-table [role="cell"] {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.change-table .end,
+.approval-table .end {
+  justify-self: end;
+  text-align: right;
+}
+.change-table .row-open {
+  display: block;
+  min-height: 0;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--text);
+  font: var(--type-body);
+  font-weight: 600;
+  text-align: left;
+  white-space: normal;
+}
+.change-table .row-open::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+}
+.change-table .row-open:focus-visible {
+  outline: none;
+}
+.change-table .row-open:focus-visible::after {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+.change-table .resource-row {
+  cursor: pointer;
+}
+@media (max-width: 1024px) {
+  .change-table {
+    --cols: minmax(0, 1fr) 180px 110px;
+  }
+  .change-table [data-wide] {
+    display: none;
+  }
+}
+@media (max-width: 600px) {
+  .change-table .table-head {
+    display: none;
+  }
+  .change-table {
+    --cols: minmax(0, 1fr) auto;
+  }
+  .change-table .end {
+    display: none;
+  }
+}
+@media (max-width: 767px), (pointer: coarse) {
+  .change-table .resource-row,
+  .approval-table .resource-row {
+    min-height: var(--control-touch);
+  }
+}
+
+/* The wizard: numbered steps, then one step's fields in a readable column. */
+.wizard-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-5);
+  list-style: none;
+  padding: 0;
+  margin: 0 0 var(--space-5);
+  color: var(--muted);
+}
+.wizard-steps li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-sm);
+}
+.wizard-steps li[aria-current="step"] {
+  color: var(--text);
+  font-weight: 600;
+}
+.step-number {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  font: var(--type-caption);
+  font-variant-numeric: tabular-nums;
+}
+.wizard-steps li[aria-current="step"] .step-number {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+.wizard-steps li.done .step-number {
+  background: var(--selected);
+}
+.wizard-body {
+  display: grid;
+  gap: var(--space-4);
+  max-width: 640px;
+}
+.wizard-body fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+.wizard-body legend {
+  font: var(--type-label);
+  padding: 0;
+  margin-bottom: var(--space-2);
+}
+.choice-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+.choice,
+.check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-md);
+  min-width: 0;
+  cursor: pointer;
+}
+.choice {
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.choice:has(input:checked) {
+  border-color: var(--accent);
+  background: var(--selected);
+}
+.choice.disabled {
+  color: var(--disabled-ink);
+  cursor: not-allowed;
+}
+.choice input,
+.check input {
+  flex: none;
+  margin: 0;
+}
+.stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.stepper button {
+  width: var(--control-sm);
+  padding: 0;
+}
+.stepper input {
+  width: 72px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.field-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+.drain-preview h3,
+.drain-progress h4 {
+  margin: 0 0 var(--space-1);
+  font: var(--type-label);
+}
+.drain-preview ul,
+.drain-progress ul {
+  list-style: none;
+  padding: 0;
+  margin: var(--space-2) 0 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.drain-preview li,
+.drain-progress li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--control-sm);
+  padding: 0 var(--space-3);
+  border-bottom: 1px solid var(--line);
+}
+.drain-preview li:last-child,
+.drain-progress li:last-child {
+  border-bottom: 0;
+}
+.drain-preview li span,
+.drain-progress li span {
+  flex: none;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.review {
+  display: grid;
+  grid-template-columns: 160px minmax(0, 1fr);
+  gap: var(--space-2) var(--space-4);
+  margin: 0;
+}
+.review dt,
+.review dd {
+  margin: 0;
+}
+.wizard-actions {
+  justify-content: flex-end;
+}
+.wizard-blocker {
+  margin: 0;
+}
+@media (max-width: 600px) {
+  .choice-grid,
+  .field-row,
+  .review {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .review dd {
+    margin-bottom: var(--space-2);
+  }
+  /* Only the current step keeps its name; the others keep their number. */
+  .wizard-steps {
+    gap: var(--space-2) var(--space-3);
+  }
+  .wizard-steps li:not([aria-current="step"]) {
+    font-size: 0;
+  }
+  .wizard-steps li:not([aria-current="step"]) .step-number {
+    font: var(--type-caption);
+  }
+  .wizard-actions {
+    flex-direction: column-reverse;
+  }
+}
+@media (max-width: 767px), (pointer: coarse) {
+  .choice,
+  .check {
+    min-height: var(--control-touch);
+  }
+  .stepper button {
+    width: var(--control-touch);
+  }
+}
+
+/* A change request's progress: a vertical line of steps. */
+.change-summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--space-4);
+}
+.change-summary h3 {
+  margin: 0 0 var(--space-1);
+}
+.change-summary p {
+  margin: 0;
+}
+.change-summary .status-pill {
+  flex: none;
+}
+.progress-steps {
+  list-style: none;
+  padding: 0;
+  margin: var(--space-5) 0;
+}
+.progress-steps li {
+  position: relative;
+  display: flex;
+  gap: var(--space-3);
+  min-height: var(--control-md);
+  padding-bottom: var(--space-2);
+}
+.progress-steps li:not(:last-child)::before {
+  content: "";
+  position: absolute;
+  left: 5px;
+  top: 16px;
+  bottom: 0;
+  width: 2px;
+  background: var(--line);
+}
+.progress-steps li[data-state="done"]:not(:last-child)::before {
+  background: var(--accent);
+}
+.step-dot {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  margin-top: 4px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  background: var(--surface);
+  box-sizing: border-box;
+}
+.progress-steps li[data-state="done"] .step-dot {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+.progress-steps li[data-state="current"] .step-dot {
+  border-color: var(--accent);
+}
+.progress-steps li[data-state="failed"] .step-dot {
+  border-color: var(--danger);
+  background: var(--danger);
+}
+.progress-steps li[data-state="todo"],
+.progress-steps li[data-state="skipped"] {
+  color: var(--muted);
+}
+.step-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.step-text small {
+  font: var(--type-caption);
+  font-weight: 400;
+  color: var(--muted);
+}
+.step-text small[data-tone="warning"] {
+  color: var(--warning-ink, var(--warning));
+}
+.step-text small[data-tone="danger"] {
+  color: var(--danger-ink);
+}
+.drain-progress {
+  margin: var(--space-4) 0;
+}
+.four-eyes {
+  margin: var(--space-3) 0 0;
+}
+.progress-actions {
+  margin-top: var(--space-4);
+}
+.change-panel .field {
+  max-width: 640px;
+  margin-top: var(--space-3);
+}
+@media (max-width: 600px) {
+  .change-summary {
+    display: grid;
+  }
+  .change-summary .status-pill {
+    justify-self: start;
+  }
+}

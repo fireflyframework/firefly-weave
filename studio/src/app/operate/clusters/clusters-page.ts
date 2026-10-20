@@ -56,7 +56,21 @@ import {
   type Approval,
   type Collection,
   type Runner,
+  type ChangeRequest,
+  type ChangeRequestCreate,
+  type DrainProgress,
 } from "../../operations/deployment-contracts";
+import type { WorkerStatus } from "../workers/workers-model";
+import {
+  ChangeRequestProgress,
+  type ApplyChoice,
+} from "./change-request-progress";
+import { ChangeRequestWizard } from "./change-request-wizard";
+import {
+  ClusterChangeRequestsTab,
+  STATE_FILTERS,
+} from "./cluster-change-requests-tab";
+import { isActive } from "./change-request-model";
 import { ApprovalsInbox } from "./approvals-inbox";
 import { ClusterApprovalsTab } from "./cluster-approvals-tab";
 import { ClusterDeploymentDetail } from "./cluster-deployment-detail";
@@ -91,7 +105,10 @@ import { RefreshStatus } from "../refresh-status";
     ClusterPlanDetail,
     ClusterJobDetail,
     ClusterTargetsTab,
+    ClusterChangeRequestsTab,
     ClusterApprovalsTab,
+    ChangeRequestWizard,
+    ChangeRequestProgress,
     ClusterJobsTab,
     ClusterRunnersTab,
     OperateState,
@@ -235,6 +252,44 @@ import { RefreshStatus } from "../refresh-status";
             (cancel)="cancelDraft()"
           />
         </section>
+      } @else if (wizardOpen) {
+        <section class="operations-panel">
+          <h2 tabindex="-1">New change request</h2>
+          <weave-change-request-wizard
+            [targets]="store.targets"
+            [deployments]="store.deployments"
+            [observations]="store.observations"
+            [workers]="wizardWorkers"
+            [releases]="workerReleases"
+            [targetId]="wizardTarget"
+            [deploymentId]="wizardDeployment"
+            [busy]="store.mutating"
+            [error]="store.mutationError"
+            (create)="createChange($event)"
+            (cancel)="closeWizard()"
+            (targetChange)="wizardTargetChanged($event)"
+          />
+        </section>
+      } @else if (screen === "change" && change) {
+        <section class="operations-panel change-panel">
+          <h2 tabindex="-1">Change request</h2>
+          <weave-change-request-progress
+            [record]="change"
+            [drain]="drainProgress"
+            [targetName]="targetName(change.target_id)"
+            [viewer]="host.identity?.principal_id ?? null"
+            [targetStrict]="changeTargetStrict"
+            [busy]="store.mutating"
+            [can]="changeCan"
+            [personName]="personNameFn"
+            (approve)="approveChange()"
+            (decline)="declineChange()"
+            (cancelChange)="cancelChange()"
+            (drainNow)="drainChange()"
+            (apply)="applyChange($event)"
+            (replan)="replanChange()"
+          />
+        </section>
       } @else if (screen === "target" && target) {
         <weave-cluster-target-detail [page]="this" />
       } @else if (screen === "deployment" && deployment) {
@@ -272,6 +327,9 @@ import { RefreshStatus } from "../refresh-status";
           @switch (tab) {
             @case ("targets") {
               <weave-cluster-targets-tab [page]="this" />
+            }
+            @case ("change-requests") {
+              <weave-cluster-change-requests-tab [page]="this" />
             }
             @case ("approvals") {
               <weave-cluster-approvals-tab [page]="this" />
@@ -323,7 +381,30 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
   readonly adapterLabels = adapterLabels;
   readonly terminalJobs = terminalJobs;
   readonly observationState = observationState;
-  screen: "overview" | "target" | "deployment" | "plan" | "job" = "overview";
+  screen: "overview" | "target" | "deployment" | "plan" | "job" | "change" =
+    "overview";
+  /** The change request on screen, and its workers' progress while they finish. */
+  change: ChangeRequest | null = null;
+  drainProgress: DrainProgress | null = null;
+  /** Whether the open change's target asks for a second approver. */
+  changeTargetStrict = true;
+  wizardOpen = false;
+  wizardTarget = "";
+  wizardDeployment = "";
+  wizardWorkers: WorkerStatus[] = [];
+  /** The Change requests tab: its rows, filters and next page. */
+  changes: {
+    rows: ChangeRequest[];
+    loaded: boolean;
+    error: PlainError | null;
+    cursor: string | null;
+  } = { rows: [], loaded: false, error: null, cursor: null };
+  changeFilter = "";
+  changeTarget = "";
+  private changeSequence = 0;
+  readonly changeCan = (capability: string) =>
+    !!this.change && this.host.can(capability, this.change.target_id);
+  readonly personNameFn = (id: string) => this.personName(id);
   target: Target | null = null;
   deployment: Deployment | null = null;
   plan: Plan | null = null;
@@ -420,6 +501,7 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
   tab: ClusterTab = "targets";
   readonly tabs: [ClusterTab, string][] = [
     ["targets", "Targets"],
+    ["change-requests", "Change requests"],
     ["approvals", "Approvals"],
     ["jobs", "Jobs"],
     ["runners", "Runners"],
@@ -439,7 +521,8 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
       this.target?.id ??
         this.deployment?.target_id ??
         this.plan?.target_id ??
-        this.job?.target_id,
+        this.job?.target_id ??
+        this.change?.target_id,
     );
   }
   get lumiAttachments(): LumiOperationAttachment[] {
@@ -576,6 +659,7 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
     this.shown = this.addressKey(collection, id, tab);
     if (!collection) {
       this.screen = "overview";
+      this.readChangeFilters();
       await this.poller.refresh();
       return;
     }
@@ -585,10 +669,17 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
         deployments: "deployment",
         plans: "plan",
         jobs: "job",
+        "change-requests": "change",
       } as const
     )[collection];
     const seq = ++this.detailSequence;
     try {
+      if (collection === "change-requests") {
+        const value = await this.readChange(id);
+        if (this.alive && seq === this.detailSequence)
+          await this.openChange(value, false);
+        return;
+      }
       const value = await this.store.read(collection as "targets", id);
       if (!this.alive || seq !== this.detailSequence || !value) return;
       if (collection === "targets") await this.openTarget(value, false);
@@ -613,12 +704,13 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
       !this.target &&
       !this.deployment &&
       !this.plan &&
-      !this.job
+      !this.job &&
+      !this.change
     );
   }
   /** "You don't have access to this target". */
   recordAccessHeading() {
-    return `You don't have access to this ${this.screen}`;
+    return `You don't have access to this ${this.screen === "change" ? "change request" : this.screen}`;
   }
   /** Refresh and Try again: a record that could not be read is read again. */
   reload() {
@@ -635,6 +727,10 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
     this.deployment = null;
     this.plan = null;
     this.job = null;
+    this.change = null;
+    this.drainProgress = null;
+    this.approvalAccessDenied = false;
+    this.wizardOpen = false;
     this.approval = null;
     this.error = "";
     this.errorCode = "";
@@ -696,6 +792,7 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
       this.editingAuthority ||
       this.registering ||
       this.planning ||
+      this.wizardOpen ||
       this.store.mutating ||
       this.recordMissing
     );
@@ -705,7 +802,10 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
     const loaded = await this.refresh();
     // 2 s while an open job runs, else 15 s: kept right after every load.
     this.poller.setInterval(
-      this.screen === "job" && this.job && !terminalJobs.has(this.job.state)
+      (this.screen === "job" &&
+        this.job &&
+        !terminalJobs.has(this.job.state)) ||
+        (this.screen === "change" && this.change && isActive(this.change.state))
         ? 2000
         : 15000,
     );
@@ -868,7 +968,9 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
     const arrived = (...names: Collection[]) => {
       if (names.some((name) => this.store.errors[name])) failed = true;
     };
-    if (this.target) {
+    if (this.change) {
+      if (!(await this.refreshChange())) failed = true;
+    } else if (this.target) {
       const names: Collection[] = ["observations", "runners", "deployments"];
       await Promise.all(
         names.map((c) =>
@@ -950,14 +1052,18 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
           jobs: ["jobs"],
           runners: ["runners", "targets"],
           approvals: ["targets", "deployments"],
+          "change-requests": ["targets"],
         } as Record<ClusterTab, Collection[]>
       )[this.tab];
       // The inbox loads, and counts, only on the tab that shows it: its
       // failure never holds back another tab.
       const inbox = this.tab === "approvals" ? this.loadInbox() : true;
+      const changes =
+        this.tab === "change-requests" ? this.loadChanges(false) : true;
       await Promise.all(names.map((c) => this.store.load(c)));
       arrived(...names);
       if (!(await inbox)) failed = true;
+      if (!(await changes)) failed = true;
     }
     this.cdr.markForCheck();
     return !failed;
@@ -978,6 +1084,7 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
     this.editingAuthority = false;
     this.registering = false;
     this.planning = false;
+    this.wizardOpen = false;
     this.store.cancelMutation();
   }
   async editTargetAuthority() {
@@ -1184,6 +1291,390 @@ export class ClustersPage implements DoCheck, OnInit, OnDestroy {
     if (result && seq === this.detailSequence) {
       this.job = result;
       this.jobReadSequence++;
+    }
+  }
+  /** "You" for the viewer, else a short stable name for the person. */
+  personName(id: string) {
+    return id === this.host.identity?.principal_id
+      ? "You"
+      : `Person ${shortId(id)}`;
+  }
+  /** The Change requests filters the address names. */
+  private readChangeFilters() {
+    const query = new URLSearchParams(location.search);
+    const state = query.get("state") ?? "";
+    this.changeFilter = STATE_FILTERS.some((item) => item[0] === state)
+      ? state
+      : "";
+    this.changeTarget = query.get("target") ?? "";
+  }
+  async filterChanges(state: string, target: string) {
+    this.changeFilter = state;
+    this.changeTarget = target;
+    this.changes = { rows: [], loaded: false, error: null, cursor: null };
+    const query = new URLSearchParams({ tab: "change-requests" });
+    if (state) query.set("state", state);
+    if (target) query.set("target", target);
+    await this.router.navigateByUrl(`/operate/clusters?${query}`, {
+      replaceUrl: true,
+    });
+    await this.poller.refresh();
+  }
+  private changeQuery(cursor: string | null) {
+    const query = new URLSearchParams({ limit: "50" });
+    const states =
+      STATE_FILTERS.find((item) => item[0] === this.changeFilter)?.[2] ?? [];
+    for (const state of states) query.append("state", state);
+    if (this.changeTarget) query.set("target_id", this.changeTarget);
+    if (cursor) query.set("cursor", cursor);
+    return query.toString();
+  }
+  /** Loads the Change requests tab; false when it could not be read. */
+  private async loadChanges(more: boolean): Promise<boolean> {
+    const seq = ++this.changeSequence;
+    const cursor = more ? this.changes.cursor : null;
+    try {
+      const page = await this.host.api.request<{
+        items: ChangeRequest[];
+        next_cursor: string | null;
+      }>(
+        `${this.host.api.environment}/deployment-change-requests?${this.changeQuery(cursor)}`,
+      );
+      if (seq !== this.changeSequence) return true;
+      const rows = more ? [...this.changes.rows] : [];
+      const seen = new Set(rows.map((row) => row.id));
+      rows.push(...page.items.filter((row) => !seen.has(row.id)));
+      this.changes = {
+        rows,
+        loaded: true,
+        error: null,
+        cursor: page.next_cursor,
+      };
+      return true;
+    } catch (error) {
+      if (seq === this.changeSequence)
+        this.changes = { ...this.changes, error: describeError(error) };
+      return false;
+    } finally {
+      this.cdr.markForCheck();
+    }
+  }
+  loadMoreChanges() {
+    return this.loadChanges(true);
+  }
+  private readChange(id: string) {
+    return this.host.api.request<ChangeRequest>(
+      `${this.host.api.environment}/deployment-change-requests/${encodeURIComponent(id)}`,
+    );
+  }
+  async openChange(value: ChangeRequest, navigate = true) {
+    this.resetDetails();
+    this.change = value;
+    this.screen = "change";
+    this.shown = this.addressKey("change-requests", value.id, this.tab);
+    if (navigate)
+      await this.router.navigateByUrl(
+        clustersRecordPath("change-requests", value.id),
+      );
+    this.focusDetail();
+    await this.poller.refresh();
+  }
+  /** Opens a change request by its id, from the inbox or a notice. */
+  async openChangeById(id: string) {
+    const seq = ++this.detailSequence;
+    try {
+      const value = await this.readChange(id);
+      if (seq === this.detailSequence) await this.openChange(value);
+    } catch (error) {
+      if (seq === this.detailSequence) this.showError(error);
+    }
+  }
+  /**
+   * Reads the open change request again, makes its plan once the target has
+   * been checked, and follows its workers while they finish their tasks.
+   */
+  private async refreshChange(): Promise<boolean> {
+    const selected = this.change!;
+    const seq = this.detailSequence;
+    let ok = true;
+    try {
+      const [record, target] = await Promise.all([
+        this.readChange(selected.id),
+        this.store.read("targets", selected.target_id).catch(() => null),
+      ]);
+      if (seq !== this.detailSequence) return true;
+      this.change = record;
+      if (target)
+        this.changeTargetStrict =
+          target.approval_policy?.distinct_approver !== false;
+    } catch (error) {
+      if (seq === this.detailSequence) this.showError(error);
+      return false;
+    }
+    const record = this.change;
+    if (
+      record?.state === "ready_to_plan" &&
+      this.host.can("deployment.plan", record.target_id) &&
+      !this.store.mutating
+    ) {
+      const advanced = await this.store.mutate<ChangeRequest>(
+        `deployment-change-requests/${record.id}/advance`,
+        undefined,
+        "POST",
+        record.revision,
+      );
+      if (advanced && seq === this.detailSequence) this.change = advanced;
+      // Another person may have made the plan first; the next read shows it.
+      if (!advanced && this.store.mutationErrorCode === "WV-REVISION")
+        this.store.cancelMutation();
+    }
+    if (this.change?.drain_set.length && seq === this.detailSequence)
+      ok = (await this.followDrain(seq)) && ok;
+    return ok;
+  }
+  /**
+   * The workers' progress while they finish: each worker's own record when
+   * the viewer may read workers, else what the change request recorded.
+   */
+  private async followDrain(seq: number): Promise<boolean> {
+    const record = this.change!;
+    const members = record.drain_set.slice(0, 20);
+    if (!this.host.can("worker.read")) {
+      this.drainProgress = {
+        members: members.map((member) => ({
+          ...member,
+          draining: record.drained.includes(member.worker_id),
+          presence: "unknown",
+          revoked: false,
+        })),
+        remaining: members.length,
+      };
+      return true;
+    }
+    const environment = this.host.api.environment;
+    const read = await Promise.all(
+      members.map((member) =>
+        this.host.api
+          .request<WorkerStatus>(
+            `${environment}/workers/${encodeURIComponent(member.worker_id)}`,
+          )
+          .then((worker) => ({
+            ...member,
+            active_leases: worker.active_leases,
+            draining: worker.draining,
+            presence: worker.presence,
+            revoked: worker.revoked,
+          }))
+          .catch((error) =>
+            describeError(error).status === 404
+              ? {
+                  ...member,
+                  active_leases: 0,
+                  draining: false,
+                  presence: "unknown" as const,
+                  revoked: true,
+                }
+              : null,
+          ),
+      ),
+    );
+    if (seq !== this.detailSequence) return true;
+    const known = read.filter((item) => item !== null);
+    this.drainProgress = {
+      members: known,
+      remaining: known.filter((item) => !item.revoked && item.active_leases)
+        .length,
+    };
+    return known.length === members.length;
+  }
+  /** Opens the wizard, for a target and deployment when one is given. */
+  async openWizard(targetId = "", deploymentId = "") {
+    if (!this.host.can("deployment.plan", targetId || undefined)) return;
+    this.resetDetails();
+    this.store.cancelMutation();
+    this.wizardTarget = targetId;
+    this.wizardDeployment = deploymentId;
+    this.wizardWorkers = [];
+    this.wizardOpen = true;
+    this.screen = "overview";
+    this.focusDetail();
+    await Promise.all([
+      this.store.load("targets"),
+      this.store.load("deployments"),
+      targetId ? this.wizardTargetChanged(targetId) : null,
+      this.loadWizardReleases(),
+    ]);
+    this.cdr.markForCheck();
+  }
+  /** The chosen target's observations and workers, for the preview. */
+  async wizardTargetChanged(targetId: string) {
+    this.wizardTarget = targetId;
+    if (!targetId) return;
+    await this.store.load("observations", false, { target_id: targetId });
+    if (this.host.can("worker.read")) {
+      try {
+        const page = await this.host.api.request<{ items: WorkerStatus[] }>(
+          `${this.host.api.environment}/workers?limit=100`,
+        );
+        this.wizardWorkers = page.items.filter(
+          (item) => "active_leases" in item,
+        );
+      } catch {
+        // The preview then shows the workers without their task counts.
+        this.wizardWorkers = [];
+      }
+    }
+    this.cdr.markForCheck();
+  }
+  private async loadWizardReleases() {
+    this.workerReleases = [];
+    if (!this.host.can("catalog.read")) return;
+    try {
+      const page = await this.host.api.page("worker-releases", true);
+      this.workerReleases = page.items as unknown as AdmittedWorkerRelease[];
+    } catch {
+      // Without releases, an update can still change CPU or memory.
+    }
+  }
+  closeWizard() {
+    if (this.store.mutating) return;
+    this.wizardOpen = false;
+    this.store.cancelMutation();
+    void this.overview();
+  }
+  async createChange(request: ChangeRequestCreate) {
+    if (!this.host.can("deployment.plan", request.target_id)) return;
+    const result = await this.store.mutate<ChangeRequest>(
+      "deployment-change-requests",
+      request,
+    );
+    if (!result) return;
+    this.host.notify("Change request created. Checking the target first.");
+    await this.openChange(result);
+  }
+  /** Set when the server refused a change to who approves this target. */
+  approvalAccessDenied = false;
+  /** Turns the second approver on or off for the open target. */
+  async setApprovalPolicy(strict: boolean) {
+    const target = this.target;
+    if (!target || !this.can("target.manage")) return;
+    this.approvalAccessDenied = false;
+    const result = await this.store.mutate<Target>(
+      "deployment-targets/" + target.id,
+      {
+        runner_principal_id: target.runner_principal_id,
+        capabilities: target.capabilities,
+        disabled: target.disabled,
+        approval_policy: { distinct_approver: strict },
+      } satisfies TargetUpdate,
+      "PUT",
+      target.revision,
+    );
+    if (result && this.target?.id === target.id) {
+      this.target = result;
+      this.host.notify(
+        strict
+          ? "A second person must now approve changes to this target."
+          : "The requester may now approve changes to this target.",
+      );
+    } else if (!result && this.store.mutationErrorStatus === 403) {
+      this.approvalAccessDenied = true;
+      this.store.cancelMutation();
+    }
+    this.cdr.markForCheck();
+  }
+  async approveChange() {
+    const record = this.change;
+    if (!record?.plan_digest) return;
+    const result = await this.store.mutate<ChangeRequest>(
+      `deployment-change-requests/${record.id}/approve`,
+      { digest: record.plan_digest },
+    );
+    if (result && this.change?.id === record.id) {
+      this.change = result;
+      this.host.notify("Plan approved.");
+    }
+  }
+  /** Asks why, then declines or cancels the open change request. */
+  private async decide(kind: "decline" | "cancel") {
+    const record = this.change;
+    if (!record) return;
+    const reason = await this.host.dialogs.prompt({
+      title:
+        kind === "decline"
+          ? "Decline this plan?"
+          : "Cancel this change request?",
+      message:
+        kind === "decline"
+          ? "Nothing changes on the target. The person who asked sees your reason."
+          : "Nothing changes on the target. Workers that were finishing their tasks take new tasks again.",
+      confirmLabel: kind === "decline" ? "Decline" : "Cancel change request",
+      cancelLabel: "Keep it",
+      danger: true,
+      field: {
+        name: "reason",
+        label: "Reason",
+        multiline: true,
+        required: true,
+        validate: (value) =>
+          value.trim()
+            ? value.length > 2000
+              ? "Keep the reason to 2,000 characters."
+              : ""
+            : "Give a reason.",
+      },
+    });
+    if (reason === null || this.change?.id !== record.id) return;
+    const result = await this.store.mutate<ChangeRequest>(
+      `deployment-change-requests/${record.id}/${kind}`,
+      { reason: reason.trim() },
+    );
+    if (result && this.change?.id === record.id) this.change = result;
+  }
+  declineChange() {
+    return this.decide("decline");
+  }
+  cancelChange() {
+    return this.decide("cancel");
+  }
+  async drainChange() {
+    const record = this.change;
+    if (!record) return;
+    const result = await this.store.mutate<DrainProgress>(
+      `deployment-change-requests/${record.id}/drain`,
+      undefined,
+    );
+    if (result && this.change?.id === record.id) {
+      this.drainProgress = result;
+      if (result.change_request) this.change = result.change_request;
+    }
+  }
+  async applyChange(choice: ApplyChoice) {
+    const record = this.change;
+    if (!record?.plan_digest) return;
+    const result = await this.store.mutate<ChangeRequest>(
+      `deployment-change-requests/${record.id}/apply`,
+      {
+        digest: record.plan_digest,
+        ...(choice.force
+          ? { force_after_timeout: true, force_reason: choice.reason }
+          : {}),
+      },
+    );
+    if (result && this.change?.id === record.id) this.change = result;
+  }
+  async replanChange() {
+    const record = this.change;
+    if (!record) return;
+    const result = await this.store.mutate<ChangeRequest>(
+      `deployment-change-requests/${record.id}/replan`,
+      undefined,
+      "POST",
+      record.revision,
+    );
+    if (result && this.change?.id === record.id) {
+      this.drainProgress = null;
+      this.change = result;
     }
   }
   riskLabel(risk: string) {

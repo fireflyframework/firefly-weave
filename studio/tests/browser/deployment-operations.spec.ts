@@ -22,6 +22,7 @@ import {
   allCapabilities,
   connected,
   offline,
+  registerTarget,
   selectChoice,
   tokenColor,
 } from "./support";
@@ -192,9 +193,7 @@ for (const width of [1440, 390])
         });
       });
       await page.getByRole("button", { name: "Clusters", exact: true }).click();
-      await page
-        .getByRole("button", { name: "Register target", exact: true })
-        .click();
+      await registerTarget(page);
       const wizard = page.locator("weave-target-wizard");
       await wizard
         .getByLabel("Target name", { exact: true })
@@ -1024,7 +1023,7 @@ for (const width of [1440, 390])
         page.getByRole("heading", { name: "Deployment targets", exact: true }),
       ).toBeVisible();
       await expect(
-        page.getByRole("button", { name: "Register target", exact: true }),
+        page.getByRole("button", { name: "Add target", exact: true }),
       ).toHaveCount(0);
     });
     test("worker registration does not claim the process is healthy", async ({
@@ -1098,9 +1097,7 @@ for (const width of [1440, 390])
       route.fulfill({ json: { ...target, ...route.request().postDataJSON() } }),
     );
     await page.getByRole("button", { name: "Clusters", exact: true }).click();
-    await page
-      .getByRole("button", { name: "Register target", exact: true })
-      .click();
+    await registerTarget(page);
     const wizard = page.locator("weave-target-wizard");
     await wizard
       .getByLabel("Target name", { exact: true })

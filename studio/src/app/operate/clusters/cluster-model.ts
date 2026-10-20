@@ -23,6 +23,7 @@ import type {
   Adapter,
   Plan,
   Runner,
+  Target,
 } from "../../operations/deployment-contracts";
 
 /** The icon each adapter shows. */
@@ -88,6 +89,7 @@ const intents: Record<Plan["intent"], string> = {
   update: "Update",
   scale_workers: "Scale workers",
   drain_workers: "Drain workers",
+  restart_workers: "Restart workers",
 };
 export function intentLabel(intent: Plan["intent"]): string {
   return intents[intent] ?? intent;
@@ -146,4 +148,11 @@ export function inboxCandidates(
     })
     .sort((a, b) => b.expires_at.localeCompare(a.expires_at));
   return [...open, ...ended].slice(0, INBOX_LIMIT);
+}
+
+/** The card line that says who approves a target's changes. */
+export function approvalLine(target: Target): string {
+  return target.approval_policy?.distinct_approver === false
+    ? "Approvals: the requester may approve"
+    : "Approvals: a second person must approve";
 }
