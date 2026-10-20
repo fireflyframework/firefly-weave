@@ -245,7 +245,14 @@ test("Check now for another draft's save leaves the open draft's revision and st
   await expect.poll(() => s.puts.length).toBe(2);
   await switchTo(page, B);
   await change(page, B);
-  await page.waitForTimeout(12000);
+  // B can't save while A's answer is unknown: its chip says what it waits on.
+  await expect(page.locator(".editor-bar")).toContainText(
+    "Waiting for an earlier save",
+    { timeout: 15000 },
+  );
+  await expect(
+    page.getByRole("button", { name: "Not saved: retry" }),
+  ).toHaveCount(0);
   const check = page.getByRole("button", { name: "Check now" });
   await expect(check).toBeVisible();
   await check.click();

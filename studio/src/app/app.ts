@@ -2795,6 +2795,15 @@ export class App implements CanvasHost {
     const autosave = this.autosave.state();
     if (autosave === "saving" || this.busy === "save")
       return { text: "Saving…", tone: "" };
+    // Another draft's save waits for its answer (Check now): this one can't save before it.
+    const earlier = this.pendingMutation;
+    if (
+      (autosave === "failed" || this.saveState === "Not saved") &&
+      earlier?.method === "PUT" &&
+      earlier.path.includes("/drafts/") &&
+      !earlier.path.endsWith(`/drafts/${this.draftId}`)
+    )
+      return { text: "Waiting for an earlier save", tone: "warning" };
     if (autosave === "failed" || this.saveState === "Not saved")
       return { text: "Not saved: retry", tone: "danger", retry: true };
     switch (this.lifecycle) {
