@@ -71,6 +71,7 @@ STAGES = (
     "connection",
     "services",
     "online",
+    "weave_ai",
     "verify",
     "ready",
 )
@@ -564,6 +565,16 @@ def _next(value: dict[str, Any]) -> str:
     return STAGES[min(STAGES.index(value["stage"]) + 1, len(STAGES) - 1)]
 
 
+def _host_principal(directory: Path) -> str | None:
+    """The installation's own host principal, from its private bootstrap receipt; None when there is none."""
+    path = directory / "bootstrap.json"
+    if not path.exists():
+        return None
+    value = strict_json(read_file(path, 65536, private=True))
+    principal = value.get("principal_id") if isinstance(value, dict) else None
+    return str(UUID(principal)) if isinstance(principal, str) else None
+
+
 async def _with_client(
     api: str,
     token: str,
@@ -677,7 +688,7 @@ def _summary(directory: Path, value: dict[str, Any], **extra: Any) -> dict[str, 
         "connection": files.CONNECTION,
         "connection_revision_id": value.get("connection_revision_id"),
         "release_id": value.get("release_id"),
-        "weave_ai": "not_available",
+        "weave_ai": value.get("weave_ai", "not_available"),
         "test": value.get("last_test"),
         "warnings": _warnings(value),
         **extra,
@@ -724,7 +735,6 @@ def enable(
         if value.get("stage") == "disabled":
             value["stage"] = "preflight"
         value.update(format=FORMAT, scope=scope, mode=mode, ollama_origin=origin, endpoint=origin + "/v1")
-        value.update(weave_ai="not_available")
         value.setdefault("stage", "preflight")
         value.setdefault("approval", "served")
         changed: list[str] = []
@@ -869,6 +879,32 @@ def enable(
         )
         advance("online")
         model = _test_model(value)
+
+        def record_grant() -> None:
+            # Saved at once: a role granted here is never granted again, even after an administrator revokes it.
+            value["weave_ai_granted"] = True
+            advance()
+
+        # Weave AI on this connection, unless someone already set Weave AI up; repeating it changes nothing.
+        value["weave_ai"] = asyncio.run(
+            _with_client(
+                api,
+                local._host_token(state),
+                scope,
+                transport,
+                lambda: "weave_ai",
+                lambda client: setup.configure_weave_ai(
+                    client,
+                    value["connection_revision_id"],
+                    model,
+                    owner=_host_principal(directory),
+                    scope=scope,
+                    granted=value.get("weave_ai_granted") is True,
+                    record=record_grant,
+                ),
+            )
+        )
+        advance("weave_ai")
         test = asyncio.run(
             _with_client(
                 api,
@@ -941,7 +977,7 @@ def status(directory: Path, *, transport: httpx.AsyncBaseTransport | None = None
         "connection_revision_id": value.get("connection_revision_id"),
         "gateway": {"state": _service_state(state, "ai-gateway")},
         "worker": {"state": _service_state(state, "agentic-worker"), "presence": "unknown", "last_seen_at": None},
-        "weave_ai": "not_available",
+        "weave_ai": value.get("weave_ai", "not_available"),
         "last_test": value.get("last_test"),
         "warnings": warnings,
     }

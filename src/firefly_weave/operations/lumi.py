@@ -19,6 +19,7 @@
 import asyncio
 import json
 from typing import cast
+from uuid import UUID
 
 from pyfly.container import service
 from sqlalchemy import text
@@ -27,7 +28,11 @@ from firefly_weave.access.audit import AuditContext
 from firefly_weave.access.models import Principal
 from firefly_weave.access.repository import load_principal
 from firefly_weave.access.service import audit
+from firefly_weave.ai_policy import DEFAULT_CONTEXT_TOKENS
+from firefly_weave.compiler.api import validate_authoring
 from firefly_weave.compiler.expressions import measure_value
+from firefly_weave.compiler.parser import parse_source
+from firefly_weave.connections.diagnostics import keyless_connection
 from firefly_weave.connections.repository import ConnectionRepository
 from firefly_weave.connections.secret_execution import resolve_secret
 from firefly_weave.connections.secrets import SecretUnavailable
@@ -36,21 +41,72 @@ from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.agentic import AGENTIC_DESCRIPTOR, CONNECTOR_REFERENCE, validate_connection
 from firefly_weave.contracts.connectors import ConnectionRevision
 from firefly_weave.contracts.lumi import (
+    LumiAnswer,
     LumiAskRequest,
+    LumiCheckedProposal,
     LumiConfiguration,
     LumiConfigurationRequest,
     LumiReply,
     LumiStatus,
 )
+from firefly_weave.contracts.run_views import RunStepQuery, RunSummary, StepFact
 from firefly_weave.contracts.schema_export import export_schemas
 from firefly_weave.contracts.values import JsonValue
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.deployments.service import DeploymentService
+from firefly_weave.operations.ai_policy import APIAIPolicy
 from firefly_weave.operations.debug.store import DebugService
 from firefly_weave.operations.history import HistoryService
+from firefly_weave.operations.lumi_context import (
+    Profile,
+    Shaped,
+    choose_profile,
+    input_budget,
+    output_tokens,
+    run_context,
+    shape,
+)
 from firefly_weave.operations.lumi_deployments import COLLECTIONS, deployment_context
 from firefly_weave.operations.lumi_gateway import LumiGatewayClient
+from firefly_weave.operations.run_views import RunViewService
 from firefly_weave.persistence.uow import Transaction
+
+# The document kind each proposal kind must hold.
+PROPOSAL_KINDS = {
+    "workflow": "Workflow",
+    "decisionTable": "DecisionTable",
+    "action": "Action",
+    "connector": "Connector",
+}
+
+
+def check_proposals(reply: LumiReply) -> LumiAnswer:
+    """The reply with each proposal's error count from the platform's own authoring check (no catalog needed)."""
+    checked = []
+    for proposal in reply.proposals:
+        result = validate_authoring(proposal.source, format=proposal.format)
+        errors = sum(1 for item in result.diagnostics if item.severity == "error")
+        try:
+            document = parse_source(proposal.source, format=proposal.format).value
+        except Exception:
+            document = None
+        if errors == 0 and (not isinstance(document, dict) or document.get("kind") != PROPOSAL_KINDS[proposal.kind]):
+            errors = 1
+        checked.append(LumiCheckedProposal(**proposal.model_dump(), diagnostics=errors))
+    return LumiAnswer.model_validate({"answer": reply.answer, "proposals": checked, "followUps": reply.follow_ups})
+
+
+def _answer_limit(config: LumiConfiguration, profile: Profile) -> LumiConfiguration:
+    """The configuration the gateway receives: the profile's answer limit replaces a larger configured one."""
+    limit = output_tokens(profile, config.profile.options.max_tokens)
+    if limit == config.profile.options.max_tokens:
+        return config
+    options = config.profile.options.model_copy(update={"max_tokens": limit})
+    return config.model_copy(update={"profile": config.profile.model_copy(update={"options": options})})
+
+
+# Pages of 200 step facts read for a run attachment: the latest steps of runs up to 10,000 instances.
+RUN_PAGES = 50
 
 
 @service
@@ -62,10 +118,13 @@ class LumiService:
         debug: DebugService,
         gateway: LumiGatewayClient,
         deployments: DeploymentService,
+        policy: APIAIPolicy,
+        runs: RunViewService,
     ) -> None:
         self.connections, self.history, self.debug, self.gateway = connections, history, debug, gateway
         self.definitions = connections.definitions
         self.deployments = deployments
+        self.policy, self.runs = policy, runs
 
     async def _require(self, tx: Transaction, actor: Principal, capability: str, context: AuditContext) -> Principal:
         if tx.scope.environment_id is None:
@@ -145,7 +204,10 @@ class LumiService:
             )
             return result
 
-    def _connection(self, scope: Scope, configuration: LumiConfigurationRequest, connection: ConnectionRevision) -> str:
+    def _connection(
+        self, scope: Scope, configuration: LumiConfigurationRequest, connection: ConnectionRevision
+    ) -> str | None:
+        """The connection's secret handle, or None for a keyless local model endpoint, which sends no credential."""
         if (
             connection.connector != CONNECTOR_REFERENCE
             or connection.connector_digest != AGENTIC_DESCRIPTOR.manifest.digest
@@ -153,13 +215,17 @@ class LumiService:
         ):
             raise CatalogError(422, "WV-LUMI-CONNECTION", "Weave AI needs its configured provider connection")
         validate_connection(connection)
+        if keyless_connection(connection.adapter, connection.config, connection.secret_refs):
+            # The reserved no-credential handle is never checked, resolved or sent.
+            return None
         handle = connection.secret_refs["apiKey"]
         self.connections.secrets.check(scope, handle)
         return handle
 
     async def _attachments(
         self, actor: Principal, scope: Scope, request: LumiAskRequest, context: AuditContext
-    ) -> JsonValue:
+    ) -> list[JsonValue]:
+        """The attached resources, read with the caller's own access; the inline draft is shaped separately."""
         result: list[JsonValue] = []
         project = scope.model_copy(update={"environment_id": None})
         for attachment in request.attachments:
@@ -173,11 +239,7 @@ class LumiService:
                 value = await self.definitions.read(actor, project, "drafts", attachment.id, context=context)
                 data = cast(JsonValue, {"document": value["document"], "revision": value["revision"]})
             elif attachment.kind == "run":
-                async with self.definitions.transaction(scope, None, mutation=False) as tx:
-                    page = await self.history.page(
-                        tx, attachment.id, None, 20, actor=actor, scope=scope, context=context
-                    )
-                    data = page.model_dump(mode="json")
+                data = await self._run(actor, scope, attachment.id, context)
             else:
                 async with self.definitions.transaction(project, None, mutation=False) as tx:
                     session = await self.debug.inspect(tx, attachment.id, actor=actor, scope=project, context=context)
@@ -187,27 +249,65 @@ class LumiService:
                         "diagnostics": [item.model_dump(mode="json") for item in session.view.diagnostics],
                     }
             result.append({"kind": attachment.kind, "id": str(attachment.id), "data": data})
-        if request.draft is not None:
-            result.append({"kind": "inline-source", "format": request.draft.format, "source": request.draft.source})
         measure_value(result)
-        if len(json.dumps(result, ensure_ascii=False).encode()) > 262144:
+        size = len(json.dumps(result, ensure_ascii=False).encode())
+        if size + (len(request.draft.source.encode()) if request.draft else 0) > 262144:
             raise CatalogError(413, "WV-LUMI-LIMIT", "Selected context is too large")
-        if request.explanation_only:
-            return {
-                "resources": result,
-                "purpose": "explain-operations",
-                "limitations": (
-                    "Saved snapshots only, not live cloud state or worker task capacity. "
-                    "Explain only; return no proposals."
-                ),
-            }
-        schemas = export_schemas()
-        return {
-            "resources": result,
-            "authoringSchemas": {key: schemas[key] for key in ("workflow", "action", "connector", "decisiontable")},
-        }
+        return result
 
-    async def ask(self, actor: Principal, scope: Scope, request: LumiAskRequest, *, context: AuditContext) -> LumiReply:
+    async def _run(self, actor: Principal, scope: Scope, run_id: UUID, context: AuditContext) -> JsonValue:
+        """A run's facts through the allowlisted builder; the run's own read checks `run.read` each time."""
+        summary = await self.runs.summary(actor, scope, run_id, context=context)
+        if summary is None:
+            return {"status": "not_recorded_yet"}
+        if not isinstance(summary, RunSummary):
+            # Classified or blocked by policy for this caller: say so, and read none of its steps.
+            return {"status": "unavailable"}
+        facts: list[StepFact] = []
+        position: tuple[JsonValue, str] | None = None
+        for _ in range(RUN_PAGES):
+            page = await self.runs.steps(actor, scope, run_id, RunStepQuery(limit=200), position, context=context)
+            facts.extend(item for item in page.items if isinstance(item, StepFact))
+            if page.next_cursor is None or not page.items:
+                return run_context(summary, facts)
+            # The next page starts after the last item, as the step cursor does: its scheduled time and key.
+            last = page.items[-1]
+            position = (last.scheduled_at.isoformat() if last.scheduled_at else None, last.instance_key or last.node_id)
+        return run_context(summary, facts, partial=True)
+
+    def _context_tokens(self, connection: ConnectionRevision) -> int | None:
+        """The context size the AI policy records for the connection's endpoint, or None when it records none."""
+        policy = self.policy.current()
+        endpoint = connection.config.get("endpoint")
+        entry = policy.entry_for(endpoint) if policy is not None and isinstance(endpoint, str) else None
+        if entry is None:
+            return None
+        if entry.context_tokens is None and entry.compat == "ollama":
+            # Ollama runs a model with a small context unless told otherwise; never size for an unbounded one.
+            return DEFAULT_CONTEXT_TOKENS
+        return entry.context_tokens
+
+    def _shape(
+        self, config: LumiConfiguration, request: LumiAskRequest, resources: list[JsonValue], tokens: int | None
+    ) -> Shaped:
+        profile = choose_profile(tokens, config.context_profile)
+        schemas = cast(dict[str, JsonValue], export_schemas())
+        return shape(
+            profile,
+            input_budget(profile, tokens, output_tokens(profile, config.profile.options.max_tokens)),
+            message=request.message,
+            history=request.history,
+            resources=resources,
+            draft=(request.draft.format, request.draft.source) if request.draft else None,
+            selected_step=request.selected_step,
+            schemas=schemas,
+            explanation_only=request.explanation_only,
+            fix=request.fix,
+        )
+
+    async def ask(
+        self, actor: Principal, scope: Scope, request: LumiAskRequest, *, context: AuditContext
+    ) -> LumiAnswer:
         async with self.definitions.transaction(scope, None, mutation=False) as tx:
             actor = await self._require(tx, actor, "lumi.use", context)
             config = await self._read(tx)
@@ -218,9 +318,20 @@ class LumiService:
         # No database transaction is held across secret resolution or model I/O.
         try:
             async with asyncio.timeout(config.profile.timeout_seconds):
-                attachments = await self._attachments(actor, scope, request, context)
-                secret = await resolve_secret(lambda: self.connections.secrets.resolve(scope, handle))
-                reply = await self.gateway.ask(config, request, attachments, dict(connection.config), secret.value)
+                tokens = self._context_tokens(connection)
+                shaped = self._shape(config, request, await self._attachments(actor, scope, request, context), tokens)
+                credential = None
+                if handle is not None:
+                    secret = await resolve_secret(lambda: self.connections.secrets.resolve(scope, handle))
+                    credential = secret.value
+                reply = await self.gateway.ask(
+                    _answer_limit(config, shaped.profile),
+                    request.model_copy(update={"history": shaped.history}),
+                    shaped.context,
+                    dict(connection.config),
+                    credential,
+                    context_tokens=tokens,
+                )
                 async with self.definitions.transaction(scope, None, mutation=False) as tx:
                     actor = await self._require(tx, actor, "lumi.use", context)
                     current = await self._read(tx)
@@ -228,7 +339,9 @@ class LumiService:
                         raise CatalogError(409, "WV-LUMI-REVISION", "Weave AI configuration changed; reply discarded")
                 # Recheck attachment permissions and simulation ownership before releasing output.
                 await self._attachments(actor, scope, request, context)
-                return reply.model_copy(update={"proposals": []}) if request.explanation_only else reply
+                if request.explanation_only:
+                    reply = reply.model_copy(update={"proposals": []})
+                return await asyncio.to_thread(check_proposals, reply)
         except TimeoutError:
             raise CatalogError(504, "WV-LUMI-TIMEOUT", "Weave AI did not respond in time") from None
         except SecretUnavailable:

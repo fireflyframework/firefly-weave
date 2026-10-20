@@ -137,7 +137,8 @@ def fixture_model(calls, *, fail=False, runaway=False):
             parts = [ToolCallPart(tool.name, value)]
         else:
             parts = [TextPart('{"result":{"approved":true}}')]
-        return ModelResponse(parts=parts, usage=RequestUsage(input_tokens=5, output_tokens=3))
+        # A whole prompt counts more than a handful of tokens; on Ollama a tiny count reads as a cut prompt.
+        return ModelResponse(parts=parts, usage=RequestUsage(input_tokens=500, output_tokens=3))
 
     return FunctionModel(respond)
 
@@ -181,7 +182,7 @@ async def test_all_patterns_use_real_agentic_and_return_only_validated_final_res
     output = await handler(transport, fixture_model(calls))(task)
     assert output == {
         "result": {"approved": True},
-        "usage": {"requests": len(calls), "inputTokens": len(calls) * 5, "outputTokens": len(calls) * 3},
+        "usage": {"requests": len(calls), "inputTokens": len(calls) * 500, "outputTokens": len(calls) * 3},
         "provider": "openai-chat",
         "model": "fixture-model",
     }
@@ -533,7 +534,7 @@ async def test_owned_preprovider_timeout_never_settles_after_authority_ends(end)
     from firefly_weave.sdk.transport import WorkerTransport
     from firefly_weave.sdk.worker import Worker
 
-    value = lease(timeoutSeconds=1).model_copy(update={"expires_at": datetime.now(UTC) + timedelta(seconds=0.25)})
+    value = lease(timeoutSeconds=1)
     retrying = asyncio.Event()
     calls, model_calls, settlements = [], [], []
 
@@ -544,14 +545,21 @@ async def test_owned_preprovider_timeout_never_settles_after_authority_ends(end)
                 retrying.set()
             return httpx.Response(429, json={"code": "WV-REQUEST-CAPACITY"})
         if request.url.path.endswith("heartbeat"):
-            await asyncio.Event().wait()
+            if retrying.is_set():
+                await asyncio.Event().wait()
+            renewed = value.model_copy(update={"expires_at": datetime.now(UTC) + timedelta(seconds=0.25)})
+            return httpx.Response(200, content=renewed.model_dump_json())
         settlements.append(True)
         raise AssertionError("Ended authority cannot settle")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(endpoint), base_url="https://weave.test") as client:
         transport = WorkerTransport(client, "/scope", value.proof.owner)
         instance = handler(transport, fixture_model(model_calls))
-        running = asyncio.create_task(Worker(transport, {value.capability: instance}, 1)._execute(value))
+        # The short lease starts with execution and is renewed until the capacity retry is observed,
+        # then its renewal stalls. Expiry is counted from the retry, however slow the setup or the
+        # first context request is on a loaded machine.
+        short = value.model_copy(update={"expires_at": datetime.now(UTC) + timedelta(seconds=0.25)})
+        running = asyncio.create_task(Worker(transport, {value.capability: instance}, 1)._execute(short))
         await asyncio.wait_for(retrying.wait(), 1)
         if end == "cancel":
             running.cancel()
@@ -627,7 +635,7 @@ SUMMARY_SCHEMA = {
 TEXT_SCHEMA = {"type": "string", "maxLength": 20000}
 
 
-def chat_answer(content, finish_reason="stop"):
+def chat_answer(content, finish_reason="stop", prompt_tokens=500):
     return httpx2.Response(
         200,
         json={
@@ -638,7 +646,7 @@ def chat_answer(content, finish_reason="stop"):
             "choices": [
                 {"index": 0, "message": {"role": "assistant", "content": content}, "finish_reason": finish_reason}
             ],
-            "usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8},
+            "usage": {"prompt_tokens": prompt_tokens, "completion_tokens": 3, "total_tokens": prompt_tokens + 3},
         },
     )
 
@@ -685,7 +693,7 @@ async def test_policy_selects_the_result_format_on_the_provider_request(tmp_path
                 "created": 0,
                 "model": "qwen2.5:1.5b",
                 "choices": [{"index": 0, "message": message, "finish_reason": "stop"}],
-                "usage": {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8},
+                "usage": {"prompt_tokens": 500, "completion_tokens": 3, "total_tokens": 503},
             },
         )
 
@@ -733,7 +741,7 @@ async def test_a_text_result_is_asked_for_as_plain_text_in_every_mode(tmp_path, 
             ollama_lease(outputSchema=TEXT_SCHEMA)
         )
     assert output["result"] == "Two sentences about the ticket."
-    assert output["usage"] == {"requests": 1, "inputTokens": 5, "outputTokens": 3}
+    assert output["usage"] == {"requests": 1, "inputTokens": 500, "outputTokens": 3}
     assert len(requests) == 1
     assert not requests[0].get("tools") and "tool_choice" not in requests[0]
     assert "response_format" not in requests[0]
@@ -1027,3 +1035,32 @@ async def test_a_refused_model_address_reports_policy_through_the_real_transport
         await AgenticTaskHandler(OllamaTransport(), policy)(ollama_lease())
     assert (failed.value.code, failed.value.outcome) == ("LLM_POLICY", "not_started")
     assert resolved == [("ollama", 11434)]
+
+
+async def test_an_ai_task_answer_to_a_prompt_ollama_cut_is_not_used(tmp_path):
+    builder = recording_builder([], lambda _: chat_answer("The order shipped.", prompt_tokens=1))
+    with po.installed(OLLAMA_ORIGINS), pytest.raises(ConnectorFailure) as failed:
+        await AgenticTaskHandler(OllamaTransport(), ollama_policy(tmp_path), model_builder=builder)(
+            ollama_lease(outputSchema=TEXT_SCHEMA)
+        )
+    assert (failed.value.code, failed.value.outcome) == ("LLM_CONTEXT_LIMIT", "failed")
+
+
+async def test_only_ollama_entries_get_the_ollama_prompt_checks(tmp_path, monkeypatch):
+    from weave_agentic_worker import handler as module
+
+    seen = []
+    real = module.run_model
+
+    async def spy(*args, **kwargs):
+        seen.append(kwargs.get("ollama"))
+        return await real(*args, **kwargs)
+
+    monkeypatch.setattr(module, "run_model", spy)
+    await handler(Transport(), fixture_model([]))(lease())
+    builder = recording_builder([], lambda _: chat_answer('{"result":{"summary":"Summary"}}'))
+    with po.installed(OLLAMA_ORIGINS):
+        await AgenticTaskHandler(OllamaTransport(), ollama_policy(tmp_path), model_builder=builder)(
+            ollama_lease(outputSchema=SUMMARY_SCHEMA)
+        )
+    assert seen == [False, True]

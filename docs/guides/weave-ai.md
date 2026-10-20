@@ -96,6 +96,12 @@ explains the shared operator/administrator handoff.
    receives that included source and authorized context.
 3. Send the request and read the plain-text answer. If a proposed draft is
    useful, open it, review its source, and make any corrections you need.
+   The platform checks every proposal before Studio shows it; a proposal it
+   found problems in names them on its button ("2 problems"). Open it and
+   select **Ask Weave AI to fix** to send the problems, with the proposal, back
+   to Weave AI. A fix sends the proposal whole when it fits the model's context,
+   even on the compact size, because the model needs the values it must fix;
+   a larger proposal goes as an outline with the steps the problems name.
 4. Select **Validate proposal**. Address diagnostics before applying. A valid
    workflow proposal offers **Apply to local draft** only while the original
    local draft and source revision remain unchanged. If either changed, ask
@@ -112,6 +118,62 @@ workflow history. Managers configure Weave AI in the **Weave AI** card of
 the enabled flag, pinned connection revision, and model separately from workflow
 AI profiles. Studio supplies the fixed reply schema from the canonical contract;
 changing a workflow's AI profile does not configure Weave AI.
+
+## Fit the model's context
+
+Weave AI sizes each request to the model's context, which the AI policy records
+for the connection's endpoint (`contextTokens`):
+
+| Context size | When | What Weave AI sends |
+| --- | --- | --- |
+| Compact | Under 16k tokens, such as a local Ollama model, or an Ollama endpoint whose size the policy does not record (sized as 8,192 tokens) | A short authoring guide, the draft (typed or attached) whole when it fits its share (otherwise an outline of each step's ID, kind and action with the selected step whole), attachments, and the last 4 messages, in at most 4,096 tokens |
+| Standard | 16k to 64k tokens | The guide, the workflow schema, the whole draft up to 32 KiB (an outline above that), attachments, and the last 8 messages |
+| Full | Over 64k tokens, or when the policy records no size for an endpoint other than Ollama | Every authoring schema, the whole draft, attachments, and the last 16 messages |
+
+Weave AI's instructions, the reply format and the guide come first, at most a
+third of the compact budget. The draft, attachments and conversation share the
+rest, each held to at most 40%, 20% and 15% of the budget. A part over its share
+is trimmed in that order: the draft becomes an outline, then a run lists fewer
+steps and attachments are left out from the last, then the oldest messages. Weave AI is told what was left out, never given a value cut in half.
+Choose another size with **Context size** on the **Weave AI** card.
+
+On Ollama, which cuts a request longer than the model's context without saying
+so, Weave AI counts each request conservatively (identifiers, digits,
+punctuation runs and text outside ASCII densely) and refuses one that may not
+fit before the model, with `WV-LUMI-CONTEXT-LIMIT`. The count stays below the
+model's only for text ordinary requests do not hold: words of random letters
+(up to 1.3 times the count) and long runs of spaces or tabs. On Ollama 0.40 or later it also refuses an answer whose
+prompt count shows the model saw only part of the request; an older Ollama cuts
+differently, so there the conservative count is the only guard.
+
+The policy's context size must match what the model really runs with. Ollama
+does not report the context it runs a model with until the model is loaded, so
+Weave AI cannot detect an Ollama on your computer started with a smaller
+context than the policy records (see `OLLAMA_CONTEXT_LENGTH` in the Ollama
+guide). Such an Ollama can cut a request without Weave AI noticing.
+
+Small models can start repeating one sentence until they run out of room. On
+the compact size, Weave AI answers in at most 512 tokens and asks the model to
+answer briefly. On an Ollama endpoint it also discourages repeated words and
+stops an answer as soon as it starts repeating itself. The person then sees
+`WV-LUMI-OUTPUT` with a suggestion to try a larger model or start a new
+conversation, so less history is sent. The same check can stop an answer that
+is meant to repeat itself, such as a decision table with many identical rows or
+a long list of the same value; the answer is then not used, never applied.
+
+Local models sometimes propose changes with problems. In our checks on Ollama
+with `qwen3:4b`, which `weave platform ai enable` offers by default, 4 of 5
+proposals for a new workflow and 4 of 5 proposals that changed a small draft
+were valid; smaller models such as `llama3.2:3b` and `qwen2.5:1.5b` seldom
+wrote a valid proposal. A draft too large for the compact size is sent as an
+outline, so a change to it has to guess the values of the steps it does not
+see. Check each proposal's problems before you apply it, use **Ask Weave AI to
+fix**, or use a larger model.
+
+A run attachment holds only the run's facts: the workflow's name and version,
+its status and times, failed steps with their error codes, the number of open
+incidents, and the last five steps with their status and time. Never its input,
+outputs, logs, keys or hosts.
 
 ## Explain Operations records
 
@@ -218,10 +280,9 @@ separate from the administrator's editable environment Weave AI configuration.
    **Model**; Studio suggests one of the platform's approved models for that
    connection. Weave AI pins the connection's exact revision, so a later
    revision does not silently change the assistant. When the connection has a
-   newer revision, the card says so and saving moves Weave AI to it; a newer
-   revision without a key can't be used, so choose another connection.
-   Connections without a key (such as a local Ollama endpoint) can't be used for
-   Weave AI yet and are listed as unavailable.
+   newer revision, the card says so and saving moves Weave AI to it. A keyless
+   connection to a local model, such as `ollama-local`, works too: Weave AI
+   sends it no credential.
 3. Select **Save Weave AI settings**. Saving keeps the stored profile's
    generation options, reasoning, call and time limits; a new configuration
    starts from Weave AI's defaults. Studio supplies the fixed reply schema. Use a
@@ -287,7 +348,8 @@ conversation when identity or environment changes. All replies and proposed
 source are untrusted text/code, never rendered as HTML or automatically executed.
 
 The API resolves only the pinned connection's scoped secret handle and forwards
-the credential to the trusted gateway over TLS. The gateway must therefore be
+the credential to the trusted gateway over TLS; a keyless local connection sends
+no credential at all. The gateway must therefore be
 operated as a credential-bearing service. It independently checks an exact
 provider/model/endpoint policy, rejects expired invocation envelopes, and owns
 no persistent conversation or model session. Provider account retention policies

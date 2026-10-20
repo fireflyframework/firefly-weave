@@ -46,11 +46,14 @@ from firefly_weave.contracts.ai import AIConnectionTestRequest, ai_message
 from firefly_weave.contracts.catalog import ActivationRequest
 from firefly_weave.contracts.connectors import NO_CREDENTIAL, ConnectionRequest, ConnectionRevision
 from firefly_weave.contracts.definitions import load_definition
+from firefly_weave.contracts.lumi import LUMI_REPLY_SCHEMA, LumiConfigurationRequest
 from firefly_weave.contracts.members import MemberGrantRequest, PrincipalCreateRequest, PrincipalIdentityRequest
+from firefly_weave.contracts.public import GrantRequest
 from firefly_weave.contracts.runtime import StartRunRequest
 from firefly_weave.contracts.workers import ReleaseRequest
 from firefly_weave.sdk import platform as local
 from firefly_weave.sdk.deployment import strict_json
+from firefly_weave.sdk.errors import WeaveError
 
 if TYPE_CHECKING:
     import httpx
@@ -324,6 +327,69 @@ async def test_connection(client: WeaveClient, revision_id: str, model: str) -> 
         "ai_connections.test", identifier=UUID(revision_id), body=AIConnectionTestRequest(model=model, probe_tools=True)
     )
     return {**result.model_dump(mode="json"), "tested_at": datetime.now(UTC).isoformat()}
+
+
+# Weave AI on the local platform: Ollama's default model, 1,024 output tokens and three minutes per answer.
+WEAVE_AI_MAX_TOKENS = 1024
+WEAVE_AI_TIMEOUT_SECONDS = 180
+
+
+async def _weave_ai_configuration(client: WeaveClient) -> Any:
+    try:
+        return await client.invoke("lumi.configuration.read")
+    except WeaveError as error:
+        if error.status != 404:
+            raise
+        return None
+
+
+async def configure_weave_ai(
+    client: WeaveClient,
+    revision_id: str,
+    model: str,
+    *,
+    owner: str | None = None,
+    scope: dict[str, str] | None = None,
+    granted: bool = False,
+    record: Callable[[], None] | None = None,
+) -> dict[str, Any]:
+    """Turn Weave AI on for the local connection, once; a configuration someone already chose is kept.
+
+    Setting Weave AI up takes its manager role. The installation's own host principal (`owner`, a platform
+    administrator) gets it in the demo workspace once, on a refused read, as the first run grants it its other
+    roles; `record` notes that it was granted, and with `granted` it is never granted again, so a role an
+    administrator revoked stays revoked."""
+    try:
+        current = await _weave_ai_configuration(client)
+    except WeaveError as error:
+        if error.status != 403 or owner is None or scope is None or granted:
+            raise
+        await client.grant(
+            GrantRequest.model_validate_json(
+                json.dumps({"principal_id": owner, "grant": {"role": "lumi_manager", "scope": scope}})
+            )
+        )
+        if record is not None:
+            record()
+        current = await _weave_ai_configuration(client)
+    if current is not None:
+        state = "unchanged" if str(current.connection_revision_id) == revision_id else "kept"
+        return {"state": state, "provider": current.profile.provider, "model": current.profile.model}
+    request = LumiConfigurationRequest.model_validate(
+        {
+            "enabled": True,
+            "connection_revision_id": revision_id,
+            "profile": {
+                "provider": "openai-chat",
+                "model": model,
+                "options": {"max_tokens": WEAVE_AI_MAX_TOKENS},
+                "timeoutSeconds": WEAVE_AI_TIMEOUT_SECONDS,
+                "outputSchema": LUMI_REPLY_SCHEMA,
+            },
+        }
+    )
+    await client.invoke("lumi.configuration.write", body=request, revision=None)
+    return {"state": "configured", "provider": "openai-chat", "model": model}
 
 
 def smoke_workflow(model: str) -> dict[str, Any]:

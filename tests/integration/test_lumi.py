@@ -34,9 +34,11 @@ from firefly_weave.contracts.lumi import LUMI_REPLY_SCHEMA, LumiAskRequest, Lumi
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.definitions.service import DefinitionService
 from firefly_weave.deployments.service import DeploymentService
+from firefly_weave.operations.ai_policy import APIAIPolicy
 from firefly_weave.operations.debug.store import DebugService
 from firefly_weave.operations.history import HistoryService
 from firefly_weave.operations.lumi import LumiService
+from firefly_weave.operations.run_views import RunViewService
 
 pytestmark = pytest.mark.integration
 
@@ -48,7 +50,7 @@ class Gateway:
         self.calls = []
         self.callback = None
 
-    async def ask(self, config, request, attachments, connection, credential):
+    async def ask(self, config, request, attachments, connection, credential, context_tokens=None):
         self.calls.append((config, request, attachments, connection, credential))
         if self.callback:
             await self.callback()
@@ -101,6 +103,8 @@ async def lumi(services, access_db, provisioned, monkeypatch):
         graph.resolve(DebugService),
         gateway,
         graph.resolve(DeploymentService),
+        APIAIPolicy(),
+        graph.resolve(RunViewService),
     )
     config = LumiConfigurationRequest(
         connection_revision_id=revision.id,
@@ -232,7 +236,8 @@ async def test_unsaved_inline_source_does_not_fetch_uris_or_require_catalog_gran
         context=AuditContext(),
     )
     assert response.answer
-    assert gateway.calls[0][2]["resources"] == [{"kind": "inline-source", "format": "yaml", "source": source}]
+    assert gateway.calls[0][2]["resources"] == []
+    assert gateway.calls[0][2]["draft"] == {"format": "yaml", "source": source}
 
 
 async def test_inline_and_saved_context_share_one_byte_budget(lumi, monkeypatch):

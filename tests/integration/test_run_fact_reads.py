@@ -1126,3 +1126,22 @@ async def test_list_pages_select_summary_columns_and_timelines_read_metadata_onc
     # Pages select only summary columns; one timeline request reads its run metadata once.
     assert len(metadata) == 1 and len(facts) - len(metadata) >= 2
     assert not any("f.*" in sql for sql in facts)
+
+
+@pytest.mark.integration
+async def test_one_run_summary_reads_metadata_only(operations_case, monkeypatch):
+    from uuid import uuid4
+
+    from firefly_weave.runtime.repository import RuntimeRepository
+
+    case = operations_case
+    run = await case.start()
+    service = RunViewService(UnitOfWork(case.sessions), AuthorizationService())
+
+    async def forbidden(*args, **kwargs):
+        pytest.fail("Metadata read fetched a full run")
+
+    monkeypatch.setattr(RuntimeRepository, "run", forbidden)
+    summary = await service.summary(case.actor, case.scope, run.id, context=AuditContext())
+    assert summary is not None and summary.id == run.id and summary.workflow.name == "worker-flow"
+    assert await service.summary(case.actor, case.scope, uuid4(), context=AuditContext()) is None
