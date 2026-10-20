@@ -144,6 +144,13 @@ stops an answer as soon as it starts repeating itself. The person then sees
 `WV-LUMI-OUTPUT` with a suggestion to try a larger model or start a new
 conversation, so less history is sent.
 
+Small local models often fail to produce valid changes. On the compact size
+Weave AI sees an outline of your draft, so a change to an existing draft has
+to guess the values of the steps it does not see. Local models explain drafts
+and runs and write small new documents more reliably than they change existing
+ones. Use a larger model when you want Weave AI to propose changes, and check
+each proposal's problems before you apply it.
+
 A run attachment holds only the run's facts: the workflow's name and version,
 its status and times, failed steps with their error codes, the number of open
 incidents, and the last five steps with their status and time. Never its input,

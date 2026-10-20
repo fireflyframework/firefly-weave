@@ -35,6 +35,7 @@ import type { AiConnection } from "../integrations/ai-provider-connection";
 import {
   FieldError,
   defaultModel,
+  keylessConnection,
   modelOptions,
   weaveAiBody,
   weaveAiChoices,
@@ -129,6 +130,12 @@ import {
         </div>
         @if (connectionNote; as note) {
           <p class="notice" data-tone="info" role="note">{{ note }}</p>
+        }
+        @if (chosen && local(chosen)) {
+          <p class="notice" data-tone="info" role="note">
+            Small local models often fail to produce valid changes. Use a larger
+            model when you want Weave AI to propose changes.
+          </p>
         }
         @if (!usable.length) {
           <p class="notice" data-tone="info" role="note">
@@ -245,6 +252,8 @@ export class WeaveAiCard implements DoCheck, OnDestroy {
     );
   }
   /** Why the saved connection is not the one shown, when it isn't. */
+  /** A local model without a key; measured, small local models seldom write valid changes. */
+  readonly local = keylessConnection;
   get connectionNote(): string {
     const id = this.draft.connection;
     if (!id || this.connections().some((item) => item.id === id)) return "";
