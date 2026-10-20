@@ -27,6 +27,7 @@ import {
   CONNECTOR_ID,
   OLLAMA_REVISION,
   OPENAI_REVISION,
+  QWEN,
   mockAiPlatform,
   ollamaConnection,
   openAiModels,
@@ -607,7 +608,7 @@ test("saves Weave AI on a cloud connection with a suggested model, keeping its l
   await card.getByLabel("Connection", { exact: true }).click();
   await expect(
     page.getByRole("option", { name: /ollama-local/ }),
-  ).toHaveAttribute("aria-disabled", "true");
+  ).not.toHaveAttribute("aria-disabled", "true");
   await page.getByRole("option", { name: /openai · revision 1/ }).click();
   await expect(card.getByLabel("Model", { exact: true })).toHaveValue(
     "gpt-5-mini",
@@ -633,13 +634,26 @@ test("saves Weave AI on a cloud connection with a suggested model, keeping its l
   await expect.poll(() => platform.readinessReads).toBeGreaterThan(1);
 });
 
-test("explains that connections without a key can't be used for Weave AI yet", async ({
+test("Weave AI can run on a keyless local Ollama connection", async ({
   page,
 }) => {
-  await start(page, { connections: [ollamaConnection] });
-  await expect(page.locator("weave-ai-card")).toContainText(
-    "Weave AI needs an AI connection with a secret handle. Connections without a key can't be used for Weave AI yet.",
+  const platform = await start(page, {
+    connections: [ollamaConnection],
+    models: [QWEN],
+  });
+  const card = page.locator("weave-ai-card");
+  await card.getByLabel("Connection", { exact: true }).click();
+  await page.getByRole("option", { name: /ollama-local · revision 1/ }).click();
+  await expect(card.getByLabel("Model", { exact: true })).toHaveValue(
+    "qwen3:4b",
   );
+  await card.getByRole("button", { name: "Save Weave AI settings" }).click();
+  await expect.poll(() => platform.lumiWrites.length).toBe(1);
+  expect(platform.lumiWrites[0].body).toMatchObject({
+    enabled: true,
+    connection_revision_id: ollamaConnection.id,
+    profile: { provider: "openai-chat", model: "qwen3:4b" },
+  });
 });
 
 test("a Weave AI manager without connection management sees why the card is read-only", async ({
@@ -785,31 +799,6 @@ test("when Weave AI's connection can't be found, the card asks for one before sa
   await expect(card).toContainText(
     "Weave AI's connection is no longer available. Choose a connection, then save.",
   );
-  await expect(
-    card.getByRole("button", { name: "Save Weave AI settings" }),
-  ).toBeDisabled();
-  expect(platform.lumiWrites).toEqual([]);
-});
-
-test("when the newest revision of Weave AI's connection has no key, the card says so and keeps Save off", async ({
-  page,
-}) => {
-  const keyless = {
-    ...openaiConnection,
-    id: "55555555-5555-4555-8555-555555555555",
-    revision: 2,
-    secretRef: { apiKey: "no-credential" },
-  };
-  const platform = await start(page, {
-    connections: [ollamaConnection, openaiConnection, keyless],
-    models: [GPT],
-    lumi: pinnedOpenAi,
-  });
-  const card = page.locator("weave-ai-card");
-  await expect(card).toContainText(
-    "The newest revision of openai (revision 2) has no key, and Weave AI can't use a connection without a key yet. Choose a connection with a key, then save.",
-  );
-  await expect(card).not.toContainText("saving moves it");
   await expect(
     card.getByRole("button", { name: "Save Weave AI settings" }),
   ).toBeDisabled();

@@ -679,19 +679,17 @@ describe("Weave AI", () => {
       ),
     ).toThrow("Choose a model");
   });
-  it("lists connections without a key as not usable for Weave AI yet", () => {
+  it("lists every AI connection for Weave AI, keyless local ones included", () => {
     expect(weaveAiChoices([keylessConnection, cloudConnection])).toEqual([
       {
         value: "r1",
         label: "ollama-local · revision 1",
-        description: "Weave AI can't use a connection without a key yet",
-        disabled: true,
+        description: "http://ollama:11434/v1 · no key",
       },
       {
         value: "r2",
         label: "openai · revision 3",
         description: "https://api.openai.com/v1",
-        disabled: false,
       },
     ]);
   });

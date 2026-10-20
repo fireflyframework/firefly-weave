@@ -133,7 +133,7 @@ class LumiGatewayClient:
         request: LumiAskRequest,
         attachments: JsonValue,
         connection_config: dict[str, JsonValue],
-        credential: str,
+        credential: str | None,
     ) -> LumiReply:
         if not self.configured:
             raise CatalogError(503, "WV-LUMI-UNAVAILABLE", "Weave AI is not configured")
@@ -149,9 +149,11 @@ class LumiGatewayClient:
                 "attachments": attachments,
                 "endpoint": connection_config["endpoint"],
                 "api_version": connection_config.get("apiVersion"),
-                "credential": credential,
                 "expires_at": (datetime.now(UTC) + timedelta(seconds=timeout)).isoformat(),
             }
+            if credential is not None:
+                # A keyless local model endpoint gets no credential at all.
+                body["credential"] = credential
             async with asyncio.timeout(timeout):
                 raw = await self._post(self.settings.endpoint, body, timeout, 1048576)
             return LumiReply.model_validate_json(raw)

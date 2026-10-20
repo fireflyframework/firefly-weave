@@ -747,15 +747,11 @@ export function weaveAiBody(
 export function weaveAiChoices(
   connections: readonly AiConnection[],
 ): SelectOption[] {
-  return connections.map((connection) => {
-    const noKey = keylessConnection(connection);
-    return {
-      value: connection.id,
-      label: `${connection.name} · revision ${connection.revision}`,
-      description: noKey
-        ? "Weave AI can't use a connection without a key yet"
-        : connection.config.endpoint,
-      disabled: noKey,
-    };
-  });
+  return connections.map((connection) => ({
+    value: connection.id,
+    label: `${connection.name} · revision ${connection.revision}`,
+    description: keylessConnection(connection)
+      ? `${connection.config.endpoint} · no key`
+      : connection.config.endpoint,
+  }));
 }

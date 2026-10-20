@@ -110,7 +110,7 @@ local endpoints use no credential. **Save connection**, choose a model (Studio s
 installed) and **Test connection**. A first test of a local model can take up to two minutes while the model loads;
 **Cancel** stops it.
 
-Weave AI can't use a connection without a key yet, so on a local platform every item but **Weave AI** turns ready.
+On the **Weave AI** card, choose `ollama-local` and a model, then **Save Weave AI settings**; Weave AI uses the keyless connection without a credential, and every item turns ready.
 
 ## Choose a model
 

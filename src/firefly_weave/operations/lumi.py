@@ -28,6 +28,7 @@ from firefly_weave.access.models import Principal
 from firefly_weave.access.repository import load_principal
 from firefly_weave.access.service import audit
 from firefly_weave.compiler.expressions import measure_value
+from firefly_weave.connections.diagnostics import keyless_connection
 from firefly_weave.connections.repository import ConnectionRepository
 from firefly_weave.connections.secret_execution import resolve_secret
 from firefly_weave.connections.secrets import SecretUnavailable
@@ -145,7 +146,10 @@ class LumiService:
             )
             return result
 
-    def _connection(self, scope: Scope, configuration: LumiConfigurationRequest, connection: ConnectionRevision) -> str:
+    def _connection(
+        self, scope: Scope, configuration: LumiConfigurationRequest, connection: ConnectionRevision
+    ) -> str | None:
+        """The connection's secret handle, or None for a keyless local model endpoint, which sends no credential."""
         if (
             connection.connector != CONNECTOR_REFERENCE
             or connection.connector_digest != AGENTIC_DESCRIPTOR.manifest.digest
@@ -153,6 +157,9 @@ class LumiService:
         ):
             raise CatalogError(422, "WV-LUMI-CONNECTION", "Weave AI needs its configured provider connection")
         validate_connection(connection)
+        if keyless_connection(connection.adapter, connection.config, connection.secret_refs):
+            # The reserved no-credential handle is never checked, resolved or sent.
+            return None
         handle = connection.secret_refs["apiKey"]
         self.connections.secrets.check(scope, handle)
         return handle
@@ -219,8 +226,11 @@ class LumiService:
         try:
             async with asyncio.timeout(config.profile.timeout_seconds):
                 attachments = await self._attachments(actor, scope, request, context)
-                secret = await resolve_secret(lambda: self.connections.secrets.resolve(scope, handle))
-                reply = await self.gateway.ask(config, request, attachments, dict(connection.config), secret.value)
+                credential = None
+                if handle is not None:
+                    secret = await resolve_secret(lambda: self.connections.secrets.resolve(scope, handle))
+                    credential = secret.value
+                reply = await self.gateway.ask(config, request, attachments, dict(connection.config), credential)
                 async with self.definitions.transaction(scope, None, mutation=False) as tx:
                     actor = await self._require(tx, actor, "lumi.use", context)
                     current = await self._read(tx)

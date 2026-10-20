@@ -35,7 +35,6 @@ import type { AiConnection } from "../integrations/ai-provider-connection";
 import {
   FieldError,
   defaultModel,
-  keylessConnection,
   modelOptions,
   weaveAiBody,
   weaveAiChoices,
@@ -124,8 +123,7 @@ import {
         }
         @if (!usable.length) {
           <p class="notice" data-tone="info" role="note">
-            Weave AI needs an AI connection with a secret handle. Connections
-            without a key can't be used for Weave AI yet.
+            Weave AI needs an AI connection. Connect a provider above first.
           </p>
         }
         @if (error) {
@@ -224,7 +222,7 @@ export class WeaveAiCard implements DoCheck, OnDestroy {
     const listed = this.connections().find((item) => item.id === id);
     if (listed) return listed;
     const newest = this.newest;
-    return newest && !keylessConnection(newest) ? newest : null;
+    return newest;
   }
   /** The newest revision of the saved connection, when the list has a newer one. */
   private get newest(): AiConnection | null {
@@ -242,9 +240,7 @@ export class WeaveAiCard implements DoCheck, OnDestroy {
     if (!id || this.connections().some((item) => item.id === id)) return "";
     const newest = this.newest;
     if (newest && this.pinned)
-      return keylessConnection(newest)
-        ? `The newest revision of ${newest.name} (revision ${newest.revision}) has no key, and Weave AI can't use a connection without a key yet. Choose a connection with a key, then save.`
-        : `Weave AI uses revision ${this.pinned.revision} of ${this.pinned.name}; saving moves it to revision ${newest.revision}.`;
+      return `Weave AI uses revision ${this.pinned.revision} of ${this.pinned.name}; saving moves it to revision ${newest.revision}.`;
     if (this.pinnedMissing || (this.pinned && this.connections().length))
       return "Weave AI's connection is no longer available. Choose a connection, then save.";
     return "";
@@ -254,9 +250,7 @@ export class WeaveAiCard implements DoCheck, OnDestroy {
     return weaveAiChoices(this.connections());
   }
   get usable() {
-    return this.connections().filter(
-      (connection) => !keylessConnection(connection),
-    );
+    return this.connections();
   }
   get modelChoices() {
     return modelOptions(this.models?.models ?? []);

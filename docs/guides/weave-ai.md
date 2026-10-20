@@ -218,10 +218,9 @@ separate from the administrator's editable environment Weave AI configuration.
    **Model**; Studio suggests one of the platform's approved models for that
    connection. Weave AI pins the connection's exact revision, so a later
    revision does not silently change the assistant. When the connection has a
-   newer revision, the card says so and saving moves Weave AI to it; a newer
-   revision without a key can't be used, so choose another connection.
-   Connections without a key (such as a local Ollama endpoint) can't be used for
-   Weave AI yet and are listed as unavailable.
+   newer revision, the card says so and saving moves Weave AI to it. A keyless
+   connection to a local model, such as `ollama-local`, works too: Weave AI
+   sends it no credential.
 3. Select **Save Weave AI settings**. Saving keeps the stored profile's
    generation options, reasoning, call and time limits; a new configuration
    starts from Weave AI's defaults. Studio supplies the fixed reply schema. Use a
