@@ -84,7 +84,7 @@ def test_projection_excludes_authority_provider_values_and_paths(kind):
 
 async def test_attachment_uses_existing_scoped_read_and_propagates_denial():
     deployments = SimpleNamespace(read=AsyncMock(side_effect=AccessDenied()))
-    service = LumiService(SimpleNamespace(definitions=None), None, None, None, deployments, NO_POLICY)
+    service = LumiService(SimpleNamespace(definitions=None), None, None, None, deployments, NO_POLICY, None)
     actor = SimpleNamespace(id=uuid4())
     scope = Scope(tenant_id=uuid4(), project_id=uuid4(), environment_id=uuid4())
     identifier = uuid4()
@@ -117,7 +117,7 @@ async def test_explanation_discards_proposals_and_rechecks_access_after_gateway(
         proposals=[{"title": "Unexpected", "kind": "workflow", "format": "yaml", "source": "kind: Workflow"}],
     )
     gateway = SimpleNamespace(configured=True, ask=AsyncMock(return_value=reply))
-    service = LumiService(connections, None, None, gateway, deployments, NO_POLICY)
+    service = LumiService(connections, None, None, gateway, deployments, NO_POLICY, None)
     service._require = AsyncMock(return_value=actor)
     service._read = AsyncMock(
         return_value=SimpleNamespace(

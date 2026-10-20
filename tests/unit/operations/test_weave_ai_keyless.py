@@ -97,7 +97,7 @@ def service(secrets, gateway=None):
         yield SimpleNamespace(scope=SCOPE)
 
     connections = SimpleNamespace(definitions=SimpleNamespace(transaction=transaction), secrets=secrets)
-    return LumiService(connections, None, None, gateway, None, NO_POLICY)
+    return LumiService(connections, None, None, gateway, None, NO_POLICY, None)
 
 
 def test_a_keyless_local_connection_is_accepted_without_a_secret():

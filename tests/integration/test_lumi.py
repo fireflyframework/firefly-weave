@@ -38,6 +38,7 @@ from firefly_weave.operations.ai_policy import APIAIPolicy
 from firefly_weave.operations.debug.store import DebugService
 from firefly_weave.operations.history import HistoryService
 from firefly_weave.operations.lumi import LumiService
+from firefly_weave.operations.run_views import RunViewService
 
 pytestmark = pytest.mark.integration
 
@@ -103,6 +104,7 @@ async def lumi(services, access_db, provisioned, monkeypatch):
         gateway,
         graph.resolve(DeploymentService),
         APIAIPolicy(),
+        graph.resolve(RunViewService),
     )
     config = LumiConfigurationRequest(
         connection_revision_id=revision.id,

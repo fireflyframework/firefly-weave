@@ -313,7 +313,7 @@ async def test_asking_sizes_the_request_to_the_endpoints_context(monkeypatch):
 
     connections = SimpleNamespace(definitions=SimpleNamespace(transaction=transaction), secrets=None)
     gateway = SimpleNamespace(configured=True, ask=AsyncMock(return_value=LumiReply(answer="Fix step-3's input.")))
-    service = LumiService(connections, None, None, gateway, None, policy)
+    service = LumiService(connections, None, None, gateway, None, policy, None)
     actor = SimpleNamespace(id=uuid4())
     service._require = AsyncMock(return_value=actor)
     service._read = AsyncMock(return_value=configuration)

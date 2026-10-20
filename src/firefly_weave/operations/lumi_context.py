@@ -27,10 +27,12 @@ outline, then attachments are left out from the last, then the oldest messages),
 import json
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Literal, cast
 
 from firefly_weave.compiler.parser import parse_source
 from firefly_weave.contracts.lumi import LumiMessage
+from firefly_weave.contracts.run_views import RunSummary, StepFact
 from firefly_weave.contracts.values import JsonObject, JsonValue
 
 type Profile = Literal["compact", "standard", "full"]
@@ -131,6 +133,65 @@ def outline(document: JsonValue, selected_step: str | None) -> JsonObject:
     return shown
 
 
+RECENT_STEPS = 5
+# Every path a run attachment may contain; a test spies on the request and fails on any other.
+RUN_FIELDS = frozenset(
+    {
+        "/workflow",
+        "/workflow/name",
+        "/workflow/version",
+        "/status",
+        "/started_at",
+        "/ended_at",
+        "/duration_ms",
+        "/active_incidents",
+        "/failed_steps",
+        "/failed_steps/*/node_id",
+        "/failed_steps/*/instance_key",
+        "/failed_steps/*/error_code",
+        "/recent_steps",
+        "/recent_steps/*/node_id",
+        "/recent_steps/*/kind",
+        "/recent_steps/*/status",
+        "/recent_steps/*/at",
+    }
+)
+
+
+def run_context(summary: RunSummary, steps: Sequence[StepFact]) -> JsonObject:
+    """A run as Weave AI sees it: its run facts only, never inputs, outputs, logs, keys, workers or hosts."""
+
+    def at(value: datetime | None) -> JsonValue:
+        return value.isoformat().replace("+00:00", "Z") if value is not None else None
+
+    timed = sorted(
+        (item for item in steps if item.scheduled_at or item.started_at or item.ended_at),
+        key=lambda item: cast(datetime, item.ended_at or item.started_at or item.scheduled_at),
+    )
+    return {
+        "workflow": {"name": summary.workflow.name, "version": summary.workflow.version},
+        "status": summary.status,
+        "started_at": at(summary.started_at),
+        "ended_at": at(summary.ended_at),
+        "duration_ms": summary.duration_ms,
+        "active_incidents": summary.active_incidents,
+        "failed_steps": [
+            {"node_id": item.node_id, "instance_key": item.instance_key, "error_code": item.error_code}
+            for item in steps
+            if item.status == "failed"
+        ],
+        "recent_steps": [
+            {
+                "node_id": item.node_id,
+                "kind": item.kind,
+                "status": item.status,
+                "at": at(item.ended_at or item.started_at or item.scheduled_at),
+            }
+            for item in timed[-RECENT_STEPS:]
+        ],
+    }
+
+
 @dataclass(frozen=True)
 class Shaped:
     """The attachments object the gateway sends as context, and the conversation that fits."""
@@ -191,6 +252,13 @@ def shape(
     allowance = share(ATTACHMENT_SHARE)
     kept: list[JsonValue] = []
     for resource in resources:
+        if profile != "full" and isinstance(resource, dict) and resource.get("kind") == "draft":
+            # A saved draft is outlined like the inline one: its own steps, never their values.
+            data = cast(JsonObject, resource["data"])
+            resource = {
+                **resource,
+                "data": {"outline": outline(data["document"], selected_step), "revision": data["revision"]},
+            }
         if allowance is not None and _tokens([*kept, resource]) > allowance:
             if "attachments" not in trimmed:
                 trimmed.append("attachments")

@@ -19,6 +19,7 @@
 import asyncio
 import json
 from typing import cast
+from uuid import UUID
 
 from pyfly.container import service
 from sqlalchemy import text
@@ -43,6 +44,7 @@ from firefly_weave.contracts.lumi import (
     LumiReply,
     LumiStatus,
 )
+from firefly_weave.contracts.run_views import RunStepQuery, RunSummary, StepFact
 from firefly_weave.contracts.schema_export import export_schemas
 from firefly_weave.contracts.values import JsonValue
 from firefly_weave.definitions.models import CatalogError
@@ -50,9 +52,10 @@ from firefly_weave.deployments.service import DeploymentService
 from firefly_weave.operations.ai_policy import APIAIPolicy
 from firefly_weave.operations.debug.store import DebugService
 from firefly_weave.operations.history import HistoryService
-from firefly_weave.operations.lumi_context import Shaped, choose_profile, input_budget, shape
+from firefly_weave.operations.lumi_context import Shaped, choose_profile, input_budget, run_context, shape
 from firefly_weave.operations.lumi_deployments import COLLECTIONS, deployment_context
 from firefly_weave.operations.lumi_gateway import LumiGatewayClient
+from firefly_weave.operations.run_views import RunViewService
 from firefly_weave.persistence.uow import Transaction
 
 
@@ -66,11 +69,12 @@ class LumiService:
         gateway: LumiGatewayClient,
         deployments: DeploymentService,
         policy: APIAIPolicy,
+        runs: RunViewService,
     ) -> None:
         self.connections, self.history, self.debug, self.gateway = connections, history, debug, gateway
         self.definitions = connections.definitions
         self.deployments = deployments
-        self.policy = policy
+        self.policy, self.runs = policy, runs
 
     async def _require(self, tx: Transaction, actor: Principal, capability: str, context: AuditContext) -> Principal:
         if tx.scope.environment_id is None:
@@ -185,11 +189,7 @@ class LumiService:
                 value = await self.definitions.read(actor, project, "drafts", attachment.id, context=context)
                 data = cast(JsonValue, {"document": value["document"], "revision": value["revision"]})
             elif attachment.kind == "run":
-                async with self.definitions.transaction(scope, None, mutation=False) as tx:
-                    page = await self.history.page(
-                        tx, attachment.id, None, 20, actor=actor, scope=scope, context=context
-                    )
-                    data = page.model_dump(mode="json")
+                data = await self._run(actor, scope, attachment.id, context)
             else:
                 async with self.definitions.transaction(project, None, mutation=False) as tx:
                     session = await self.debug.inspect(tx, attachment.id, actor=actor, scope=project, context=context)
@@ -204,6 +204,14 @@ class LumiService:
         if size + (len(request.draft.source.encode()) if request.draft else 0) > 262144:
             raise CatalogError(413, "WV-LUMI-LIMIT", "Selected context is too large")
         return result
+
+    async def _run(self, actor: Principal, scope: Scope, run_id: UUID, context: AuditContext) -> JsonValue:
+        """A run's facts through the allowlisted builder; the run's own read checks `run.read` each time."""
+        summary = await self.runs.summary(actor, scope, run_id, context=context)
+        if not isinstance(summary, RunSummary):
+            return {"status": "not_recorded_yet"}
+        steps = await self.runs.steps(actor, scope, run_id, RunStepQuery(limit=200), None, context=context)
+        return run_context(summary, [item for item in steps.items if isinstance(item, StepFact)])
 
     def _context_tokens(self, connection: ConnectionRevision) -> int | None:
         """The context size the AI policy records for the connection's endpoint, or None when it records none."""

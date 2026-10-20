@@ -339,6 +339,11 @@ class FactReadRepository(FactRepository):
     async def summary_rows(self, query: RunSummaryQuery, position: RunPosition | None) -> list[dict[str, Any]]:
         return await self._run_rows(query, position)
 
+    async def summary_row(self, run_id: UUID) -> dict[str, Any] | None:
+        """One run's summary columns, archived or not; None when the run has no facts."""
+        rows = await self.rows(_RUN_SELECT + " AND f.run_id=:run_id", run_id=run_id)
+        return rows[0] if rows else None
+
     async def legacy_rows(self, query: RunListQuery, position: RunPosition | UUID | None) -> list[dict[str, Any]]:
         return await self._run_rows(query, position)
 
