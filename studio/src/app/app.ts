@@ -2715,7 +2715,7 @@ export class App implements CanvasHost {
   }
   /**
    * The status chip beside the version: "Unsaved changes", "Saving…",
-   * "Draft saved", "Kept on this computer", "Published 1.0.0" or
+   * "Saved 12:04", "Not saved: retry", "Published 1.0.0" or
    * "Active in Production". Null for a new local workflow with no edits.
    */
   get statusChip(): { text: string; tone: string; retry?: boolean } | null {
@@ -2758,8 +2758,8 @@ export class App implements CanvasHost {
   }
   private savedDraftLabel() {
     return this.draftSavedAt
-      ? `Draft saved ${clockTime(new Date(this.draftSavedAt).getTime())}`
-      : "Draft saved";
+      ? `Saved ${clockTime(new Date(this.draftSavedAt).getTime())}`
+      : "Saved";
   }
   /** The open workflow has a copy kept on this computer. */
   private keptLocally = false;

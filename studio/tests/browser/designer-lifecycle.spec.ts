@@ -96,7 +96,7 @@ for (const viewport of [
       await closeSheet(page);
       // The autosave settles on its own: the chip doesn't stay on "Saving…".
       await expect(page.locator(".editor-identity .status-chip")).toHaveText(
-        /Draft saved \d{2}:\d{2}/,
+        /^Saved \d{2}:\d{2}$/,
       );
       await expect(await primary(page)).toHaveText(/Save to file/);
       await toolbar(page).locator(".toolbar-help > summary").click();
@@ -236,7 +236,7 @@ test.describe("1280x720", () => {
       await expect(page.locator(".status-chip")).toHaveAttribute(
         "title",
         mode === "local"
-          ? /Draft saved \d{2}:\d{2}/
+          ? /^Saved \d{2}:\d{2}$/
           : /^(Unsaved|Saved \d{2}:\d{2}|Not saved: retry)$/,
       );
       const canvas = await page.locator(".canvas").boundingBox();

@@ -86,7 +86,7 @@ for (const viewport of [
     const designer = new DesignerPage(page);
     await designer.append("wait");
     const status = page.locator(".status-chip");
-    await expect(status).toContainText("Draft saved");
+    await expect(status).toContainText("Saved");
     const close = page.getByRole("button", {
       name: "Close inspector",
       exact: true,
@@ -143,6 +143,6 @@ test("an opened workflow isn't marked unsaved until it's edited", async ({
   await title.press("Tab");
   await page.clock.runFor(1200);
   await expect(identity.locator(".status-chip")).toContainText(
-    /Draft saved \d{2}:\d{2}/,
+    /^Saved \d{2}:\d{2}$/,
   );
 });

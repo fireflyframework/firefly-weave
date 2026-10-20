@@ -190,7 +190,7 @@ test("the desktop app keeps local drafts on this computer, through the host", as
   await newWorkflow(page);
   await insertStep(page, "Transform");
   await expect(page.locator(".status-chip")).toContainText(
-    /Draft saved \d{2}:\d{2}/,
+    /^Saved \d{2}:\d{2}$/,
     { timeout: 10_000 },
   );
   await page.getByRole("button", { name: "Workflows", exact: true }).click();
@@ -340,7 +340,7 @@ test("a draft whose notes and settings can't be read opens without them and says
   await newWorkflow(page);
   await insertStep(page, "Transform");
   await expect(page.locator(".status-chip")).toContainText(
-    /Draft saved \d{2}:\d{2}/,
+    /^Saved \d{2}:\d{2}$/,
     { timeout: 10_000 },
   );
   const toast = page.getByRole("alert").locator(".toast");
