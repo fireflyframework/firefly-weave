@@ -90,6 +90,7 @@ from firefly_weave.contracts.file_connectors import FILE_DESCRIPTORS, FileConnec
 from firefly_weave.contracts.http_profiles import HTTP_PROFILE_DESCRIPTOR
 from firefly_weave.definitions.ports import ConnectionBindingPort, WorkerAdmissionPort
 from firefly_weave.definitions.service import DefinitionService
+from firefly_weave.definitions.studio_documents import StudioDocumentService
 from firefly_weave.email.source import EmailSourceService
 from firefly_weave.email.transport import MailPolicy
 from firefly_weave.files.human import HumanFileService
@@ -144,6 +145,7 @@ SERVICE_PACKAGES = (
     "firefly_weave.access.authentication",
     "firefly_weave.access.identity_links",
     "firefly_weave.definitions.service",
+    "firefly_weave.definitions.studio_documents",
     "firefly_weave.connections.service",
     "firefly_weave.connections.bindable",
     "firefly_weave.connections.descriptors",
@@ -324,6 +326,7 @@ def make_app(
                 AuthenticationService,
                 IdentityResolver,
                 DefinitionService,
+                StudioDocumentService,
                 ConnectionService,
                 BindableConnectionService,
                 ConnectorDescriptorService,
