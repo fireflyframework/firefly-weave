@@ -130,3 +130,9 @@ def test_every_valid_recording_fits_a_test_data_document(entry):
         "aiTurns": {"support": entry},
     }
     assert documents.parse_test_data(json.dumps(document).encode()).ai_turns is not None
+
+
+def test_a_place_is_written_as_a_json_pointer():
+    assert documents.json_pointer([]) == ""
+    assert documents.json_pointer(["turns", 0, "toolCalls"]) == "/turns/0/toolCalls"
+    assert documents.json_pointer(["a/b", "c~d"]) == "/a~1b/c~0d"

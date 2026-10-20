@@ -25,8 +25,9 @@ reads field aliases only. Entry keys are instance keys typed ``InstanceKeyText``
 
 import json
 import re
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from datetime import datetime
+from functools import cache
 from pathlib import Path
 from typing import Annotated, Any, Final, Literal, Self, cast
 from uuid import UUID
@@ -308,12 +309,18 @@ def ai_turns_problems(entry: object) -> list[str]:
 
     Only places are reported, never values: recorded turns may hold customer data.
     """
-    validator = _TurnsValidator(studio_ai_turns_schema(), format_checker=_TURNS_FORMATS)
-    places = {
-        "".join(f"/{str(part).replace('~', '~0').replace('/', '~1')}" for part in error.absolute_path)
-        for error in validator.iter_errors(entry)
-    }
-    return sorted(places)
+    return sorted({json_pointer(error.absolute_path) for error in _turns_validator().iter_errors(entry)})
+
+
+def json_pointer(parts: Iterable[str | int]) -> str:
+    """A place in a document as a JSON pointer (RFC 6901): ``""`` for the whole document."""
+    return "".join(f"/{str(part).replace('~', '~0').replace('/', '~1')}" for part in parts)
+
+
+@cache
+def _turns_validator() -> Any:
+    # The schema file never changes while the process runs, so one validator serves every check.
+    return _TurnsValidator(studio_ai_turns_schema(), format_checker=_TURNS_FORMATS)
 
 
 def parse_test_data(raw: bytes) -> StudioTestData:
