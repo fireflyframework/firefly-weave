@@ -37,6 +37,8 @@ SPDX-License-Identifier: Apache-2.0
   `WV-LUMI-MODEL-NOT-FOUND`, `WV-LUMI-UNREACHABLE`, `WV-LUMI-CONTEXT-LIMIT`,
   `WV-LUMI-OUTPUT` and `WV-LUMI-TIMEOUT`, with `WV-LUMI-CAPACITY` for busy and
   rate-limited providers, instead of `WV-LUMI-UNAVAILABLE` for all of them.
+- The local platform runs Ollama 0.40.6 (was 0.12.3); Weave AI asks thinking models
+  such as `qwen3` to answer without thinking, which 0.12.3 refused.
 - AI tasks count text outside ASCII, such as Chinese or emoji, by its UTF-8 bytes
   when they check that a prompt fits the model's context, and on Ollama an answer
   to a prompt the model saw only part of fails with `LLM_CONTEXT_LIMIT` instead
