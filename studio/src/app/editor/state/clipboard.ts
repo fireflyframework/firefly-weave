@@ -51,6 +51,7 @@ import {
 } from "../ndv/owned/owned-actions";
 import { ownedActionsOf, unpublished } from "../ndv/owned/owned-store";
 import { emptyCanvas, type CanvasSidecar } from "./canvas-sidecar";
+import { instanceStep } from "./instance-keys";
 import type { PinEntry } from "./test-data";
 
 export const CLIPBOARD_HEADER = "# Firefly Weave steps. Paste into Studio.";
@@ -312,9 +313,7 @@ export function stepTree(step: Step): Step[] {
 }
 
 /** The step an instance key belongs to: `send[2]` and `support#2.1` belong to send and support. */
-export function instanceStep(key: string): string {
-  return /^[A-Za-z0-9][A-Za-z0-9_.-]*/.exec(key)?.[0] ?? key;
-}
+export { instanceStep } from "./instance-keys";
 
 export function copySteps(
   workflow: Workflow,
