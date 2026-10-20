@@ -131,7 +131,7 @@ async def requested(client, intent: str, replicas: int | None = None, **values: 
         body["desired"] = [{"name": COMPONENT, "replicas": replicas}]
     created = await client.invoke(
         "deployment_change_requests.create",
-        body=ChangeRequestCreate.model_validate(body),
+        body=ChangeRequestCreate.model_validate_json(json.dumps(body)),
         idempotency_key=uuid4().hex,
     )
 
@@ -240,34 +240,48 @@ async def lite_activation(client, release: str) -> Any:
     )
     return await client.invoke(
         "activations.create",
-        body=ActivationRequest.model_validate(
-            {
-                "scope": client.scope.model_dump(mode="json"),
-                "version_id": str(version.id),
-                "artifact_digest": version.digest,
-                "worker_release_ids": {"example-sleep": release},
-            }
+        body=ActivationRequest.model_validate_json(
+            json.dumps(
+                {
+                    "scope": client.scope.model_dump(mode="json"),
+                    "version_id": str(version.id),
+                    "artifact_digest": version.digest,
+                    "worker_release_ids": {"example-sleep": release},
+                }
+            )
         ),
         idempotency_key=uuid4().hex,
     )
 
 
 async def start_runs(client, activation, inputs: list[dict]) -> list[UUID]:
+    """Start each run; a full start queue answers 429 WV-OPERATION-CAPACITY, so wait and send the same start again."""
     from firefly_weave.contracts.runtime import StartRunRequest
 
     runs = []
     for value in inputs:
-        started = await client.invoke(
-            "runs.start",
-            body=StartRunRequest.model_validate({"activation_id": str(activation.id), "input": value}),
-            idempotency_key=uuid4().hex,
-        )
+        key = uuid4().hex
+        deadline = time.monotonic() + 120
+        while True:
+            try:
+                started = await client.invoke(
+                    "runs.start",
+                    body=StartRunRequest.model_validate_json(
+                        json.dumps({"activation_id": str(activation.id), "input": value})
+                    ),
+                    idempotency_key=key,
+                )
+                break
+            except WeaveError as error:
+                if error.code != "WV-OPERATION-CAPACITY" or time.monotonic() > deadline:
+                    raise
+                await asyncio.sleep(2)
         runs.append(started.id)
     return runs
 
 
 async def run_states(client, runs: list[UUID]) -> dict[UUID, str]:
-    return {run: (await client.invoke("runs.read", identifier=run)).status for run in runs}
+    return {run: (await client.invoke("runs.read", identifier=run)).state.status for run in runs}
 
 
 def platform_sql(run, sql: str) -> str:
@@ -305,14 +319,17 @@ async def test_o_j1_a_clean_platform_has_local_operations_ready(run):
 
 async def test_o_j2_scale_up_run_twenty_tasks_then_scale_down_removing_the_drained_workers(run):
     """O-J2: 3 fixture workers run 20 sleeps of 5 s; scaling to 1 drains exactly the containers it removes."""
-    async with run.client("operator") as operator:
+    # The operator changes infrastructure; the owner, who may publish and run workflows, runs the work.
+    async with run.client("operator") as operator, run.client("owner") as owner:
         await finished(operator, await requested(operator, "scale_workers", 3))
         await auntil(lambda: fixture_workers(operator), lambda items: len(items) == 3, 180, "three workers online")
-        activation = await lite_activation(operator, release_of(run))
-        runs = await start_runs(operator, activation, [{"ms": 5000}] * 20)
+        activation = await lite_activation(owner, release_of(run))
+        runs = await start_runs(owner, activation, [{"ms": 5000}] * 20)
         states = await auntil(
-            lambda: run_states(operator, runs),
-            lambda value: all(state in {"succeeded", "failed", "cancelled"} for state in value.values()),
+            lambda: run_states(owner, runs),
+            lambda value: all(
+                state in {"succeeded", "failed", "cancelled", "timed_out", "suspended"} for state in value.values()
+            ),
             600,
             "twenty runs still running",
         )
@@ -368,8 +385,8 @@ async def test_o_j8_four_eyes_on_local_docker(run):
         updated = await owner.invoke(
             "deployment_targets.update",
             identifier=target.id,
-            body=TargetUpdate.model_validate(
-                {**policy, "disabled": False, "approval_policy": {"distinct_approver": True}}
+            body=TargetUpdate.model_validate_json(
+                json.dumps({**policy, "disabled": False, "approval_policy": {"distinct_approver": True}})
             ),
             revision=target.revision,
         )
@@ -393,7 +410,7 @@ async def test_o_j8_four_eyes_on_local_docker(run):
                 assert (error.value.status, error.value.code) == (403, "WV-APPROVAL-SELF")
             await finished(operator, change, approver=owner)
             # A plan that expires before anyone approves it is observed and planned again.
-            short = await requested(operator, "scale_workers", 1, plan_ttl_seconds=30)
+            short = await requested(operator, "scale_workers", 3, plan_ttl_seconds=30)
 
             async def read():
                 return await operator.invoke("deployment_change_requests.read", identifier=short.id)
@@ -414,8 +431,8 @@ async def test_o_j8_four_eyes_on_local_docker(run):
             await owner.invoke(
                 "deployment_targets.update",
                 identifier=current.id,
-                body=TargetUpdate.model_validate(
-                    {**policy, "disabled": False, "approval_policy": {"distinct_approver": False}}
+                body=TargetUpdate.model_validate_json(
+                    json.dumps({**policy, "disabled": False, "approval_policy": {"distinct_approver": False}})
                 ),
                 revision=current.revision,
             )
@@ -430,7 +447,7 @@ async def test_o_j9_an_unknown_outcome_opens_an_incident_that_a_safe_retry_resol
     from firefly_weave.contracts.operations import IncidentResolution
 
     workers_file = run.platform_dir / "operations" / "workers" / "compose.json"
-    async with run.client("operator") as operator:
+    async with run.client("operator") as operator, run.client("owner") as owner:
         own = await fixture_workers(operator)
         for worker in own:
             await operator.invoke(
@@ -458,11 +475,11 @@ async def test_o_j9_an_unknown_outcome_opens_an_incident_that_a_safe_retry_resol
             )
         )
         try:
-            activation = await lite_activation(operator, release_of(run))
-            (run_id,) = await start_runs(operator, activation, [{"ms": 0, "fail": "unknown"}])
+            activation = await lite_activation(owner, release_of(run))
+            (run_id,) = await start_runs(owner, activation, [{"ms": 0, "fail": "unknown"}])
 
             async def incidents():
-                return (await operator.invoke("incidents.run_list", identifier=run_id)).items
+                return (await owner.invoke("incidents.run_list", identifier=run_id)).items
 
             (incident,) = await auntil(incidents, lambda items: len(items) == 1, 300, "no incident")
         finally:
@@ -477,7 +494,7 @@ async def test_o_j9_an_unknown_outcome_opens_an_incident_that_a_safe_retry_resol
                     body=WorkerControlRequest(expected_revision=current.revision),
                     idempotency_key=uuid4().hex,
                 )
-        resolved = await operator.invoke(
+        resolved = await owner.invoke(
             "incidents.resolve",
             identifier=incident.id,
             body=IncidentResolution(receipt_id=uuid4(), kind="retry_safe", reason="The fault was injected on purpose"),
@@ -485,8 +502,8 @@ async def test_o_j9_an_unknown_outcome_opens_an_incident_that_a_safe_retry_resol
         )
         assert resolved.id == incident.id
         states = await auntil(
-            lambda: run_states(operator, [run_id]),
-            lambda value: value[run_id] in {"succeeded", "failed", "cancelled"},
+            lambda: run_states(owner, [run_id]),
+            lambda value: value[run_id] in {"succeeded", "failed", "cancelled", "timed_out"},
             300,
             "the retried run is still running",
         )
