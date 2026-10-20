@@ -117,6 +117,11 @@ installed) and **Test connection**. A first test of a local model can take up to
 
 On the **Weave AI** card, choose `ollama-local` and a model, then **Save Weave AI settings**; Weave AI uses the keyless connection without a credential, and every item turns ready.
 
+A keyless connection reaches only an origin a platform operator approved in the private-origin file, on loopback or
+private networks (RFC 1918, CGNAT such as Tailscale, or IPv6 ULA), never a public host. An approved Ollama on another
+machine of your LAN or tailnet is reached over plain HTTP, so the draft, run facts and questions Weave AI sends cross
+that network unencrypted; approve such an origin only for a network you trust.
+
 ## Choose a model
 
 | Use | Model | Download |
