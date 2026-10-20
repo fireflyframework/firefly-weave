@@ -247,7 +247,7 @@ async def test_real_incident_reads_filters_and_resolution(operations_case, task_
     assert (stale.value.status, stale.value.code) == (409, "WV-RUNTIME-STATE")
     resolved = await service.read(case.actor, case.scope, incident["id"], context=AuditContext())
     assert isinstance(resolved, IncidentView)
-    assert (resolved.status, resolved.revision, resolved.resolution) == ("resolved", receipt.revision, request)
+    assert (resolved.status, resolved.revision, resolved.resolution) == ("resolved", receipt.revision, request.recorded())
     assert resolved.opened_at == opened and resolved.updated_at is not None and resolved.updated_at > opened
     assert resolved.updated_at == resolved.resolved_at
     assert await walk(case, {"status": ["resolved"]}) == [str(incident["id"])]
