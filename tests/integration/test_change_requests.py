@@ -1475,3 +1475,56 @@ async def test_a_successful_change_resumes_every_drained_worker_it_did_not_remov
     )
     assert (await ops.changes.read(planned.id, **ops.authority("planner"))).state == "succeeded"
     assert [await draining_state(ops, worker) for worker in workers] == [(False, 3), (False, 3)]
+
+
+@pytest.mark.parametrize("intent", ["update", "deploy"])
+async def test_any_change_that_lowers_workers_is_a_reviewed_scale_down(ops, fleet, intent):
+    """An update or deploy to fewer workers drains and removes the reviewed members, through upgraded runners only."""
+    runner = ops.authority("planner")
+    older = await ops.service.register_runner(
+        RunnerRegistration(
+            target_id=fleet.setup.target.id,
+            adapter="docker-compose",
+            capabilities=["observe", "deploy", "update", "scale_workers"],
+        ),
+        **runner,
+    )
+    created = await ops.changes.create(
+        change(fleet.setup, intent=intent, desired=[{"name": COMPONENT, "replicas": 1}]),
+        uuid4().hex,
+        **ops.authority("planner"),
+    )
+    assert created.drain.mode == "drain_first"
+    await run_observation(ops, fleet.setup, 3)
+    ready = await ops.changes.read(created.id, **ops.authority("planner"))
+    planned = await ops.changes.advance(created.id, ready.revision, **ops.authority("planner"))
+    assert planned.state == "awaiting_approval", planned.failure
+    assert {member.worker_id for member in planned.drain_set} == {worker.id for worker in fleet.workers}
+    plan = await ops.service.read("plans", planned.plan_id, **ops.authority("planner"))
+    assert "worker_drain" in plan.risks
+    assert await victims(ops, plan) == {COMPONENT: ["c0ffee000003", "c0ffee000002"]}
+    approved_change = await ops.changes.approve(
+        planned.id, ChangeRequestApprove(digest=planned.plan_digest), **ops.authority("approver")
+    )
+    await ops.changes.drain(approved_change.id, uuid4().hex, **ops.authority("operator"))
+    applying_change = await ops.changes.apply(
+        planned.id, ChangeRequestApply(digest=planned.plan_digest), uuid4().hex, **ops.authority("operator")
+    )
+    await ops.service.revoke_runner(fleet.setup.runner.id, **ops.authority("owner"))
+    assert await ops.service.claim(RunnerClaimRequest(runner_id=older.id), **runner) is None
+    upgraded = await ops.service.register_runner(
+        RunnerRegistration(
+            target_id=fleet.setup.target.id, adapter="docker-compose", adapter_version="2", capabilities=CAPABILITIES
+        ),
+        **runner,
+    )
+    lease = await ops.service.claim(RunnerClaimRequest(runner_id=upgraded.id), **runner)
+    assert lease is not None and lease.job.id == applying_change.apply_job_id
+
+
+@pytest.mark.parametrize("intent", ["update", "deploy"])
+async def test_a_low_level_plan_that_lowers_workers_names_their_removal_and_drain(ops, intent):
+    setup = await prepared(ops, replicas=3)
+    plan = await low_level_plan(ops, setup, intent=intent, deployed=1, observed_count=3)
+    assert await victims(ops, plan) == {COMPONENT: ["c0ffee000003", "c0ffee000002"]}
+    assert "worker_drain" in plan.risks

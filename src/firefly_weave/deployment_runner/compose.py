@@ -295,8 +295,9 @@ class ComposeAdapter:
                 raise RunnerPolicyError()
             if step.action == "restart_workers" and component.replicas != fact.replicas:
                 raise RunnerPolicyError()
-            if step.action == "scale_workers" and fact.replicas > component.replicas:
-                # The reviewed members, chosen by the plan's rule from this same observed state (its version).
+            if step.action != "restart_workers" and component.kind == "worker" and fact.replicas > component.replicas:
+                # Any plan that lowers workers is a scale-down, whatever its intent: the reviewed members, chosen by
+                # the plan's rule from this same observed state (its version), go first, never Compose's choice.
                 try:
                     hosts = scale_down_members(self.policy.adapter, fact, component.replicas)
                 except MemberSelectionError:
@@ -320,7 +321,13 @@ class ComposeAdapter:
         try:
             await self._configuration(candidate)
             # A scale-down keeps the reviewed survivors; a restart replaces every worker at the current scale.
-            mode = ["--force-recreate"] if plan.intent == "restart_workers" else ["--no-recreate"] if victims else []
+            mode = (
+                ["--force-recreate"]
+                if plan.intent == "restart_workers"
+                else ["--no-recreate"]
+                if victims and plan.intent == "scale_workers"
+                else []
+            )
             arguments = [
                 "up",
                 "--detach",

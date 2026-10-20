@@ -80,15 +80,18 @@ async def follow_job(repo: DeploymentRepository, job: DeploymentJob, *, observat
 
 
 async def plan_victims(repo: DeploymentRepository, plan: DeploymentPlan) -> dict[str, list[str]]:
-    """The running members each step of a scale-down plan removes, from the plan's own observation."""
-    if plan.intent != "scale_workers":
+    """The running members each step that lowers workers removes, from the plan's own observation.
+
+    Any plan that lowers a worker component's replicas is a scale-down, whatever its intent; a restart keeps them.
+    """
+    if plan.intent == "restart_workers":
         return {}
     observation = await repo.get("observations", plan.observation_id, DeploymentObservation)
     observed = {resource.name: resource for resource in observation.resources}
     result = {}
     for step in plan.steps:
         fact = observed.get(step.component.name)
-        if fact is None or fact.replicas <= step.component.replicas:
+        if fact is None or step.component.kind != "worker" or fact.replicas <= step.component.replicas:
             continue
         try:
             hosts = scale_down_members(plan.adapter, fact, step.component.replicas)
@@ -591,10 +594,13 @@ class DeploymentService:
             )
         if request.intent == "restart_workers" and any(by_name[c.name].replicas != c.replicas for c in selected):
             raise CatalogError(409, "WV-PLAN-STALE", "A restart keeps the observed number of workers; scale them first")
+        # Any plan that lowers workers removes the members the shared rule names, whatever its intent.
         removed = {
             c.name: hosts
             for c in selected
-            if request.intent == "scale_workers"
+            if request.intent != "restart_workers"
+            and c.kind == "worker"
+            and c.name in by_name
             and by_name[c.name].replicas > c.replicas
             and (hosts := self.scale_down_members(target, by_name[c.name], c.replicas))
         }

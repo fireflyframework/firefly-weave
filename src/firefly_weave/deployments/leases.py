@@ -199,12 +199,15 @@ class DeploymentLeases:
 
     @staticmethod
     async def removes_members(repo: DeploymentRepository, plan: DeploymentPlan) -> bool:
-        """Whether applying the plan removes running or exited members: a scale-down below the observed count."""
-        if plan.intent != "scale_workers":
+        """Whether applying the plan removes running or exited workers: any intent lowering a worker component."""
+        if plan.intent == "restart_workers":
             return False
         observation = await repo.get("observations", plan.observation_id, DeploymentObservation)
         observed = {resource.name: resource.replicas for resource in observation.resources}
-        return any(observed.get(step.component.name, 0) > step.component.replicas for step in plan.steps)
+        return any(
+            step.component.kind == "worker" and observed.get(step.component.name, 0) > step.component.replicas
+            for step in plan.steps
+        )
 
     async def checked(
         self,

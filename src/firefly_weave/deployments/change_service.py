@@ -298,8 +298,8 @@ async def drain_set(
         release = step.component.worker_release_id
         if release is None:
             continue
-        if step.action == "scale_workers":
-            hosts = victims.get(step.component.name, [])
+        if step.component.name in victims:
+            hosts = victims[step.component.name]
         elif step.action == "restart_workers" and drains(record) and step.component.name in observed:
             hosts = [member.host for member in observed[step.component.name].members]
         else:
@@ -490,8 +490,11 @@ class ChangeRequestService:
                 raise CatalogError(422, "WV-VALIDATION", "Scaling and restarting select worker components only")
             if request.intent == "restart_workers" and request.desired:
                 raise CatalogError(422, "WV-VALIDATION", "A restart keeps every value; scale or update instead")
-            lowered = request.intent == "scale_workers" and any(
-                item.replicas is not None and item.replicas < current[item.name].replicas
+            # Any change that lowers workers is a scale-down, whatever its intent.
+            lowered = request.intent != "restart_workers" and any(
+                item.replicas is not None
+                and current[item.name].kind == "worker"
+                and item.replicas < current[item.name].replicas
                 for item in request.desired or []
             )
             drains = lowered or (request.intent == "restart_workers" and request.drain.mode == "drain_first")

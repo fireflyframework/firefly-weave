@@ -42,7 +42,7 @@ def policy(tmp_path):
         boundary="weave-test",
         context="owned-test",
         executable="/usr/bin/docker",
-        capabilities=["observe", "update", "scale_workers", "restart_workers"],
+        capabilities=["observe", "deploy", "update", "scale_workers", "restart_workers"],
         compose_file=str(source),
         lock_file=str(tmp_path / "runner.lock"),
         components=[{"name": "worker", "kind": "worker", "configuration": "current"}],
@@ -331,3 +331,34 @@ def test_the_reviewed_members_must_be_live_containers_and_exactly_enough():
     for hosts in (["c" * 12], ["a" * 12, "b" * 12], []):
         with pytest.raises(RunnerPolicyError):
             ComposeAdapter._victims(hosts, containers, 3, component)
+
+
+@pytest.mark.parametrize("action", ["update", "deploy"])
+async def test_any_plan_that_lowers_workers_removes_exactly_the_reviewed_members_first(tmp_path, action):
+    """An update or deploy to fewer workers is a scale-down: Compose never chooses which workers go."""
+    config = policy(tmp_path)
+    project = Project(config, 3)
+    victims = [project.full(3), project.full(2)]
+    keep = project.full(1)
+    plan = project.plan(action, 1)
+    project.calls.clear()
+    result = await ComposeAdapter(config, command=project.command).apply(plan, renewed)
+    assert [item["id"] for item in project.containers] == [keep]
+    assert result.settled and result.resources[0].replicas == 1
+    stop = next(argv for argv, _ in project.calls if "stop" in argv)
+    assert stop[3:] == ["stop", "--time", str(STOP_GRACE_SECONDS), *victims]
+    assert next(argv for argv, _ in project.calls if "rm" in argv)[3:] == ["rm", *victims]
+    verbs = project.verbs()
+    up = max(index for index, verb in enumerate(verbs) if verb == "up")
+    assert verbs.index("stop") < up and verbs.index("rm") < up
+
+
+@pytest.mark.parametrize("action", ["update", "deploy"])
+async def test_a_lowering_plan_made_on_another_state_is_refused_before_any_change(tmp_path, action):
+    config = policy(tmp_path)
+    project = Project(config, 3)
+    plan = project.plan(action, 1)
+    project.containers[0]["state"] = "exited"
+    with pytest.raises(RunnerPolicyError):
+        await ComposeAdapter(config, command=project.command).apply(plan, renewed)
+    assert "stop" not in project.verbs() and len(project.containers) == 3
