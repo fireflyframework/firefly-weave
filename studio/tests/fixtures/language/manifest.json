@@ -31,8 +31,24 @@
           "max": 2
         },
         "operand_types": [
-          ["array", "boolean", "integer", "null", "number", "object", "string"],
-          ["array", "boolean", "integer", "null", "number", "object", "string"]
+          [
+            "array",
+            "boolean",
+            "integer",
+            "null",
+            "number",
+            "object",
+            "string"
+          ],
+          [
+            "array",
+            "boolean",
+            "integer",
+            "null",
+            "number",
+            "object",
+            "string"
+          ]
         ],
         "result": {
           "type": "boolean"
@@ -47,8 +63,24 @@
           "max": 2
         },
         "operand_types": [
-          ["array", "boolean", "integer", "null", "number", "object", "string"],
-          ["array", "boolean", "integer", "null", "number", "object", "string"]
+          [
+            "array",
+            "boolean",
+            "integer",
+            "null",
+            "number",
+            "object",
+            "string"
+          ],
+          [
+            "array",
+            "boolean",
+            "integer",
+            "null",
+            "number",
+            "object",
+            "string"
+          ]
         ],
         "result": {
           "type": "boolean"
@@ -63,8 +95,16 @@
           "max": 2
         },
         "operand_types": [
-          ["integer", "number", "string"],
-          ["integer", "number", "string"]
+          [
+            "integer",
+            "number",
+            "string"
+          ],
+          [
+            "integer",
+            "number",
+            "string"
+          ]
         ],
         "result": {
           "type": "boolean"
@@ -79,8 +119,16 @@
           "max": 2
         },
         "operand_types": [
-          ["integer", "number", "string"],
-          ["integer", "number", "string"]
+          [
+            "integer",
+            "number",
+            "string"
+          ],
+          [
+            "integer",
+            "number",
+            "string"
+          ]
         ],
         "result": {
           "type": "boolean"
@@ -95,8 +143,16 @@
           "max": 2
         },
         "operand_types": [
-          ["integer", "number", "string"],
-          ["integer", "number", "string"]
+          [
+            "integer",
+            "number",
+            "string"
+          ],
+          [
+            "integer",
+            "number",
+            "string"
+          ]
         ],
         "result": {
           "type": "boolean"
@@ -111,8 +167,16 @@
           "max": 2
         },
         "operand_types": [
-          ["integer", "number", "string"],
-          ["integer", "number", "string"]
+          [
+            "integer",
+            "number",
+            "string"
+          ],
+          [
+            "integer",
+            "number",
+            "string"
+          ]
         ],
         "result": {
           "type": "boolean"
@@ -125,7 +189,11 @@
         "arity": {
           "min": 1
         },
-        "operand_types": [["boolean"]],
+        "operand_types": [
+          [
+            "boolean"
+          ]
+        ],
         "repeat_last": true,
         "result": {
           "type": "boolean"
@@ -138,7 +206,11 @@
         "arity": {
           "min": 1
         },
-        "operand_types": [["boolean"]],
+        "operand_types": [
+          [
+            "boolean"
+          ]
+        ],
         "repeat_last": true,
         "result": {
           "type": "boolean"
@@ -152,7 +224,11 @@
           "min": 1,
           "max": 1
         },
-        "operand_types": [["boolean"]],
+        "operand_types": [
+          [
+            "boolean"
+          ]
+        ],
         "result": {
           "type": "boolean"
         },
@@ -166,7 +242,15 @@
           "max": 1
         },
         "operand_types": [
-          ["array", "boolean", "integer", "null", "number", "object", "string"]
+          [
+            "array",
+            "boolean",
+            "integer",
+            "null",
+            "number",
+            "object",
+            "string"
+          ]
         ],
         "result": {
           "type": "boolean"
@@ -180,7 +264,15 @@
           "min": 1
         },
         "operand_types": [
-          ["array", "boolean", "integer", "null", "number", "object", "string"]
+          [
+            "array",
+            "boolean",
+            "integer",
+            "null",
+            "number",
+            "object",
+            "string"
+          ]
         ],
         "repeat_last": true,
         "result": {},
@@ -194,8 +286,19 @@
           "max": 2
         },
         "operand_types": [
-          ["array", "string"],
-          ["array", "boolean", "integer", "null", "number", "object", "string"]
+          [
+            "array",
+            "string"
+          ],
+          [
+            "array",
+            "boolean",
+            "integer",
+            "null",
+            "number",
+            "object",
+            "string"
+          ]
         ],
         "result": {
           "type": "boolean"
@@ -210,8 +313,19 @@
           "max": 2
         },
         "operand_types": [
-          ["array", "string"],
-          ["array", "boolean", "integer", "null", "number", "object", "string"]
+          [
+            "array",
+            "string"
+          ],
+          [
+            "array",
+            "boolean",
+            "integer",
+            "null",
+            "number",
+            "object",
+            "string"
+          ]
         ],
         "result": {
           "type": "boolean"
@@ -226,8 +340,18 @@
           "max": 2
         },
         "operand_types": [
-          ["array", "boolean", "integer", "null", "number", "object", "string"],
-          ["array"]
+          [
+            "array",
+            "boolean",
+            "integer",
+            "null",
+            "number",
+            "object",
+            "string"
+          ],
+          [
+            "array"
+          ]
         ],
         "result": {
           "type": "boolean"
@@ -242,8 +366,18 @@
           "max": 2
         },
         "operand_types": [
-          ["array", "boolean", "integer", "null", "number", "object", "string"],
-          ["array"]
+          [
+            "array",
+            "boolean",
+            "integer",
+            "null",
+            "number",
+            "object",
+            "string"
+          ],
+          [
+            "array"
+          ]
         ],
         "result": {
           "type": "boolean"
@@ -257,7 +391,14 @@
           "min": 2,
           "max": 2
         },
-        "operand_types": [["string"], ["string"]],
+        "operand_types": [
+          [
+            "string"
+          ],
+          [
+            "string"
+          ]
+        ],
         "result": {
           "type": "boolean"
         },
@@ -270,7 +411,14 @@
           "min": 2,
           "max": 2
         },
-        "operand_types": [["string"], ["string"]],
+        "operand_types": [
+          [
+            "string"
+          ],
+          [
+            "string"
+          ]
+        ],
         "result": {
           "type": "boolean"
         },
@@ -283,7 +431,14 @@
         "arity": {
           "min": 1
         },
-        "operand_types": [["string", "integer", "number", "boolean"]],
+        "operand_types": [
+          [
+            "string",
+            "integer",
+            "number",
+            "boolean"
+          ]
+        ],
         "repeat_last": true,
         "result": {
           "type": "string"
@@ -298,8 +453,20 @@
           "min": 2,
           "max": 2
         },
-        "operand_types": [["array"], ["string"]],
-        "item_types": ["string", "integer", "number", "boolean"],
+        "operand_types": [
+          [
+            "array"
+          ],
+          [
+            "string"
+          ]
+        ],
+        "item_types": [
+          "string",
+          "integer",
+          "number",
+          "boolean"
+        ],
         "result": {
           "type": "string"
         },
@@ -416,7 +583,11 @@
             "label": "For each item"
           }
         ],
-        "scope_roots": ["/item", "/index", "/loops"],
+        "scope_roots": [
+          "/item",
+          "/index",
+          "/loops"
+        ],
         "studio": "pending"
       },
       {

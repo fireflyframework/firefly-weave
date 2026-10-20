@@ -15,88 +15,44 @@
 # SPDX-License-Identifier: Apache-2.0
 apiVersion: weave/v1alpha1
 kind: Workflow
-metadata: { name: order-review, version: 1.0.0 }
+metadata: {name: order-review, version: 1.0.0}
 spec:
   inputSchema:
     type: object
     required: [customerId, amount]
     properties:
-      customerId: { type: string, title: Customer ID }
-      email: { type: string, title: Email }
-      amount: { type: number, title: Amount }
-      status: { type: string, title: Status, enum: [open, closed] }
-      tags: { type: array, title: Tags, items: { type: string } }
-      password: { type: string, title: Password, x-secret: true }
-  outputSchema: { type: object }
+      customerId: {type: string, title: Customer ID}
+      email: {type: string, title: Email}
+      amount: {type: number, title: Amount}
+      status: {type: string, title: Status, enum: [open, closed]}
+      tags: {type: array, title: Tags, items: {type: string}}
+      password: {type: string, title: Password, x-secret: true}
+  outputSchema: {type: object}
   steps:
     - id: check
       kind: transform
-      value:
-        {
-          object:
-            { large: { literal: false }, customer: { ref: /input/customerId } },
-        }
+      value: {object: {large: {literal: false}, customer: {ref: /input/customerId}}}
     - id: flag
       kind: transform
-      value:
-        { op: { name: gt, args: [{ ref: /input/amount }, { literal: 1000 }] } }
+      value: {op: {name: gt, args: [{ref: /input/amount}, {literal: 1000}]}}
     - id: opaque
       kind: transform
-      value: { ref: /input/amount, literal: hidden }
+      value: {ref: /input/amount, literal: hidden}
     - id: note
       kind: transform
-      value: { literal: Ready }
+      value: {literal: Ready}
     - id: review
       kind: humanTask
       assignment: reviewers
-      title:
-        {
-          op:
-            {
-              name: concat,
-              args: [{ literal: "Review order of " }, { ref: /input/amount }],
-            },
-        }
-      context: { ref: /steps/check/output }
-      formSchema: { type: object, properties: {} }
+      title: {op: {name: concat, args: [{literal: "Review order of "}, {ref: /input/amount}]}}
+      context: {ref: /steps/check/output}
+      formSchema: {type: object, properties: {}}
       decisions: [approve, reject]
     - id: route
       kind: switch
       cases:
-        - when:
-            {
-              op:
-                {
-                  name: or,
-                  args:
-                    [
-                      {
-                        op:
-                          {
-                            name: gt,
-                            args: [{ ref: /input/amount }, { literal: 1000 }],
-                          },
-                      },
-                      {
-                        op:
-                          {
-                            name: not,
-                            args:
-                              [
-                                {
-                                  op:
-                                    {
-                                      name: exists,
-                                      args: [{ ref: /input/email }],
-                                    },
-                                },
-                              ],
-                          },
-                      },
-                    ],
-                },
-            }
+        - when: {op: {name: or, args: [{op: {name: gt, args: [{ref: /input/amount}, {literal: 1000}]}}, {op: {name: not, args: [{op: {name: exists, args: [{ref: /input/email}]}}]}}]}}
           steps: []
-          output: { literal: {} }
-      default: { steps: [], output: { literal: {} } }
-  output: { literal: {} }
+          output: {literal: {}}
+      default: {steps: [], output: {literal: {}}}
+  output: {literal: {}}

@@ -18,32 +18,44 @@
     {
       "key": "send[3]",
       "node_id": "send",
-      "indexes": [3],
+      "indexes": [
+        3
+      ],
       "segments": [],
       "count": null,
       "view": {
         "node_id": "send",
         "instance_key": "send[3]",
-        "iteration": [3]
+        "iteration": [
+          3
+        ]
       }
     },
     {
       "key": "send[3][0]",
       "node_id": "send",
-      "indexes": [3, 0],
+      "indexes": [
+        3,
+        0
+      ],
       "segments": [],
       "count": null,
       "view": {
         "node_id": "send",
         "instance_key": "send[3][0]",
-        "iteration": [3, 0]
+        "iteration": [
+          3,
+          0
+        ]
       }
     },
     {
       "key": "support#2",
       "node_id": "support",
       "indexes": [],
-      "segments": ["2"],
+      "segments": [
+        "2"
+      ],
       "count": null,
       "view": {
         "node_id": "support",
@@ -55,7 +67,10 @@
       "key": "support#2.1",
       "node_id": "support",
       "indexes": [],
-      "segments": ["2", "1"],
+      "segments": [
+        "2",
+        "1"
+      ],
       "count": null,
       "view": {
         "node_id": "support",
@@ -67,7 +82,11 @@
       "key": "support#2.1.review",
       "node_id": "support",
       "indexes": [],
-      "segments": ["2", "1", "review"],
+      "segments": [
+        "2",
+        "1",
+        "review"
+      ],
       "count": null,
       "view": {
         "node_id": "support",
@@ -78,13 +97,21 @@
     {
       "key": "support[3]#2.1.review",
       "node_id": "support",
-      "indexes": [3],
-      "segments": ["2", "1", "review"],
+      "indexes": [
+        3
+      ],
+      "segments": [
+        "2",
+        "1",
+        "review"
+      ],
       "count": null,
       "view": {
         "node_id": "support",
         "instance_key": "support[3]#2.1.review",
-        "iteration": [3]
+        "iteration": [
+          3
+        ]
       }
     },
     {
@@ -102,13 +129,17 @@
     {
       "key": "notify[1]~2",
       "node_id": "notify",
-      "indexes": [1],
+      "indexes": [
+        1
+      ],
       "segments": [],
       "count": 2,
       "view": {
         "node_id": "notify",
         "instance_key": "notify[1]~2",
-        "iteration": [1]
+        "iteration": [
+          1
+        ]
       }
     },
     {
@@ -126,25 +157,33 @@
     {
       "key": "@branch:notify:0[4]",
       "node_id": "@branch:notify:0",
-      "indexes": [4],
+      "indexes": [
+        4
+      ],
       "segments": [],
       "count": null,
       "view": {
         "node_id": "@branch:notify:0",
         "instance_key": "@branch:notify:0[4]",
-        "iteration": [4]
+        "iteration": [
+          4
+        ]
       }
     },
     {
       "key": "a.b_c-d[9007199254740991]",
       "node_id": "a.b_c-d",
-      "indexes": [9007199254740991],
+      "indexes": [
+        9007199254740991
+      ],
       "segments": [],
       "count": null,
       "view": {
         "node_id": "a.b_c-d",
         "instance_key": "a.b_c-d[9007199254740991]",
-        "iteration": [9007199254740991]
+        "iteration": [
+          9007199254740991
+        ]
       }
     }
   ],

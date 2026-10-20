@@ -15,65 +15,40 @@
 # SPDX-License-Identifier: Apache-2.0
 apiVersion: weave/v1alpha1
 kind: Workflow
-metadata: { name: vendor-payment-approval, version: 1.0.0 }
+metadata: {name: vendor-payment-approval, version: 1.0.0}
 spec:
   inputSchema:
     type: object
     required: [customerId, amount]
     properties:
-      customerId: { type: string, title: Customer ID }
-      amount: { type: number, title: Amount }
-      region: { type: string, title: Region, enum: [eu, us] }
-      vip: { type: boolean, title: VIP }
-  outputSchema: { type: object }
+      customerId: {type: string, title: Customer ID}
+      amount: {type: number, title: Amount}
+      region: {type: string, title: Region, enum: [eu, us]}
+      vip: {type: boolean, title: VIP}
+  outputSchema: {type: object}
   connections:
-    ledger-db: { connector: weave-postgresql@1.0.0, required: true }
+    ledger-db: {connector: weave-postgresql@1.0.0, required: true}
   steps:
     - id: prepare-request
       kind: transform
-      value:
-        {
-          object:
-            {
-              customer: { ref: /input/customerId },
-              amount: { ref: /input/amount },
-            },
-        }
+      value: {object: {customer: {ref: /input/customerId}, amount: {ref: /input/amount}}}
     - id: approval
       kind: humanTask
       assignment: finance-approvers
-      title: { literal: Approve vendor payment }
-      context: { ref: /steps/prepare-request/output }
-      formSchema: { type: object }
+      title: {literal: Approve vendor payment}
+      context: {ref: /steps/prepare-request/output}
+      formSchema: {type: object}
       decisions: [approve, reject]
     - id: route
       kind: switch
       cases:
-        - when:
-            {
-              op:
-                {
-                  name: eq,
-                  args:
-                    [
-                      { ref: /steps/approval/output/decision },
-                      { literal: approve },
-                    ],
-                },
-            }
+        - when: {op: {name: eq, args: [{ref: /steps/approval/output/decision}, {literal: approve}]}}
           steps:
             - id: pay-vendor
               kind: action
               uses: sql.lookup@1.0.0
               connection: ledger-db
-              with:
-                {
-                  object:
-                    {
-                      parameters:
-                        { object: { customerId: { ref: /input/customerId } } },
-                    },
-                }
+              with: {object: {parameters: {object: {customerId: {ref: /input/customerId}}}}}
             - id: pay-and-notify
               kind: parallel
               concurrency: 2
@@ -84,48 +59,22 @@ spec:
                       kind: action
                       uses: sql.lookup@1.0.0
                       connection: ledger-db
-                      with:
-                        {
-                          object:
-                            {
-                              parameters:
-                                {
-                                  object:
-                                    { customerId: { ref: /input/customerId } },
-                                },
-                            },
-                        }
-                  output: { literal: {} }
+                      with: {object: {parameters: {object: {customerId: {ref: /input/customerId}}}}}
+                  output: {literal: {}}
                 email:
                   steps:
                     - id: send-confirmation
                       kind: action
                       uses: crm.lookup@2.0.0
-                      with: { object: { customer: { ref: /input/customerId } } }
-                  output: { literal: {} }
-          output: { literal: {} }
-        - when:
-            {
-              op:
-                {
-                  name: eq,
-                  args:
-                    [
-                      { ref: /steps/approval/output/decision },
-                      { literal: reject },
-                    ],
-                },
-            }
+                      with: {object: {customer: {ref: /input/customerId}}}
+                  output: {literal: {}}
+          output: {literal: {}}
+        - when: {op: {name: eq, args: [{ref: /steps/approval/output/decision}, {literal: reject}]}}
           steps:
-            - {
-                id: rejected,
-                kind: fail,
-                code: payment-rejected,
-                message: The approver rejected the payment.,
-              }
-          output: { literal: {} }
-      default: { steps: [], output: { literal: {} } }
+            - {id: rejected, kind: fail, code: payment-rejected, message: The approver rejected the payment.}
+          output: {literal: {}}
+      default: {steps: [], output: {literal: {}}}
     - id: record-result
       kind: transform
-      value: { object: { decision: { ref: /steps/approval/output/decision } } }
-  output: { ref: /steps/record-result/output }
+      value: {object: {decision: {ref: /steps/approval/output/decision}}}
+  output: {ref: /steps/record-result/output}
