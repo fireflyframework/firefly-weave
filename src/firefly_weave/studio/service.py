@@ -99,6 +99,8 @@ STUDIO_FAMILIES = frozenset(
         "deployment_plans",
         "deployment_jobs",
         "deployment_runners",
+        # Change requests re-check every capability and the four-eyes rule server-side.
+        "deployment_change_requests",
         "environments",
         "incidents",
         # The environment summary and telemetry settings re-check each section's capability server-side.

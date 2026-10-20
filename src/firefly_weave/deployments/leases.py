@@ -294,6 +294,7 @@ class DeploymentLeases:
             ):
                 raise CatalogError(422, "WV-JOB-RECEIPT", "Ambiguous effects must remain explicit")
             observation_id = None
+            observation: DeploymentObservation | None = None
             if request.observation:
                 data = dict(
                     **request.observation.model_dump(),
@@ -319,6 +320,10 @@ class DeploymentLeases:
                 }
             )
             await repo.update("jobs", job.id, result, extra={"state": request.state})
+            # The change request that owns this job moves in the same transaction as the job.
+            from firefly_weave.deployments.change_service import follow_job
+
+            await follow_job(repo, result, observation=observation)
             await repo.insert(
                 "reports",
                 request.report_id,

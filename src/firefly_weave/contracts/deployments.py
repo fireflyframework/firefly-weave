@@ -16,6 +16,8 @@
 
 """Typed, bounded Operations plans; infrastructure credentials remain with the runner."""
 
+import hashlib
+import json
 from typing import Annotated, Literal, Self
 from uuid import UUID
 
@@ -484,3 +486,24 @@ class DrainProgress(ContractModel):
     change_request: ChangeRequest
     members: list[DrainProgressMember] = Field(max_length=100)
     remaining: int = Field(ge=0, le=100)
+
+
+class ChangeRequestQuery(ContractModel):
+    """`deployment_change_requests.list` filters; a state filter matches the state readers see."""
+
+    target_id: UUID | None = None
+    state: list[ChangeState] = Field(default_factory=list, max_length=13)
+    requested_by: Literal["me"] | None = None
+    limit: int = Field(default=50, ge=1, le=100)
+    cursor: Annotated[str, Field(min_length=1, max_length=1024, pattern=r"^[A-Za-z0-9_-]+$")] | None = None
+
+    @model_validator(mode="after")
+    def distinct_states(self) -> Self:
+        if len(set(self.state)) != len(self.state):
+            raise ValueError("States must be distinct")
+        return self
+
+    def cursor_collection(self) -> str:
+        """Cursors are bound to every filter, so a changed filter refuses an old cursor."""
+        filters = json.dumps(self.model_dump(mode="json", exclude={"limit", "cursor"}), sort_keys=True)
+        return "deployment-change-requests:" + hashlib.sha256(filters.encode()).hexdigest()[:32]
