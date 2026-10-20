@@ -308,8 +308,10 @@ class _Walk:
             return frozenset(merged) if all(results) else frozenset()
         if isinstance(element, Repeat):
             once = self.repeat(element, states, shared=shared, beside=beside)
-            # A second iteration starts where the first ended; it differs only when the first changed the state.
-            twice = self.repeat(element, once, shared=shared, beside=beside) if once != states else once
+            # A second iteration starts where the first ended; it differs only when the first changed the state,
+            # and there is none when the loop runs at most once.
+            again = element.max_items > 1 and once != states
+            twice = self.repeat(element, once, shared=shared, beside=beside) if again else once
             return states | once | twice
         self.reached[element.id] = self.reached.get(element.id, True) and all(s.pivot is not None for s in states)
         if isinstance(element, Other):

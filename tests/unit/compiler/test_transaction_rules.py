@@ -281,6 +281,15 @@ def test_a_wait_beside_a_reservation_in_a_parallel_step_warns_too():
     assert check(Fork("both", at(0), short), irreversible(1, timeout=10))[0] == []
 
 
+def test_a_loop_that_runs_at_most_once_has_no_second_round():
+    inner = at(0) + "/body/steps"
+    body = Sequence(inner, (Other("answer", at(0, inner), "signal", None), reserve(1, 60, base=inner)))
+    assert check(Repeat("each", at(0), body, 1), irreversible(1, timeout=10))[0] == []
+    assert check(Repeat("each", at(0), body, 2), irreversible(1, timeout=10))[0] == [
+        ("TXN_HOLD_WAIT", at(0, inner), "warning")
+    ]
+
+
 def test_size_is_bounded_with_loops_multiplied_out_and_an_edit_on_maxitems():
     body = Sequence(at(0) + "/body/steps", (compensate(0, base=at(0) + "/body/steps"),))
     issues, analysis = check(Repeat("each", at(0), body, 2000))
@@ -399,7 +408,7 @@ def _bodies(draw, base: str = BODY, depth: int = 0, budget: list[int] | None = N
             continue
         if shape == "loop":
             body = draw(_bodies(f"{path}/body/steps", depth + 1, budget, numbers))
-            elements.append(Repeat(f"r{number()}", path, body, draw(st.integers(2, 5))))
+            elements.append(Repeat(f"r{number()}", path, body, draw(st.integers(1, 5))))
             continue
         kinds = ["wait", "pure", "fail", "read"]
         if budget[0] > 0:
