@@ -21,6 +21,7 @@ SPDX-License-Identifier: Apache-2.0
 import { expect, test, type Page } from "@playwright/test";
 import { applySource } from "./owned-actions";
 import { fitCanvas, sizes, type StepDetailsPage } from "./step-details-po";
+import { box, clippedText, expectAligned } from "./step-geometry";
 import { command, sourceText } from "./support";
 import { banner, openTestDataFixture, outputPane } from "./test-data-po";
 
@@ -176,5 +177,47 @@ for (const size of sizes)
       await expect(page.getByRole("menuitem", { name: /^Unpin/ })).toHaveCount(
         0,
       );
+    });
+  });
+
+for (const size of [
+  { tag: "1440x900", width: 1440, height: 900 },
+  { tag: "600x500", width: 600, height: 500 },
+  { tag: "360x640", width: 360, height: 640 },
+])
+  test.describe(`pinned banner geometry at ${size.tag}`, () => {
+    test.use({ viewport: { width: size.width, height: size.height } });
+    test("the stale banner fits the pane, its icon on the first line, its links in the text", async ({
+      page,
+    }) => {
+      const details = await openTestDataFixture(page);
+      await pin(details, "notify");
+      await changeScore(page);
+      await details.open("notify");
+      const pane = await outputPane(details);
+      const shown = banner(pane);
+      await expect(shown).toHaveAttribute("data-tone", "warning");
+      const outer = await box(shown);
+      const content = await box(pane.locator(".pane-content"));
+      expect(outer.x).toBeGreaterThanOrEqual(content.x - 1);
+      expect(outer.right).toBeLessThanOrEqual(content.right + 1);
+      const icon = await box(shown.locator("weave-icon").first());
+      const text = await box(shown.locator("p").first());
+      // The icon sits on the first line of text, never below it.
+      expect(icon.y).toBeGreaterThanOrEqual(text.y - 1);
+      expect(icon.y).toBeLessThan(text.y + 12);
+      expect(icon.right).toBeLessThan(text.x);
+      for (const name of ["Keep pinned", "Unpin"]) {
+        const link = await box(shown.getByRole("button", { name }));
+        expect(link.x).toBeGreaterThanOrEqual(text.x - 1);
+        expect(link.right).toBeLessThanOrEqual(outer.right);
+      }
+      // The Pinned tag and the count share the sub-row with Edit and Pin.
+      const tag = await box(pane.locator(".pane-sub .pill"));
+      const edit = await box(pane.locator(".pane-edit"));
+      const pinButton = await box(pane.locator(".pane-pin"));
+      expectAligned([tag.middle, edit.middle, pinButton.middle], "sub-row", 2);
+      expect(edit.right).toBeLessThanOrEqual(pinButton.x);
+      expect(await clippedText(details.dialog)).toEqual([]);
     });
   });
