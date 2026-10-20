@@ -1147,6 +1147,51 @@ secret are locked: Studio never enters, sends, or stores their values. In an
 action's input, the connection's credentials supply them. The expression rules
 are in [Decide where a value comes from](studio-step-reference.md#decide-where-a-value-comes-from).
 
+### Use test data while you build
+
+Test data is what Studio uses to show you data while you build, without
+calling real systems: the trigger's test input and the output you pin on
+steps. It is kept with the workflow, outside its undo history, and never
+becomes part of the workflow definition.
+
+- **Test input.** Open the trigger and fill in its **Test event**, or select
+  **Generate sample**. Every step that reads the workflow input shows these
+  values in its Input pane, and formula previews use them.
+- **Pin output.** A step that calls something outside the workflow, such as an
+  action or an AI task, can keep an output for test runs. In its Output pane,
+  select **Set test output** to type or paste JSON, or **Generate sample** to
+  fill it from the step's output fields. The pane then shows **Pinned** and
+  "This data is pinned for test runs. Production runs ignore it." **Edit
+  output** opens the JSON again; closing step details with an edit not saved
+  asks first. Steps whose output is computed from their input, such as a
+  Transform, can't be pinned: pin the steps they read instead.
+- **Pin and unpin.** Press **P** outside a field, in step details or on the
+  canvas (for every selected step), or use the step's menu. **Unpin** shows
+  **Undo**. On the canvas, pinned steps show a pin badge.
+- **Out of date.** When a pinned step's settings, what it calls, or anything it
+  reads changes, its badge reads "Pinned test data, out of date" with the
+  reason, and the Output pane says "Pinned output may be out of date: earlier
+  steps changed." Select **Keep pinned** to keep the output as it is. Output
+  pasted or loaded from another workflow reads "pinned in another workflow;
+  check it still fits" until you keep it.
+- **Secrets.** Test data never keeps a value for a field its schema marks
+  secret or write-only. Studio checks every value before it keeps it, and the
+  platform checks again.
+- **Copy, rename and delete.** Copied steps bring their pinned output, except
+  output recorded from a run. Renaming a step keeps its test data, and Undo of
+  a deletion, from the toast or the toolbar, brings its pinned output back.
+- **Simulate.** The simulation's forms start from the test input and the pinned
+  outputs.
+- **Where it is kept.** For a workflow on this computer, next to the draft; in
+  the desktop app, in Studio's private store, so it survives quitting. For a
+  platform draft, on the platform with the draft, with a copy on this
+  computer, so others working on the draft see it. Test data recorded from a
+  run can be read only by people who can read that run.
+- **Files.** **Save to file** adds `<name>.testdata.json` beside the workflow.
+  Opening the workflow with that file asks whether to load it. When test data
+  holds data recorded from a run, Studio asks before saving it, and offers to
+  save without it.
+
 ### Design schemas
 
 Input, output, signal payload, and human task form schemas open in a field
