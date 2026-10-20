@@ -324,3 +324,130 @@ def test_a_value_too_deep_or_too_large_to_classify_is_refused(monkeypatch, failu
     monkeypatch.setattr(test_data, "classify", give_up)
     result = check(data(pins={"check": {**PIN, "output": {"eligible": True}}}), ACTION)
     assert result == {"/pins/check": "WV-SCHEMA-CLASSIFICATION"}
+
+
+CALLEE: dict[str, Any] = {
+    "apiVersion": "weave/v1alpha1",
+    "kind": "Workflow",
+    "metadata": {"name": "enrich", "version": "1.0.0"},
+    "spec": {
+        "inputSchema": {"type": "object"},
+        "outputSchema": {},
+        "steps": [
+            {"id": "check", "kind": "action", "uses": "onboarding.issue-token@1.0.0", "with": {"literal": {}}},
+            {
+                "id": "paid",
+                "kind": "signal",
+                "name": "paid",
+                "timeoutSeconds": 60,
+                "payloadSchema": {"type": "object", "properties": {"code": {"type": "string", "x-secret": True}}},
+            },
+            {
+                "id": "review",
+                "kind": "humanTask",
+                "assignment": "reviewers",
+                "title": {"literal": "Review"},
+                "context": {"literal": {}},
+                "formSchema": {"type": "object", "properties": {"note": {"type": "string", "x-secret": True}}},
+                "decisions": ["approve", "reject"],
+            },
+        ],
+        "output": {"literal": None},
+    },
+}
+NESTED: dict[str, Any] = {
+    **WORKFLOW,
+    "spec": {
+        **WORKFLOW["spec"],
+        "steps": [
+            *WORKFLOW["spec"]["steps"],
+            {
+                "id": "fan",
+                "kind": "parallel",
+                "branches": {
+                    "a": {
+                        "steps": [
+                            {
+                                "id": "issue",
+                                "kind": "action",
+                                "uses": "onboarding.issue-token@1.0.0",
+                                "with": {"literal": {}},
+                            }
+                        ],
+                        "output": {"literal": None},
+                    }
+                },
+            },
+            {
+                "id": "each",
+                "kind": "forEach",
+                "items": {"literal": [1]},
+                "body": {
+                    "steps": [
+                        {
+                            "id": "again",
+                            "kind": "action",
+                            "uses": "onboarding.check-customer@1.0.0",
+                            "with": {"literal": {}},
+                        }
+                    ],
+                    "output": {"literal": None},
+                },
+            },
+            {"id": "enrich", "kind": "callWorkflow", "uses": "enrich@1.0.0", "mode": "wait", "with": {"literal": {}}},
+            {"id": "support", "kind": "agent"},
+        ],
+    },
+}
+
+
+def check_nested(document: StudioTestData) -> dict[str, str | None]:
+    definitions = [load_definition(d) for d in (ACTION, SECRET_ACTION, CALLEE)]
+    return dict(check_test_data(NESTED, document, CatalogSnapshot.from_definitions(definitions)))
+
+
+def test_steps_inside_parallel_branches_and_loops_are_checked():
+    result = check_nested(
+        data(pins={"issue": {**PIN, "output": {"token": "abc"}}, "again": {**PIN, "output": {"eligible": "yes"}}})
+    )
+    assert result == {"/pins/issue": "WV-SCHEMA-SECRET_VALUE", "/pins/again": "WV-STUDIO-TESTDATA-SCHEMA"}
+
+
+def test_signals_and_answers_in_a_frame_are_checked_against_the_called_workflow():
+    result = check_nested(
+        data(
+            signals={"paid": {"payload": {"code": "1"}, "frame": "enrich"}},
+            humans={"review": {"decision": "approve", "data": {"note": "x"}, "frame": "enrich"}},
+        )
+    )
+    assert result == {"/signals/paid": "WV-SCHEMA-SECRET_VALUE", "/humans/review": "WV-SCHEMA-SECRET_VALUE"}
+    # The same entries without the frame are this workflow's steps, whose schemas mark nothing secret there.
+    unframed = check_nested(
+        data(
+            signals={"paid": {"payload": {"code": "1"}}},
+            humans={"review": {"decision": "approve", "data": {"note": "x"}}},
+        )
+    )
+    assert unframed == {"/signals/paid": None, "/humans/review": None}
+
+
+def test_mocks_of_a_called_workflow_are_checked_against_its_own_steps():
+    result = check_nested(
+        data(workflows={"enrich@1.0.0": {"mocks": {"check": {"output": {"token": "abc"}, "source": "manual"}}}})
+    )
+    assert result == {"/workflows/enrich@1.0.0/mocks/check": "WV-SCHEMA-SECRET_VALUE"}
+
+
+def test_an_ai_agent_s_pin_stays_unresolved():
+    assert check_nested(data(pins={"support": {**PIN, "output": {}}})) == {
+        "/pins/support": "WV-STUDIO-TESTDATA-UNRESOLVED"
+    }
+
+
+def test_the_host_keeps_the_first_copy_of_a_definition(tmp_path):
+    first = {**SECRET_ACTION, "metadata": ACTION["metadata"]}
+    document = data(pins={"check": {**PIN, "output": {"token": "abc"}}})
+    with client(tmp_path) as browser:
+        headers = pair(browser)
+        answer = browser.post("/studio/local/testdata/check", json=body(document, first, ACTION), headers=headers)
+    assert answer.json() == {"entries": [{"path": "/pins/check", "ok": False, "code": "WV-SCHEMA-SECRET_VALUE"}]}
