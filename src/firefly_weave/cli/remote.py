@@ -202,6 +202,18 @@ def command(operation_id: str, name: str | None = None) -> click.Command:
                 if options.get(key) is not None:
                     query[key] = str(options[key]).lower() if isinstance(options[key], bool) else options[key]
             async with WeaveClient(base_url, provider, scope) as sdk:
+                if operation_id == "activations.create" and options.get("pin_current_calls"):
+                    from firefly_weave.contracts.catalog import ActivationRequest
+                    from firefly_weave.sdk.call_pins import CallPinError, current_call_pins
+
+                    assert isinstance(body, ActivationRequest)
+                    try:
+                        body = await current_call_pins(sdk, body)
+                    except CallPinError as error:
+                        raise TargetProblem(str(error)) from None
+                    # Show the chosen pins before the mutation; standard output stays the final result.
+                    pins = {reference: str(value) for reference, value in sorted(body.workflow_activation_ids.items())}
+                    click.echo(json.dumps({"workflow_activation_ids": pins}), err=True)
                 if operation_id == "retention.apply":
                     assert identifier is not None
                     plan = await sdk.read_retention_plan(identifier)
@@ -328,6 +340,14 @@ def command(operation_id: str, name: str | None = None) -> click.Command:
         )
     if operation.idempotency:
         params.append(click.Option(["--idempotency-key"], required=True))
+    if operation_id == "activations.create":
+        params.append(
+            click.Option(
+                ["--pin-current-calls"],
+                is_flag=True,
+                help="Pin the current activation of each workflow version this workflow calls; prints the pins.",
+            )
+        )
     if operation.page or operation_id in {"runs.history", "runs.export", "runs.replay"}:
         params.append(
             click.Option(

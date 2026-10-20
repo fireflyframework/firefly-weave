@@ -217,12 +217,11 @@ other workflows are part of the language; compensation is not.
 
 **New language constructs.** `forEach`, `callWorkflow`, `concat`, and `join`
 each need a language feature: `flow.forEach`, `flow.callWorkflow`, `text.concat`,
-and `text.join`. This version compiles and runs `concat`, `join`, and `forEach`;
-see [loops at run time](reference/compiler.md#loops-at-run-time). A platform
-that does not list `flow.forEach` refuses to publish, import, or activate a
-workflow that uses a loop (`WV-IR-UNSUPPORTED`). It also compiles
-`callWorkflow` (see **Workflow calls** below) and refuses to publish a workflow
-that calls another until it runs calls. A platform runs a construct only when its
+and `text.join`. This version compiles and runs all four; see
+[loops at run time](reference/compiler.md#loops-at-run-time) and
+[Call another workflow](guides/call-workflows.md). A platform that does not list
+`flow.forEach` or `flow.callWorkflow` refuses to publish, import, or activate a
+workflow that uses a loop or a call (`WV-IR-UNSUPPORTED`). A platform runs a construct only when its
 [language manifest](#language-manifest) lists the feature. Step IDs can never
 contain `[`, `#`, or `~`, which keeps
 [instance keys](reference/compiler.md#instance-keys) unambiguous.
@@ -275,6 +274,25 @@ extra pin, a pin to another workflow or version, a retired activation or
 version, a version that does not allow this workflow, and a chain of calls
 deeper than 8 with `422 WV-READINESS-CALL`; the activation records each pin in
 `workflow_call_pins` and the longest chain in `call_depth`.
+`weave definitions activations create --pin-current-calls` fills the pins from the current
+activation of each called version and prints them before it submits.
+
+**Calls at run time.** Each call starts a separate child run of the pinned
+activation, under the principal of the calling run, which must still hold
+`run.start` when the child starts. The child has its own history, incidents,
+human tasks, waits and signals, and `RunView.caller` names the call that started
+it; `GET …/runs/{id}/calls` lists a run's calls with each child's run ID and
+status. A waiting call continues when its child ends: with `stop`, a child that
+fails fails the caller with the child's `code` and `message`, and a child that is
+cancelled or times out opens `WV-CALL-INTERRUPTED` on the caller; with
+`continue`, every outcome returns the envelope above. A call that cannot start
+(the pinned activation or its version was retired, `run.start` was removed, or the
+chain is deeper than 8) opens `WV-CALL-START` or `WV-CALL-DEPTH` on a waiting
+caller and is recorded for a detached one. Cancelling or ending a caller cancels
+its waiting children and theirs; detached children keep running, and a detached
+call that is a workflow's last step still starts its child after the caller
+finished. There is no call-level timeout: the child's own `timeoutSeconds` and
+the caller's bound the call.
 
 **Human tasks** need an environment assignment binding at activation, and
 completing one requires the current claim and task permission. A workflow with a
@@ -490,7 +508,9 @@ backend is absent. The `integration` and `e2e` pytest markers are registered.
 | `null` is rejected for an optional field | Optional fields may be omitted but not set to null | Remove the field |
 | A step's `retry` or `timeoutSeconds` is rejected | Retry and per-attempt timeout belong to the action definition | Move them to the action; use `spec.timeoutSeconds` for a workflow-wide timeout |
 | `WV-COMP-UNSUPPORTED_FEATURE` | The document uses a construct whose language feature this compiler does not compile; the message names the feature | Upgrade the CLI or SDK that compiles it, or replace the construct with steps this compiler supports |
-| `WV-IR-UNSUPPORTED` when publishing a workflow with `callWorkflow` | The compiler accepts the call, but this platform does not run workflow calls yet, so it refuses to publish it; `result.missing_features` is `["flow.callWorkflow"]` | Keep the workflow as a draft until the platform lists `flow.callWorkflow` in its language manifest; the called workflow itself publishes normally |
+| `WV-IR-UNSUPPORTED` when publishing a workflow with `callWorkflow` | The platform you publish to is older and does not list `flow.callWorkflow` in its language manifest; `result.missing_features` is `["flow.callWorkflow"]` | Upgrade that platform, or keep the workflow as a draft until it lists the feature; the called workflow itself publishes normally |
+| `WV-CALL-START` or `WV-CALL-DEPTH` on a run | A waiting call could not start its child: the pinned activation or its version was retired, the calling run's principal no longer holds `run.start`, the input no longer fits the called version, or the chain of calls is deeper than 8 | Fix the cause, then resolve the incident with `retry_safe` to try a new child, `accept_reconciled_result` with the call's output, or `terminate` |
+| `WV-CALL-INTERRUPTED` on a run | The child of a waiting call that stops on failure was cancelled or timed out | `retry_safe` starts a new child run; only its result is used |
 | `WV-READINESS-CALL` on activation | A called workflow version has no pinned activation; a pin names something the workflow does not call; the pinned activation or its version is retired, runs another version, or does not allow this workflow; the pinned version differs from the one the workflow was compiled against; or the chain of calls is deeper than 8 | Pin one live activation of each called version in `workflow_activation_ids` |
 | `WV-IR-UNSUPPORTED` when publishing a workflow with `forEach` | The platform you publish to is older and does not list `flow.forEach` in its language manifest; `result.missing_features` is `["flow.forEach"]` | Upgrade that platform, or keep the workflow as a draft until it lists the feature |
 | `WV-DECISION-OPERATOR` | A decision table rule uses `concat` or `join` | Build the text in a Transform step before the table and pass it in as input |

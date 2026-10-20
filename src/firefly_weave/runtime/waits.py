@@ -117,6 +117,9 @@ async def settle(repository: RuntimeRepository, row: dict[str, Any], *, terminal
         return 2 if elapsed else 1
     if terminal_only:
         return 0
+    from firefly_weave.runtime.calls import deliver_calls
+
+    view, _ = await deliver_calls(repository, view, artifact)
     # Consume the durable winner even behind the barrier: the kernel defers its
     # continuation, while its settled deadline no longer occupies scanner pages.
     while view.state.status in {"waiting", "suspended"}:

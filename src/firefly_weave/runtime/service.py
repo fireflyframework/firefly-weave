@@ -40,6 +40,7 @@ from firefly_weave.contracts.operations import CancelRunRequest
 from firefly_weave.contracts.run_views import RunListQuery
 from firefly_weave.contracts.runtime import (
     CapacityRunAcknowledgment,
+    RunCaller,
     RunListFilters,
     RunView,
     StartRunRequest,
@@ -59,6 +60,7 @@ from firefly_weave.runtime.repository import RuntimeRepository
 
 if TYPE_CHECKING:
     from firefly_weave.contracts.values import JsonValue
+    from firefly_weave.runtime.calls import ChildStart
     from firefly_weave.workers.models import VerifiedTask
 
 
@@ -81,7 +83,27 @@ def view_of(row: dict[str, Any]) -> RunView:
         business_key=request["business_key"],
         parent_run_id=row.get("parent_run_id"),
         external_effects_may_continue=row["state"]["status"] == "cancelled",
+        caller=run_caller(row.get("call_link")),
     )
+
+
+def run_caller(link: dict[str, Any] | None) -> RunCaller | None:
+    """The call that started a child run, from its stored call link."""
+    if not link:
+        return None
+    from firefly_weave.contracts.instance_keys import instance_view
+
+    view = instance_view(link["node_id"])
+    fields = {
+        "run_id": str(link["run_id"]),
+        "node_id": view.node_id,
+        "instance_key": view.instance_key,
+        "iteration": view.iteration,
+        "generation": link["generation"],
+        "mode": link["mode"],
+        "depth": link["depth"],
+    }
+    return RunCaller.model_validate_json(json.dumps(fields))
 
 
 @service
@@ -172,16 +194,19 @@ class RuntimeService:
         tx: Transaction | None = None,
         not_after: datetime | None = None,
         start_facts: RunStartFacts | None = None,
+        child: "ChildStart | None" = None,
     ) -> RunView:
+        """Start a run; with ``child``, the child run of a claimed call, linked to its call before its first event."""
         self.require(actor, scope, "run.start", context)
         start_facts = start_facts if start_facts is not None else RunStartFacts()
         if not isinstance(start_facts, RunStartFacts):
             raise ValueError("Trusted start facts required")
         async with self.definitions.transaction(scope, tx) as enlisted:
+            # A child start keeps its keys apart from public starts, so no public start can claim a call's key.
             replay = Idempotency(
                 enlisted,
                 actor.id,
-                f"run.start:{scope.environment_id}",
+                f"run.{'start' if child is None else 'call'}:{scope.environment_id}",
                 idempotency_key,
                 request.model_dump(mode="json"),
             )
@@ -231,13 +256,39 @@ class RuntimeService:
                 state=result.state,
                 correlation_key=request.correlation_key,
                 business_key=request.business_key,
+                caller=None
+                if child is None
+                else run_caller(
+                    {
+                        "run_id": child.caller_run_id,
+                        "node_id": child.node_id,
+                        "generation": child.generation,
+                        "mode": child.mode,
+                        "depth": child.depth,
+                    }
+                ),
             )
             await repository.insert(
                 view, envelope, request, actor.id, start_facts=start_facts, at=now, imported=artifact, ir=ir
             )
-            from firefly_weave.files.authority import admit_files
+            from firefly_weave.files.authority import admit_files, admit_run_files
 
-            await admit_files(enlisted, view.id, request.input, actor, context=context)
+            if child is None:
+                await admit_files(enlisted, view.id, request.input, actor, context=context)
+            else:
+                # The link exists before the child's first event, so a child that ends in it reaches its call row.
+                await repository.execute(
+                    "INSERT INTO run_call_links(tenant_id,project_id,environment_id,run_id,caller_run_id,node_id,"
+                    "generation,mode,depth) VALUES(:tenant,:project,:environment,:run,:caller,:node,:generation,"
+                    ":mode,:depth)",
+                    run=view.id,
+                    caller=child.caller_run_id,
+                    node=child.node_id,
+                    generation=child.generation,
+                    mode=child.mode,
+                    depth=child.depth,
+                )
+                await admit_run_files(enlisted, child.caller_run_id, view.id, request.input)
             await admit_files(enlisted, view.id, envelope, actor, context=context)
             await repository.persist(view, event, result, event_hash(event))
             await replay.save(view.model_dump(mode="json"))
@@ -249,6 +300,9 @@ class RuntimeService:
                 scope=scope,
                 capability="run.start",
                 context=context.model_copy(update={"run_id": view.id}),
+                details=None
+                if child is None
+                else {"caller_run_id": str(child.caller_run_id), "call": child.node_id, "generation": child.generation},
             )
             return view
 
@@ -258,6 +312,28 @@ class RuntimeService:
         self.require(actor, scope, "run.read", context)
         async with self.definitions.transaction(scope, tx, mutation=False) as enlisted:
             return view_of(await RuntimeRepository(enlisted, self.definitions.outbox).run(identifier))
+
+    async def calls(
+        self,
+        actor: Principal,
+        scope: Scope,
+        identifier: UUID,
+        *,
+        limit: int = 50,
+        cursor: UUID | None = None,
+        context: AuditContext,
+    ) -> dict[str, Any]:
+        """The calls a run made; each names its child run and never carries input or output."""
+        if not 1 <= limit <= 100:
+            raise CatalogError(422, "WV-PAGE", "A bounded page is required")
+        self.require(actor, scope, "run.read", context)
+        async with self.definitions.transaction(scope, None, mutation=False) as tx:
+            self.require(await load_principal(tx.session, actor.id), scope, "run.read", context)
+            repository = RuntimeRepository(tx, self.definitions.outbox)
+            view_of(await repository.run(identifier))
+            from firefly_weave.runtime.calls import call_page
+
+            return await call_page(repository, identifier, limit, cursor)
 
     async def apply(
         self,
@@ -443,17 +519,62 @@ class RuntimeService:
     async def cancel(
         self, tx: Transaction, run_id: UUID, reason: str, *, actor: Principal, scope: Scope, context: AuditContext
     ) -> RunView | UnavailableRunAcknowledgment | CapacityRunAcknowledgment:
+        return await self._cancel(tx, run_id, reason, actor=actor, scope=scope, context=context)
+
+    async def cancel_child(self, tx: Transaction, run_id: UUID, caller_run_id: UUID) -> None:
+        """Cancel a child run because its caller ended: the caller's ended call is the authority, not a grant.
+
+        The cancellation is audited under the principal the child runs as, with the caller run's ID.
+        """
+        from firefly_weave.runtime.calls import CALLER_ENDED
+
+        principal = await self._stored_principal(tx, run_id)
+        await self._cancel(
+            tx, run_id, CALLER_ENDED, actor=principal, scope=tx.scope, context=AuditContext(), caller=caller_run_id
+        )
+
+    @staticmethod
+    async def _stored_principal(tx: Transaction, run_id: UUID) -> Principal:
+        from sqlalchemy import text
+
+        row = (
+            (
+                await tx.session.execute(
+                    text("SELECT p.id,p.kind FROM runs r JOIN principals p ON p.id=r.principal_id WHERE r.id=:run"),
+                    {"run": run_id},
+                )
+            )
+            .mappings()
+            .one()
+        )
+        return Principal(id=row["id"], kind=row["kind"])
+
+    async def _cancel(
+        self,
+        tx: Transaction,
+        run_id: UUID,
+        reason: str,
+        *,
+        actor: Principal,
+        scope: Scope,
+        context: AuditContext,
+        caller: UUID | None = None,
+    ) -> RunView | UnavailableRunAcknowledgment | CapacityRunAcknowledgment:
         from firefly_weave.runtime.waits import TERMINAL
 
         request = CancelRunRequest(reason=reason)
-        self.require(actor, scope, "run.cancel", context)
+        # A child whose caller ended is cancelled on the caller's authority; everyone else needs run.cancel.
+        if caller is None:
+            self.require(actor, scope, "run.cancel", context)
+        cascade = {} if caller is None else {"caller_run_id": str(caller)}
         async with self.definitions.transaction(scope, tx) as tx:
             repository = RuntimeRepository(tx, self.definitions.outbox)
             from firefly_weave.runtime.terminal_capacity import oversized_row, persist_terminal
 
             oversized = await oversized_row(repository, run_id)
             row = oversized or await repository.run(run_id, lock=True)
-            self.require(await load_principal(tx.session, actor.id), scope, "run.cancel", context)
+            if caller is None:
+                self.require(await load_principal(tx.session, actor.id), scope, "run.cancel", context)
             if oversized is not None:
                 if row["state"]["status"] == "cancelled":
                     return CapacityRunAcknowledgment(
@@ -475,7 +596,7 @@ class RuntimeService:
                     scope=scope,
                     capability="run.cancel",
                     context=context.model_copy(update={"run_id": run_id}),
-                    details={"external_effects_may_continue": True, "reason": request.reason},
+                    details={"external_effects_may_continue": True, "reason": request.reason, **cascade},
                 )
                 return capacity_ack
             from firefly_weave.runtime.admission import unavailable
@@ -524,7 +645,7 @@ class RuntimeService:
                     scope=scope,
                     capability="run.cancel",
                     context=context.model_copy(update={"run_id": run_id}),
-                    details={"external_effects_may_continue": True, "reason": request.reason},
+                    details={"external_effects_may_continue": True, "reason": request.reason, **cascade},
                 )
                 return capacity_ack
             view = previous.model_copy(update={"state": result.state})
@@ -544,7 +665,11 @@ class RuntimeService:
                 scope=scope,
                 capability="run.cancel",
                 context=context.model_copy(update={"run_id": run_id}),
-                details={"external_effects_may_continue": True, **({} if quarantined else {"reason": request.reason})},
+                details={
+                    "external_effects_may_continue": True,
+                    **({} if quarantined else {"reason": request.reason}),
+                    **cascade,
+                },
             )
             if ack is not None:
                 return ack

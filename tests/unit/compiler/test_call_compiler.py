@@ -352,13 +352,13 @@ def per_customer(*body):
     return document
 
 
-def test_calls_inside_a_loop_body_compile_import_and_stop_like_any_other_call():
+def test_calls_inside_a_loop_body_compile_import_and_issue_one_call_per_iteration():
     from datetime import UTC, datetime
     from uuid import uuid4
 
     from firefly_weave.compiler.ir import UnsupportedIR
     from firefly_weave.runtime.kernel import transition
-    from firefly_weave.runtime.models import RunState, RuntimeEvent
+    from firefly_weave.runtime.models import CallIntent, RunState, RuntimeEvent
 
     loop = per_customer(
         call(**{"with": PER_CUSTOMER}), call("status", **{"with": PER_CUSTOMER, "onFailure": "continue"})
@@ -376,19 +376,16 @@ def test_calls_inside_a_loop_body_compile_import_and_stop_like_any_other_call():
         ("/spec/steps/0/body/steps/1/with", "call_input"),
         ("/spec/steps/0/body/steps/1", "call_output"),
     ]
+    assert import_artifact(result.artifact.to_bytes()).digest == result.artifact.digest
     with pytest.raises(UnsupportedIR) as refused:
-        import_artifact(result.artifact.to_bytes())
+        import_artifact(result.artifact.to_bytes(), features=["flow.forEach"])
     assert refused.value.missing == ("flow.callWorkflow",)
-    artifact = import_artifact(result.artifact.to_bytes(), features=["flow.callWorkflow", "flow.forEach"])
-    assert artifact.digest == result.artifact.digest
 
     started = RuntimeEvent(id=uuid4(), type="started", timestamp=datetime(2026, 10, 13, tzinfo=UTC), sequence=1)
-    stopped = transition(RunState(input={"customers": ["c-1", "c-2"]}), started, result.artifact)
-    assert stopped.state.status == "suspended"
-    assert [(item.node_id, item.code) for item in stopped.state.incidents.values()] == [
-        ("notify[0]", "WV-RUNTIME-ARTIFACT")
-    ]
-    assert stopped.steps == []
+    waiting = transition(RunState(input={"customers": ["c-1", "c-2"]}), started, result.artifact)
+    assert waiting.state.status == "waiting"
+    # Loops run one iteration at a time by default: the first customer's call waits for its child.
+    assert [c.node_id for c in waiting.commands if isinstance(c, CallIntent)] == ["notify[0]"]
 
 
 def test_call_checks_reach_into_loop_bodies():

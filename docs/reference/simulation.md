@@ -221,6 +221,16 @@ result. There is no scripting of retry outcomes and no live fallback: an action
 without a mock stops the simulation with `WV-DEBUG-MISSING_MOCK`, whose hint
 lists the keys that would answer it.
 
+**Calls to other workflows.** A simulation never starts another workflow, and
+**Call a workflow** steps take no mocks: a `node:` key for a call step is
+rejected with `WV-DEBUG-MOCK-KEY`. A detached call (`mode: detach`) continues at
+once with `null`, as it does in a real run, so the simulation goes on past it. A
+waiting call (`mode: wait`, the default) stops the simulation with
+`WV-DEBUG-MISSING_MOCK` and status `failed`: "A step that waits for another
+workflow cannot be simulated yet; simulate the called workflow on its own." This
+diagnostic has no hint. Simulate the called workflow separately, with the input
+the call would send.
+
 ## Read the debugger view
 
 Every command returns a view:
@@ -453,7 +463,8 @@ fingerprints.
 | `WV-DEBUG-REQUEST` from the CLI | The request file is not valid JSON, misses a field, or its input or mocks violate a schema | Check `artifact`, `mocks`, `input`, and a `now` with a time zone |
 | `WV-DEBUG-COMMAND` | The command file is not a JSON array, or a command lacks the field its kind needs, such as a `signal` without `name` | Check each command against the [command reference](#command-reference) |
 | `WV-DEBUG-MISSING_MOCK`, status `failed` | An action has no mock (in Studio, **Skip this action** was selected) | Add a mock under one of the keys in the diagnostic's hint |
-| `WV-DEBUG-MOCK-KEY` | A mock key names no action node in this artifact, or no iteration of it | Use `action:EXACT_REFERENCE`, `node:NODE_ID` or `node:INSTANCE_KEY` with one position per enclosing loop, below its `maxItems` |
+| `WV-DEBUG-MISSING_MOCK` without a hint, at a **Call a workflow** step | The step waits for another workflow, which a simulation does not start | Simulate the called workflow on its own; see [Mock actions, send signals, decide tasks, and move time](#mock-actions-send-signals-decide-tasks-and-move-time) |
+| `WV-DEBUG-MOCK-KEY` | A mock key names no action node in this artifact, or no iteration of it (call steps take no mocks) | Use `action:EXACT_REFERENCE`, `node:NODE_ID` or `node:INSTANCE_KEY` with one position per enclosing loop, below its `maxItems` |
 | `WV-IR-UNSUPPORTED` (HTTP 422 on a server) | The workflow uses a language feature this version does not run; a server names it in `result.missing_features`, and `weave workflow simulate` in its message (`Missing language features: flow.forEach.`) | Upgrade the platform or CLI, or simulate on one that runs the feature |
 | `WV-DEBUG-MOCK-OUTPUT` | The mock does not match the action's output schema | Fix the mocked result |
 | Status `waiting` | The run waits for time, a signal, or a person | Send the signal or decision, or advance time, then continue |

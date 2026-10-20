@@ -602,6 +602,11 @@ weave connections test "$CONNECTION_ID" --output json
 # Read run history and replay it on the platform.
 weave runs history "$RUN_ID" --limit 50 --output json
 weave runs replay "$RUN_ID" --output json
+# List the calls a run made, with each child run's ID and status.
+weave runs calls "$RUN_ID" --output json
+# Activate a workflow that calls others, pinning each called version's current activation.
+weave definitions activations create --request activation.json --pin-current-calls \
+  --idempotency-key orders-activation-1 --output json
 # Send a command to a debug session at revision 1.
 weave runs debug command "$SESSION_ID" --revision 1 --request debug-command.json --output json
 ```

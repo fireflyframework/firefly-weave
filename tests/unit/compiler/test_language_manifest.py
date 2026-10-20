@@ -120,8 +120,8 @@ def test_limits_follow_their_sources():
 
 
 def test_features_are_what_the_target_runs():
-    assert ADVERTISED_FEATURES == ("flow.forEach", "text.concat", "text.join")
-    assert language_manifest().features == ["flow.forEach", "text.concat", "text.join"]
+    assert ADVERTISED_FEATURES == ("flow.callWorkflow", "flow.forEach", "text.concat", "text.join")
+    assert language_manifest().features == ["flow.callWorkflow", "flow.forEach", "text.concat", "text.join"]
     assert language_manifest(["text.join", "text.concat"]).features == ["text.concat", "text.join"]
     assert language_manifest([]).features == []
 
@@ -148,6 +148,7 @@ def test_capabilities_list_every_runnable_kind_from_the_manifest():
             "switch",
             "parallel",
             "forEach",
+            "callWorkflow",
             "wait",
             "signal",
             "humanTask",
@@ -237,5 +238,6 @@ def test_loop_default_in_the_definition_is_the_manifest_default():
 def test_kinds_with_a_feature_run_only_where_the_feature_is_advertised():
     assert "forEach" in supported_step_kinds()
     assert "forEach" not in supported_step_kinds(["text.concat", "text.join"])
-    assert "callWorkflow" not in supported_step_kinds()
+    assert "callWorkflow" in supported_step_kinds()
+    assert "callWorkflow" not in supported_step_kinds(["flow.forEach", "text.concat", "text.join"])
     assert "callWorkflow" in supported_step_kinds(["flow.callWorkflow"])

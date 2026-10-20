@@ -25,7 +25,14 @@ from starlette.responses import JSONResponse
 
 from firefly_weave.api.access import request_scope
 from firefly_weave.api.surface import operation
-from firefly_weave.api.transport import canonical_path, decode_cursor, decode_cursor_v2, parse_query
+from firefly_weave.api.transport import (
+    canonical_path,
+    decode_cursor,
+    decode_cursor_v2,
+    page_request,
+    page_response,
+    parse_query,
+)
 from firefly_weave.contracts.human_tasks import ManualControlRequest
 from firefly_weave.contracts.run_views import RunListQuery
 from firefly_weave.contracts.runtime import SignalRequest, StartRunRequest
@@ -63,6 +70,17 @@ class RunController:
             context=request.state.audit_context,
         )
         return JSONResponse(result.model_dump(mode="json"))
+
+    @operation("runs.calls")
+    async def calls(self, request: Request) -> JSONResponse:
+        scope = request_scope(request, environment=True)
+        identifier = UUID(request.path_params["identifier"])
+        collection = f"run_calls:{identifier}"
+        limit, cursor = page_request(request, scope, collection)
+        result = await self.service.calls(
+            request.state.principal, scope, identifier, limit=limit, cursor=cursor, context=request.state.audit_context
+        )
+        return JSONResponse(page_response(result, scope, collection, request.url.path))
 
     @operation("runs.signal")
     async def signal(self, request: Request) -> JSONResponse:

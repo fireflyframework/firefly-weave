@@ -242,6 +242,7 @@ def test_every_operation_crosses_the_bridge_exactly_when_its_family_or_id_is_adm
         "operations_summary.read",
         "operations_telemetry.read",
         "releases.usage",
+        "runs.calls",
     }
     assert approved_additions <= crossing
     preserved = crossing - approved_additions

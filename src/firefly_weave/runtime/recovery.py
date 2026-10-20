@@ -35,6 +35,7 @@ from firefly_weave.contracts.runtime import RecoveryReport
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.operations.facts import task_fact_update
 from firefly_weave.persistence.uow import Transaction
+from firefly_weave.runtime.calls import CallService
 from firefly_weave.runtime.deadlines import DeadlineService
 from firefly_weave.runtime.kernel import transition_async as transition
 from firefly_weave.runtime.models import RuntimeEvent
@@ -54,6 +55,7 @@ class RecoveryService:
     ) -> None:
         self.runtime, self.tasks, self.deadlines = runtime, tasks, deadlines
         self.access = access
+        self.calls = CallService(runtime)
 
     async def scan(
         self,
@@ -93,12 +95,15 @@ class RecoveryService:
         if not 1 <= limit <= 100:
             raise ValueError("Bounded recovery page required")
         totals = {name: 0 for name in RecoveryReport.model_fields}
-        for kind in ("terminal",) if terminal_only else ("deadline", "expired", "retry"):
+        # Cancelling the children of ended callers is terminal control, so it also runs while starts are refused, and
+        # it runs right after due deadlines: stopping work never waits behind task recovery or call starts.
+        kinds = ("terminal", "cancel") if terminal_only else ("deadline", "cancel", "expired", "retry", "dispatch")
+        for kind in kinds:
             for _ in range(limit):
                 try:
                     async with self.runtime.definitions.transaction(scope, None) as tx:
                         await authorize(tx)
-                        if kind in {"expired", "retry"}:
+                        if kind in {"expired", "retry", "dispatch"}:
                             self.runtime.definitions.registry.require_operational()
                         report = await self._recover(tx, kind)
                 except CatalogError as error:
@@ -113,6 +118,11 @@ class RecoveryService:
 
     async def _recover(self, tx: Transaction, kind: str) -> RecoveryReport:
         limit = 1
+        if kind == "dispatch":
+            started, rejected = await self.calls.dispatch(tx, 10)
+            return RecoveryReport(calls_started=started, calls_rejected=rejected)
+        if kind == "cancel":
+            return RecoveryReport(calls_cancelled=await self.calls.cancel_children(tx, 10))
         deadlines = (
             await self.deadlines.scan(tx, 1, terminal_only=kind == "terminal")
             if kind in {"terminal", "deadline"}

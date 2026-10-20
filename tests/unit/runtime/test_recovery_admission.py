@@ -151,6 +151,15 @@ class _Harness:
             SimpleNamespace(scan=deadlines),
             None,
         )
+
+        async def no_calls(tx, limit):
+            return (0, 0)
+
+        async def no_children(tx, limit):
+            return 0
+
+        # No call rows in this harness: dispatch and child cancellation find nothing to do.
+        self.recovery.calls = SimpleNamespace(dispatch=no_calls, cancel_children=no_children)
         scan = self.recovery._scan_scheduled
 
         async def observed_scan(authority, limit):
