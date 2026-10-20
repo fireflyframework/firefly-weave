@@ -314,6 +314,48 @@ def test_a_reservation_without_its_own_hold_is_held_for_the_transactions_policy(
     assert findings(compiled(workflow(transaction(hold(), pause, add(), submit()))), "TXN_HOLD_WAIT") == []
 
 
+def test_a_wait_as_long_as_the_hold_is_fine_and_one_second_longer_is_not():
+    for seconds, expected in ((600, []), (601, [("TXN_HOLD_WAIT", f"{BODY}/1", "warning")])):
+        pause = {"id": "pause", "kind": "wait", "durationSeconds": seconds}
+        result = compiled(workflow(transaction(hold(holdSeconds=600), pause, add(), submit())))
+        assert findings(result, "TXN_HOLD_WAIT") == expected
+
+
+def test_a_human_task_waits_until_it_expires_not_until_it_is_due():
+    review = {
+        "id": "review",
+        "kind": "humanTask",
+        "assignment": "reviewers",
+        "title": {"literal": "Review the move"},
+        "context": {"ref": "/input"},
+        "formSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+        "decisions": ["approve", "reject"],
+        "dueSeconds": 60,
+        "expirySeconds": 6000,
+    }
+    result = compiled(workflow(transaction(hold(holdSeconds=900), review, add(), submit())))
+    [finding] = [d for d in result.diagnostics if d.code == "WV-COMP-TXN_HOLD_WAIT"]
+    assert (finding.path, finding.message) == (
+        f"{BODY}/1",
+        "review can wait up to 1 hour 40 minutes, but reservations are held for 15 minutes.",
+    )
+
+
+def test_a_workflow_called_to_undo_a_step_must_allow_this_workflow_at_its_field():
+    definitions = copy.deepcopy(FIXTURE["definitions"])
+    callee = next(item for item in definitions if item["metadata"]["name"] == "reverse-target-addition")
+    callee["spec"]["callable"] = {"allowedCallers": ["someone-else"]}
+    catalog = CatalogSnapshot.from_definitions([load_definition(item) for item in definitions], tasks=FIXTURE["tasks"])
+    reverse = undo(
+        "reverse-target-addition@1.0.0",
+        {"object": {"reference": ref("/input/moveId"), "addOperation": ref("/participant/operationKey")}},
+        kind="callWorkflow",
+    )
+    document = workflow(transaction(hold(), add(compensate=reverse), submit()))
+    result = compile_source(document, format="object", catalog=catalog)
+    assert ("CALL_NOT_CALLABLE", f"{BODY}/1/compensate/uses", "error") in findings(result)
+
+
 @pytest.mark.parametrize(
     ("step", "key", "path"),
     [
