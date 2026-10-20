@@ -321,3 +321,62 @@ def test_an_upgraded_cli_rerenders_its_files_while_outside_edits_are_still_refus
     written = json.loads((case.directory / "compose.operations.json").read_text())
     assert written["services"]["registry"]["healthcheck"]["retries"] == 90
     platform._compose(platform._load(case.directory))
+
+
+def test_an_interrupted_render_is_never_taken_for_an_outside_edit(operations, monkeypatch):
+    case = operations
+    enable(case)
+    render = platform_operations.runner_document
+
+    def upgraded(state, value):
+        document = render(state, value)
+        document["services"]["registry"]["healthcheck"]["retries"] = 90
+        return document
+
+    monkeypatch.setattr(platform_operations, "runner_document", upgraded)
+    write = platform_operations.files._private
+
+    def interrupted(path, data):
+        write(path, data)
+        raise KeyboardInterrupt
+
+    # The new file is written, then the command stops before it records what it wrote.
+    monkeypatch.setattr(platform_operations.files, "_private", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        enable(case)
+    monkeypatch.setattr(platform_operations.files, "_private", write)
+    platform._compose(platform._load(case.directory))
+    enable(case)
+    value = json.loads((case.directory / "operations.json").read_text())
+    assert "files_pending" not in value
+    # An edit after that is still refused.
+    path = case.directory / "compose.operations.json"
+    path.write_text(path.read_text().replace("90", "91"))
+    with pytest.raises(platform.PlatformError, match="changed outside platform commands"):
+        platform._compose(platform._load(case.directory))
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "workers/compose.json",
+        "config/runner.json",
+        "config/worker-oauth.json",
+        "config/runner-oauth.json",
+        "docker-config/config.json",
+    ],
+)
+def test_every_generated_file_is_checked_before_platform_commands_use_it(operations, name):
+    case = operations
+    enable(case)
+    value = json.loads((case.directory / "operations.json").read_text())
+    assert name in value["files"]
+    path = case.directory / "operations" / name
+    path.chmod(0o644)
+    path.write_text(path.read_text().replace("{", "{ ", 1))
+    with pytest.raises(platform.PlatformError, match="changed outside platform commands"):
+        platform_operations.verify_files(platform._load(case.directory), value)
+    with pytest.raises(platform.PlatformError, match="changed outside platform commands"):
+        platform._compose(platform._load(case.directory))
+    with pytest.raises(platform.PlatformError, match="changed outside platform commands"):
+        enable(case)

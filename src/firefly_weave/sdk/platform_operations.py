@@ -346,31 +346,39 @@ def _docker_config() -> dict[str, bytes]:
     }
 
 
-def _write_files(state: dict[str, Any], value: dict[str, Any]) -> bool:
-    """Render every file the receipt describes; True when any changed. Files are 0444 in 0755 directories."""
-    changed = False
+def _outputs(state: dict[str, Any], value: dict[str, Any]) -> dict[str, tuple[Path, bytes, bool]]:
+    """Every file the receipt describes, by its name in the receipt: its path, content and whether it is private.
+
+    Shared files are 0444 in 0755 directories, mounted read-only into containers; compose.operations.json is 0600.
+    """
+    found: dict[str, tuple[Path, bytes, bool]] = {}
     config = _shared(state, "config")
     if "release_id" in value and "origins_copy" in value:
         workers = _shared(state, "workers")
-        changed = files._publish(workers / "compose.json", files._json(workers_document(state, value))) or changed
+        found["workers/compose.json"] = (workers / "compose.json", files._json(workers_document(state, value)), False)
         # OAuth clients take plain HTTP on loopback only: the worker signs in through its own loopback relay,
         # which forwards to Keycloak on the platform network after checking the bridge entry.
         oauth = _oauth(KEYCLOAK_ORIGIN, WORKER_CLIENT, "worker-client-secret")
-        changed = files._publish(config / "worker-oauth.json", files._json(oauth)) or changed
+        found["config/worker-oauth.json"] = (config / "worker-oauth.json", files._json(oauth), False)
     if "target_id" in value:
-        runner = files._json(runner_configuration(state, value))
-        changed = files._publish(config / "runner.json", runner) or changed
+        found["config/runner.json"] = (config / "runner.json", files._json(runner_configuration(state, value)), False)
         oauth = _oauth(KEYCLOAK_ORIGIN, RUNNER_CLIENT, "runner-client-secret")
-        changed = files._publish(config / "runner-oauth.json", files._json(oauth)) or changed
+        found["config/runner-oauth.json"] = (config / "runner-oauth.json", files._json(oauth), False)
         for name, data in _docker_config().items():
             path = _shared(state, "docker-config")
             for part in Path(name).parent.parts:
                 path = files._shared(path / part)
-            changed = files._publish(path / Path(name).name, data) or changed
+            found["docker-config/" + name] = (path / Path(name).name, data, False)
     if "registry_port" in value:
-        changed = files._private(Path(state["directory"]) / COMPOSE, files._json(runner_document(state, value))) or (
-            changed
-        )
+        found[COMPOSE] = (Path(state["directory"]) / COMPOSE, files._json(runner_document(state, value)), True)
+    return found
+
+
+def _write_files(outputs: dict[str, tuple[Path, bytes, bool]]) -> bool:
+    """Write every output; True when any changed."""
+    changed = False
+    for path, data, private in outputs.values():
+        changed = (files._private(path, data) if private else files._publish(path, data)) or changed
     return changed
 
 
@@ -381,17 +389,24 @@ def _digest(path: Path) -> str | None:
         return None
 
 
-def _rendered(state: dict[str, Any]) -> dict[str, Path]:
+def _path(state: dict[str, Any], name: str) -> Path:
+    """Where the receipt's file `name` lives: compose.operations.json beside platform.json, the rest in operations."""
     directory = Path(state["directory"])
+    return directory / COMPOSE if name == COMPOSE else directory / ROOT / name
+
+
+def _accepted(value: dict[str, Any], name: str) -> set[str]:
+    """The digests a file may have: the one recorded, or the one a render that may have stopped was writing."""
     return {
-        COMPOSE: directory / COMPOSE,
-        "workers/compose.json": directory / ROOT / "workers" / "compose.json",
-        "config/runner.json": directory / ROOT / "config" / "runner.json",
+        digest
+        for digest in ((value.get("files") or {}).get(name), (value.get("files_pending") or {}).get(name))
+        if digest is not None
     }
 
 
 def compose_file(state: dict[str, Any]) -> Path | None:
-    """compose.operations.json for platform Compose commands, only when it is the file platform commands wrote.
+    """compose.operations.json for platform Compose commands, once every rendered file is the one platform commands
+    wrote.
 
     The receipt keeps each rendered file's digest, so an outside edit is refused while a newer CLI that renders
     the same receipt differently still starts the services it wrote, then rewrites them on its next up.
@@ -400,16 +415,22 @@ def compose_file(state: dict[str, Any]) -> Path | None:
     if not os.path.lexists(path):
         return None
     value = receipt(Path(state["directory"]))
-    if value is None or _digest(path) != (value.get("files") or {}).get(COMPOSE):
+    if value is None or _digest(path) not in _accepted(value, COMPOSE):
         raise local.PlatformError(CHANGED_OUTSIDE)
+    verify_files(state, value)
     return path
 
 
 def verify_files(state: dict[str, Any], value: dict[str, Any]) -> None:
-    """Refuse when a rendered file differs from the one platform commands wrote; nothing is restored silently."""
-    recorded = value.get("files") or {}
-    for name, path in _rendered(state).items():
-        if name in recorded and os.path.lexists(path) and _digest(path) != recorded[name]:
+    """Refuse when any rendered file differs from the one platform commands wrote.
+
+    Covered: compose.operations.json, the workers' Compose file, both OAuth files, the runner configuration and its
+    Docker configuration. The client secrets are generation files that are never rewritten, and the private-origin
+    copy is rendered again from platform.json by every up.
+    """
+    for name in {*(value.get("files") or {}), *(value.get("files_pending") or {})}:
+        path = _path(state, name)
+        if os.path.lexists(path) and _digest(path) not in _accepted(value, name):
             raise local.PlatformError(CHANGED_OUTSIDE)
 
 
@@ -786,11 +807,16 @@ def enable(
         def advance(stage: str | None = None) -> None:
             if stage is not None and STAGES.index(stage) > STAGES.index(value["stage"]):
                 value["stage"] = stage
+            outputs = _outputs(state, value)
+            # What is about to be written is recorded first, so a render that stops half way is never taken for
+            # an outside edit; once every file is written, its digests replace the recorded ones.
+            value["files_pending"] = {name: hashlib.sha256(data).hexdigest() for name, (_, data, _) in outputs.items()}
             _save(directory, value)
-            _write_files(state, value)
+            _write_files(outputs)
             value["files"] = {
-                name: digest for name, path in _rendered(state).items() if (digest := _digest(path)) is not None
+                name: digest for name, (path, _, _) in outputs.items() if (digest := _digest(path)) is not None
             }
+            value.pop("files_pending", None)
             _save(directory, value)
 
         def save() -> None:
