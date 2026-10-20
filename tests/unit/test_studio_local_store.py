@@ -175,6 +175,7 @@ def test_a_purge_skips_what_it_can_t_read_and_says_so(tmp_path):
     assert store.pending() == [profile_prefix("acme")]
 
 
+@POSIX
 def test_a_purge_removes_copies_a_write_left_behind(tmp_path):
     folder = tmp_path / "studio-store"
     store = LocalStore(folder)
@@ -216,3 +217,64 @@ def test_starting_forgets_platforms_that_are_no_longer_saved(tmp_path):
     store.put("ui:weave.panes", "{}")
     store.finish_purges(saved={profile_prefix("Saved")})
     assert store.keys() == ["local:weave.localDraft.d-3", kept, "ui:weave.panes"]
+
+
+def test_files_are_named_by_the_sha_256_of_their_key(tmp_path):
+    store = LocalStore(tmp_path / "studio-store")
+    key = ACCOUNT + "testData.d-1"
+    store.put(key, "{}")
+    expected = hashlib.sha256(key.encode("ascii")).hexdigest() + ".json"
+    assert [path.name for path in (tmp_path / "studio-store").iterdir() if not path.name.endswith(".lock")] == [
+        expected
+    ]
+
+
+@POSIX
+def test_a_file_that_names_another_key_is_never_read_as_this_one(tmp_path):
+    folder = tmp_path / "studio-store"
+    store = LocalStore(folder)
+    store.put("local:a", "1")
+    # A copy of a's file under b's name holds key a: neither listing nor reading b may answer a's value.
+    (folder / file_name("local:b")).write_bytes((folder / file_name("local:a")).read_bytes())
+    os.chmod(folder / file_name("local:b"), 0o600)
+    assert store.keys() == ["local:a"]
+    assert store.get("local:b") is None
+
+
+@POSIX
+def test_a_damaged_file_or_a_value_utf_8_can_t_hold_is_answered_in_words(tmp_path):
+    folder = tmp_path / "studio-store"
+    store = LocalStore(folder)
+    store.put("local:a", "1")
+    (folder / file_name("local:a")).write_bytes(b"{not json")
+    with pytest.raises(StoreUnavailable):
+        store.get("local:a")
+    with pytest.raises(ValueError):
+        store.put("local:b", "\ud800")
+    with client(tmp_path, folder) as browser:
+        headers = pair(browser)
+        damaged = browser.get("/studio/local/store/local:a", headers=headers)
+        assert damaged.status_code == 500 and damaged.json()["code"] == "WV-STUDIO-STORE"
+
+
+def test_the_routes_refuse_a_full_store_a_delete_without_csrf_and_an_oversized_body(tmp_path, monkeypatch):
+    monkeypatch.setattr(local_store, "STORE_LIMIT", 1024)
+    with client(tmp_path, tmp_path / "studio-store") as browser:
+        headers = pair(browser)
+        full = browser.put("/studio/local/store/local:a", json={"value": "x" * 2000}, headers=headers)
+        assert full.status_code == 413 and full.json()["code"] == "WV-STUDIO-STORE-FULL"
+        assert browser.delete("/studio/local/store/local:a", headers={"Origin": ORIGIN}).status_code == 403
+        huge = browser.put("/studio/local/store/local:a", json={"value": "x" * (3 * 1024 * 1024)}, headers=headers)
+        assert huge.status_code == 413
+
+
+@POSIX
+def test_an_entry_counts_only_under_its_own_file_name(tmp_path):
+    folder = tmp_path / "studio-store"
+    store = LocalStore(folder)
+    store.put("local:a", "1")
+    impostor = folder / "zzzz.json"
+    impostor.write_text(json.dumps({"key": "local:a", "value": "2"}))
+    os.chmod(impostor, 0o600)
+    assert store.purge("local:").removed == 1
+    assert store.keys() == [] and impostor.exists()

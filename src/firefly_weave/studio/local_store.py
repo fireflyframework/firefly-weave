@@ -122,11 +122,20 @@ class LocalStore:
             raise StoreUnavailable() from None
         if raw is None:
             return None
-        entry = json.loads(raw)
+        try:
+            entry = json.loads(raw)
+        except ValueError:
+            # A damaged file: reported, never answered as a value.
+            raise StoreUnavailable() from None
+        if not isinstance(entry, dict):
+            raise StoreUnavailable()
         return entry["value"] if entry.get("key") == key and isinstance(entry.get("value"), str) else None
 
     def put(self, key: str, value: str) -> None:
-        raw = json.dumps({"key": key, "value": value}, ensure_ascii=False).encode("utf-8")
+        try:
+            raw = json.dumps({"key": key, "value": value}, ensure_ascii=False).encode("utf-8")
+        except UnicodeEncodeError:
+            raise ValueError("Values are text without lone surrogates") from None
         name = file_name(key)
         try:
             with self.folder.changing() as directory:
