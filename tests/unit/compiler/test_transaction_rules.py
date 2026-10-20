@@ -286,63 +286,236 @@ def test_durations_read_as_words():
     ]
 
 
-# Bodies of decisions and steps, compared with a brute-force enumeration of every execution path.
-_MODES = st.sampled_from(["reserve", "compensate", "irreversible", "irreversible-unsafe"])
+# Bodies of decisions, parallel steps, loops, waits and steps, compared with a brute-force enumeration of every run.
+_RULE_CODES = {
+    "TXN_ORDER",
+    "TXN_PIVOT_PLACEMENT",
+    "TXN_AFTER_PIVOT_UNSAFE",
+    "TXN_AFTER_PIVOT_PURE",
+    "TXN_AFTER_PIVOT_WAIT",
+    "TXN_HOLD_PIVOT",
+    "TXN_HOLD_WAIT",
+}
+_MAX_GENERATED_PARTICIPANTS = 9
+_UNROLLED_ITERATIONS = 3
 
 
 @st.composite
-def _bodies(draw, base: str = BODY, depth: int = 0):
+def _bodies(draw, base: str = BODY, depth: int = 0, budget: list[int] | None = None, numbers: list[int] | None = None):
+    budget = [_MAX_GENERATED_PARTICIPANTS] if budget is None else budget
+    numbers = [0] if numbers is None else numbers
+
+    def number() -> int:
+        numbers[0] += 1
+        return numbers[0]
+
     elements = []
-    for index in range(draw(st.integers(0, 4))):
-        if depth < 2 and draw(st.booleans()):
-            paths = tuple(
-                draw(_bodies(f"{at(index, base)}/cases/{number}/steps", depth + 1))
-                for number in range(draw(st.integers(1, 3)))
+    for index in range(draw(st.integers(0, 3 if depth == 0 else 2))):
+        path = at(index, base)
+        shape = draw(st.sampled_from(["choice", "fork", "loop", "step", "step", "step"] if depth < 2 else ["step"]))
+        if shape == "choice":
+            paths = draw(st.integers(1, 2))
+            nested = tuple(draw(_bodies(f"{path}/cases/{n}/steps", depth + 1, budget, numbers)) for n in range(paths))
+            elements.append(Choice(f"c{number()}", path, nested))
+            continue
+        if shape == "fork":
+            branches = draw(st.integers(1, 3))
+            nested = tuple(
+                draw(_bodies(f"{path}/branches/{n}/steps", depth + 1, budget, numbers)) for n in range(branches)
             )
-            elements.append(Choice(f"c{depth}{index}", at(index, base), paths))
+            elements.append(Fork(f"f{number()}", path, nested))
+            continue
+        if shape == "loop":
+            body = draw(_bodies(f"{path}/body/steps", depth + 1, budget, numbers))
+            elements.append(Repeat(f"r{number()}", path, body, draw(st.integers(2, 5))))
+            continue
+        kinds = ["wait", "pure", "fail", "read"]
+        if budget[0] > 0:
+            kinds += ["reserve", "compensate", "irreversible", "undeclared", "call"] * 2
+        kind = draw(st.sampled_from(kinds))
+        step = f"s{number()}"
+        if kind in ("reserve", "compensate", "irreversible", "undeclared", "call"):
+            budget[0] -= 1
+        if kind == "reserve":
+            # Distinct holds, so the reservation a finding names is never a tie.
+            hold = 60 + 10 * draw(st.integers(0, 100)) + number() % 10
+            elements.append(reserve(index, hold, step=step, base=base))
+        elif kind == "compensate":
+            effect = draw(st.sampled_from(["non_idempotent", "idempotent"]))
+            elements.append(compensate(index, step=step, base=base, side_effect=effect))
+        elif kind == "irreversible":
+            effect = draw(st.sampled_from(["non_idempotent", "idempotent", "idempotency_key"]))
+            timeout = draw(st.sampled_from([10, 300, 2_000]))
+            elements.append(irreversible(index, step=step, base=base, timeout=timeout, side_effect=effect))
+        elif kind == "undeclared":
+            effect = draw(st.sampled_from(["non_idempotent", "idempotent"]))
+            elements.append(Participant(step, path, "action", None, effect, True, draw(st.sampled_from([10, 2_000]))))
+        elif kind == "call":
+            mode = draw(st.sampled_from(["irreversible", "compensate"]))
+            elements.append(Participant(step, path, "callWorkflow", mode, None, True, 60))
+        elif kind == "wait":
+            waiting = draw(st.sampled_from(["wait", "signal", "humanTask"]))
+            elements.append(Other(step, path, waiting, draw(st.sampled_from([None, 50, 5_000]))))
+        elif kind == "pure":
+            elements.append(Other(step, path, draw(st.sampled_from(["transform", "llm", "decisionTable"]))))
+        elif kind == "fail":
+            elements.append(Other(step, path, "fail"))
         else:
-            mode = draw(_MODES)
-            step = f"s{len(base)}x{index}"
-            if mode == "reserve":
-                elements.append(reserve(index, step=step, base=base))
-            elif mode == "compensate":
-                elements.append(compensate(index, step=step, base=base))
-            else:
-                effect = "non_idempotent" if mode == "irreversible-unsafe" else "idempotent"
-                elements.append(irreversible(index, step=step, base=base, side_effect=effect))
+            elements.append(Other(step, path, "action"))
     return Sequence(base, tuple(elements))
 
 
-def _paths(sequence: Sequence):
-    options = []
+# One run as a graph: its steps, the steps that happen before each, and whether it always ends in a fail step.
+type _Run = tuple[list, list[set[int]], bool]
+_EMPTY: _Run = ([], [], False)
+
+
+def _then(first: _Run, second: _Run) -> _Run:
+    size = len(first[0])
+    before = set(range(size))
+    preds = [set(p) for p in first[1]] + [{index + size for index in p} | before for p in second[1]]
+    return first[0] + second[0], preds, first[2] or second[2]
+
+
+def _beside(first: _Run, second: _Run) -> _Run:
+    size = len(first[0])
+    preds = [set(p) for p in first[1]] + [{index + size for index in p} for p in second[1]]
+    return first[0] + second[0], preds, first[2] or second[2]
+
+
+def _runs(sequence: Sequence) -> list[_Run]:
+    runs = [_EMPTY]
     for element in sequence.elements:
-        if isinstance(element, Choice):
-            options.append([path for branch in element.paths for path in _paths(branch)])
-        else:
-            options.append([[element]])
-    for combination in product(*options):
-        yield [step for part in combination for step in part]
+        runs = [run if run[2] else _then(run, part) for run in runs for part in ([None] if run[2] else _parts(element))]
+    return runs
 
 
-@settings(max_examples=300, deadline=None)
+def _parts(element) -> list[_Run]:
+    if isinstance(element, Choice):
+        return [run for path in element.paths for run in _runs(path)]
+    if isinstance(element, Fork):
+        combined = []
+        for runs in product(*(_runs(branch) for branch in element.branches)):
+            run = _EMPTY
+            for part in runs:
+                run = _beside(run, part)
+            combined.append(run)
+        return combined
+    if isinstance(element, Repeat):
+        body = _runs(element.body)
+        unrolled, level = [_EMPTY], [_EMPTY]
+        for _ in range(min(_UNROLLED_ITERATIONS, element.max_items)):
+            level = [_then(run, part) for run in level if not run[2] for part in body]
+            unrolled.extend(level)
+        return unrolled
+    if isinstance(element, Other) and element.kind == "fail":
+        return [([], [], True)]
+    return [([element], [set()], False)]
+
+
+def _members(sequence: Sequence):
+    for element in sequence.elements:
+        if isinstance(element, (Participant, Other)):
+            yield element
+        for nested in getattr(element, "paths", ()) + getattr(element, "branches", ()):
+            yield from _members(nested)
+        if isinstance(element, Repeat):
+            yield from _members(element.body)
+
+
+def _misplaced(sequence: Sequence, *, loop: bool = False, shared: bool = False):
+    """Steps that can't be undone inside a loop, or in a parallel branch beside branches that change data."""
+    for element in sequence.elements:
+        if isinstance(element, Participant) and element.mode in (None, "irreversible") and (loop or shared):
+            yield element.path
+        elif isinstance(element, Choice):
+            for path in element.paths:
+                yield from _misplaced(path, loop=loop, shared=shared)
+        elif isinstance(element, Fork):
+            for position, branch in enumerate(element.branches):
+                beside = any(
+                    isinstance(member, Participant)
+                    for number, other in enumerate(element.branches)
+                    if number != position
+                    for member in _members(other)
+                )
+                yield from _misplaced(branch, loop=loop, shared=shared or beside)
+        elif isinstance(element, Repeat):
+            yield from _misplaced(element.body, loop=True, shared=shared)
+
+
+def _expected(body: Sequence):
+    """Every finding, the pivots and the steps reached only after one, read off each run directly."""
+    found, pivots, ran, only_after = set(), set(), set(), {}
+    for nodes, preds, _ in _runs(body):
+        decides = [isinstance(node, Participant) and node.mode in (None, "irreversible") for node in nodes]
+        for index, node in enumerate(nodes):
+            ran.add(node.path)
+            after = any(decides[other] for other in preds[index])
+            only_after[node.id] = only_after.get(node.id, True) and after
+            holds = sorted(
+                (nodes[other].hold, nodes[other].path)
+                for other in preds[index]
+                if isinstance(nodes[other], Participant)
+                and nodes[other].mode == "reserve"
+                and not any(decides[earlier] for earlier in preds[other])
+            )
+            if isinstance(node, Participant):
+                if after:
+                    if node.mode in ("reserve", "compensate"):
+                        found.add(("TXN_ORDER", node.path + ("/confirm" if node.mode == "reserve" else "/compensate")))
+                    elif node.kind == "callWorkflow":
+                        found.add(("TXN_AFTER_PIVOT_PURE", node.path))
+                    elif node.side_effect == "non_idempotent":
+                        found.add(("TXN_AFTER_PIVOT_UNSAFE", node.path))
+                elif decides[index]:
+                    pivots.add(node.id)
+                    if holds and node.timeout is not None and holds[0][0] < node.timeout + 30:
+                        found.add(("TXN_HOLD_PIVOT", holds[0][1] + "/holdSeconds"))
+            elif node.kind in ("wait", "signal", "humanTask"):
+                if not after and holds and (node.wait_seconds is None or node.wait_seconds > holds[0][0]):
+                    found.add(("TXN_HOLD_WAIT", node.path))
+                if after:
+                    found.add(("TXN_AFTER_PIVOT_WAIT", node.path))
+            elif node.kind in ("transform", "llm", "decisionTable") and after:
+                found.add(("TXN_AFTER_PIVOT_PURE", node.path))
+    found |= {("TXN_PIVOT_PLACEMENT", path) for path in _misplaced(body) if path in ran}
+    return found, pivots, {step for step, only in only_after.items() if only}
+
+
+@settings(max_examples=400, deadline=None)
 @given(_bodies())
-def test_ordering_verdicts_match_every_path_enumerated(body):
-    expected = set()
-    for path in _paths(body):
-        pivot = None
-        for step in path:
-            if pivot is None:
-                if step.mode == "irreversible":
-                    pivot = step
-            elif step.mode in ("reserve", "compensate"):
-                expected.add(("TXN_ORDER", step.path + ("/confirm" if step.mode == "reserve" else "/compensate")))
-            elif step.side_effect == "non_idempotent":
-                expected.add(("TXN_AFTER_PIVOT_UNSAFE", step.path))
+def test_rule_verdicts_match_every_run_enumerated(body):
+    expected, pivots, only_after = _expected(body)
     analysis = check_transaction(TransactionBody("move", "/spec/steps/0", body))
-    found = {
-        (issue.code, issue.path) for issue in analysis.issues if issue.code in {"TXN_ORDER", "TXN_AFTER_PIVOT_UNSAFE"}
-    }
-    assert found == expected
+    assert {(issue.code, issue.path) for issue in analysis.issues if issue.code in _RULE_CODES} == expected
+    assert analysis.pivots == pivots
+    fails = {member.id for member in _members(body) if isinstance(member, Other) and member.kind == "fail"}
+    assert set(analysis.after_pivot) - fails == only_after
+
+
+def test_parallel_reservations_must_each_outlast_the_step_that_cant_be_undone():
+    short, long = f"{at(0)}/branches/0/steps", f"{at(0)}/branches/1/steps"
+    branches = (
+        Sequence(short, (reserve(0, 60, step="hold-short", base=short),)),
+        Sequence(long, (reserve(0, 900, step="hold-long", base=long),)),
+    )
+    issues, analysis = check(Fork("both", at(0), branches), irreversible(1, timeout=300))
+    assert issues == [("TXN_HOLD_PIVOT", f"{short}/0/holdSeconds", "error")]
+    assert analysis.issues[0].edit == (f"{short}/0/holdSeconds", 330)
+
+
+def test_a_loop_is_checked_on_its_second_round_too():
+    inner = f"{at(0)}/body/steps"
+    body = Sequence(
+        inner,
+        (
+            compensate(0, step="add", base=inner),
+            Participant("note", f"{inner}/1", "action", None, "idempotent", True, 10),
+        ),
+    )
+    issues, _ = check(Repeat("each", at(0), body, 3))
+    assert ("TXN_ORDER", f"{inner}/0/compensate", "error") in issues
 
 
 def test_nested_loops_are_walked_once_per_distinct_entry_state(monkeypatch):
