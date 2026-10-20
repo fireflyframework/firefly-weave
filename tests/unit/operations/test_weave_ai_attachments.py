@@ -170,6 +170,7 @@ def test_a_compact_request_outlines_a_saved_draft():
         },
         "revision": 4,
     }
+    assert compact.context["trimmed"] == ["outlined"]
     full = shape("full", None, message="m", history=[], resources=[saved], draft=None, selected_step=None, schemas={})
     assert full.context["resources"][0] == saved
 
@@ -240,3 +241,22 @@ async def test_a_run_too_long_to_read_whole_is_marked_partial():
     data, calls = await run_attachment(steps, size=1)
     assert data["partial"] is True and len(calls) == 50
     assert set(keys(data)) <= RUN_FIELDS
+
+
+def test_a_large_saved_draft_is_held_to_the_attachments_share():
+    steps = [{"id": f"step-{index}", "kind": "action", "uses": "x@1.0.0"} for index in range(400)]
+    document = {"kind": "Workflow", "metadata": {"name": "n", "version": "1.0.0"}, "spec": {"steps": steps}}
+    saved = {"kind": "draft", "id": "d", "data": {"document": document, "revision": 4}}
+    compact = shape(
+        "compact",
+        COMPACT_INPUT_TOKENS,
+        message="m",
+        history=[],
+        resources=[saved],
+        draft=None,
+        selected_step=None,
+        schemas={},
+    )
+    listed = compact.context["resources"][0]["data"]["outline"]["steps"]
+    assert listed[0]["id"] == "step-0" and listed[-1]["id"] == "step-399"
+    assert {"outlined", "steps"} <= set(compact.context["trimmed"])

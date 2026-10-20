@@ -469,3 +469,45 @@ def test_weave_ai_stays_a_registered_service_and_its_helpers_do_not():
 
     assert vars(lumi.LumiService).get("__pyfly_stereotype__") == "service"
     assert "__pyfly_stereotype__" not in vars(lumi._answer_limit)
+
+
+def test_an_administrator_chosen_compact_profile_keeps_its_cap_without_a_context_size():
+    assert input_budget("compact", None, 1024) == COMPACT_INPUT_TOKENS
+    assert input_budget("standard", None, 1024) is None
+
+
+def resource(name, characters):
+    return {"kind": "run", "id": name, "data": {"status": "failed", "note": "n" * characters}}
+
+
+def test_attachments_over_their_share_are_left_out_from_the_last():
+    first, large, last = resource("a", 100), resource("b", 4000), resource("c", 100)
+    shaped = shape(
+        "compact",
+        COMPACT_INPUT_TOKENS,
+        message="m",
+        history=[],
+        resources=[first, large, last],
+        draft=None,
+        selected_step=None,
+        schemas={},
+    )
+    assert shaped.context["resources"] == [first] and shaped.context["trimmed"] == ["attachments"]
+
+
+def test_standard_attachments_are_capped_at_thirty_two_kibibytes():
+    resources = [resource(str(index), 6000) for index in range(8)]
+    shaped = shape(
+        "standard",
+        input_budget("standard", 200000, 1024),
+        message="m",
+        history=[],
+        resources=resources,
+        draft=None,
+        selected_step=None,
+        schemas={},
+    )
+    kept = shaped.context["resources"]
+    assert kept == resources[: len(kept)] and 0 < len(kept) < len(resources)
+    assert len(json.dumps(kept, ensure_ascii=False).encode()) <= 32768
+    assert shaped.context["trimmed"] == ["attachments"]

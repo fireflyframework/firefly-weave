@@ -48,6 +48,7 @@ GATEWAY_RESERVE_TOKENS = 704
 # The request's own wrapping (prompt, context, history and attachments keys) and the list of trimmed parts.
 ENVELOPE_TOKENS = 64
 STANDARD_DRAFT_BYTES = 32768
+STANDARD_ATTACHMENT_BYTES = 32768
 HISTORY: dict[Profile, int] = {"compact": 4, "standard": 8, "full": 16}
 SCHEMAS: dict[Profile, tuple[str, ...]] = {
     "compact": (),
@@ -112,7 +113,8 @@ def output_tokens(profile: Profile, max_tokens: int) -> int:
 def input_budget(profile: Profile, context_tokens: int | None, max_tokens: int) -> int | None:
     """Tokens the request may use, or None when the context size is unknown (cloud endpoints)."""
     if context_tokens is None:
-        return None
+        # A compact profile an administrator chose keeps its cap where the policy records no context size.
+        return COMPACT_INPUT_TOKENS if profile == "compact" else None
     budget = context_tokens - max_tokens
     return min(budget, COMPACT_INPUT_TOKENS) if profile == "compact" else budget
 
@@ -350,15 +352,25 @@ def shape(
         if profile != "full" and isinstance(resource, dict) and resource.get("kind") == "draft":
             # A saved draft is outlined like the inline one: its own steps, never their values.
             data = cast(JsonObject, resource["data"])
+            _note(trimmed, "outlined")
+            shown = _bounded(outline(data["document"], selected_step), allowance, trimmed)
             resource = {
                 **resource,
-                "data": {"outline": outline(data["document"], selected_step), "revision": data["revision"]},
+                "data": {"outline": shown, "revision": data["revision"]}
+                if shown is not None
+                else {"note": TOO_LARGE_DRAFT, "revision": data["revision"]},
             }
-        if allowance is not None and _tokens([*kept, resource]) > allowance:
-            if "attachments" not in trimmed:
-                trimmed.append("attachments")
-            continue
         kept.append(resource)
+
+    def over() -> bool:
+        if allowance is not None and _tokens(kept) > allowance:
+            return True
+        return profile == "standard" and len(json.dumps(kept, ensure_ascii=False).encode()) > STANDARD_ATTACHMENT_BYTES
+
+    # Over their share (or standard's 32 KiB), attachments are left out from the last.
+    while kept and over():
+        kept.pop()
+        _note(trimmed, "attachments")
     context["resources"] = kept
     room = share(HISTORY_SHARE)
     if room is not None:
