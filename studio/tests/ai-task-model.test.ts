@@ -36,7 +36,10 @@ import {
   stepsSharing,
   type ConnectionModels,
 } from "../src/app/editor/ndv/kinds/ai-task-model";
-import { applyChange } from "../src/app/editor/ndv/params/value-io";
+import {
+  applyChange,
+  FormWriteError,
+} from "../src/app/editor/ndv/params/value-io";
 import type { BindableConnection } from "../src/app/integrations/ai-setup-api";
 import {
   createStep,
@@ -425,6 +428,26 @@ describe("the model list", () => {
         group: "OpenAI · openai",
       },
     ]);
+  });
+  it("never writes settings without a provider", () => {
+    const unnamed = { ...ollama, provider: undefined };
+    expect(modelOptions([{ connection: unnamed, models: [qwen] }])).toEqual([
+      {
+        value: modelValue("r-ollama", ""),
+        label: "Models unavailable",
+        description:
+          "This AI connection doesn't name its provider. Edit it in Settings › AI models.",
+        group: "Ollama · ollama-local",
+        disabled: true,
+      },
+    ]);
+    const { workflow, step } = withTask();
+    expect(() =>
+      chooseModel(workflow, step, {
+        ...choice(ollama, "qwen3:4b"),
+        provider: "",
+      }),
+    ).toThrow(FormWriteError);
   });
   it("says when a connection's models can't be listed", () => {
     expect(

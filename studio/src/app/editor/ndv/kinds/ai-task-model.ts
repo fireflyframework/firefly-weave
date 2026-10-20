@@ -190,6 +190,10 @@ export function chooseModel(
   const name = current ? profileNameOf(step) : freeName(profiles, step.id);
   if (!current && Object.keys(profiles).length >= MAX_PROFILES)
     throw new FormWriteError(TOO_MANY);
+  if (!choice.provider)
+    throw new FormWriteError(
+      "This AI connection doesn't name its provider. Edit it in Settings › AI models.",
+    );
   const profile = current
     ? { ...current, provider: choice.provider, model: choice.model }
     : {
@@ -257,17 +261,22 @@ export function modelOptions(
 ): SelectOption[] {
   return groups.flatMap(({ connection, models, error }) => {
     const group = connection.label;
-    if (!models)
+    const unusable = !connection.provider
+      ? "This AI connection doesn't name its provider. Edit it in Settings › AI models."
+      : !models
+        ? (error ?? "Studio couldn't list this connection's models.")
+        : "";
+    if (unusable)
       return [
         {
           value: modelValue(connection.revision_id, ""),
           label: "Models unavailable",
-          description:
-            error ?? "Studio couldn't list this connection's models.",
+          description: unusable,
           group,
           disabled: true,
         },
       ];
+    if (!models) return [];
     return models
       .filter((model) => model.available)
       .map((model) =>

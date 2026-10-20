@@ -103,7 +103,11 @@ const cache = new WeakMap<
       (choose)="choose($event)"
     />
     @if (facts().length) {
-      <div class="param-model-facts" aria-label="What this model can do">
+      <div
+        class="param-model-facts"
+        role="group"
+        aria-label="What this model can do"
+      >
         @for (fact of facts(); track fact) {
           <span class="pill">{{ fact }}</span>
         }
