@@ -301,3 +301,23 @@ def test_the_host_account_may_register_the_target_before_it_does(operations):
         ("deployment_planner", SCOPE["environment_id"])
     ]
     assert names.index("members.grant", names.index("releases.create") + 1) < names.index("deployment_targets.create")
+
+
+def test_an_upgraded_cli_rerenders_its_files_while_outside_edits_are_still_refused(operations, monkeypatch):
+    case = operations
+    enable(case)
+    render = platform_operations.runner_document
+
+    def upgraded(state, value):
+        document = render(state, value)
+        document["services"]["registry"]["healthcheck"]["retries"] = 90
+        return document
+
+    # A newer CLI renders the same receipt differently: Compose still accepts the files this CLI wrote, and the
+    # next up writes the new ones.
+    monkeypatch.setattr(platform_operations, "runner_document", upgraded)
+    platform._compose(platform._load(case.directory))
+    enable(case)
+    written = json.loads((case.directory / "compose.operations.json").read_text())
+    assert written["services"]["registry"]["healthcheck"]["retries"] == 90
+    platform._compose(platform._load(case.directory))

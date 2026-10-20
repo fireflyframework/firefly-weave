@@ -374,33 +374,43 @@ def _write_files(state: dict[str, Any], value: dict[str, Any]) -> bool:
     return changed
 
 
-def compose_file(state: dict[str, Any]) -> Path | None:
-    """compose.operations.json for platform Compose commands, only when it is exactly what the receipt renders."""
+def _digest(path: Path) -> str | None:
+    try:
+        return hashlib.sha256(read_file(path, 65536, private=path.name == COMPOSE)).hexdigest()
+    except (OSError, DeploymentError):
+        return None
+
+
+def _rendered(state: dict[str, Any]) -> dict[str, Path]:
     directory = Path(state["directory"])
-    path = directory / COMPOSE
+    return {
+        COMPOSE: directory / COMPOSE,
+        "workers/compose.json": directory / ROOT / "workers" / "compose.json",
+        "config/runner.json": directory / ROOT / "config" / "runner.json",
+    }
+
+
+def compose_file(state: dict[str, Any]) -> Path | None:
+    """compose.operations.json for platform Compose commands, only when it is the file platform commands wrote.
+
+    The receipt keeps each rendered file's digest, so an outside edit is refused while a newer CLI that renders
+    the same receipt differently still starts the services it wrote, then rewrites them on its next up.
+    """
+    path = Path(state["directory"]) / COMPOSE
     if not os.path.lexists(path):
         return None
-    value = receipt(directory)
-    try:
-        if value is None or read_file(path, 65536, private=True) != files._json(runner_document(state, value)):
-            raise ValueError("Changed")
-    except (OSError, ValueError, DeploymentError):
-        raise local.PlatformError(CHANGED_OUTSIDE) from None
+    value = receipt(Path(state["directory"]))
+    if value is None or _digest(path) != (value.get("files") or {}).get(COMPOSE):
+        raise local.PlatformError(CHANGED_OUTSIDE)
     return path
 
 
 def verify_files(state: dict[str, Any], value: dict[str, Any]) -> None:
-    """Refuse when a rendered file differs from what the receipt says; a rerun of up restores nothing silently."""
-    root = Path(state["directory"]) / ROOT
-    expected: list[tuple[Path, bytes]] = []
-    if "release_id" in value and "origins_copy" in value:
-        expected.append((root / "workers" / "compose.json", files._json(workers_document(state, value))))
-    if "target_id" in value:
-        expected.append((root / "config" / "runner.json", files._json(runner_configuration(state, value))))
-    for path, data in expected:
-        if files._current(path, 0o444) not in (None, data):
+    """Refuse when a rendered file differs from the one platform commands wrote; nothing is restored silently."""
+    recorded = value.get("files") or {}
+    for name, path in _rendered(state).items():
+        if name in recorded and os.path.lexists(path) and _digest(path) != recorded[name]:
             raise local.PlatformError(CHANGED_OUTSIDE)
-    compose_file(state)
 
 
 # Secrets
@@ -778,6 +788,10 @@ def enable(
                 value["stage"] = stage
             _save(directory, value)
             _write_files(state, value)
+            value["files"] = {
+                name: digest for name, path in _rendered(state).items() if (digest := _digest(path)) is not None
+            }
+            _save(directory, value)
 
         def save() -> None:
             advance(None)
