@@ -25,6 +25,7 @@ outline, then attachments are left out from the last, then the oldest messages),
 """
 
 import json
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -196,6 +197,8 @@ def outline(document: JsonValue, selected_step: str | None) -> JsonObject:
 RECENT_STEPS = 5
 # Failed steps listed by name; the rest are counted, so sixty failed iterations still fit a compact request.
 FAILED_STEPS = 10
+# Worker codes (PAYMENT_DECLINED) and `fail` step codes (resource names); anything else is free text, not sent.
+ERROR_CODE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,99}")
 # Every path a run attachment may contain; a test spies on the request and fails on any other.
 RUN_FIELDS = frozenset(
     {
@@ -238,6 +241,9 @@ def run_context(summary: RunSummary, steps: Sequence[StepFact], *, partial: bool
         (item for item in steps if item.scheduled_at or item.started_at or item.ended_at),
         key=lambda item: cast(datetime, item.ended_at or item.started_at or item.scheduled_at),
     )
+    def code(value: str | None) -> JsonValue:
+        return value if value is not None and ERROR_CODE.fullmatch(value) else None
+
     failed = [item for item in steps if item.status == "failed"]
     stopped = summary.failed_step
     data: JsonObject = {
@@ -248,12 +254,12 @@ def run_context(summary: RunSummary, steps: Sequence[StepFact], *, partial: bool
         "duration_ms": summary.duration_ms,
         "active_incidents": summary.active_incidents,
         "failed_step": (
-            {"node_id": stopped.node_id, "instance_key": stopped.instance_key, "error_code": stopped.error_code}
+            {"node_id": stopped.node_id, "instance_key": stopped.instance_key, "error_code": code(stopped.error_code)}
             if stopped is not None
             else None
         ),
         "failed_steps": [
-            {"node_id": item.node_id, "instance_key": item.instance_key, "error_code": item.error_code}
+            {"node_id": item.node_id, "instance_key": item.instance_key, "error_code": code(item.error_code)}
             for item in failed[:FAILED_STEPS]
         ],
         "recent_steps": [

@@ -257,8 +257,11 @@ class LumiService:
     async def _run(self, actor: Principal, scope: Scope, run_id: UUID, context: AuditContext) -> JsonValue:
         """A run's facts through the allowlisted builder; the run's own read checks `run.read` each time."""
         summary = await self.runs.summary(actor, scope, run_id, context=context)
-        if not isinstance(summary, RunSummary):
+        if summary is None:
             return {"status": "not_recorded_yet"}
+        if not isinstance(summary, RunSummary):
+            # Classified or blocked by policy for this caller: say so, and read none of its steps.
+            return {"status": "unavailable"}
         facts: list[StepFact] = []
         position: tuple[JsonValue, str] | None = None
         for _ in range(RUN_PAGES):
