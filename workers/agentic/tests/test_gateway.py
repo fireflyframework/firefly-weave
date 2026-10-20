@@ -1346,3 +1346,8 @@ async def test_a_thinking_model_that_fails_on_an_older_ollama_answers_with_an_up
     async with thinking_gateway(tmp_path, "0.12.3", ["not a reply"], []) as client:
         response = await client.post("/v1/lumi", json=thinking_ask(), headers=AUTH)
     assert (response.status_code, response.json()) == (422, {"code": "LUMI_THINKING"})
+
+
+def test_the_gateway_counts_a_newline_and_an_indent_as_a_token_each():
+    assert conservative_tokens("word\nword") == 2 + 1 + 2
+    assert conservative_tokens("word\n    word") == 2 + 1 + 1 + 2
