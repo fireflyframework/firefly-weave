@@ -256,10 +256,20 @@ async def test_sizes_are_bounded_per_kind(author, headers, project_url):
     assert (await save(client, project_url, headers, identifier, data)).status_code == 413
 
 
-async def test_another_tenant_reads_nothing(author, headers, other_headers, project_url):
+async def test_another_tenant_reads_nothing(author, headers, other_headers, project_url, access_db, provisioned):
     client, identifier = author[0], await draft(author, headers, project_url)
     await save(client, project_url, headers, identifier, document_of())
+    # Subject 1 belongs to the second tenant: through the API it has no grant here.
     assert (await client.get(url(project_url, identifier), headers=other_headers)).status_code in {403, 404}
+    # And in the database the second tenant's scope sees no row of the first's.
+    other_tenant = provisioned[1][1].tenant_id
+    async with access_db[0].begin() as session:
+        await session.execute(text("SELECT set_config('weave.tenant_id',:tenant,true)"), {"tenant": str(other_tenant)})
+        assert await session.scalar(text("SELECT count(*) FROM studio_documents")) == 0
+        await session.execute(
+            text("SELECT set_config('weave.tenant_id',:tenant,true)"), {"tenant": str(author[2].tenant_id)}
+        )
+        assert await session.scalar(text("SELECT count(*) FROM studio_documents")) == 1
 
 
 async def test_retiring_a_draft_deletes_its_documents(author, headers, project_url):
@@ -333,3 +343,99 @@ async def test_a_field_named_like_provenance_inside_ai_turns_is_data(author, hea
     saved = await save(author[0], project_url, headers, identifier, document_of(aiTurns={"agent": turns}))
     # The AI turns themselves are unclassified (no turn schema yet), never a validation error of provenance.
     assert saved.status_code == 422 and saved.json()["code"] == "WV-STUDIO-DOCUMENT-UNCLASSIFIED", saved.text
+
+
+async def test_deleting_run_data_needs_run_read_in_its_environments(
+    author, headers, other_headers, project_url, person
+):
+    client, identifier = author[0], await draft(author, headers, project_url)
+    run = {"value": {}, "source": "run", "runId": RUN, "runEnvironmentId": str(author[2].environment_id)}
+    await save(client, project_url, headers, identifier, document_of(input=run))
+    await person[0](["developer"])
+    deleted = await client.delete(url(project_url, identifier), headers={**other_headers, "If-Match": '"1"'})
+    assert deleted.status_code == 403
+
+
+async def test_a_grant_revoked_after_the_first_check_is_refused_inside_the_transaction(
+    author, headers, project_url, person, services, access_db
+):
+    from firefly_weave.access.audit import AuditContext
+    from firefly_weave.access.authorization import AccessDenied
+    from firefly_weave.contracts.studio_documents import StudioDocumentSave
+    from firefly_weave.definitions.studio_documents import StudioDocumentService
+
+    environment = str(author[2].environment_id)
+    run = {"value": {}, "source": "run", "runId": RUN, "runEnvironmentId": environment}
+    identifier = await draft(author, headers, project_url)
+    assert (await save(author[0], project_url, headers, identifier, document_of(input=run))).status_code == 201
+    fresh = await draft(author, headers, project_url)
+    grant, revoke_all = person
+    sessions = access_db[0]
+    async with sessions.begin() as session:
+        subject = await session.scalar(text("SELECT principal_id FROM identity_links WHERE subject='1'"))
+    service = services(sessions).resolve(StudioDocumentService)
+    scope = Scope(tenant_id=author[2].tenant_id, project_id=author[2].project_id)
+    await grant(["developer"], ["viewer"])
+    # Loaded while the person could read runs; the grant goes before each call.
+    stale = await access_db[2].load_principal(subject)
+    await revoke_all()
+    with pytest.raises(AccessDenied):
+        await service.read(stale, scope, identifier, "test-data", context=AuditContext())
+    with pytest.raises(AccessDenied):
+        await service.save(
+            stale,
+            scope,
+            identifier,
+            "test-data",
+            StudioDocumentSave(draft_revision=1, document=document_of()),
+            1,
+            context=AuditContext(),
+        )
+    with pytest.raises(AccessDenied):
+        await service.delete(stale, scope, identifier, "test-data", 1, context=AuditContext())
+    # A new document naming an environment the person no longer reads, with nothing stored yet: the person may
+    # still write test data, and only run.read in that environment is missing.
+    await grant(["developer"])
+    with pytest.raises(AccessDenied):
+        await service.save(
+            stale,
+            scope,
+            fresh,
+            "test-data",
+            StudioDocumentSave(draft_revision=1, document=document_of(input=run)),
+            None,
+            context=AuditContext(),
+        )
+
+
+@pytest.mark.parametrize("kind", ["test-data", "canvas"])
+async def test_a_nul_character_is_refused_in_words(author, headers, project_url, kind):
+    client, identifier = author[0], await draft(author, headers, project_url)
+    document = (
+        document_of(input={"value": {"note": "a\u0000b"}, "source": "manual"})
+        if kind == "test-data"
+        else {"version": 2, "notes": [{"text": "a\u0000b"}]}
+    )
+    refused = await save(client, project_url, headers, identifier, document, kind=kind)
+    assert refused.status_code == 422, refused.text
+    assert refused.json()["code"] == "WV-STUDIO-DOCUMENT-SCHEMA"
+
+
+async def test_values_are_checked_against_the_draft_as_it_is_now(author, headers, project_url):
+    client, identifier = author[0], await draft(author, headers, project_url)
+    later = {
+        **WORKFLOW,
+        "spec": {
+            **WORKFLOW["spec"],
+            "inputSchema": {"type": "object", "properties": {"apiKey": {"type": "string", "x-secret": True}}},
+        },
+    }
+    saved = await client.put(
+        f"{project_url}/drafts/{identifier}", headers={**headers, "If-Match": '"1"'}, json={"document": later}
+    )
+    assert saved.status_code == 200, saved.text
+    # Naming the earlier revision, where apiKey wasn't secret, doesn't let the value through.
+    refused = await save(
+        client, project_url, headers, identifier, document_of(input={"value": {"apiKey": "k-1"}, "source": "manual"})
+    )
+    assert refused.status_code == 422 and refused.json()["code"] == "WV-STUDIO-DOCUMENT-SECRET", refused.text

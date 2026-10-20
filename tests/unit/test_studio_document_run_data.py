@@ -77,3 +77,13 @@ def test_manual_and_generated_data_are_not():
 def test_a_document_that_does_not_parse_is_refused_not_guessed():
     with pytest.raises(ValidationError):
         run_data(document(pins={"a": {**PIN, "source": "run"}}))
+
+
+def test_each_kind_needs_its_capabilities():
+    from firefly_weave.definitions.studio_documents import StudioDocumentService
+
+    service = StudioDocumentService.__new__(StudioDocumentService)
+    assert service._capabilities("canvas", write=False) == ("catalog.read",)
+    assert service._capabilities("canvas", write=True) == ("definition.write",)
+    assert service._capabilities("test-data", write=False) == ("simulate",)
+    assert service._capabilities("test-data", write=True) == ("simulate", "definition.write")

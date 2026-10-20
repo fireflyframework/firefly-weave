@@ -54,6 +54,24 @@ from firefly_weave.persistence.idempotency import lock
 _RUN_SOURCES = {"run", "test-call"}
 
 
+def _holds_nul(document: object) -> bool:
+    """Whether any string or key of the document holds U+0000 (checked without recursion)."""
+    stack: list[object] = [document]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, str):
+            if "\x00" in node:
+                return True
+        elif isinstance(node, list):
+            stack.extend(node)
+        elif isinstance(node, dict):
+            for key, value in node.items():
+                if "\x00" in key:
+                    return True
+                stack.append(value)
+    return False
+
+
 def run_data(document: JsonObject) -> tuple[bool, list[UUID]]:
     """Whether a test-data document holds data recorded from runs, and the environments of those runs.
 
@@ -150,6 +168,9 @@ class StudioDocumentService:
             return self._view(row)
 
     def _document(self, kind: StudioDocumentKind, document: JsonObject) -> JsonObject:
+        if _holds_nul(document):
+            # PostgreSQL's jsonb can't store U+0000: refused in words, not as a storage failure.
+            raise CatalogError(422, "WV-STUDIO-DOCUMENT-SCHEMA", "Studio documents can't hold the NUL character")
         raw = json.dumps(document, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         if len(raw) > STUDIO_DOCUMENT_MAX_BYTES[kind]:
             raise CatalogError(413, "WV-STUDIO-DOCUMENT-SIZE", "Studio document is too large")
@@ -213,14 +234,20 @@ class StudioDocumentService:
                 "SELECT id FROM draft_retirements WHERE tenant_id=:tenant AND project_id=:project AND id=:id", id=draft
             ):
                 raise CatalogError(409, "WV-DRAFT-RETIRED", "Retired drafts keep no studio documents")
-            drafts = await repository.rows(
-                "SELECT document FROM draft_revisions WHERE tenant_id=:tenant AND project_id=:project AND id=:id "
+            named = await repository.rows(
+                "SELECT revision FROM draft_revisions WHERE tenant_id=:tenant AND project_id=:project AND id=:id "
                 "AND revision=:revision",
                 id=draft,
                 revision=body.draft_revision,
             )
-            if not drafts:
+            if not named:
                 raise CatalogError(404, "WV-NOT-FOUND", "Draft revision not found")
+            # Values are checked against the draft as it is now, whichever revision the client names.
+            drafts = await repository.rows(
+                "SELECT document FROM draft_revisions WHERE tenant_id=:tenant AND project_id=:project AND id=:id "
+                "ORDER BY revision DESC LIMIT 1",
+                id=draft,
+            )
             current = await self._latest(repository, draft, kind)
             check_revision(current["revision"] if current else None, expected_revision)
             stored = list(current["source_environment_ids"]) if current else []
