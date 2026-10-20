@@ -29,7 +29,7 @@ from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.lumi import LumiAskRequest
 from firefly_weave.contracts.run_views import RunStepQuery, RunSummary, StepFact, StepFactPage
 from firefly_weave.operations.lumi import LumiService
-from firefly_weave.operations.lumi_context import RUN_FIELDS, run_context, shape
+from firefly_weave.operations.lumi_context import COMPACT_INPUT_TOKENS, FAILED_STEPS, RUN_FIELDS, run_context, shape
 
 SCOPE = Scope(tenant_id=uuid4(), project_id=uuid4(), environment_id=uuid4())
 START = datetime(2026, 10, 20, 9, 0, tzinfo=UTC)
@@ -107,6 +107,7 @@ def test_a_run_attachment_keeps_only_the_allowlisted_fields():
         "ended_at": "2026-10-20T09:00:09Z",
         "duration_ms": 9000,
         "active_incidents": 1,
+        "failed_step": {"node_id": "charge", "instance_key": "", "error_code": "PAYMENT_DECLINED"},
         "failed_steps": [{"node_id": "charge", "instance_key": "", "error_code": "PAYMENT_DECLINED"}],
         "recent_steps": [
             {"node_id": "step-3", "kind": "action", "status": "succeeded", "at": "2026-10-20T09:03:00Z"},
@@ -171,3 +172,71 @@ def test_a_compact_request_outlines_a_saved_draft():
     }
     full = shape("full", None, message="m", history=[], resources=[saved], draft=None, selected_step=None, schemas={})
     assert full.context["resources"][0] == saved
+
+
+def paged(steps, size=200):
+    """A runs.steps fake that pages like the real read: by the last item's scheduled time and instance key."""
+    calls = []
+
+    async def read(actor, scope, run_id, query, position, *, context):
+        calls.append(position)
+        start = 0
+        if position is not None:
+            start = next(
+                index + 1
+                for index, item in enumerate(steps)
+                if (item.scheduled_at.isoformat(), item.instance_key or item.node_id) == position
+            )
+        items = steps[start : start + size]
+        more = start + size < len(steps)
+        return StepFactPage(items=items, next_cursor="next" if more else None, complete=True)
+
+    return read, calls
+
+
+async def run_attachment(steps, run_summary=None, size=200):
+    read, calls = paged(steps, size)
+    runs = SimpleNamespace(summary=AsyncMock(return_value=run_summary or summary()), steps=read)
+    service = LumiService(SimpleNamespace(definitions=None), None, None, None, None, None, runs)
+    request = LumiAskRequest(message="Why did it fail?", attachments=[{"kind": "run", "id": RUN_ID}])
+    resources = await service._attachments(SimpleNamespace(id=uuid4()), SCOPE, request, AuditContext())
+    return resources[0]["data"], calls
+
+
+async def test_a_run_with_more_than_two_hundred_instances_reads_its_latest_steps():
+    steps = [step(f"step-{index}", index) for index in range(250)]
+    steps[240] = step("step-240", 240, "failed", "PAYMENT_DECLINED")
+    data, calls = await run_attachment(steps)
+    assert data["failed_steps"] == [{"node_id": "step-240", "instance_key": "", "error_code": "PAYMENT_DECLINED"}]
+    assert [item["node_id"] for item in data["recent_steps"]] == [f"step-{index}" for index in range(245, 250)]
+    assert data["failed_step"]["node_id"] == "charge" and "partial" not in data
+    assert calls == [None, (steps[199].scheduled_at.isoformat(), "step-199")]
+    assert set(keys(data)) <= RUN_FIELDS
+
+
+async def test_sixty_failed_iterations_are_capped_and_the_run_still_fits_a_compact_request():
+    steps = [step(f"item-{index}", index, "failed", "TIMEOUT") for index in range(60)]
+    data, _ = await run_attachment(steps)
+    assert FAILED_STEPS == 10
+    assert [item["node_id"] for item in data["failed_steps"]] == [f"item-{index}" for index in range(10)]
+    assert data["more_failed_steps"] == 50
+    run = {"kind": "run", "id": str(RUN_ID), "data": data}
+    shaped = shape(
+        "compact",
+        COMPACT_INPUT_TOKENS,
+        message="Why did it fail?",
+        history=[],
+        resources=[run],
+        draft=None,
+        selected_step=None,
+        schemas={},
+    )
+    assert shaped.context["resources"] == [run] and "trimmed" not in shaped.context
+    assert set(keys(data)) <= RUN_FIELDS
+
+
+async def test_a_run_too_long_to_read_whole_is_marked_partial():
+    steps = [step(f"step-{index}", index) for index in range(60)]
+    data, calls = await run_attachment(steps, size=1)
+    assert data["partial"] is True and len(calls) == 50
+    assert set(keys(data)) <= RUN_FIELDS

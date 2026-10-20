@@ -104,6 +104,10 @@ def _answer_limit(config: LumiConfiguration, profile: Profile) -> LumiConfigurat
     return config.model_copy(update={"profile": config.profile.model_copy(update={"options": options})})
 
 
+# Pages of 200 step facts read for a run attachment: the latest steps of runs up to 10,000 instances.
+RUN_PAGES = 50
+
+
 @service
 class LumiService:
     def __init__(
@@ -255,8 +259,17 @@ class LumiService:
         summary = await self.runs.summary(actor, scope, run_id, context=context)
         if not isinstance(summary, RunSummary):
             return {"status": "not_recorded_yet"}
-        steps = await self.runs.steps(actor, scope, run_id, RunStepQuery(limit=200), None, context=context)
-        return run_context(summary, [item for item in steps.items if isinstance(item, StepFact)])
+        facts: list[StepFact] = []
+        position: tuple[JsonValue, str] | None = None
+        for _ in range(RUN_PAGES):
+            page = await self.runs.steps(actor, scope, run_id, RunStepQuery(limit=200), position, context=context)
+            facts.extend(item for item in page.items if isinstance(item, StepFact))
+            if page.next_cursor is None or not page.items:
+                return run_context(summary, facts)
+            # The next page starts after the last item, as the step cursor does: its scheduled time and key.
+            last = page.items[-1]
+            position = (last.scheduled_at.isoformat() if last.scheduled_at else None, last.instance_key or last.node_id)
+        return run_context(summary, facts, partial=True)
 
     def _context_tokens(self, connection: ConnectionRevision) -> int | None:
         """The context size the AI policy records for the connection's endpoint, or None when it records none."""

@@ -192,6 +192,8 @@ def outline(document: JsonValue, selected_step: str | None) -> JsonObject:
 
 
 RECENT_STEPS = 5
+# Failed steps listed by name; the rest are counted, so sixty failed iterations still fit a compact request.
+FAILED_STEPS = 10
 # Every path a run attachment may contain; a test spies on the request and fails on any other.
 RUN_FIELDS = frozenset(
     {
@@ -203,7 +205,13 @@ RUN_FIELDS = frozenset(
         "/ended_at",
         "/duration_ms",
         "/active_incidents",
+        "/failed_step",
+        "/failed_step/node_id",
+        "/failed_step/instance_key",
+        "/failed_step/error_code",
         "/failed_steps",
+        "/more_failed_steps",
+        "/partial",
         "/failed_steps/*/node_id",
         "/failed_steps/*/instance_key",
         "/failed_steps/*/error_code",
@@ -216,8 +224,10 @@ RUN_FIELDS = frozenset(
 )
 
 
-def run_context(summary: RunSummary, steps: Sequence[StepFact]) -> JsonObject:
-    """A run as Weave AI sees it: its run facts only, never inputs, outputs, logs, keys, workers or hosts."""
+def run_context(summary: RunSummary, steps: Sequence[StepFact], *, partial: bool = False) -> JsonObject:
+    """A run as Weave AI sees it: its run facts only, never inputs, outputs, logs, keys, workers or hosts.
+
+    `partial` says the steps are not all of the run's step facts."""
 
     def at(value: datetime | None) -> JsonValue:
         return value.isoformat().replace("+00:00", "Z") if value is not None else None
@@ -226,17 +236,23 @@ def run_context(summary: RunSummary, steps: Sequence[StepFact]) -> JsonObject:
         (item for item in steps if item.scheduled_at or item.started_at or item.ended_at),
         key=lambda item: cast(datetime, item.ended_at or item.started_at or item.scheduled_at),
     )
-    return {
+    failed = [item for item in steps if item.status == "failed"]
+    stopped = summary.failed_step
+    data: JsonObject = {
         "workflow": {"name": summary.workflow.name, "version": summary.workflow.version},
         "status": summary.status,
         "started_at": at(summary.started_at),
         "ended_at": at(summary.ended_at),
         "duration_ms": summary.duration_ms,
         "active_incidents": summary.active_incidents,
+        "failed_step": (
+            {"node_id": stopped.node_id, "instance_key": stopped.instance_key, "error_code": stopped.error_code}
+            if stopped is not None
+            else None
+        ),
         "failed_steps": [
             {"node_id": item.node_id, "instance_key": item.instance_key, "error_code": item.error_code}
-            for item in steps
-            if item.status == "failed"
+            for item in failed[:FAILED_STEPS]
         ],
         "recent_steps": [
             {
@@ -248,6 +264,11 @@ def run_context(summary: RunSummary, steps: Sequence[StepFact]) -> JsonObject:
             for item in timed[-RECENT_STEPS:]
         ],
     }
+    if len(failed) > FAILED_STEPS:
+        data["more_failed_steps"] = len(failed) - FAILED_STEPS
+    if partial:
+        data["partial"] = True
+    return data
 
 
 @dataclass(frozen=True)
