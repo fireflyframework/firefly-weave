@@ -27,6 +27,7 @@ the label weave.owner=o3 and is removed by name and label before the test ends. 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import importlib.util
 import json
 import sys
@@ -41,6 +42,7 @@ from firefly_weave.contracts.deployments import (
     ChangeRequestApply,
     ChangeRequestApprove,
     ChangeRequestCreate,
+    ChangeRequestDecision,
     PlanApprovalRequest,
     TargetUpdate,
 )
@@ -85,6 +87,25 @@ def run() -> Any:
     found = _harness().Run(path)
     assert found.context == OWNED_CONTEXT, f"the journeys use only {OWNED_CONTEXT}"
     return found
+
+
+@pytest.fixture(autouse=True)
+def tidy(run) -> Any:
+    """After each journey, cancel any change request it left active, so the next one finds local-docker free."""
+    yield
+
+    async def cancel() -> None:
+        async with run.client("operator") as operator:
+            for item in (await operator.invoke("deployment_change_requests.list")).items:
+                if item.state in {"observing", "ready_to_plan", "awaiting_approval", "approved", "draining"}:
+                    with contextlib.suppress(WeaveError):
+                        await operator.invoke(
+                            "deployment_change_requests.cancel",
+                            identifier=item.id,
+                            body=ChangeRequestDecision(reason="The journey ended"),
+                        )
+
+    asyncio.run(cancel())
 
 
 def until(read, done, seconds: float, what: str) -> Any:
