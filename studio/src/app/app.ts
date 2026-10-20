@@ -1795,7 +1795,7 @@ export class App implements CanvasHost {
       return this.dialogs.confirm({
         title: "Leave the designer?",
         message: saving
-          ? "Studio is still saving this draft and hasn't heard back from the platform. Your edits stay in this Studio window; keep editing to see the save finish."
+          ? "Studio is still saving this draft and hasn't heard back from the platform. If you leave, Studio keeps a recovery copy of your edits on this computer."
           : "Your edits stay in this Studio window, but they are not saved to a platform. Save a draft, or use Save to file, to keep a copy.",
         confirmLabel: "Leave designer",
         cancelLabel: "Keep editing",

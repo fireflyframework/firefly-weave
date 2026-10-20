@@ -229,7 +229,9 @@ test("leaving while a draft is saving asks first", async ({ page }) => {
   await page.getByRole("button", { name: "Home", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Leave the designer?" });
   await expect(dialog).toBeVisible({ timeout: 4000 });
-  await expect(dialog).toContainText("still saving");
+  await expect(dialog).toContainText(
+    "Studio is still saving this draft and hasn't heard back from the platform. If you leave, Studio keeps a recovery copy of your edits on this computer.",
+  );
   await dialog.getByRole("button", { name: "Keep editing" }).click();
   await expect(page.locator('[data-step="alpha-step"]').first()).toBeVisible();
 });
