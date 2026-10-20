@@ -22,6 +22,7 @@ when stopped. It never accepts database or administrator settings.
 """
 
 import asyncio
+import logging
 import os
 import signal
 import socket
@@ -42,6 +43,7 @@ from firefly_weave.sdk.worker_registration import register_worker_http
 
 TASK_TYPE = "example-sleep@1.0.0"
 MANIFEST = Path(__file__).with_name("manifest.json")
+LOG = logging.getLogger("weave.operations_worker")
 
 
 def capacity(environ: Mapping[str, str]) -> int:
@@ -68,21 +70,29 @@ async def _pipe(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> N
 
 
 async def start_relay(destination: str, *, listen: int = 8080) -> asyncio.Server:
-    """A loopback relay to Keycloak on the platform network, for the token endpoint only.
+    """A loopback relay to Keycloak on the platform network, so the worker can sign in over plain HTTP.
 
-    OAuth clients accept plain HTTP only on loopback, so the worker signs in through 127.0.0.1. Each
-    connection is checked against the worker's private-origin entries for worker-auth before anything is
-    forwarded, and goes to the checked address.
+    OAuth clients accept plain HTTP only on loopback, so the worker signs in through 127.0.0.1. The relay
+    forwards whole connections to the one destination its environment names (any Keycloak path, which gives
+    the worker no reach it lacks: it is on the platform network). Each connection is checked against the
+    worker's private-origin entries for worker-auth, as one that carries credentials, before anything is
+    forwarded, and goes to the checked address, never to the name resolved again. A refusal is logged with
+    its reason and a count only.
     """
     host, _, port = destination.rpartition(":")
+    refused = 0
 
     async def relay(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        nonlocal refused
         try:
             found = await asyncio.get_running_loop().getaddrinfo(host, int(port), type=socket.SOCK_STREAM)
             addresses = sorted({item[4][0] for item in found})
             private_origins.active().check("worker-auth", f"http://{host}:{port}/", addresses, sends_credentials=True)
             upstream_reader, upstream_writer = await asyncio.open_connection(addresses[0], int(port))
-        except Exception:
+        except Exception as error:
+            refused += 1
+            reason = error.reason if isinstance(error, private_origins.PrivateOriginDenied) else "unreachable"
+            LOG.warning("The token relay refused a connection (%s); %d refused so far", reason, refused)
             writer.close()
             return
         await asyncio.gather(_pipe(reader, upstream_writer), _pipe(upstream_reader, writer), return_exceptions=True)
