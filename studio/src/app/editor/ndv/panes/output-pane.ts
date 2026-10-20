@@ -147,6 +147,7 @@ import { ndvRegistry, type Json } from "../registry";
         @if (editing()) {
           @defer (on immediate) {
             <weave-output-editor
+              #editor
               [session]="session()"
               [initial]="editText()"
               (saved)="saved()"
@@ -335,7 +336,15 @@ export class OutputPane {
   }
   readonly editing = signal(false);
   readonly editText = signal("{}");
-  private readonly editor = viewChild(OutputEditor);
+  /**
+   * The open editor, queried by name: naming its class here would load it,
+   * and CodeMirror with it, with step details instead of on first use.
+   */
+  private readonly editor = viewChild<{
+    dirty(): boolean;
+    save(): Promise<boolean>;
+    focus(): void;
+  }>("editor");
   /** An output edit not saved yet: closing asks first. */
   editDirty(): boolean {
     return this.editing() && !!this.editor()?.dirty();

@@ -80,7 +80,8 @@ export interface StepDetailsHost {
   /** The open workflow's test data (test input, pinned output), outside undo. */
   readonly testData?: TestDataService;
   /** Every step's fingerprints now (memoized on the workflow, the canvas and the test input). */
-  testDataPrints?(): ReadonlyMap<string, StepFingerprints>;
+  /** Null while the shell's copy isn't ready: step details compute their own. */
+  testDataPrints?(): ReadonlyMap<string, StepFingerprints> | null;
   /** Opens the test data of the workflow and account shown now; false when it was open already. */
   openTestData?(): boolean;
   /** Saves a platform draft's pending edits now (closing step details); true when nothing is left. */

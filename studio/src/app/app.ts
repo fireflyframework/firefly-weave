@@ -71,17 +71,7 @@ import {
   TestDataService,
   type TestDataPlace,
 } from "./editor/state/test-data-service";
-import { checkInputsOf } from "./editor/state/test-data-inputs";
-import {
-  fingerprints,
-  type StepFingerprints,
-} from "./editor/state/fingerprints";
-import {
-  contractOf,
-  ownedContract,
-  pinsView,
-  staleText,
-} from "./editor/state/pins-stale";
+import type { StepFingerprints } from "./editor/state/fingerprints";
 import type {
   PinEntry,
   StudioDocument,
@@ -452,6 +442,9 @@ const sideEffects: Record<string, string> = {
   idempotency_key: "Retried with an idempotency key",
   non_idempotent: "Not idempotent — never retried automatically",
 };
+/** No pinned steps (before the test data tools load). */
+const NO_PINS: ReadonlyMap<string, { stale: string | null }> = new Map();
+
 @Component({
   selector: "weave-studio",
   standalone: true,
@@ -7042,7 +7035,12 @@ export class App implements CanvasHost {
     api: this.api,
     backend: studioBackend(),
     now: () => new Date(),
-    inputs: () => checkInputsOf(this.model.definition, this.catalogContracts),
+    // The schemas a check needs come with the tools, loaded on first use.
+    inputs: async () =>
+      (await this.loadTools()).checkInputsOf(
+        this.model.definition,
+        this.catalogContracts,
+      ),
     // A platform draft saves its test data with the draft.
     changed: () => {
       if (this.profile) this.autosave.touch();
@@ -7069,6 +7067,7 @@ export class App implements CanvasHost {
     const key = JSON.stringify([place, this.model.opened]);
     if (key === this.testDataKey) return false;
     this.testDataKey = key;
+    void this.loadTools();
     // Another workflow's test data: no pin here came from elsewhere yet.
     this.foreignPins.clear();
     this.foreignVersion++;
@@ -7098,6 +7097,24 @@ export class App implements CanvasHost {
     for (const key of keys) this.foreignPins.add(key);
     this.foreignVersion++;
   }
+  /** Test data's tools: fingerprints, pin states, the check's schemas (a lazy chunk). */
+  private tools: typeof import("./editor/state/test-data-tools") | null = null;
+  private toolsLoading: Promise<
+    typeof import("./editor/state/test-data-tools")
+  > | null = null;
+  /** Bumped when the tools arrive, so what reads them draws again. */
+  private readonly toolsReady = signal(0);
+  private loadTools() {
+    this.toolsLoading ??= import("./editor/state/test-data-tools").then(
+      (tools) => {
+        this.tools = tools;
+        this.toolsReady.update((n) => n + 1);
+        this.cdr.markForCheck();
+        return tools;
+      },
+    );
+    return this.toolsLoading;
+  }
   private pinStatesMemo: {
     prints: ReadonlyMap<string, StepFingerprints>;
     data: StudioTestData;
@@ -7107,6 +7124,8 @@ export class App implements CanvasHost {
   /** Each pinned step's stale words for the canvas (null when current). */
   pinStates(): ReadonlyMap<string, { stale: string | null }> {
     const prints = this.testDataPrints();
+    // Until the tools load (a moment after the first page), no badges.
+    if (!prints || !this.tools) return NO_PINS;
     const data = this.testData.data();
     const memo = this.pinStatesMemo;
     if (
@@ -7116,18 +7135,7 @@ export class App implements CanvasHost {
       memo.foreign === this.foreignVersion
     )
       return memo.states;
-    const states = new Map<string, { stale: string | null }>();
-    for (const [id, view] of pinsView(data, prints)) {
-      // Kept, or pinned again here: it is this workflow's pin now.
-      if (!view.stale) this.foreignPins.delete(id);
-      states.set(id, {
-        stale: !view.stale
-          ? null
-          : this.foreignPins.has(id)
-            ? "pinned in another workflow; check it still fits"
-            : staleText(view.stale),
-      });
-    }
+    const states = this.tools.pinStatesOf(data, prints, this.foreignPins);
     this.pinStatesMemo = { prints, data, foreign: this.foreignVersion, states };
     return states;
   }
@@ -7138,17 +7146,11 @@ export class App implements CanvasHost {
   /** What the simulation's editors start from: the test input and each step's pinned output, or null. */
   simulationTestData(): { input?: Json; pins: Record<string, Json> } | null {
     this.testData.version();
+    this.toolsReady();
     const data = this.testData.data();
     if (this.simulationDataMemo?.data === data)
       return this.simulationDataMemo.value;
-    const pins: Record<string, Json> = {};
-    for (const [id, view] of pinsView(data, new Map()))
-      pins[id] = view.entry.output as Json;
-    const input = data.input?.value as Json | undefined;
-    const value =
-      input === undefined && !Object.keys(pins).length
-        ? null
-        : { ...(input === undefined ? {} : { input }), pins };
+    const value = this.tools ? this.tools.simulationDataOf(data) : null;
     this.simulationDataMemo = { data, value };
     return value;
   }
@@ -7184,7 +7186,14 @@ export class App implements CanvasHost {
       );
     });
   }
-  testDataPrints(): ReadonlyMap<string, StepFingerprints> {
+  /**
+   * Every step's fingerprints now, or null until the test data tools load
+   * (step details then compute their own).
+   */
+  testDataPrints(): ReadonlyMap<string, StepFingerprints> | null {
+    this.toolsReady();
+    const tools = this.tools;
+    if (!tools) return null;
     const model = this.model;
     const version = this.testData.version();
     const memo = this.printsMemo;
@@ -7195,18 +7204,7 @@ export class App implements CanvasHost {
       memo.version === version
     )
       return memo.prints;
-    const prints = fingerprints({
-      workflow: model.definition,
-      testInput: this.testData.data().input?.value,
-      contractOf: (step) =>
-        contractOf(step, {
-          owned: (uses) => ownedContract(model.canvas, uses),
-          profiles:
-            (model.definition.spec["llmProfiles"] as
-              | Record<string, unknown>
-              | undefined) ?? {},
-        }),
-    });
+    const prints = tools.printsOf(model, this.testData.data().input?.value);
     this.printsMemo = {
       revision: model.revision,
       canvas: model.canvas,

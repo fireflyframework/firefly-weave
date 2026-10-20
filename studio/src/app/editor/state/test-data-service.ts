@@ -124,7 +124,8 @@ export interface TestDataHost {
   api: Pick<StudioApi, "request">;
   backend: StoreBackend;
   now(): Date;
-  inputs(): CheckInputs;
+  /** What the check needs to know about the workflow (may load first). */
+  inputs(): CheckInputs | Promise<CheckInputs>;
   /** Called after each change is kept (a platform draft then saves it with the draft). */
   changed?(): void;
 }
@@ -257,7 +258,12 @@ export class TestDataService {
     const opening = this.opened;
     const previous = this.current;
     const verdicts = pointers.length
-      ? await checkEntries(this.host.api, next, pointers, this.host.inputs())
+      ? await checkEntries(
+          this.host.api,
+          next,
+          pointers,
+          await this.host.inputs(),
+        )
       : new Map();
     if (opening !== this.opened || this.current !== previous)
       return {

@@ -315,7 +315,8 @@ export class StepDetailsController {
   }
   /** Every step's fingerprints now: the shell's (memoized), or computed here. */
   prints(): ReadonlyMap<string, StepFingerprints> {
-    if (this.host.testDataPrints) return this.host.testDataPrints();
+    const shared = this.host.testDataPrints?.();
+    if (shared) return shared;
     const model = this.host.model;
     return fingerprints({
       workflow: model.definition,
