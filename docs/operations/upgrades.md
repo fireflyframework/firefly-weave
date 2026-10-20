@@ -576,7 +576,7 @@ what runners, CLIs and SDKs of the previous release read:
   needs a second person to approve its plans. A plan made before the upgrade does
   not record its planner, so on such a target it must be planned again before it
   can be approved or applied (409 `WV-PLAN-STALE`). The rule compares accounts:
-  see [Who counts as a second approver](cluster-management.md).
+  see [Who counts as a second approver](cluster-management.md#who-counts-as-a-second-approver).
 
 Upgrade runners soon after the server anyway: a runner of the previous release
 cannot run restart jobs (it never registers `restart_workers`, so it never claims

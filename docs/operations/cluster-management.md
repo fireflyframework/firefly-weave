@@ -236,6 +236,23 @@ approved plan**. Approval stores the exact digest. Applying rechecks revisions,
 freshness, capabilities, and the approver's current role. A saved approval can
 therefore become unusable after a revocation or change.
 
+### Who counts as a second approver
+
+Unless an environment manager turned it off for a target, a plan needs a second
+approver: the account that made the plan, and the account that requested its
+change request, cannot approve it, through Studio, the change request or the
+low-level `weave operations plans approve`. Applying checks the stored approval
+against the same rule again.
+
+The rule compares **accounts, not people**. A person who can grant roles can
+give an application account the `deployment_approver` role and approve their own
+plans through it, which needs no more authority than turning the rule off.
+Every grant of approval rights to an application account is therefore audited
+as `deployment_target.approval_policy`, the same action as a change of a target's
+policy, so reviewing that one action covers both. Keep approval rights on
+people's own accounts, and on application accounts only for automation you
+review.
+
 For the CLI, create `reviewed-digest.json` containing only `digest` with the
 exact digest you reviewed:
 

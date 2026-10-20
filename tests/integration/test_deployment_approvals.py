@@ -242,3 +242,28 @@ async def test_apply_checks_the_approval_against_the_policy_again(people):
             plan.id, ApplyPlanRequest(digest=plan.digest), "apply", **people.authority("planner")
         )
     assert (refused.value.status, refused.value.code) == (403, "WV-APPROVAL-SELF")
+
+
+async def test_granting_approval_rights_to_an_application_account_is_audited_as_a_policy_event(
+    people, access_db, provisioned
+):
+    admin, scopes = provisioned
+    application = await access_db[2].create_principal(admin, "application")
+    person = await access_db[2].create_principal(admin, "human")
+    for principal in (application, person):
+        await access_db[2].grant(admin, principal, Grant(role="deployment_approver", scope=scopes[0]))
+    # A role without approval rights is not a policy event.
+    await access_db[2].grant(admin, application, Grant(role="deployment_reader", scope=scopes[0]))
+    async with access_db[1]() as session:
+        rows = (
+            await session.execute(
+                text(
+                    "SELECT target,event->'details' FROM access_audit WHERE action='deployment_target.approval_policy' "
+                    "AND target IN (:application,:person)"
+                ),
+                {"application": str(application), "person": str(person)},
+            )
+        ).all()
+    assert [(row[0], row[1]["role"], row[1]["approver_kind"]) for row in rows] == [
+        (str(application), "deployment_approver", "application")
+    ]
