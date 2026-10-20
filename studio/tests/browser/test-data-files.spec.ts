@@ -282,7 +282,9 @@ test("the toolbar's Undo of a delete brings the pin back too, and Redo takes it 
   ).toHaveAttribute("data-badge", "pinned");
   await command(page, "Redo");
   await expect(page.locator('[data-step="notify"]')).toHaveCount(0);
-  await command(page, "Undo");
+  // Mod+Z on the canvas is the same Undo.
+  await page.getByLabel("Workflow canvas", { exact: true }).focus();
+  await page.keyboard.press("ControlOrMeta+z");
   await expect(
     page.locator('[data-step="notify"] .tile-badge').first(),
   ).toHaveAttribute("data-badge", "pinned");
