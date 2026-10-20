@@ -127,6 +127,16 @@ export class StudioApi {
   };
   /** Called when the local host no longer recognizes this window's pairing. */
   onSessionEnded: (() => void) | null = null;
+  /**
+   * Who is signed in, and where, for a keyed change sent again after a
+   * capacity pause: the host sends it for whoever is signed in by then.
+   * `settled` waits for a sign-in check still out; `scope` names the person
+   * and workspace right then. The shell sets it.
+   */
+  replayGuard: {
+    settled: () => Promise<void>;
+    scope: () => string;
+  } | null = null;
   /** Pauses before replaying a request the host or platform turned away for capacity. */
   wait = (milliseconds: number) =>
     new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
@@ -167,7 +177,10 @@ export class StudioApi {
       h["X-Weave-CSRF"] = this.session.csrfToken;
     // A capacity or compatibility rejection means the host or platform did not admit the
     // request, so a read, or a change that carries an idempotency key, can be sent again.
-    const safe = method === "GET" || "Idempotency-Key" in h;
+    const keyed = method !== "GET" && "Idempotency-Key" in h;
+    const safe = method === "GET" || keyed;
+    // A change is sent again only for the person and workspace it was first sent for.
+    const scope = keyed ? this.replayGuard?.scope() : undefined;
     for (let attempt = 1; ; attempt++) {
       const scoped = signal ? cancellable(signal, timeout) : null;
       let response: Response;
@@ -202,6 +215,13 @@ export class StudioApi {
           retryDelay(response.headers.get("Retry-After")),
           signal,
         );
+        const guard = keyed ? this.replayGuard : null;
+        if (guard) {
+          await guard.settled();
+          signal?.throwIfAborted();
+          // Nothing ran: the refusal stands, rather than a send as someone else.
+          if (guard.scope() !== scope) throw error;
+        }
         continue;
       }
       if (

@@ -1521,6 +1521,54 @@ test.describe("another person on the same environment", () => {
     ).toHaveCount(0);
   });
 
+  test("a change refused for capacity is not sent again once another person is signed in", async ({
+    page,
+  }) => {
+    const people = await janeThenJohn(page);
+    const sent: { person: string; path: string }[] = [];
+    let reached: () => void = () => undefined;
+    const out = new Promise<void>((resolve) => (reached = resolve));
+    await page.route("**/workers/*/drain", async (r) => {
+      sent.push({
+        person: people.person(),
+        path: new URL(r.request().url()).pathname
+          .split("/")
+          .slice(-2)
+          .join("/"),
+      });
+      if (sent.length === 1) {
+        reached();
+        // Studio pauses for Retry-After, then would send the same keyed change again.
+        return r.fulfill({
+          status: 429,
+          headers: { "Retry-After": "2" },
+          json: { code: "WV-OPERATION-CAPACITY", message: "Busy" },
+        });
+      }
+      return r.fulfill({ json: { revoked: false } });
+    });
+    await page.getByLabel("Select every worker on this list, up to 50").check();
+    await page
+      .getByRole("region", { name: "Selected workers" })
+      .getByRole("button", { name: "Drain" })
+      .click();
+    await page
+      .getByRole("dialog", { name: "Drain 3 workers?" })
+      .getByRole("button", { name: "Drain" })
+      .click();
+    // The platform refuses the first drain; John signs in during the pause.
+    await out;
+    const refused = Date.now();
+    await people.switch();
+    expect(Date.now() - refused).toBeLessThan(2000);
+    await expect
+      .poll(() => people.lists.filter((item) => item.person === "john").length)
+      .toBeGreaterThan(0);
+    // Past the pause, nothing has gone out for John.
+    await page.waitForTimeout(Math.max(0, 3500 - (Date.now() - refused)));
+    expect(sent).toEqual([{ person: "jane", path: `${online}/drain` }]);
+  });
+
   test("a bulk action waits for the sign-in check before its next send", async ({
     page,
   }) => {

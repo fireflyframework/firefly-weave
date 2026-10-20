@@ -252,6 +252,57 @@ describe("capacity rejections", () => {
     });
     expect(other).toHaveBeenCalledTimes(1);
   });
+  it("does not replay a keyed change once another person is signed in", async () => {
+    const fetch = vi.fn(async () => busy());
+    vi.stubGlobal("fetch", fetch);
+    const client = api();
+    let person = "jane";
+    let settle: () => void = () => undefined;
+    const checked: string[] = [];
+    client.replayGuard = {
+      scope: () => person,
+      settled: () =>
+        new Promise<void>((resolve) => {
+          checked.push(person);
+          settle = resolve;
+        }),
+    };
+    client.wait = vi.fn(async () => {
+      // The person changes while Studio pauses before the replay.
+      person = "john";
+    });
+    const pending = client.mutate(
+      "/studio/api/runs",
+      "POST",
+      {},
+      undefined,
+      "k",
+    );
+    await vi.waitFor(() => expect(checked).toEqual(["john"]));
+    // Nothing is sent while the sign-in check is still out.
+    expect(fetch).toHaveBeenCalledTimes(1);
+    settle();
+    await expect(pending).rejects.toMatchObject({
+      status: 429,
+      code: "WV-OPERATION-CAPACITY",
+    });
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+  it("replays a keyed change after the sign-in check finds the same person", async () => {
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(busy())
+      .mockResolvedValueOnce(ok());
+    vi.stubGlobal("fetch", fetch);
+    const client = api();
+    const settled = vi.fn(async () => undefined);
+    client.replayGuard = { scope: () => "jane", settled };
+    await expect(
+      client.mutate("/studio/api/runs", "POST", {}, undefined, "k"),
+    ).resolves.toEqual({ items: [] });
+    expect(settled).toHaveBeenCalledTimes(1);
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
   it("does not replay other 429 answers", async () => {
     const fetch = vi.fn().mockResolvedValue(busy("WV-PAGE-LIMIT"));
     vi.stubGlobal("fetch", fetch);
