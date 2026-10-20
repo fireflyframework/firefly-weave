@@ -262,6 +262,29 @@ def test_reservations_must_outlast_the_step_that_cant_be_undone():
     assert check(reserve(0, 930), irreversible(1, timeout=900))[0] == []
 
 
+def test_the_hold_edit_covers_every_path_and_every_reservation():
+    case, default = at(1) + "/cases/0/steps", at(1) + "/default/steps"
+    slow = Participant("reverse", at(0, default), "callWorkflow", "irreversible", None, True, 300)
+    route = Choice(
+        "route", at(1), (Sequence(case, (irreversible(0, base=case, timeout=60),)), Sequence(default, (slow,)))
+    )
+    issues, analysis = check(reserve(0, 80), route)
+    assert issues == [("TXN_HOLD_PIVOT", at(0) + "/holdSeconds", "error")]
+    assert analysis.issues[0].edit == (at(0) + "/holdSeconds", 330)
+    assert "but reverse may take up to 5 minutes" in analysis.issues[0].message
+    assert check(reserve(0, 330), route)[0] == []
+    issues, analysis = check(reserve(0, 70, step="h1"), reserve(1, 60, step="h2"), irreversible(2, timeout=60))
+    assert issues == [
+        ("TXN_HOLD_PIVOT", at(0) + "/holdSeconds", "error"),
+        ("TXN_HOLD_PIVOT", at(1) + "/holdSeconds", "error"),
+    ]
+    assert [issue.edit for issue in analysis.issues] == [(at(0) + "/holdSeconds", 90), (at(1) + "/holdSeconds", 90)]
+    assert analysis.issues[0].message == (
+        "Reservations are held for 1 minute 10 seconds, but submit may take up to 1 minute. "
+        "Hold them for at least 1 minute 30 seconds."
+    )
+
+
 def test_waits_before_the_decision_warn_when_they_can_outlast_reservations():
     issues, analysis = check(
         reserve(0, 900),
@@ -574,8 +597,13 @@ def _expected(body: Sequence):
                         found.add(("TXN_AFTER_PIVOT_UNSAFE", node.path))
                 elif decides[index]:
                     pivots.add(node.id)
-                    if holds and node.timeout is not None and holds[0][0] < node.timeout + 30:
-                        found.add(("TXN_HOLD_PIVOT", holds[0][1] + "/holdSeconds"))
+                    # Every reservation held for less than the decision may take, so one edit each is enough.
+                    if node.timeout is not None:
+                        found |= {
+                            ("TXN_HOLD_PIVOT", path + "/holdSeconds")
+                            for hold, path in holds
+                            if hold < node.timeout + 30
+                        }
             elif node.kind in ("wait", "signal", "humanTask"):
                 # A wait also outlasts reservations made beside it in a parallel step.
                 beside = [

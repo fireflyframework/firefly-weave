@@ -30,7 +30,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from copy import deepcopy
 from dataclasses import dataclass, field
-from typing import Final, Literal
+from typing import Final, Literal, cast
 
 from firefly_weave.compiler.language_support import path_order
 from firefly_weave.contracts.definitions import SideEffect
@@ -238,6 +238,8 @@ class _Walk:
     pivots: set[str] = field(default_factory=set)
     # For each step: whether every state that reached it had a pivot.
     reached: dict[str, bool] = field(default_factory=dict)
+    # Reservations that some path reaches before a point of no return, in walk order.
+    open_reservations: dict[str, Participant] = field(default_factory=dict)
     # Loop bodies already walked, by loop, entry states, placement and reservations held beside them: each is walked
     # once per distinct entry.
     walked: dict[tuple[int, frozenset[_State], bool, int | None], frozenset[_State]] = field(default_factory=dict)
@@ -402,22 +404,13 @@ class _Walk:
                 result.add(state)
             elif irreversible:
                 self.pivots.add(step.id)
-                if state.hold is not None and state.holder is not None and step.timeout is not None:
-                    needed = step.timeout + HOLD_MARGIN_SECONDS
-                    if state.hold < needed:
-                        self.add(
-                            "TXN_HOLD_PIVOT",
-                            state.holder.path + "/holdSeconds",
-                            "error",
-                            hold=duration_text(state.hold),
-                            pivot=step.id,
-                            timeout=duration_text(step.timeout),
-                            needed=duration_text(needed),
-                            edit=(state.holder.path + "/holdSeconds", needed),
-                        )
                 result.add(_State(step, state.hold, state.holder))
             elif step.mode == "reserve" and step.hold is not None and (state.hold is None or step.hold < state.hold):
+                self.open_reservations.setdefault(step.path, step)
                 result.add(_State(None, step.hold, step))
+            elif step.mode == "reserve":
+                self.open_reservations.setdefault(step.path, step)
+                result.add(state)
             else:
                 result.add(state)
         if after:
@@ -435,6 +428,95 @@ class _Walk:
             elif step.side_effect == "non_idempotent":
                 self.add("TXN_AFTER_PIVOT_UNSAFE", step.path, "error", step=step.id, pivot=pivot.id)
         return frozenset(result)
+
+
+# The longest hold a decision needs, with the step that needs it; ties name the first step in step order.
+type _Need = tuple[int, Participant] | None
+
+
+def _longer(first: _Need, second: _Need) -> _Need:
+    if first is None or second is None:
+        return first or second
+    if first[0] != second[0]:
+        return first if first[0] > second[0] else second
+    return first if path_order(first[1].path) <= path_order(second[1].path) else second
+
+
+@dataclass
+class _Decisions:
+    """For each reservation, the longest hold that a point of no return reached after it needs, on any path.
+
+    A point of no return counts when no other step that can't be undone runs between the reservation and it.
+    """
+
+    needs: dict[str, _Need] = field(default_factory=dict)
+    summaries: dict[int, tuple[_Need, bool]] = field(default_factory=dict)
+
+    def summary(self, sequence: Sequence) -> tuple[_Need, bool]:
+        """The longest need of the first decisions in ``sequence``, and whether a path passes it without one."""
+        key = id(sequence)
+        if key not in self.summaries:
+            need: _Need = None
+            for element in reversed(sequence.elements):
+                need = self.before(element, need, None)
+            self.summaries[key] = (need, all(self.passes(element) for element in sequence.elements))
+        return self.summaries[key]
+
+    def passes(self, element: Element) -> bool:
+        if isinstance(element, Participant):
+            return element.mode not in (None, "irreversible")
+        if isinstance(element, Other):
+            return element.kind != "fail"
+        if isinstance(element, Choice):
+            return any(self.summary(path)[1] for path in element.paths)
+        if isinstance(element, Fork):
+            return all(self.summary(branch)[1] for branch in element.branches)
+        return True
+
+    def through(self, sequence: Sequence, following: _Need) -> _Need:
+        need, passes = self.summary(sequence)
+        return _longer(need, following if passes else None)
+
+    def before(self, element: Element, following: _Need, record: bool | None) -> _Need:
+        """The need seen just before ``element`` when ``following`` is the need after it; records reservations."""
+        if isinstance(element, Participant):
+            if element.mode in (None, "irreversible"):
+                if element.timeout is None:
+                    return None
+                return (element.timeout + HOLD_MARGIN_SECONDS, element)
+            if record and element.mode == "reserve":
+                self.needs[element.path] = following
+            return following
+        if isinstance(element, Other):
+            return None if element.kind == "fail" else following
+        if isinstance(element, Choice):
+            if record:
+                for path in element.paths:
+                    self.record(path, following)
+            need: _Need = None
+            for path in element.paths:
+                need = _longer(need, self.through(path, following))
+            return need
+        if isinstance(element, Fork):
+            summaries = [self.summary(branch) for branch in element.branches]
+            if record:
+                for position, branch in enumerate(element.branches):
+                    others = all(passes for number, (_, passes) in enumerate(summaries) if number != position)
+                    self.record(branch, following if others else None)
+            need = following if all(passes for _, passes in summaries) else None
+            for branch_need, _ in summaries:
+                need = _longer(need, branch_need)
+            return need
+        once = self.through(element.body, following)
+        if record:
+            # After the body: the loop ends, or another round starts.
+            self.record(element.body, _longer(following, once) if element.max_items > 1 else following)
+        return _longer(following, once)
+
+    def record(self, sequence: Sequence, following: _Need) -> None:
+        need = following
+        for element in reversed(sequence.elements):
+            need = self.before(element, need, True)
 
 
 def _shortest(first: int | None, second: int | None) -> int | None:
@@ -554,6 +636,23 @@ def check_transaction(
         walk.add("TXN_SIZE", transaction.path, "error", count=count, limit=max_participants, edit=edit)
     # Undeclared steps count as irreversible for ordering, so every problem shows in one pass.
     walk.sequence(transaction.body, frozenset({_State()}), loop=False, shared=False)
+    decisions = _Decisions()
+    decisions.record(transaction.body, None)
+    for reservation in walk.open_reservations.values():
+        need = decisions.needs.get(reservation.path)
+        if need is None or reservation.hold is None or reservation.hold >= need[0]:
+            continue
+        needed, pivot = need
+        walk.add(
+            "TXN_HOLD_PIVOT",
+            reservation.path + "/holdSeconds",
+            "error",
+            hold=duration_text(reservation.hold),
+            pivot=pivot.id,
+            timeout=duration_text(cast(int, pivot.timeout)),
+            needed=duration_text(needed),
+            edit=(reservation.path + "/holdSeconds", needed),
+        )
     issues = sorted(walk.issues.values(), key=lambda issue: (path_order(issue.path), issue.code))
     after = tuple(step for step, only_after in walk.reached.items() if only_after)
     return TransactionAnalysis(tuple(issues), frozenset(walk.pivots), after)
