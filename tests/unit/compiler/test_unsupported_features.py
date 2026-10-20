@@ -231,8 +231,14 @@ POSITIONS = [
 ]
 
 
-def test_text_loops_and_calls_compile_and_nothing_is_advertised_that_the_compiler_cannot_compile():
-    assert set(COMPILED_FEATURES) == {"flow.callWorkflow", "flow.forEach", "text.concat", "text.join"}
+def test_text_loops_calls_and_transactions_compile_and_nothing_is_advertised_that_the_compiler_cannot_compile():
+    assert set(COMPILED_FEATURES) == {
+        "flow.callWorkflow",
+        "flow.forEach",
+        "flow.transaction",
+        "text.concat",
+        "text.join",
+    }
     assert set(ADVERTISED_FEATURES) <= COMPILED_FEATURES
 
 

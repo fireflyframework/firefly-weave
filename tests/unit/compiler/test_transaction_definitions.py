@@ -194,7 +194,7 @@ def test_frozen_schema_definitions_are_exported_for_studio():
 def test_existing_examples_gain_no_new_keys():
     for path in sorted(Path("examples").rglob("*.yaml")):
         text = path.read_text(encoding="utf-8")
-        if "kind: Workflow" not in text:
+        if "kind: Workflow" not in text or path.name == "move-between-systems.workflow.yaml":
             continue
         spec = json.dumps(dumped(parse_source(text, format="yaml").value)["spec"])
         for key in ('"transaction"', '"confirm"', '"cancel"', '"compensate"', '"irreversible"', '"eventTrigger"'):

@@ -70,10 +70,29 @@ from firefly_weave.compiler.parser import ParsedSource
 from firefly_weave.compiler.schema_profile import DEFAULT_CONTRACT_LIMITS, SchemaLimits
 from firefly_weave.compiler.schemas import validate_contract_payload, validate_payload, validate_schema
 from firefly_weave.compiler.source_map import pointer_child
+from firefly_weave.compiler.transactions import (
+    RULE_CODES,
+    RULE_MESSAGES,
+    Choice,
+    Element,
+    Fork,
+    Other,
+    Participant,
+    Repeat,
+    TransactionBody,
+    TransactionIssue,
+    UndoFacts,
+    check_transaction,
+    undo_shape_issues,
+    without_undo_shape_issues,
+)
+from firefly_weave.compiler.transactions import Sequence as StepSequence
 from firefly_weave.compiler.typecheck import TypeCheckLimit, check_compatibility, schema_types
-from firefly_weave.contracts.definitions import load_definition
+from firefly_weave.contracts.definitions import SideEffect, load_definition
 from firefly_weave.contracts.diagnostics import Diagnostic, RelatedLocation, SourceRange, SuggestedEdit
+from firefly_weave.contracts.language_features import UNDO_FIELDS, UNDO_KINDS
 from firefly_weave.contracts.limits import Limits
+from firefly_weave.contracts.transactions import DEFAULT_HOLD_SECONDS, TRANSIENT_WORKER_CODES, UndoMode, UndoPhase
 from firefly_weave.contracts.values import JsonObject, JsonValue
 
 _DEFAULT_LIMITS = Limits()
@@ -117,7 +136,7 @@ _MESSAGES = {
     ),
     "UNKNOWN_WORKFLOW": CALL_MESSAGES["UNKNOWN_WORKFLOW"],
     "CALL_MODE": CALL_MESSAGES["CALL_MODE"],
-}
+} | {RULE_CODES[key]: message for key, message in RULE_MESSAGES.items() if "{" not in message}
 
 
 def _message(code: str, **values: object) -> str:
@@ -128,6 +147,22 @@ def _message(code: str, **values: object) -> str:
 
 def reference_available(step_id: str, completed: frozenset[str]) -> bool:
     return step_id in completed
+
+
+# What an undo phase reads besides what its step saw: the step's own operation key and outcome, and the transaction.
+UNDO_ROOTS = frozenset({"participant", "transaction"})
+PARTICIPANT_SCHEMA: JsonObject = {
+    "type": "object",
+    "properties": {"operationKey": {"type": "string"}, "outcome": {"type": "string", "enum": ["done", "unknown"]}},
+    "required": ["operationKey", "outcome"],
+    "additionalProperties": False,
+}
+TRANSACTION_SCHEMA: JsonObject = {
+    "type": "object",
+    "properties": {"id": {"type": "string"}, "businessKey": {"type": ["string", "null"]}},
+    "required": ["id", "businessKey"],
+    "additionalProperties": False,
+}
 
 
 def severity_for_unknown(strict: bool) -> Literal["error", "warning"]:
@@ -162,6 +197,8 @@ class AnalyzedStep:
     branches: tuple[AnalyzedBranch, ...] = ()
     completes: bool = True
     reachable: bool = True
+    # How a step inside a transaction is undone: mode, hold, and each phase with the reference it uses.
+    participation: FrozenDocument | None = None
 
 
 @dataclass(frozen=True)
@@ -189,6 +226,10 @@ class AnalysisResult:
     error_count: int = 0
     omitted_count: int = 0
     schema_truncated: bool = False
+    # Steps that are the first irreversible step of a transaction on some path, and per transaction, the steps
+    # reached only after one.
+    pivots: frozenset[str] = frozenset()
+    after_pivot: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
     @property
     def diagnostics(self) -> tuple[Diagnostic, ...]:
@@ -277,6 +318,14 @@ class _Analyzer:
         # The analyzed workflow's exact reference, and the calls each catalog workflow makes.
         self.reference = ""
         self.calls = CallGraph(catalog)
+        # The transaction enclosing the position being analyzed: its ID and its default hold; and the undo phase
+        # being analyzed, whose expressions may read /participant and /transaction.
+        self.transaction: tuple[str, int] | None = None
+        self.undo: str | None = None
+        self.undo_step = ""
+        self.participants: dict[str, Participant] = {}
+        self.pivots: set[str] = set()
+        self.after_pivot: dict[str, tuple[str, ...]] = {}
 
     def location(self, path: str) -> SourceRange | None:
         while path not in self.source.locations and path:
@@ -307,7 +356,7 @@ class _Analyzer:
         unknown: bool = False,
         stage: Literal["resolution", "semantic"] = "semantic",
         related: str | None = None,
-        severity: Literal["error", "warning"] | None = None,
+        severity: Literal["error", "warning", "info"] | None = None,
         message: str | None = None,
         edit: SuggestedEdit | None = None,
     ) -> None:
@@ -473,6 +522,8 @@ class _Analyzer:
                 if cast(int, descriptor["timeoutSeconds"]) > cast(int, limits["maxTimeoutSeconds"]):
                     self.issue("TIMEOUT_CONTRACT", descriptor_path + "/timeoutSeconds")
             return
+        if kind == "Action" and not dependency:
+            self.definite_failures(spec, base)
         if partial:
             return
         if "connection" in spec:
@@ -588,10 +639,13 @@ class _Analyzer:
                 self.count(cast(JsonObject, step[key]), step_path + "/" + key)
             if kind == "forEach":
                 self.count(cast(JsonObject, step["items"]), step_path + "/items")
+            if kind in {"callWorkflow", "transaction"} and "businessKey" in step:
+                self.count(cast(JsonObject, step["businessKey"]), step_path + "/businessKey")
             if kind == "callWorkflow":
                 self.count(cast(JsonObject, step["with"]), step_path + "/with")
-                if "businessKey" in step:
-                    self.count(cast(JsonObject, step["businessKey"]), step_path + "/businessKey")
+            for name in ("confirm", "cancel", "compensate") if kind in UNDO_KINDS else ():
+                if name in step:
+                    self.count(cast(JsonObject, cast(JsonObject, step[name])["with"]), f"{step_path}/{name}/with")
             for _, child, child_path in self.branch_values(step, step_path):
                 if "when" in child:
                     self.count(cast(JsonObject, child["when"]), child_path + "/when")
@@ -618,11 +672,14 @@ class _Analyzer:
             ]
         if step["kind"] == "forEach":
             return [("body", cast(JsonObject, step["body"]), path + "/body")]
+        if step["kind"] == "transaction":
+            # A transaction is its own block: its steps and output sit beside its other fields.
+            return [("body", step, path)]
         return []
 
     def infer(self, expression: JsonObject, visible: dict[str, JsonObject]) -> InferredType:
         requested: set[str] = set()
-        include_input = include_all = include_steps = include_loops = False
+        include_input = include_all = include_steps = include_loops = include_undo = False
         stack = [expression]
         while stack:
             node = stack.pop()
@@ -632,6 +689,8 @@ class _Analyzer:
                     include_input = include_all = include_steps = include_loops = True
                 elif segments[0] in LOOP_ROOTS:
                     include_loops = True
+                elif segments[0] in UNDO_ROOTS:
+                    include_undo = True
                 elif segments[0] == "input":
                     include_input = True
                 elif segments[0] == "steps":
@@ -652,6 +711,9 @@ class _Analyzer:
             context["item"] = self.loops[-1].item
             context["index"] = self.loops[-1].index
             context["loops"] = loops_schema(self.loops)
+        if include_undo and self.undo is not None:
+            context["participant"] = PARTICIPANT_SCHEMA
+            context["transaction"] = TRANSACTION_SCHEMA
         return infer_expression(expression, context, limits=self.limits, schema_limits=self.schema_limits)
 
     def observe(self, path: str, visible: dict[str, JsonObject], evaluated: bool = True) -> None:
@@ -685,6 +747,8 @@ class _Analyzer:
                         self.issue("UNAVAILABLE_REFERENCE", location + "/ref")
                     if not self.in_loop_scope(segments):
                         self.issue("LOOP_SCOPE", location + "/ref")
+                    if segments and segments[0] in UNDO_ROOTS and self.undo is None:
+                        self.issue("TXN_SCOPE", location + "/ref")
                 stack.extend(_children(node, location))
             self.operands(expression, path, visible)
             result = self.infer(expression, visible)
@@ -710,9 +774,12 @@ class _Analyzer:
             result = self.infer(expression, visible)
             segments = pointer_segments(cast(str, expression["ref"]))
             unavailable = len(segments) >= 2 and segments[0] == "steps" and segments[1] not in visible
-            if unavailable or not self.in_loop_scope(segments):
+            outside = bool(segments) and segments[0] in UNDO_ROOTS and self.undo is None
+            if unavailable or outside or not self.in_loop_scope(segments):
                 return
-            if not handled and len(segments) > 3 and segments[0] == "steps" and segments[2] == "output":
+            # In an undo phase, the step's own output is maybe missing as a whole, not per decision path.
+            own = self.undo is not None and len(segments) > 1 and segments[1] == self.undo_step
+            if not handled and not own and len(segments) > 3 and segments[0] == "steps" and segments[2] == "output":
                 variants = [visible[segments[1]]]
                 while variants:
                     variant = variants.pop()
@@ -936,6 +1003,10 @@ class _Analyzer:
                 branches.append(body)
             elif kind == "callWorkflow":
                 output = self.call(step, location, visible)
+            elif kind == "transaction":
+                output, body = self.transaction_block(step, location, visible, scope)
+                branches.append(body)
+                completes = body.completes
             elif kind in {"switch", "parallel"}:
                 if kind == "parallel" and cast(int, step["concurrency"]) > self.concurrency:
                     self.issue("CONCURRENCY_LIMIT", location + "/concurrency")
@@ -982,6 +1053,7 @@ class _Analyzer:
                         else {}
                     )
                     completes = bool(alternatives)
+            participation = self.undo_fields(step, location, visible, output) if kind in UNDO_KINDS else None
             nodes.append(
                 AnalyzedStep(
                     identifier,
@@ -993,6 +1065,7 @@ class _Analyzer:
                     tuple(branches),
                     completes,
                     reachable,
+                    participation,
                 )
             )
             self.kinds[identifier] = kind
@@ -1094,6 +1167,243 @@ class _Analyzer:
         self.guard(location, "call_output", output)
         return call_output_schema(mode, on_failure, output)
 
+    def transaction_block(
+        self, step: JsonObject, location: str, visible: dict[str, JsonObject], scope: tuple[str, ...]
+    ) -> tuple[JsonObject, AnalyzedBranch]:
+        """Check one transaction and its body; returns the block's output schema and its analyzed body."""
+        identifier = cast(str, step["id"])
+        if self.transaction is not None:
+            self.issue("TXN_NESTED", location + "/kind")
+        if "businessKey" in step:
+            self.expression(
+                cast(JsonObject, step["businessKey"]), location + "/businessKey", visible, BUSINESS_KEY_SCHEMA
+            )
+        policy = cast(JsonObject, step.get("policy", {}))
+        outer, self.transaction = (
+            self.transaction,
+            (identifier, cast(int, policy.get("holdSeconds", DEFAULT_HOLD_SECONDS))),
+        )
+        try:
+            children, body_visible, completes = self.block(
+                cast(list[JsonObject], step["steps"]), location + "/steps", visible, scope + (identifier, "body")
+            )
+        finally:
+            self.transaction = outer
+        expression = cast(JsonObject, step["output"])
+        if completes:
+            output = self.expression(expression, location + "/output", body_visible)
+            if self.reads_pending(expression):
+                self.pending_outputs.add(identifier)
+        else:
+            self.observe(location + "/output", body_visible, evaluated=False)
+            output = {}
+        self.guard(location + "/output", "branch_output", output)
+        body = StepSequence(location + "/steps", self.elements(children))
+        analysis = check_transaction(
+            TransactionBody(identifier, location, body), max_participants=self.limits.max_transaction_participants
+        )
+        for finding in analysis.issues:
+            self.transaction_issue(finding)
+        self.pivots |= analysis.pivots
+        self.after_pivot[identifier] = analysis.after_pivot
+        branch = AnalyzedBranch(
+            "body", location, children, FrozenDocument.from_value(expression), self.freeze_schema(output), completes
+        )
+        return output, branch
+
+    def elements(self, steps: tuple[AnalyzedStep, ...]) -> tuple[Element, ...]:
+        """The analyzed steps of a block as the transaction rules read them.
+
+        Steps after a path that always fails are kept: they never run, so no path reaches them, but a step there that
+        changes data must still say how it is undone.
+        """
+        found: list[Element] = []
+        for step in steps:
+            value = step.definition.value
+            if step.path in self.participants:
+                found.append(self.participants[step.path])
+            elif step.kind == "switch":
+                paths = tuple(StepSequence(b.path + "/steps", self.elements(b.steps)) for b in step.branches)
+                found.append(Choice(step.id, step.path, paths))
+            elif step.kind == "parallel":
+                paths = tuple(StepSequence(b.path + "/steps", self.elements(b.steps)) for b in step.branches)
+                found.append(Fork(step.id, step.path, paths))
+            elif step.kind == "forEach":
+                body = step.branches[0]
+                sequence = StepSequence(body.path + "/steps", self.elements(body.steps))
+                found.append(Repeat(step.id, step.path, sequence, cast(int, value["maxItems"])))
+            else:
+                bound = {"wait": "durationSeconds", "signal": "timeoutSeconds", "humanTask": "expirySeconds"}
+                seconds = value.get(bound[step.kind]) if step.kind in bound else None
+                found.append(Other(step.id, step.path, step.kind, cast(int | None, seconds)))
+        return tuple(found)
+
+    def transaction_issue(self, finding: TransactionIssue) -> None:
+        edit = None
+        if finding.edit is not None:
+            edit = SuggestedEdit(path=finding.edit[0], value=finding.edit[1])
+        elif finding.move is not None and self.definition is not None:
+            steps: JsonValue = self.definition.value
+            for segment in pointer_segments(finding.move[0]):
+                steps = steps[segment] if isinstance(steps, dict) else cast(list[JsonValue], steps)[int(segment)]
+            items = list(cast(list[JsonValue], steps))
+            moved = items.pop(finding.move[1])
+            edit = SuggestedEdit(path=finding.move[0], value=[*items, moved])
+        self.issue(
+            finding.code,
+            finding.path,
+            severity=finding.severity,
+            message=finding.message,
+            related=finding.related,
+            edit=edit,
+        )
+
+    def undo_fields(
+        self, step: JsonObject, location: str, visible: dict[str, JsonObject], output: JsonObject
+    ) -> FrozenDocument | None:
+        """How an action or call step is undone; records the step for its transaction's rules."""
+        identifier, kind, reference = cast(str, step["id"]), cast(str, step["kind"]), cast(str, step["uses"])
+        present = [name for name in UNDO_FIELDS if name in step]
+        if kind == "callWorkflow" and step["mode"] == "detach":
+            if self.transaction is not None:
+                self.issue("TXN_DETACH", location + "/mode")
+            return None
+        if self.transaction is None:
+            for name in present:
+                self.issue("TXN_OUTSIDE", f"{location}/{name}")
+            return None
+        mode: UndoMode | None = (
+            "reserve"
+            if "confirm" in step
+            else "compensate"
+            if "compensate" in step
+            else "irreversible"
+            if "irreversible" in step
+            else None
+        )
+        resource_kind: ResourceKind = "Action" if kind == "action" else "Workflow"
+        resource = (
+            self.resolved.get((resource_kind, reference)) if self.checked.get((resource_kind, reference)) else None
+        )
+        spec = cast(JsonObject, resource.definition.value["spec"]) if resource else None
+        side_effect = cast(SideEffect, spec["sideEffect"]) if spec and kind == "action" else None
+        if mode is None and kind == "action" and (spec is None or side_effect == "read_only"):
+            # Reads only, or unknown until the catalog is present: nothing to declare.
+            return None
+        undo: list[UndoFacts] = []
+        phases: JsonObject = {}
+        for name in ("confirm", "cancel", "compensate"):
+            if name in step:
+                facts, phase = self.undo_phase(step, location, name, visible, output)
+                undo.append(facts)
+                phases[name] = phase
+        hold = cast(int, step.get("holdSeconds", self.transaction[1])) if mode == "reserve" else None
+        timeout = cast(int | None, spec.get("timeoutSeconds")) if spec else None
+        self.participants[location] = Participant(
+            identifier,
+            location,
+            cast(Literal["action", "callWorkflow"], kind),
+            mode,
+            side_effect,
+            spec is not None,
+            timeout,
+            hold,
+            tuple(undo),
+        )
+        if mode is None:
+            return None
+        value: JsonObject = {"owner": self.transaction[0], "mode": mode}
+        if hold is not None:
+            value["holdSeconds"] = hold
+        if phases:
+            value["phases"] = phases
+        return FrozenDocument.from_value(value)
+
+    def undo_phase(
+        self, step: JsonObject, location: str, name: str, visible: dict[str, JsonObject], output: JsonObject
+    ) -> tuple[UndoFacts, JsonObject]:
+        """Check one confirm, cancel or compensate against what it uses; its scope adds the step's own output."""
+        identifier = cast(str, step["id"])
+        undo = cast(JsonObject, step[name])
+        path, reference, expression = f"{location}/{name}", cast(str, undo["uses"]), cast(JsonObject, undo["with"])
+        # A confirm runs only after its step succeeded; a cancel or compensate also runs when the step's outcome is
+        # unknown, so there the step's own output may be null.
+        own: JsonObject = output if name == "confirm" else {"anyOf": [output, {"type": "null"}]}
+        scope = dict(visible) | {identifier: own}
+        self.kinds[identifier] = cast(str, step["kind"])
+        if name == "cancel":
+            stack = [(expression, path + "/with")]
+            while stack:
+                node, at = stack.pop()
+                segments = pointer_segments(cast(str, node["ref"])) if "ref" in node else None
+                # Reading every step, or the whole scope, reads the step's own output too.
+                whole = segments in ((), ("steps",))
+                if segments is not None and (whole or (len(segments) >= 2 and segments[:2] == ("steps", identifier))):
+                    self.issue(
+                        "TXN_CANCEL_OUTPUT",
+                        at + "/ref",
+                        message=RULE_MESSAGES["TXN_CANCEL_OUTPUT"].format(step=identifier),
+                    )
+                stack.extend(_children(node, at))
+        self.undo, self.undo_step = name, identifier
+        try:
+            if undo["kind"] == "action":
+                resource = self.resolve("Action", reference, path + "/uses")
+                spec = cast(JsonObject, resource.definition.value["spec"]) if resource else None
+                target = cast(JsonObject, spec["inputSchema"]) if spec else None
+                self.expression(expression, path + "/with", scope, target)
+                slot = cast(str | None, undo.get("connection", step.get("connection")))
+                if spec is not None:
+                    self.connection({"connection": slot} if slot is not None else {}, spec, path + "/connection")
+                    self.guard(path + "/with", "undo_input", cast(JsonObject, target))
+                facts = UndoFacts(
+                    cast(UndoPhase, name),
+                    path,
+                    "action",
+                    reference,
+                    cast(SideEffect | None, spec["sideEffect"]) if spec else None,
+                    None,
+                    spec is not None,
+                )
+                phase: JsonObject = {"kind": "action", "uses": reference, "with": expression}
+                if slot is not None:
+                    phase["connection"] = slot
+                return facts, phase
+            resource = self.resolve("Workflow", reference, path + "/uses")
+            callee = cast(JsonObject, resource.definition.value["spec"]) if resource else None
+            if resource is not None:
+                target_check = check_call_target(
+                    self.reference, reference, self.catalog, max_call_depth=self.limits.max_call_depth, graph=self.calls
+                )
+                for finding in target_check.issues:
+                    self.issue(finding.code, path + "/uses", stage=finding.stage, message=finding.message)
+            input_schema = cast(JsonObject, callee["inputSchema"]) if callee else None
+            self.expression(expression, path + "/with", scope, input_schema)
+            if input_schema is not None:
+                self.guard(path + "/with", "call_input", input_schema)
+            facts = UndoFacts(
+                cast(UndoPhase, name),
+                path,
+                "callWorkflow",
+                reference,
+                None,
+                cast(int | None, callee.get("timeoutSeconds")) if callee else None,
+                callee is not None,
+            )
+            return facts, {"kind": "callWorkflow", "uses": reference, "with": expression}
+        finally:
+            self.undo = None
+
+    def definite_failures(self, spec: JsonObject, base: str) -> None:
+        """An action's definite failures must prove nothing was applied, which a temporary failure never does."""
+        for index, code in enumerate(cast(list[str], spec.get("definiteFailures", []))):
+            if code in TRANSIENT_WORKER_CODES or code.startswith("LLM_"):
+                self.issue(
+                    "ACTION_DEFINITE_TRANSIENT",
+                    f"{base}/definiteFailures/{index}",
+                    message=RULE_MESSAGES["ACTION_DEFINITE_TRANSIENT"].format(code=code),
+                )
+
     def loop_items(self, schema: JsonObject, items: JsonObject, path: str) -> None:
         """Items must be a list: provably not is LOOP_ITEMS; unproved warns and keeps a loop_items guard."""
         try:
@@ -1179,6 +1489,8 @@ class _Analyzer:
             self.error_count,
             self.omitted_count,
             self.schema_truncated,
+            frozenset(self.pivots),
+            tuple(sorted(self.after_pivot.items())),
         )
 
     def run(self, *, partial: bool = False) -> AnalysisResult:
@@ -1193,10 +1505,15 @@ class _Analyzer:
         for path in detached:
             self.issue("CALL_MODE", path)
         document = without_detached_failures(self.source.value) if detached else self.source.value
+        # So are ways of undoing a step that the definition model rejects.
+        shapes = undo_shape_issues(document) if contract == "workflow" else []
+        for key, path in shapes:
+            self.issue(RULE_CODES[key], path, message=RULE_MESSAGES[key])
+        document = without_undo_shape_issues(document) if shapes else document
         issues = validate_contract_payload(contract, document, limits=self.contract_limits)
         for issue in issues:
             self.add(issue)
-        if issues or detached:
+        if issues or detached or shapes:
             return self.finish(None, None)
         model = load_definition(self.source.value)
         value = model.model_dump(by_alias=True)

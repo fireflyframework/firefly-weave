@@ -28,12 +28,14 @@ is its *pivot*, the point after which nothing can be undone.
 from __future__ import annotations
 
 from collections.abc import Iterable
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Final, Literal
 
 from firefly_weave.compiler.language_support import path_order
 from firefly_weave.contracts.definitions import SideEffect
 from firefly_weave.contracts.transactions import HOLD_MARGIN_SECONDS, MAX_TRANSACTION_PARTICIPANTS, UndoMode, UndoPhase
+from firefly_weave.contracts.values import JsonObject, JsonValue
 
 type Severity = Literal["error", "warning", "info"]
 
@@ -470,3 +472,44 @@ def check_transaction(
     issues = sorted(walk.issues.values(), key=lambda issue: (path_order(issue.path), issue.code))
     after = tuple(step for step, only_after in walk.reached.items() if only_after)
     return TransactionAnalysis(tuple(issues), frozenset(walk.pivots), after)
+
+
+_UNDO_PHASES: Final = ("confirm", "cancel", "compensate")
+
+
+def undo_shape_issues(document: JsonValue) -> list[tuple[str, str]]:
+    """Ways of undoing a step that the definition model rejects, as (message key, path), before contract validation.
+
+    The compiler reports them at their field instead of as an anonymous contract violation.
+    """
+    from firefly_weave.compiler.calls import workflow_steps
+
+    found: list[tuple[str, str]] = []
+    for step, path in workflow_steps(document):
+        if step.get("kind") not in ("action", "callWorkflow"):
+            continue
+        if ("confirm" in step) != ("cancel" in step):
+            found.append(("TXN_RESERVE_PAIR", path + ("/confirm" if "confirm" in step else "/cancel")))
+        if "compensate" in step and ("confirm" in step or "cancel" in step):
+            found.append(("TXN_UNDO_FORMS", path + "/compensate"))
+        if "irreversible" in step and any(name in step for name in _UNDO_PHASES):
+            found.append(("TXN_UNDO_FORMS", path + "/irreversible"))
+        if "holdSeconds" in step and "confirm" not in step and "cancel" not in step:
+            found.append(("TXN_HOLD_RESERVE", path + "/holdSeconds"))
+        undo = any(name in step for name in (*_UNDO_PHASES, "irreversible", "holdSeconds"))
+        if step.get("kind") == "callWorkflow" and step.get("mode") == "detach" and undo:
+            found.append(("TXN_DETACH", path + "/mode"))
+    return found
+
+
+def without_undo_shape_issues(document: JsonObject) -> JsonObject:
+    """A copy of a workflow definition without the undo fields of steps that ``undo_shape_issues`` reports."""
+    from firefly_weave.compiler.calls import workflow_steps
+
+    copy = deepcopy(document)
+    flagged = {path.rpartition("/")[0] for _, path in undo_shape_issues(copy)}
+    for step, path in workflow_steps(copy):
+        if path in flagged:
+            for name in (*_UNDO_PHASES, "irreversible", "holdSeconds"):
+                step.pop(name, None)
+    return copy

@@ -116,6 +116,88 @@ const compiler: Record<string, Copy> = {
     text: "This step can continue after the called run fails only when it waits for the called workflow's result.",
     hint: "Set When it runs to Wait for its result, or clear If the called run fails.",
   },
+  TXN_ORDER: {
+    text: "This step can be undone, but it runs after a step that can't. Steps that can't be undone must come last in a transaction.",
+    hint: "Move the step that can't be undone to the end of the transaction.",
+  },
+  TXN_PIVOT_PLACEMENT: {
+    text: "A step that can't be undone can't be inside a loop or next to parallel steps that change data.",
+    hint: "Move it out of the loop or the parallel step.",
+  },
+  TXN_AFTER_PIVOT_UNSAFE: {
+    text: "Nothing can be undone after the step that can't be undone, so this step must be safe to retry.",
+    hint: "Move it after the transaction, or use an action that is safe to retry.",
+  },
+  TXN_AFTER_PIVOT_PURE: {
+    text: "If this step fails, nothing can be undone and the transaction is left in doubt.",
+    hint: "Consider moving it after the transaction.",
+  },
+  TXN_AFTER_PIVOT_WAIT: {
+    text: "This step waits after the step that can't be undone; if nobody answers in time, the transaction is left in doubt.",
+    hint: "Consider moving it after the transaction.",
+  },
+  TXN_UNDO_SIDE_EFFECT: {
+    text: "Weave retries undo steps until they succeed, so this action must be safe to retry.",
+    hint: "Choose an action that is safe to retry.",
+  },
+  TXN_RESERVE_PAIR: {
+    text: "A step that reserves needs both Confirm with and Release with.",
+    hint: "Set both, or choose another way to undo the step.",
+  },
+  TXN_UNDO_FORMS: {
+    text: "A step can be undone in only one way.",
+    hint: "Keep one choice under How it's undone.",
+  },
+  TXN_CANCEL_OUTPUT: {
+    text: "Release must work even if the hold didn't go through, so it can't use the step's result.",
+    hint: "Use the step's operation key or your own reference.",
+  },
+  TXN_OUTSIDE: {
+    text: "How a step is undone applies only to steps inside a transaction.",
+    hint: "Move the step into a transaction, or clear How it's undone.",
+  },
+  TXN_NESTED: {
+    text: "A transaction can't contain another transaction.",
+    hint: "Call a workflow that has its own transaction instead.",
+  },
+  TXN_DETACH: {
+    text: "A workflow called inside a transaction must be waited for.",
+    hint: "Set When it runs to Wait for its result.",
+  },
+  TXN_AGENT: {
+    text: "An AI agent can't run inside a transaction.",
+    hint: "Move the agent before or after the transaction.",
+  },
+  TXN_UNDECLARED: {
+    text: "This step changes data. Choose how it's undone.",
+    hint: "Pick Reserve, then confirm, An action that reverses it, or Can't be undone.",
+  },
+  TXN_HOLD_WAIT: {
+    text: "This step can wait longer than reservations are held.",
+    hint: "Shorten the wait, or hold the reservations longer.",
+  },
+  TXN_SIZE: {
+    text: "Loops inside this transaction could make it include too many steps that change data.",
+    hint: "Lower Up to on a loop inside the transaction.",
+  },
+  TXN_NOTHING_TO_UNDO: {
+    text: "Nothing in this transaction can be undone.",
+  },
+  TXN_CALL_TIMEOUT: {
+    text: "Called workflows inside a transaction need a time limit.",
+    hint: "Publish a version of the called workflow with a time limit.",
+  },
+  TXN_HOLD_PIVOT: {
+    text: "Reservations aren't held long enough for the step that can't be undone to finish.",
+    hint: "Set Hold for to at least the suggested time.",
+  },
+  TXN_SCOPE: {
+    text: "A step's operation key and the transaction's details are available only while confirming, releasing or reversing that step.",
+  },
+  ACTION_DEFINITE_TRANSIENT: {
+    text: "A temporary failure can't mean that nothing was applied.",
+    hint: "Remove temporary failure codes from the definite failures.",
+  },
   CATALOG_PENDING: {
     text: "This is checked against the project catalog when you validate while connected to a platform.",
   },

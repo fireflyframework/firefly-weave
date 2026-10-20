@@ -24,6 +24,7 @@ from firefly_weave.contracts.language_features import (
     MAX_LOOP_ITEMS,
     MAX_RUN_ITERATIONS,
 )
+from firefly_weave.contracts.transactions import MAX_TRANSACTION_PARTICIPANTS
 
 
 class Limits(BaseModel):
@@ -43,3 +44,5 @@ class Limits(BaseModel):
     max_run_iterations: int = Field(default=MAX_RUN_ITERATIONS, gt=0)
     # Workflow calls: the longest chain of calls one workflow may start, counting each call once.
     max_call_depth: int = Field(default=MAX_CALL_DEPTH, gt=0)
+    # Transactions: the most steps that change data one transaction can include, loops multiplied out.
+    max_transaction_participants: int = Field(default=MAX_TRANSACTION_PARTICIPANTS, gt=0)
