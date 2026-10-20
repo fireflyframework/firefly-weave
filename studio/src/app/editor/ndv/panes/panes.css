@@ -418,10 +418,21 @@ weave-input-pane.is-compact .pane-source-field::before {
   flex: none;
 }
 /* Pin output: a toggle beside the search, pressed in the info tone. */
-/* At the end of the sub-row, beside the Pinned tag and the count. */
-.step-details button.pane-pin {
+/* Edit output and Pin output end the sub-row, beside the Pinned tag and the count. */
+.step-details button.pane-edit {
   flex: none;
   margin-left: auto;
+  width: var(--sd-target);
+  min-width: var(--sd-target);
+  height: var(--sd-target);
+  min-height: var(--sd-target);
+}
+.step-details button.pane-edit[aria-pressed="true"] {
+  color: var(--text);
+  background: var(--hover);
+}
+.step-details button.pane-pin {
+  flex: none;
   width: var(--sd-target);
   min-width: var(--sd-target);
   height: var(--sd-target);
@@ -490,4 +501,62 @@ weave-input-pane.is-compact .pane-source-field::before {
   margin: 0 0 var(--space-3);
   font: var(--type-small);
   color: var(--danger-ink);
+}
+
+/* Edit output: the JSON editor fills the pane; its note and actions end it. */
+.pane-content.is-editing {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+.output-editor {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-height: 0;
+}
+.output-editor-field {
+  flex: 1;
+  min-height: 160px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--field-border);
+  border-radius: var(--radius-sm);
+  background: var(--sunken);
+  font: var(--type-mono);
+  overflow: auto;
+}
+.output-editor-field:focus-within {
+  border-color: var(--focus);
+  box-shadow: 0 0 0 1px var(--focus);
+}
+.output-editor-field.is-invalid {
+  border-color: var(--danger);
+}
+.output-editor-field .cm-editor {
+  min-height: 100%;
+}
+.output-editor-error {
+  margin: 0;
+  color: var(--danger-ink);
+  font: var(--type-small);
+}
+.output-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+.output-editor-note {
+  flex: 1 1 12rem;
+  min-width: 0;
+  margin: 0;
+  color: var(--muted);
+  font: var(--type-small);
+}
+/* The 32 px action row (44 px on touch). */
+.step-details .output-editor-actions button {
+  flex: none;
+  height: var(--sd-target);
+  min-height: var(--sd-target);
 }

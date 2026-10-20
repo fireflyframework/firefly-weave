@@ -28,11 +28,15 @@ import {
   ElementRef,
   inject,
   input,
+  effect,
   signal,
+  untracked,
+  viewChild,
 } from "@angular/core";
 import { Icon } from "../../../icon";
 import { DataTree } from "./data-tree";
 import { PinnedBanner } from "./pinned-banner";
+import { OutputEditor } from "./output-editor";
 import {
   countLabel,
   sampleCount,
@@ -53,7 +57,7 @@ import { ndvRegistry, type Json } from "../registry";
   selector: "weave-output-pane",
   standalone: true,
   changeDetection: ChangeDetectionStrategy.Eager,
-  imports: [Icon, DataTree, PinnedBanner],
+  imports: [Icon, DataTree, PinnedBanner, OutputEditor],
   template: `@let none = noOutput();
     @let pin = pinned();
     @let canPin = pinnable();
@@ -117,6 +121,16 @@ import { ndvRegistry, type Json } from "../registry";
       @if (canPin) {
         <button
           type="button"
+          class="icon-button pane-edit"
+          aria-label="Edit output"
+          title="Edit output"
+          [attr.aria-pressed]="editing()"
+          (click)="setOutput()"
+        >
+          <weave-icon name="edit" [size]="16" />
+        </button>
+        <button
+          type="button"
           class="icon-button pane-pin"
           [attr.aria-pressed]="!!pin"
           [attr.aria-label]="pin ? 'Unpin output' : 'Pin output'"
@@ -129,81 +143,97 @@ import { ndvRegistry, type Json } from "../registry";
       }
     </div>
     <div class="sd-pane-body">
-      <div class="pane-content">
-        @if (pin) {
-          <weave-pinned-banner
-            [stale]="pin.stale !== null"
-            [localOnly]="localOnly()"
-            (unpin)="unpin()"
-            (keep)="keepPinned()"
-          />
-        }
-        @if (problem()) {
-          <p class="pane-problem" role="alert">{{ problem() }}</p>
-        }
-        @if (none) {
-          <p class="pane-empty-text">{{ none }}</p>
-        } @else if (event() !== undefined && view() !== "schema") {
-          @if (view() === "table") {
-            <p class="pane-empty-text">
-              Table view isn't available for this sample yet.
-            </p>
-            <button type="button" (click)="setView('json')">View JSON</button>
-          } @else {
-            <pre class="pane-json" tabindex="0" aria-label="Output data">{{
-              json(event())
-            }}</pre>
-          }
-        } @else if (view() === "schema") {
-          @if (session().target === "$trigger" && event() === undefined) {
-            <p class="pane-empty-text">No test event yet</p>
-          }
-          @if (computed()) {
-            <p class="pane-empty-text">
-              Output is computed from the input; pin the steps it reads instead.
-            </p>
-          }
-          @if (canPin && !pin) {
-            <div class="pane-empty">
-              <span class="pane-empty-icon" aria-hidden="true"
-                ><weave-icon name="pin" [size]="20"
-              /></span>
-              <h4>No output yet</h4>
-              <p>
-                Set test output, or generate a sample from the output fields.
-              </p>
-              <div class="pane-empty-actions">
-                <button type="button" class="sm" (click)="setOutput()">
-                  Set test output
-                </button>
-                <button type="button" class="sm" (click)="generate()">
-                  <weave-icon name="refresh" [size]="16" />Generate sample
-                </button>
-              </div>
-            </div>
-          }
-          @if (rows.length) {
-            <weave-data-tree [rows]="shown" label="Output fields" />
-          } @else {
-            <p class="pane-empty-text">This step's output can be any value.</p>
+      <div class="pane-content" [class.is-editing]="editing()">
+        @if (editing()) {
+          @defer (on immediate) {
+            <weave-output-editor
+              [session]="session()"
+              [initial]="editText()"
+              (saved)="saved()"
+              (cancelled)="closeEditor()"
+            />
+          } @placeholder {
+            <p class="pane-empty-text">Opening the editor…</p>
           }
         } @else {
-          <div class="pane-empty">
-            <span class="pane-empty-icon" aria-hidden="true"
-              ><weave-icon name="execute" [size]="20"
-            /></span>
-            <h4>
-              {{
-                session().target === "$trigger"
-                  ? "No test event yet"
-                  : "No output yet"
-              }}
-            </h4>
-            <p>
-              Schema shows the fields later steps can read. Executing this step
-              isn’t available yet.
-            </p>
-          </div>
+          @if (pin) {
+            <weave-pinned-banner
+              [stale]="pin.stale !== null"
+              [localOnly]="localOnly()"
+              (unpin)="unpin()"
+              (keep)="keepPinned()"
+            />
+          }
+          @if (problem()) {
+            <p class="pane-problem" role="alert">{{ problem() }}</p>
+          }
+          @if (none) {
+            <p class="pane-empty-text">{{ none }}</p>
+          } @else if (event() !== undefined && view() !== "schema") {
+            @if (view() === "table") {
+              <p class="pane-empty-text">
+                Table view isn't available for this sample yet.
+              </p>
+              <button type="button" (click)="setView('json')">View JSON</button>
+            } @else {
+              <pre class="pane-json" tabindex="0" aria-label="Output data">{{
+                json(event())
+              }}</pre>
+            }
+          } @else if (view() === "schema") {
+            @if (session().target === "$trigger" && event() === undefined) {
+              <p class="pane-empty-text">No test event yet</p>
+            }
+            @if (computed()) {
+              <p class="pane-empty-text">
+                Output is computed from the input; pin the steps it reads
+                instead.
+              </p>
+            }
+            @if (canPin && !pin) {
+              <div class="pane-empty">
+                <span class="pane-empty-icon" aria-hidden="true"
+                  ><weave-icon name="pin" [size]="20"
+                /></span>
+                <h4>No output yet</h4>
+                <p>
+                  Set test output, or generate a sample from the output fields.
+                </p>
+                <div class="pane-empty-actions">
+                  <button type="button" class="sm" (click)="setOutput()">
+                    Set test output
+                  </button>
+                  <button type="button" class="sm" (click)="generate()">
+                    <weave-icon name="refresh" [size]="16" />Generate sample
+                  </button>
+                </div>
+              </div>
+            }
+            @if (rows.length) {
+              <weave-data-tree [rows]="shown" label="Output fields" />
+            } @else {
+              <p class="pane-empty-text">
+                This step's output can be any value.
+              </p>
+            }
+          } @else {
+            <div class="pane-empty">
+              <span class="pane-empty-icon" aria-hidden="true"
+                ><weave-icon name="execute" [size]="20"
+              /></span>
+              <h4>
+                {{
+                  session().target === "$trigger"
+                    ? "No test event yet"
+                    : "No output yet"
+                }}
+              </h4>
+              <p>
+                Schema shows the fields later steps can read. Executing this
+                step isn’t available yet.
+              </p>
+            </div>
+          }
         }
       </div>
     </div>`,
@@ -227,6 +257,13 @@ export class OutputPane {
   ];
   readonly radioKey = radioKey;
   private readonly lifetime = inject(DestroyRef);
+  constructor() {
+    // Another step opened in step details: an open edit belonged to the previous one.
+    effect(() => {
+      this.session();
+      untracked(() => this.editing.set(false));
+    });
+  }
   private readonly element = inject<ElementRef<HTMLElement>>(ElementRef);
 
   noOutput(): string | null {
@@ -286,11 +323,48 @@ export class OutputPane {
     if (!refused)
       session.announce(`Pinned a sample output for ${session.target}.`);
   }
-  /** Set test output: the JSON editor (Edit output). */
+  /** Set test output and Edit output: the JSON editor, with the pinned value or {}. */
   setOutput() {
+    if (this.editing()) return this.editor()?.focus();
+    const pinned = this.event();
+    this.editText.set(
+      pinned === undefined ? "{}" : JSON.stringify(pinned, null, 2),
+    );
+    this.problem.set("");
     this.editing.set(true);
   }
   readonly editing = signal(false);
+  readonly editText = signal("{}");
+  private readonly editor = viewChild(OutputEditor);
+  /** An output edit not saved yet: closing asks first. */
+  editDirty(): boolean {
+    return this.editing() && !!this.editor()?.dirty();
+  }
+  /** Saves the open edit (the guard's Save); true once pinned. */
+  async saveEdit(): Promise<boolean> {
+    const editor = this.editor();
+    return editor ? editor.save() : true;
+  }
+  focusEditor() {
+    this.editor()?.focus();
+  }
+  saved() {
+    const session = this.session();
+    this.editing.set(false);
+    session.announce(`Pinned the output of ${session.target}.`);
+    this.focusEdit();
+  }
+  closeEditor() {
+    this.editing.set(false);
+    this.focusEdit();
+  }
+  private focusEdit() {
+    setTimeout(() =>
+      this.element.nativeElement
+        .querySelector<HTMLElement>(".pane-edit")
+        ?.focus({ preventScroll: true }),
+    );
+  }
   rows() {
     const session = this.session();
     const target = session.target;

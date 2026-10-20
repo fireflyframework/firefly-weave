@@ -52,6 +52,7 @@ import {
 } from "./panes/layout";
 import { InputPane } from "./panes/input-pane";
 import { OutputPane } from "./panes/output-pane";
+import { CloseGuard, type GuardAnswer } from "./panes/close-guard";
 import { TestEventPane } from "./panes/test-event-pane";
 import { Icon } from "../../icon";
 import { coveredBy, keepUsable } from "../../modal-sheet";
@@ -152,6 +153,7 @@ const visible = (element: HTMLElement): boolean =>
     InputPane,
     OutputPane,
     TestEventPane,
+    CloseGuard,
     SettingsTab,
     IssuesIndicator,
   ],
@@ -261,6 +263,19 @@ export class StepDetails {
   readonly executeReason = EXECUTE_REASON;
 
   constructor() {
+    // Leaving the editor asks the same question about an unsaved output edit.
+    this.details.askBeforeLeaving = () =>
+      new Promise<boolean>((resolve) =>
+        this.guard(
+          () => resolve(true),
+          () => resolve(false),
+        ),
+      );
+    this.lifetime.onDestroy(() => {
+      this.details.askBeforeLeaving = null;
+      // A question still open when step details goes keeps editing.
+      this.guarding()?.keep?.();
+    });
     effect(() => {
       this.details.opening();
       const request = this.request();
@@ -530,9 +545,46 @@ export class StepDetails {
   }
   move(delta: 1 | -1) {
     const id = delta > 0 ? this.next() : this.previous();
-    if (id) this.go(id);
+    if (id) this.guard(() => this.go(id));
   }
+  // ------------------------------------------------- unsaved output edits
+  /** The question before an unsaved output edit goes, and what waits for its answer. */
+  readonly guarding = signal<{ next(): void; keep?(): void } | null>(null);
+  /** Runs `next` at once when no output edit is unsaved; otherwise asks first. */
+  guard(next: () => void, keep?: () => void) {
+    if (!this.outputPane()?.editDirty()) return next();
+    this.guarding.set({ next, keep });
+  }
+  async answerGuard(answer: GuardAnswer) {
+    const pending = this.guarding();
+    this.guarding.set(null);
+    if (!pending) return;
+    const pane = this.outputPane();
+    if (answer === "save" && !(await pane?.saveEdit())) answer = "keep";
+    if (answer === "keep") {
+      pending.keep?.();
+      // The editor shows the words when Save was refused.
+      setTimeout(() => pane?.focusEditor());
+      return;
+    }
+    if (answer === "discard") pane?.closeEditor();
+    pending.next();
+  }
+  /** Switches the shown pane (the tabs below 768 px); leaving an unsaved output edit asks first. */
+  choosePane(which: "pane" | "dataPane", choice: string) {
+    const current = which === "pane" ? this.pane() : this.dataPane();
+    const set = () =>
+      which === "pane"
+        ? this.pane.set(choice as "input" | "parameters" | "output")
+        : this.dataPane.set(choice as "input" | "output");
+    if (current === "output" && choice !== "output") this.guard(set);
+    else set();
+  }
+  /** Closes step details; an unsaved output edit asks first. */
   close() {
+    this.guard(() => this.closeNow());
+  }
+  private closeNow() {
     // What doesn't apply yet stays for the next time; with step details
     // gone nothing else shows it, so a toast names the entries still kept,
     // on this step and on the steps it was left on, in the workflow's order.
@@ -645,9 +697,9 @@ export class StepDetails {
     const at = order.indexOf(this.currentRegion() ?? "parameters");
     const next = order[(at + delta + order.length) % order.length];
     if (this.layout() === "sheet")
-      this.pane.set(next === "header" ? "parameters" : next);
+      this.choosePane("pane", next === "header" ? "parameters" : next);
     if (this.layout() === "two" && (next === "input" || next === "output"))
-      this.dataPane.set(next);
+      this.choosePane("dataPane", next);
     afterNextRender(() => this.applyFocus({ kind: "region", region: next }), {
       injector: this.injector,
     });
@@ -676,8 +728,10 @@ export class StepDetails {
         disabled: !!blocked,
         run: () => {
           const host = this.host();
-          this.close();
-          void host.runCommand("simulate");
+          this.guard(() => {
+            this.closeNow();
+            void host.runCommand("simulate");
+          });
         },
       },
     ];

@@ -1733,6 +1733,9 @@ export class App implements CanvasHost {
     const before = this.model.source;
     if (leaving && (!this.leaveInspector() || !(await this.settleSource())))
       return;
+    // An output edit in step details not saved yet asks the same question as closing them.
+    const ask = leaving ? this.stepDetails.askBeforeLeaving : null;
+    if (ask && !(await ask())) return;
     // A platform draft saves itself on the way out (waiting at most 2 s);
     // work still unsaved, or a save still going, asks.
     if (leaving && this.profile && this.dirty)
