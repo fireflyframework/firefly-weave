@@ -444,8 +444,10 @@ from step 5. Or, in Studio: [Call a REST API from a step](studio.md#call-a-rest-
 **The local executor has fixed limits.** It runs only the built-in HTTP connector,
 never connector packages. It calls only public destinations, over HTTPS or over
 HTTP with a "Not encrypted" warning: an API on your own computer or private
-network is refused, except an origin that a Docker installation approved with
-`--allow-private-origin`. A new secret handle needs a restart;
+network is refused, except a test service on the installation's egress network
+whose exact DNS-name origin a Docker installation approved with
+`--allow-private-origin` (addresses and `localhost` are refused). A new secret
+handle needs a restart;
 replacing an existing handle's value does not in this foreground mode.
 For a [Docker installation](docker-development.md), run `platform start` after
 adding, replacing, or removing a secret: its running container retains the

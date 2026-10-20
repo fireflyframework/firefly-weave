@@ -67,11 +67,23 @@ ALWAYS = frozenset({"collect", "scan", "down"})
 FIXED_MINUTES = {"prepare": 30, "up": 25, "collect": 5, "scan": 5, "down": 10}
 RUN_MINUTES = {"pr": 35, "ai": 45, "cluster": 45, "k3d": 45, "nightly": 90, "release": 90, "docs-shots": 35}
 FIXTURE_ORIGIN = "http://acme.acceptance.test:8080"
+# Approved too, and answered by Keycloak (whose network namespace the API shares) only while J9.3 gives it this alias:
+# the control-plane rule must refuse it although its entry exists.
+IDENTITY_ORIGIN = "http://identity.acceptance.test:8080"
+FIXTURE_ORIGINS = (FIXTURE_ORIGIN, IDENTITY_ORIGIN)
 ACME_IMAGE = "weave-acc/acme-api:local"
 # J0.14 compares image content, not image IDs: with the containerd image store an ID is the
 # manifest-index digest, and BuildKit's provenance attestation gives each cache-hit rebuild a new one.
 IMAGE_CONTENT_FORMAT = "{{json .RootFS.Layers}}{{json .Config}}"
 CANARY_HANDLES = ("acme-api-key", "order-review-webhook")
+STUDIO_JOURNEYS_CONFIG = "playwright.acceptance.config.ts"
+# The canary scan, including every Studio browser context's storage, is itself a journey step.
+SCAN_STEP = "J9.4"
+# Its check that every Studio storage key carries an account prefix, purged when the platform is removed.
+SCAN_CHECK = "J9.4/storage-keys"
+# private/<STUDIO_PEOPLE>: one {"journey", "viewport", "person", "dump"} line for each Studio sign-in,
+# written at sign-in, so the scan expects that person's browser-storage dump even when the journey failed.
+STUDIO_PEOPLE = "studio-people.jsonl"
 # The real-platform journeys move these tests to playwright.acceptance.config.ts; until then the quick-integration
 # test runs against the platform this harness starts. A suite with a capability runs once that capability has landed
 # (journeys.toml).
@@ -364,7 +376,7 @@ def prepare(plan: Plan, recorder: Recorder) -> None:
     )
     plan.state.update(
         subnet=choose_subnet(_docker_subnets(recorder, docker), plan.subnet),
-        origins=[FIXTURE_ORIGIN],
+        origins=list(FIXTURE_ORIGINS),
         acme_image=ACME_IMAGE,
         acme_control_port=_free_port(),
         inventory=inventory,
@@ -420,31 +432,50 @@ def up(plan: Plan, recorder: Recorder) -> None:
     _journeys(plan, recorder, [J0_TESTS], allow_empty=False)
 
 
+def _studio_env(plan: Plan, name: str) -> dict[str, str]:
+    """Environment of every Studio suite: the run, the platform, the people files, the Acme origins, evidence paths."""
+    people = plan.private / "people"
+    return {
+        **os.environ,
+        "WEAVE_ACC_RUN_DIR": str(plan.root),
+        "WEAVE_E2E_PLATFORM_DIR": str(plan.platform_dir),
+        "WEAVE_E2E_PERSON_FILE": str(people / "builder.json"),
+        "WEAVE_E2E_VIEWER_FILE": str(people / "viewer.json"),
+        "WEAVE_E2E_OPERATIONS_EVIDENCE": str(plan.evidence / "operations"),
+        "WEAVE_E2E_ACME_ORIGIN": plan.state["origins"][0],
+        "WEAVE_E2E_ACME_CONTROL": f"http://127.0.0.1:{plan.state['acme_control_port']}",
+        "WEAVE_E2E_SHOTS": str(plan.evidence / "screens" / name),
+        "PLAYWRIGHT_JSON_OUTPUT_NAME": str(plan.evidence / f"playwright-{name}.json"),
+    }
+
+
+def write_enablement(plan: Plan, enablement: acceptance_journeys.Enablement) -> Path:
+    """RUN_DIR/enablement.json: what the Studio harness may run in this profile."""
+    path = plan.root / "enablement.json"
+    path.write_text(json.dumps(enablement.resolved(plan.profile), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return path
+
+
 def run(plan: Plan, recorder: Recorder) -> None:
+    """pytest journeys, then the browser suites, then the Studio journeys; every part runs, and the stage
+    fails once at the end naming each part that failed."""
+    failed: list[str] = []
     others = sorted(
         str(path.relative_to(ROOT))
         for path in (ROOT / "tests/acceptance").glob("test_*.py")
         if path.name != Path(J0_TESTS).name
     )
     if others:
-        _journeys(plan, recorder, others, allow_empty=True)
+        try:
+            _journeys(plan, recorder, others, allow_empty=True)
+        except StageFailed as error:
+            failed.append(str(error))
     enablement = acceptance_journeys.Enablement.load(JOURNEYS)
     for name, suite in SUITES.items():
         if plan.profile not in suite["profiles"]:
             continue
         if "capability" in suite and not enablement.capabilities.get(suite["capability"]):
             continue
-        env = {
-            **os.environ,
-            "WEAVE_E2E_PLATFORM_DIR": str(plan.platform_dir),
-            "WEAVE_E2E_PERSON_FILE": str(plan.private / "people" / "builder.json"),
-            "WEAVE_E2E_VIEWER_FILE": str(plan.private / "people" / "viewer.json"),
-            "WEAVE_E2E_OPERATIONS_EVIDENCE": str(plan.evidence / "operations"),
-            "WEAVE_E2E_ACME_ORIGIN": plan.state["origins"][0],
-            "WEAVE_E2E_ACME_CONTROL": f"http://127.0.0.1:{plan.state['acme_control_port']}",
-            "WEAVE_E2E_SHOTS": str(plan.evidence / "screens" / name),
-            "PLAYWRIGHT_JSON_OUTPUT_NAME": str(plan.evidence / f"playwright-{name}.json"),
-        }
         result = recorder.run(
             [
                 "npx",
@@ -460,13 +491,26 @@ def run(plan: Plan, recorder: Recorder) -> None:
                 str(plan.private / "playwright" / name),
             ],
             cwd=ROOT / "studio",
-            env=env,
+            env=_studio_env(plan, name),
             timeout=6000,
             check=False,
             capture=False,
         )
         if result.returncode != 0:
-            raise StageFailed(f"The {name} suite failed")
+            failed.append(f"the {name} suite")
+    write_enablement(plan, enablement)
+    result = recorder.run(
+        ["npx", "playwright", "test", "--config", STUDIO_JOURNEYS_CONFIG, "--retries", "0"],
+        cwd=ROOT / "studio",
+        env=_studio_env(plan, "journeys"),
+        timeout=6000,
+        check=False,
+        capture=False,
+    )
+    if result.returncode != 0:
+        failed.append("the Studio journeys")
+    if failed:
+        raise StageFailed("Failed: " + "; ".join(failed))
 
 
 def collect(plan: Plan, recorder: Recorder) -> None:
@@ -509,17 +553,79 @@ def collect(plan: Plan, recorder: Recorder) -> None:
             (logs / f"{name}.log").write_text((output.stdout + output.stderr)[-2 * 1024 * 1024 :], encoding="utf-8")
 
 
+def studio_people(plan: Plan) -> list[str]:
+    """The browser-storage dumps the scan expects: ``<journey>-<viewport>-<person>`` for each Studio sign-in."""
+    path = plan.private / STUDIO_PEOPLE
+    if not path.is_file():
+        return []
+    people = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    # A line names its dump; lines without one are a person's first sign-in in that journey and viewport.
+    return sorted(
+        {person.get("dump") or f"{person['journey']}-{person['viewport']}-{person['person']}" for person in people}
+    )
+
+
+def _storage(plan: Plan) -> tuple[int, str | None]:
+    """Entries in every browser-storage dump, and why the dumps do not cover each Studio sign-in, if they do not."""
+    folder = plan.private / "browser-storage"
+    try:
+        entries = acceptance_evidence.storage_entries(folder, expected=studio_people(plan))
+    except acceptance_evidence.MissingStorage as error:
+        return acceptance_evidence.storage_entries(folder, expected=()), str(error)
+    studio_ran = any("viewport" in record for record in acceptance_evidence.read_steps(plan.evidence / "steps.jsonl"))
+    if studio_ran and not (folder.is_dir() and any(folder.glob("*.json"))):
+        return entries, "No browser storage was captured from the Studio journeys"
+    return entries, None
+
+
+def _scan_step(plan: Plan, hits: int, storage_error: str | None, seconds: float) -> None:
+    """Record the scan journey step when this profile runs it and its capabilities have landed."""
+    enablement = acceptance_journeys.Enablement.load(JOURNEYS)
+    if (
+        SCAN_STEP not in enablement.steps
+        or not enablement.applies(SCAN_STEP, plan.profile)
+        or enablement.missing(SCAN_STEP)
+    ):
+        return
+    error = f"The canary scan found a secret in {hits} file(s)" if hits else storage_error
+    skipped: list[dict[str, Any]] = []
+    if not error and SCAN_CHECK in enablement.steps and enablement.applies(SCAN_CHECK, plan.profile):
+        waiting = enablement.missing(SCAN_CHECK)
+        if waiting:
+            skipped.append({"check": SCAN_CHECK, "missing": list(waiting)})
+        else:
+            folder = plan.private / "browser-storage"
+            problems = acceptance_evidence.storage_key_problems(folder, expected=studio_people(plan))
+            error = "; ".join(problems) or None
+    status = "failed" if error else "partial" if skipped else "passed"
+    entry: dict[str, Any] = {"id": SCAN_STEP, "status": status, "seconds": round(seconds, 1), "source": "scan"}
+    if skipped:
+        entry["skipped_checks"] = skipped
+    if error:
+        entry["error"] = error
+    with (plan.evidence / "steps.jsonl").open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps(entry, sort_keys=True) + "\n")
+    if error and not hits:
+        raise StageFailed(error)
+
+
 def scan(plan: Plan, recorder: Recorder) -> None:
+    started = time.monotonic()
     canaries: list[str] = []
     if (plan.private / "canaries.json").is_file():
         canaries += json.loads((plan.private / "canaries.json").read_text(encoding="utf-8")).values()
     for person in sorted((plan.private / "people").glob("*.json")):
         canaries.append(json.loads(person.read_text(encoding="utf-8"))["password"])
     platform = plan.platform_dir
+    # The identity provider's admin secret belongs only in its own file.
+    admin = acceptance_evidence.admin_secret(platform)
+    if admin:
+        canaries.append(admin)
     found = acceptance_evidence.scan_tree(
         [plan.evidence, plan.private],
         canaries,
         exclude=[
+            platform / acceptance_evidence.IDENTITY_ENV,
             plan.private / "canaries.json",
             plan.private / "people",
             plan.private / "playwright",
@@ -530,9 +636,15 @@ def scan(plan: Plan, recorder: Recorder) -> None:
             platform / "release",
         ],
     )
-    plan.state["secret_scan"] = {"files": found.files, "browser_storage_entries": 0, "hits": found.hits}
+    entries, storage_error = _storage(plan)
+    plan.state["secret_scan"] = {"files": found.files, "browser_storage_entries": entries, "hits": found.hits}
+    _scan_step(plan, found.hits, storage_error, time.monotonic() - started)
     if found.hits:
         raise StageFailed(f"The canary scan found a secret in {found.hits} file(s); inspect private evidence")
+    # Whether or not this profile records the scan step: a Studio sign-in whose storage was not captured
+    # was never scanned.
+    if storage_error:
+        raise StageFailed(storage_error)
     output = os.environ.get("GITHUB_OUTPUT")
     if output:
         with open(output, "a", encoding="utf-8") as stream:
@@ -696,12 +808,16 @@ def journey_stage(journey: str) -> str:
 
 
 def failed_journeys(journeys: Sequence[Mapping[str, Any]], stages: Sequence[str]) -> list[str]:
-    """The journeys recorded by ``stages`` that failed, including those with an enabled step that never ran."""
-    return [
-        str(journey["id"])
-        for journey in journeys
-        if journey["status"] == "failed" and journey_stage(str(journey["id"])) in stages
-    ]
+    """The failed journeys whose failed or missing steps belong to one of ``stages`` (J0 to up, J9.4 to scan,
+    every other step to run), including those with an enabled step that never ran."""
+    failed: list[str] = []
+    for journey in journeys:
+        if journey["status"] != "failed":
+            continue
+        broken = [step for step in journey["steps"] if step["status"] in ("failed", "not_run")]
+        if any(acceptance_journeys.step_stage(f"{journey['id']}.{step['n']}") in stages for step in broken):
+            failed.append(str(journey["id"]))
+    return list(dict.fromkeys(failed))
 
 
 def summarize(plan: Plan, records: Sequence[Mapping[str, Any]]) -> dict[str, Any]:

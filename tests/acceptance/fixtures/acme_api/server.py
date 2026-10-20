@@ -28,7 +28,10 @@ import hmac
 import json
 import os
 import re
+import socket
 import threading
+import time
+from contextlib import suppress
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -37,10 +40,20 @@ from typing import Any
 DATA: dict[str, Any] = json.loads(Path(__file__).with_name("data.json").read_text(encoding="utf-8"))
 ORIGIN = "http://acme.acceptance.test:8080"
 MAX_BODY = 65536
+MAX_LENGTH_DIGITS = 12
+BODY_METHODS = frozenset({"POST", "PUT", "PATCH"})
 CUSTOMER = re.compile(r"/customers/([A-Z0-9-]{1,32})")
 ORDERS = re.compile(r"/customers/([A-Z0-9-]{1,32})/orders")
 STATUS = re.compile(r"/orders/([A-Z0-9-]{1,32})/status")
 SINK = re.compile(r"/sink/([a-z0-9-]{1,64})")
+
+
+class _BadRequest(Exception):
+    """A request the fixture answers with 400 and journals; the connection closes after the answer."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.message = message
 
 
 def _json(schema: str) -> dict[str, Any]:
@@ -187,26 +200,79 @@ class _Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     server_version = "AcmeFixture/1"
     sys_version = ""
+    # Socket timeout in seconds: a client that stalls mid-request loses its connection.
+    timeout = 10.0
+    # Set when the answer refuses input the client may still be sending.
+    _discard = False
     state: State
 
     def log_message(self, format: str, *args: Any) -> None:
         # No access log: request lines and headers stay out of container logs.
         return
 
+    def _refuse_input(self) -> None:
+        """Close after the answer and discard what the client still sends, so it is never read as a request."""
+        self.close_connection = True
+        self._discard = True
+
+    def finish(self) -> None:
+        super().finish()
+        if self._discard:
+            # Closing with unread input resets the connection and can destroy the answer in flight:
+            # end our side, then read and drop the rest for a bounded time and size.
+            with suppress(OSError):
+                self.connection.shutdown(socket.SHUT_WR)
+                self.connection.settimeout(1)
+                discarded, deadline = 0, time.monotonic() + 2
+                while discarded <= 4 * MAX_BODY and time.monotonic() < deadline:
+                    chunk = self.connection.recv(65536)
+                    if not chunk:
+                        break
+                    discarded += len(chunk)
+
+    def _framing_error(self) -> str | None:
+        """Why the body framing is refused: any Transfer-Encoding, or a body on GET, HEAD or DELETE."""
+        if self.headers.get_all("Transfer-Encoding"):
+            self._refuse_input()
+            return "Send the body with one Content-Length; Transfer-Encoding is not supported."
+        lengths = self.headers.get_all("Content-Length") or []
+        if self.command not in BODY_METHODS and any(length != "0" for length in lengths):
+            self._refuse_input()
+            return "A GET, HEAD or DELETE request takes no body."
+        return None
+
     def _read_body(self) -> bytes | None:
-        """The request body, or None when it is over 64 KiB (drained when at most 256 KiB)."""
-        length = self.headers.get("Content-Length", "0")
-        if not length.isdigit():
-            self.close_connection = True
-            return None
+        """The request body, or None when it is over 64 KiB (drained when at most 256 KiB).
+
+        Raises _BadRequest for more than one Content-Length, one that is not a short run of
+        ASCII digits, or a body that ends (or stalls past the socket timeout) before it.
+        """
+        lengths = self.headers.get_all("Content-Length") or ["0"]
+        if len(lengths) > 1:
+            self._refuse_input()
+            raise _BadRequest("Send one Content-Length.")
+        length = lengths[0]
+        if not (length.isascii() and length.isdigit() and len(length) <= MAX_LENGTH_DIGITS):
+            self._refuse_input()
+            raise _BadRequest("Send a decimal Content-Length.")
         size = int(length)
         if size > MAX_BODY:
+            drained = b""
             if size <= 4 * MAX_BODY:
-                self.rfile.read(size)
-            else:
-                self.close_connection = True
+                with suppress(OSError):
+                    drained = self.rfile.read(size)
+            if len(drained) != size:
+                self._refuse_input()
             return None
-        return self.rfile.read(size)
+        try:
+            body = self.rfile.read(size)
+        except OSError:
+            # A stalled client: whatever arrived is not the whole body.
+            body = b""
+        if len(body) != size:
+            self._refuse_input()
+            raise _BadRequest("The request body is shorter than its Content-Length.")
+        return body
 
     def _send(self, status: int, value: Any = None) -> None:
         data = b"" if value is None else json.dumps(value, separators=(",", ":"), sort_keys=True).encode()
@@ -240,14 +306,23 @@ class ApiHandler(_Handler):
 
     def _serve(self) -> None:
         path = self.path.split("?", 1)[0]
-        body = self._read_body() if self.command in {"POST", "PUT", "PATCH"} else b""
+        refused = self._framing_error()
+        body: bytes | None = b""
+        if refused is None and self.command in BODY_METHODS:
+            try:
+                body = self._read_body()
+            except _BadRequest as error:
+                refused = error.message
         key = self.headers.get("X-Api-Key")
         key_sha256 = None if key is None else _digest(key.encode())
-        injected = self.state.take_fault(path)
-        if injected is not None:
-            status, value = injected, {"error": "injected"}
+        # A malformed or oversized request never consumes an armed fault.
+        injected = None if refused is not None or body is None else self.state.take_fault(path)
+        if refused is not None:
+            status, value = 400, {"error": refused}
         elif body is None:
             status, value = 413, {"error": "The request body is over 64 KiB."}
+        elif injected is not None:
+            status, value = injected, {"error": "injected"}
         else:
             status, value = self._route(path, body, key_sha256)
         self.state.record(
@@ -291,7 +366,7 @@ class ApiHandler(_Handler):
             if path in {"/approvals", "/notifications"}:
                 try:
                     payload = json.loads(body or b"null")
-                except ValueError:
+                except (ValueError, RecursionError):
                     payload = None
                 if not isinstance(payload, dict):
                     return 400, {"error": "Send a JSON object."}
@@ -305,7 +380,7 @@ class ApiHandler(_Handler):
 def _fault(body: bytes) -> tuple[str, int, int] | None:
     try:
         value = json.loads(body)
-    except ValueError:
+    except (ValueError, RecursionError):
         return None
     if not isinstance(value, dict) or set(value) != {"status", "count", "path"}:
         return None
@@ -325,15 +400,26 @@ def _fault(body: bytes) -> tuple[str, int, int] | None:
 
 class ControlHandler(_Handler):
     def do_GET(self) -> None:
-        if self.path != "/_control/journal":
+        refused = self._framing_error()
+        if refused is not None:
+            self._send(400, {"error": refused})
+        elif self.path != "/_control/journal":
             self._send(404, {"error": "Not found."})
-            return
-        with self.state.lock:
-            entries = list(self.state.journal)
-        self._send(200, {"entries": entries})
+        else:
+            with self.state.lock:
+                entries = list(self.state.journal)
+            self._send(200, {"entries": entries})
 
     def do_POST(self) -> None:
-        body = self._read_body()
+        refused = self._framing_error()
+        if refused is not None:
+            self._send(400, {"error": refused})
+            return
+        try:
+            body = self._read_body()
+        except _BadRequest as error:
+            self._send(400, {"error": error.message})
+            return
         if body is None:
             self._send(413, {"error": "The request body is over 64 KiB."})
         elif self.path == "/_control/reset":

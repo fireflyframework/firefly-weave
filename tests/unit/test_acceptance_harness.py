@@ -47,8 +47,7 @@ spec = importlib.util.spec_from_file_location("harness_under_test", {str(HARNESS
 harness = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(harness)
 run = harness.run
-pytest_runtest_setup = harness.pytest_runtest_setup
-pytest_runtest_makereport = harness.pytest_runtest_makereport
+globals().update({{name: value for name, value in vars(harness).items() if name.startswith("pytest_")}})
 """
 FAILING_STEPS = {
     "command output": """
@@ -180,3 +179,145 @@ def test_j0_failures_never_echo_a_canary_or_a_password(pytester, flags):
     assert "printed the value of acme-api-key" in output
     for secret in (CANARY, PASSWORD):
         assert not leaked(secret, output)
+
+
+def test_a_step_that_skips_itself_during_its_call_is_recorded_as_failed(pytester, monkeypatch):
+    # An enabled step decided to run; skipping inside its body would otherwise read as a pass.
+    root = prepared_run(pytester.path)
+    monkeypatch.setenv("WEAVE_ACC_RUN_DIR", str(root))
+    pytester.makeini(INI)
+    pytester.makeconftest(HARNESS)
+    pytester.makepyfile(
+        test_step=(
+            "import pytest\n\n\n"
+            '@pytest.mark.journey_step("J0.1")\n'
+            "def test_step(run):\n"
+            '    pytest.skip("the platform is not ready")\n'
+        )
+    )
+    result = pytester.runpytest_subprocess("-p", "no:cacheprovider", "-q", "--tb=short")
+    records = [json.loads(line) for line in (root / "evidence/steps.jsonl").read_text().splitlines()]
+    assert result.ret == 1
+    assert [(record["id"], record["status"]) for record in records] == [("J0.1", "failed")]
+    assert records[0]["error"] == "J0.1 skipped itself after it started: the platform is not ready"
+
+
+def run_steps(pytester, monkeypatch, source: str):
+    """Run a test module under the real harness on a prepared run; returns pytest's result and the step records."""
+    root = prepared_run(pytester.path)
+    monkeypatch.setenv("WEAVE_ACC_RUN_DIR", str(root))
+    pytester.makeini(INI)
+    pytester.makeconftest(HARNESS)
+    pytester.makepyfile(test_steps="import pytest\n\n\n" + source)
+    result = pytester.runpytest_subprocess("-p", "no:cacheprovider", "-q", "--tb=short")
+    steps = root / "evidence/steps.jsonl"
+    records = [json.loads(line) for line in steps.read_text().splitlines()] if steps.exists() else []
+    return result, records
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        '@pytest.mark.journey_step("J0.1")\n@pytest.mark.xfail(reason="known gap")\ndef test_step(run):\n'
+        "    assert False\n",
+        '@pytest.mark.journey_step("J0.1")\ndef test_step(run):\n    pytest.xfail("known gap")\n',
+    ],
+    ids=["marker", "call"],
+)
+def test_an_expected_failure_fails_the_step_and_the_pytest_exit_code(pytester, monkeypatch, source):
+    result, records = run_steps(pytester, monkeypatch, source)
+    assert result.ret == 1
+    result.assert_outcomes(failed=1)
+    assert [(record["id"], record["status"]) for record in records] == [("J0.1", "failed")]
+    assert "known gap" in records[0]["error"]
+
+
+NEXT_STEP = '\n\n@pytest.mark.journey_step("J0.2")\ndef test_next(run):\n    pass\n'
+NOT_STARTED = {
+    "skip in a fixture": '@pytest.fixture\ndef ready():\n    pytest.skip("the platform is not ready")\n\n\n'
+    '@pytest.mark.journey_step("J0.1")\ndef test_step(run, ready):\n    pass\n',
+    "skip marker": '@pytest.mark.journey_step("J0.1")\n@pytest.mark.skip(reason="the platform is not ready")\n'
+    "def test_step(run):\n    pass\n",
+    "xfail without running": '@pytest.mark.journey_step("J0.1")\n'
+    '@pytest.mark.xfail(run=False, reason="the platform is not ready")\ndef test_step(run):\n    pass\n',
+    "error in a fixture": '@pytest.fixture\ndef ready():\n    raise RuntimeError("the platform is not ready")\n\n\n'
+    '@pytest.mark.journey_step("J0.1")\ndef test_step(run, ready):\n    pass\n',
+}
+
+
+@pytest.mark.parametrize("source", NOT_STARTED.values(), ids=NOT_STARTED.keys())
+def test_a_step_that_never_starts_is_not_run_and_stops_its_journey(pytester, monkeypatch, source):
+    result, records = run_steps(pytester, monkeypatch, source + NEXT_STEP)
+    assert result.ret == 1
+    assert [(record["id"], record["status"]) for record in records] == [("J0.1", "not_run"), ("J0.2", "not_run")]
+    assert "the platform is not ready" in records[0]["error"]
+    assert records[1]["error"] == "An earlier step of this journey failed."
+
+
+def test_a_skip_marker_on_a_step_the_harness_skips_anyway_keeps_the_harness_record(pytester, monkeypatch):
+    # J0.10 waits for a capability that has not landed: the step reads skipped with it, not not_run.
+    source = '@pytest.mark.journey_step("J0.10")\n@pytest.mark.skip(reason="later")\ndef test_step(run):\n    pass\n'
+    result, records = run_steps(pytester, monkeypatch, source)
+    assert result.ret == 0
+    assert records == [{"id": "J0.10", "status": "skipped", "missing": ["compose-operations"]}]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        '@pytest.mark.journey_step("J0.1")\ndef test_step(run):\n    pytest.exit("operator stop")\n',
+        '@pytest.fixture\ndef ready():\n    pytest.exit("operator stop")\n\n\n'
+        '@pytest.mark.journey_step("J0.1")\ndef test_step(run, ready):\n    pass\n',
+    ],
+    ids=["call", "setup"],
+)
+def test_pytest_exit_in_a_step_records_it_as_not_run(pytester, monkeypatch, source):
+    result, records = run_steps(pytester, monkeypatch, source + NEXT_STEP)
+    assert result.ret != 0
+    assert [(record["id"], record["status"]) for record in records] == [("J0.1", "not_run")]
+    assert "operator stop" in records[0]["error"]
+
+
+def test_a_failure_in_teardown_fails_the_step_and_stops_its_journey(pytester, monkeypatch):
+    source = (
+        "import json\n\n\n"
+        "@pytest.fixture\ndef cleanup(run):\n    yield\n"
+        '    person = json.loads((run.private / "people" / "builder.json").read_text())\n'
+        '    raise RuntimeError("cleanup left a session for " + person["password"])\n\n\n'
+        '@pytest.mark.journey_step("J0.1")\ndef test_step(run, cleanup):\n    pass\n'
+    )
+    result, records = run_steps(pytester, monkeypatch, source + NEXT_STEP)
+    output = result.stdout.str() + result.stderr.str()
+    assert result.ret == 1
+    assert [(record["id"], record["status"]) for record in records] == [("J0.1", "failed"), ("J0.2", "not_run")]
+    assert "cleanup left a session for [redacted]" in records[0]["error"]
+    assert not leaked(PASSWORD, output) and not leaked(PASSWORD, json.dumps(records))
+
+
+def test_pytest_exit_in_teardown_fails_a_step_whose_body_passed(pytester, monkeypatch):
+    source = (
+        '@pytest.fixture\ndef cleanup():\n    yield\n    pytest.exit("operator stop")\n\n\n'
+        '@pytest.mark.journey_step("J0.1")\ndef test_step(run, cleanup):\n    pass\n'
+    )
+    result, records = run_steps(pytester, monkeypatch, source + NEXT_STEP)
+    assert result.ret != 0
+    assert records == [
+        {
+            "id": "J0.1",
+            "status": "failed",
+            "seconds": records[0]["seconds"],
+            "error": "teardown: pytest.exit: operator stop",
+        }
+    ]
+
+
+def test_the_identity_providers_admin_secret_is_redacted_too(tmp_path):
+    spec = importlib.util.spec_from_file_location("harness_for_admin", HARNESS_PATH)
+    harness = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(harness)
+    root = prepared_run(tmp_path)
+    platform = root / "private" / ".local" / "platform"
+    platform.mkdir(parents=True)
+    admin = "kc-admin-" + "f" * 32
+    (platform / "identity.env").write_text(f"WEAVE_KC_REALM=weave\nWEAVE_KC_ADMIN_SECRET='{admin}'\n", encoding="utf-8")
+    assert admin in harness.known_secrets(root)

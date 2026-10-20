@@ -15,31 +15,18 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Real-service acceptance on Linux (ubuntu-24.04, zero retries). Needs no secrets, so it
-# also runs for fork pull requests. The real-platform journeys run the pr profile on every pull request.
+# also runs for fork pull requests. Every pull request and every push to main runs the pr profile.
 name: Acceptance
 on:
   pull_request:
-    paths:
-      - 'scripts/acceptance*.py'
-      - 'tests/acceptance/**'
-      - 'src/firefly_weave/private_origins.py'
-      - 'src/firefly_weave/connectors/**'
-      - 'src/firefly_weave/connections/**'
-      - 'src/firefly_weave/contracts/http_profile*.py'
-      - 'src/firefly_weave/operations/event_delivery.py'
-      - 'src/firefly_weave/sdk/platform*.py'
-      - 'studio/src/app/integrations/**'
-      - 'studio/tests/browser/real-platform.spec.ts'
-      - 'studio/tests/credential-store.ts'
-      - 'studio/tests/python-path.ts'
-      - '.github/workflows/acceptance.yml'
   push:
     branches: [main]
   workflow_dispatch:
 permissions:
   contents: read
 concurrency:
-  group: acceptance-pr-${{ github.ref }}
+  # One run per pull request commit, as in Checks; each push to main keeps its own run.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   pr:

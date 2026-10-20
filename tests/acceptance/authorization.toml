@@ -1,0 +1,109 @@
+# Copyright 2026 Firefly Software Foundation.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# Author: Firefly Software Foundation
+# SPDX-License-Identifier: Apache-2.0
+
+# Authorization matrix for the security journey (J9). [operations] lists every operation added
+# after the baseline release, [controls] the operations behind Studio controls a viewer must not
+# use. Each row names the capability the operation needs (tests/contracts checks it against the
+# operation registry) and one request that is safe to send as any person: "random" becomes a new
+# UUID, so a permitted call names nothing that exists, and "demo-scope" becomes the demo environment's
+# tenant, project and environment IDs; collection names the catalog collection of
+# operations whose path has one. The journey expects exactly
+# 403 WV-FORBIDDEN where the person's grants at the operation's scope lack the capability, and elsewhere the
+# operation's own answer: success, or for a random target its not-found, conflict or validation answer, or one of
+# the row's answers.
+baseline = "tests/fixtures/contracts/operations-0.1.0a14.json"
+
+[operations."ai_connections.test"]
+capability = "connection.manage"
+identifier = "random"
+body = { model = "qwen2.5:1.5b", probe_tools = false }
+
+[operations."ai_endpoints.list"]
+capability = "catalog.read"
+
+[operations."ai_models.list"]
+capability = "catalog.read"
+query = { connection = "random" }
+
+[operations."ai_readiness.read"]
+capability = "catalog.read"
+
+[operations."ai_setup.grant"]
+capability = "connection.manage"
+body = { connection_revision_id = "random" }
+
+# Publishes the bundled Ollama connector and its actions in the demo project when permitted.
+[operations."ai_setup.publish"]
+capability = "definition.publish"
+body = {}
+# Without an AI worker (the pr profile installs none) publishing the AI setup is refused by its own precondition.
+answers = [{ status = 422, code = "WV-AI-WORKER-MISSING" }]
+
+[operations."bindable_connections.list"]
+capability = "connection.bind"
+
+[operations."incidents.read"]
+capability = "incident.read"
+identifier = "random"
+
+[operations."language.read"]
+capability = "catalog.read"
+
+[operations."operations_summary.read"]
+capability = "status.read"
+
+[operations."operations_telemetry.read"]
+capability = "status.read"
+
+[operations."releases.usage"]
+capability = "catalog.read"
+identifier = "random"
+
+[operations."run_summaries.list"]
+capability = "run.read"
+
+[operations."runs.calls"]
+capability = "run.read"
+identifier = "random"
+
+[operations."runs.logs"]
+capability = "run.read"
+identifier = "random"
+# Run logs answer 501 until the platform has a log reader (the logs capability).
+answers = [{ status = 501, code = "WV-UNAVAILABLE", until = "logs" }]
+
+[operations."runs.steps"]
+capability = "run.read"
+identifier = "random"
+
+# A permitted call is a dry run, so no worker is retired.
+[operations."workers.retire_stale"]
+capability = "release.retire"
+body = { older_than_seconds = 2592000, dry_run = true }
+
+# A permitted publish fails compilation (no spec), so nothing is published.
+[controls."definitions.publish"]
+capability = "definition.publish"
+collection = "workflows"
+body = { source = "apiVersion: weave/v1alpha1\nkind: Workflow\nmetadata: {name: authorization-probe-j9, version: 1.0.0}\nspec:\n  inputSchema: {type: object}\n  outputSchema: {type: object}\n  steps:\n    - {id: echo, kind: transform, value: {object: {}}}\n  output: {ref: /steps/echo/output}\n", format = "yaml" }
+
+[controls."activations.create"]
+capability = "release.activate"
+body = { version_id = "random", artifact_digest = "0000000000000000000000000000000000000000000000000000000000000000", scope = "demo-scope" }
+
+[controls."runs.start"]
+capability = "run.start"
+body = { activation_id = "random", input = {} }

@@ -275,6 +275,8 @@ def record_steps(plan, leave_out=()):
                 if ENABLEMENT.applies(check, "pr") and ENABLEMENT.missing(check)
             ]
             record = {"id": step, "status": "partial" if skipped else "passed", "seconds": 1.0}
+            if acceptance.acceptance_journeys.step_stage(step) == "scan":
+                record["source"] = "scan"
             lines.append({**record, "skipped_checks": skipped} if skipped else record)
     (plan.evidence / "steps.jsonl").write_text("".join(json.dumps(line) + "\n" for line in lines), encoding="utf-8")
 
@@ -401,3 +403,283 @@ def test_main_judges_only_the_journeys_of_the_requested_stages(tmp_path, monkeyp
     assert acceptance.main([*argv, "--stages", "up"]) == 1
     monkeypatch.setitem(acceptance.STAGE_FUNCTIONS, "up", lambda plan, recorder: record_steps(plan))
     assert acceptance.main([*argv, "--stages", "up"]) == 0
+
+
+class CallRecorder:
+    """Records every command; commands whose text holds a ``failing`` marker exit 1."""
+
+    def __init__(self, failing=()):
+        self.calls, self.failing = [], tuple(failing)
+
+    def run(self, argv, **kwargs):
+        self.calls.append((list(argv), kwargs))
+        code = 1 if any(marker in " ".join(argv) for marker in self.failing) else 0
+        return subprocess.CompletedProcess(list(argv), code, stdout="", stderr="")
+
+
+def journeys_plan(tmp_path):
+    state = {"profile": "pr", "origins": [acceptance.FIXTURE_ORIGIN], "acme_control_port": 40001}
+    plan = acceptance.Plan(tmp_path, RUN, "pr", "default", False, False, state)
+    plan.private.mkdir(parents=True)
+    plan.evidence.mkdir()
+    return plan
+
+
+def test_run_drives_legacy_suites_and_the_studio_journeys(tmp_path):
+    plan = journeys_plan(tmp_path)
+    recorder = CallRecorder()
+    acceptance.run(plan, recorder)
+    commands = [" ".join(argv) for argv, _ in recorder.calls]
+    assert "-m pytest" in commands[0]
+    assert any("tests/browser/real-platform.spec.ts" in command for command in commands)
+    studio = [(argv, kwargs) for argv, kwargs in recorder.calls if acceptance.STUDIO_JOURNEYS_CONFIG in argv]
+    assert len(studio) == 1 and studio[0][0][-2:] == ["--retries", "0"]
+    assert studio[0][1]["env"]["WEAVE_ACC_RUN_DIR"] == str(plan.root)
+    assert studio[0][1]["cwd"] == acceptance.ROOT / "studio"
+    resolved = json.loads((plan.root / "enablement.json").read_text(encoding="utf-8"))
+    assert resolved["profile"] == "pr" and "J1.1" in resolved["steps"]
+
+
+def test_a_failed_suite_still_runs_the_studio_journeys(tmp_path):
+    plan = journeys_plan(tmp_path)
+    recorder = CallRecorder(failing=("real-platform.spec.ts",))
+    with pytest.raises(acceptance.StageFailed, match="the platform-session suite"):
+        acceptance.run(plan, recorder)
+    assert any(acceptance.STUDIO_JOURNEYS_CONFIG in argv for argv, _ in recorder.calls)
+
+
+def journeys_map(tmp_path, enabled):
+    """The committed map with real-platform-journeys switched on or off."""
+    text = (acceptance.ROOT / "tests/acceptance/journeys.toml").read_text(encoding="utf-8")
+    text = re.sub(
+        r'"real-platform-journeys" = (true|false)', f'"real-platform-journeys" = {str(enabled).lower()}', text
+    )
+    path = tmp_path / ("on.toml" if enabled else "off.toml")
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def scan_steps(plan):
+    path = plan.evidence / "steps.jsonl"
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()] if path.is_file() else []
+
+
+def test_the_scan_records_j9_4_only_when_it_is_enabled(tmp_path, monkeypatch):
+    monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+    plan = journeys_plan(tmp_path / "run")
+    monkeypatch.setattr(acceptance, "JOURNEYS", journeys_map(tmp_path, False))
+    acceptance.scan(plan, FakeRecorder())
+    assert scan_steps(plan) == []
+    monkeypatch.setattr(acceptance, "JOURNEYS", journeys_map(tmp_path, True))
+    acceptance.scan(plan, FakeRecorder())
+    (record,) = scan_steps(plan)
+    # The storage-key check waits for the editor's account-prefixed storage.
+    assert (record["id"], record["status"]) == ("J9.4", "partial")
+    assert record["skipped_checks"] == [{"check": "J9.4/storage-keys", "missing": ["editor-contracts"]}]
+
+
+def test_studio_steps_without_storage_dumps_fail_j9_4(tmp_path, monkeypatch):
+    monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+    plan = journeys_plan(tmp_path / "run")
+    monkeypatch.setattr(acceptance, "JOURNEYS", journeys_map(tmp_path, True))
+    (plan.evidence / "steps.jsonl").write_text(
+        json.dumps({"id": "J1.1", "status": "passed", "viewport": "1440x900"}) + "\n", encoding="utf-8"
+    )
+    with pytest.raises(acceptance.StageFailed, match="No browser storage was captured"):
+        acceptance.scan(plan, FakeRecorder())
+    assert scan_steps(plan)[-1]["status"] == "failed"
+
+
+def test_scan_counts_browser_storage_entries_and_finds_canaries_in_them(tmp_path, monkeypatch):
+    monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+    plan = journeys_plan(tmp_path / "run")
+    monkeypatch.setattr(acceptance, "JOURNEYS", journeys_map(tmp_path, True))
+    (plan.private / "canaries.json").write_text(json.dumps({"acme-api-key": "wv-canary-x1-unit"}), encoding="utf-8")
+    storage = plan.private / "browser-storage"
+    storage.mkdir()
+    dump = {"local": {"a": "1"}, "session": {"b": "2"}, "indexed_db": []}
+    (storage / "J1-1440x900-builder.json").write_text(json.dumps(dump), encoding="utf-8")
+    acceptance.scan(plan, FakeRecorder())
+    assert plan.state["secret_scan"]["browser_storage_entries"] == 2 and plan.state["secret_scan"]["hits"] == 0
+    dump["local"]["leak"] = "wv-canary-x1-unit"
+    (storage / "J1-1440x900-builder.json").write_text(json.dumps(dump), encoding="utf-8")
+    with pytest.raises(acceptance.StageFailed, match="found a secret"):
+        acceptance.scan(plan, FakeRecorder())
+    assert scan_steps(plan)[-1] == {
+        "id": "J9.4",
+        "status": "failed",
+        "seconds": scan_steps(plan)[-1]["seconds"],
+        "error": "The canary scan found a secret in 1 file(s)",
+        "source": "scan",
+    }
+
+
+def test_scan_steps_are_judged_by_the_scan_stage():
+    journeys = [
+        {"id": "J9", "status": "failed", "steps": [{"n": 1, "status": "passed"}, {"n": 4, "status": "not_run"}]}
+    ]
+    assert acceptance.failed_journeys(journeys, ("run",)) == []
+    assert acceptance.failed_journeys(journeys, ("run", "scan")) == ["J9"]
+
+
+def test_each_person_a_studio_journey_signed_in_as_needs_a_storage_dump(tmp_path, monkeypatch):
+    monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+    plan = journeys_plan(tmp_path / "run")
+    monkeypatch.setattr(acceptance, "JOURNEYS", journeys_map(tmp_path, True))
+    (plan.evidence / "steps.jsonl").write_text(
+        json.dumps({"id": "J9.2", "status": "passed", "viewport": "1440x900"}) + "\n", encoding="utf-8"
+    )
+    people = [{"journey": "J9", "viewport": "1440x900", "person": name} for name in ("builder", "viewer")]
+    (plan.private / acceptance.STUDIO_PEOPLE).write_text(
+        "".join(json.dumps(person) + "\n" for person in people), encoding="utf-8"
+    )
+    storage = plan.private / "browser-storage"
+    storage.mkdir()
+    dump = {"local": {"a": "1"}, "session": {}, "indexed_db": []}
+    (storage / "J9-1440x900-builder.json").write_text(json.dumps(dump), encoding="utf-8")
+    with pytest.raises(acceptance.StageFailed, match="captured for J9-1440x900-viewer"):
+        acceptance.scan(plan, FakeRecorder())
+    assert scan_steps(plan)[-1]["status"] == "failed"
+    assert plan.state["secret_scan"]["browser_storage_entries"] == 1
+    (storage / "J9-1440x900-viewer.json").write_text(json.dumps(dump), encoding="utf-8")
+    acceptance.scan(plan, FakeRecorder())
+    assert scan_steps(plan)[-1]["status"] == "partial"
+    assert plan.state["secret_scan"]["browser_storage_entries"] == 2
+
+
+def test_the_studio_harness_writes_the_people_and_dumps_the_scan_expects():
+    harness = (acceptance.ROOT / "studio/tests/acceptance/harness.ts").read_text(encoding="utf-8")
+    assert f'const STUDIO_PEOPLE = "{acceptance.STUDIO_PEOPLE}";' in harness
+    assert "dump: signed.dump," in harness
+    assert "const base = signed.dump;" in harness and "`${base}.json`" in harness
+    assert "dumpOriginProblem(dump.origin, signed.host)" in harness
+    assert f'const AFTER_REMOVAL = "{acceptance.acceptance_evidence.AFTER_REMOVAL}";' in harness
+    assert "`${base}${AFTER_REMOVAL}.json`" in harness
+    # Each dump lists IndexedDB databases exactly while the scan checks storage keys.
+    assert f'const KEY_CHECK = "{acceptance.SCAN_CHECK}";' in harness
+    assert "storageKeyCheckOn(enablement().steps, KEY_CHECK)" in harness
+    assert f"{acceptance.acceptance_evidence.DATABASES}: databases" in harness
+    # The second dump waits for the purge: no account key left, or 10 s.
+    purge = harness.index("storageAccountKeys(await dumpStorage(signed.page))")
+    assert purge < harness.index("`${base}${AFTER_REMOVAL}.json`")
+
+
+def test_a_second_sign_in_of_the_same_person_needs_its_own_dump(tmp_path):
+    plan = journeys_plan(tmp_path)
+    lines = [
+        {"journey": "J9", "viewport": "1440x900", "person": "viewer", "dump": "J9-1440x900-viewer"},
+        {"journey": "J9", "viewport": "1440x900", "person": "viewer", "dump": "J9-1440x900-viewer-2"},
+        {"journey": "J1", "viewport": "600x500", "person": "builder"},
+    ]
+    (plan.private / acceptance.STUDIO_PEOPLE).write_text(
+        "".join(json.dumps(line) + "\n" for line in lines), encoding="utf-8"
+    )
+    assert acceptance.studio_people(plan) == ["J1-600x500-builder", "J9-1440x900-viewer", "J9-1440x900-viewer-2"]
+
+
+@pytest.mark.parametrize("profile", ["ai", "cluster", "k3d"])
+def test_a_missing_storage_dump_fails_the_scan_in_profiles_without_j9(tmp_path, monkeypatch, profile):
+    monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+    monkeypatch.setattr(acceptance, "JOURNEYS", journeys_map(tmp_path, True))
+    plan = journeys_plan(tmp_path / "run")
+    plan.profile = profile
+    (plan.private / acceptance.STUDIO_PEOPLE).write_text(
+        json.dumps({"journey": "J4", "viewport": "1440x900", "person": "builder"}) + "\n", encoding="utf-8"
+    )
+    with pytest.raises(acceptance.StageFailed, match="captured for J4-1440x900-builder"):
+        acceptance.scan(plan, FakeRecorder())
+    assert scan_steps(plan) == []
+
+
+def test_the_scan_checks_storage_keys_once_the_editor_prefixes_them(tmp_path, monkeypatch):
+    monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+    path = journeys_map(tmp_path, True)
+    path.write_text(
+        path.read_text(encoding="utf-8").replace('"editor-contracts" = false', '"editor-contracts" = true'),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(acceptance, "JOURNEYS", path)
+    plan = journeys_plan(tmp_path / "run")
+    (plan.evidence / "steps.jsonl").write_text(
+        json.dumps({"id": "J9.2", "status": "passed", "viewport": "1440x900"}) + "\n", encoding="utf-8"
+    )
+    (plan.private / acceptance.STUDIO_PEOPLE).write_text(
+        json.dumps({"journey": "J9", "viewport": "1440x900", "person": "viewer", "dump": "J9-1440x900-viewer"}) + "\n",
+        encoding="utf-8",
+    )
+    storage = plan.private / "browser-storage"
+    storage.mkdir()
+    key = (
+        "p0123456789abcdef:fedcba9876543210:11111111-2222-3333-4444-555555555555:66666666-7777-8888-9999-000000000000:x"
+    )
+    before = {"local": {key: "v", "ui:w": "1"}, "session": {}, "indexed_db": [], "indexed_db_databases": []}
+    (storage / "J9-1440x900-viewer.json").write_text(json.dumps(before), encoding="utf-8")
+    (storage / "J9-1440x900-viewer.after-removal.json").write_text(json.dumps(before), encoding="utf-8")
+    with pytest.raises(acceptance.StageFailed, match="1 account key"):
+        acceptance.scan(plan, FakeRecorder())
+    assert scan_steps(plan)[-1]["status"] == "failed"
+    after = {"local": {"ui:w": "1"}, "session": {}, "indexed_db": [], "indexed_db_databases": []}
+    (storage / "J9-1440x900-viewer.after-removal.json").write_text(json.dumps(after), encoding="utf-8")
+    acceptance.scan(plan, FakeRecorder())
+    assert scan_steps(plan)[-1]["status"] == "passed" and "skipped_checks" not in scan_steps(plan)[-1]
+
+
+def test_the_studio_harness_registers_each_person_before_signing_in():
+    # A sign-in that fails must still leave its people line and its place in close(), or the scan would neither
+    # expect nor see that context's storage.
+    harness = (acceptance.ROOT / "studio/tests/acceptance/harness.ts").read_text(encoding="utf-8")
+    body = harness[harness.index("  async signIn(name: string)") :]
+    body = body[: body.index("\n  }\n")]
+    order = [
+        body.index("this.#people.push(signed);"),
+        body.index("appendPrivate(\n      STUDIO_PEOPLE,"),
+        body.index("await session(page)"),
+        body.index("await pair(page"),
+        body.index("await connectAndSignIn(page"),
+        body.index("signed.signedIn = true;"),
+    ]
+    assert order == sorted(order)
+
+
+def test_platform_up_approves_the_acme_service_and_the_identity_alias():
+    # The identity alias names the control plane (Keycloak, whose network namespace the API shares) by an approved
+    # origin, so J9.3 sees the control-plane rule refuse it although its entry exists. Acme stays first: the
+    # Studio suites read it as the Acme origin.
+    from firefly_weave.sdk.platform_origins import fixture_origin
+
+    assert acceptance.FIXTURE_ORIGINS == (acceptance.FIXTURE_ORIGIN, acceptance.IDENTITY_ORIGIN)
+    assert acceptance.IDENTITY_ORIGIN == "http://identity.acceptance.test:8080"
+    assert [fixture_origin(origin) for origin in acceptance.FIXTURE_ORIGINS] == list(acceptance.FIXTURE_ORIGINS)
+
+
+def test_scan_finds_the_identity_providers_admin_secret_outside_its_own_file(tmp_path, monkeypatch):
+    monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+    plan = journeys_plan(tmp_path / "run")
+    monkeypatch.setattr(acceptance, "JOURNEYS", journeys_map(tmp_path, False))
+    plan.platform_dir.mkdir(parents=True)
+    admin = "kc-admin-" + "e" * 32
+    (plan.platform_dir / "identity.env").write_text(f"WEAVE_KC_ADMIN_SECRET={admin}\n", encoding="utf-8")
+    # Its own file is where it belongs; anywhere else is a leak.
+    acceptance.scan(plan, FakeRecorder())
+    assert plan.state["secret_scan"]["hits"] == 0
+    (plan.evidence / "log.txt").write_text(f"token request with {admin}\n", encoding="utf-8")
+    with pytest.raises(acceptance.StageFailed, match="found a secret"):
+        acceptance.scan(plan, FakeRecorder())
+
+
+def test_the_studio_harness_redacts_the_identity_providers_admin_secret():
+    harness = (acceptance.ROOT / "studio/tests/acceptance/harness.ts").read_text(encoding="utf-8")
+    body = harness[harness.index("function secrets(): string[] {") :]
+    body = body[: body.index("\n}\n")]
+    assert "adminSecret()" in body
+
+
+def test_a_studio_step_whose_page_left_http_or_its_hosts_fails_itself():
+    # finish() fails the test, but the step that navigated must not keep a passed record.
+    harness = (acceptance.ROOT / "studio/tests/acceptance/harness.ts").read_text(encoding="utf-8")
+    step = harness[harness.index("  async step(stepId: string") :]
+    step = step[: step.index("\n  }\n")]
+    body, after = step.index("await body();"), step.index("this.#navigationProblems.length > navigated")
+    assert body < after
+    sign_in = harness[harness.index("  async signIn(name: string)") :]
+    assert "this.#navigationProblems.push(" in sign_in[: sign_in.index("\n  }\n")]

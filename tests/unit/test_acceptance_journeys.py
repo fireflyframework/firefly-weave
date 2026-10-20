@@ -130,6 +130,9 @@ def test_the_committed_map_is_valid():
     assert enablement.capabilities["acceptance-foundations"] is True
     landed = [name for name, value in enablement.capabilities.items() if value]
     assert landed == [
+        "studio-brand",
+        "brand-assets",
+        "docs-brand",
         "text-operators",
         "instance-keys",
         "loop-compiler",
@@ -141,14 +144,56 @@ def test_the_committed_map_is_valid():
         "ai-models-screen",
         "run-views",
         "acceptance-foundations",
+        "real-platform-journeys",
     ]
     assert enablement.journey_steps("J0") == tuple(f"J0.{n}" for n in range(1, 15))
     assert enablement.profiles["pr"] == ("J0", "J1", "J2", "J3", "J5", "J8", "J9")
     assert enablement.criteria["J3"] == ("SC1", "SC3", "SC7")
     assert enablement.applies("J0.12", "ai") and not enablement.applies("J0.12", "pr")
     assert enablement.missing("J0.3/owner-roles") == ()
-    assert enablement.journey_steps("J5") == ("J5.1",) and enablement.missing("J5.1") == ()
+    assert enablement.missing("J5.1") == ()
     assert enablement.applies("J5.1", "pr") and not enablement.applies("J5.1", "ai")
+    assert enablement.journey_steps("J1") == tuple(f"J1.{n}" for n in range(1, 11))
+    assert enablement.journey_steps("J2") == tuple(f"J2.{n}" for n in range(1, 10))
+    assert enablement.journey_steps("J3") == tuple(f"J3.{n}" for n in range(1, 13))
+    assert enablement.journey_steps("J5") == tuple(f"J5.{n}" for n in range(1, 8))
+    assert enablement.journey_steps("J8") == tuple(f"J8.{n}" for n in range(1, 6))
+    # J9: authorization (J9.1, J9.2), private origins (J9.3) and the canary scan (J9.4); cluster hardening is J6.1.
+    assert enablement.journey_steps("J9") == tuple(f"J9.{n}" for n in range(1, 5))
+    assert enablement.applies("J8.4", "nightly") and not enablement.applies("J8.4", "pr")
+    assert "step-error-handling" in enablement.missing("J3.10")
+    assert enablement.checks("J9.2") == ("J9.2/execute-in-local", "J9.2/operations-controls")
+    # The connection Test that sends a request is J1.3's, not J9.3's; it waits for connections in step details.
+    assert "step-details" in enablement.missing("J1.3/test-sends-request")
+    assert enablement.checks("J9.4") == ("J9.4/storage-keys",)
+    # A connection's Test is no step test, and the Incidents inbox reads no metrics.
+    assert [step for step in enablement.journey_steps("J1") if "step-tests" in enablement.steps[step]] == []
+    assert "metrics" not in enablement.steps["J5.7"]
+    assert set(enablement.steps["J5.7"]) == {"real-platform-journeys", "run-views", "compose-operations"}
+    assert "editor-contracts" in enablement.missing("J9.4/storage-keys")
+
+
+def test_resolved_enablement_lists_each_step_and_viewport():
+    enablement = journeys.Enablement.load(ROOT / "tests/acceptance/journeys.toml")
+    resolved = enablement.resolved("pr")
+    assert resolved["profile"] == "pr" and set(resolved["steps"]) == set(enablement.steps)
+    assert resolved["steps"]["J0.12"] == {"applies": False, "missing": list(enablement.missing("J0.12"))}
+    assert resolved["viewports"]["J1"] == ["1440x900", "600x500"] and resolved["viewports"]["J0"] == ["cli"]
+    assert set(resolved["viewports"]) == set(enablement.profiles["pr"])
+    # The Studio harness records only steps of the run stage; the scan records J9.4.
+    assert resolved["stages"]["J9.4"] == "scan" and resolved["stages"]["J9.2"] == "run"
+    assert resolved["stages"]["J0.5"] == "up" and set(resolved["stages"]) == set(enablement.steps)
+
+
+@pytest.mark.parametrize(("journey", "first"), [("J1", 3), ("J3", 2)])
+def test_journey_steps_build_on_the_steps_before_them(journey, first):
+    # A step that uses an earlier step's result must wait for everything that step waits for.
+    enablement = journeys.Enablement.load(ROOT / "tests/acceptance/journeys.toml")
+    steps = enablement.journey_steps(journey)
+    for previous, current in zip(steps[first - 2 :], steps[first - 1 :], strict=False):
+        if current in {"J3.10", "J3.11", "J3.12"} and previous == "J3.9":
+            continue
+        assert set(enablement.steps[previous]) <= set(enablement.steps[current]), current
 
 
 def test_versions_toml_pins_match_the_files_that_use_them():
@@ -189,7 +234,11 @@ def declared_in_tests():
         found |= set(re.findall(r'\.check\(\s*"([^"]+)"', content))
     specs = ROOT / "studio/tests/acceptance"
     for path in sorted(specs.rglob("*.spec.ts")) if specs.is_dir() else []:
-        found |= set(re.findall(r'\bstep\(\s*"(J[^"]+)"', path.read_text(encoding="utf-8")))
+        content = path.read_text(encoding="utf-8")
+        found |= set(re.findall(r'\bstep\(\s*"(J[^"]+)"', content))
+        found |= set(re.findall(r'\bcheck\(\s*"(J[^"]+)"', content))
+    orchestrator = (ROOT / "scripts/acceptance.py").read_text(encoding="utf-8")
+    found |= set(re.findall(r'^SCAN_(?:STEP|CHECK) = "([^"]+)"', orchestrator, flags=re.MULTILINE))
     return found
 
 

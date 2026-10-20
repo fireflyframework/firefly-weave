@@ -17,11 +17,16 @@
 """The Acme API fixture serves the data, key check, faults and journal the acceptance journeys rely on."""
 
 import hashlib
+import http.client
 import importlib.util
 import json
+import re
+import socket
 import sys
 import threading
+import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -46,11 +51,13 @@ acme = load_fixture()
 
 
 @pytest.fixture
-def servers():
+def servers(monkeypatch):
     api, control, _ = acme.make_servers(
         host="127.0.0.1", api_port=0, control_port=0, key_sha256=hashlib.sha256(KEY.encode()).hexdigest()
     )
     for server in (api, control):
+        # A stalled client gives up its connection quickly here; the service's own timeout is pinned below.
+        monkeypatch.setattr(server.RequestHandlerClass, "timeout", 0.5)
         threading.Thread(target=server.serve_forever, daemon=True).start()
     yield f"http://127.0.0.1:{api.server_address[1]}", f"http://127.0.0.1:{control.server_address[1]}"
     for server in (api, control):
@@ -147,3 +154,189 @@ def test_compose_keeps_acme_on_the_egress_network_with_a_loopback_control_port()
     assert all(port.startswith("127.0.0.1:") for port in service["ports"])
     assert service["read_only"] and service["cap_drop"] == ["ALL"] and service["pull_policy"] == "never"
     assert document["networks"]["egress"]["external"] is True
+
+
+DEEP = b"[" * 30000 + b"]" * 30000  # under 64 KiB, deeper than the JSON parser accepts
+
+
+def raw_post(base, path, body, length=None):
+    """POST with a Content-Length the test chooses (urllib would compute its own)."""
+    url = urllib.parse.urlsplit(base)
+    connection = http.client.HTTPConnection(url.hostname, url.port, timeout=5)
+    try:
+        connection.putrequest("POST", path)
+        connection.putheader("Content-Type", "application/json")
+        connection.putheader("Content-Length", str(len(body)) if length is None else length)
+        connection.endheaders()
+        connection.send(body)
+        response = connection.getresponse()
+        return response.status, response.read()
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize("length", ["\u00b2", "1e3", "-5", "1" * 13])
+def test_an_odd_content_length_is_refused_and_journaled(servers, length):
+    api, control = servers
+    status, body = raw_post(api, "/approvals", b"{}", length)
+    assert (status, json.loads(body)) == (400, {"error": "Send a decimal Content-Length."})
+    journal = json.loads(urllib.request.urlopen(control + "/_control/journal", timeout=5).read())["entries"]
+    assert [(entry["method"], entry["path"], entry["status"]) for entry in journal] == [("POST", "/approvals", 400)]
+    status, body = raw_post(control, "/_control/faults", b"{}", length)
+    assert (status, json.loads(body)) == (400, {"error": "Send a decimal Content-Length."})
+
+
+def test_deeply_nested_json_is_refused_and_journaled(servers):
+    api, control = servers
+    for path in ("/approvals", "/notifications"):
+        status, body = raw_post(api, path, DEEP)
+        assert (status, json.loads(body)) == (400, {"error": "Send a JSON object."})
+    status, _ = raw_post(control, "/_control/faults", DEEP)
+    assert status == 400
+    journal = json.loads(urllib.request.urlopen(control + "/_control/journal", timeout=5).read())["entries"]
+    assert [entry["status"] for entry in journal] == [400, 400]
+
+
+def test_a_malformed_request_never_consumes_an_armed_fault(servers):
+    api, control = servers
+    fault = json.dumps({"status": 503, "count": 1, "path": "/approvals"}).encode()
+    assert raw_post(control, "/_control/faults", fault)[0] == 204
+    assert raw_post(api, "/approvals", b"{}", "x")[0] == 400
+    assert raw_post(api, "/approvals", b"{}")[0] == 503
+    assert raw_post(api, "/approvals", b"{}")[0] == 201
+
+
+@pytest.mark.parametrize("length", [None, str(4 * acme.MAX_BODY + 1), "9" * acme.MAX_LENGTH_DIGITS])
+def test_an_oversized_body_never_consumes_an_armed_fault(servers, length):
+    api, control = servers
+    fault = json.dumps({"status": 503, "count": 1, "path": "/sink/alerts"}).encode()
+    assert raw_post(control, "/_control/faults", fault)[0] == 204
+    body = b"x" * (acme.MAX_BODY + 1) if length is None else b"{}"
+    assert raw_post(api, "/sink/alerts", body, length)[0] == 413
+    assert raw_post(api, "/sink/alerts", b"{}")[0] == 503
+    assert raw_post(api, "/sink/alerts", b"{}")[0] == 204
+
+
+def raw_exchange(base, request, *, half_close=False):
+    """Send raw request bytes and read one response; returns (status, JSON body, seconds waited)."""
+    url = urllib.parse.urlsplit(base)
+    started = time.monotonic()
+    with socket.create_connection((url.hostname, url.port), timeout=5) as connection:
+        connection.sendall(request)
+        if half_close:
+            connection.shutdown(socket.SHUT_WR)
+        response = http.client.HTTPResponse(connection)
+        response.begin()
+        body = response.read()
+    return response.status, json.loads(body) if body else None, time.monotonic() - started
+
+
+def journal(control):
+    entries = json.loads(urllib.request.urlopen(control + "/_control/journal", timeout=5).read())["entries"]
+    return [(entry["method"], entry["path"], entry["status"]) for entry in entries]
+
+
+def test_two_content_length_headers_are_refused_and_journaled(servers):
+    api, control = servers
+    request = b"POST /approvals HTTP/1.1\r\nHost: acme\r\nContent-Length: 100\r\nContent-Length: 2\r\n\r\n{}"
+    status, body, waited = raw_exchange(api, request)
+    assert (status, body) == (400, {"error": "Send one Content-Length."})
+    assert waited < 0.4
+    assert journal(control) == [("POST", "/approvals", 400)]
+    assert raw_exchange(control, request.replace(b"/approvals", b"/_control/reset"))[:2] == (400, body)
+
+
+@pytest.mark.parametrize("half_close", [False, True], ids=["stalled", "closed"])
+def test_a_body_shorter_than_its_content_length_is_refused_and_journaled(servers, half_close):
+    api, control = servers
+    request = b"POST /approvals HTTP/1.1\r\nHost: acme\r\nContent-Length: 10\r\n\r\n{}"
+    status, body, _ = raw_exchange(api, request, half_close=half_close)
+    assert (status, body) == (400, {"error": "The request body is shorter than its Content-Length."})
+    assert journal(control) == [("POST", "/approvals", 400)]
+    # Nothing was received: the next approval gets the first receipt.
+    assert call(api + "/approvals", "POST", {"customerId": "C-1001", "lines": []})[1]["id"] == "A-1"
+
+
+def raw_responses(base, request):
+    """Send raw request bytes and read until the service closes; returns every (status, body) it answered."""
+    url = urllib.parse.urlsplit(base)
+    received = b""
+    with socket.create_connection((url.hostname, url.port), timeout=3) as connection:
+        connection.sendall(request)
+        while chunk := connection.recv(65536):
+            received += chunk
+    answers = []
+    for part in re.split(rb"(?=HTTP/1\.[01] \d{3} )", received):
+        if part:
+            head, _, body = part.partition(b"\r\n\r\n")
+            answers.append((int(head.split(b" ")[1]), body))
+    return answers
+
+
+SMUGGLED = b"GET /customers/C-1001 HTTP/1.1\r\nHost: acme\r\nX-Api-Key: " + KEY.encode() + b"\r\n\r\n"
+CHUNKED = b"%x\r\n%s\r\n0\r\n\r\n" % (len(SMUGGLED), SMUGGLED)
+UNFRAMED = {
+    "chunked POST": (
+        b"POST /approvals HTTP/1.1\r\nHost: acme\r\nTransfer-Encoding: chunked\r\n\r\n" + CHUNKED,
+        ("POST", "/approvals"),
+        "Send the body with one Content-Length; Transfer-Encoding is not supported.",
+    ),
+    "chunked GET": (
+        b"GET /customers/C-1002 HTTP/1.1\r\nHost: acme\r\nTransfer-Encoding: chunked\r\n\r\n" + CHUNKED,
+        ("GET", "/customers/C-1002"),
+        "Send the body with one Content-Length; Transfer-Encoding is not supported.",
+    ),
+    "GET with a body": (
+        b"GET /orders/O-1/status HTTP/1.1\r\nHost: acme\r\nContent-Length: %d\r\n\r\n" % len(SMUGGLED) + SMUGGLED,
+        ("GET", "/orders/O-1/status"),
+        "A GET, HEAD or DELETE request takes no body.",
+    ),
+    "DELETE with a body": (
+        b"DELETE /customers/C-1001 HTTP/1.1\r\nHost: acme\r\nContent-Length: %d\r\n\r\n" % len(SMUGGLED) + SMUGGLED,
+        ("DELETE", "/customers/C-1001"),
+        "A GET, HEAD or DELETE request takes no body.",
+    ),
+}
+
+
+@pytest.mark.parametrize(("request_bytes", "expected", "message"), UNFRAMED.values(), ids=UNFRAMED.keys())
+def test_a_body_without_a_single_content_length_is_refused_and_never_read_as_a_request(
+    servers, request_bytes, expected, message
+):
+    api, control = servers
+    answers = raw_responses(api, request_bytes)
+    assert [(status, json.loads(body)) for status, body in answers] == [(400, {"error": message})]
+    assert journal(control) == [(*expected, 400)]
+
+
+def test_the_control_api_refuses_a_chunked_body(servers):
+    _, control = servers
+    request = b"POST /_control/reset HTTP/1.1\r\nHost: acme\r\nTransfer-Encoding: chunked\r\n\r\n2\r\n{}\r\n0\r\n\r\n"
+    answers = raw_responses(control, request)
+    message = "Send the body with one Content-Length; Transfer-Encoding is not supported."
+    assert [(status, json.loads(body)) for status, body in answers] == [(400, {"error": message})]
+
+
+def test_a_stalled_client_loses_its_connection_after_ten_seconds():
+    assert acme.ApiHandler.timeout == acme.ControlHandler.timeout == 10.0
+
+
+def test_a_refused_request_keeps_reading_what_the_client_still_sends(servers):
+    # After a refusal the service reads and drops the rest of the input before it closes: closing with unread
+    # input resets the connection, which on Linux can destroy the answer in flight. A reset shows here as a
+    # failed send or read; a drained connection ends cleanly.
+    api, _ = servers
+    url = urllib.parse.urlsplit(api)
+    with socket.create_connection((url.hostname, url.port), timeout=5) as connection:
+        connection.sendall(b"POST /approvals HTTP/1.1\r\nHost: acme\r\nTransfer-Encoding: chunked\r\n\r\n")
+        response = http.client.HTTPResponse(connection)
+        response.begin()
+        body = json.loads(response.read())
+        for _ in range(3 * acme.MAX_BODY // 16384):
+            connection.sendall(b"x" * 16384)
+        connection.shutdown(socket.SHUT_WR)
+        assert connection.recv(16) == b""
+    assert (response.status, body) == (
+        400,
+        {"error": "Send the body with one Content-Length; Transfer-Encoding is not supported."},
+    )
