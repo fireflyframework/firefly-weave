@@ -13,6 +13,7 @@
 # limitations under the License.
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
+
 """The SDK reads, saves and deletes a draft's studio documents through the operation registry."""
 
 import json
