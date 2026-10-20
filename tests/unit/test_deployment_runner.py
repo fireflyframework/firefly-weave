@@ -244,3 +244,53 @@ async def test_revoked_lease_during_work_cancels_the_owned_effect():
     await OperationsRunner(client, policy, adapter, renew_interval=0.01).execute(lease)
     assert cancelled.is_set()
     assert client.reports[-1].state == "reconciliation_required"
+
+
+def test_a_restart_of_anything_but_a_worker_is_refused():
+    lease, policy = fixture()
+    api = ComponentSpec(
+        name="worker", kind="api", image=lease.plan.steps[0].component.image, configuration="current", replicas=1
+    )
+    target = lease.target.model_copy(
+        update={"adapter": "docker-compose", "capabilities": ["observe", "restart_workers"]}
+    )
+    plan = lease.plan.model_copy(
+        update={
+            "adapter": "docker-compose",
+            "intent": "restart_workers",
+            "steps": [PlanStep(action="restart_workers", component=api, expected_version="8")],
+        }
+    )
+    plan = plan.model_copy(update={"digest": canonical_digest(plan.model_dump(mode="json", exclude={"digest"}))})
+    job = lease.job.model_copy(update={"plan_digest": plan.digest})
+    deployment = lease.deployment.model_copy(update={"components": [api]})
+    compose = policy.model_copy(
+        update={
+            "adapter": "docker-compose",
+            "capabilities": ["observe", "restart_workers"],
+            "compose_file": "/srv/compose.yaml",
+            "lock_file": "/srv/runner.lock",
+            "components": [policy.components[0].model_copy(update={"kind": "api", "container": None})],
+        }
+    )
+    restart = lease.model_copy(update={"target": target, "plan": plan, "job": job, "deployment": deployment})
+    with pytest.raises(RunnerPolicyError):
+        validate_lease(restart, compose)
+    # The same lease restarting a worker passes the check.
+    worker = lease.plan.steps[0].component
+    allowed = plan.model_copy(
+        update={"steps": [PlanStep(action="restart_workers", component=worker, expected_version="8")]}
+    )
+    allowed = allowed.model_copy(
+        update={"digest": canonical_digest(allowed.model_dump(mode="json", exclude={"digest"}))}
+    )
+    validate_lease(
+        restart.model_copy(
+            update={
+                "plan": allowed,
+                "job": job.model_copy(update={"plan_digest": allowed.digest}),
+                "deployment": lease.deployment,
+            }
+        ),
+        compose.model_copy(update={"components": policy.components}),
+    )

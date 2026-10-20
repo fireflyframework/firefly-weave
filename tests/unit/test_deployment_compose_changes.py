@@ -297,3 +297,37 @@ async def test_a_scale_down_to_the_running_workers_never_needs_a_running_victim(
     await ComposeAdapter(config, command=project.command).apply(project.plan("scale_workers", 1), renewed)
     assert [item["id"] for item in project.containers] == [keep]
     assert all(keep not in argv for argv, _ in project.calls if "stop" in argv or "rm" in argv)
+
+
+async def test_a_restart_when_the_worker_count_drifted_is_refused(tmp_path):
+    config = policy(tmp_path)
+    project = Project(config, 3)
+    with pytest.raises(RunnerPolicyError):
+        await ComposeAdapter(config, command=project.command).apply(project.plan("restart_workers", 2), renewed)
+    assert not any("--force-recreate" in argv and "--dry-run" not in argv for argv, _ in project.calls)
+
+
+async def test_exited_containers_go_highest_number_first(tmp_path):
+    config = policy(tmp_path)
+    project = Project(config, 4)
+    project.containers[2]["state"] = "exited"
+    project.containers[3]["state"] = "exited"
+    keep = [project.full(1), project.full(2), project.full(3)]
+    await ComposeAdapter(config, command=project.command).apply(project.plan("scale_workers", 3), renewed)
+    assert [item["id"] for item in project.containers] == keep
+
+
+def test_the_reviewed_members_must_be_live_containers_and_exactly_enough():
+    containers = [
+        {"id": "a" * 12 + "f" * 52, "state": "running", "number": "1"},
+        {"id": "b" * 12 + "f" * 52, "state": "running", "number": "2"},
+        {"id": "c" * 12 + "f" * 52, "state": "exited", "number": "3"},
+    ]
+    component = ComponentSpec(
+        name="worker", kind="worker", image=IMAGE, configuration="current", replicas=1, worker_release_id=uuid4()
+    )
+    assert ComposeAdapter._victims(["b" * 12], containers, 3, component) == [containers[1]["id"], containers[2]["id"]]
+    # A stopped container is never a reviewed member, and the count must be exactly what remains to remove.
+    for hosts in (["c" * 12], ["a" * 12, "b" * 12], []):
+        with pytest.raises(RunnerPolicyError):
+            ComposeAdapter._victims(hosts, containers, 3, component)

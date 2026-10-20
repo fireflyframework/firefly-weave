@@ -198,3 +198,46 @@ def test_subscribing_to_change_request_events_needs_deployment_read():
     assert event_capability("change_request.transition") == "deployment.read"
     assert event_capability("run.transition") == "run.read"
     assert event_capability("activation.activated") == "catalog.read"
+
+
+async def test_upkeep_gets_its_own_budget_after_a_revalidation_that_spent_the_quantum(monkeypatch):
+    clock = {"now": 100.0}
+    order = []
+
+    async def revalidate(scope, deadline):
+        order.append(("revalidate", deadline))
+        clock["now"] = deadline + 0.2  # the whole quantum, and part of the grace
+        return True
+
+    async def maintain(scope, deadline):
+        order.append(("upkeep", deadline))
+        assert deadline > clock["now"]
+        return True
+
+    loop = OperationsLoop(
+        Settings(database_url=DATABASE, scheduler_database_url=SCHEDULER),
+        None,  # type: ignore[arg-type]
+        LoopHealth(),
+        monotonic=lambda: clock["now"],
+    )
+    monkeypatch.setattr(loop, "revalidate", revalidate)
+    monkeypatch.setattr(loop, "maintain_changes", maintain)
+    await loop._environment(authority())
+    assert [name for name, _ in order] == ["revalidate", "upkeep"]
+    assert order[1][1] == clock["now"] + operations.UPKEEP_SECONDS
+
+
+def test_a_never_seen_worker_counts_as_drained_only_while_it_drains_with_no_lease():
+    from uuid import uuid4 as new
+
+    from firefly_weave.contracts.deployments import DrainProgressMember
+    from firefly_weave.deployments.change_service import drained
+
+    def member(**values):
+        base = {"worker_id": new(), "host": "c0ffee000001", "active_leases": 0, "draining": False, "revoked": False}
+        return DrainProgressMember(**{**base, "presence": "unknown", **values})
+
+    assert not drained(member())
+    assert drained(member(draining=True))
+    assert not drained(member(draining=True, active_leases=1))
+    assert drained(member(presence="stale")) and drained(member(revoked=True))
