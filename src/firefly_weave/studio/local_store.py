@@ -28,6 +28,9 @@ folder is removed without following links; an oversized file is unlinked) and ev
 write left behind. Only counts are logged, never names or values. Studio refuses writes under a tombstoned prefix
 and, when it starts, purges every tombstoned prefix again; a sign-in to that platform lifts its tombstone. Keys of a
 platform that is neither saved nor tombstoned (an older Studio's name, say) are left alone and only counted.
+
+A tombstone file Studio can't read fails closed: nobody knows which platforms signed out, so nothing is purged and
+every platform's writes are refused until that platform signs in again.
 """
 
 import hashlib
@@ -84,10 +87,45 @@ class Purge:
 
 @dataclass(frozen=True)
 class Startup:
-    """What starting the store did: each tombstoned prefix purged again, and keys of untracked platforms counted."""
+    """What starting the store did: each tombstoned prefix purged again, and keys of untracked platforms counted.
+    ``unknown_tombstones`` says the tombstone file couldn't be read: nothing was purged, and every platform's writes
+    wait for its next sign-in."""
 
     purged: list[tuple[str, Purge]]
     untracked: int
+    unknown_tombstones: bool = False
+
+
+@dataclass(frozen=True)
+class Tombstones:
+    """The platforms whose writes are refused. When the file can't be read, nobody knows which platforms signed out:
+    ``everyone`` refuses every platform's keys except those signed in since (``lifted``), and purges none."""
+
+    prefixes: frozenset[str] = frozenset()
+    everyone: bool = False
+    lifted: frozenset[str] = frozenset()
+
+    def refuses(self, key: str) -> bool:
+        if any(key.startswith(prefix) for prefix in self.prefixes):
+            return True
+        match = PLATFORM_PREFIX.match(key) if self.everyone else None
+        return match is not None and match.group(0) not in self.lifted
+
+    def raw(self) -> bytes | None:
+        """The file's content, or None when nothing is tombstoned."""
+        if self.everyone:
+            value: object = {"everyone": True, "prefixes": sorted(self.prefixes), "lifted": sorted(self.lifted)}
+        elif self.prefixes:
+            value = sorted(self.prefixes)
+        else:
+            return None
+        return json.dumps(value).encode("ascii")
+
+
+def _texts(value: object) -> frozenset[str] | None:
+    if not isinstance(value, list) or not all(isinstance(item, str) and PREFIX.fullmatch(item) for item in value):
+        return None
+    return frozenset(item for item in value if item)
 
 
 def profile_prefix(name: str) -> str:
@@ -163,10 +201,7 @@ class LocalStore:
         name = file_name(key)
         try:
             with self.folder.changing() as directory:
-                if guarded and (
-                    any(key.startswith(prefix) for prefix in self._tombstones(directory))
-                    or (refuse is not None and refuse(key))
-                ):
+                if guarded and (self._tombstones(directory).refuses(key) or (refuse is not None and refuse(key))):
                     raise StoreSignedOut()
                 used = sum(self.folder.size(directory, item) for item in self.folder.names(directory) if item != name)
                 if used + len(raw) > STORE_LIMIT:
@@ -184,28 +219,45 @@ class LocalStore:
         except (OSError, ProfileError):
             raise StoreUnavailable() from None
 
-    def _tombstones(self, directory: int | None) -> list[str]:
+    def _tombstones(self, directory: int | None) -> Tombstones:
+        """The tombstone file; one that can't be read fails closed (``Tombstones.everyone``)."""
         try:
             raw = self.folder.read(directory, TOMBSTONES, 64 * 1024)
-            value = json.loads(raw or b"[]")
-        except (OSError, ProfileError, ValueError):
-            return []
-        return sorted({item for item in value if isinstance(item, str) and item} if isinstance(value, list) else [])
+        except FileNotFoundError:
+            return Tombstones()
+        except (OSError, ProfileError):
+            return Tombstones(everyone=True)
+        if raw is None:
+            return Tombstones()
+        try:
+            value = json.loads(raw)
+        except ValueError:
+            return Tombstones(everyone=True)
+        prefixes = _texts(value)
+        if prefixes is not None:
+            return Tombstones(prefixes)
+        if isinstance(value, dict) and value.get("everyone") is True:
+            listed, lifted = _texts(value.get("prefixes")), _texts(value.get("lifted"))
+            if listed is not None and lifted is not None:
+                return Tombstones(listed, True, lifted)
+        return Tombstones(everyone=True)
 
-    def _set_tombstones(self, directory: int | None, prefixes: Iterable[str]) -> None:
-        wanted = sorted(set(prefixes))
+    def _set_tombstones(self, directory: int | None, wanted: Tombstones) -> None:
         if wanted == self._tombstones(directory):
             return
-        if wanted:
-            self.folder.write(directory, TOMBSTONES, json.dumps(wanted).encode("ascii"))
+        raw = wanted.raw()
+        if raw is not None:
+            # Written to a temporary copy and renamed: a link or a damaged file in its place is replaced, unfollowed.
+            self.folder.write(directory, TOMBSTONES, raw)
         else:
             self.folder.remove(directory, TOMBSTONES)
 
     def tombstones(self) -> list[str]:
-        """The prefixes of platforms signed out or removed and not signed in since."""
+        """The prefixes of platforms signed out or removed and not signed in since (see ``Tombstones`` for a file
+        that can't be read)."""
         try:
             with self.folder.reading() as directory:
-                return self._tombstones(directory)
+                return sorted(self._tombstones(directory).prefixes)
         except FileNotFoundError:
             return []
         except (OSError, ProfileError):
@@ -218,7 +270,10 @@ class LocalStore:
             raise ValueError("A purge names a prefix")
         try:
             with self.folder.changing() as directory:
-                self._set_tombstones(directory, [*self._tombstones(directory), prefix])
+                now = self._tombstones(directory)
+                self._set_tombstones(
+                    directory, Tombstones(now.prefixes | {prefix}, now.everyone, now.lifted - {prefix})
+                )
                 return self._purge(directory, prefix)
         except (OSError, ProfileError):
             raise StoreUnavailable() from None
@@ -227,7 +282,9 @@ class LocalStore:
         """A sign-in lifts the platform's tombstone."""
         try:
             with self.folder.changing() as directory:
-                self._set_tombstones(directory, [item for item in self._tombstones(directory) if item != prefix])
+                now = self._tombstones(directory)
+                lifted = now.lifted | {prefix} if now.everyone else now.lifted
+                self._set_tombstones(directory, Tombstones(now.prefixes - {prefix}, now.everyone, lifted))
         except FileNotFoundError:
             return
         except (OSError, ProfileError):
@@ -279,17 +336,25 @@ class LocalStore:
         (``saved`` holds their prefixes, when known) nor tombstoned; those are left alone."""
         try:
             with self.folder.changing() as directory:
-                tombstoned = self._tombstones(directory)
-                purged = [(prefix, self._purge(directory, prefix)) for prefix in tombstoned]
-                known = {*tombstoned, *(saved or ())}
-                untracked = 0
+                tombstones = self._tombstones(directory)
+                purged = [(prefix, self._purge(directory, prefix)) for prefix in sorted(tombstones.prefixes)]
+                known = {*tombstones.prefixes, *(saved or ())}
+                untracked = waiting = 0
                 for key in self._entries(directory):
                     match = PLATFORM_PREFIX.match(key)
                     if match and match.group(0) not in known and saved is not None:
                         untracked += 1
+                    if match and tombstones.refuses(key):
+                        waiting += 1
                 if untracked:
                     _log.info("Studio's store holds %d keys of platforms it doesn't know; it leaves them", untracked)
-                return Startup(purged, untracked)
+                if tombstones.everyone:
+                    _log.warning(
+                        "Studio couldn't read its store's tombstones: it purges nothing, and writes for every "
+                        "platform wait for its next sign-in (%d keys kept)",
+                        waiting,
+                    )
+                return Startup(purged, untracked, tombstones.everyone)
         except FileNotFoundError:
             return Startup([], 0)
         except (OSError, ProfileError):

@@ -346,3 +346,90 @@ def test_a_guarded_write_under_a_tombstoned_prefix_is_refused_inside_the_lock(tm
     store.remember(profile_prefix("acme"))
     store.put(key, "{}", guarded=True)
     assert store.keys() == ["local:b", key]
+
+
+def test_signing_in_lifts_only_that_platform_s_tombstone(tmp_path):
+    store = LocalStore(tmp_path / "studio-store")
+    beta = profile_prefix("beta") + "0123456789abcdef:t:p:testData.d-1"
+    store.forget(profile_prefix("acme"))
+    store.forget(profile_prefix("beta"))
+    store.remember(profile_prefix("acme"))
+    assert store.tombstones() == [profile_prefix("beta")]
+    store.put(ACCOUNT + "testData.d-1", "{}", guarded=True)
+    with pytest.raises(local_store.StoreSignedOut):
+        store.put(beta, "{}", guarded=True)
+
+
+@pytest.mark.parametrize("damage", ["not json", '{"a": 1}', "\xff"])
+def test_an_unreadable_tombstone_file_refuses_every_platform_until_it_signs_in(tmp_path, damage, caplog):
+    folder = tmp_path / "studio-store"
+    store = LocalStore(folder)
+    acme = ACCOUNT + "testData.d-1"
+    beta = profile_prefix("beta") + "0123456789abcdef:t:p:testData.d-2"
+    store.put(acme, "{}")
+    store.forget(profile_prefix("acme"))
+    (folder / ".tombstones").write_bytes(damage.encode("latin-1"))
+    # Nobody knows which platforms signed out: every platform's writes wait for its sign-in.
+    for key in (acme, beta):
+        with pytest.raises(local_store.StoreSignedOut):
+            store.put(key, "{}", guarded=True)
+    store.put("local:weave.localDraft.d-3", "{}", guarded=True)
+    # Start-up purges nothing it can't attribute, and says so with a count only.
+    store.put(beta, "{}")
+    with caplog.at_level("WARNING"):
+        startup = LocalStore(folder).finish_purges(saved={profile_prefix("beta")})
+    assert startup.purged == [] and startup.unknown_tombstones
+    kept = store.keys()
+    assert beta in kept
+    assert any("tombstones" in record.getMessage() for record in caplog.records)
+    assert all("beta" not in record.getMessage() for record in caplog.records)
+    # A sign-in lifts it for that platform only.
+    store.remember(profile_prefix("acme"))
+    store.put(acme, "{}", guarded=True)
+    with pytest.raises(local_store.StoreSignedOut):
+        store.put(beta, "{}", guarded=True)
+    # And a later sign-out of that platform tombstones it again.
+    store.forget(profile_prefix("acme"))
+    with pytest.raises(local_store.StoreSignedOut):
+        store.put(acme, "{}", guarded=True)
+    store.remember(profile_prefix("beta"))
+    store.put(beta, "{}", guarded=True)
+
+
+def test_the_host_checks_the_sign_out_again_when_it_writes(tmp_path, monkeypatch):
+    from firefly_weave.studio.service import StudioService
+
+    folder = tmp_path / "studio-store"
+    key = ACCOUNT + "testData.d-1"
+    calls: list[str] = []
+
+    def keeps(self, name):
+        # The platform signs out after the first check, while the body arrives.
+        calls.append(name)
+        return len(calls) == 1
+
+    monkeypatch.setattr(StudioService, "keeps", keeps)
+    with client(tmp_path, folder) as browser:
+        headers = pair(browser)
+        answer = browser.put(f"/studio/local/store/{key}", headers=headers, json={"value": "{}"})
+        assert answer.status_code == 409 and answer.json()["code"] == "WV-STUDIO-STORE-SIGNED-OUT"
+    assert LocalStore(folder).keys() == []
+    assert len(calls) >= 2
+
+
+def test_the_host_refuses_a_write_whose_platform_signed_out_while_it_arrived(tmp_path, monkeypatch):
+    folder = tmp_path / "studio-store"
+    key = ACCOUNT + "testData.d-1"
+    original = LocalStore.put
+
+    def signed_out_meanwhile(self, name, value, **options):
+        LocalStore(folder).forget(profile_prefix("acme"))
+        return original(self, name, value, **options)
+
+    monkeypatch.setattr(LocalStore, "put", signed_out_meanwhile)
+    with client(tmp_path, folder) as browser:
+        headers = pair(browser)
+        answer = browser.put(f"/studio/local/store/{key}", headers=headers, json={"value": "{}"})
+        assert answer.status_code == 409
+    monkeypatch.undo()
+    assert LocalStore(folder).keys() == []
