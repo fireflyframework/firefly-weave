@@ -369,9 +369,14 @@ async def test_o_j3_a_restart_replaces_every_worker_and_the_old_ones_are_retired
     """O-J3: restarting lets the workers finish, replaces their containers; the old instances go offline and are
     revoked one by one (retire-stale waits an hour, so the journey revokes the offline instances directly)."""
     async with run.client("operator") as operator:
-        old = {item.id for item in await fixture_workers(operator)}
-        assert old
         before = containers(run)
+        # Workers a scale-down just removed still read recent until their TTL ends: count those that run here.
+        old = {
+            item.id
+            for item in await fixture_workers(operator)
+            if item.identity is not None and item.identity.host in before
+        }
+        assert old
         restart = await requested(operator, "restart_workers", drain={"mode": "drain_first"})
         assert {member.worker_id for member in restart.drain_set} == old
         await finished(operator, restart)
