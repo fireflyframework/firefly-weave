@@ -127,12 +127,26 @@ export class StudioApi {
   };
   /** Called when the local host no longer recognizes this window's pairing. */
   onSessionEnded: (() => void) | null = null;
+  /**
+   * Who is signed in, and where, for a keyed change sent again after a
+   * capacity pause: the host sends it for whoever is signed in by then.
+   * `settled` waits for a sign-in check still out; `scope` names the person
+   * and workspace right then. The shell sets it.
+   */
+  replayGuard: {
+    settled: () => Promise<void>;
+    scope: () => string;
+  } | null = null;
   /** Pauses before replaying a request the host or platform turned away for capacity. */
   wait = (milliseconds: number) =>
     new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
   /** A pause that a cancel ends at once, so a canceled request is never sent again. */
-  private async pause(milliseconds: number, signal?: AbortSignal) {
-    if (!signal) return this.wait(milliseconds);
+  private pause(milliseconds: number, signal?: AbortSignal) {
+    return this.untilCanceled(() => this.wait(milliseconds), signal);
+  }
+  /** Waits for `work`, or rejects at once when `signal` cancels first. */
+  private async untilCanceled(work: () => Promise<void>, signal?: AbortSignal) {
+    if (!signal) return work();
     signal.throwIfAborted();
     let stop = () => {};
     const canceled = new Promise<never>((_resolve, reject) => {
@@ -140,7 +154,7 @@ export class StudioApi {
       signal.addEventListener("abort", stop, { once: true });
     });
     try {
-      await Promise.race([this.wait(milliseconds), canceled]);
+      await Promise.race([work(), canceled]);
     } finally {
       signal.removeEventListener("abort", stop);
     }
@@ -167,7 +181,10 @@ export class StudioApi {
       h["X-Weave-CSRF"] = this.session.csrfToken;
     // A capacity or compatibility rejection means the host or platform did not admit the
     // request, so a read, or a change that carries an idempotency key, can be sent again.
-    const safe = method === "GET" || "Idempotency-Key" in h;
+    const keyed = method !== "GET" && "Idempotency-Key" in h;
+    const safe = method === "GET" || keyed;
+    // A change is sent again only for the person and workspace it was first sent for.
+    const scope = keyed ? this.replayGuard?.scope() : undefined;
     for (let attempt = 1; ; attempt++) {
       const scoped = signal ? cancellable(signal, timeout) : null;
       let response: Response;
@@ -202,6 +219,12 @@ export class StudioApi {
           retryDelay(response.headers.get("Retry-After")),
           signal,
         );
+        const guard = keyed ? this.replayGuard : null;
+        if (guard) {
+          await this.untilCanceled(() => guard.settled(), signal);
+          // Nothing ran: the refusal stands, rather than a send as someone else.
+          if (guard.scope() !== scope) throw error;
+        }
         continue;
       }
       if (

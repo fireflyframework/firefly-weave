@@ -1548,8 +1548,10 @@ def _person_roles(roles: Sequence[str], default: Sequence[str] = DEFAULT_PERSON_
 
 
 def _person_grants(roles: tuple[str, ...], scope: dict[str, str]) -> list[dict[str, Any]]:
-    levels = {"tenant_admin": ("tenant_id",), "developer": ("tenant_id", "project_id")}
-    # Definitions are project resources; activation, runs, and tasks belong to the demo environment.
+    project = ("tenant_id", "project_id")
+    levels = {"tenant_admin": ("tenant_id",), "developer": project, "viewer": project}
+    # Definitions are project resources, and an environment grant never contains a project-level read: viewer
+    # reads the catalog only on the project. Activation, runs, and tasks belong to the demo environment.
     return [
         {
             "role": role,

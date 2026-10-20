@@ -234,7 +234,7 @@ read runs, and work on human tasks:
 | `developer` | Demo project | Read the catalog, compile, simulate, write, and publish definitions |
 | `deployer` | Demo environment | Activate and retire versions, bind connections, manage triggers and subscriptions |
 | `operator` | Demo environment | Start, pause, resume, retry, cancel, and signal runs; inspect and resolve incidents |
-| `viewer` | Demo environment | Read runs, deliveries, status, and the catalog |
+| `viewer` | Demo project | Read the catalog, and runs, deliveries, and status in the project's environments |
 | `task_participant` | Demo environment | Read, claim, complete, and release assigned human tasks |
 
 **`user` never changes an existing username**, and `--role` replaces the
