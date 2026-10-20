@@ -478,3 +478,81 @@ describe("reviving a deleted step's test data", () => {
     expect(await service.revive(() => true)).toEqual([]);
   });
 });
+
+describe("test data set before the account is known", () => {
+  const SCOPE = {
+    profileName: "P",
+    subject: "human",
+    tenantId: "7b0c1c43-3f5a-4cde-9f0e-3c2d5a6b7c8d",
+    projectId: "9b1c2d3e-4f50-4a61-8b72-c3d4e5f60718",
+  };
+  it("is carried into the account's copy when the account arrives, checked and kept", async () => {
+    const { value, store } = host();
+    const service = new TestDataService(value);
+    await service.open({ kind: "memory" });
+    const typed = withInput(
+      emptyTestData(ISO),
+      { customerId: "typed-early" },
+      "manual",
+      ISO,
+    );
+    expect((await service.change(typed, ["/input"])).ok).toBe(true);
+    await service.open(
+      { kind: "connected", scope: SCOPE, draftId: "d-1" },
+      { carry: true },
+    );
+    const asked: string[][] = [];
+    expect(
+      await service.carryOver(async (paths) => (asked.push(paths), true)),
+    ).toEqual(["/input"]);
+    expect(asked).toEqual([]);
+    expect(service.data().input?.value).toEqual({ customerId: "typed-early" });
+    await service.flush();
+    expect(
+      [...store.values.values()].some((raw) => raw.includes("typed-early")),
+    ).toBe(true);
+  });
+  it("asks only when the stored copy holds a different value, and keeps the stored one when told to", async () => {
+    const { value } = host();
+    const service = new TestDataService(value);
+    // The account already keeps a pin for lookup.
+    await service.open({ kind: "connected", scope: SCOPE, draftId: "d-1" });
+    await service.change(
+      withPin(emptyTestData(ISO), "lookup", pin({ id: "stored" }), ISO),
+      [],
+    );
+    await service.flush();
+    await service.open({ kind: "memory" });
+    await service.change(
+      withPin(
+        withInput(emptyTestData(ISO), 1, "manual", ISO),
+        "lookup",
+        pin({ id: "typed" }),
+        ISO,
+      ),
+      [],
+    );
+    await service.open(
+      { kind: "connected", scope: SCOPE, draftId: "d-1" },
+      { carry: true },
+    );
+    const asked: string[][] = [];
+    expect(
+      await service.carryOver(async (paths) => (asked.push(paths), false)),
+    ).toEqual(["/input"]);
+    expect(asked).toEqual([["/pins/lookup"]]);
+    expect(service.data().pins?.["lookup"]?.output).toEqual({ id: "stored" });
+    expect(service.data().input?.value).toBe(1);
+  });
+  it("carries nothing from another workflow (no carry asked)", async () => {
+    const { value } = host();
+    const service = new TestDataService(value);
+    await service.open({ kind: "memory" });
+    await service.change(withInput(emptyTestData(ISO), 1, "manual", ISO), [
+      "/input",
+    ]);
+    await service.open({ kind: "connected", scope: SCOPE, draftId: "d-2" });
+    expect(await service.carryOver(async () => true)).toEqual([]);
+    expect(service.data().input).toBeUndefined();
+  });
+});

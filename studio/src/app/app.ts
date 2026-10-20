@@ -7090,6 +7090,12 @@ export class App implements CanvasHost {
         : { kind: "memory" };
     const key = JSON.stringify([place, this.model.opened]);
     if (key === this.testDataKey) return false;
+    // The same workflow, opened in memory until the account was known: what
+    // was set meanwhile is carried into the account's copy.
+    const carry =
+      place.kind !== "memory" &&
+      this.testDataKey ===
+        JSON.stringify([{ kind: "memory" }, this.model.opened]);
     this.testDataKey = key;
     void this.loadTools();
     // Another workflow's test data: no pin here came from elsewhere yet.
@@ -7098,9 +7104,11 @@ export class App implements CanvasHost {
     // Failures are said where they happen; this only orders what waits.
     this.testDataOpening = (
       place.kind === "connected"
-        ? this.openPlatformTestData(place.scope, place.draftId)
-        : this.testData.open(place)
-    ).catch(() => undefined);
+        ? this.openPlatformTestData(place.scope, place.draftId, carry)
+        : this.testData.open(place, { carry })
+    )
+      .then(() => this.carryTestData())
+      .catch(() => undefined);
     return true;
   }
   /** Every step's fingerprints now, memoized on the workflow, its canvas and the test input. */
@@ -7253,8 +7261,29 @@ export class App implements CanvasHost {
     theirs: StudioDocument;
   } | null = null;
   /** Opens a platform draft's test data: this computer's copy, then the platform's over it. */
-  private async openPlatformTestData(scope: AccountScope, draftId: string) {
-    await this.testData.open({ kind: "connected", scope, draftId });
+  /**
+   * Test data set before the account was known joins the account's copy;
+   * where both hold a value for the same entry, the person chooses.
+   */
+  private async carryTestData() {
+    const carried = await this.testData.carryOver((conflicts) =>
+      this.dialogs
+        .choose({
+          title: "Keep the test data you just set?",
+          message: `This workflow's saved test data has other values for ${conflicts.length === 1 ? "an entry" : `${conflicts.length} entries`} you set while Studio was checking your sign-in.`,
+          confirmLabel: "Keep mine",
+          cancelLabel: "Use the saved values",
+        })
+        .then((choice) => choice === "confirm"),
+    );
+    if (carried.length) this.cdr.markForCheck();
+  }
+  private async openPlatformTestData(
+    scope: AccountScope,
+    draftId: string,
+    carry = false,
+  ) {
+    await this.testData.open({ kind: "connected", scope, draftId }, { carry });
     if (draftId !== this.draftId) return;
     let document: StudioDocument | null;
     try {

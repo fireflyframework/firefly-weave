@@ -21,6 +21,7 @@ SPDX-License-Identifier: Apache-2.0
 // secret, and keep entries the platform can't classify yet on this computer.
 import { expect, test } from "@playwright/test";
 import { CanvasPage, useNewEditor } from "./canvas-po";
+import { StepDetailsPage } from "./step-details-po";
 import {
   COPY,
   PIN,
@@ -329,4 +330,69 @@ test("a saved platform's draft gets its canvas from the platform once its sign-i
   await expect(page.locator(".sticky-note-body")).toHaveText(
     "Kept on the platform",
   );
+});
+
+test("a test input set before the account is known is kept and saved once it is", async ({
+  page,
+}) => {
+  const state = fresh();
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await useNewEditor(page);
+  await platform(page, state);
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  await page.route("**/studio/api/api/v1/identity", async (route) => {
+    await gate;
+    await route.fulfill({
+      json: {
+        principal_id: PRINCIPAL,
+        kind: "human",
+        grants: [
+          {
+            role: "test",
+            scope: {
+              tenant_id: tenant,
+              project_id: project,
+              environment_id: "development",
+            },
+            resources: [],
+            capabilities: ["catalog.read", "definition.write", "simulate"],
+          },
+        ],
+        workspaces: [],
+        truncated: false,
+      },
+    });
+  });
+  await page.goto(`/workflows/${draftId}/designer`);
+  await new CanvasPage(page).ready();
+  const details = new StepDetailsPage(page);
+  await details.trigger().focus();
+  await page.keyboard.press("Enter");
+  const dialog = page.getByRole("dialog").first();
+  await expect(dialog).toBeVisible();
+  const generate = dialog.getByRole("button", { name: "Generate sample" });
+  await generate.first().click();
+  // The sample is the test input now, in memory until the account is known.
+  await expect(dialog).toContainText(
+    "Test input is kept until you close this workflow.",
+  );
+  await details.close();
+  release();
+  await page
+    .waitForResponse("**/studio/api/api/v1/identity")
+    .catch(() => undefined);
+  // Kept, and saved with the draft on the platform.
+  await expect
+    .poll(
+      () =>
+        state.saves.some(
+          (s) =>
+            s.kind === "test-data" &&
+            JSON.stringify(s.body).includes('"input"'),
+        ),
+      { timeout: 15000 },
+    )
+    .toBe(true);
+  await expect.poll(() => kept(page)).toContain('"input"');
 });

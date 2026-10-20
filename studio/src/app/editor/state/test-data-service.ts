@@ -46,6 +46,7 @@ import {
   pruneEntries,
   renameEntries,
 } from "./test-data-ops";
+import { canonicalJson } from "../../forms/core/json";
 import { readTestData } from "./test-data-read";
 import type { StudioDocument, StudioTestData } from "./test-data";
 
@@ -156,6 +157,8 @@ export class TestDataService {
     string,
     { entry: unknown; step: string | undefined }
   >();
+  /** What was set in memory before the account was known, waiting for `carryOver`. */
+  private carried: StudioTestData | null = null;
   /** Keys of accounts signed out since: a write queued for one never runs. */
   private readonly forgotten = new Set<string>();
   /** The platform revision this copy is based on. */
@@ -186,7 +189,22 @@ export class TestDataService {
     }
     return null;
   }
-  async open(place: TestDataPlace): Promise<void> {
+  /**
+   * Opens the test data kept at `place`. With `carry`, what was set in memory
+   * just before (the same workflow, before the account was known) waits to
+   * be carried over by `carryOver`, after the stored copy is read.
+   */
+  async open(
+    place: TestDataPlace,
+    options: { carry?: boolean } = {},
+  ): Promise<void> {
+    const carried =
+      options.carry &&
+      this.where.kind === "memory" &&
+      entriesOf(this.current).length
+        ? this.current
+        : null;
+    this.carried = null;
     await this.flush();
     const opening = ++this.opened;
     const key = await this.keyOf(place);
@@ -231,6 +249,40 @@ export class TestDataService {
     }
     this.loaded++;
     this.set(data);
+    this.carried = carried;
+  }
+  /**
+   * Carries what was set in memory into this copy: entries it lacks are
+   * added; entries it holds with another value are listed to `ask`, and
+   * replace the stored ones only when it answers true. The result is
+   * checked and kept as any change is. Returns the pointers carried.
+   */
+  async carryOver(
+    ask: (conflicts: string[]) => Promise<boolean>,
+  ): Promise<string[]> {
+    const carried = this.carried;
+    this.carried = null;
+    if (!carried) return [];
+    const opening = this.opened;
+    const fresh: { path: string; entry: unknown }[] = [];
+    const conflicts: { path: string; entry: unknown }[] = [];
+    for (const { path, entry } of entriesOf(carried)) {
+      const stored = entryAt(this.current, path);
+      if (stored === undefined) fresh.push({ path, entry });
+      else if (canonicalJson(stored) !== canonicalJson(entry))
+        conflicts.push({ path, entry });
+    }
+    const taken = [...fresh];
+    if (conflicts.length && (await ask(conflicts.map(({ path }) => path))))
+      taken.push(...conflicts);
+    if (opening !== this.opened || !taken.length) return [];
+    let next = this.current;
+    for (const { path, entry } of taken) next = withEntry(next, path, entry);
+    const outcome = await this.change(
+      { ...next, updatedAt: this.stamp() },
+      taken.map(({ path }) => path),
+    );
+    return outcome.ok ? taken.map(({ path }) => path) : [];
   }
   /**
    * The account signed out: its data leaves memory now, and nothing waiting
