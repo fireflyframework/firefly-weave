@@ -438,7 +438,7 @@ def test_user_creates_account_principal_link_and_default_grants(demo_workspace, 
                 "principal_id": PRINCIPAL,
                 "role": role,
                 "project_id": PROJECT,
-                "environment_id": ENVIRONMENT,
+                "environment_id": None if role == "viewer" else ENVIRONMENT,
                 "resources": [],
             }
             for role in ("deployer", "operator", "viewer", "task_participant")
@@ -459,7 +459,7 @@ def test_user_creates_account_principal_link_and_default_grants(demo_workspace, 
 @pytest.mark.parametrize(
     ("roles", "expected"),
     [
-        (("viewer",), [("viewer", PROJECT, ENVIRONMENT)]),
+        (("viewer",), [("viewer", PROJECT, None)]),
         (("developer",), [("developer", PROJECT, None)]),
         (("tenant_admin", "task_manager"), [("tenant_admin", None, None), ("task_manager", PROJECT, ENVIRONMENT)]),
     ],
@@ -710,7 +710,7 @@ def test_cli_text_shows_password_once_with_warning_and_next_commands(demo_worksp
     assert "Username: grace" in lines
     assert any("Development only" in line and "not saved" in line for line in lines)
     assert "  weave auth setup " + API in lines and "  weave studio" in lines
-    assert "Roles: viewer (demo environment)" in lines
+    assert "Roles: viewer (demo project)" in lines
 
 
 def test_cli_reports_existing_username_as_platform_error(demo_workspace, monkeypatch):
@@ -958,3 +958,34 @@ def test_cli_text_says_when_the_initial_account_receipt_was_not_completed(capsys
     output = capsys.readouterr().out
     assert output.count("shown-once") == 1
     assert platform._RECEIPT_NOT_SAVED in output
+
+
+@pytest.mark.parametrize(
+    "roles",
+    [
+        ("operator", "viewer"),
+        ("deployment_approver", "viewer"),
+        ("deployer", "operator", "viewer", "task_participant"),
+        platform.DEFAULT_PERSON_ROLES,
+    ],
+)
+def test_people_with_viewer_read_the_project_catalog_and_their_environment(roles):
+    # The catalog is a project resource; an environment grant never contains a project-level read.
+    from firefly_weave.access.authorization import AuthorizationService
+    from firefly_weave.access.models import Grant, Principal
+    from firefly_weave.contracts.access import Scope
+
+    workspace = {"tenant_id": TENANT, "project_id": PROJECT, "environment_id": ENVIRONMENT}
+    grants = [
+        Grant(role=item["role"], scope=Scope(**item["scope"]))
+        for item in platform._person_grants(tuple(roles), workspace)
+    ]
+    person = Principal(id=uuid4(), kind="human", active=True, grants=grants)
+    project = Scope(tenant_id=UUID(TENANT), project_id=UUID(PROJECT))
+    environment = Scope(tenant_id=UUID(TENANT), project_id=UUID(PROJECT), environment_id=UUID(ENVIRONMENT))
+    access = AuthorizationService()
+    assert access.allows(person, project, "catalog.read")
+    assert access.allows(person, environment, "catalog.read")
+    assert access.allows(person, environment, "run.read")
+    other_project = Scope(tenant_id=UUID(TENANT), project_id=uuid4())
+    assert not access.allows(person, other_project, "catalog.read")

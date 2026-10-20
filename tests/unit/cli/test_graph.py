@@ -296,3 +296,55 @@ def test_graph_draws_a_compiled_call_without_running_it(tmp_path):
         assert "Call a workflow" in json.loads(drawn.output)["content"]
     text = CliRunner().invoke(cli, ["workflow", "graph", str(path)]).output
     assert "[notify] Call a workflow\n" in text and "[audit] Call a workflow\n" in text
+
+
+@pytest.mark.parametrize("format", ["text", "mermaid", "svg"])
+def test_graph_draws_decision_table_steps(tmp_path, format):
+    from firefly_weave.compiler.catalog import CatalogSnapshot
+    from firefly_weave.contracts.definitions import load_definition
+
+    schema = {"type": "object", "properties": {"amount": {"type": "number"}}}
+    table = {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "DecisionTable",
+        "metadata": {"name": "payment-policy", "version": "1.0.0"},
+        "spec": {
+            "inputSchema": schema,
+            "outputSchema": {"type": "string"},
+            "hitPolicy": "first",
+            "rules": [{"id": "any", "when": {"literal": True}, "output": {"literal": "approve"}}],
+        },
+    }
+    workflow = {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {"name": "payment", "version": "1.0.0"},
+        "spec": {
+            "inputSchema": schema,
+            "outputSchema": {"type": "string"},
+            "steps": [
+                {"id": "decide", "kind": "decisionTable", "uses": "payment-policy@1.0.0", "with": {"ref": "/input"}}
+            ],
+            "output": {"ref": "/steps/decide/output"},
+        },
+    }
+    catalog = CatalogSnapshot.from_definitions([load_definition(table)])
+    flow = compile_source(json.dumps(workflow), format="json", catalog=catalog)
+    assert flow.artifact is not None, flow.to_bytes()
+    path = tmp_path / "compiled.json"
+    path.write_bytes(flow.artifact.to_bytes())
+    result = CliRunner().invoke(cli, ["workflow", "graph", str(path), "--format", format, "--output", "json"])
+    assert result.exit_code == 0, result.output
+    assert "Apply a decision table" in json.loads(result.output)["content"]
+
+
+def test_graph_labels_every_compiled_node_kind():
+    from typing import get_args
+
+    from firefly_weave.compiler.ir import IRNode
+    from firefly_weave.sdk.visualization import LABELS
+
+    union = get_args(IRNode.__value__)[0]
+    kinds = {kind for model in get_args(union) for kind in get_args(model.model_fields["kind"].annotation)}
+    assert "decisionTable" in kinds
+    assert kinds - set(LABELS) == set()

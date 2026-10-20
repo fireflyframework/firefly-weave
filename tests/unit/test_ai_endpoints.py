@@ -45,14 +45,18 @@ def test_model_query_is_required_and_defaults_remain_optional():
     assert bindable["limit"].required is False and bindable["limit"].default == 50
 
 
+# A fixed id keeps parametrized test ids identical across pytest-xdist workers.
+CONNECTION = "345e1767-4745-488b-b967-e3c4c07e62ac"
+
+
 @pytest.mark.parametrize(
     "query",
     [
         "",
         "connection=wrong",
-        "connection=" + str(uuid4()) + "&refresh=wrong",
-        "connection=" + str(uuid4()) + "&refresh=true&refresh=false",
-        "connection=" + str(uuid4()) + "&unknown=1",
+        f"connection={CONNECTION}&refresh=wrong",
+        f"connection={CONNECTION}&refresh=true&refresh=false",
+        f"connection={CONNECTION}&unknown=1",
     ],
 )
 async def test_model_queries_are_strict_before_service_access(query):

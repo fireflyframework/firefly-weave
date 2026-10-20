@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import runpy
 import signal
 import sys
@@ -62,6 +63,33 @@ def worker_stages() -> list[tuple[str, list[str], int]]:
         ):
             stages.append((f"worker-{worker}-{gate}", [*command, *arguments], 600))
     return stages
+
+
+# Only the outcome and node id of pytest's short summary lines; the " - message" part may carry output.
+SUMMARY_LINE = re.compile(r"^(FAILED|ERROR) ([\x21-\x7e](?:[\x20-\x7e]*?[\x21-\x7e])?)(?: - |$)")
+SUMMARY_TAIL_BYTES = 256 * 1024
+SUMMARY_MAX_LINES = 50
+SUMMARY_MAX_LENGTH = 300
+
+
+def failing_tests(log: Path) -> list[str]:
+    """Name the failing tests from the tail of a stage log, never their output."""
+    try:
+        with log.open("rb") as stream:
+            stream.seek(max(0, stream.seek(0, os.SEEK_END) - SUMMARY_TAIL_BYTES))
+            tail = stream.read().decode("utf-8", "replace")
+    except OSError:
+        return []
+    _, header, summary = tail.rpartition("short test summary info")
+    names = []
+    for line in summary.splitlines()[1:] if header else ():
+        # pytest closes its summary with a "==== 1 failed in 3.00s ====" line; later output is not its summary.
+        if line.startswith("="):
+            break
+        match = SUMMARY_LINE.match(re.sub(r"\x1b\[[0-9;]*m", "", line))
+        if match and len(match.group(2)) <= SUMMARY_MAX_LENGTH:
+            names.append(match.group(1) + " " + match.group(2))
+    return list(dict.fromkeys(names))[:SUMMARY_MAX_LINES]
 
 
 def release_prerequisites(root: Path, context: str | None) -> None:
@@ -215,6 +243,9 @@ def run(root: Path, evidence: Path, *, release: bool, context: str | None, integ
             except BaseException:
                 results[name] = {"status": "failed", "seconds": round(time.monotonic() - started, 3)}
                 failed = True
+                print(f"Stage {name} failed.", flush=True)
+                for line in failing_tests(evidence / (name + ".log")):
+                    print(line, flush=True)
                 break
     except BaseException:
         failed = True

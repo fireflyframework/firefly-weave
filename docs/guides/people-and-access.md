@@ -400,7 +400,7 @@ weave platform user --username alice
 
 Expected: `Username: alice`, the password, the granted roles, and the next
 command, `weave auth setup http://127.0.0.1:API_PORT`. The default roles are
-`developer` on the demo project, and `deployer`, `operator`, `viewer`, and
+`developer` and `viewer` on the demo project, and `deployer`, `operator`, and
 `task_participant` on the demo environment. Repeat `--role` to grant a
 different set instead. An existing username is never reset. Never use this
 command with a shared or production identity provider.
