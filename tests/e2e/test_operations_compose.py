@@ -46,6 +46,7 @@ from firefly_weave.contracts.deployments import (
     PlanApprovalRequest,
     TargetUpdate,
 )
+from firefly_weave.contracts.operations import IncidentResolution
 from firefly_weave.contracts.workers import WorkerControlRequest
 from firefly_weave.sdk.errors import WeaveError
 from firefly_weave.sdk.platform import LOCAL_OWNER_ROLES
@@ -545,18 +546,14 @@ async def test_o_j9_an_unknown_outcome_opens_an_incident_that_a_safe_retry_resol
                     body=WorkerControlRequest(expected_revision=current.revision),
                     idempotency_key=uuid4().hex,
                 )
-        # Sent as plain JSON: the SDK's IncidentResolution also sends "output": null, which the API refuses for
-        # retry_safe (follow-up recorded in the ledger).
-        provider = owner.credential_provider
-        token = provider() if callable(provider) else await provider.get_access_token(owner.base_url)
-        scope = owner.scope
-        response = await owner._client.post(
-            f"/api/v1/tenants/{scope.tenant_id}/projects/{scope.project_id}/environments/{scope.environment_id}"
-            f"/incidents/{incident.id}/resolve",
-            json={"receipt_id": str(uuid4()), "kind": "retry_safe", "reason": "The fault was injected on purpose"},
-            headers={"Authorization": "Bearer " + token, "If-Match": f'"{incident.revision}"'},
+        resolved = await call(
+            owner,
+            "incidents.resolve",
+            identifier=incident.id,
+            body=IncidentResolution(receipt_id=uuid4(), kind="retry_safe", reason="The fault was injected on purpose"),
+            revision=incident.revision,
         )
-        assert response.status_code == 200, response.text[:400]
+        assert resolved.id == incident.id
         states = await auntil(
             lambda: run_states(owner, [run_id]),
             lambda value: value[run_id] in {"succeeded", "failed", "cancelled", "timed_out"},
