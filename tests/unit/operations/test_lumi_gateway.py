@@ -604,6 +604,7 @@ ASK_CONFIGURATION = {
         (422, "LLM_OUTPUT", 422, "WV-LUMI-OUTPUT", "did not match"),
         (422, "LUMI_REPETITION", 422, "WV-LUMI-OUTPUT", "started repeating itself"),
         (422, "LUMI_TRUNCATED", 413, "WV-LUMI-CONTEXT-LIMIT", "could not hold the whole request"),
+        (422, "LUMI_THINKING", 422, "WV-LUMI-OUTPUT", "Upgrade Ollama to 0.40 or later"),
         (422, "LLM_TIMEOUT", 504, "WV-LUMI-TIMEOUT", "did not answer within 180 seconds"),
         (504, "LUMI_TIMEOUT", 504, "WV-LUMI-TIMEOUT", "did not respond in time"),
         (422, "LLM_RATE_LIMITED", 429, "WV-LUMI-CAPACITY", "rate limiting"),

@@ -50,6 +50,7 @@ _PROBLEMS: dict[str, tuple[int, str]] = {
     "LLM_OUTPUT": (422, "WV-LUMI-OUTPUT"),
     "LUMI_REPETITION": (422, "WV-LUMI-OUTPUT"),
     "LUMI_TRUNCATED": (413, "WV-LUMI-CONTEXT-LIMIT"),
+    "LUMI_THINKING": (422, "WV-LUMI-OUTPUT"),
     "LLM_TIMEOUT": (504, "WV-LUMI-TIMEOUT"),
     "LUMI_TIMEOUT": (504, "WV-LUMI-TIMEOUT"),
     "LLM_RATE_LIMITED": (429, "WV-LUMI-CAPACITY"),
@@ -62,6 +63,10 @@ _MESSAGES = {
     "LLM_CAPACITY": "Weave AI is busy; try again later",
     "LUMI_CAPACITY": "Weave AI is busy; try again later",
     "LUMI_LIMIT": "Selected context is too large",
+    "LUMI_THINKING": (
+        "This model thinks before it answers, and this Ollama cannot turn that off, so no usable answer came back. "
+        "Upgrade Ollama to 0.40 or later, or choose a model that does not think."
+    ),
     "LUMI_TRUNCATED": (
         "The model's context could not hold the whole request, so its answer was not used. Attach less, start a "
         "new conversation, or use a model with a larger context."

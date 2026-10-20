@@ -1304,3 +1304,43 @@ async def test_on_ollama_before_0_40_a_count_at_half_the_context_is_not_read_as_
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://gateway") as client:
         response = await client.post("/v1/lumi", json=ask, headers=AUTH)
     assert response.status_code == 200, response.text
+
+
+def thinking_gateway(tmp_path, version, chunks, settings):
+    async def stream(messages, info):
+        settings.append(info.model_settings or {})
+        for chunk in streamed(info, chunks):
+            yield chunk
+
+    token = tmp_path / "token"
+    token.write_text("service-token")
+    model = Counted(FunctionModel(stream_function=stream))
+    app = create_app(
+        ollama_gateway_policy(tmp_path, models=["qwen3:4b"]),
+        token,
+        model_builder=lambda *_: model,
+        transport_factory=fake_ollama([], version),
+    )
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://gateway")
+
+
+def thinking_ask():
+    ask = ollama_ask()
+    ask["profile"]["model"] = "qwen3:4b"
+    return ask
+
+
+@pytest.mark.parametrize(("version", "sent"), [("0.40.2", True), ("0.12.3", False), (None, False)])
+async def test_answering_without_thinking_is_asked_only_of_an_ollama_that_accepts_it(tmp_path, version, sent):
+    # Ollama 0.12.3 refuses reasoning_effort "none" for every model (measured); 0.40.2 and 0.40.6 accept it.
+    settings = []
+    async with thinking_gateway(tmp_path, version, [json.dumps(REPLY)], settings) as client:
+        response = await client.post("/v1/lumi", json=thinking_ask(), headers=AUTH)
+    assert response.status_code == 200, response.text
+    assert ("openai_reasoning_effort" in settings[0]) is sent
+
+
+async def test_a_thinking_model_that_fails_on_an_older_ollama_answers_with_an_upgrade_hint(tmp_path):
+    async with thinking_gateway(tmp_path, "0.12.3", ["not a reply"], []) as client:
+        response = await client.post("/v1/lumi", json=thinking_ask(), headers=AUTH)
+    assert (response.status_code, response.json()) == (422, {"code": "LUMI_THINKING"})

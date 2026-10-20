@@ -130,6 +130,15 @@ that network unencrypted; approve such an origin only for a network you trust.
 | Quick checks and continuous integration | `qwen2.5:1.5b` | about 1.0 GB |
 | A model without tool calling, to see that error | `gemma3:270m` | about 0.3 GB |
 
+Weave AI asks a thinking model such as `qwen3:4b` to answer without thinking,
+which needs **Ollama 0.40 or later**. Ollama 0.12.3 refuses that setting for
+every model, so on an older Ollama Weave AI does not send it, and a thinking
+model may spend its whole answer thinking: Weave AI then says to upgrade Ollama
+or choose a model that does not think. With `--ollama host`, upgrade the Ollama
+you run. A container installation moves to Ollama 0.40.6 on the next
+`weave platform ai enable`, which keeps its `ollama-models` volume and the models
+in it.
+
 ```sh
 # Pull another model, then list what the endpoint serves.
 weave platform ai models pull qwen3:4b --yes

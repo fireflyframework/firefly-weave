@@ -120,6 +120,8 @@ OLLAMA_CONTEXT_TOKENS = 8192
 THINKING_SECONDS = 5.0
 # Ollama 0.40 and later keep half the context when they cut a prompt (4,098 of 8,192 on 0.40.2, twice).
 HALF_CUT_VERSION = (0, 40, 0)
+# The first Ollama measured to accept reasoning_effort "none" (0.40.2 and 0.40.6 do; 0.12.3 refuses it).
+NO_THINKING_VERSION = (0, 40, 0)
 TEST_PROMPT = "Reply with the single word: ready"
 PROBE_PROMPT = "Call the ping tool with the value weave. Do not answer in text."
 PING = ToolDefinition(
@@ -358,6 +360,8 @@ def create_app(
             profile = body.profile
             guard: LoopGuard | None = None
             version: tuple[int, ...] | None = None
+            # A thinking model on an Ollama that cannot turn thinking off: its failures say to upgrade Ollama.
+            thinking_unchecked = False
             # Request problems answer LUMI_INPUT; a failure while building or calling the model never does.
             try:
                 measure_value(body.attachments)
@@ -408,11 +412,11 @@ def create_app(
                         # Small local models are the ones that loop: penalize repeats and stop a loop early.
                         settings["frequency_penalty"] = OLLAMA_FREQUENCY_PENALTY
                         version, thinking = await ollama_facts(entry, profile.model)
-                        if thinking:
+                        if thinking and version is not None and version >= NO_THINKING_VERSION:
                             # A thinking model otherwise spends the answer limit thinking (qwen3:4b: 512 of 512
-                            # tokens, no answer). Only thinking models get it: Ollama 0.12.3 refuses "none" for
-                            # a model that does not think.
+                            # tokens, no answer). Ollama 0.12.3 refuses "none" for every model; 0.40 accepts it.
                             settings["openai_reasoning_effort"] = "none"
+                        thinking_unchecked = thinking and "openai_reasoning_effort" not in settings
                         guard = LoopGuard(model)
                         model = guard
                     try:
@@ -453,6 +457,8 @@ def create_app(
             except ConnectorFailure as error:
                 if guard is not None and guard.stopped:
                     return JSONResponse({"code": "LUMI_REPETITION"}, status_code=422)
+                if thinking_unchecked and error.code in {"LLM_OUTPUT", "LLM_LIMIT"}:
+                    return JSONResponse({"code": "LUMI_THINKING"}, status_code=422)
                 return JSONResponse({"code": _product_code(error.code)}, status_code=422)
             except TimeoutError:
                 return JSONResponse({"code": "LUMI_TIMEOUT"}, status_code=504)
