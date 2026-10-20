@@ -140,3 +140,28 @@ def test_the_acceptance_pr_job_runs_on_ubuntu_24_04_with_egress_blocked_and_the_
     (upload,) = [step for step in job["steps"] if step.get("uses", "").startswith("actions/upload-artifact")]
     assert upload["if"] == "always() && steps.acceptance.outputs.scan == 'passed'"
     assert upload["with"]["retention-days"] == 30
+
+
+def test_the_acceptance_pr_profile_runs_on_every_pull_request_and_push_to_main():
+    document = workflow("acceptance.yml")
+    triggers = document["on"]
+    assert triggers["pull_request"] is None or "paths" not in triggers["pull_request"]
+    assert triggers["push"] == {"branches": ["main"]}
+    assert "workflow_dispatch" in triggers
+    # Like Checks: one run per pull request commit, and every push to main keeps its own run.
+    concurrency = document["concurrency"]
+    assert concurrency["cancel-in-progress"] == "${{ github.event_name == 'pull_request' }}"
+    assert concurrency["group"] == workflow("ci.yml")["concurrency"]["group"]
+
+
+def test_the_acceptance_workflow_reads_only_and_never_keeps_or_names_credentials():
+    # It runs for fork pull requests, so it gets no write token, keeps no checkout credentials and uses no secret.
+    text = (WORKFLOWS / "acceptance.yml").read_text(encoding="utf-8")
+    document = workflow("acceptance.yml")
+    assert document["permissions"] == {"contents": "read"}
+    assert "pull_request_target" not in document["on"]
+    (checkout,) = [
+        step for step in document["jobs"]["pr"]["steps"] if step.get("uses", "").startswith("actions/checkout")
+    ]
+    assert checkout["with"]["persist-credentials"] is False
+    assert "secrets." not in text

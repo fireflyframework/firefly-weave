@@ -22,6 +22,7 @@ step; the checks that later capabilities add run inside their step through run.c
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 import urllib.request
@@ -111,8 +112,15 @@ def test_j0_03_up_with_the_fixture_origin(run):
     )
 
 
+# Roles a person also needs on the demo project. An environment grant does not cover project operations
+# (access/authorization.py contains()), and the workflow catalog is a project resource, so a viewer granted only on
+# the environment sees no workflows; weave platform user grants every role but developer and tenant_admin there.
+PROJECT_ROLES = {"viewer": ("viewer",)}
+
+
 @pytest.mark.journey_step("J0.4")
-def test_j0_04_people(run):
+async def test_j0_04_people(run):
+    principals = {}
     for name, roles in PEOPLE.items():
         granted = [role for role in roles if role in PERSON_ROLES]
         arguments = ["user", "--username", name]
@@ -120,9 +128,52 @@ def test_j0_04_people(run):
             arguments += ["--role", role]
         value = json.loads(run.require(run.platform(*arguments, "--output", "json")).stdout)
         run.save_person(name, value)
+        principals[name] = value["principal_id"]
         assert sorted({grant["role"] for grant in value["grants"]}) == sorted(granted)
     for name in ("owner", *PEOPLE):
         assert len(run.keycloak_users(name)) == 1, name
+    scope = run.demo_scope()
+    project = {"tenant_id": scope["tenant_id"], "project_id": scope["project_id"]}
+    async with run.cli("owner") as weave:
+        for name, roles in PROJECT_ROLES.items():
+            added = []
+            for role in roles:
+                binding = weave(
+                    *("remote", "access", "members", "grant"),
+                    request={"principal_id": principals[name], "role": role, "project_id": scope["project_id"]},
+                )
+                assert binding["role"] == role and binding["scope"].get("environment_id") is None
+                added.append({"role": role, "scope": project})
+            run.add_grants(name, added)
+
+
+@pytest.mark.journey_step("J0.5")
+async def test_j0_05_approvers_group_bound_in_the_demo_environment(run):
+    async with run.client("approver") as approver:
+        principal = str((await approver.invoke("identity.read")).principal_id)
+    members = {"name": "approvers", "member_ids": [principal]}
+    async with run.cli("approver") as weave:
+        group = weave("human-groups", "put", "--idempotency-key", f"j0-05-group-{run.run_id}", request=members)
+        binding = weave(
+            "human-assignments",
+            "put",
+            "--idempotency-key",
+            f"j0-05-binding-{run.run_id}",
+            request={"name": "approvers", "group_ids": [group["id"]]},
+        )
+        listed = weave("human-assignments", "list")
+        # Read back: no operation lists groups, but the server holds this one at revision 1, so creating it
+        # again (expected revision 0) is refused.
+        again = weave.refused("human-groups", "put", "--idempotency-key", f"j0-05-again-{run.run_id}", request=members)
+    assert (group["name"], group["member_ids"], group["revision"]) == ("approvers", [principal], 1)
+    assert (again["status"], again["code"]) == (409, "WV-GROUP-REVISION")
+    found = [
+        (item["name"], item["group_ids"], item["enabled"])
+        for item in listed["items"]
+        if item["binding_id"] == binding["binding_id"]
+    ]
+    assert found == [("approvers", [group["id"]], True)]
+    run.save_private("human", {"group_id": group["id"], "binding_id": binding["binding_id"]})
 
 
 @pytest.mark.journey_step("J0.6")
@@ -163,6 +214,98 @@ def test_j0_08_fixtures_on_the_egress_network(run):
     assert list(networks) == [network]
     assert ACME_ALIAS in (networks[network].get("Aliases") or [])
     assert run.acme_control("/_control/journal") == {"entries": []}
+    run.check("J0.8/catalog", lambda: asyncio.run(_publish_catalog(run)))
+    run.check("J0.8/child-workflow", lambda: asyncio.run(_publish_child_workflow(run)))
+
+
+GRANTED = ["weave-connector-http-read@2.0.0", "weave-connector-http-write@2.0.0"]
+
+
+async def _publish_catalog(run) -> None:
+    """As the owner, through the CLI: connection acme-local, the five acme-* actions and risk-tier, then the grant."""
+    catalog = run.helper("acceptance_catalog")
+    async with run.client("owner") as owner:
+        version = await catalog.connector_version(owner)
+    async with run.cli("owner") as weave:
+        connection = weave(
+            "connections",
+            "create",
+            request=json.loads(catalog.connection_request(version).model_dump_json(by_alias=True)),
+        )
+        actions = {}
+        for name, document in catalog.actions().items():
+            published = weave(
+                *("definitions", "publish", "--collection", "actions"),
+                *("--idempotency-key", f"j0-08-{name}-{run.run_id}"),
+                request={"source": json.dumps(document), "format": "json"},
+            )
+            actions[name] = published["id"]
+        table = weave(
+            *("definitions", "publish", "--collection", "decision-tables"),
+            *("--idempotency-key", f"j0-08-risk-tier-{run.run_id}"),
+            request={"source": catalog.decision_table(), "format": "yaml"},
+        )
+        listed = weave("definitions", "list", "--collection", "actions", "--limit", "100")
+        tables = weave("definitions", "list", "--collection", "decision-tables", "--limit", "100")
+    assert set(catalog.ACTION_NAMES) <= {item.get("name") for item in listed["items"]}
+    assert ("risk-tier", "1.0.0") in {(item.get("name"), item.get("version")) for item in tables["items"]}
+    granted = run.require(
+        run.platform(
+            "integrations",
+            "grant",
+            "--connection",
+            connection["id"],
+            "--access",
+            "read",
+            "--access",
+            "write",
+            "--output",
+            "json",
+        )
+    )
+    assert sorted(json.loads(granted.stdout)["capabilities"]) == GRANTED
+    run.save_private(
+        "catalog",
+        {"connection_revision_id": connection["id"], "actions": actions, "decision_table_id": table["id"]},
+    )
+
+
+async def _publish_child_workflow(run) -> None:
+    """As the owner, through the CLI: the callable child workflow notify-customer 1.0.0."""
+    catalog = run.helper("acceptance_catalog")
+    async with run.cli("owner") as weave:
+        published = weave(
+            *("definitions", "publish", "--collection", "workflows"),
+            *("--idempotency-key", f"j0-08-child-{run.run_id}"),
+            request={"source": catalog.child_workflow(), "format": "yaml"},
+        )
+        listed = weave("definitions", "list", "--collection", "workflows", "--limit", "100")
+    assert (published["kind"], published["name"], published["version"]) == ("Workflow", catalog.CHILD_WORKFLOW, "1.0.0")
+    assert published["id"] in {item.get("id") for item in listed["items"]}
+    run.save_private("child-workflow", {"version_id": published["id"], "artifact_digest": published["digest"]})
+
+
+@pytest.mark.journey_step("J0.9")
+async def test_j0_09_the_child_workflow_is_active_and_callable_in_the_demo_environment(run):
+    catalog = run.helper("acceptance_catalog")
+    child = run.private_record("child-workflow")
+    async with run.cli("owner") as weave:
+        activation = weave(
+            *("definitions", "activations", "create", "--idempotency-key", f"j0-09-child-{run.run_id}"),
+            request={
+                "version_id": child["version_id"],
+                "artifact_digest": child["artifact_digest"],
+                "scope": weave.scope,
+            },
+        )
+        read = weave("definitions", "activations", "read", activation["id"])
+        exported = weave("definitions", "export", "--collection", "workflows", child["version_id"])
+    assert (read["name"], read.get("retired", False)) == (catalog.CHILD_WORKFLOW, False)
+    scope = {key: read["request"]["scope"].get(key) for key in weave.scope}
+    assert read["request"]["version_id"] == child["version_id"] and scope == weave.scope
+    assert not read.get("workflow_call_pins")
+    assert "callable" in exported["document"]["spec"] and exported.get("retired", False) is False
+    run.save_private("child-workflow", {**child, "activation_id": activation["id"]})
 
 
 @pytest.mark.journey_step("J0.14")

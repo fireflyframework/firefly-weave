@@ -1,0 +1,447 @@
+# Copyright 2026 Firefly Software Foundation.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# Author: Firefly Software Foundation
+# SPDX-License-Identifier: Apache-2.0
+
+"""Acceptance people sign in through the identity provider's own pages into a private file store (loopback only)."""
+
+import http.server
+import importlib.util
+import stat
+import sys
+import threading
+from pathlib import Path
+from urllib.parse import urlencode
+from uuid import uuid4
+
+import httpx
+import pytest
+
+ROOT = Path(__file__).resolve().parents[2]
+ISSUER = "http://localhost:18080"
+AUTHORIZE = (
+    ISSUER
+    + "/realms/weave/protocol/openid-connect/auth?client_id=weave-cli&state=s&"
+    + urlencode({"redirect_uri": "http://127.0.0.1:43123/callback"})
+)
+ACTION = ISSUER + "/realms/weave/login-actions/authenticate?session_code=c"
+CALLBACK = "http://127.0.0.1:43123/callback?code=abc&state=s"
+PASSWORD = "pw-" + uuid4().hex
+FORM = (
+    f'<html><form id="kc-form-login" action="{ACTION}" method="post">'
+    '<input type="hidden" name="credentialId" value=""/>'
+    '<input name="username"/><input name="password" type="password"/></form></html>'
+)
+
+
+def load():
+    spec = importlib.util.spec_from_file_location("acceptance_people", ROOT / "tests/acceptance/acceptance_people.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+people = load()
+
+
+async def test_the_sign_in_posts_the_form_once_and_reaches_the_loopback_callback():
+    seen = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        seen.append((request.method, str(request.url), request.content))
+        if request.method == "GET" and str(request.url) == AUTHORIZE:
+            return httpx.Response(200, text=FORM)
+        if request.method == "POST" and str(request.url) == ACTION:
+            return httpx.Response(302, headers={"location": CALLBACK})
+        if request.method == "GET" and str(request.url) == CALLBACK:
+            return httpx.Response(200, text="Login complete. Close this window.")
+        return httpx.Response(500)
+
+    await people.follow_sign_in(AUTHORIZE, ISSUER, "builder", PASSWORD, transport=httpx.MockTransport(answer))
+    assert [(method, url) for method, url, _ in seen] == [("GET", AUTHORIZE), ("POST", ACTION), ("GET", CALLBACK)]
+    posted = seen[1][2].decode()
+    assert "username=builder" in posted and PASSWORD in posted
+    assert all(PASSWORD.encode() not in content for method, _, content in seen if method == "GET")
+
+
+async def test_the_sign_in_refuses_a_redirect_outside_the_identity_provider():
+    def answer(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(302, headers={"location": "http://elsewhere.example/realms/weave"})
+
+    with pytest.raises(people.SignInFailed, match="outside the platform's Keycloak") as raised:
+        await people.follow_sign_in(AUTHORIZE, ISSUER, "builder", PASSWORD, transport=httpx.MockTransport(answer))
+    assert PASSWORD not in str(raised.value)
+
+
+async def test_sign_in_errors_never_carry_the_password():
+    # A wrong password re-renders the form forever: the bound stops it, and the message names no secret.
+    def answer(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text=FORM)
+
+    with pytest.raises(people.SignInFailed, match="redirect bound") as raised:
+        await people.follow_sign_in(AUTHORIZE, ISSUER, "builder", PASSWORD, transport=httpx.MockTransport(answer))
+    assert PASSWORD not in str(raised.value) and PASSWORD not in repr(raised.value)
+
+
+@pytest.mark.parametrize(
+    "callback",
+    [
+        "http://127.0.0.1:43124/callback?code=abc&state=s",
+        "http://[::1]:43123/callback?code=abc&state=s",
+        "http://127.0.0.1:43123/other?code=abc&state=s",
+        "https://127.0.0.1:43123/callback?code=abc&state=s",
+    ],
+)
+async def test_the_sign_in_follows_only_the_callback_the_authorization_request_names(callback):
+    seen = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        seen.append((request.method, str(request.url)))
+        if request.method == "GET" and str(request.url) == AUTHORIZE:
+            return httpx.Response(200, text=FORM)
+        if request.method == "POST":
+            return httpx.Response(302, headers={"location": callback})
+        return httpx.Response(200)
+
+    with pytest.raises(people.SignInFailed, match="outside the platform's Keycloak"):
+        await people.follow_sign_in(AUTHORIZE, ISSUER, "builder", PASSWORD, transport=httpx.MockTransport(answer))
+    assert [method for method, _ in seen] == ["GET", "POST"]
+
+
+@pytest.mark.parametrize(
+    "redirect",
+    [
+        None,
+        "http://evil.example/callback",
+        "http://127.0.0.1:43123/callback?x=1",
+        "http://localhost:43123/callback",
+        "http://127.0.0.1/callback",
+        "https://127.0.0.1:43123/callback",
+    ],
+)
+async def test_the_sign_in_needs_a_loopback_redirect_uri_in_the_authorization_request(redirect):
+    seen = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        seen.append(request.method)
+        return httpx.Response(200, text=FORM)
+
+    url = ISSUER + "/realms/weave/protocol/openid-connect/auth?client_id=weave-cli&state=s"
+    if redirect is not None:
+        url += "&" + urlencode({"redirect_uri": redirect})
+    with pytest.raises(people.SignInFailed, match="loopback redirect_uri"):
+        await people.follow_sign_in(url, ISSUER, "builder", PASSWORD, transport=httpx.MockTransport(answer))
+    assert seen == []
+
+
+@pytest.mark.parametrize(
+    "action",
+    [
+        "http://evil.example/login",
+        "//evil.example/login",
+        "http://localhost:18080.evil.example/login",
+        "http://localhost:18080@evil.example/login",
+        "https://localhost:18080/login",
+        "javascript:alert(1)",
+    ],
+)
+async def test_the_sign_in_never_posts_the_form_outside_the_identity_provider(action):
+    seen = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        seen.append(request.method)
+        return httpx.Response(200, text=FORM.replace(ACTION, action))
+
+    with pytest.raises(people.SignInFailed, match="posts outside the platform's Keycloak") as raised:
+        await people.follow_sign_in(AUTHORIZE, ISSUER, "builder", PASSWORD, transport=httpx.MockTransport(answer))
+    assert seen == ["GET"]
+    assert PASSWORD not in str(raised.value)
+
+
+async def test_the_sign_in_fails_when_the_loopback_callback_refuses_the_code():
+    def answer(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and str(request.url) == AUTHORIZE:
+            return httpx.Response(200, text=FORM)
+        if request.method == "POST":
+            return httpx.Response(302, headers={"location": CALLBACK})
+        return httpx.Response(400)
+
+    with pytest.raises(people.SignInFailed, match="loopback callback answered HTTP 400") as raised:
+        await people.follow_sign_in(AUTHORIZE, ISSUER, "builder", PASSWORD, transport=httpx.MockTransport(answer))
+    assert PASSWORD not in str(raised.value)
+
+
+def serve(handler):
+    """A loopback HTTP server answering with ``handler(method, path)``; yields its origin and the requests seen."""
+    seen = []
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def log_message(self, format, *args):
+            return
+
+        def _answer(self):
+            length = int(self.headers.get("Content-Length") or 0)
+            if length:
+                self.rfile.read(length)
+            seen.append((self.command, self.path))
+            status, headers, body = handler(self.command, self.path)
+            self.send_response(status)
+            for name, value in {**headers, "Content-Length": str(len(body))}.items():
+                self.send_header(name, value)
+            self.end_headers()
+            self.wfile.write(body)
+
+        do_GET = do_POST = _answer
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server, f"http://127.0.0.1:{server.server_address[1]}", seen
+
+
+async def test_the_sign_in_ignores_proxy_settings_from_the_environment(monkeypatch):
+    # The password form goes straight to the local identity provider, never through an environment proxy.
+    proxy, proxy_origin, proxied = serve(lambda method, path: (502, {}, b"proxy"))
+
+    def identity_provider(method, path):
+        if method == "GET" and path.startswith("/realms/weave/protocol/openid-connect/auth"):
+            form = FORM.replace(ACTION, origin + "/realms/weave/login-actions/authenticate?session_code=c")
+            return 200, {"Content-Type": "text/html"}, form.encode()
+        if method == "POST":
+            return 302, {"Location": origin + "/callback?code=abc&state=s"}, b""
+        return 200, {}, b"Login complete. Close this window."
+
+    provider, origin, seen = serve(identity_provider)
+    try:
+        for name in ("NO_PROXY", "no_proxy"):
+            monkeypatch.delenv(name, raising=False)
+        for name in ("HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"):
+            monkeypatch.setenv(name, proxy_origin)
+        authorize = (
+            origin
+            + "/realms/weave/protocol/openid-connect/auth?"
+            + urlencode({"client_id": "weave-cli", "state": "s", "redirect_uri": origin + "/callback"})
+        )
+        await people.follow_sign_in(authorize, origin, "builder", PASSWORD)
+    finally:
+        for server in (proxy, provider):
+            server.shutdown()
+            server.server_close()
+    assert proxied == []
+    assert [method for method, _ in seen] == ["GET", "POST", "GET"]
+
+
+def test_sessions_live_in_the_private_file_store(tmp_path):
+    private = tmp_path / "private"
+    private.mkdir(mode=0o700)
+    store = people.session_store(private, "builder")
+    assert type(store).__name__ == "FileCredentialStore"
+    assert store.path == private / "sessions" / "builder.json"
+    assert stat.S_IMODE((private / "sessions").stat().st_mode) == 0o700
+
+
+def test_the_scope_and_api_origin_come_from_the_platform_state():
+    ids = {"tenant_id": str(uuid4()), "project_id": str(uuid4()), "environment_id": str(uuid4())}
+    scope = people.scope_of(ids)
+    assert (str(scope.tenant_id), str(scope.project_id), str(scope.environment_id)) == tuple(ids.values())
+    assert (
+        people.api_origin({"mode": "docker", "ports": {"container_api": 18081, "api": 1}}) == "http://127.0.0.1:18081"
+    )
+    assert people.api_origin({"ports": {"api": 18000}}) == "http://127.0.0.1:18000"
+
+
+class SignedInRun:
+    """The run surface person_client reads; the platform itself is never reached."""
+
+    def __init__(self, private):
+        self.private = private
+
+    def person(self, name):
+        return {"username": name, "password": PASSWORD}
+
+    def platform_state(self):
+        return {"ports": {"api": 18000, "keycloak": 18080}}
+
+    def demo_scope(self):
+        return {"tenant_id": str(uuid4()), "project_id": str(uuid4()), "environment_id": str(uuid4())}
+
+
+class SeededStore:
+    """A credential store holding one record for any binding, as a run's private file store would."""
+
+    def __init__(self, state, path):
+        from firefly_weave.sdk.credentials import CredentialRecord
+
+        self.path = path
+        self.record = None if state is None else CredentialRecord(binding="seeded", state=state)
+
+    def load(self, binding):
+        return self.record
+
+    def save(self, binding, record):
+        self.record = record
+
+
+@pytest.fixture
+def signed_in(tmp_path, monkeypatch):
+    """person_client with the identity provider and the API stubbed; yields (run, sign-ins seen, seed)."""
+    from firefly_weave.sdk.credentials import CredentialRecord
+
+    sign_ins = []
+    stores = {"builder": SeededStore(None, tmp_path / "seeded.json")}
+
+    async def login(session, *, flow, browser):
+        sign_ins.append((flow, session.store.load(session.config.binding)))
+        session.store.save(
+            session.config.binding,
+            CredentialRecord(binding=session.config.binding, state="active", access_token="t", expires_at=9e9),
+        )
+        return {}
+
+    class Client:
+        def __init__(self, api, session, scope):
+            self.session = session
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc_info):
+            return None
+
+    def seed(state):
+        stores["builder"] = SeededStore(state, tmp_path / "seeded.json")
+
+    monkeypatch.setattr(people.OAuthSession, "login", login)
+    monkeypatch.setattr(people, "WeaveClient", Client)
+    monkeypatch.setattr(people, "session_store", lambda private, name: stores[name.rsplit("-", 1)[0]])
+    return SignedInRun(tmp_path / "private"), sign_ins, seed
+
+
+@pytest.mark.parametrize("stored", [None, "logged_out", "refreshing", "authenticating", "active"])
+async def test_every_client_signs_the_person_in_again_whatever_the_stored_record_says(signed_in, stored):
+    # A failed sign-in leaves logged_out, a failed refresh leaves the token-free refreshing fence and an idle
+    # identity-provider session can expire an active record: each run.client(...) starts from a fresh sign-in.
+    run, sign_ins, seed = signed_in
+    if stored is not None:
+        seed(stored)
+    async with people.person_client(run, "builder") as client:
+        assert client.session.store.load(client.session.config.binding).state == "active"
+    assert [flow for flow, _ in sign_ins] == ["pkce"]
+    assert (sign_ins[0][1] is None) == (stored is None)
+
+
+async def test_two_clients_for_one_person_sign_in_twice(signed_in):
+    run, sign_ins, _ = signed_in
+    for _ in range(2):
+        async with people.person_client(run, "builder"):
+            pass
+    assert len(sign_ins) == 2
+
+
+async def test_concurrent_clients_for_one_person_keep_separate_sessions(tmp_path, monkeypatch):
+    # A sign-in marks its record authenticating; a client that shared the file would fail every request meanwhile.
+    from firefly_weave.sdk.credentials import CredentialRecord
+
+    open_sessions, seen = [], []
+
+    async def login(session, *, flow, browser):
+        binding = session.config.binding
+        session.store.save(binding, CredentialRecord(binding=binding, state="authenticating"))
+        seen.append([other.store.load(other.config.binding).state for other in open_sessions])
+        session.store.save(binding, CredentialRecord(binding=binding, state="active", access_token="t", expires_at=9e9))
+        open_sessions.append(session)
+        return {}
+
+    class Client:
+        def __init__(self, api, session, scope):
+            self.session = session
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc_info):
+            return None
+
+    monkeypatch.setattr(people.OAuthSession, "login", login)
+    monkeypatch.setattr(people, "WeaveClient", Client)
+    (tmp_path / "private").mkdir(mode=0o700)
+    run = SignedInRun(tmp_path / "private")
+    async with people.person_client(run, "builder") as first, people.person_client(run, "builder") as second:
+        assert first.session.store.path != second.session.store.path
+        assert first.session.store.path.parent == tmp_path / "private" / "sessions"
+        assert first.session.store.path.name.startswith("builder-")
+    assert seen == [[], ["active"]]
+    assert list((tmp_path / "private" / "sessions").iterdir()) == []
+
+
+async def test_typed_cli_commands_run_as_the_person_with_a_private_token_file_and_leave_nothing(tmp_path, monkeypatch):
+    import subprocess
+
+    from firefly_weave.sdk.credentials import CredentialRecord
+
+    async def login(session, *, flow, browser):
+        binding = session.config.binding
+        session.store.save(binding, CredentialRecord(binding=binding, state="active", access_token="t", expires_at=9e9))
+        return {}
+
+    monkeypatch.setattr(people.OAuthSession, "login", login)
+    calls, seen = [], []
+
+    class CliRun(SignedInRun):
+        def weave(self, *args, **_):
+            calls.append(list(args))
+            for flag in ("--auth-config", "--credential-file", "--request"):
+                if flag in args:
+                    path = Path(args[args.index(flag) + 1])
+                    seen.append((flag, path.stat().st_mode & 0o777, path.read_text(encoding="utf-8")))
+            failing = "again" in args
+            stdout = '{"code":"WV-GROUP-REVISION","status":409}' if failing else '{"id":"g1"}'
+            return subprocess.CompletedProcess(args, 1 if failing else 0, stdout=stdout, stderr="")
+
+        def require(self, result):
+            assert result.returncode == 0
+            return result
+
+    run = CliRun(tmp_path / "private")
+    run.private.mkdir()
+    async with people.person_cli(run, "approver") as weave:
+        assert weave("human-groups", "put", "--idempotency-key", "k", request={"name": "approvers"}) == {"id": "g1"}
+        assert weave.refused("human-groups", "put", "again") == {"code": "WV-GROUP-REVISION", "status": 409}
+    arguments = calls[0]
+    assert arguments[:4] == ["human-groups", "put", "--idempotency-key", "k"]
+    assert arguments[arguments.index("--credential-store") + 1] == "file"
+    assert arguments[arguments.index("--base-url") + 1] == "http://127.0.0.1:18000"
+    for flag in ("--tenant", "--project", "--environment"):
+        assert flag in arguments
+    assert {flag for flag, _, _ in seen} == {"--auth-config", "--credential-file", "--request"}
+    assert {mode for _, mode, _ in seen} == {0o600}
+    assert ("--request", 0o600, '{"name": "approvers"}') in seen
+    assert all(PASSWORD not in " ".join(call) for call in calls)
+    # The token file, the sign-in configuration and the request files are gone.
+    assert [path for path in (run.private / "sessions").rglob("*") if path.is_file()] == []
+
+
+def test_project_grants_are_added_to_a_person_file_that_stays_private(tmp_path):
+    people_dir = tmp_path / "people"
+    people_dir.mkdir(mode=0o700)
+    path = people_dir / "viewer.json"
+    record = {"username": "viewer", "password": PASSWORD, "subject": "s", "grants": [{"role": "viewer", "scope": {}}]}
+    path.write_text(__import__("json").dumps(record), encoding="utf-8")
+    path.chmod(0o600)
+    added = {"role": "viewer", "scope": {"tenant_id": "t", "project_id": "p"}}
+    people.add_grants(path, [added])
+    saved = __import__("json").loads(path.read_text(encoding="utf-8"))
+    assert saved["grants"] == [*record["grants"], added] and saved["password"] == PASSWORD
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert [entry.name for entry in people_dir.iterdir()] == ["viewer.json"]

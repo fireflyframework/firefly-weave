@@ -19,7 +19,10 @@
 Journeys run only through scripts/acceptance.py, which sets WEAVE_ACC_RUN_DIR to a run
 directory it prepared. A test marked journey_step("J0.3") implements one journeys.toml
 step: a step whose capabilities have not landed is skipped and recorded with them, never
-passed, and after a failed step the rest of its journey is recorded as not run. Results go
+passed, and after a failed step the rest of its journey is recorded as not run. An enabled
+step that never starts (a skip or error in setup, xfail(run=False), pytest.exit) is recorded
+as not run, fails pytest and stops its journey the same way; a step whose teardown fails is
+recorded as failed. Results go
 to evidence/steps.jsonl. Command output can hold generated passwords: it is parsed in
 memory and shown only when a command fails. Failure text, on the console and in a step's
 error, never carries the run's canaries or people passwords: they read [redacted].
@@ -51,13 +54,14 @@ FRAGMENT = 4
 
 
 def known_secrets(root: Path) -> list[str]:
-    """The run's canary values and people passwords, longest first."""
+    """The run's canary values, people passwords and the identity provider's admin secret, longest first."""
     private = root / "private"
     found: list[str] = []
     if (private / "canaries.json").is_file():
         found += json.loads((private / "canaries.json").read_text(encoding="utf-8")).values()
     for person in sorted((private / "people").glob("*.json")):
         found.append(json.loads(person.read_text(encoding="utf-8")).get("password"))
+    found.append(_script("acceptance_evidence").admin_secret(private / ".local" / "platform"))
     return sorted({value for value in found if isinstance(value, str) and value}, key=len, reverse=True)
 
 
@@ -84,9 +88,20 @@ def _script(name: str) -> Any:
     return module
 
 
+def _helper(name: str) -> Any:
+    if name in sys.modules:
+        return sys.modules[name]
+    spec = importlib.util.spec_from_file_location(name, ROOT / "tests/acceptance" / f"{name}.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 ENABLEMENT = _script("acceptance_journeys").Enablement.load(ROOT / "tests/acceptance/journeys.toml")
 ACCEPTANCE = _script("acceptance")
-_STEP: dict[str, Any] = {"id": None, "started": 0.0, "ran": set(), "skipped": []}
+_STEP: dict[str, Any] = {"id": None, "started": 0.0, "ran": set(), "skipped": [], "recorded": False, "entry": None}
 _FAILED_JOURNEYS: set[str] = set()
 
 
@@ -118,12 +133,13 @@ class Run:
         input: str | None = None,
         timeout: float = 900,
         env: Mapping[str, str] | None = None,
+        cwd: Path | None = None,
     ) -> subprocess.CompletedProcess[str]:
         if env is None:
             env = {key: value for key, value in os.environ.items() if not key.startswith(("WEAVE_", "PYFLY_"))}
         return subprocess.run(
             argv,
-            cwd=self.private,
+            cwd=cwd or self.private,
             env=dict(env),
             input=input,
             text=True,
@@ -170,6 +186,44 @@ class Run:
     def canary(self, handle: str) -> str:
         return str(json.loads((self.private / "canaries.json").read_text(encoding="utf-8"))[handle])
 
+    def person(self, name: str) -> dict[str, Any]:
+        """The person's private file: username, password, subject and grants (never printed)."""
+        return dict(json.loads((self.private / "people" / f"{name}.json").read_text(encoding="utf-8")))
+
+    def roles(self, name: str) -> set[str]:
+        return {str(grant["role"]) for grant in self.person(name)["grants"]}
+
+    def demo_scope(self) -> dict[str, str]:
+        """The demo environment (local): the environment the owner's grants name."""
+        for grant in self.person("owner")["grants"]:
+            if "environment_id" in grant["scope"]:
+                return {key: str(value) for key, value in grant["scope"].items()}
+        raise AssertionError("The owner holds no grant on the demo environment")
+
+    def save_private(self, name: str, value: Mapping[str, Any]) -> Path:
+        """Keep a J0 record (IDs only, no secret) as private/<name>.json, mode 0600."""
+        path = self.private / f"{name}.json"
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            json.dump(dict(value), stream, indent=2, sort_keys=True)
+        return path
+
+    def private_record(self, name: str) -> dict[str, Any]:
+        return dict(json.loads((self.private / f"{name}.json").read_text(encoding="utf-8")))
+
+    @staticmethod
+    def helper(name: str) -> Any:
+        """A helper module of tests/acceptance (acceptance_people, acceptance_catalog, …), loaded by path."""
+        return _helper(name)
+
+    def client(self, name: str) -> Any:
+        """``async with run.client("owner") as owner:`` a WeaveClient signed in as that person."""
+        return _helper("acceptance_people").person_client(self, name)
+
+    def cli(self, name: str) -> Any:
+        """``async with run.cli("owner") as weave:`` typed weave commands signed in as that person."""
+        return _helper("acceptance_people").person_cli(self, name)
+
     def save_person(self, name: str, value: Mapping[str, Any]) -> Path:
         """Keep a person's sign-in in a 0600 file under private/; never print it."""
         people = self.private / "people"
@@ -179,6 +233,10 @@ class Run:
         with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w", encoding="utf-8") as stream:
             json.dump(record, stream, indent=2, sort_keys=True)
         return path
+
+    def add_grants(self, name: str, grants: list[dict[str, Any]]) -> None:
+        """Record grants given after a person was saved, in the same 0600 file."""
+        _helper("acceptance_people").add_grants(self.private / "people" / f"{name}.json", grants)
 
     def fixtures(self, *args: str, timeout: float = 300) -> subprocess.CompletedProcess[str]:
         """docker compose for this run's fixture project on the installation's egress network."""
@@ -268,6 +326,50 @@ def run() -> Run:
     return Run(Path(root))
 
 
+def _gate(step: str) -> tuple[str, dict[str, Any] | None] | None:
+    """Why the harness itself does not run the step, with the record that says so; None when it runs."""
+    profile = _profile()
+    if not ENABLEMENT.applies(step, profile):
+        return f"{step} does not run in the {profile} profile", None
+    missing = ENABLEMENT.missing(step)
+    if missing:
+        return f"{step} waits for {', '.join(missing)}", {"id": step, "status": "skipped", "missing": list(missing)}
+    journey = step.split(".")[0]
+    if journey in _FAILED_JOURNEYS:
+        record = {"id": step, "status": "not_run", "error": "An earlier step of this journey failed."}
+        return f"{step}: an earlier step of {journey} failed", record
+    return None
+
+
+def _not_run(step: str, cause: str) -> str:
+    """Record an enabled step that never ran as not_run, stop the rest of its journey; returns the redacted text."""
+    text = redact(f"{step} did not run: {cause}", known_secrets(_root()))
+    lines = text.strip().splitlines() or [step]
+    _record({"id": step, "status": "not_run", "error": lines[-1][:300]})
+    _FAILED_JOURNEYS.add(step.split(".")[0])
+    return text
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_protocol(item: pytest.Item, nextitem: pytest.Item | None) -> Any:
+    _STEP.update(id=None, started=time.monotonic(), ran=set(), skipped=[], recorded=False, entry=None)
+    outcome = yield
+    marker = item.get_closest_marker("journey_step")
+    entry: dict[str, Any] | None = _STEP["entry"]
+    _STEP["entry"] = None
+    if marker is None or not os.environ.get("WEAVE_ACC_RUN_DIR") or _STEP["recorded"]:
+        return
+    stopped = outcome.excinfo is not None and isinstance(outcome.excinfo[1], pytest.exit.Exception)
+    if entry is not None:
+        # The body ended but teardown did not report: only pytest.exit stops it there.
+        cause = f"pytest.exit: {outcome.excinfo[1]}" if stopped else "it did not report"
+        _fail_entry(entry, redact("teardown: " + cause, known_secrets(_root())))
+        _record(entry)
+    elif stopped:
+        # pytest.exit stops the session before any report of this phase: the step never finished.
+        _not_run(str(marker.args[0]), f"pytest.exit: {outcome.excinfo[1]}")
+
+
 def pytest_runtest_setup(item: pytest.Item) -> None:
     marker = item.get_closest_marker("journey_step")
     if marker is None:
@@ -275,19 +377,57 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
     if not os.environ.get("WEAVE_ACC_RUN_DIR"):
         pytest.skip("Acceptance journeys run through scripts/acceptance.py.")
     step = marker.args[0]
-    _STEP.update(id=None, started=time.monotonic(), ran=set(), skipped=[])
-    profile = _profile()
-    if not ENABLEMENT.applies(step, profile):
-        pytest.skip(f"{step} does not run in the {profile} profile")
-    missing = ENABLEMENT.missing(step)
-    if missing:
-        _record({"id": step, "status": "skipped", "missing": list(missing)})
-        pytest.skip(f"{step} waits for {', '.join(missing)}")
-    journey = step.split(".")[0]
-    if journey in _FAILED_JOURNEYS:
-        _record({"id": step, "status": "not_run", "error": "An earlier step of this journey failed."})
-        pytest.skip(f"{step}: an earlier step of {journey} failed")
+    gate = _gate(step)
+    if gate is not None:
+        reason, record = gate
+        if record is not None:
+            _record(record)
+        _STEP["recorded"] = True
+        pytest.skip(reason)
     _STEP["id"] = step
+
+
+def _setup_report(step: str, report: pytest.TestReport) -> None:
+    """A step that was due to run but never started: a skip or xfail(run=False) in setup, or a setup error."""
+    if report.skipped:
+        gate = _gate(step)
+        if gate is not None:
+            # A skip marker on a step the harness skips anyway: keep the harness's own record.
+            if gate[1] is not None:
+                _record(gate[1])
+            _STEP["recorded"] = True
+            return
+    if hasattr(report, "wasxfail"):
+        cause = str(report.wasxfail)
+        del report.wasxfail
+    elif isinstance(report.longrepr, tuple):
+        cause = str(report.longrepr[2]).removeprefix("Skipped: ")
+    else:
+        cause = (str(report.longrepr).strip().splitlines() or ["setup failed"])[-1]
+    report.outcome = "failed"
+    # The console prints this text too, so it replaces pytest's own report.
+    report.longrepr = _not_run(step, cause)
+    _STEP["recorded"] = True
+
+
+def _fail_entry(entry: dict[str, Any], cause: str) -> None:
+    if entry["status"] != "failed":
+        entry["status"] = "failed"
+        entry["error"] = cause[:300]
+        _FAILED_JOURNEYS.add(str(entry["id"]).split(".")[0])
+
+
+def _teardown_report(report: pytest.TestReport) -> None:
+    """Write the step's record once teardown ends; a teardown failure fails a step whose body passed."""
+    entry: dict[str, Any] | None = _STEP["entry"]
+    if report.failed:
+        text = redact(str(report.longrepr) if report.longrepr else "teardown failed", known_secrets(_root()))
+        report.longrepr = text
+        if entry is not None:
+            _fail_entry(entry, "teardown: " + (text.strip().splitlines() or ["failed"])[-1])
+    if entry is not None:
+        _record(entry)
+        _STEP.update(entry=None, recorded=True)
 
 
 @pytest.hookimpl(hookwrapper=True)
@@ -295,9 +435,30 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[None]) ->
     outcome = yield
     report = outcome.get_result()
     marker = item.get_closest_marker("journey_step")
-    if marker is None or report.when != "call" or _STEP["id"] != marker.args[0]:
+    if marker is None or not os.environ.get("WEAVE_ACC_RUN_DIR"):
+        return
+    if report.when == "setup" and not report.passed and not _STEP["recorded"]:
+        _setup_report(str(marker.args[0]), report)
+        return
+    if report.when == "teardown":
+        _teardown_report(report)
+        return
+    if report.when != "call" or _STEP["id"] != marker.args[0]:
         return
     step = str(_STEP["id"])
+    if hasattr(report, "wasxfail"):
+        # An expected failure is still a failure of an enabled step, in the evidence and in pytest's exit code:
+        # pytest leaves reports that carry wasxfail out of its failure count.
+        reason = str(report.wasxfail) or "no reason given"
+        del report.wasxfail
+        if report.skipped:
+            report.outcome = "failed"
+            report.longrepr = f"{report.longrepr}\n{step} failed as an expected failure: {reason}"
+    elif report.skipped:
+        # The step was enabled and started: a skip now would hide that it never finished.
+        reason = report.longrepr[2] if isinstance(report.longrepr, tuple) else str(report.longrepr)
+        report.outcome = "failed"
+        report.longrepr = f"{step} skipped itself after it started: {reason.removeprefix('Skipped: ')}"
     profile = _profile()
     skipped = list(_STEP["skipped"])
     problems = []
@@ -324,5 +485,5 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[None]) ->
         lines = text.strip().splitlines() or ["failed"]
         entry["error"] = lines[-1][:300]
         _FAILED_JOURNEYS.add(step.split(".")[0])
-    _record(entry)
-    _STEP["id"] = None
+    # Teardown can still fail the step: the record is written once it ends.
+    _STEP.update(id=None, entry=entry)

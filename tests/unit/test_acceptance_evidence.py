@@ -98,28 +98,29 @@ def test_journey_results_report_passes_partials_skips_and_gaps():
                 "id": "J0.3",
                 "status": "partial",
                 "seconds": 300.0,
-                "skipped_checks": [{"check": "J0.3/owner-roles", "missing": ["A3|O3"]}],
+                "skipped_checks": [{"check": "J0.3/operations", "missing": ["compose-operations"]}],
             },
         ],
     )
-    assert [journey["id"] for journey in results] == ["J0", "J1", "J2", "J3", "J5", "J8", "J9"]
+    assert [(journey["id"], journey["viewport"]) for journey in results] == [
+        ("J0", "cli"),
+        ("J1", "1440x900"),
+        ("J1", "600x500"),
+        ("J2", "1440x900"),
+        ("J3", "1440x900"),
+        ("J3", "600x500"),
+        ("J5", "1440x900"),
+        ("J8", "1440x900"),
+        ("J9", "1440x900"),
+    ]
     first = results[0]
     assert (first["criteria"], first["viewport"], first["status"]) == (["SC7"], "cli", "failed")
     steps = {step["n"]: step for step in first["steps"]}
     assert steps[1] == {"n": 1, "status": "passed", "seconds": 1.0}
-    assert steps[3]["status"] == "partial" and steps[3]["skipped_checks"][0]["check"] == "J0.3/owner-roles"
+    assert steps[3]["status"] == "partial" and steps[3]["skipped_checks"][0]["check"] == "J0.3/operations"
     assert steps[2] == {"n": 2, "status": "not_run"}
-    assert steps[5] == {"n": 5, "status": "skipped", "missing": ["real-platform-journeys"]}
+    assert steps[5] == {"n": 5, "status": "not_run"}
     assert 12 not in steps and 13 not in steps
-    assert results[1] == {
-        "id": "J1",
-        "criteria": ["SC1", "SC7"],
-        "viewport": "1440x900",
-        "status": "skipped",
-        "attempts": 1,
-        "seconds": 0.0,
-        "steps": [],
-    }
 
 
 def applicable_records(profile, journey):
@@ -202,3 +203,268 @@ def test_step_records_are_read_line_by_line(tmp_path):
     assert evidence.read_steps(path) == []
     path.write_text('{"id": "J0.1", "status": "passed"}\n\n{"id": "J0.2", "status": "failed"}\n')
     assert [record["id"] for record in evidence.read_steps(path)] == ["J0.1", "J0.2"]
+
+
+def synthetic(steps: str) -> object:
+    """A map with three journeys in every profile, J0 and J1/J8 steps, and only acceptance-foundations landed."""
+    capabilities = "\n".join(
+        f'"{name}" = {"true" if name == "acceptance-foundations" else "false"}' for name in journeys.CAPABILITIES
+    )
+    profiles = "\n".join(f'{profile} = ["J0", "J1", "J8"]' for profile in journeys.PROFILES)
+    criteria = "\n".join(f'{journey} = ["SC7"]' for journey in journeys.JOURNEYS)
+    text = f"[capabilities]\n{capabilities}\n[profiles]\n{profiles}\n[criteria]\n{criteria}\n[steps]\n{steps}\n"
+    return journeys.Enablement.parse(text)
+
+
+STUDIO_MAP = synthetic(
+    '"J0.1" = ["acceptance-foundations"]\n"J1.1" = ["acceptance-foundations"]\n'
+    '"J1.2" = ["loops"]\n"J8.1" = ["acceptance-foundations"]'
+)
+
+
+def test_each_required_viewport_needs_its_own_studio_record():
+    records = [
+        {"id": "J0.1", "status": "passed", "seconds": 1.0},
+        {"id": "J1.1", "status": "passed", "seconds": 2.0, "viewport": "1440x900"},
+        {"id": "J8.1", "status": "passed", "seconds": 3.0, "viewport": "1440x900"},
+    ]
+    results = evidence.journey_results(STUDIO_MAP, "pr", records)
+    assert [(result["id"], result["viewport"], result["status"]) for result in results] == [
+        ("J0", "cli", "passed"),
+        ("J1", "1440x900", "partial"),
+        ("J1", "600x500", "failed"),
+        ("J8", "1440x900", "passed"),
+    ]
+    assert results[2]["steps"] == [{"n": 1, "status": "not_run"}, {"n": 2, "status": "skipped", "missing": ["loops"]}]
+
+
+def test_records_without_a_viewport_count_for_every_viewport():
+    results = evidence.journey_results(STUDIO_MAP, "pr", [{"id": "J1.1", "status": "passed", "seconds": 1.0}])
+    assert [result["steps"][0] for result in results if result["id"] == "J1"] == [
+        {"n": 1, "status": "passed", "seconds": 1.0}
+    ] * 2
+
+
+def test_viewports_follow_the_profile_rules():
+    sizes = journeys.journey_viewports
+    assert sizes("pr", "J0") == sizes("nightly", "J13") == sizes("release", "J15") == ("cli",)
+    assert sizes("pr", "J11") == ("desktop",)
+    assert sizes("pr", "J2") == sizes("cluster", "J6") == ("1440x900",)
+    assert sizes("pr", "J1") == sizes("ai", "J7") == ("1440x900", "600x500")
+    assert sizes("nightly", "J2") == sizes("release", "J9") == ("1440x900", "600x500")
+    assert STUDIO_MAP.viewports("pr", "J3") == ("1440x900", "600x500")
+
+
+def test_steps_are_judged_by_the_stage_that_records_them():
+    stage = journeys.step_stage
+    assert (stage("J0.3"), stage("J0.3/owner-roles"), stage("J1.1"), stage("J9.4"), stage("J9.3")) == (
+        "up",
+        "up",
+        "run",
+        "scan",
+        "run",
+    )
+
+
+def test_scan_counts_browser_storage_entries(tmp_path):
+    first = {
+        "local": {"a": "1", "b": "2"},
+        "session": {"c": "3"},
+        "indexed_db": [{"database": "d", "store": "s", "key": "1", "value": "{}"}],
+    }
+    (tmp_path / "J1-1440x900-builder.json").write_text(json.dumps(first), encoding="utf-8")
+    (tmp_path / "J8-1440x900-builder.json").write_text(
+        json.dumps({"local": {}, "session": {}, "indexed_db": []}), encoding="utf-8"
+    )
+    expected = ["J1-1440x900-builder", "J8-1440x900-builder"]
+    assert evidence.storage_entries(tmp_path, expected=expected) == 4
+    # Nothing ran in Studio, so nothing was captured: zero is the honest count.
+    assert evidence.storage_entries(tmp_path / "missing", expected=[]) == 0
+
+
+def test_a_missing_storage_dump_fails_the_count_for_each_person(tmp_path):
+    empty = json.dumps({"local": {}, "session": {}, "indexed_db": []})
+    (tmp_path / "J1-1440x900-builder.json").write_text(empty, encoding="utf-8")
+    expected = ["J1-1440x900-builder", "J1-1440x900-viewer", "J1-390x844-builder"]
+    with pytest.raises(evidence.MissingStorage, match="J1-1440x900-viewer, J1-390x844-builder$"):
+        evidence.storage_entries(tmp_path, expected=expected)
+    with pytest.raises(evidence.MissingStorage, match="J1-1440x900-builder"):
+        evidence.storage_entries(tmp_path / "missing", expected=["J1-1440x900-builder"])
+
+
+CONNECTED = (
+    "p0123456789abcdef:fedcba9876543210:11111111-2222-3333-4444-555555555555:66666666-7777-8888-9999-000000000000:"
+)
+
+
+def dump(local=(), session=(), records=(), databases=()):
+    """A dump taken while the storage-key check runs: ``records`` are (database, key) pairs, ``databases`` names."""
+    return json.dumps(
+        {
+            "local": dict.fromkeys(local, "v"),
+            "session": dict.fromkeys(session, "v"),
+            "indexed_db": [
+                {"database": database, "store": "s", "key": json.dumps(key), "value": '"v"'}
+                for database, key in records
+            ],
+            "indexed_db_databases": [{"name": name, "stores": ["s"]} for name in databases],
+        }
+    )
+
+
+def test_every_studio_storage_key_carries_an_account_prefix_and_removal_purges_them(tmp_path):
+    (tmp_path / "J9-1440x900-viewer.json").write_text(
+        dump([CONNECTED + "weave.lastExecution.d1", "local:weave.localDraft.d2"], ["ui:weave.editorNext"]),
+        encoding="utf-8",
+    )
+    (tmp_path / "J9-1440x900-viewer.after-removal.json").write_text(
+        dump(["local:weave.localDraft.d2"], ["ui:weave.editorNext"]), encoding="utf-8"
+    )
+    assert evidence.storage_key_problems(tmp_path, expected=["J9-1440x900-viewer"]) == []
+
+
+def test_unprefixed_keys_and_keys_left_after_removal_are_reported_without_naming_them(tmp_path):
+    (tmp_path / "J9-1440x900-viewer.json").write_text(
+        dump(["weave.localDrafts.v1", CONNECTED + "x"], ["weave-studio-run-input:a"]), encoding="utf-8"
+    )
+    (tmp_path / "J9-1440x900-viewer.after-removal.json").write_text(dump([CONNECTED + "x"]), encoding="utf-8")
+    (tmp_path / "J9-1440x900-builder.json").write_text(dump(["local:x"]), encoding="utf-8")
+    problems = evidence.storage_key_problems(
+        tmp_path, expected=["J9-1440x900-viewer", "J9-1440x900-builder", "J9-1440x900-operator"]
+    )
+    assert problems == [
+        "J9-1440x900-builder: no storage was captured after its platform was removed",
+        "J9-1440x900-operator: no storage was captured",
+        "J9-1440x900-viewer: 2 storage key(s) without an account, local: or ui: prefix",
+        "J9-1440x900-viewer: 1 account key(s) left after its platform was removed",
+    ]
+    assert not any("weave.localDrafts" in problem for problem in problems)
+
+
+def test_indexed_db_records_carry_the_prefix_in_their_key_or_their_database_name(tmp_path):
+    (tmp_path / "J9-1440x900-viewer.json").write_text(
+        dump(
+            records=[
+                (CONNECTED + "drafts", "d1"),
+                ("weave", CONNECTED + "run.1"),
+                ("weave", "local:draft.2"),
+                ("weave", "ui:panes"),
+                ("weave", "drafts.3"),
+                ("weave", 7),
+                ("thirdparty-cache", "entry"),
+            ],
+            databases=[CONNECTED + "drafts", "weave", "thirdparty-cache"],
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "J9-1440x900-viewer.after-removal.json").write_text(
+        dump(records=[("weave", "local:draft.2")], databases=["weave"]), encoding="utf-8"
+    )
+    assert evidence.storage_key_problems(tmp_path, expected=["J9-1440x900-viewer"]) == [
+        "J9-1440x900-viewer: 3 IndexedDB record(s) without an account, local: or ui: prefix"
+    ]
+
+
+def test_account_databases_and_records_left_in_indexed_db_after_removal_are_reported(tmp_path):
+    before = dump(records=[("weave", CONNECTED + "run.1")], databases=[CONNECTED + "drafts", "weave"])
+    for person in ("builder", "viewer"):
+        (tmp_path / f"J9-1440x900-{person}.json").write_text(before, encoding="utf-8")
+    # The builder's account record stays in a shared database; the viewer's account database stays, empty, which
+    # still names the account.
+    (tmp_path / "J9-1440x900-builder.after-removal.json").write_text(
+        dump(records=[("weave", CONNECTED + "run.1")], databases=["weave"]), encoding="utf-8"
+    )
+    (tmp_path / "J9-1440x900-viewer.after-removal.json").write_text(
+        dump(databases=[CONNECTED + "drafts", "weave"]), encoding="utf-8"
+    )
+    problems = evidence.storage_key_problems(tmp_path, expected=["J9-1440x900-builder", "J9-1440x900-viewer"])
+    assert problems == [
+        "J9-1440x900-builder: 0 IndexedDB account database(s) and 1 account record(s) left after its platform was "
+        "removed",
+        "J9-1440x900-viewer: 1 IndexedDB account database(s) and 0 account record(s) left after its platform was "
+        "removed",
+    ]
+    assert not any("run.1" in problem or "drafts" in problem for problem in problems)
+
+
+def test_a_dump_without_its_indexed_db_database_list_fails_the_key_check(tmp_path):
+    # Taken while the check was off: it cannot show an empty account database, so it never passes the check.
+    legacy = json.dumps({"local": {}, "session": {}, "indexed_db": []})
+    (tmp_path / "J9-1440x900-viewer.json").write_text(legacy, encoding="utf-8")
+    (tmp_path / "J9-1440x900-viewer.after-removal.json").write_text(dump(), encoding="utf-8")
+    assert evidence.storage_key_problems(tmp_path, expected=["J9-1440x900-viewer"]) == [
+        "J9-1440x900-viewer: a dump does not list its IndexedDB databases",
+        "J9-1440x900-viewer: no storage entry with an account, local: or ui: prefix",
+    ]
+
+
+def test_a_profile_prefix_alone_is_not_an_account_key(tmp_path):
+    # An account key names the profile, the subject, the tenant and the project; "p<16 hex>:settings" names none
+    # of the account, so it is an unprefixed key, and left after removal it is not an account key.
+    profile_only = "p0123456789abcdef:settings"
+    subject_only = "p0123456789abcdef:fedcba9876543210:drafts"
+    (tmp_path / "J9-1440x900-viewer.json").write_text(dump([profile_only, subject_only]), encoding="utf-8")
+    (tmp_path / "J9-1440x900-viewer.after-removal.json").write_text(dump([profile_only]), encoding="utf-8")
+    assert evidence.storage_key_problems(tmp_path, expected=["J9-1440x900-viewer"]) == [
+        "J9-1440x900-viewer: no storage entry with an account, local: or ui: prefix",
+        "J9-1440x900-viewer: 2 storage key(s) without an account, local: or ui: prefix",
+    ]
+    assert evidence.ACCOUNT_KEY.match(CONNECTED) and not evidence.ACCOUNT_KEY.match(profile_only + ":")
+
+
+def test_each_signed_in_person_keeps_at_least_one_prefixed_entry(tmp_path):
+    # Once the editor prefixes its keys, an empty dump proves nothing: each sign-in must show its prefixed storage.
+    (tmp_path / "J9-1440x900-viewer.json").write_text(dump(), encoding="utf-8")
+    (tmp_path / "J9-1440x900-viewer.after-removal.json").write_text(dump(), encoding="utf-8")
+    (tmp_path / "J9-1440x900-builder.json").write_text(
+        dump(records=[("weave", CONNECTED + "run.1")], databases=["weave"]), encoding="utf-8"
+    )
+    (tmp_path / "J9-1440x900-builder.after-removal.json").write_text(dump(databases=["weave"]), encoding="utf-8")
+    assert evidence.storage_key_problems(tmp_path, expected=["J9-1440x900-builder", "J9-1440x900-viewer"]) == [
+        "J9-1440x900-viewer: no storage entry with an account, local: or ui: prefix"
+    ]
+
+
+def test_a_record_whose_waiting_capabilities_differ_from_the_map_fails_its_step():
+    # A harness that rewrote its copy of the map could record an enabled step as skipped; the orchestrator's own
+    # map decides what may wait.
+    records = [
+        {"id": "J0.1", "status": "skipped", "missing": ["acceptance-foundations"]},
+        {"id": "J0.3", "status": "partial", "skipped_checks": [{"check": "J0.3/operations", "missing": ["logs"]}]},
+        {"id": "J0.4", "status": "partial", "skipped_checks": [{"check": "J0.4/alert-manager", "missing": ["alerts"]}]},
+    ]
+    steps = {step["n"]: step for step in evidence.journey_results(ENABLEMENT, "pr", records)[0]["steps"]}
+    assert steps[1]["status"] == "failed" and "J0.1" in steps[1]["error"]
+    assert steps[3]["status"] == "failed" and "J0.3/operations" in steps[3]["error"]
+    assert steps[4]["status"] == "partial"
+
+
+def j9(records):
+    (journey,) = [j for j in evidence.journey_results(ENABLEMENT, "pr", records) if j["id"] == "J9"]
+    return journey, {step["n"]: step for step in journey["steps"]}
+
+
+def test_a_step_recorded_twice_fails_whatever_the_last_record_says():
+    for records in (
+        # failed, then passed
+        [{"id": "J9.1", "status": "failed", "error": "x"}, {"id": "J9.1", "status": "passed"}],
+        # two passes: a step runs once
+        [{"id": "J9.1", "status": "passed"}, {"id": "J9.1", "status": "passed"}],
+        # a pytest record and a Studio record for one step
+        [{"id": "J9.2", "status": "failed", "error": "x"}, {"id": "J9.2", "status": "passed", "viewport": "1440x900"}],
+    ):
+        journey, steps = j9(records)
+        number = int(records[0]["id"].split(".")[1])
+        assert steps[number]["status"] == "failed" and "recorded 2 times" in steps[number]["error"], records
+        assert journey["status"] == "failed"
+
+
+def test_the_scan_step_counts_only_the_scan_record():
+    scan = {"id": "J9.4", "status": "failed", "error": "hit", "source": "scan"}
+    studio = {"id": "J9.4", "status": "passed", "viewport": "1440x900"}
+    _, steps = j9([scan, studio])
+    assert steps[4]["status"] == "failed"
+    _, steps = j9([studio])
+    assert steps[4]["status"] == "failed" and "only by the scan" in steps[4]["error"]
+    _, steps = j9([{"id": "J9.4", "status": "passed", "source": "scan"}])
+    assert steps[4]["status"] == "passed"
