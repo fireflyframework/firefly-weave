@@ -108,16 +108,29 @@ const slotName = (connection: string): string =>
 
 /**
  * The slot an AI task uses for a connection: `ai`, unless `ai` is bound to
- * another connection while editing; then `ai-<connection name>`.
+ * another connection while editing; then `ai-<connection name>`. A slot the
+ * workflow already declares for another connector is never reused: the next
+ * free `ai-<connection name>`, `ai-<connection name>-2`… is taken instead.
  */
 export function slotFor(
   workflow: Workflow,
   choice: ModelChoice,
   boundTo: BoundTo = () => null,
 ): string {
+  const slots = isRecord(workflow.spec["connections"])
+    ? workflow.spec["connections"]
+    : {};
+  const usable = (name: string) => {
+    const slot = slots[name];
+    return !isRecord(slot) || slot["connector"] === AI_CONNECTOR;
+  };
   const bound = boundTo(AI_SLOT);
-  if (!bound || bound === choice.connectionId) return AI_SLOT;
-  return slotName(choice.connection);
+  if ((!bound || bound === choice.connectionId) && usable(AI_SLOT))
+    return AI_SLOT;
+  const base = slotName(choice.connection);
+  let name = base;
+  for (let n = 2; !usable(name); n++) name = `${base.slice(0, 60)}-${n}`;
+  return name;
 }
 
 function freeName(profiles: Record_, id: string): string {

@@ -227,6 +227,46 @@ describe("choosing a model", () => {
     );
     expect(same.spec.steps[0]["connection"]).toBe("ai");
   });
+  it("keeps an existing ai slot as it is", () => {
+    const { workflow, step } = withTask();
+    workflow.spec["connections"] = {
+      ai: { connector: AI_CONNECTOR, required: false },
+    };
+    const changes = chooseModel(workflow, step, choice(ollama, "qwen3:4b"));
+    expect(changes.some((c) => c.path[1] === "connections")).toBe(false);
+    const next = applied(workflow, step, changes);
+    expect(next.spec["connections"]).toEqual({
+      ai: { connector: AI_CONNECTOR, required: false },
+    });
+    expect(next.spec.steps[0]["connection"]).toBe("ai");
+  });
+  it("never points an AI task at a slot of another connector", () => {
+    const { workflow, step } = withTask();
+    const mail = { connector: "weave-email@1.0.0", required: true };
+    workflow.spec["connections"] = { ai: mail };
+    const next = applied(
+      workflow,
+      step,
+      chooseModel(workflow, step, choice(ollama, "qwen3:4b")),
+    );
+    expect(next.spec["connections"]).toEqual({
+      ai: mail,
+      "ai-ollama-local": { connector: AI_CONNECTOR, required: true },
+    });
+    expect(next.spec.steps[0]["connection"]).toBe("ai-ollama-local");
+    workflow.spec["connections"] = { ai: mail, "ai-ollama-local": mail };
+    const taken = applied(
+      workflow,
+      step,
+      chooseModel(workflow, step, choice(ollama, "qwen3:4b")),
+    );
+    expect(taken.spec["connections"]).toMatchObject({
+      ai: mail,
+      "ai-ollama-local": mail,
+      "ai-ollama-local-2": { connector: AI_CONNECTOR, required: true },
+    });
+    expect(taken.spec.steps[0]["connection"]).toBe("ai-ollama-local-2");
+  });
   it("changes every AI task that shares the settings", () => {
     const { workflow, step } = withTask();
     const other = { ...createStep("llm", "review"), profile: "summarize" };
