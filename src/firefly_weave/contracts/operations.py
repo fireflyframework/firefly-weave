@@ -16,10 +16,17 @@
 
 """Operator requests and immutable incident resolution receipts."""
 
-from typing import Literal, Self
+from typing import Any, Literal, Self
 from uuid import UUID
 
-from pydantic import AwareDatetime, Field, field_validator, model_validator
+from pydantic import (
+    AwareDatetime,
+    Field,
+    SerializerFunctionWrapHandler,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.catalog import Digest
@@ -50,10 +57,16 @@ class RecordedResolution(ContractModel):
 
 
 class IncidentResolution(RecordedResolution):
-    """A resolution request. Unset, `output` is left out: the API refuses any output, null included, for
-    retry_safe and terminate."""
+    """A resolution request. An unset `output` is left out (the API refuses any output, null included, for
+    retry_safe and terminate); an explicit null is sent, as accepting a null result needs."""
 
-    output: JsonData = Field(default=None, exclude_if=lambda value: value is None)
+    @model_serializer(mode="wrap")
+    def _unset_output_left_out(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        """An explicit null output (accepting a null result) is sent; an output nobody set is not."""
+        data: dict[str, Any] = handler(self)
+        if "output" not in self.model_fields_set:
+            data.pop("output", None)
+        return data
 
     def recorded(self) -> RecordedResolution:
         """The resolution as the incident keeps it, byte for byte as before requests left output out."""

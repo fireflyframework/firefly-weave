@@ -16,6 +16,7 @@
 
 """Real PostgreSQL incident reads: facts, filters, classification, authority and pagination without run payloads."""
 
+import json
 from datetime import timedelta
 from uuid import UUID, uuid4
 
@@ -253,6 +254,10 @@ async def test_real_incident_reads_filters_and_resolution(operations_case, task_
         request.recorded(),
     )
     assert resolved.opened_at == opened and resolved.updated_at is not None and resolved.updated_at > opened
+    # The stored row keeps the recorded shape, output included, whatever the request left out.
+    async with case.owner.begin() as session:
+        stored = await session.scalar(text("SELECT resolution FROM incidents WHERE id=:id"), {"id": incident["id"]})
+    assert stored == json.loads(request.recorded().model_dump_json()) and "output" in stored
     assert resolved.updated_at == resolved.resolved_at
     assert await walk(case, {"status": ["resolved"]}) == [str(incident["id"])]
     assert await walk(case, {"status": ["active"]}) == []

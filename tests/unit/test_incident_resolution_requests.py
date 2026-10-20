@@ -80,3 +80,29 @@ def test_a_stored_resolution_keeps_its_bytes():
         '"code":"WV-TASK-AMBIGUOUS","status":"resolved","revision":2,"resolution":' + stored + "}"
     )
     assert view.resolution is not None and view.resolution.model_dump_json() == stored
+
+
+def test_an_explicit_null_output_is_sent_and_an_unset_one_is_left_out():
+    """Accepting a reconciled result whose output is JSON null sends "output": null; a retry sends no output."""
+    accepted = IncidentResolution(
+        receipt_id=uuid4(), kind="accept_reconciled_result", reason="x", output=None, evidence_reference="e"
+    )
+    assert json.loads(accepted.model_dump_json())["output"] is None
+    assert "output" in accepted.model_dump(mode="json")
+    retried = IncidentResolution(receipt_id=uuid4(), kind="retry_safe", reason="x")
+    assert "output" not in json.loads(retried.model_dump_json())
+    # Parsed from a body, the same rule holds.
+    parsed = IncidentResolution.model_validate_json(accepted.model_dump_json())
+    assert "output" in parsed.model_dump(mode="json")
+
+
+def test_the_recorded_resolution_keeps_its_stored_bytes():
+    receipt = UUID("3c2b1a09-8f7e-4d6c-9b5a-4e3d2c1b0a99")
+    for request in (
+        IncidentResolution(receipt_id=receipt, kind="terminate", reason="Stop the run"),
+        IncidentResolution(receipt_id=receipt, kind="terminate", reason="Stop the run", output=None),
+    ):
+        assert request.recorded().model_dump_json() == (
+            '{"receipt_id":"3c2b1a09-8f7e-4d6c-9b5a-4e3d2c1b0a99","kind":"terminate","reason":"Stop the run",'
+            '"output":null,"evidence_reference":null}'
+        )
