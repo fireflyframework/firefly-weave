@@ -562,3 +562,69 @@ def test_the_shares_of_the_draft_and_attachments_are_forty_and_twenty_percent():
     from firefly_weave.operations.lumi_context import ATTACHMENT_SHARE, DRAFT_SHARE
 
     assert (DRAFT_SHARE, ATTACHMENT_SHARE) == (0.40, 0.20)
+
+
+def broken_proposal(steps=3, broken=1):
+    """A whole workflow proposal whose step `step-<broken>` has an empty value the platform rejects."""
+    return yaml.safe_dump(
+        {
+            "apiVersion": "weave/v1alpha1",
+            "kind": "Workflow",
+            "metadata": {"name": "greet", "version": "1.0.0"},
+            "spec": {
+                "inputSchema": {"type": "object"},
+                "outputSchema": {},
+                "steps": [
+                    {
+                        "id": f"step-{index}",
+                        "kind": "transform",
+                        "value": {} if index == broken else {"object": {"note": {"literal": "keep " * 20}}},
+                    }
+                    for index in range(steps)
+                ],
+                "output": {"ref": f"/steps/step-{steps - 1}/output"},
+            },
+        },
+        sort_keys=False,
+    )
+
+
+def fix_shape(source, fix=True):
+    return shape(
+        "compact",
+        COMPACT_INPUT_TOKENS,
+        message="Fix the proposal",
+        history=[],
+        resources=[],
+        draft=("yaml", source),
+        selected_step=None,
+        schemas={},
+        fix=fix,
+    )
+
+
+def test_a_fix_request_sends_a_proposal_that_fits_whole():
+    source = broken_proposal()
+    shaped = fix_shape(source)
+    assert shaped.context["draft"] == {"format": "yaml", "source": source}
+    assert "trimmed" not in shaped.context
+    # Without the fix flag the same draft is outlined, as decision 4 rules for ordinary requests.
+    assert "outline" in fix_shape(source, fix=False).context["draft"]
+
+
+def test_a_fix_request_too_large_to_send_whole_sends_the_diagnosed_steps_and_the_problems():
+    source = broken_proposal(steps=300, broken=5)
+    shaped = fix_shape(source)
+    draft = shaped.context["draft"]
+    assert "source" not in draft and "outline" in draft
+    assert [step["id"] for step in draft["diagnosed"]] == ["step-5"] and draft["diagnosed"][0]["value"] == {}
+    assert draft["problems"] == [
+        {
+            "code": "WV-SCHEMA-INVALID_INSTANCE",
+            "path": "/spec/steps/5",
+            "message": "Value does not satisfy the declared contract.",
+        }
+    ]
+    assert sent_tokens(shaped, "Fix the proposal") <= COMPACT_INPUT_TOKENS
+    assert estimate_tokens(json.dumps(draft)) <= COMPACT_INPUT_TOKENS * 0.40
+    assert {"outlined", "steps"} <= set(shaped.context["trimmed"])

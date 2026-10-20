@@ -31,6 +31,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal, cast
 
+from firefly_weave.compiler.api import validate_authoring
 from firefly_weave.compiler.parser import parse_source
 from firefly_weave.contracts.lumi import LumiMessage
 from firefly_weave.contracts.run_views import RunSummary, StepFact
@@ -64,6 +65,9 @@ TOO_LARGE_STEP = "This step is too large to send whole."
 # The only metadata an outline keeps; descriptions and labels are free text the budget does not need.
 METADATA_KEYS = ("name", "version")
 OUTLINE_KEYS = ("id", "kind", "uses")
+# A fix request too large to send whole lists at most this many problems and the top-level steps they name.
+FIX_PROBLEMS = 10
+STEP_PATH = re.compile(r"^/spec/steps/(\d+)(?:/|$)")
 GUIDE_VERSION = 2
 GUIDE = """\
 Weave workflow guide (version 2).
@@ -178,6 +182,28 @@ def _bounded(shown: JsonObject, allowance: int | None, trimmed: list[str]) -> Js
             high = kept - 1
     _note(trimmed, "steps")
     return best
+
+
+def _diagnosed(document: JsonValue, format: str, source: str, allowance: int | None) -> JsonObject:
+    """For a proposal too large to send whole: the platform's problems in it, and the top-level steps they name,
+    whole, within half the allowance."""
+    result = validate_authoring(source, format=cast(Literal["yaml", "json"], format))
+    errors = [item for item in result.diagnostics if item.severity == "error"][:FIX_PROBLEMS]
+    problems: list[JsonValue] = [{"code": item.code, "path": item.path, "message": item.message} for item in errors]
+    spec = document.get("spec") if isinstance(document, dict) else None
+    steps = spec.get("steps") if isinstance(spec, dict) else None
+    diagnosed: list[JsonValue] = []
+    for item in errors:
+        match = STEP_PATH.match(item.path or "")
+        if match is None or not isinstance(steps, list) or int(match.group(1)) >= len(steps):
+            continue
+        step = steps[int(match.group(1))]
+        if step in diagnosed:
+            continue
+        if allowance is not None and _tokens([*diagnosed, step, *problems]) > allowance // 2:
+            break
+        diagnosed.append(step)
+    return {"diagnosed": diagnosed, "problems": problems}
 
 
 def outline(document: JsonValue, selected_step: str | None) -> JsonObject:
@@ -313,6 +339,7 @@ def shape(
     selected_step: str | None,
     schemas: dict[str, JsonValue],
     explanation_only: bool = False,
+    fix: bool = False,
 ) -> Shaped:
     """What to send for one question; deterministic, so the same inputs send the same request."""
     trimmed: list[str] = []
@@ -342,7 +369,9 @@ def shape(
         whole: JsonObject = {"format": format, "source": source}
         fits = share(DRAFT_SHARE)
         small = len(source.encode()) <= STANDARD_DRAFT_BYTES and (fits is None or _tokens(whole) <= fits)
-        if profile == "full" or (profile == "standard" and small):
+        # A fix needs the values it must fix: a proposal to fix is sent whole whenever it fits its share.
+        fits_whole = fits is None or _tokens(whole) <= fits
+        if profile == "full" or (profile == "standard" and small) or (fix and fits_whole):
             context["draft"] = whole
         else:
             document = _parsed(format, source)
@@ -353,12 +382,14 @@ def shape(
                 metadata = document.get("metadata") if isinstance(document, dict) else None
                 if isinstance(metadata, dict) and set(metadata) - set(METADATA_KEYS):
                     _note(trimmed, "metadata")
-                shown = _bounded(outline(document, selected_step), fits, trimmed)
+                extra: JsonObject = _diagnosed(document, format, source, fits) if fix else {}
+                room = fits - _tokens(extra) if fits is not None else None
+                shown = _bounded(outline(document, selected_step), room, trimmed)
                 if shown is None:
-                    context["draft"] = {"note": TOO_LARGE_DRAFT}
+                    context["draft"] = {"note": TOO_LARGE_DRAFT, **extra}
                     _note(trimmed, "draft")
                 else:
-                    context["draft"] = {"outline": shown}
+                    context["draft"] = {"outline": shown, **extra}
     allowance = share(ATTACHMENT_SHARE)
     kept: list[JsonValue] = []
     for resource in resources:

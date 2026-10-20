@@ -99,7 +99,9 @@ explains the shared operator/administrator handoff.
    The platform checks every proposal before Studio shows it; a proposal it
    found problems in names them on its button ("2 problems"). Open it and
    select **Ask Weave AI to fix** to send the problems, with the proposal, back
-   to Weave AI.
+   to Weave AI. A fix sends the proposal whole when it fits the model's context,
+   even on the compact size, because the model needs the values it must fix;
+   a larger proposal goes as an outline with the steps the problems name.
 4. Select **Validate proposal**. Address diagnostics before applying. A valid
    workflow proposal offers **Apply to local draft** only while the original
    local draft and source revision remain unchanged. If either changed, ask

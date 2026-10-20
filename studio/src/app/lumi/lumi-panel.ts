@@ -498,9 +498,9 @@ export class LumiPanel implements DoCheck {
     const request = fixRequest(item, item.problems);
     this.back();
     this.message = request.message;
-    await this.send(request.draft);
+    await this.send(request.draft, true);
   }
-  async send(draft?: { format: "yaml" | "json"; source: string }) {
+  async send(draft?: { format: "yaml" | "json"; source: string }, fix = false) {
     if (
       this.busy ||
       !this.message.trim() ||
@@ -520,8 +520,11 @@ export class LumiPanel implements DoCheck {
         .filter((item) => this.attachments.has(item.kind + item.id))
         .map(({ kind, id }) => ({ kind, id })),
     };
-    if (draft) body["draft"] = draft;
-    else if (this.includeSource && this.host.view !== "clusters") {
+    if (draft) {
+      body["draft"] = draft;
+      // A fix sends the proposal whole when it fits, so the model sees the values it must fix.
+      if (fix) body["fix"] = true;
+    } else if (this.includeSource && this.host.view !== "clusters") {
       body["draft"] = {
         format: this.host.model.format,
         source: this.host.sourceBuffer || this.host.model.source,

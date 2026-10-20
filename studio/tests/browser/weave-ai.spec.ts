@@ -369,6 +369,8 @@ test("a proposal with problems offers Ask Weave AI to fix, with the problems and
     'Fix the proposal "Review workflow". The platform found 1 problem:\n- durationSeconds must be at least 1.',
   );
   expect(sent[1].draft).toEqual({ format: "yaml", source: broken });
+  expect(sent[1].fix).toBe(true);
+  expect(sent[0].fix).toBeUndefined();
   await expect(
     panel.getByRole("button", { name: "Review workflow", exact: true }),
   ).toBeVisible();

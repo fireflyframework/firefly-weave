@@ -151,10 +151,18 @@ class LumiAskRequest(BaseModel):
     selected_step: str | None = Field(
         default=None, max_length=200, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$", exclude_if=lambda value: value is None
     )
+    # Ask Weave AI to fix a proposal: the draft is that proposal, sent whole on every profile when it fits.
+    fix: bool = Field(default=False, exclude_if=lambda value: not value)
 
     @property
     def explanation_only(self) -> bool:
         return any(item.kind.startswith("deployment") for item in self.attachments)
+
+    @model_validator(mode="after")
+    def fix_names_its_proposal(self) -> Self:
+        if self.fix and self.draft is None:
+            raise ValueError("A fix request carries the proposal to fix as its draft")
+        return self
 
     @model_validator(mode="after")
     def separate_operations_context(self) -> Self:

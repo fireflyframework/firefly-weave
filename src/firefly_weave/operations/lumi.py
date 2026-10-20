@@ -296,6 +296,7 @@ class LumiService:
             selected_step=request.selected_step,
             schemas=schemas,
             explanation_only=request.explanation_only,
+            fix=request.fix,
         )
 
     async def ask(
