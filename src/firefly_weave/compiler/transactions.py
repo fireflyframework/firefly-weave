@@ -358,9 +358,12 @@ class _Walk:
         return shortest, open_
 
     def other(self, step: Other, states: frozenset[_State], beside: int | None) -> frozenset[_State]:
-        if step.kind == "fail":
-            return frozenset()
         pivots = sorted((s.pivot for s in states if s.pivot is not None), key=lambda p: path_order(p.path))
+        if step.kind == "fail":
+            # A fail step rolls the transaction back, which after a point of no return it can't.
+            if pivots:
+                self.add("TXN_AFTER_PIVOT_PURE", step.path, "info", step=step.id, pivot=pivots[0].id)
+            return frozenset()
         if step.kind in _WAITS:
             holds = [hold for s in states if s.pivot is None and (hold := _shortest(s.hold, beside)) is not None]
             if holds and (step.wait_seconds is None or step.wait_seconds > min(holds)):

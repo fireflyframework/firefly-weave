@@ -332,6 +332,15 @@ def test_a_read_only_action_after_the_point_of_no_return_is_noted_because_its_fa
     )
 
 
+def test_a_fail_step_after_the_point_of_no_return_is_noted_because_it_cant_roll_anything_back():
+    issues, analysis = check(reserve(0), irreversible(1), Other("stop", at(2), "fail"))
+    assert issues == [("TXN_AFTER_PIVOT_PURE", at(2), "info")]
+    assert analysis.issues[0].message == (
+        "If stop fails after submit, nothing can be undone and the transaction is left in doubt."
+    )
+    assert analysis.after_pivot == ("stop",)
+
+
 def test_a_fail_step_ends_its_path():
     issues, _ = check(reserve(0), Other("stop", at(1), "fail"), irreversible(2), compensate(3))
     assert issues == []
@@ -472,7 +481,7 @@ def _parts(element) -> list[_Run]:
             unrolled.extend(level)
         return unrolled
     if isinstance(element, Other) and element.kind == "fail":
-        return [([], [], True)]
+        return [([element], [set()], True)]
     return [([element], [set()], False)]
 
 
@@ -554,7 +563,7 @@ def _expected(body: Sequence):
                     found.add(("TXN_HOLD_WAIT", node.path))
                 if after:
                     found.add(("TXN_AFTER_PIVOT_WAIT", node.path))
-            elif node.kind in ("transform", "llm", "decisionTable", "action") and after:
+            elif node.kind in ("transform", "llm", "decisionTable", "action", "fail") and after:
                 found.add(("TXN_AFTER_PIVOT_PURE", node.path))
     found |= {("TXN_PIVOT_PLACEMENT", path) for path in _misplaced(body) if path in before}
     return found, pivots, {step for step, only in only_after.items() if only}
@@ -567,8 +576,7 @@ def test_rule_verdicts_match_every_run_enumerated(body):
     analysis = check_transaction(TransactionBody("move", "/spec/steps/0", body))
     assert {(issue.code, issue.path) for issue in analysis.issues if issue.code in _RULE_CODES} == expected
     assert analysis.pivots == pivots
-    fails = {member.id for member in _members(body) if isinstance(member, Other) and member.kind == "fail"}
-    assert set(analysis.after_pivot) - fails == only_after
+    assert set(analysis.after_pivot) == only_after
 
 
 def test_parallel_reservations_must_each_outlast_the_step_that_cant_be_undone():
