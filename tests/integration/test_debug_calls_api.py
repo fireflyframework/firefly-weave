@@ -207,3 +207,61 @@ async def test_a_malformed_artifact_is_refused_the_same_way_when_called_versions
         resolved = await author[0].post(url, headers=headers, json=body | {"resolve_workflows": True})
         assert plain.status_code == 422, plain.text
         assert (resolved.status_code, resolved.json()["code"]) == (422, plain.json()["code"]), artifact
+
+
+OUTER = """apiVersion: weave/v1alpha1
+kind: Workflow
+metadata: {name: debug-outer, version: 1.0.0}
+spec:
+  callable: {}
+  inputSchema:
+    {type: object, properties: {customerId: {type: string}}, required: [customerId], additionalProperties: false}
+  outputSchema: {type: object, properties: {tier: {type: string}}, required: [tier], additionalProperties: false}
+  steps:
+    - {id: enrich, kind: callWorkflow, uses: debug-enrich@1.0.0, with: {object: {customerId: {ref: /input/customerId}}}}
+  output: {ref: /steps/enrich/output}
+"""
+
+
+def orders_calling_outer():
+    """A caller of debug-outer@1.0.0, and debug-outer itself, which calls debug-enrich@1.0.0."""
+    outer = compiled(yaml.safe_load(OUTER), CatalogSnapshot.from_definitions([load_definition(yaml.safe_load(CALLED))]))
+    caller = compiled(
+        workflow("debug-orders", [call("debug-outer@1.0.0")], {"ref": "/steps/enrich/output"}),
+        CatalogSnapshot.from_definitions([load_definition(yaml.safe_load(OUTER))]),
+    )
+    body = {"artifact": json.loads(caller.to_bytes()), "mocks": {}, "input": {"customerId": "c-1"}, "now": NOW}
+    return body, json.loads(outer.to_bytes())
+
+
+async def continued(author, headers, project_url, body):
+    """Create a session from ``body`` and continue it; the final view."""
+    created = await author[0].post(project_url + "/debug/sessions", headers=headers, json=body)
+    assert created.status_code == 201, created.text
+    url = project_url + "/debug/sessions/" + created.json()["id"]
+    done = await author[0].post(url + "/commands", headers={**headers, "If-Match": "1"}, json={"kind": "continue"})
+    assert done.status_code == 200, done.text
+    return done.json()["view"]
+
+
+def frame_rows(view):
+    return [(frame["key"], frame["workflow"], frame["status"]) for frame in view.get("frames", [])]
+
+
+async def test_a_supplied_called_workflow_resolves_the_published_versions_it_calls(author, headers, project_url):
+    published = await catalog_tests.publish(
+        author, headers, project_url, {"format": "yaml", "source": CALLED}, key="debug-enrich"
+    )
+    assert published.status_code in {200, 201}, published.text
+    body, outer = orders_calling_outer()
+    view = await continued(
+        author,
+        headers,
+        project_url,
+        body | {"resolve_workflows": True, "workflows": {"debug-outer@1.0.0": {"artifact": outer}}},
+    )
+    assert (view["status"], view["variables"]["output"], view["diagnostics"]) == ("succeeded", {"tier": "gold"}, [])
+    assert frame_rows(view) == [
+        ("enrich", "debug-outer@1.0.0", "succeeded"),
+        ("enrich/enrich", "debug-enrich@1.0.0", "succeeded"),
+    ]

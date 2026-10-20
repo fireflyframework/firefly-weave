@@ -16,6 +16,7 @@
 
 """Project-scoped, creator-only sessions; all mutable state belongs to a locked row."""
 
+from functools import partial
 from typing import Any, cast
 from uuid import UUID, uuid4
 
@@ -30,6 +31,7 @@ from firefly_weave.compiler.api import CompiledArtifact, import_artifact
 from firefly_weave.compiler.canonical import canonical_bytes
 from firefly_weave.compiler.ir import UnsupportedIR
 from firefly_weave.contracts.access import Scope
+from firefly_weave.contracts.language_features import MAX_CALL_DEPTH
 from firefly_weave.contracts.values import JsonObject
 from firefly_weave.definitions.calls import called_dependencies
 from firefly_weave.definitions.models import CatalogError, ir_unsupported
@@ -72,30 +74,43 @@ async def published_workflows(
     repository: DebugRepository, request: DebugCreate, artifact: CompiledArtifact
 ) -> dict[str, CalledWorkflow]:
     """``request.workflows`` with the published artifact of every called version it gives none for, through every
-    call those versions make. ``artifact`` is the request's artifact, already imported. A version the project never
-    published, or one whose definition differs from the one the calling workflow was compiled against, is refused.
+    call the simulated workflow and those versions make, supplied ones included, up to the call depth a session
+    runs. ``artifact`` is the request's artifact, already imported. A version the project never published, or one
+    whose definition differs from the one its caller was compiled against, is refused.
     """
     workflows = dict(request.workflows)
-    pending = [called_dependencies(artifact.executable)]
+    pending = [(called_dependencies(artifact.executable), 1)]
     seen: set[str] = set()
     while pending:
-        for reference, digest in pending.pop().items():
-            supplied = workflows.get(reference)
-            if reference in seen or (supplied is not None and supplied.artifact is not None):
+        dependencies, depth = pending.pop()
+        for reference, digest in dependencies.items():
+            if reference in seen:
                 continue
             seen.add(reference)
-            name, _, version = reference.rpartition("@")
-            rows = await repository.rows(
-                "SELECT definition_digest,artifact FROM definition_versions WHERE tenant_id=:tenant "
-                "AND project_id=:project AND kind='Workflow' AND name=:name AND version=:version",
-                name=name,
-                version=version,
-            )
-            if not rows or rows[0]["definition_digest"] != digest:
-                raise DebugError("WV-DEBUG-WORKFLOW")
-            document = cast(JsonObject, rows[0]["artifact"])
-            workflows[reference] = CalledWorkflow(artifact=document, mocks=supplied.mocks if supplied else {})
-            pending.append(called_dependencies(cast(JsonObject, document["executable"])))
+            supplied = workflows.get(reference)
+            if supplied is not None and supplied.artifact is not None:
+                # A supplied artifact wins over the published version; the versions it calls still resolve.
+                try:
+                    document = (await execute_pure(partial(import_artifact, supplied.artifact))).executable
+                except UnsupportedIR:
+                    raise
+                except ValueError:
+                    raise DebugError("WV-DEBUG-WORKFLOW") from None
+            else:
+                name, _, version = reference.rpartition("@")
+                rows = await repository.rows(
+                    "SELECT definition_digest,artifact FROM definition_versions WHERE tenant_id=:tenant "
+                    "AND project_id=:project AND kind='Workflow' AND name=:name AND version=:version",
+                    name=name,
+                    version=version,
+                )
+                if not rows or rows[0]["definition_digest"] != digest:
+                    raise DebugError("WV-DEBUG-WORKFLOW")
+                published = cast(JsonObject, rows[0]["artifact"])
+                workflows[reference] = CalledWorkflow(artifact=published, mocks=supplied.mocks if supplied else {})
+                document = cast(JsonObject, published["executable"])
+            if depth < MAX_CALL_DEPTH:
+                pending.append((called_dependencies(document), depth + 1))
     return workflows
 
 
