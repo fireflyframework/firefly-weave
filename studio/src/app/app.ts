@@ -1718,7 +1718,8 @@ export class App implements CanvasHost {
     const before = this.model.source;
     if (leaving && (!this.leaveInspector() || !(await this.settleSource())))
       return;
-    // A platform draft saves itself on the way out (waiting at most 2 s); only work still unsaved asks.
+    // A platform draft saves itself on the way out (waiting at most 2 s);
+    // work still unsaved, or a save still going, asks.
     if (leaving && this.profile && this.dirty)
       await Promise.race([
         this.flushAutosave(),
@@ -1727,8 +1728,13 @@ export class App implements CanvasHost {
     if (
       leaving &&
       this.dirty &&
-      (this.saveState === "Unsaved" || this.saveState === "Not saved") &&
-      !(await this.confirmLeave(typed && this.model.source !== before))
+      (this.saveState === "Unsaved" ||
+        this.saveState === "Not saved" ||
+        this.saveState === "Saving") &&
+      !(await this.confirmLeave(
+        typed && this.model.source !== before,
+        this.saveState === "Saving",
+      ))
     )
       return;
     if (view !== "connect") this.releaseWizard();
@@ -1758,12 +1764,13 @@ export class App implements CanvasHost {
    * applied on the way out, that question was the one about leaving, and
    * none follows it.
    */
-  private async confirmLeave(applied = false) {
+  private async confirmLeave(applied = false, saving = false) {
     if (this.profile || this.draftRevision !== undefined || this.published)
       return this.dialogs.confirm({
         title: "Leave the designer?",
-        message:
-          "Your edits stay in this Studio window, but they are not saved to a platform. Save a draft, or use Save to file, to keep a copy.",
+        message: saving
+          ? "Studio is still saving this draft and hasn't heard back from the platform. Your edits stay in this Studio window; keep editing to see the save finish."
+          : "Your edits stay in this Studio window, but they are not saved to a platform. Save a draft, or use Save to file, to keep a copy.",
         confirmLabel: "Leave designer",
         cancelLabel: "Keep editing",
       });
@@ -6772,7 +6779,9 @@ export class App implements CanvasHost {
   }
   // --- autosave of platform drafts ---------------------------------------
   /** Platform drafts save themselves 2 s after the last change, at most every 10 s. */
-  private readonly autosave = new Autosave(() => this.autosaveDraft());
+  private readonly autosave: Autosave = new Autosave((generation) =>
+    this.autosaveDraft(generation),
+  );
   /** Save draft was pressed: the draft saves even when nothing changed since it opened. */
   private saveForced = false;
   /** Why the last autosave failed, when it wasn't a conflict (the compare flow shows those). */
@@ -6786,17 +6795,26 @@ export class App implements CanvasHost {
     this.autosave.touch();
     void this.autosave.flush().then(() => this.cdr.markForCheck());
   }
-  /** One save of the open platform draft, without a toast; false when it didn't save. */
-  private async autosaveDraft(): Promise<boolean> {
+  /**
+   * One save of the open platform draft, without a toast; false when it didn't
+   * save. The draft, its content and its revision are read once, when the save
+   * starts; after each answer the save goes on only while that draft is still
+   * the open one (`generation`, which opening a draft changes).
+   */
+  private async autosaveDraft(generation: number): Promise<boolean> {
+    const current = () => this.autosave.current(generation);
+    if (!current()) return true;
     this.autosaveFailure = null;
     if (!this.profile) return true;
     const forced = this.saveForced;
     this.saveForced = false;
+    // The compare flow is open: nothing saves until the person chooses.
+    if (this.conflict?.["draftId"] === this.draftId) return false;
     // Nothing changed in the workflow (test data or the canvas did): only they save.
     if (!this.dirty && !forced)
       return this.draftRevision === undefined
         ? true
-        : await this.flushPlatformDocuments();
+        : await this.flushPlatformDocuments(generation);
     this.flushInspector();
     if (
       this.model.readonly ||
@@ -6805,13 +6823,18 @@ export class App implements CanvasHost {
       this.sourcePending
     )
       return false;
-    const source = this.model.source;
     const draftId = this.draftId;
+    const source = this.model.source;
+    const document = structuredClone(this.model.definition);
+    let revision = this.draftRevision;
     this.saveState = "Saving";
     this.cdr.markForCheck();
     try {
       // A save whose answer never came is sent again first, with its own key, so it can't apply twice.
-      if (!(await this.settlePendingDraftSave(draftId))) return false;
+      const settled = await this.settlePendingDraftSave(draftId, generation);
+      if (!current()) return true;
+      if (settled === false) return false;
+      if (settled !== true) revision = settled;
       const result = await this.safeMutation<{
         id: string;
         revision: number;
@@ -6819,11 +6842,12 @@ export class App implements CanvasHost {
       }>(
         `${this.api.project}/drafts/${draftId}`,
         "PUT",
-        { document: this.model.definition },
-        this.draftRevision,
+        { document },
+        revision,
         "Save draft",
+        false,
       );
-      if (draftId !== this.draftId) return true;
+      if (!current()) return true;
       this.draftRevision = result.revision;
       const unchanged = source === this.model.source;
       this.saveState = unchanged ? "Draft saved" : "Unsaved";
@@ -6834,22 +6858,53 @@ export class App implements CanvasHost {
       }
       this.error = "";
       await this.flushDraftCanvas();
+      if (!current()) return true;
       // Test data and the canvas follow the draft, naming the revision just saved.
-      return await this.flushPlatformDocuments();
+      return await this.flushPlatformDocuments(generation);
     } catch (e) {
+      if (!current()) return false;
       this.saveState = "Not saved";
-      if (e instanceof ApiError && e.status === 409) {
-        this.conflict = { local: this.model.definition, server: e.detail };
-        this.error =
-          "Someone else saved this draft. Your version is still here. Compare them before you save.";
-      } else this.autosaveFailure = e;
+      if (e instanceof ApiError && (e.status === 409 || e.status === 412))
+        await this.draftConflict(draftId, document, e, generation);
+      else this.autosaveFailure = e;
       return false;
     } finally {
-      this.cdr.markForCheck();
+      if (current()) this.cdr.markForCheck();
     }
   }
-  /** True once no save of this draft is waiting for an answer; false while another command's is. */
-  private async settlePendingDraftSave(draftId: string): Promise<boolean> {
+  /**
+   * Someone else saved the draft (409, or 412 for a stale revision): the
+   * compare flow shows theirs beside this one, and autosave waits for a choice.
+   */
+  private async draftConflict(
+    draftId: string,
+    local: Workflow,
+    e: ApiError,
+    generation: number,
+  ) {
+    let server: unknown = e.detail;
+    if (e.status === 412)
+      try {
+        server = await this.api.request<Record<string, unknown>>(
+          `${this.api.project}/drafts/${draftId}`,
+        );
+      } catch {
+        // Their version couldn't be read: the compare flow shows the refusal.
+      }
+    if (!this.autosave.current(generation)) return;
+    this.conflict = { draftId, local, server };
+    this.error =
+      "Someone else saved this draft. Your version is still here. Compare them before you save.";
+  }
+  /**
+   * True once no save of this draft is waiting for an answer, or the revision
+   * that save made; false while another command's is. The revision is the
+   * open draft's only while `generation` is current.
+   */
+  private async settlePendingDraftSave(
+    draftId: string,
+    generation: number,
+  ): Promise<boolean | number> {
     const pending = this.pendingMutation;
     if (!pending) return true;
     if (
@@ -6864,10 +6919,14 @@ export class App implements CanvasHost {
       pending.revision,
       pending.key,
     );
-    this.pendingMutation = null;
-    this.unknownCommand = false;
-    this.draftRevision = Number(result["revision"]);
-    return true;
+    if (this.pendingMutation === pending) {
+      this.pendingMutation = null;
+      this.unknownCommand = false;
+    }
+    const revision = Number(result["revision"]);
+    if (this.autosave.current(generation) && draftId === this.draftId)
+      this.draftRevision = revision;
+    return revision;
   }
   // --- test data and the canvas of a platform draft, on the platform -------
   /** The open workflow's test data: test input and pinned output. */
@@ -6976,21 +7035,27 @@ export class App implements CanvasHost {
     this.cdr.markForCheck();
   }
   /** After the draft saves: test data and the canvas, each when it changed since its last save. */
-  private async flushPlatformDocuments(): Promise<boolean> {
+  private async flushPlatformDocuments(
+    generation: number = this.autosave.generation,
+  ): Promise<boolean> {
+    const current = () => this.autosave.current(generation);
     const draftId = this.draftId;
-    if (!this.profile || this.draftRevision === undefined) return true;
+    if (!current() || !this.profile || this.draftRevision === undefined)
+      return true;
     if (this.platformDocs.draftId !== draftId)
       this.platformDocs = { draftId, testData: null, canvas: null };
     let ok = true;
     const place = this.testData.place();
     if (place.kind === "connected" && place.draftId === draftId) {
       await this.testData.flush();
+      if (!current()) return true;
       const { document } = this.testData.toPlatform();
       const text = canonicalJson(document);
       const nothing =
         !entriesOf(document).length && this.platformDocs.testData === null;
       if (text !== this.platformDocs.testData && !nothing)
         ok = (await this.savePlatformDocument("test-data", document)) && ok;
+      if (!current()) return true;
     }
     // A canvas still being read from this computer isn't the draft's canvas yet.
     if (this.draftCanvasPending?.draftId !== draftId) {
@@ -7019,6 +7084,9 @@ export class App implements CanvasHost {
   ): Promise<boolean> {
     const draftId = this.draftId;
     const draftRevision = this.draftRevision;
+    const generation = this.autosave.generation;
+    const open = () =>
+      draftId === this.draftId && this.autosave.current(generation);
     if (draftRevision === undefined) return false;
     const answer = await saveStudioDocument(
       this.api,
@@ -7027,7 +7095,7 @@ export class App implements CanvasHost {
       { draft_revision: draftRevision, document: document as never },
       revision,
     );
-    if (draftId !== this.draftId) return true;
+    if (!open()) return true;
     if (answer.ok) {
       const text = canonicalJson(answer.document.document);
       if (kind === "test-data") {
@@ -7042,8 +7110,7 @@ export class App implements CanvasHost {
     if (answer.status === 412) {
       try {
         const theirs = await readStudioDocument(this.api, draftId, kind);
-        if (theirs && draftId === this.draftId)
-          this.documentConflict = { kind, draftId, theirs };
+        if (theirs && open()) this.documentConflict = { kind, draftId, theirs };
       } catch {
         // The conflict shows at the next save.
       }
@@ -7052,6 +7119,7 @@ export class App implements CanvasHost {
     }
     if (kind === "test-data" && answer.code === "WV-STUDIO-DOCUMENT-SECRET") {
       await this.testData.dropSecret(answer.paths);
+      if (!open()) return true;
       for (const _ of answer.paths)
         this.notify(CHECK_WORDS["WV-SCHEMA-SECRET_VALUE"], undefined, "danger");
       if (!again) return false;
@@ -9413,6 +9481,8 @@ export class App implements CanvasHost {
     body: unknown,
     revision: number | undefined = undefined,
     label: string = "Command",
+    /** False for a save that runs in the background (autosave): it never sets or clears `busy`. */
+    busy = true,
   ) {
     if (this.pendingMutation)
       throw Error("Resolve the pending mutation before another action.");
@@ -9425,7 +9495,7 @@ export class App implements CanvasHost {
       label,
     };
     this.pendingMutation = pending;
-    this.busy = label;
+    if (busy) this.busy = label;
     try {
       const result = await this.api.mutate<T>(
         path,
@@ -9448,7 +9518,7 @@ export class App implements CanvasHost {
       );
     } finally {
       this.cdr.markForCheck();
-      this.busy = "";
+      if (busy) this.busy = "";
     }
   }
   async retryExact() {

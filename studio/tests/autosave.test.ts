@@ -95,4 +95,77 @@ describe("autosave", () => {
     expect(await autosave.flush()).toBe(true);
     expect(saves).toBe(0);
   });
+  it("a save running when another draft opens says nothing about the new one", async () => {
+    const time = clock();
+    let answer!: (ok: boolean) => void;
+    const seen: boolean[] = [];
+    const autosave = new Autosave(
+      (generation) =>
+        new Promise<boolean>((done) => {
+          answer = (ok) => {
+            seen.push(autosave.current(generation));
+            done(ok);
+          };
+        }),
+      time.value,
+    );
+    autosave.touch();
+    const first = autosave.flush();
+    expect(autosave.state()).toBe("saving");
+    autosave.cancel();
+    answer(false);
+    await first;
+    // The run learns that its draft is no longer open, and its failure
+    // neither marks the new draft failed nor leaves it dirty.
+    expect(seen).toEqual([false]);
+    expect(autosave.state()).toBe("idle");
+    expect(autosave.savedAt()).toBeNull();
+    expect(await autosave.flush()).toBe(true);
+  });
+  it("a successful save of the previous draft shows no Saved time", async () => {
+    const time = clock();
+    let answer!: (ok: boolean) => void;
+    const autosave = new Autosave(
+      () => new Promise<boolean>((done) => (answer = done)),
+      time.value,
+    );
+    autosave.touch();
+    const first = autosave.flush();
+    autosave.cancel();
+    answer(true);
+    await first;
+    expect(autosave.savedAt()).toBeNull();
+    expect(autosave.state()).toBe("idle");
+  });
+  it("never runs two saves at once: a flush waits for the one running", async () => {
+    const time = clock();
+    let running = 0;
+    let most = 0;
+    const answers: ((ok: boolean) => void)[] = [];
+    const autosave = new Autosave(
+      () =>
+        new Promise<boolean>((done) => {
+          most = Math.max(most, ++running);
+          answers.push((ok) => {
+            running--;
+            done(ok);
+          });
+        }),
+      time.value,
+    );
+    autosave.touch();
+    const first = autosave.flush();
+    autosave.touch();
+    const second = autosave.flush();
+    await Promise.resolve();
+    expect(answers).toHaveLength(1);
+    answers[0](true);
+    await first;
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(answers).toHaveLength(2);
+    answers[1](true);
+    expect(await second).toBe(true);
+    expect(most).toBe(1);
+  });
 });

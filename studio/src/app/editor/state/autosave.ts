@@ -42,14 +42,24 @@ export class Autosave {
   private lastSave = -Infinity;
   private running: Promise<boolean> | null = null;
   private disposed = false;
+  private generationNow = 0;
 
   constructor(
-    private readonly run: () => Promise<boolean>,
+    /** One save; `generation` names the draft it belongs to (see `current`). */
+    private readonly run: (generation: number) => Promise<boolean>,
     private readonly clock: AutosaveClock = realClock,
     private readonly idleMs = 2000,
     private readonly gapMs = 10000,
   ) {}
 
+  /** Bumped by every cancel: a save started under another number belongs to a draft no longer open. */
+  get generation(): number {
+    return this.generationNow;
+  }
+  /** True while the draft a save started for is still the open one. */
+  current(generation: number): boolean {
+    return generation === this.generationNow;
+  }
   touch(): void {
     if (this.disposed) return;
     this.dirty = true;
@@ -76,9 +86,12 @@ export class Autosave {
     if (!this.dirty || this.disposed) return this.state() !== "failed";
     this.dirty = false;
     this.state.set("saving");
-    this.running = this.run().catch(() => false);
+    const generation = this.generationNow;
+    this.running = this.run(generation).catch(() => false);
     const ok = await this.running;
     this.running = null;
+    // Cancelled meanwhile: its outcome belongs to the previous draft, and says nothing here.
+    if (generation !== this.generationNow) return ok;
     this.lastSave = this.clock.now();
     if (ok) {
       this.savedAt.set(this.clock.now());
@@ -92,6 +105,7 @@ export class Autosave {
   }
   /** Another draft opened: what waited belonged to the previous one, and nothing is saved for it. */
   cancel(): void {
+    this.generationNow++;
     if (this.timer !== null) this.clock.clear(this.timer);
     this.timer = null;
     this.dirty = false;
