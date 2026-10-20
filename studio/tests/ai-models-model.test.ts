@@ -657,6 +657,28 @@ describe("Weave AI", () => {
       },
     });
   });
+  it("sends a chosen context size and leaves the automatic one out", () => {
+    const draft = { enabled: true, connection: "r2", model: "gpt-5-mini" };
+    expect(
+      weaveAiBody(
+        { ...draft, contextProfile: "compact" },
+        cloudConnection,
+        null,
+        {},
+      ),
+    ).toMatchObject({ context_profile: "compact" });
+    expect(
+      weaveAiBody(
+        { ...draft, contextProfile: "auto" },
+        cloudConnection,
+        null,
+        {},
+      ),
+    ).not.toHaveProperty("context_profile");
+    expect(weaveAiBody(draft, cloudConnection, null, {})).not.toHaveProperty(
+      "context_profile",
+    );
+  });
   it("uses 1,024 output tokens and three minutes for a new configuration", () => {
     expect(
       weaveAiBody(
@@ -679,19 +701,17 @@ describe("Weave AI", () => {
       ),
     ).toThrow("Choose a model");
   });
-  it("lists connections without a key as not usable for Weave AI yet", () => {
+  it("lists every AI connection for Weave AI, keyless local ones included", () => {
     expect(weaveAiChoices([keylessConnection, cloudConnection])).toEqual([
       {
         value: "r1",
         label: "ollama-local · revision 1",
-        description: "Weave AI can't use a connection without a key yet",
-        disabled: true,
+        description: "http://ollama:11434/v1 · no key",
       },
       {
         value: "r2",
         label: "openai · revision 3",
         description: "https://api.openai.com/v1",
-        disabled: false,
       },
     ]);
   });

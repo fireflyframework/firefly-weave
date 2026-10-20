@@ -341,3 +341,153 @@ async def test_a_failed_smoke_run_reports_the_model_code():
 def test_refusals_name_the_code_and_send_no_secret():
     error = setup.refused("connection", SimpleNamespace(code="WV-CONNECTION"))
     assert "WV-CONNECTION" in str(error) and "No secret was sent" in str(error)
+
+
+class WeaveAiClient(Client):
+    """Weave AI's configuration operations on top of the recorded ones."""
+
+    def __init__(self, configuration=None):
+        super().__init__()
+        self.configuration = configuration
+
+    async def invoke(self, operation, **kwargs):
+        if operation == "lumi.configuration.read":
+            self.calls.append((operation, None, None))
+            if self.configuration is None:
+                from firefly_weave.contracts.public import Problem
+                from firefly_weave.sdk.errors import WeaveError
+
+                raise WeaveError(Problem(status=404, code="WV-NOT-FOUND", message="Weave AI is not configured"))
+            return self.configuration
+        if operation == "lumi.configuration.write":
+            from firefly_weave.contracts.lumi import LumiConfiguration
+
+            self.calls.append((operation, kwargs["body"], kwargs.get("revision")))
+            revision = (kwargs.get("revision") or 0) + 1
+            self.configuration = LumiConfiguration(**kwargs["body"].model_dump(), revision=revision)
+            return self.configuration
+        return await super().invoke(operation, **kwargs)
+
+
+async def test_weave_ai_is_set_up_on_the_local_connection_once():
+    from firefly_weave.contracts.lumi import LUMI_REPLY_SCHEMA
+
+    client = WeaveAiClient()
+    first = await setup.configure_weave_ai(client, str(REVISION), "qwen3:4b")
+    assert first == {"state": "configured", "provider": "openai-chat", "model": "qwen3:4b"}
+    written = next(call[1] for call in client.calls if call[0] == "lumi.configuration.write")
+    assert written.connection_revision_id == REVISION and written.enabled
+    assert written.profile.model_dump(mode="json", by_alias=True, exclude_none=True) == {
+        "provider": "openai-chat",
+        "model": "qwen3:4b",
+        "options": {"max_tokens": 1024},
+        "reasoning": {"pattern": "none", "maxSteps": 6},
+        "maxCalls": 8,
+        "timeoutSeconds": 180,
+        "outputSchema": LUMI_REPLY_SCHEMA,
+    }
+    again = await setup.configure_weave_ai(client, str(REVISION), "qwen3:4b")
+    assert again == {"state": "unchanged", "provider": "openai-chat", "model": "qwen3:4b"}
+    assert [call[0] for call in client.calls].count("lumi.configuration.write") == 1
+
+
+async def test_weave_ai_someone_already_configured_is_kept():
+    from firefly_weave.contracts.lumi import LUMI_REPLY_SCHEMA, LumiConfiguration
+
+    chosen = LumiConfiguration.model_validate(
+        {
+            "enabled": False,
+            "connection_revision_id": uuid4(),
+            "revision": 4,
+            "profile": {
+                "provider": "openai-responses",
+                "model": "gpt-5-mini",
+                "options": {"max_tokens": 512},
+                "outputSchema": LUMI_REPLY_SCHEMA,
+            },
+        }
+    )
+    client = WeaveAiClient(chosen)
+    kept = await setup.configure_weave_ai(client, str(REVISION), "qwen3:4b")
+    assert kept == {"state": "kept", "provider": "openai-responses", "model": "gpt-5-mini"}
+    assert "lumi.configuration.write" not in client.operations()
+
+
+class ForbiddenUntilGranted(WeaveAiClient):
+    """A host principal without Weave AI's manager role until AI setup grants it one."""
+
+    def __init__(self):
+        super().__init__()
+        self.granted = False
+
+    async def invoke(self, operation, **kwargs):
+        if operation.startswith("lumi.configuration.") and not self.granted:
+            from firefly_weave.contracts.public import Problem
+            from firefly_weave.sdk.errors import WeaveError
+
+            self.calls.append((operation, None, None))
+            raise WeaveError(Problem(status=403, code="WV-FORBIDDEN", message="Forbidden"))
+        return await super().invoke(operation, **kwargs)
+
+    async def grant(self, request):
+        self.calls.append(("admin.grant", request, None))
+        self.granted = True
+        return SimpleNamespace(id=uuid4())
+
+
+async def test_the_local_owner_gets_the_weave_ai_manager_role_once_to_set_weave_ai_up():
+    owner = str(uuid4())
+    scope = {"tenant_id": str(uuid4()), "project_id": str(uuid4()), "environment_id": str(uuid4())}
+    client = ForbiddenUntilGranted()
+    first = await setup.configure_weave_ai(client, str(REVISION), "qwen3:4b", owner=owner, scope=scope)
+    assert first == {"state": "configured", "provider": "openai-chat", "model": "qwen3:4b"}
+    grants = [call[1] for call in client.calls if call[0] == "admin.grant"]
+    assert len(grants) == 1 and str(grants[0].principal_id) == owner
+    assert grants[0].grant.role == "lumi_manager"
+    assert grants[0].grant.scope.model_dump(mode="json") == scope
+    again = await setup.configure_weave_ai(client, str(REVISION), "qwen3:4b", owner=owner, scope=scope)
+    assert again["state"] == "unchanged"
+    assert [call[0] for call in client.calls].count("admin.grant") == 1
+
+
+async def test_without_a_local_owner_a_refused_weave_ai_read_is_not_retried():
+    from firefly_weave.sdk.errors import WeaveError
+
+    client = ForbiddenUntilGranted()
+    with pytest.raises(WeaveError):
+        await setup.configure_weave_ai(client, str(REVISION), "qwen3:4b")
+    assert "admin.grant" not in client.operations()
+
+
+async def test_a_grant_already_made_is_never_made_again_after_an_administrator_revokes_it():
+    from firefly_weave.sdk.errors import WeaveError
+
+    owner = str(uuid4())
+    scope = {"tenant_id": str(uuid4()), "project_id": str(uuid4()), "environment_id": str(uuid4())}
+    client, recorded = ForbiddenUntilGranted(), []
+    await setup.configure_weave_ai(
+        client, str(REVISION), "qwen3:4b", owner=owner, scope=scope, record=lambda: recorded.append(True)
+    )
+    assert recorded == [True]
+    client.granted = False
+    with pytest.raises(WeaveError):
+        await setup.configure_weave_ai(client, str(REVISION), "qwen3:4b", owner=owner, scope=scope, granted=True)
+    assert [call[0] for call in client.calls].count("admin.grant") == 1
+
+
+async def test_only_a_refused_read_leads_to_the_grant():
+    from firefly_weave.contracts.public import Problem
+    from firefly_weave.sdk.errors import WeaveError
+
+    class Failing(ForbiddenUntilGranted):
+        async def invoke(self, operation, **kwargs):
+            if operation == "lumi.configuration.read":
+                raise WeaveError(Problem(status=500, code="WV-INTERNAL", message="Internal"))
+            return await super().invoke(operation, **kwargs)
+
+    owner = str(uuid4())
+    scope = {"tenant_id": str(uuid4()), "project_id": str(uuid4()), "environment_id": str(uuid4())}
+    client = Failing()
+    with pytest.raises(WeaveError):
+        await setup.configure_weave_ai(client, str(REVISION), "qwen3:4b", owner=owner, scope=scope)
+    assert "admin.grant" not in client.operations()

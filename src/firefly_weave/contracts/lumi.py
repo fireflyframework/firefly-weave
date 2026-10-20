@@ -48,6 +48,22 @@ class LumiReply(BaseModel):
         return self
 
 
+class LumiCheckedProposal(LumiProposal):
+    # Error-severity findings when the platform checked the source; 0 when it is a valid document of its kind.
+    diagnostics: int = Field(ge=0)
+
+
+class LumiAnswer(BaseModel):
+    """What asking Weave AI returns: its reply, with every proposal checked by the platform."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True, populate_by_name=True)
+    answer: str = Field(min_length=1, max_length=20000)
+    proposals: list[LumiCheckedProposal] = Field(default_factory=list, max_length=5)
+    follow_ups: list[Annotated[str, Field(min_length=1, max_length=1000)]] = Field(
+        default_factory=list, max_length=5, alias="followUps"
+    )
+
+
 def reply_schema() -> JsonObjectData:
     schema = LumiReply.model_json_schema(by_alias=True)
     # A schema carried as const data must contain no refs for Pydantic's schema exporter.
@@ -74,6 +90,10 @@ class LumiConfigurationRequest(BaseModel):
     enabled: bool = True
     connection_revision_id: UUID
     profile: LumiProfile
+    # How much authoring context Weave AI sends: chosen from the model's context size, or set here.
+    context_profile: Literal["auto", "compact", "standard", "full"] = Field(
+        default="auto", exclude_if=lambda value: value == "auto"
+    )
 
 
 class LumiConfiguration(LumiConfigurationRequest):
@@ -127,10 +147,22 @@ class LumiAskRequest(BaseModel):
     draft: LumiDraft | None = Field(default=None, exclude_if=lambda value: value is None)
     history: list[LumiMessage] = Field(default_factory=list, max_length=16)
     attachments: list[LumiAttachment] = Field(default_factory=list, max_length=4)
+    # The step selected in the editor; a compact request sends it whole and outlines the rest of the draft.
+    selected_step: str | None = Field(
+        default=None, max_length=200, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$", exclude_if=lambda value: value is None
+    )
+    # Ask Weave AI to fix a proposal: the draft is that proposal, sent whole on every profile when it fits.
+    fix: bool = Field(default=False, exclude_if=lambda value: not value)
 
     @property
     def explanation_only(self) -> bool:
         return any(item.kind.startswith("deployment") for item in self.attachments)
+
+    @model_validator(mode="after")
+    def fix_names_its_proposal(self) -> Self:
+        if self.fix and self.draft is None:
+            raise ValueError("A fix request carries the proposal to fix as its draft")
+        return self
 
     @model_validator(mode="after")
     def separate_operations_context(self) -> Self:

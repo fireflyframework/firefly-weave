@@ -156,6 +156,7 @@ def contract_models() -> dict[str, SchemaModel]:
     from firefly_weave.contracts.incident_queries import IncidentQuery
     from firefly_weave.contracts.language import LanguageManifest
     from firefly_weave.contracts.lumi import (
+        LumiAnswer,
         LumiAskRequest,
         LumiConfiguration,
         LumiConfigurationRequest,
@@ -434,6 +435,7 @@ def contract_models() -> dict[str, SchemaModel]:
         "definition": TypeAdapter(Definition),
         "lumi-ask-request": LumiAskRequest,
         "lumi-reply": LumiReply,
+        "lumi-answer": LumiAnswer,
         "lumi-configuration-request": LumiConfigurationRequest,
         "lumi-configuration": LumiConfiguration,
         "lumi-status": LumiStatus,

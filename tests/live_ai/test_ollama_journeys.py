@@ -21,6 +21,7 @@ call, then the refusals; the last one stops and restarts the installation's own 
 """
 
 import hashlib
+import json
 from uuid import uuid4
 
 import pytest
@@ -37,24 +38,22 @@ PROVIDER = ("--provider", "openai-chat")
 def test_enable_sets_up_ai_and_a_repeated_enable_changes_nothing(live):
     arguments = ("ai", "enable", "--ollama", "container", "--model", live.model, "--yes")
     first = live.weave(*arguments)
-    assert (first["ok"], first["stage"], first["mode"], first["weave_ai"]) == (
-        True,
-        "ready",
-        "container",
-        "not_available",
-    )
+    assert (first["ok"], first["stage"], first["mode"]) == (True, "ready", "container")
+    assert first["weave_ai"] == {"state": "configured", "provider": "openai-chat", "model": live.model}
     assert live.model in first["models"]
     assert (first["test"]["ok"], first["test"]["model"]) == (True, live.model)
 
     again = live.weave(*arguments)
     assert again["changed"] == []
     assert again["test"]["ok"] is True
+    assert again["weave_ai"]["state"] == "unchanged"
 
     status = live.weave("ai", "status")
     assert status["enabled"] is True
     assert status["worker"]["presence"] == "recent"
     assert status["gateway"]["state"] == status["ollama"]["state"] == "running"
     assert live.model in {item["name"] for item in status["models"]["served"]}
+    assert status["weave_ai"]["model"] == live.model
 
 
 async def test_discovery_lists_the_pulled_model_with_tool_support(live):
@@ -76,6 +75,36 @@ async def test_the_guide_summarize_workflow_runs_on_the_local_model(live):
     assert isinstance(outcome["output"], str) and outcome["output"].strip()
     assert outcome["usage"].get("requests", 0) >= 1
     assert outcome["replay"] == "consistent"
+
+
+async def test_weave_ai_explains_a_draft_on_the_local_model(live):
+    from firefly_weave.contracts.lumi import LumiAskRequest
+
+    steps = [
+        {"id": f"step-{index}", "kind": "transform", "value": {"object": {"n": {"literal": index}}}}
+        for index in range(20)
+    ]
+    draft = {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {"name": "explain-me", "version": "1.0.0"},
+        "spec": {
+            "inputSchema": {"type": "object"},
+            "outputSchema": {},
+            "steps": steps,
+            "output": {"ref": "/steps/step-19/output"},
+        },
+    }
+    async with live.client() as (client, _):
+        answer = await client.ask_lumi(
+            LumiAskRequest(
+                message="Explain this workflow in one sentence.",
+                draft={"format": "json", "source": json.dumps(draft)},
+                selected_step="step-3",
+            )
+        )
+    assert answer.answer.strip()
+    assert all(isinstance(item.diagnostics, int) for item in answer.proposals)
 
 
 async def owned_activations(live):

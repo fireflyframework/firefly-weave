@@ -60,10 +60,10 @@ from firefly_weave.contracts.incident_queries import IncidentOrder, IncidentQuer
 from firefly_weave.contracts.integration_events import DeliveryAttempt, DeliveryView, Subscription, SubscriptionRequest
 from firefly_weave.contracts.language import LanguageManifest
 from firefly_weave.contracts.lumi import (
+    LumiAnswer,
     LumiAskRequest,
     LumiConfiguration,
     LumiConfigurationRequest,
-    LumiReply,
     LumiStatus,
 )
 from firefly_weave.contracts.maintenance import RetentionApplication, RetentionPlan, RetentionRequest
@@ -1123,8 +1123,8 @@ class WeaveClient:
     ) -> LumiConfiguration:
         return cast(LumiConfiguration, await self.invoke("lumi.configuration.write", body=request, revision=revision))
 
-    async def ask_lumi(self, request: LumiAskRequest) -> LumiReply:
-        return cast(LumiReply, await self.invoke("lumi.ask", body=request))
+    async def ask_lumi(self, request: LumiAskRequest) -> LumiAnswer:
+        return cast(LumiAnswer, await self.invoke("lumi.ask", body=request))
 
     async def create_human_file(
         self, identifier: UUID, request: HumanFileCreate, *, idempotency_key: str
