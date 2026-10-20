@@ -543,6 +543,24 @@ SPDX-License-Identifier: Apache-2.0
   for the upgrade times, the behavior changes to check, and what to do before a
   rollback.
 
+Verified on macOS (Apple silicon) before tagging: the full local check gate (17
+stages, including 7,751 unit and contract tests, the Agentic and Files worker
+suites, and building, installing, and checking the 0.1.0a16 core and 0.1.8
+worker packages); Studio's type check, 2,391 unit tests, and production build;
+941 integration tests against a real PostgreSQL 17; and the release acceptance
+profile against a real Docker platform with PostgreSQL 17 and Keycloak 26.7.4,
+where J0, J1, J5, J8, and J9 steps passed (15 in full and 8 with checks for
+later capabilities skipped), the secret scan found nothing, and no container,
+network, or volume was left behind. Integration tests that need Kafka, an owned
+PostgreSQL connector target, CLI identity against Keycloak, or built release
+images did not run, and one timing-sensitive test of two replicas joining a
+parallel step did not pass under the host's load at the time. The release
+gate with real Kafka and release images, the acceptance journeys beyond those
+steps, the desktop installers on Windows and Linux beyond their CI builds,
+Developer ID signing, and Apple notarization are **not verified** for this
+release. macOS installers remain ad-hoc signed and not notarized, and Windows
+installers remain unsigned.
+
 ## 0.1.0a15
 
 ### Workflow language
