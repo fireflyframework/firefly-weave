@@ -416,7 +416,7 @@ class Simulator:
         selected = self._selected()
         state = self.data.cursor.result.state if self.data.cursor else self.data.state
         status = "failed" if self.data.diagnostics else "paused" if self.data.paused else state.status
-        current = self._current()
+        upcoming = self._upcoming()
         return DebugView(
             status=status,
             selected_node=selected,
@@ -431,7 +431,7 @@ class Simulator:
             loops=self._loops(self._prepared, state),
             selected_scope=self._scope(state, selected),
             frames=[self._frame_view(frame) for frame in self.data.frames],
-            selected_frame=current[0] if current is not None and current[0] else None,
+            selected_frame=upcoming[0] if upcoming is not None and upcoming[0] else None,
         ).model_copy(deep=True)
 
     def _stops_at(self, path: str) -> bool:
@@ -490,8 +490,8 @@ class Simulator:
         """
 
         def run() -> None:
-            current = self._current()
-            key = frame if frame is not None else current[0] if current is not None else ""
+            upcoming = self._upcoming()
+            key = frame if frame is not None else upcoming[0] if upcoming is not None else ""
             target = cast(FrameState, self._run(key)) if key else None
             if target is None:
                 raise DebugError("WV-DEBUG-FRAME")
@@ -534,20 +534,31 @@ class Simulator:
     def _grown(self, value: object) -> None:
         self._unchecked_bytes += logical_size(value, TRANSITION_BYTES)
 
-    def _scheduled(self) -> tuple[str, Run, RuntimeEvent | None] | None:
-        """The run the next boundary belongs to: the one in the middle of an event, otherwise the deepest frame with
-        an event ready (frames at one depth in the order their calls started), the simulated workflow last.
+    def _upcoming(self) -> tuple[str, Run] | None:
+        """The run the next boundary belongs to, without changing anything: the one in the middle of an event,
+        otherwise the deepest frame with an event ready (frames at one depth in the order their calls started), the
+        simulated workflow last.
         """
         current = self._current()
         if current is not None:
-            return current[0], current[1], None
+            return current
         for key, run in sorted(self._runs(), key=lambda entry: -_depth(entry[0])):
             if run.state is None or run.state.status in TERMINAL:
                 continue
-            event = self._eligible(key, run)
-            if event is not None:
-                return key, run, event
+            if self._due(key, run) is not None:
+                return key, run
         return None
+
+    def _scheduled(self) -> tuple[str, Run, RuntimeEvent | None] | None:
+        """The run of the next boundary (see ``_upcoming``) and, between events, the event it accepts next."""
+        current = self._current()
+        if current is not None:
+            return current[0], current[1], None
+        upcoming = self._upcoming()
+        if upcoming is None:
+            return None
+        key, run = upcoming
+        return key, run, self._eligible(key, run)
 
     def _step(self) -> bool:
         d = self.data
@@ -721,7 +732,10 @@ class Simulator:
         self.data.boundaries.append(Boundary(kind="event", event_type="cancelled", frame=frame.key))
         self._ended(frame.key)
 
-    def _eligible(self, key: str, run: Run) -> RuntimeEvent | None:
+    def _due(self, key: str, run: Run) -> Deadline | tuple[SignalNode, SignalReceipt] | RuntimeEvent | None:
+        """What ``run`` accepts next, without taking it: a due deadline, a received signal a waiting step matches,
+        or the first pending event.
+        """
         ir = self._workflow(key).ir
         state = cast(RunState, run.state)
         durations = duration_steps(ir)
@@ -736,11 +750,7 @@ class Simulator:
                 s.name == deadline.name and s.accepted_at < deadline.deadline for s in run.signals
             ):
                 continue
-            run.deadlines.remove(deadline)
-            return self._event(
-                "wait_elapsed" if node_of(deadline.node_id) in durations else "timed_out",
-                {"node_id": deadline.node_id, "deadline": deadline.deadline.isoformat()},
-            )
+            return deadline
         for node in ir.graph.nodes:
             if not isinstance(node, SignalNode) or node.id not in state.active or node.id in deferred:
                 continue
@@ -749,19 +759,33 @@ class Simulator:
                 key=lambda s: (s.accepted_at, s.id),
             )
             if matches:
-                receipt = matches[0]
-                run.signals.remove(receipt)
-                return self._event(
-                    "signal_received",
-                    {
-                        "node_id": node.id,
-                        "output": receipt.payload,
-                        "accepted_at": receipt.accepted_at.isoformat(),
-                        "deadline": state.waits[node.id].isoformat(),
-                    },
-                    identifier=receipt.id,
-                )
-        return run.pending.pop(0) if run.pending else None
+                return node, matches[0]
+        return run.pending[0] if run.pending else None
+
+    def _eligible(self, key: str, run: Run) -> RuntimeEvent | None:
+        """Take what ``run`` accepts next (see ``_due``) as the event it accepts."""
+        due = self._due(key, run)
+        if isinstance(due, Deadline):
+            run.deadlines.remove(due)
+            durations = duration_steps(self._workflow(key).ir)
+            return self._event(
+                "wait_elapsed" if node_of(due.node_id) in durations else "timed_out",
+                {"node_id": due.node_id, "deadline": due.deadline.isoformat()},
+            )
+        if isinstance(due, tuple):
+            node, receipt = due
+            run.signals.remove(receipt)
+            return self._event(
+                "signal_received",
+                {
+                    "node_id": node.id,
+                    "output": receipt.payload,
+                    "accepted_at": receipt.accepted_at.isoformat(),
+                    "deadline": cast(RunState, run.state).waits[node.id].isoformat(),
+                },
+                identifier=receipt.id,
+            )
+        return run.pending.pop(0) if due is not None else None
 
     def human_decision(self, node_id: str, payload: JsonValue, *, frame: str | None = None) -> DebugView:
         def receive() -> None:

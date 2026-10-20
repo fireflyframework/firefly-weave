@@ -547,7 +547,8 @@ def test_next_steps_into_the_deepest_frame_with_work_and_back_out():
     assert trace[:4] == [
         (None, "started", None),
         (None, "@start", None),
-        (None, "enrich", None),
+        # The call step's event ended and the called workflow's start is the next boundary.
+        (None, "enrich", "enrich"),
         ("enrich", "started", "enrich"),
     ]
     assert trace[-1] == (None, "call_completed", None)
@@ -633,3 +634,51 @@ def test_signals_and_step_out_reach_the_frame_they_name():
     )
     with pytest.raises(DebugError, match="WV-DEBUG-FRAME"):
         simulator.command(DebugCommand(kind="human_decision", name="review", payload={}, frame="missing"))
+
+
+def test_step_over_a_paused_call_step_runs_the_called_workflow_and_returns_to_the_caller():
+    after = {"id": "after", "kind": "transform", "value": {"ref": "/steps/enrich/output/tier"}}
+    artifact = caller([call(), after], {"ref": "/steps/after/output"})
+    simulator = Simulator(artifact, mocks={}, input={"customerId": "c-1"}, now=NOW, workflows=enrich_called())
+    simulator.set_breakpoints({"enrich"})
+    paused = simulator.continue_until_breakpoint()
+    assert (paused.status, paused.selected_frame, paused.selected_node) == ("paused", None, "enrich")
+    into = simulator.next()
+    # Between events the view names the frame of the next boundary: the called workflow's start.
+    assert (into.boundary.node_id, into.boundary.frame, into.selected_frame) == ("enrich", None, "enrich")
+    over = simulator.step_out()
+    assert (over.selected_frame, over.selected_node) == (None, "after")
+    assert (over.boundary.event_type, over.boundary.frame, over.frames[0].status) == (
+        "call_completed",
+        None,
+        "succeeded",
+    )
+    assert simulator.continue_until_breakpoint().variables["output"] == "gold"
+
+
+def test_step_out_between_events_inside_a_frame_leaves_the_frame_of_the_next_boundary():
+    after = {"id": "after", "kind": "transform", "value": {"ref": "/steps/enrich/output/tier"}}
+    artifact = caller([call(), after], {"ref": "/steps/after/output"})
+    simulator = Simulator(artifact, mocks={}, input={"customerId": "c-1"}, now=NOW, workflows=enrich_called())
+    simulator.set_breakpoints({"enrich/validate"})
+    simulator.continue_until_breakpoint()
+    # Reducing the action ends the frame's event; its mocked result is the next boundary.
+    between = simulator.next()
+    assert (between.boundary.frame, between.boundary.node_id) == ("enrich", "validate")
+    assert (between.selected_frame, between.frames[0].selected_node, between.selected_node) == ("enrich", None, None)
+    out = simulator.step_out()
+    assert (out.selected_frame, out.selected_node, out.boundary.event_type) == (None, "after", "call_completed")
+
+
+def test_a_frame_waiting_for_a_signal_is_selected_once_the_signal_is_ready():
+    artifact = caller([call(uses="hold@1.0.0")], {"ref": "/steps/enrich/output"}, HOLD)
+    workflows = {"hold@1.0.0": CalledWorkflow(artifact=artifact_of(HOLD))}
+    simulator = Simulator(artifact, mocks={}, input={"customerId": "c-1"}, now=NOW, workflows=workflows)
+    waiting = simulator.continue_until_breakpoint()
+    assert waiting.selected_frame is None
+    with pytest.raises(DebugError, match="WV-DEBUG-FRAME"):
+        simulator.step_out()
+    ready = simulator.signal("release", {}, frame="enrich")
+    assert ready.selected_frame == "enrich"
+    out = simulator.step_out()
+    assert (out.status, out.frames[0].status, out.boundary.event_type) == ("waiting", "succeeded", "call_completed")
