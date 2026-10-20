@@ -32,6 +32,7 @@ WORKER_IMAGE_ID = "sha256:" + "1" * 64
 RUNNER_IMAGE_ID = "sha256:" + "2" * 64
 PUSHED = "sha256:" + "3" * 64
 SUBJECTS = {"weave-operations-worker": str(uuid4()), "weave-operations-runner": str(uuid4())}
+HOST = str(uuid4())
 MANIFEST = json.loads((Path(__file__).resolve().parents[2] / "fixtures/operations-worker/manifest.json").read_text())
 
 
@@ -68,6 +69,7 @@ def operations(owned, monkeypatch):
         "scope": SCOPE,
     }
     platform._write(directory / "first-run.json", receipt)
+    platform._write(directory / "bootstrap.json", {"principal_id": HOST})
     context = directory / "release" / "images"
     context.mkdir(parents=True)
     (context / "operations-worker.py").write_text("# fixture\n")
@@ -151,7 +153,7 @@ def test_operations_enable_is_resumable_stage_by_stage(operations):
     for operation in ("principals.create", "releases.create", "deployment_targets.create", "deployments.create"):
         expected = 2 if operation == "principals.create" else 1
         assert case.api.count(operation) == expected, operation
-    assert case.api.count("members.grant") == 2
+    assert case.api.count("members.grant") == 3
     assert case.runner.names().count("operations-runner-build") == 1
     # A rerun changes nothing and creates nothing.
     calls = len(case.api.calls)
@@ -287,3 +289,15 @@ def test_the_api_environment_accepts_exactly_the_operations_clients(owned):
     path.write_text(text)
     platform_operations.prepare_provider(state)
     platform_docker.environment(state, {})
+
+
+def test_the_host_account_may_register_the_target_before_it_does(operations):
+    case = operations
+    enable(case)
+    names = [name for name, _ in case.api.calls]
+    grants = [kwargs["body"] for name, kwargs in case.api.calls if name == "members.grant"]
+    host = [grant for grant in grants if str(grant.principal_id) == HOST]
+    assert [(grant.role, str(grant.environment_id)) for grant in host] == [
+        ("deployment_planner", SCOPE["environment_id"])
+    ]
+    assert names.index("members.grant", names.index("releases.create") + 1) < names.index("deployment_targets.create")

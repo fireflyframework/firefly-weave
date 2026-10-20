@@ -562,6 +562,21 @@ async def _target(client: WeaveClient, state: dict[str, Any], value: dict[str, A
     from firefly_weave.sdk.members import MembersClient
 
     key = "weave-platform-operations-" + state["id"]
+    if not value.get("host_planner"):
+        # The host account administers the demo tenant but plans no deployments; registering local-docker and its
+        # deployment needs target.manage, so it grants itself the planner role here (audited like any grant).
+        host = strict_json(read_file(Path(state["directory"]) / "bootstrap.json", 65536, private=True))["principal_id"]
+        scope = value["scope"]
+        await MembersClient(client).grant(
+            MemberGrantRequest(
+                principal_id=UUID(host),
+                role="deployment_planner",
+                project_id=UUID(scope["project_id"]),
+                environment_id=UUID(scope["environment_id"]),
+            )
+        )
+        value["host_planner"] = True
+        save()
     if value.get("target_id") is None:
         request = TargetRequest.model_validate_json(json.dumps(target_request(state, value)))
         created = await client.invoke("deployment_targets.create", body=request, idempotency_key=key + "-target")
