@@ -237,6 +237,32 @@ def test_size_is_bounded_with_loops_multiplied_out_and_an_edit_on_maxitems():
     assert check(Repeat("each", at(0), body, 1000))[0] == []
 
 
+def _loop(name: str, index: int, max_items: int, base: str = BODY) -> Repeat:
+    inner = f"{at(index, base)}/body/steps"
+    return Repeat(name, at(index, base), Sequence(inner, (compensate(0, step=f"{name}-add", base=inner),)), max_items)
+
+
+def test_the_suggested_maxitems_brings_the_path_through_that_loop_within_the_limit():
+    first, second = f"{at(0)}/cases/0/steps", f"{at(0)}/cases/1/steps"
+
+    def body(large: int, small: int, after: int) -> tuple:
+        paths = (
+            Sequence(first, (_loop("large", 0, large, first),)),
+            Sequence(second, (_loop("small", 0, small, second),)),
+        )
+        return Choice("route", at(0), paths), _loop("after", 1, after)
+
+    # Lowering the larger loop to 700 still leaves 900 + 300 on the other path; no single maxItems fits.
+    _, analysis = check(*body(1100, 900, 300))
+    assert [issue.code for issue in analysis.issues] == ["TXN_SIZE"]
+    assert analysis.issues[0].edit is None
+    # The other path stays within the limit, so lowering the larger loop works.
+    _, analysis = check(*body(1100, 600, 300))
+    assert analysis.issues[0].edit == (f"{first}/0/maxItems", 700)
+    _, analysis = check(*body(1100, 500, 300))
+    assert analysis.issues[0].edit == (f"{first}/0/maxItems", 700)
+
+
 def test_a_transaction_with_nothing_to_undo_warns():
     issues, _ = check(irreversible(0))
     assert issues == [("TXN_NOTHING_TO_UNDO", "/spec/steps/0", "warning")]

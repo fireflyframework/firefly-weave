@@ -393,19 +393,35 @@ def _merge(left: _State, right: _State) -> _State:
     return _State(pivot, left.hold, left.holder)
 
 
-def _participants(sequence: Sequence) -> int:
-    """The most participants one run of ``sequence`` can register, loops multiplied out."""
+def _participants(sequence: Sequence, lowered: tuple[Repeat, int] | None = None) -> int:
+    """The most participants one run of ``sequence`` can register, loops multiplied out.
+
+    ``lowered`` counts one loop as if its ``maxItems`` were the given number instead.
+    """
     total = 0
     for element in sequence.elements:
         if isinstance(element, Participant):
             total += 1
         elif isinstance(element, Choice):
-            total += max((_participants(path) for path in element.paths), default=0)
+            total += max((_participants(path, lowered) for path in element.paths), default=0)
         elif isinstance(element, Fork):
-            total += sum(_participants(branch) for branch in element.branches)
+            total += sum(_participants(branch, lowered) for branch in element.branches)
         elif isinstance(element, Repeat):
-            total += _participants(element.body) * element.max_items
+            items = lowered[1] if lowered is not None and lowered[0] is element else element.max_items
+            total += _participants(element.body, lowered) * items
     return total
+
+
+def _lowered_max_items(body: Sequence, loop: Repeat, limit: int) -> int | None:
+    """The largest ``maxItems`` below the current one that brings ``body`` within ``limit``, if one does."""
+    low, high, found = 1, loop.max_items - 1, None
+    while low <= high:
+        middle = (low + high) // 2
+        if _participants(body, (loop, middle)) <= limit:
+            found, low = middle, middle + 1
+        else:
+            high = middle - 1
+    return found
 
 
 def _all_participants(sequence: Sequence) -> Iterable[Participant]:
@@ -459,11 +475,9 @@ def check_transaction(
     count = _participants(transaction.body)
     if count > max_participants:
         edit = None
-        for loop, outer in sorted(_loops(transaction.body), key=lambda item: -item[1] * item[0].max_items):
-            each = _participants(loop.body) * outer
-            rest = count - each * loop.max_items
-            lowered = (max_participants - rest) // each if each else 0
-            if lowered >= 1:
+        for loop, _outer in sorted(_loops(transaction.body), key=lambda item: -item[1] * item[0].max_items):
+            lowered = _lowered_max_items(transaction.body, loop, max_participants)
+            if lowered is not None:
                 edit = (loop.path + "/maxItems", lowered)
                 break
         walk.add("TXN_SIZE", transaction.path, "error", count=count, limit=max_participants, edit=edit)
