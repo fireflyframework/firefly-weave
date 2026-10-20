@@ -318,11 +318,22 @@ for (const size of layoutSizes)
       expect(listBox.right).toBeLessThanOrEqual(size.width + 0.5);
       expect(listBox.bottom).toBeLessThanOrEqual(size.height + 0.5);
       const rows = await boxes(list.getByRole("option"));
-      // A model and what it can do take two lines of one row height each at
-      // most: 32 px lines with a mouse, 44 px for touch.
+      // Every row is as tall as its text plus the same small padding: rows
+      // never grow to a touch height for one line.
       for (const row of rows)
         expect(row.height).toBeGreaterThanOrEqual(sizes.row - 0.5);
-      expect(rows[0].height).toBeLessThanOrEqual(2 * sizes.row + 0.5);
+      const paddings = await list.getByRole("option").evaluateAll((options) =>
+        options.map((option) => {
+          const range = document.createRange();
+          range.selectNodeContents(option);
+          return (
+            option.getBoundingClientRect().height -
+            range.getBoundingClientRect().height
+          );
+        }),
+      );
+      expectAligned(paddings, "option row padding");
+      expect(paddings[0]).toBeLessThanOrEqual(16);
       expectAligned(
         [
           (await box(list.locator(".choice-group"))).x,

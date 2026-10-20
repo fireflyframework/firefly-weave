@@ -304,6 +304,9 @@ describe("choosing a model", () => {
   it("says when the settings are shared, and what a new model changes", () => {
     const { workflow, step } = withTask();
     expect(sharingNote(workflow, step)).toBe("");
+    // Settings only this step uses need no note.
+    workflow.spec["llmProfiles"] = { default: { provider: "x", model: "y" } };
+    expect(sharingNote(workflow, step)).toBe("");
     workflow.spec["llmProfiles"] = {
       default: { provider: "anthropic", model: "claude-x" },
       triage: { provider: "anthropic", model: "claude-x" },
