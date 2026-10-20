@@ -27,6 +27,7 @@ import os
 import signal
 import socket
 import sys
+import traceback
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -106,6 +107,30 @@ async def start_relay(destination: str, *, listen: int = 8080) -> asyncio.Server
     return await asyncio.start_server(relay, "127.0.0.1", listen)
 
 
+async def register(
+    client: httpx.AsyncClient, prefix: str, body: dict[str, Any], *, seconds: float = 120, pause: float = 2
+) -> httpx.Response:
+    """Register, trying again while a busy platform answers 429 (out of capacity), for up to `seconds`."""
+    deadline = asyncio.get_running_loop().time() + seconds
+    while True:
+        try:
+            return await register_worker_http(client, prefix, body)
+        except httpx.HTTPStatusError as error:
+            if error.response.status_code != 429 or asyncio.get_running_loop().time() + pause > deadline:
+                raise
+        await asyncio.sleep(pause)
+
+
+def failure(error: BaseException) -> str:
+    """The failure's kind, HTTP status and the code that raised it: never its message or a URL."""
+    while isinstance(error, BaseExceptionGroup) and error.exceptions:
+        error = error.exceptions[0]
+    found = traceback.extract_tb(error.__traceback__)
+    place = f" at {found[-1].name}" if found else ""
+    status = f" (HTTP {error.response.status_code})" if isinstance(error, httpx.HTTPStatusError) else ""
+    return f"{type(error).__name__}{status}{place}"
+
+
 async def main() -> None:
     forbidden = [key for key in os.environ if "DATABASE" in key or key.startswith(("PG", "WEAVE_KC_ADMIN"))]
     if forbidden:
@@ -125,7 +150,7 @@ async def main() -> None:
         transport=private_transport(api, "platform-api"),
     ) as client:
         prefix = os.environ["WEAVE_ENVIRONMENT_URL"]
-        response = await register_worker_http(
+        response = await register(
             client,
             prefix,
             {
@@ -149,9 +174,9 @@ def cli(argv: list[str]) -> int:
         return 0
     try:
         asyncio.run(main())
-    except Exception:
-        # HTTP errors may carry URLs or response data; keep the output free of them.
-        print("The fixture worker stopped after an operation failed", file=sys.stderr)
+    except Exception as error:
+        # HTTP errors may carry URLs or response data; only the kind, status and place are printed.
+        print("The fixture worker stopped after an operation failed: " + failure(error), file=sys.stderr)
         return 1
     return 0
 

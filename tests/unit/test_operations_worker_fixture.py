@@ -272,3 +272,35 @@ def test_the_manifest_accepts_only_the_unknown_fault():
     for wrong in ({"ms": 0, "fail": "boom"}, {"fail": "unknown"}):
         with pytest.raises(jsonschema.ValidationError):
             jsonschema.validate(wrong, schema)
+
+
+async def test_registration_waits_out_a_busy_platform():
+    """A platform out of capacity answers 429 to a registration: the fixture tries again instead of exiting, which
+    made a restarted container exit and its change request end in reconciliation."""
+    import httpx
+
+    module = fixture()
+    answers = [429, 429, 201]
+
+    def handler(request):
+        return httpx.Response(answers.pop(0), json={"id": "00000000-0000-4000-8000-000000000001"})
+
+    async with httpx.AsyncClient(base_url="http://platform.test", transport=httpx.MockTransport(handler)) as client:
+        response = await module.register(client, "/env", {"release_id": "r", "task_types": [], "capacity": 1}, pause=0)
+    assert response.status_code == 201 and answers == []
+
+
+def test_a_failure_names_its_kind_and_place_but_no_address(capsys, monkeypatch):
+    import httpx
+
+    module = fixture()
+
+    async def failing():
+        request = httpx.Request("POST", "http://secret-host.test/api?token=abc")
+        raise httpx.HTTPStatusError("boom", request=request, response=httpx.Response(503, request=request))
+
+    monkeypatch.setattr(module, "main", failing)
+    assert module.cli([]) == 1
+    printed = capsys.readouterr().err
+    assert "HTTPStatusError" in printed and "503" in printed and "failing" in printed
+    assert "secret-host" not in printed and "token" not in printed
