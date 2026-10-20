@@ -51,8 +51,14 @@ permissions, and real delivery still need checking in your deployment.
 ## Which release this page describes
 
 Weave is an alpha workflow and integration platform. This documentation targets
-**`0.1.0a15`**, with PyFly 26.9.15 and database schema revision
-`0030_worker_presence`, unchanged from alpha12. Alpha15 adds text templates
+**`0.1.0a16`**, with PyFly 26.9.15 and database schema revision
+`0033_language_workflow_calls`. Alpha16 adds loops over items and calls between
+workflows, Studio's Operate area with its Overview, Runs, Incidents, Workers and
+Clusters pages, the new editor's canvas, step details, **Add a step** and
+formulas (off by default), and AI tasks on a local Ollama model set up from
+**Settings › AI models**; it adds three migrations, described in the
+[upgrade procedure](operations/upgrades.md#what-changes-in-alpha16). Alpha15
+kept schema revision `0030_worker_presence` and adds text templates
 (`concat` and `join`), development-only private origins for the Docker
 development platform, plain-HTTP no-code connections with a "Not encrypted"
 warning, and the Firefly identity in Studio, the desktop app, the CLI and this

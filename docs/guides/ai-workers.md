@@ -27,7 +27,7 @@ Use [Weave AI](weave-ai.md) when *you*, the person using Studio, want an
 explanation or a proposed definition change. Weave AI has separate configuration
 and does not execute workflow AI tasks.
 
-The examples here use Weave **0.1.0a15** and the **0.1.7 Agentic worker package**,
+The examples here use Weave **0.1.0a16** and the **0.1.8 Agentic worker package**,
 whose core dependency is
 pinned to that Weave version. The catalog references below retain their own
 `1.0.0` definition and task versions.
@@ -375,7 +375,7 @@ refuses their calls with `LLM_POLICY` when the model is no longer approved.
 | `contextTokens` | The context window; a prompt that cannot fit fails with `LLM_CONTEXT_LIMIT` before any request |
 | `maxOutputTokens` | The largest `options.max_tokens` a step may ask for; larger values fail with `LLM_OPTIONS` |
 | `compat` | `ollama` for an Ollama endpoint, otherwise omitted |
-| `structuredOutput` | How the endpoint returns structured results: `tool` (the default), `native` (the default for `compat: ollama`) or `prompted`. Typed AI task results are requested through a tool call |
+| `structuredOutput` | How the endpoint returns structured results: `tool` (the default), `native` (the default for `compat: ollama`) or `prompted`. A text result (a string schema whose only keywords are `type`, `minLength`, `maxLength`, `title` and `description`) is always asked for as plain text: closed `<think>…</think>` reasoning blocks are removed wherever they appear, surrounding whitespace is trimmed, and an answer cut off at the output token limit fails with `LLM_LIMIT`. When an endpoint refuses a `native` response format, the worker asks once more with the format in the prompt; that refused request counts against the step's model calls |
 | `caBundle` | An absolute CA file for a private HTTPS endpoint |
 
 The model names above illustrate the format; use models available to your provider

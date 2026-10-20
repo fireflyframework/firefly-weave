@@ -398,12 +398,14 @@ people connect with
   `_`, or `-`.
 - The generated password is printed once and never saved, and an existing
   username is never reset.
-- Without `--role`, the person gets `developer` on the demo project and
-  `deployer`, `operator`, `viewer`, and `task_participant` on the demo
+- Without `--role`, the person gets `developer` and `viewer` on the demo
+  project and `deployer`, `operator`, and `task_participant` on the demo
   environment.
 - Each `--role` replaces those defaults: `tenant_admin` is granted on the
-  tenant, `developer` on the project, and every other role on the environment.
-  Creating connections needs `tenant_admin`.
+  tenant, `developer` and `viewer` on the project, and every other role on the
+  environment. Published workflows are project resources, so a person without
+  `developer` needs `viewer` to see them. Creating connections needs
+  `tenant_admin`.
 
 **`integrations` and `secret` are for development only.**
 

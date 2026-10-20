@@ -408,17 +408,18 @@ def test_an_existing_event_type_keeps_its_bytes_and_an_empty_transition_keeps_no
     assert "call" not in json.dumps(result.model_dump(mode="json"))
 
 
-def test_a_debug_session_reports_a_waiting_call_and_simulates_past_a_detached_one():
+def test_a_debug_session_asks_for_a_waiting_calls_result_and_simulates_past_a_detached_one():
     from firefly_weave.operations.debug.simulator import Simulator
 
     waiting = Simulator(
         compiled([call()], {"ref": "/steps/enrich/output"}), mocks={}, input={"customerId": "c-1"}, now=NOW
     )
     view = waiting.continue_until_breakpoint()
-    assert [(d.code, d.message) for d in view.diagnostics] == [
+    assert [(d.code, d.message, d.hint) for d in view.diagnostics] == [
         (
             "WV-DEBUG-MISSING_MOCK",
-            "A step that waits for another workflow cannot be simulated yet; simulate the called workflow on its own.",
+            "A step that waits for another workflow needs a mock or the called workflow.",
+            "Add a mock under node:enrich, or the artifact of enrich@1.0.0 under workflows.",
         )
     ]
     detached = Simulator(

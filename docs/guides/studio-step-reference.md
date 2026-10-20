@@ -31,13 +31,13 @@ Studio writes the same versioned definition language that you can edit as YAML
 or build with the CLI and the Python SDK, so every choice here is visible in
 the **Source** tab.
 
-**This page describes the Studio 0.1.0a15 editor.** The step kinds and native
+**This page describes the Studio 0.1.0a16 editor.** The step kinds and native
 human tasks are also part of alpha6, but several controls described here, such
 as the canvas step picker, the searchable action picker, the **Value** /
 typed input rows with **Use data** and **Calculate…**, the schema designer, the API action builder,
 and the simulation setup and panel, are new in 0.1.0a7. An alpha6 or earlier
 browser bundle does not have them; to see the same screens,
-[install the alpha15 browser application](studio.md#install-the-alpha15-browser-application).
+[install the alpha16 browser application](studio.md#install-the-alpha16-browser-application).
 
 **How to use this page:**
 
@@ -200,7 +200,7 @@ details and **Assignment binding** in the inspector.
 | Write a file | **Connection**, **File**, **Destination**, and **Name** on a drive | | **Retry on fail**, **Timeout** |
 | Move a file | **Connection**, **Path** (**Item ID** on a drive), **Destination**, and **Name** on a drive | | **Retry on fail**, **Timeout** |
 | Decision table | **Table**, then the table's required inputs | The table's optional inputs | |
-| AI task | **Model**, one of the workflow's AI profiles, and **Prompt** | **Context**, **AI action version**, **AI connection** | |
+| AI task | **Model**, chosen from the models of your AI connections, and **Prompt** | **Context**, **Structured result**, **Max output tokens**, **Temperature**, **Reasoning pattern**, **Share settings with other AI steps** | **Timeout** |
 | Transform | **Fields**, or **Text** for a text template | | |
 | Decision | Each path's **Runs when** and **Path result**, then **Otherwise** | | |
 | Parallel | **Branches** | **Run at most**, **Branch results** | |
@@ -238,7 +238,28 @@ matching, no-match behavior, limits and API/SDK usage.
 
 ### AI task
 
-Choose **AI task** from the Actions palette. The built-in action reference is
+In step details, an AI task shows **Model** and **Prompt**. **Model** lists the
+approved models of every AI connection you may use, grouped by connection, with
+what each model can do (calls tools, its context size, local). Choosing one
+writes the step's AI settings (`spec.llmProfiles`, named after the step, or
+`<step>-2` and so on when that name is taken), the `ai` connection slot and the
+built-in action together, as one change you can undo. When the step uses
+settings that other AI steps share, the field says so: a new model changes
+shared settings for every step that uses them, except the `default` settings a
+new AI task starts with, where the step gets settings of its own. Until a model
+is chosen, the canvas card reads **Choose a model** and shows that the step
+needs setup instead of listing errors. **Set up AI** under the field opens the
+AI connection side sheet.
+
+A new AI task answers in text, up to 1,024 output tokens. **Structured result**
+under **Add option** describes fields the model fills in instead; **Max output
+tokens**, **Temperature** and **Reasoning pattern** tune the step's settings, and
+**Share settings with other AI steps** points the step at another AI step's
+settings, so both use the same model and options. **Timeout** (120 seconds) is
+on **Settings**, and can be changed once a model is chosen.
+
+The classic inspector works as follows. Choose **AI task** from the Actions
+palette. The built-in action reference is
 `weave-agentic-generate@1.0.0`; Studio indicates whether that action is available
 in the connected catalog. Select a **Workflow AI profile** and an **AI connection
 slot**, then map **AI prompt** and **AI context** using Value, Data or Formula.

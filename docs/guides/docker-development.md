@@ -40,10 +40,10 @@ application development.
 ```sh
 # Confirm that the installed CLI matches the source version below.
 weave --version
-# Expected: Firefly Weave 0.1.0a15.
+# Expected: Firefly Weave 0.1.0a16.
 
 # Download the matching operator files into a new, dedicated directory.
-git clone --branch v0.1.0a15 --depth 1 \
+git clone --branch v0.1.0a16 --depth 1 \
   https://github.com/fireflyframework/firefly-weave.git weave-platform-a15
 cd weave-platform-a15
 ```
