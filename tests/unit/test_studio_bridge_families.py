@@ -229,7 +229,8 @@ def test_every_operation_crosses_the_bridge_exactly_when_its_family_or_id_is_adm
     assert {"releases.create", "admin.grant", "admin.tenant"}.isdisjoint(crossing)
     # The AI setup operations add exactly these six, direct incident reads join the incidents
     # family, stale-worker retirement joins the workers family, and the environment summary,
-    # telemetry settings and release usage join as reads; every earlier crossing stays as it was.
+    # telemetry settings and release usage join as reads, and change requests join as their own family; every
+    # earlier crossing stays as it was.
     approved_additions = {
         "ai_endpoints.list",
         "ai_models.list",
@@ -243,6 +244,21 @@ def test_every_operation_crosses_the_bridge_exactly_when_its_family_or_id_is_adm
         "operations_telemetry.read",
         "releases.usage",
         "runs.calls",
+        *(
+            "deployment_change_requests." + verb
+            for verb in (
+                "create",
+                "list",
+                "read",
+                "advance",
+                "approve",
+                "drain",
+                "apply",
+                "replan",
+                "decline",
+                "cancel",
+            )
+        ),
     }
     assert approved_additions <= crossing
     preserved = crossing - approved_additions

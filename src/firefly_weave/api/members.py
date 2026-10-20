@@ -61,7 +61,12 @@ class MemberController:
     @operation("principals.create")
     async def create(self, request: Request) -> JSONResponse:
         body = PrincipalCreateRequest.model_validate_json(await request.body())
-        result = await self.members.create_principal(request.state.principal, body, context=request.state.audit_context)
+        result = await self.members.create_principal(
+            request.state.principal,
+            body,
+            context=request.state.audit_context,
+            idempotency_key=request.headers.get("Idempotency-Key"),
+        )
         return JSONResponse(result.model_dump(mode="json"), status_code=201)
 
     @operation("principals.link")

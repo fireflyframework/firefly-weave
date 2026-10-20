@@ -91,6 +91,8 @@ def prepared_release(tmp_path):
                 "image_identity.py",
                 "main.py",
                 "manifest.json",
+                "operations-worker.py",
+                "operations-worker-manifest.json",
                 "LICENSE",
                 "NOTICE",
             )

@@ -68,6 +68,8 @@ export class OperationsStore {
   mutating = false;
   mutationError = "";
   mutationErrorCode = "";
+  /** The HTTP status behind `mutationError`, or 0. */
+  mutationErrorStatus = 0;
   mutationUncertain = false;
   private pendingMutation: { identity: string; key: string } | null = null;
   constructor(
@@ -230,6 +232,7 @@ export class OperationsStore {
     this.pendingMutation = null;
     this.mutationError = "";
     this.mutationErrorCode = "";
+    this.mutationErrorStatus = 0;
     this.mutationUncertain = false;
   }
   async mutate<T>(
@@ -241,7 +244,7 @@ export class OperationsStore {
   ): Promise<T | null> {
     if (!this.scope || !this.readable || this.mutating) return null;
     if (
-      !/^(deployment-targets|deployments|deployment-observations|deployment-plans|deployment-jobs|deployment-runners)(\/[A-Za-z0-9-]+){0,2}$/.test(
+      !/^(deployment-targets|deployments|deployment-observations|deployment-plans|deployment-jobs|deployment-runners|deployment-change-requests)(\/[A-Za-z0-9-]+){0,2}$/.test(
         path,
       )
     )
@@ -268,6 +271,7 @@ export class OperationsStore {
     this.mutationError = "";
     this.changed();
     this.mutationErrorCode = "";
+    this.mutationErrorStatus = 0;
     this.mutationUncertain = false;
     const headers: Record<string, string> = { "Idempotency-Key": intent.key };
     if (revision !== undefined) headers["If-Match"] = `"${revision}"`;
@@ -286,6 +290,7 @@ export class OperationsStore {
         const plain = describeError(error);
         this.mutationError = plain.message;
         this.mutationErrorCode = plain.code;
+        this.mutationErrorStatus = plain.status;
         this.mutationUncertain =
           plain.status === 0 || plain.status === 408 || plain.status >= 500;
         if (!this.mutationUncertain && this.pendingMutation === intent)

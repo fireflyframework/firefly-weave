@@ -28,6 +28,7 @@ from firefly_weave.access.audit import AuditContext, event
 from firefly_weave.access.authorization import AccessDenied, AuthorizationService
 from firefly_weave.access.models import Grant, Principal, VerifiedIdentity
 from firefly_weave.access.repository import load_principal
+from firefly_weave.access.roles import ROLE_CAPABILITIES
 from firefly_weave.contracts.access import Scope
 from firefly_weave.persistence.uow import Transaction, UnitOfWork
 
@@ -252,6 +253,28 @@ class AccessService:
                         "grant": grant.model_dump(mode="json"),
                     },
                 )
+                if "deployment.approve" in ROLE_CAPABILITIES[grant.role]:
+                    kind = await tx.session.scalar(
+                        text("SELECT kind FROM principals WHERE id=:id"), {"id": principal_id}
+                    )
+                    if kind == "application":
+                        # The second-approver rule compares accounts, not people: whoever can give an application
+                        # account approval rights can approve their own plans through it. Auditors find it here.
+                        await audit(
+                            tx.session,
+                            actor,
+                            "deployment_target.approval_policy",
+                            str(principal_id),
+                            scope=grant.scope,
+                            capability=self.delegation_capability(actor),
+                            context=context,
+                            details={
+                                "binding_id": str(identifier),
+                                "approver_kind": kind,
+                                "role": grant.role,
+                                "resources": list(grant.resources),
+                            },
+                        )
         return identifier
 
     async def create_principal(self, actor: Principal, kind: str, *, context: AuditContext | None = None) -> UUID:

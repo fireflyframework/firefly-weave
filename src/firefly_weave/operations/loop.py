@@ -17,7 +17,8 @@
 """The lifespan-owned operations loop: bounded per-environment quanta under execute-only traversal authority.
 
 Every minute it pages tenants with its own cursors and gives one environment per tenant a budget of one second of
-database work. Today that work refreshes cached run listing decisions; it never grants execution authority.
+database work. That work refreshes cached run listing decisions, persists expired change request plans and prunes
+change requests that ended 90 days ago; it never grants execution authority.
 """
 
 import asyncio
@@ -43,6 +44,8 @@ from firefly_weave.settings import Settings
 
 # Database work one environment may use per cycle. A quantum that runs out resumes on a later cycle.
 ENVIRONMENT_SECONDS = 1.0
+# Change request upkeep has its own budget after revalidation, so a revalidation backlog never starves it.
+UPKEEP_SECONDS = 0.25
 # The wall-clock guard waits this much longer, so the database's own timeout normally ends a slow statement.
 CANCEL_GRACE_SECONDS = 0.25
 # A cycle runs one pure classification at a time; the spare slot absorbs one that outlived its cancelled quantum.
@@ -145,8 +148,10 @@ class OperationsLoop:
 
     async def _environment(self, authority: _SchedulerScope) -> None:
         deadline = self.monotonic() + ENVIRONMENT_SECONDS
-        async with asyncio.timeout(ENVIRONMENT_SECONDS + CANCEL_GRACE_SECONDS):
-            if not await self.revalidate(authority, deadline):
+        async with asyncio.timeout(ENVIRONMENT_SECONDS + UPKEEP_SECONDS + CANCEL_GRACE_SECONDS):
+            revalidated = await self.revalidate(authority, deadline)
+            maintained = await self.maintain_changes(authority, self.monotonic() + UPKEEP_SECONDS)
+            if not (revalidated and maintained):
                 raise QuantumIncomplete()
 
     @asynccontextmanager
@@ -213,6 +218,27 @@ class OperationsLoop:
                     await FactRepository(tx).refresh_listing_metadata(run_id)
             except Exception as error:
                 log.error("Operations revalidation of a run failed (%s); later runs continue", failure_cause(error))
+                completed = False
+        return completed
+
+    async def maintain_changes(self, authority: _SchedulerScope, deadline_monotonic: float) -> bool:
+        """Persist expired change request plans, then prune those that ended 90 days ago, each in its own unit.
+
+        True when both steps completed; a failed step is logged and the other still runs.
+        """
+        if not isinstance(authority, _SchedulerScope):
+            raise AccessDenied()
+        from firefly_weave.deployments import change_service
+
+        completed = True
+        for step in (change_service.persist_expiry, change_service.retention):
+            try:
+                async with self._unit(authority, deadline_monotonic, mutation=True) as tx:
+                    await change_service.upkeep(tx, step)
+            except QuantumIncomplete:
+                return False
+            except Exception as error:
+                logging.getLogger(__name__).error("Operations change request upkeep failed (%s)", failure_cause(error))
                 completed = False
         return completed
 

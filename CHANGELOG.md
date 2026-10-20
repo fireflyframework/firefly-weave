@@ -47,6 +47,29 @@ SPDX-License-Identifier: Apache-2.0
   the server: an earlier CLI or SDK can't read this server's manifest, while
   this CLI or SDK still reads an earlier server's (see
   [language manifest compatibility](docs/operations/upgrades.md#language-manifest-compatibility)).
+- Operations work out of the box on the local Docker platform, and every
+  infrastructure change can go through a reviewed **change request**. `weave
+  platform up` starts a local registry, admits the sleep fixture worker
+  `example-sleep@1.0.0`, writes a workers project with `fixture-worker` at 0
+  replicas and starts a hardened runner for the target `local-docker`
+  (`--no-operations` skips it; `doctor` explains that the runner controls the
+  Docker engine). A change request observes the target, plans, waits for an
+  approval, lets the workers it removes or restarts finish their tasks, applies
+  and follows the runner; an expired or stale one is re-observed and re-planned
+  in one step, and ended ones are kept 90 days. New: the
+  `deployment_change_requests` operations, `weave operations change-requests`,
+  the `restart_workers` intent, the `change_request.transition` event, and
+  Studio's change request wizard, progress view, approvals inbox with
+  countdowns, Clusters badge and notice. Targets need a second approver unless
+  an environment manager turns it off (`local-docker` turns it off); the
+  requester and the planner get `WV-APPROVAL-SELF`. Any plan that lowers worker
+  replicas removes exactly the reviewed workers, and only Compose runners of
+  this release take such plans. Removing or restarting workers that no
+  registered worker matches (`WV-DRAIN-UNKNOWN`) needs an audited reason. For
+  seven days, a repeated `Idempotency-Key` on principal creation answers the
+  principal it created, as it is now. Migrations
+  `0034_operations_change_requests` and `0035_principal_idempotency` add empty
+  tables; see the upgrade notes for the approval change and the runner upgrade.
 - Weave AI runs on a local Ollama model. It works on a keyless connection such as
   `ollama-local`, sending no credential, and `weave platform ai enable` turns it
   on with the tested model unless Weave AI is already set up. Each request is

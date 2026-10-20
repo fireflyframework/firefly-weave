@@ -31,6 +31,9 @@ from uuid import uuid4
 from firefly_weave.sdk import platform as local
 from firefly_weave.sdk.deployment import read_file, real_path, strict_json
 
+# The clients the local provider accepts: those setup creates, and the two local operations add.
+_CLIENTS = frozenset({"weave-host", "weave-worker", "weave-cli", "weave-operations-worker", "weave-operations-runner"})
+
 
 def _private_bytes(path: Path, data: bytes) -> None:
     with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".docker-", delete=False) as stream:
@@ -80,6 +83,8 @@ def environment(state: dict[str, Any], execution: dict[str, str]) -> dict[str, s
         or providers[0].get("issuer") != issuer
         or providers[0].get("jwks_uri") != issuer + "/protocol/openid-connect/certs"
         or providers[0].get("local_development") is not True
+        or not isinstance(providers[0].get("clients"), dict)
+        or not set(providers[0]["clients"]) <= _CLIENTS
     ):
         raise local.PlatformError("The saved identity configuration is outside this installation.")
     providers[0]["jwks_uri"] = "http://127.0.0.1:8080/realms/weave/protocol/openid-connect/certs"
@@ -120,11 +125,8 @@ def _image(state: dict[str, Any]) -> str:
     return value
 
 
-def _build(state: dict[str, Any], notice: Callable[[str], None]) -> None:
-    if state.get("docker_image") is not None:
-        _image(state)
-        return
-    directory = Path(state["directory"])
+def retained_build_context(directory: Path) -> Path:
+    """Check every retained build input against the release receipt and return the build context."""
     release = strict_json(read_file(directory / "release/release.json", 65536))
     context = directory / "release/images"
     if not release.get("complete"):
@@ -134,6 +136,15 @@ def _build(state: dict[str, Any], notice: Callable[[str], None]) -> None:
             raise local.PlatformError("The retained Docker build inputs changed.")
     if strict_json(read_file(context / "release.json", 65536)) != release:
         raise local.PlatformError("The Docker build receipt differs from the retained release.")
+    return context
+
+
+def _build(state: dict[str, Any], notice: Callable[[str], None]) -> None:
+    if state.get("docker_image") is not None:
+        _image(state)
+        return
+    directory = Path(state["directory"])
+    context = retained_build_context(directory)
     notice("Building the retained server image for this Docker platform")
     receipt = directory / "api-image.id"
     if receipt.exists():

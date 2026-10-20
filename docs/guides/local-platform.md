@@ -45,6 +45,8 @@ that already exists, [connect the CLI to it](connect-to-api.md).
 The [Docker development guide](docker-development.md) combines setup, detached API
 startup, a demo workspace, and optional account creation in `weave platform up`.
 Use that route when you want to close the terminal and keep working in Studio.
+It also sets up [local operations](docker-development.md#8-try-infrastructure-changes-on-this-computer-development-only)
+for trying change requests on your own computer.
 The steps below retain the foreground API route for developers inspecting server logs.
 
 ## The route at a glance

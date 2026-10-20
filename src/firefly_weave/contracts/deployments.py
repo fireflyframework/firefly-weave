@@ -16,6 +16,9 @@
 
 """Typed, bounded Operations plans; infrastructure credentials remain with the runner."""
 
+import hashlib
+import json
+from collections.abc import Sequence
 from typing import Annotated, Literal, Self
 from uuid import UUID
 
@@ -33,10 +36,21 @@ type ImageReference = Annotated[
     str, Field(max_length=512, pattern=r"^[a-zA-Z0-9][a-zA-Z0-9._:/-]*@sha256:[0-9a-f]{64}$")
 ]
 type AdapterKind = Literal["docker-compose", "kubernetes", "azure-container-apps"]
-type DeploymentCapability = Literal["observe", "deploy", "update", "scale_workers", "drain_workers"]
+type DeploymentCapability = Literal["observe", "deploy", "update", "scale_workers", "drain_workers", "restart_workers"]
+type PlanIntent = Literal["deploy", "update", "scale_workers", "drain_workers", "restart_workers"]
 type JobState = Literal[
     "queued", "claimed", "running", "verifying", "succeeded", "failed", "cancelled", "reconciliation_required"
 ]
+
+
+class ApprovalPolicy(ContractModel):
+    """Who may approve a target's plans. A second person approves unless the target turns this off."""
+
+    distinct_approver: bool = True
+
+
+def _default_policy(value: ApprovalPolicy) -> bool:
+    return value.distinct_approver
 
 
 class TargetRequest(ContractModel):
@@ -45,7 +59,9 @@ class TargetRequest(ContractModel):
     external_identity: ExternalIdentity
     boundary: DeploymentName
     runner_principal_id: UUID
-    capabilities: list[DeploymentCapability] = Field(min_length=1, max_length=5)
+    capabilities: list[DeploymentCapability] = Field(min_length=1, max_length=6)
+    # Left out at its default, so targets stored before policies existed keep their bytes and read as strict.
+    approval_policy: ApprovalPolicy = Field(default_factory=ApprovalPolicy, exclude_if=_default_policy)
 
     @model_validator(mode="after")
     def distinct_capabilities(self) -> Self:
@@ -64,8 +80,10 @@ class DeploymentTarget(TargetRequest):
 
 class TargetUpdate(ContractModel):
     runner_principal_id: UUID
-    capabilities: list[DeploymentCapability] = Field(min_length=1, max_length=5)
+    capabilities: list[DeploymentCapability] = Field(min_length=1, max_length=6)
     disabled: bool = False
+    # None keeps the target's policy; changing it also needs environment.manage.
+    approval_policy: ApprovalPolicy | None = Field(default=None, exclude_if=lambda v: v is None)
 
 
 class ComponentSpec(ContractModel):
@@ -170,14 +188,49 @@ class PlanRequest(ContractModel):
     deployment_id: UUID
     deployment_revision: int = Field(ge=1)
     observation_id: UUID
-    intent: Literal["deploy", "update", "scale_workers", "drain_workers"]
+    intent: PlanIntent
     ttl_seconds: int = Field(default=300, ge=30, le=900)
 
 
 class PlanStep(ContractModel):
-    action: Literal["deploy", "update", "scale_workers", "drain_workers"]
+    action: PlanIntent
     component: ComponentSpec
     expected_version: ExternalIdentity | None = None
+
+
+class MemberSelectionError(ValueError):
+    """The observation does not list every member a scale-down would choose from."""
+
+
+def removed_members(adapter: AdapterKind, members: Sequence[ObservedMember], count: int) -> list[str]:
+    """The `count` members to remove: Compose's highest container numbers; Kubernetes' not-ready pods first, then
+    the most recently started (a pod without a start time counts as the newest)."""
+    if len(members) < count or (adapter == "docker-compose" and any(m.ordinal is None for m in members)):
+        raise MemberSelectionError("The observation does not list every worker to remove")
+    if adapter == "docker-compose":
+        ordered = sorted(members, key=lambda m: (m.ordinal or 0, m.host), reverse=True)
+    else:
+        ordered = sorted(
+            members, key=lambda m: (m.ready, -(m.started_at.timestamp() if m.started_at else float("inf")), m.host)
+        )
+    return [member.host for member in ordered[:count]]
+
+
+def scale_down_members(adapter: AdapterKind, resource: ObservedResource, desired: int) -> list[str]:
+    """The running members a scale-down of `resource` to `desired` replicas removes.
+
+    The rule is part of what a plan means: the server applies it to the plan's observation and the runner to the
+    same observed state (the step's expected version), so the reviewed members never travel in the plan document.
+    Compose lists only running containers as members and counts exited ones in its replicas: exited containers go
+    first and need no drain, then the highest container numbers. Kubernetes lists every pod.
+    """
+    excess = resource.replicas - desired
+    if adapter == "docker-compose":
+        if resource.ready_replicas > len(resource.members):
+            # Ready containers are running ones, so members that cannot all be listed are unknown, not exited.
+            raise MemberSelectionError("The observation does not list every worker")
+        excess -= max(0, resource.replicas - len(resource.members))
+    return removed_members(adapter, resource.members, max(0, excess))
 
 
 class DeploymentPlan(ContractModel):
@@ -189,7 +242,7 @@ class DeploymentPlan(ContractModel):
     deployment_revision: int = Field(ge=1)
     adapter: AdapterKind
     adapter_version: Literal["1"] = "1"
-    intent: Literal["deploy", "update", "scale_workers", "drain_workers"]
+    intent: PlanIntent
     observation_id: UUID
     observation_digest: Digest
     steps: list[PlanStep] = Field(min_length=1, max_length=100)
@@ -258,8 +311,10 @@ class DeploymentJob(ContractModel):
 class RunnerRegistration(ContractModel):
     target_id: UUID
     adapter: AdapterKind
-    adapter_version: Literal["1"] = "1"
-    capabilities: list[DeploymentCapability] = Field(min_length=1, max_length=5)
+    # Version 2 runners remove exactly the members `scale_down_members` chooses on a scale-down; only they
+    # are offered scale-down apply jobs. Runners of earlier releases register version 1.
+    adapter_version: Literal["1", "2"] = "1"
+    capabilities: list[DeploymentCapability] = Field(min_length=1, max_length=6)
 
 
 class DeploymentRunner(RunnerRegistration):
@@ -316,3 +371,177 @@ class ReconcileJobRequest(ContractModel):
     plan_digest: Digest
     observation_id: UUID
     external_operation_stopped: Literal[True]
+
+
+# Change requests: one reviewed infrastructure change that outlives its plans.
+type ChangeIntent = Literal["deploy", "update", "scale_workers", "restart_workers"]
+type ChangeState = Literal[
+    "observing",
+    "ready_to_plan",
+    "awaiting_approval",
+    "approved",
+    "draining",
+    "applying",
+    "succeeded",
+    "failed",
+    "reconciliation_required",
+    "expired",
+    "declined",
+    "cancelled",
+    "superseded",
+]
+# One line of text a person typed: no control characters.
+type ChangeTitle = Annotated[
+    str, Field(min_length=1, max_length=120, pattern=r"^[^\x00-\x1f\x7f]*\S[^\x00-\x1f\x7f]*$")
+]
+# Free text that may span lines, with no other control characters.
+type ChangeReason = Annotated[str, Field(max_length=2000, pattern=r"^[^\x00-\x09\x0b-\x1f\x7f]*$")]
+type ErrorCode = Annotated[str, Field(pattern=r"^WV-[A-Z0-9-]{1,60}$")]
+
+
+class DesiredComponent(ContractModel):
+    """What a change request sets on one component; fields left out keep the deployment's value."""
+
+    name: DeploymentName
+    replicas: int | None = Field(default=None, ge=0, le=100, exclude_if=lambda v: v is None)
+    image: ImageReference | None = Field(default=None, exclude_if=lambda v: v is None)
+    worker_release_id: UUID | None = Field(default=None, exclude_if=lambda v: v is None)
+    cpu_millis: int | None = Field(default=None, ge=100, le=16000, exclude_if=lambda v: v is None)
+    memory_mib: int | None = Field(default=None, ge=128, le=65536, exclude_if=lambda v: v is None)
+
+
+class DrainSetting(ContractModel):
+    mode: Literal["none", "drain_first"] = "none"
+    timeout_seconds: int = Field(default=300, ge=60, le=600)
+
+
+class ChangeRequestCreate(ContractModel):
+    target_id: UUID
+    deployment_id: UUID
+    expected_deployment_revision: int = Field(ge=1)
+    intent: ChangeIntent
+    components: list[DeploymentName] = Field(min_length=1, max_length=100)
+    desired: list[DesiredComponent] | None = Field(default=None, max_length=100, exclude_if=lambda v: v is None)
+    drain: DrainSetting = Field(default_factory=DrainSetting)
+    title: ChangeTitle
+    reason: ChangeReason = ""
+    # Left out, the server uses 600 s, or 900 s when the change drains workers.
+    plan_ttl_seconds: int | None = Field(default=None, ge=30, le=900, exclude_if=lambda v: v is None)
+
+    @model_validator(mode="after")
+    def bounded_intent(self) -> Self:
+        if len(set(self.components)) != len(self.components):
+            raise ValueError("Components must be distinct")
+        names = [item.name for item in self.desired or []]
+        if len(set(names)) != len(names) or not set(names) <= set(self.components):
+            raise ValueError("Desired values must name distinct selected components")
+        return self
+
+
+class ChangeApproval(ContractModel):
+    principal_id: UUID
+    approved_at: AwareDatetime
+
+
+class DrainMember(ContractModel):
+    worker_id: UUID
+    host: WorkerHost
+    active_leases: int = Field(ge=0, le=100000)
+
+
+class ChangeFailure(ContractModel):
+    code: ErrorCode
+    message: Annotated[str, Field(max_length=500)]
+
+
+class ChangeHistory(ContractModel):
+    at: AwareDatetime
+    state: ChangeState
+    actor_id: UUID | None = None
+
+
+class ChangeRequest(ChangeRequestCreate):
+    id: UUID
+    scope: Scope
+    revision: int = Field(ge=1)
+    requested_by: UUID
+    created_at: AwareDatetime
+    plan_ttl_seconds: int | None = Field(default=None, ge=30, le=900)
+    deployment_revision: int = Field(ge=1)
+    approval_policy: ApprovalPolicy
+    state: ChangeState
+    observation_job_id: UUID | None = None
+    observation_id: UUID | None = None
+    plan_id: UUID | None = None
+    plan_digest: Digest | None = None
+    plan_expires_at: AwareDatetime | None = None
+    approval: ChangeApproval | None = None
+    # Who made the current plan. Plans themselves do not carry it, so runners and clients of earlier releases
+    # still read them; the server keeps it beside each plan.
+    planned_by: UUID | None = None
+    drain_set: list[DrainMember] = Field(default_factory=list, max_length=100)
+    # The workers this change put into draining and has not resumed: they are resumed when it ends without
+    # applying anything; after it succeeds only the workers its plan removed stay listed.
+    drained: list[UUID] = Field(default_factory=list, max_length=100)
+    # Each drained worker's control revision right after this change drained it: a worker whose revision moved
+    # since was resumed, or drained again, by someone else, and the change leaves it as they left it.
+    drained_revisions: dict[UUID, int] = Field(default_factory=dict, max_length=100, exclude_if=lambda v: not v)
+    apply_job_id: UUID | None = None
+    failure: ChangeFailure | None = None
+    # Codes the runner's verification raised after a change succeeded, such as WV-DRAIN-VICTIMS.
+    warnings: list[ErrorCode] = Field(default_factory=list, max_length=10)
+    history: list[ChangeHistory] = Field(default_factory=list, max_length=50)
+
+
+class ChangeRequestApprove(ContractModel):
+    digest: Digest
+
+
+class ChangeRequestApply(ContractModel):
+    digest: Digest
+    force_after_timeout: bool = False
+    force_reason: ChangeReason | None = None
+
+    @model_validator(mode="after")
+    def forced_with_reason(self) -> Self:
+        if self.force_after_timeout and not (self.force_reason or "").strip():
+            raise ValueError("Forcing an apply after the drain timeout needs a reason")
+        return self
+
+
+class ChangeRequestDecision(ContractModel):
+    reason: Annotated[ChangeReason, Field(min_length=1)]
+
+
+class DrainProgressMember(DrainMember):
+    draining: bool
+    presence: Literal["recent", "stale", "unknown"]
+    revoked: bool
+
+
+class DrainProgress(ContractModel):
+    # Present only for a caller who may read the change request's target; worker drain rights alone show the drain.
+    change_request: ChangeRequest | None = Field(default=None, exclude_if=lambda v: v is None)
+    members: list[DrainProgressMember] = Field(max_length=100)
+    remaining: int = Field(ge=0, le=100)
+
+
+class ChangeRequestQuery(ContractModel):
+    """`deployment_change_requests.list` filters; a state filter matches the state readers see."""
+
+    target_id: UUID | None = None
+    state: list[ChangeState] = Field(default_factory=list, max_length=13)
+    requested_by: Literal["me"] | None = None
+    limit: int = Field(default=50, ge=1, le=100)
+    cursor: Annotated[str, Field(min_length=1, max_length=1024, pattern=r"^[A-Za-z0-9_-]+$")] | None = None
+
+    @model_validator(mode="after")
+    def distinct_states(self) -> Self:
+        if len(set(self.state)) != len(self.state):
+            raise ValueError("States must be distinct")
+        return self
+
+    def cursor_collection(self) -> str:
+        """Cursors are bound to every filter, so a changed filter refuses an old cursor."""
+        filters = json.dumps(self.model_dump(mode="json", exclude={"limit", "cursor"}), sort_keys=True)
+        return "deployment-change-requests:" + hashlib.sha256(filters.encode()).hexdigest()[:32]

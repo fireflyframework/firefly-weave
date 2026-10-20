@@ -77,6 +77,11 @@ def health_for(value: Settings) -> LoopHealth:
     return health
 
 
+async def maintained(scope, deadline):
+    """Change request upkeep with nothing to do; its own tests are in test_change_request_loop.py."""
+    return True
+
+
 def tasks_named(name: str) -> list[asyncio.Task]:
     return [task for task in asyncio.all_tasks() if task.get_name() == name and not task.done()]
 
@@ -202,6 +207,7 @@ async def test_cycle_traverses_its_own_cursors_one_environment_per_tenant(monkey
     loop = OperationsLoop(settings(), None, LoopHealth())  # type: ignore[arg-type]
     loop.engine = object()  # type: ignore[assignment]
     monkeypatch.setattr(loop, "revalidate", revalidate)
+    monkeypatch.setattr(loop, "maintain_changes", maintained)
     assert await loop.cycle() is True
     # The operations traversal never moves the recovery cursors.
     assert pages == [(16, True)]
@@ -237,6 +243,7 @@ async def test_an_environment_overrun_fails_the_cycle_but_later_tenants_still_pr
     loop = OperationsLoop(settings(), None, LoopHealth(), monotonic=lambda: clock["now"])  # type: ignore[arg-type]
     loop.engine = object()  # type: ignore[assignment]
     monkeypatch.setattr(loop, "revalidate", revalidate)
+    monkeypatch.setattr(loop, "maintain_changes", maintained)
     assert await loop.cycle() is False
     assert [tenant for tenant, _ in progressed] == tenants
 
@@ -259,6 +266,7 @@ async def test_a_quantum_that_outlives_its_wall_clock_guard_is_cancelled(monkeyp
     loop = OperationsLoop(settings(), None, LoopHealth())  # type: ignore[arg-type]
     loop.engine = object()  # type: ignore[assignment]
     monkeypatch.setattr(loop, "revalidate", revalidate)
+    monkeypatch.setattr(loop, "maintain_changes", maintained)
     async with asyncio.timeout(2):
         assert await loop.cycle() is False
 
@@ -283,6 +291,7 @@ async def test_cycle_runs_pure_work_from_its_reservation_while_requests_hold_eve
     loop = OperationsLoop(settings(), None, LoopHealth())  # type: ignore[arg-type]
     loop.engine = object()  # type: ignore[assignment]
     monkeypatch.setattr(loop, "revalidate", revalidate)
+    monkeypatch.setattr(loop, "maintain_changes", maintained)
     async with saturated_requests():
         assert await loop.cycle() is True
     assert ran == ["classified"]

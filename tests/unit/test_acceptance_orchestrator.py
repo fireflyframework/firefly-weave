@@ -683,3 +683,66 @@ def test_a_studio_step_whose_page_left_http_or_its_hosts_fails_itself():
     assert body < after
     sign_in = harness[harness.index("  async signIn(name: string)") :]
     assert "this.#navigationProblems.push(" in sign_in[: sign_in.index("\n  }\n")]
+
+
+class ImageRecorder:
+    """Answers the Docker commands of the operations image steps and records them."""
+
+    def __init__(self):
+        self.commands = []
+
+    def run(self, argv, **kwargs):
+        argv = list(argv)
+        self.commands.append(argv)
+        stdout = ""
+        if "--iidfile" in argv:
+            Path(argv[argv.index("--iidfile") + 1]).write_text("sha256:" + ("1" if "runner" in argv else "2") * 64)
+        elif argv[-2:] == ["--format", "{{.Id}}"]:
+            stdout = argv[-3]
+        elif "inspect" in argv:
+            stdout = "layers and config"
+        elif argv[3:5] == ["ps", "--all"] or "ls" in argv:
+            stdout = ""
+        return subprocess.CompletedProcess(argv, 0, stdout=stdout, stderr="")
+
+
+def test_prepare_pins_the_registry_and_docker_cli_images(tmp_path):
+    from firefly_weave.sdk import platform_operations
+
+    versions = acceptance.acceptance_journeys.load_versions(acceptance.VERSIONS)
+    assert versions["images"]["registry"] == platform_operations.REGISTRY_IMAGE
+    assert versions["images"]["docker_cli"] == platform_operations.DOCKER_CLI_IMAGE
+    assert f"COPY --from={platform_operations.DOCKER_CLI_IMAGE} " in (ROOT / "Dockerfile").read_text()
+    # The operations images weave platform up builds are built here from the same inputs, so they are cache hits.
+    plan = blocked_plan(tmp_path)
+    recorder = ImageRecorder()
+    release = tmp_path / "release"
+    inventory = acceptance._operations_images(plan, recorder, plan.docker(), release)
+    builds = [argv for argv in recorder.commands if "build" in argv]
+    assert [argv[argv.index("--target") + 1] for argv in builds] == ["runner", "operations-worker"]
+    assert builds[1][builds[1].index("-f") + 1] == str(release / "images" / "worker.Dockerfile")
+    assert [item["ref"] for item in inventory] == [
+        "firefly-weave runner (weave platform up inputs)",
+        "firefly-weave sleep fixture worker (weave platform up inputs)",
+    ]
+
+
+def test_down_removes_the_workers_project_and_the_operations_images(tmp_path):
+    plan = blocked_plan(tmp_path)
+    plan.state["egress_rules"] = False
+    platform = plan.platform_dir
+    platform.mkdir(parents=True)
+    (platform / "platform.json").write_text(json.dumps({"id": "a" * 24}))
+    runner, worker = "sha256:" + "1" * 64, "sha256:" + "2" * 64
+    (platform / "operations.json").write_text(json.dumps({"runner_image": runner, "worker_image_id": worker}))
+    assert acceptance._projects(plan) == [
+        "weave-local-" + "a" * 24,
+        "weave-local-" + "a" * 24 + "-workers",
+        f"weave-acc-{RUN}",
+    ]
+    recorder = ImageRecorder()
+    acceptance.down(plan, recorder)
+    removed = [argv for argv in recorder.commands if argv[3:5] == ["image", "rm"]]
+    assert removed == [[*plan.docker(), "image", "rm", "--force", runner, worker]]
+    project_filters = [argv[-1] for argv in recorder.commands if "ps" in argv and "--quiet" in argv]
+    assert "label=com.docker.compose.project=weave-local-" + "a" * 24 + "-workers" in project_filters

@@ -43,6 +43,8 @@ def build(release: Path, output: Path, context: str) -> dict:
         "image_identity.py",
         "main.py",
         "manifest.json",
+        "operations-worker.py",
+        "operations-worker-manifest.json",
         "LICENSE",
         "NOTICE",
         "base-requirements.txt",

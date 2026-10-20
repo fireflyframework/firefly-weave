@@ -25,3 +25,5 @@
 !manifest.json
 !LICENSE
 !NOTICE
+!operations-worker.py
+!operations-worker-manifest.json

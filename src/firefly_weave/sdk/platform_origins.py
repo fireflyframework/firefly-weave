@@ -68,6 +68,8 @@ _HEX = re.compile(r"[0-9a-f]{64}")
 _FIXTURE_KEYS = frozenset({"origins", "network", "subnet", "consent", "consented_at"})
 AI_CONSENT = "weave platform ai enable"
 AI_PURPOSES = frozenset({"model", "worker-auth", "platform-api"})
+OPERATIONS_CONSENT = "weave platform up"
+OPERATIONS_PURPOSES = frozenset({"worker-auth", "platform-api"})
 
 
 def fixture_origin(value: str) -> str:
@@ -216,13 +218,14 @@ def entry_records(entries: Sequence[private_origins.PrivateOrigin]) -> list[dict
     ]
 
 
-def _ai_entries(value: dict[str, Any]) -> list[private_origins.PrivateOrigin]:
+def _ai_entries(value: dict[str, Any], key: str = "ai") -> list[private_origins.PrivateOrigin]:
     found = []
-    for item in (value.get("ai") or {}).get("entries", []):
+    purposes = AI_PURPOSES if key == "ai" else OPERATIONS_PURPOSES
+    for item in (value.get(key) or {}).get("entries", []):
         if (
             not isinstance(item, dict)
             or set(item) != {"origin", "purpose", "networks", "credentials"}
-            or item["purpose"] not in AI_PURPOSES
+            or item["purpose"] not in purposes
         ):
             raise ValueError("Unknown AI entry")
         found.append(
@@ -248,6 +251,8 @@ def _fixture_entries(value: dict[str, Any]) -> list[private_origins.PrivateOrigi
 
 def _render(value: dict[str, Any]) -> bytes:
     entries = [*_fixture_entries(value), *_ai_entries(value)]
+    # AI and operations both need the loopback sign-in entries; an operations entry AI already wrote is written once.
+    entries += [entry for entry in _ai_entries(value, "operations") if entry not in entries]
     return private_origins.render(
         private_origins.PrivateOrigins(platform=private_origins.PLATFORM).with_entries(entries)
     )
@@ -261,7 +266,7 @@ def validate_state(state: dict[str, Any]) -> None:
             raise ValueError("Unknown consent metadata")
         keys = set(value) - {"file_sha256"}
         fixtures = keys & _FIXTURE_KEYS
-        if not keys or keys - _FIXTURE_KEYS - {"ai"} or (fixtures and fixtures != _FIXTURE_KEYS):
+        if not keys or keys - _FIXTURE_KEYS - {"ai", "operations"} or (fixtures and fixtures != _FIXTURE_KEYS):
             raise ValueError("Unknown consent metadata")
         if fixtures:
             if (
@@ -284,6 +289,18 @@ def validate_state(state: dict[str, Any]) -> None:
                 or not isinstance(ai["entries"], list)
                 or not ai["entries"]
                 or ai["entries"] != entry_records(_ai_entries(value))
+            ):
+                raise ValueError("Unknown consent metadata")
+        if "operations" in value:
+            operations = value["operations"]
+            if (
+                not isinstance(operations, dict)
+                or set(operations) != {"entries", "consent", "consented_at"}
+                or operations["consent"] != OPERATIONS_CONSENT
+                or not isinstance(operations["consented_at"], str)
+                or not isinstance(operations["entries"], list)
+                or not operations["entries"]
+                or operations["entries"] != entry_records(_ai_entries(value, "operations"))
             ):
                 raise ValueError("Unknown consent metadata")
         # The recorded entries must form one valid policy: one entry per origin and purpose.
@@ -340,7 +357,9 @@ def _ai_transition(before: dict[str, Any] | None, after: dict[str, Any] | None) 
         return {key: item for key, item in (value or {}).items() if key in _FIXTURE_KEYS}
 
     if before == after or fixtures(before) != fixtures(after):
-        raise local.PlatformError("Pending transition is not an AI-only consent update; no files were changed.")
+        raise local.PlatformError(
+            "Pending transition is not an AI or operations consent update; no files were changed."
+        )
 
 
 def _finish(state: dict[str, Any], after: dict[str, Any] | None, data: bytes | None) -> None:
@@ -452,6 +471,29 @@ def set_ai_entries(state: dict[str, Any], entries: Sequence[private_origins.Priv
     return True
 
 
+def set_operations_entries(state: dict[str, Any], entries: Sequence[private_origins.PrivateOrigin]) -> bool:
+    """Durably record the local operations entries and publish the matching policy; True on change."""
+    if state.get("mode") != "docker":
+        raise local.PlatformError("Private origins need the Docker platform; use weave platform up.")
+    if not entries or any(entry.purpose not in OPERATIONS_PURPOSES or entry.source != "file" for entry in entries):
+        raise ValueError("Operations entries are worker-auth or platform-api entries")
+    records = entry_records(entries)
+    value = dict(state.get("private_origins") or {})
+    if (value.get("operations") or {}).get("entries") == records:
+        return False
+    if value:
+        verified(state)
+    value["operations"] = {
+        "entries": records,
+        "consent": OPERATIONS_CONSENT,
+        "consented_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    data = _render(value)
+    value["file_sha256"] = hashlib.sha256(data).hexdigest()
+    _transition(state, value)
+    return True
+
+
 def remove_ai_entries(state: dict[str, Any]) -> bool:
     """Drop AI's entries; the file goes away when no connector test origin remains. True on change."""
     value = dict(state.get("private_origins") or {})
@@ -459,7 +501,7 @@ def remove_ai_entries(state: dict[str, Any]) -> bool:
         return False
     verified(state)
     del value["ai"]
-    if not set(value) & _FIXTURE_KEYS:
+    if not set(value) & (_FIXTURE_KEYS | {"operations"}):
         _transition(state, None)
         return True
     data = _render(value)

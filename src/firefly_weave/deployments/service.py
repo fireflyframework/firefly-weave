@@ -16,7 +16,9 @@
 
 """Environment-scoped intent and immutable approval; runners own external effects."""
 
+import builtins
 import json
+from collections.abc import Sequence
 from datetime import timedelta
 from typing import Any
 from uuid import UUID, uuid4
@@ -34,6 +36,7 @@ from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.definitions import ContractModel
 from firefly_weave.contracts.deployments import (
     ApplyPlanRequest,
+    ChangeRequest,
     Deployment,
     DeploymentJob,
     DeploymentLease,
@@ -44,6 +47,10 @@ from firefly_weave.contracts.deployments import (
     DeploymentRunner,
     DeploymentTarget,
     JobCancelRequest,
+    MemberSelectionError,
+    ObservationReport,
+    ObservedMember,
+    ObservedResource,
     ObserveRequest,
     PlanApproval,
     PlanApprovalRequest,
@@ -56,11 +63,44 @@ from firefly_weave.contracts.deployments import (
     SafeDeploymentReceipt,
     TargetRequest,
     TargetUpdate,
+    removed_members,
+    scale_down_members,
 )
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.deployments.repository import SCOPE, DeploymentRepository
 from firefly_weave.persistence.idempotency import Idempotency
 from firefly_weave.persistence.uow import Transaction, UnitOfWork
+
+
+async def follow_job(repo: DeploymentRepository, job: DeploymentJob, *, observation: ObservationReport | None) -> None:
+    """Move the change request that owns this job along with it, in the job's own transaction."""
+    from firefly_weave.deployments.change_service import follow_job as follow
+
+    await follow(repo, job, observation=observation)
+
+
+async def plan_victims(repo: DeploymentRepository, plan: DeploymentPlan) -> dict[str, list[str]]:
+    """The running members each step that lowers workers removes, from the plan's own observation.
+
+    Any plan that lowers a worker component's replicas is a scale-down, whatever its intent; a restart keeps them.
+    """
+    if plan.intent == "restart_workers":
+        return {}
+    observation = await repo.get("observations", plan.observation_id, DeploymentObservation)
+    observed = {resource.name: resource for resource in observation.resources}
+    result = {}
+    for step in plan.steps:
+        fact = observed.get(step.component.name)
+        if fact is None or step.component.kind != "worker" or fact.replicas <= step.component.replicas:
+            continue
+        try:
+            hosts = scale_down_members(plan.adapter, fact, step.component.replicas)
+        except MemberSelectionError:
+            raise CatalogError(409, "WV-PLAN-STALE", "Observe the target again and plan the change again") from None
+        if hosts:
+            result[step.component.name] = hosts
+    return result
+
 
 MODELS: dict[str, type[ContractModel]] = {
     "targets": DeploymentTarget,
@@ -130,21 +170,7 @@ class DeploymentService:
         if collection not in MODELS or not 1 <= limit <= 100:
             raise ValueError("Invalid deployment list")
         async with self.uow.open(scope, mutation=False) as tx:
-            current = await load_principal(tx.session, actor.id)
-            sets = []
-            for principal in (actor, current):
-                if not principal.active or principal.kind == "worker" or scope.environment_id is None:
-                    raise AccessDenied()
-                grants = [
-                    g
-                    for g in principal.grants
-                    if contains(g.scope, scope) and "deployment.read" in ROLE_CAPABILITIES[g.role]
-                ]
-                if not grants:
-                    raise AccessDenied()
-                sets.append(None if any(not g.resources for g in grants) else {r for g in grants for r in g.resources})
-            bounded = sets[0] if sets[1] is None else sets[1] if sets[0] is None else sets[0] & sets[1]
-            permitted = None if bounded is None else [UUID(value) for value in bounded if self.is_uuid(value)]
+            permitted = await self.readable_targets(tx, actor)
             if target_id:
                 await self.authorize(tx, actor, "deployment.read", context, target_id)
             repo = DeploymentRepository(tx)
@@ -166,6 +192,25 @@ class DeploymentService:
                 "items": [row["payload"] for row in rows[:limit]],
                 "next_cursor": str(rows[limit - 1]["id"]) if len(rows) > limit else None,
             }
+
+    async def readable_targets(self, tx: Transaction, actor: Principal) -> builtins.list[UUID] | None:
+        """The targets the token principal and the current principal may both read; None means every target."""
+        scope = tx.scope
+        current = await load_principal(tx.session, actor.id)
+        sets = []
+        for principal in (actor, current):
+            if not principal.active or principal.kind == "worker" or scope.environment_id is None:
+                raise AccessDenied()
+            grants = [
+                g
+                for g in principal.grants
+                if contains(g.scope, scope) and "deployment.read" in ROLE_CAPABILITIES[g.role]
+            ]
+            if not grants:
+                raise AccessDenied()
+            sets.append(None if any(not g.resources for g in grants) else {r for g in grants for r in g.resources})
+        bounded = sets[0] if sets[1] is None else sets[1] if sets[0] is None else sets[0] & sets[1]
+        return None if bounded is None else [UUID(value) for value in bounded if self.is_uuid(value)]
 
     async def read(
         self, collection: str, identifier: UUID, *, actor: Principal, scope: Scope, context: AuditContext
@@ -192,6 +237,10 @@ class DeploymentService:
             )
             if saved := await idem.replay():
                 return DeploymentTarget.model_validate_json(json.dumps(saved))
+            relaxed = not request.approval_policy.distinct_approver
+            if relaxed:
+                # Letting one person plan and approve is an environment decision, not only a target one.
+                await self.authorize(tx, actor, "environment.manage", context)
             await self.principal(tx, request.runner_principal_id)
             repo = DeploymentRepository(tx)
             identifier = uuid4()
@@ -210,6 +259,8 @@ class DeploymentService:
             await repo.insert("targets", identifier, identifier, target)
             await idem.save(target.model_dump(mode="json"))
             await self.record(tx, actor, "target.manage", identifier, context)
+            if relaxed:
+                await self.policy_changed(tx, actor, target, context)
             return target
 
     async def update_target(
@@ -228,14 +279,72 @@ class DeploymentService:
             prior = await repo.get("targets", identifier, DeploymentTarget, lock=True)
             if prior.revision != revision:
                 raise CatalogError(409, "WV-REVISION", "Deployment target changed")
+            policy = request.approval_policy or prior.approval_policy
+            changed = policy != prior.approval_policy
+            if changed:
+                await self.authorize(tx, actor, "environment.manage", context)
             await self.principal(tx, request.runner_principal_id)
             value = DeploymentTarget.model_validate(
-                {**prior.model_dump(), **request.model_dump(), "revision": revision + 1}
+                {
+                    **prior.model_dump(),
+                    **request.model_dump(exclude={"approval_policy"}),
+                    "approval_policy": policy,
+                    "revision": revision + 1,
+                }
             )
             await repo.update("targets", identifier, value)
             await self.expire(repo, identifier)
             await self.record(tx, actor, "target.manage", identifier, context)
+            if changed:
+                await self.policy_changed(tx, actor, value, context)
             return value
+
+    async def policy_changed(
+        self, tx: Transaction, actor: Principal, target: DeploymentTarget, context: AuditContext
+    ) -> None:
+        await audit(
+            tx.session,
+            actor,
+            "deployment_target.approval_policy",
+            str(target.id),
+            scope=tx.scope,
+            capability="environment.manage",
+            context=context,
+            details={"distinct_approver": target.approval_policy.distinct_approver},
+        )
+
+    async def four_eyes(
+        self, repo: DeploymentRepository, target: DeploymentTarget, plan: DeploymentPlan, approver: UUID
+    ) -> None:
+        """Refuse an approver who planned or requested the change while the target needs a second person.
+
+        The stricter of the target's policy and the policy its change request recorded applies.
+        """
+        distinct, requester = target.approval_policy.distinct_approver, None
+        # The change request a plan was made for stays linked to it after the change is planned again.
+        rows = await repo.rows(
+            "SELECT c.payload FROM deployment_plans p JOIN deployment_change_requests c ON c.id=p.change_request_id "
+            "AND c.tenant_id=p.tenant_id AND c.project_id=p.project_id AND c.environment_id=p.environment_id "
+            "WHERE p.tenant_id=:tenant AND p.project_id=:project AND p.environment_id=:environment AND p.id=:plan",
+            plan=plan.id,
+        )
+        if rows:
+            change = ChangeRequest.model_validate_json(json.dumps(rows[0]["payload"]))
+            distinct = distinct or change.approval_policy.distinct_approver
+            requester = change.requested_by
+        if not distinct:
+            return
+        planner = await self.planner(repo, plan.id)
+        if planner is None:
+            raise CatalogError(
+                409,
+                "WV-PLAN-STALE",
+                "Plan this change again: the plan does not record who made it, and this target needs a second approver",
+            )
+        if approver in {planner, requester}:
+            raise CatalogError(
+                403, "WV-APPROVAL-SELF", "You requested or planned this change. Another approver must review it."
+            )
 
     async def admitted_components(self, repo: DeploymentRepository, request: DeploymentRequest) -> None:
         from firefly_weave.workers.repository import WorkerRepository
@@ -336,6 +445,7 @@ class DeploymentService:
                 changed,
                 extra={"state": state, "runner_id": None, "lease_token": None, "lease_expires_at": None},
             )
+            await follow_job(repo, changed, observation=None)
 
     async def new_job(
         self, repo: DeploymentRepository, target: DeploymentTarget, *, plan: DeploymentPlan | None = None
@@ -419,7 +529,8 @@ class DeploymentService:
             repo = DeploymentRepository(tx)
             deployment = await repo.get("deployments", request.deployment_id, Deployment, lock=True)
             actor = await self.authorize(tx, actor, "deployment.plan", context, deployment.target_id)
-            target = await self.target(repo, deployment.target_id, lock=True)
+            # A disabled target refuses before a replay too.
+            await self.target(repo, deployment.target_id, lock=True)
             idem = Idempotency(
                 tx,
                 actor.id,
@@ -429,79 +540,140 @@ class DeploymentService:
             )
             if saved := await idem.replay():
                 return DeploymentPlan.model_validate_json(json.dumps(saved))
-            observed = await repo.get("observations", request.observation_id, DeploymentObservation)
-            now = await repo.now()
-            if (
-                deployment.revision != request.deployment_revision
-                or observed.target_id != target.id
-                or observed.target_revision != target.revision
-                or not observed.complete
-                or observed.expires_at <= now
-            ):
-                raise CatalogError(
-                    409, "WV-PLAN-STALE", "Fresh complete target observation and current intent required"
-                )
-            if request.intent == "drain_workers":
-                raise CatalogError(422, "WV-DEPLOYMENT-UNSUPPORTED", "Use explicit worker-instance drain controls")
-            if request.intent not in target.capabilities:
-                raise CatalogError(422, "WV-DEPLOYMENT-UNSUPPORTED", "Target does not support the requested capability")
-            selected = [
-                c
-                for c in deployment.components
-                if request.intent not in {"scale_workers", "drain_workers"} or c.kind == "worker"
-            ]
-            if not selected:
-                raise CatalogError(422, "WV-DEPLOYMENT-UNSUPPORTED", "No worker component selected")
-            if target.adapter == "azure-container-apps" and any(c.kind not in {"worker", "lumi"} for c in selected):
-                raise CatalogError(
-                    422,
-                    "WV-DEPLOYMENT-UNSUPPORTED",
-                    "Container Apps plans support worker and Weave AI components only; use the API upgrade runbook",
-                )
-            by_name = {r.name: r for r in observed.resources}
-            if request.intent == "scale_workers" and any(
-                c.name not in by_name or by_name[c.name].image != c.image for c in selected
-            ):
-                raise CatalogError(
-                    409, "WV-PLAN-STALE", "Scale requires the observed worker image; use update to change images"
-                )
-            steps = [
-                PlanStep(
-                    action=request.intent,
-                    component=c,
-                    expected_version=by_name[c.name].version if c.name in by_name else None,
-                )
-                for c in selected
-            ]
-            risks = ["external_effects"]
-            if any(c.kind == "api" for c in selected):
-                risks.append("service_interruption")
-            if deployment.ownership == "imported":
-                risks.append("adoption")
-            data: dict[str, Any] = dict(
-                id=uuid4(),
-                scope=scope,
-                target_id=target.id,
-                target_revision=target.revision,
-                deployment_id=deployment.id,
-                deployment_revision=deployment.revision,
-                adapter=target.adapter,
-                intent=request.intent,
-                observation_id=observed.id,
-                observation_digest=observed.digest,
-                steps=steps,
-                risks=risks,
-                created_at=now,
-                expires_at=min(now + timedelta(seconds=request.ttl_seconds), observed.expires_at),
-            )
-            draft = DeploymentPlan(**data, digest="0" * 64)
-            result = draft.model_copy(
-                update={"digest": canonical_digest(draft.model_dump(mode="json", exclude={"digest"}))}
-            )
-            await repo.insert("plans", result.id, target.id, result, deployment_id=deployment.id)
+            result = await self.plan_in(tx, repo, request, actor, context)
             await idem.save(result.model_dump(mode="json"))
-            await self.record(tx, actor, "deployment.plan", result.id, context)
             return result
+
+    async def plan_in(
+        self,
+        tx: Transaction,
+        repo: DeploymentRepository,
+        request: PlanRequest,
+        actor: Principal,
+        context: AuditContext,
+        *,
+        change_request_id: UUID | None = None,
+    ) -> DeploymentPlan:
+        """Make and store a plan inside the caller's transaction; the caller authorized deployment.plan."""
+        scope = tx.scope
+        deployment = await repo.get("deployments", request.deployment_id, Deployment, lock=True)
+        target = await self.target(repo, deployment.target_id, lock=True)
+        observed = await repo.get("observations", request.observation_id, DeploymentObservation)
+        now = await repo.now()
+        if (
+            deployment.revision != request.deployment_revision
+            or observed.target_id != target.id
+            or observed.target_revision != target.revision
+            or not observed.complete
+            or observed.expires_at <= now
+        ):
+            raise CatalogError(409, "WV-PLAN-STALE", "Fresh complete target observation and current intent required")
+        if request.intent == "drain_workers":
+            raise CatalogError(422, "WV-DEPLOYMENT-UNSUPPORTED", "Use explicit worker-instance drain controls")
+        if request.intent not in target.capabilities:
+            raise CatalogError(422, "WV-DEPLOYMENT-UNSUPPORTED", "Target does not support the requested capability")
+        selected = [
+            c
+            for c in deployment.components
+            if request.intent not in {"scale_workers", "drain_workers", "restart_workers"} or c.kind == "worker"
+        ]
+        if not selected:
+            raise CatalogError(422, "WV-DEPLOYMENT-UNSUPPORTED", "No worker component selected")
+        if target.adapter == "azure-container-apps" and any(c.kind not in {"worker", "lumi"} for c in selected):
+            raise CatalogError(
+                422,
+                "WV-DEPLOYMENT-UNSUPPORTED",
+                "Container Apps plans support worker and Weave AI components only; use the API upgrade runbook",
+            )
+        by_name = {r.name: r for r in observed.resources}
+        if request.intent in {"scale_workers", "restart_workers"} and any(
+            c.name not in by_name or by_name[c.name].image != c.image for c in selected
+        ):
+            raise CatalogError(
+                409, "WV-PLAN-STALE", "Scale and restart require the observed worker image; use update to change it"
+            )
+        if request.intent == "restart_workers" and any(by_name[c.name].replicas != c.replicas for c in selected):
+            raise CatalogError(409, "WV-PLAN-STALE", "A restart keeps the observed number of workers; scale them first")
+        # Any plan that lowers workers removes the members the shared rule names, whatever its intent.
+        removed = {
+            c.name: hosts
+            for c in selected
+            if request.intent != "restart_workers"
+            and c.kind == "worker"
+            and c.name in by_name
+            and by_name[c.name].replicas > c.replicas
+            and (hosts := self.scale_down_members(target, by_name[c.name], c.replicas))
+        }
+        steps = [
+            PlanStep(
+                action=request.intent,
+                component=c,
+                expected_version=by_name[c.name].version if c.name in by_name else None,
+            )
+            for c in selected
+        ]
+        risks = ["external_effects"]
+        if any(c.kind == "api" for c in selected):
+            risks.append("service_interruption")
+        if deployment.ownership == "imported":
+            risks.append("adoption")
+        if removed or request.intent == "restart_workers":
+            risks.append("worker_drain")
+        data: dict[str, Any] = dict(
+            id=uuid4(),
+            scope=scope,
+            target_id=target.id,
+            target_revision=target.revision,
+            deployment_id=deployment.id,
+            deployment_revision=deployment.revision,
+            adapter=target.adapter,
+            intent=request.intent,
+            observation_id=observed.id,
+            observation_digest=observed.digest,
+            steps=steps,
+            risks=risks,
+            created_at=now,
+            expires_at=min(now + timedelta(seconds=request.ttl_seconds), observed.expires_at),
+        )
+        draft = DeploymentPlan(**data, digest="0" * 64)
+        result = draft.model_copy(
+            update={"digest": canonical_digest(draft.model_dump(mode="json", exclude={"digest"}))}
+        )
+        await repo.insert(
+            "plans",
+            result.id,
+            target.id,
+            result,
+            deployment_id=deployment.id,
+            extra={"planned_by": actor.id, "change_request_id": change_request_id},
+        )
+        await self.record(tx, actor, "deployment.plan", result.id, context)
+        return result
+
+    @staticmethod
+    def scale_down_members(target: DeploymentTarget, resource: ObservedResource, desired: int) -> builtins.list[str]:
+        """The running members a scale-down to `desired` removes (`scale_down_members` in the contracts)."""
+        try:
+            return scale_down_members(target.adapter, resource, desired)
+        except MemberSelectionError:
+            raise CatalogError(
+                409, "WV-PLAN-STALE", "The observation does not list every worker to remove; observe the target again"
+            ) from None
+
+    @staticmethod
+    def removed_members(target: DeploymentTarget, members: Sequence[ObservedMember], count: int) -> builtins.list[str]:
+        """The `count` members a scale-down removes (`removed_members` in the contracts)."""
+        try:
+            return removed_members(target.adapter, members, count)
+        except MemberSelectionError:
+            raise CatalogError(
+                409, "WV-PLAN-STALE", "The observation does not list every worker to remove; observe the target again"
+            ) from None
+
+    async def planner(self, repo: DeploymentRepository, plan_id: UUID) -> UUID | None:
+        """Who made the plan, kept beside it; None for plans made before the server recorded planners."""
+        rows = await repo.rows(f"SELECT planned_by FROM deployment_plans WHERE {SCOPE} AND id=:id", id=plan_id)
+        return rows[0]["planned_by"] if rows else None
 
     async def approve(
         self, identifier: UUID, request: PlanApprovalRequest, *, actor: Principal, scope: Scope, context: AuditContext
@@ -510,16 +682,40 @@ class DeploymentService:
             repo = DeploymentRepository(tx)
             plan = await repo.get("plans", identifier, DeploymentPlan)
             actor = await self.authorize(tx, actor, "deployment.approve", context, plan.target_id)
-            await self.valid_plan(repo, plan, request.digest)
-            rows = await repo.rows(f"SELECT payload FROM deployment_approvals WHERE {SCOPE} AND id=:id", id=identifier)
-            if rows:
-                return PlanApproval.model_validate_json(json.dumps(rows[0]["payload"]))
-            result = PlanApproval(
-                plan_id=identifier, digest=plan.digest, principal_id=actor.id, approved_at=await repo.now()
+            await self.outside_change_request(repo, plan)
+            return await self.approve_in(repo, plan, request.digest, actor, context)
+
+    @staticmethod
+    async def outside_change_request(repo: DeploymentRepository, plan: DeploymentPlan) -> None:
+        """409 WV-CHANGE-REQUEST when a change request owns the plan: approving or applying it directly would skip
+        the change's drain, its force rule and its record of the job, or apply a change that was declined,
+        cancelled or replaced. Retention removes a change request long after its plans have expired."""
+        rows = await repo.rows(
+            "SELECT c.id FROM deployment_plans p JOIN deployment_change_requests c ON c.id=p.change_request_id "
+            "AND c.tenant_id=p.tenant_id AND c.project_id=p.project_id AND c.environment_id=p.environment_id "
+            "WHERE p.tenant_id=:tenant AND p.project_id=:project AND p.environment_id=:environment AND p.id=:plan",
+            plan=plan.id,
+        )
+        if rows:
+            raise CatalogError(
+                409,
+                "WV-CHANGE-REQUEST",
+                f"Change request {rows[0]['id']} owns this plan; approve and apply it through that change request",
             )
-            await repo.insert("approvals", identifier, plan.target_id, result, deployment_id=plan.deployment_id)
-            await self.record(tx, actor, "deployment.approve", identifier, context)
-            return result
+
+    async def approve_in(
+        self, repo: DeploymentRepository, plan: DeploymentPlan, digest: str, actor: Principal, context: AuditContext
+    ) -> PlanApproval:
+        """Approve a plan inside the caller's transaction; the caller authorized deployment.approve."""
+        target = await self.valid_plan(repo, plan, digest)
+        await self.four_eyes(repo, target, plan, actor.id)
+        rows = await repo.rows(f"SELECT payload FROM deployment_approvals WHERE {SCOPE} AND id=:id", id=plan.id)
+        if rows:
+            return PlanApproval.model_validate_json(json.dumps(rows[0]["payload"]))
+        result = PlanApproval(plan_id=plan.id, digest=plan.digest, principal_id=actor.id, approved_at=await repo.now())
+        await repo.insert("approvals", plan.id, plan.target_id, result, deployment_id=plan.deployment_id)
+        await self.record(repo.tx, actor, "deployment.approve", plan.id, context)
+        return result
 
     async def apply(
         self,
@@ -544,21 +740,32 @@ class DeploymentService:
             )
             if saved := await idem.replay():
                 return DeploymentJob.model_validate_json(json.dumps(saved))
-            target = await self.valid_plan(repo, plan, request.digest)
-            approval = await repo.get("approvals", identifier, PlanApproval)
-            approver = await load_principal(tx.session, approval.principal_id)
-            self.authorization.require(approver, scope, "deployment.approve", resource=str(target.id), context=context)
-            if approval.digest != plan.digest:
-                raise CatalogError(409, "WV-PLAN-STALE", "Approval differs from reviewed plan")
-            previous = await repo.rows(
-                f"SELECT id FROM deployment_jobs WHERE {SCOPE} AND payload->>'plan_id'=:plan", plan=str(identifier)
-            )
-            if previous:
-                raise CatalogError(409, "WV-PLAN-APPLIED", "A plan may be applied only once")
-            result = await self.new_job(repo, target, plan=plan)
+            await self.outside_change_request(repo, plan)
+            result = await self.apply_in(repo, plan, request.digest, actor, context)
             await idem.save(result.model_dump(mode="json"))
-            await self.record(tx, actor, "deployment.apply", result.id, context)
             return result
+
+    async def apply_in(
+        self, repo: DeploymentRepository, plan: DeploymentPlan, digest: str, actor: Principal, context: AuditContext
+    ) -> DeploymentJob:
+        """Queue the apply job of an approved plan inside the caller's transaction; the caller authorized it."""
+        target = await self.valid_plan(repo, plan, digest)
+        approval = await repo.get("approvals", plan.id, PlanApproval)
+        approver = await load_principal(repo.tx.session, approval.principal_id)
+        self.authorization.require(
+            approver, repo.tx.scope, "deployment.approve", resource=str(target.id), context=context
+        )
+        if approval.digest != plan.digest:
+            raise CatalogError(409, "WV-PLAN-STALE", "Approval differs from reviewed plan")
+        await self.four_eyes(repo, target, plan, approval.principal_id)
+        previous = await repo.rows(
+            f"SELECT id FROM deployment_jobs WHERE {SCOPE} AND payload->>'plan_id'=:plan", plan=str(plan.id)
+        )
+        if previous:
+            raise CatalogError(409, "WV-PLAN-APPLIED", "A plan may be applied only once")
+        result = await self.new_job(repo, target, plan=plan)
+        await self.record(repo.tx, actor, "deployment.apply", result.id, context)
+        return result
 
     async def cancel(
         self, identifier: UUID, request: JobCancelRequest, *, actor: Principal, scope: Scope, context: AuditContext
@@ -569,23 +776,27 @@ class DeploymentService:
             actor = await self.authorize(tx, actor, "deployment.cancel", context, job.target_id)
             if job.state in {"succeeded", "failed", "cancelled", "reconciliation_required"}:
                 return job
-            ambiguous = job.state in {"running", "verifying"}
-            state = "reconciliation_required" if ambiguous else "cancelled"
-            result = job.model_copy(
-                update={
-                    "state": state,
-                    "revision": job.revision + 1,
-                    "reconciliation_started_at": await repo.now() if ambiguous else None,
-                    "receipt": SafeDeploymentReceipt(
-                        code="ambiguous" if ambiguous else "cancelled", external_effects_may_continue=ambiguous
-                    ),
-                }
-            )
-            await repo.update(
-                "jobs", identifier, result, extra={"state": state, "lease_token": None, "lease_expires_at": None}
-            )
+            result = await self.stop_job(repo, job)
             await self.record(tx, actor, "deployment.cancel", identifier, context)
             return result
+
+    async def stop_job(self, repo: DeploymentRepository, job: DeploymentJob) -> DeploymentJob:
+        """Cancel a locked unfinished job; one the runner may still be acting on needs reconciliation instead."""
+        ambiguous = job.state in {"running", "verifying"}
+        state = "reconciliation_required" if ambiguous else "cancelled"
+        result = job.model_copy(
+            update={
+                "state": state,
+                "revision": job.revision + 1,
+                "reconciliation_started_at": await repo.now() if ambiguous else None,
+                "receipt": SafeDeploymentReceipt(
+                    code="ambiguous" if ambiguous else "cancelled", external_effects_may_continue=ambiguous
+                ),
+            }
+        )
+        await repo.update("jobs", job.id, result, extra={"state": state, "lease_token": None, "lease_expires_at": None})
+        await follow_job(repo, result, observation=None)
+        return result
 
     async def register_runner(self, request: RunnerRegistration, **authority: Any) -> DeploymentRunner:
         from firefly_weave.deployments.leases import DeploymentLeases
@@ -654,6 +865,7 @@ class DeploymentService:
             await repo.update(
                 "jobs", identifier, result, extra={"state": "failed", "lease_token": None, "lease_expires_at": None}
             )
+            await follow_job(repo, result, observation=None)
             await self.record(tx, actor, "deployment.approve", identifier, context)
             return result
 
