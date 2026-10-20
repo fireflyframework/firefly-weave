@@ -371,3 +371,15 @@ async def test_the_victims_stop_fits_the_runner_command_bound():
 
     assert STOP_GRACE_SECONDS + 60 <= MAX_COMMAND_SECONDS
     assert await run_command(["/bin/sh", "-c", "exit 0"], timeout=STOP_GRACE_SECONDS + 60) == b""
+
+
+@pytest.mark.parametrize("action", ["update", "deploy"])
+async def test_an_update_that_lowers_workers_still_recreates_the_survivors(tmp_path, action):
+    """--no-recreate keeps a scale-down's survivors as they are; an update must recreate them with its new values."""
+    config = policy(tmp_path)
+    project = Project(config, 3)
+    plan = project.plan(action, 1)
+    project.calls.clear()
+    await ComposeAdapter(config, command=project.command).apply(plan, renewed)
+    up = [argv for argv, _ in project.calls if "up" in argv and "--dry-run" not in argv]
+    assert len(up) == 1 and "--no-recreate" not in up[0]

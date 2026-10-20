@@ -353,3 +353,27 @@ async def test_a_failed_job_logs_where_it_failed_and_nothing_the_provider_said(c
     assert str(lease.job.id) in message and "reconciliation required" in message
     assert "RuntimeError at apply" in message
     assert "private provider diagnostic" not in message
+
+
+@pytest.mark.asyncio
+async def test_a_report_refused_for_any_other_reason_is_not_sent_again(monkeypatch):
+    """Only a capacity refusal is sent again; another 429 (or any refusal) fails the job as before."""
+    from firefly_weave.deployment_runner import runtime
+    from firefly_weave.sdk.errors import Problem, WeaveError
+
+    monkeypatch.setattr(runtime, "REPORT_RETRY_SECONDS", 0.01)
+    lease, policy = fixture()
+    client, adapter = Client(lease), Adapter(lease)
+    original = client.invoke
+    refused = []
+
+    async def limited(operation, **kwargs):
+        if operation == "deployment_runners.report" and kwargs["body"].state == "succeeded":
+            refused.append(kwargs["body"])
+            raise WeaveError(Problem(status=429, code="WV-RATE-LIMITED", message="slow down"))
+        return await original(operation, **kwargs)
+
+    client.invoke = limited
+    await OperationsRunner(client, policy, adapter).execute(lease)
+    assert len(refused) == 1
+    assert client.reports[-1].state == "reconciliation_required"

@@ -304,3 +304,18 @@ def test_a_failure_names_its_kind_and_place_but_no_address(capsys, monkeypatch):
     printed = capsys.readouterr().err
     assert "HTTPStatusError" in printed and "503" in printed and "failing" in printed
     assert "secret-host" not in printed and "token" not in printed
+
+
+async def test_registration_gives_up_at_once_on_any_other_refusal():
+    import httpx
+
+    module = fixture()
+    answers = [503, 201]
+
+    def handler(request):
+        return httpx.Response(answers.pop(0), json={"id": "00000000-0000-4000-8000-000000000001"})
+
+    async with httpx.AsyncClient(base_url="http://platform.test", transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(httpx.HTTPStatusError):
+            await module.register(client, "/env", {"release_id": "r", "task_types": [], "capacity": 1}, pause=0)
+    assert answers == [201]

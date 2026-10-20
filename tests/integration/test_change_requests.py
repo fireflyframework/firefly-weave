@@ -1755,3 +1755,44 @@ async def test_a_declined_changes_plan_is_never_applied_directly(ops):
             planned.plan_id, PlanApprovalRequest(digest=planned.plan_digest), **ops.authority("approver")
         )
     assert (refused.value.status, refused.value.code) == (409, "WV-CHANGE-REQUEST")
+
+
+async def test_a_drained_worker_someone_resumed_holds_the_apply_back(ops, fleet):
+    """Idle is not enough: a worker of the drain set that takes tasks again must finish draining first."""
+    first, _ = sorted(worker.id for worker in fleet.workers)
+    change_request = await approved(ops, fleet.setup, observed_count=3, replicas=1)
+    await ops.changes.drain(change_request.id, uuid4().hex, **ops.authority("operator"))
+    await operator_control(ops, first, draining=False)
+    with pytest.raises(CatalogError) as pending:
+        await ops.changes.apply(
+            change_request.id,
+            ChangeRequestApply(digest=change_request.plan_digest),
+            uuid4().hex,
+            **ops.authority("operator"),
+        )
+    assert pending.value.code == "WV-DRAIN-PENDING"
+    assert [member["worker_id"] for member in pending.value.result["remaining"]] == [str(first)]
+
+
+async def test_a_successful_scale_down_keeps_the_workers_it_removed_drained(ops, fleet):
+    """The removed workers are gone with their containers: success never puts them back to work."""
+    workers = sorted(worker.id for worker in fleet.workers)
+    change_request = await drained_and_applying(ops, fleet)
+    runner = ops.authority("planner")
+    lease = await ops.service.claim(RunnerClaimRequest(runner_id=fleet.setup.runner.id), **runner)
+    for state in ("running", "verifying"):
+        await ops.service.report(RunnerReport(lease=lease.proof, report_id=uuid4(), state=state), **runner)
+    await ops.service.report(
+        RunnerReport(
+            lease=lease.proof,
+            report_id=uuid4(),
+            state="succeeded",
+            observation=observed(1),
+            receipt=SafeDeploymentReceipt(code="applied"),
+        ),
+        **runner,
+    )
+    done = await ops.changes.read(change_request.id, **ops.authority("planner"))
+    assert done.state == "succeeded" and sorted(done.drained) == workers
+    assert [(await draining_state(ops, worker))[0] for worker in workers] == [True, True]
+    assert await resumed_audit(ops, change_request.id) == []
