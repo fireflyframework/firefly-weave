@@ -37,8 +37,8 @@ SPDX-License-Identifier: Apache-2.0
   manager turns it off (`local-docker` turns it off); the requester and the
   planner get `WV-APPROVAL-SELF`. Any plan that lowers worker replicas removes
   exactly the reviewed workers, and only Compose runners of this release take
-  such plans. A repeated `Idempotency-Key` on principal creation answers the
-  principal it created. Migrations `0034_operations_change_requests` and
+  such plans. For seven days, a repeated `Idempotency-Key` on principal creation
+  answers the principal it created, as it is now. Migrations `0034_operations_change_requests` and
   `0035_principal_idempotency` add empty tables; see the upgrade notes for the
   approval change and the runner upgrade.
 

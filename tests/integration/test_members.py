@@ -195,3 +195,60 @@ async def test_creating_a_principal_with_a_key_answers_the_same_principal_again(
         with pytest.raises(CatalogError) as refused:
             await members.create_principal(admin, PrincipalCreateRequest(kind="worker"), idempotency_key=key)
         assert refused.value.status == 422
+
+
+async def test_a_repeated_key_answers_the_principals_current_state(access_db, provisioned):
+    """A replay reports the principal as it is now, so a deactivated principal never reads as active."""
+    _, _, access, _ = access_db
+    admin, _ = provisioned
+    members = MemberAdminService(access)
+    first = await members.create_principal(admin, PrincipalCreateRequest(kind="worker"), idempotency_key="state-1")
+    assert first.active is True
+    await members.set_active(admin, first.id, False)
+    again = await members.create_principal(admin, PrincipalCreateRequest(kind="worker"), idempotency_key="state-1")
+    assert (again.id, again.kind, again.active) == (first.id, "worker", False)
+
+
+async def test_a_principal_key_is_kept_for_its_retention_period_only(access_db, provisioned):
+    """Keys answer replays for seven days; an older key is removed and the same key then creates a new principal."""
+    from sqlalchemy import text
+
+    from firefly_weave.access.members import PRINCIPAL_KEY_RETENTION
+
+    sessions, owner, access, _ = access_db
+    admin, _ = provisioned
+    members = MemberAdminService(access)
+    assert PRINCIPAL_KEY_RETENTION.days == 7
+    first = await members.create_principal(admin, PrincipalCreateRequest(kind="worker"), idempotency_key="aged-1")
+    kept = await members.create_principal(admin, PrincipalCreateRequest(kind="worker"), idempotency_key="aged-2")
+
+    async def age(key, days):
+        async with owner.begin() as session:
+            await session.execute(
+                text(
+                    "UPDATE principal_idempotency SET created_at=now()-make_interval(days=>:days) "
+                    "WHERE principal_id=:actor AND idempotency_key=:key"
+                ),
+                {"days": days, "actor": admin.id, "key": key},
+            )
+
+    async def keys():
+        async with owner() as session:
+            rows = await session.execute(
+                text("SELECT idempotency_key FROM principal_idempotency WHERE principal_id=:actor ORDER BY 1"),
+                {"actor": admin.id},
+            )
+            return rows.scalars().all()
+
+    await age("aged-1", 8)
+    await age("aged-2", 6)
+    assert (
+        await members.create_principal(admin, PrincipalCreateRequest(kind="worker"), idempotency_key="aged-2")
+    ).id == kept.id
+    renewed = await members.create_principal(admin, PrincipalCreateRequest(kind="human"), idempotency_key="aged-1")
+    assert renewed.id != first.id and renewed.kind == "human"
+    assert await keys() == ["aged-1", "aged-2"]
+    # Any keyed creation also removes the administrator's expired keys.
+    await age("aged-2", 8)
+    await members.create_principal(admin, PrincipalCreateRequest(kind="worker"), idempotency_key="aged-3")
+    assert await keys() == ["aged-1", "aged-3"]

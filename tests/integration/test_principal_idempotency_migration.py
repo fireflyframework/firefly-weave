@@ -27,7 +27,7 @@ PRIOR_HEAD = "0034_operations_change_requests"
 HEAD = "0035_principal_idempotency"
 
 
-async def test_the_upgrade_adds_an_empty_platform_table_the_app_may_read_and_insert_only(empty_settings):
+async def test_the_upgrade_adds_an_empty_platform_table_the_app_may_read_insert_and_expire(empty_settings):
     engine = create_async_engine(empty_settings.database_url.get_secret_value(), hide_parameters=True)
     try:
         async with engine.begin() as connection:
@@ -48,8 +48,17 @@ async def test_the_upgrade_adds_an_empty_platform_table_the_app_may_read_and_ins
                 .scalars()
                 .all()
             )
-            # Replays are read and the first answer stored; nothing rewrites or removes a stored answer.
-            assert granted == ["INSERT", "SELECT"]
+            # Replays are read and the first answer stored; nothing rewrites one, and expired keys are removed.
+            assert granted == ["DELETE", "INSERT", "SELECT"]
+            created = (
+                await connection.execute(
+                    text(
+                        "SELECT data_type,is_nullable,column_default FROM information_schema.columns "
+                        "WHERE table_name='principal_idempotency' AND column_name='created_at'"
+                    )
+                )
+            ).one()
+            assert created == ("timestamp with time zone", "NO", "now()")
             columns = (
                 (
                     await connection.execute(

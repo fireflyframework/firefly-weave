@@ -25,14 +25,16 @@ down_revision = "0034_operations_change_requests"
 
 def upgrade():
     # Principals are platform records, so their idempotency store has no tenant scope: each key belongs to the
-    # administrator who sent it. Stored answers are only read and inserted.
+    # administrator who sent it. Stored answers are read and inserted, never rewritten; keys past their retention
+    # period are deleted by the next keyed creation of the same administrator.
     op.execute(
         "CREATE TABLE principal_idempotency(principal_id uuid NOT NULL REFERENCES principals(id),"
         "operation text NOT NULL,idempotency_key text NOT NULL CHECK(char_length(idempotency_key) BETWEEN 1 AND 200),"
         "request_hash text NOT NULL,response jsonb NOT NULL CHECK(octet_length(response::text)<=4096),"
+        "created_at timestamptz NOT NULL DEFAULT now(),"
         "PRIMARY KEY(principal_id,operation,idempotency_key))"
     )
-    op.execute("GRANT SELECT,INSERT ON principal_idempotency TO weave_app")
+    op.execute("GRANT SELECT,INSERT,DELETE ON principal_idempotency TO weave_app")
     op.execute(f"UPDATE weave_schema_version SET version='{revision}'")
 
 

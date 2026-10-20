@@ -18,6 +18,7 @@
 
 import hashlib
 import json
+from datetime import timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -41,6 +42,9 @@ from firefly_weave.contracts.members import (
 )
 from firefly_weave.contracts.public import Page
 from firefly_weave.definitions.models import CatalogError
+
+# How long a principal creation key answers replays; older keys are removed and may be used again.
+PRINCIPAL_KEY_RETENTION = timedelta(days=7)
 
 
 @service
@@ -116,6 +120,13 @@ class MemberAdminService:
                     text("SELECT pg_advisory_xact_lock(:lock)"),
                     {"lock": int.from_bytes(hashlib.sha256(namespace.encode()).digest()[:8], signed=True)},
                 )
+                await session.execute(
+                    text(
+                        "DELETE FROM principal_idempotency WHERE principal_id=:actor "
+                        "AND created_at<now()-make_interval(days=>:days)"
+                    ),
+                    {"actor": actor.id, "days": PRINCIPAL_KEY_RETENTION.days},
+                )
                 row = (
                     (
                         await session.execute(
@@ -134,7 +145,18 @@ class MemberAdminService:
                         raise CatalogError(
                             409, "WV-IDEMPOTENCY-CONFLICT", "Idempotency key was used for another request"
                         )
-                    return PrincipalRecord.model_validate_json(json.dumps(row["response"]))
+                    created = PrincipalRecord.model_validate_json(json.dumps(row["response"]))
+                    # The replay names the principal it created, as it is now.
+                    current = (
+                        (
+                            await session.execute(
+                                text("SELECT id,kind,active FROM principals WHERE id=:id"), {"id": created.id}
+                            )
+                        )
+                        .mappings()
+                        .one()
+                    )
+                    return PrincipalRecord(**current)
             identifier = uuid4()
             await session.execute(
                 text("INSERT INTO principals(id,kind) VALUES(:id,:kind)"), {"id": identifier, "kind": request.kind}
@@ -153,8 +175,8 @@ class MemberAdminService:
             if idempotency_key is not None:
                 await session.execute(
                     text(
-                        "INSERT INTO principal_idempotency "
-                        "VALUES(:actor,:operation,:key,:hash,cast(:response AS jsonb))"
+                        "INSERT INTO principal_idempotency(principal_id,operation,idempotency_key,request_hash,"
+                        "response) VALUES(:actor,:operation,:key,:hash,cast(:response AS jsonb))"
                     ),
                     {**values, "hash": digest, "response": record.model_dump_json()},
                 )
