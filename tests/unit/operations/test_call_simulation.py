@@ -749,3 +749,48 @@ def test_a_frame_delivers_its_output_only_when_real_delivery_would(monkeypatch, 
     assert checked == [(TIER, {"tier": "gold", "score": 5})]
     assert view.events[-1].type == "incident_opened"
     assert view.events[-1].data == {"node_id": "enrich", "generation": 0, "code": "WV-SCHEMA-SECRET_VALUE"}
+
+
+def test_a_caller_that_ends_cancels_its_waiting_children_and_their_children():
+    outer = workflow("outer", [call(uses="hold@1.0.0")], {"ref": "/steps/enrich/output"})
+    artifact = caller([call(uses="outer@1.0.0")], {"ref": "/steps/enrich/output"}, outer, timeout=60)
+    workflows = {
+        "outer@1.0.0": CalledWorkflow(artifact=json.loads(compiled(outer, HOLD).to_bytes())),
+        "hold@1.0.0": CalledWorkflow(artifact=artifact_of(HOLD)),
+    }
+    simulator = Simulator(artifact, mocks={}, input={"customerId": "c-1"}, now=NOW, workflows=workflows)
+    waiting = simulator.continue_until_breakpoint()
+    assert [(frame.key, frame.status) for frame in waiting.frames] == [
+        ("enrich", "waiting"),
+        ("enrich/enrich", "waiting"),
+    ]
+    simulator.advance_time(60)
+    view = simulator.continue_until_breakpoint()
+    assert view.status == "timed_out"
+    assert frames(view) == [
+        ("enrich", "outer@1.0.0", "enrich", "wait", "cancelled"),
+        ("enrich/enrich", "hold@1.0.0", "enrich", "wait", "cancelled"),
+    ]
+    cancelled = [(b.frame, b.event_type) for b in view.boundaries if b.event_type == "cancelled"]
+    assert cancelled == [("enrich", "cancelled"), ("enrich/enrich", "cancelled")]
+
+
+def test_mocks_of_the_calling_workflow_never_answer_steps_inside_a_called_workflow():
+    own = {"id": "own", "kind": "action", "uses": "echo-action@2.0.0", "with": {"ref": "/input/customerId"}}
+    artifact = caller([own, call()], {"ref": "/steps/enrich/output"})
+    workflows = {"enrich@1.0.0": CalledWorkflow(artifact=artifact_of(ENRICH))}
+    mocks = {"action:echo-action@2.0.0": 7}
+    view = Simulator(
+        artifact, mocks=mocks, input={"customerId": "c-1"}, now=NOW, workflows=workflows
+    ).continue_until_breakpoint()
+    assert view.variables["steps"]["own"]["output"] == 7
+    assert [(d.code, d.hint) for d in view.diagnostics] == [
+        (
+            "WV-DEBUG-MISSING_MOCK",
+            "Add a mock under node:validate, action:echo-action@2.0.0 in the mocks of enrich@1.0.0.",
+        )
+    ]
+    with pytest.raises(DebugError, match="WV-DEBUG-MOCK-KEY"):
+        Simulator(
+            artifact, mocks=mocks | {"node:validate": 5}, input={"customerId": "c-1"}, now=NOW, workflows=workflows
+        )
