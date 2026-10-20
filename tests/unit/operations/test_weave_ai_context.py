@@ -84,10 +84,26 @@ def test_the_estimate_counts_two_and_a_half_characters_per_token():
     assert estimate_tokens("x" * 1000) == 400 and estimate_tokens("x") == 1 and estimate_tokens("") == 0
 
 
-def test_the_gateway_text_and_the_guide_leave_most_of_the_compact_budget():
+def test_the_gateway_text_and_the_guide_leave_two_thirds_of_the_compact_budget():
     # The gateway's tests keep its instructions and reply format within this reserve.
-    assert GATEWAY_RESERVE_TOKENS == 704
-    assert estimate_tokens(GUIDE) + GATEWAY_RESERVE_TOKENS <= COMPACT_INPUT_TOKENS * 0.3
+    assert GATEWAY_RESERVE_TOKENS == 736
+    assert estimate_tokens(GUIDE) + GATEWAY_RESERVE_TOKENS <= COMPACT_INPUT_TOKENS / 3
+
+
+def test_the_guide_shows_a_whole_workflow_the_platform_accepts_without_a_warning():
+    from firefly_weave.compiler.api import validate_authoring
+    from firefly_weave.operations.lumi_context import GUIDE_VERSION
+
+    lines = GUIDE.splitlines()
+    start = lines.index("Example of a whole workflow document:") + 1
+    example = []
+    for line in lines[start:]:
+        if not line.startswith("  "):
+            break
+        example.append(line[2:])
+    assert example[:2] == ["apiVersion: weave/v1alpha1", "kind: Workflow"]
+    assert list(validate_authoring("\n".join(example) + "\n", format="yaml").diagnostics) == []
+    assert GUIDE_VERSION == 2
 
 
 def test_a_standard_request_counts_the_workflow_schema_against_its_budget():

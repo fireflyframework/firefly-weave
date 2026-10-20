@@ -45,7 +45,7 @@ COMPACT_MAX_TOKENS = 512
 COMPACT_BELOW = 16384
 STANDARD_UP_TO = 65536
 # The gateway's instructions and the reply format it sends with every request; the gateway tests keep them under it.
-GATEWAY_RESERVE_TOKENS = 704
+GATEWAY_RESERVE_TOKENS = 736
 # The request's own wrapping (prompt, context, history and attachments keys) and the list of trimmed parts.
 ENVELOPE_TOKENS = 64
 STANDARD_DRAFT_BYTES = 32768
@@ -64,9 +64,9 @@ TOO_LARGE_STEP = "This step is too large to send whole."
 # The only metadata an outline keeps; descriptions and labels are free text the budget does not need.
 METADATA_KEYS = ("name", "version")
 OUTLINE_KEYS = ("id", "kind", "uses")
-GUIDE_VERSION = 1
+GUIDE_VERSION = 2
 GUIDE = """\
-Weave workflow guide (version 1).
+Weave workflow guide (version 2).
 A workflow is YAML: apiVersion weave/v1alpha1, kind Workflow, metadata {name, version}, spec {inputSchema,
 outputSchema, steps, output}. Each step has a unique id (lowercase letters, digits, hyphens) and a kind:
 `action` (uses name@version, with, connection), `llm` (an AI task: uses weave-agentic-generate@1.0.0, profile,
@@ -76,12 +76,18 @@ default), `parallel` (branches), `forEach` (items, body), `callWorkflow` (uses, 
 (code, message). Nested steps sit in a block: {steps, output}.
 Expressions: {literal: 1}, {ref: /input/name}, {ref: /steps/<id>/output/field}, {object: {key: expr}},
 {array: [expr]}, {op: {name, args}}.
-Example:
-  steps:
-    - id: greet
-      kind: transform
-      value: {object: {text: {ref: /input/name}}}
-  output: {ref: /steps/greet/output}
+Example of a whole workflow document:
+  apiVersion: weave/v1alpha1
+  kind: Workflow
+  metadata: {name: greet, version: 1.0.0}
+  spec:
+    inputSchema: {type: object, required: [name], properties: {name: {type: string}}}
+    outputSchema: {type: object}
+    steps:
+      - id: greet
+        kind: transform
+        value: {object: {text: {ref: /input/name}}}
+    output: {ref: /steps/greet/output}
 Versions are semantic (1.0.0). A proposal is a whole document of kind workflow, decisionTable, action or
 connector, never a fragment. Say what you could not see when the context lists trimmed parts.
 """

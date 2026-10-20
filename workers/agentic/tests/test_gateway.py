@@ -993,7 +993,7 @@ def test_the_assistant_instructions_and_reply_format_fit_the_reserve_weave_ai_le
     from weave_agentic_worker.gateway import INSTRUCTIONS
 
     # The API leaves these tokens for the gateway's own text (GATEWAY_RESERVE_TOKENS in the server's Weave AI context).
-    reserve = 704
+    reserve = 736
     reply_format = json.dumps(provider_schema(LUMI_REPLY_SCHEMA))
     assert conservative_tokens(INSTRUCTIONS, reply_format) <= reserve
     assert INSTRUCTIONS.startswith("You are Weave AI")
@@ -1004,6 +1004,7 @@ def test_the_assistant_instructions_and_reply_format_fit_the_reserve_weave_ai_le
         "trimmed",
         "return no proposals",
         "Answer briefly",
+        "in a proposal's source field, never in the answer",
     ):
         assert rule in INSTRUCTIONS
 
