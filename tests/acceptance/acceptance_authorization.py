@@ -32,7 +32,7 @@ RANDOM = "random"
 # The demo environment's scope (tenant, project and environment IDs); without one, three new UUIDs.
 DEMO_SCOPE = "demo-scope"
 TABLES = ("operations", "controls")
-KEYS = {"capability", "identifier", "query", "body", "collection", "answers"}
+KEYS = {"capability", "identifier", "query", "body", "collection", "kind", "answers"}
 
 
 @dataclass(frozen=True)
@@ -46,6 +46,8 @@ class Row:
     collection: str | None = None
     # Answers a permitted call may also give: {status, code}, and "until" a journeys.toml capability lands.
     answers: tuple[Mapping[str, Any], ...] = ()
+    # The studio document kind of operations whose path has one.
+    kind: str | None = None
 
 
 def load(path: Path = MATRIX) -> tuple[Path, list[Row]]:
@@ -57,7 +59,8 @@ def load(path: Path = MATRIX) -> tuple[Path, list[Row]]:
         for operation, row in data[table].items():
             if set(row) - KEYS or "capability" not in row or row.get("identifier", RANDOM) != RANDOM:
                 raise ValueError(
-                    f'{table}.{operation}: use capability, identifier = "random", query, body, collection and answers'
+                    f'{table}.{operation}: use capability, identifier = "random", query, body, collection, kind'
+                    " and answers"
                 )
             for answer in row.get("answers", ()):
                 if set(answer) - {"status", "code", "until"} or not {"status", "code"} <= set(answer):
@@ -72,6 +75,7 @@ def load(path: Path = MATRIX) -> tuple[Path, list[Row]]:
                     row.get("body"),
                     row.get("collection"),
                     tuple(row.get("answers", ())),
+                    row.get("kind"),
                 )
             )
     return ROOT / data["baseline"], rows

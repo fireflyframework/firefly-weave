@@ -66,7 +66,7 @@ PIN = {
 }
 
 
-def test_data(**fields):
+def document_of(**fields):
     return {"schemaVersion": 1, "kind": "weave.studio/testData", "updatedAt": "2026-10-20T10:00:00Z", **fields}
 
 
@@ -138,16 +138,16 @@ async def person(access_db, provisioned):
 
 async def test_a_document_round_trips_and_keeps_two_revisions(author, headers, project_url, access_db):
     client, identifier = author[0], await draft(author, headers, project_url)
-    first = await save(client, project_url, headers, identifier, test_data(input={"value": {}, "source": "manual"}))
+    first = await save(client, project_url, headers, identifier, document_of(input={"value": {}, "source": "manual"}))
     assert first.status_code == 201, first.text
     assert first.headers["etag"] == '"1"'
     body = first.json()
     assert body["revision"] == 1 and body["kind"] == "test-data" and body["contains_run_data"] is False
     for revision in (1, 2):
-        again = await save(client, project_url, headers, identifier, test_data(), revision=revision)
+        again = await save(client, project_url, headers, identifier, document_of(), revision=revision)
         assert again.status_code == 200, again.text
     read = await client.get(url(project_url, identifier), headers=headers)
-    assert read.json()["revision"] == 3 and read.json()["document"] == test_data()
+    assert read.json()["revision"] == 3 and read.json()["document"] == document_of()
     sessions = access_db[0]
     async with sessions.begin() as session:
         await session.execute(
@@ -159,9 +159,9 @@ async def test_a_document_round_trips_and_keeps_two_revisions(author, headers, p
 
 async def test_an_update_needs_the_current_revision(author, headers, project_url):
     client, identifier = author[0], await draft(author, headers, project_url)
-    await save(client, project_url, headers, identifier, test_data())
-    missing = await save(client, project_url, headers, identifier, test_data())
-    stale = await save(client, project_url, headers, identifier, test_data(), revision=7)
+    await save(client, project_url, headers, identifier, document_of())
+    missing = await save(client, project_url, headers, identifier, document_of())
+    stale = await save(client, project_url, headers, identifier, document_of(), revision=7)
     assert (missing.status_code, stale.status_code) == (412, 412)
     assert stale.json()["code"] == "WV-ETAG"
 
@@ -173,7 +173,7 @@ async def test_a_save_with_a_secret_value_is_refused_with_pointers_only(author, 
         project_url,
         headers,
         identifier,
-        test_data(
+        document_of(
             input={"value": {"password": "s3cret"}, "source": "manual"},
             pins={"token": {**PIN, "output": {"id": "t", "token": "abc"}}},
         ),
@@ -187,7 +187,7 @@ async def test_a_save_with_a_secret_value_is_refused_with_pointers_only(author, 
 
 async def test_an_entry_the_platform_cannot_classify_is_refused_by_pointer(author, headers, project_url):
     client, identifier = author[0], await draft(author, headers, project_url)
-    refused = await save(client, project_url, headers, identifier, test_data(pins={"local": {**PIN, "output": {}}}))
+    refused = await save(client, project_url, headers, identifier, document_of(pins={"local": {**PIN, "output": {}}}))
     assert refused.status_code == 422
     assert refused.json()["code"] == "WV-STUDIO-DOCUMENT-UNCLASSIFIED"
     assert refused.json()["result"] == {"paths": ["/pins/local"]}
@@ -197,16 +197,16 @@ async def test_run_data_is_sticky_and_a_client_cannot_clear_it(author, headers, 
     client, identifier = author[0], await draft(author, headers, project_url)
     environment = str(author[2].environment_id)
     run = {"value": {}, "source": "run", "runId": RUN, "runEnvironmentId": environment}
-    first = await save(client, project_url, headers, identifier, test_data(input=run))
+    first = await save(client, project_url, headers, identifier, document_of(input=run))
     assert first.status_code == 201, first.text
     assert first.json()["contains_run_data"] is True
     assert first.json()["source_environment_ids"] == [environment]
-    clean = await save(client, project_url, headers, identifier, test_data(), revision=1)
+    clean = await save(client, project_url, headers, identifier, document_of(), revision=1)
     assert clean.json()["contains_run_data"] is True and clean.json()["source_environment_ids"] == [environment]
     asserted = await client.put(
         url(project_url, identifier),
         headers={**headers, "If-Match": '"2"'},
-        json={"draft_revision": 1, "document": test_data(), "contains_run_data": False},
+        json={"draft_revision": 1, "document": document_of(), "contains_run_data": False},
     )
     assert asserted.status_code == 422
 
@@ -216,11 +216,11 @@ async def test_reading_run_data_needs_run_read_in_every_source_environment(
 ):
     client, identifier = author[0], await draft(author, headers, project_url)
     run = {"value": {}, "source": "run", "runId": RUN, "runEnvironmentId": str(author[2].environment_id)}
-    await save(client, project_url, headers, identifier, test_data(input=run))
+    await save(client, project_url, headers, identifier, document_of(input=run))
     grant, revoke_all = person
     await grant(["developer"])
     assert (await client.get(url(project_url, identifier), headers=other_headers)).status_code == 403
-    assert (await save(client, project_url, other_headers, identifier, test_data(), revision=1)).status_code == 403
+    assert (await save(client, project_url, other_headers, identifier, document_of(), revision=1)).status_code == 403
     await grant([], ["viewer"])
     assert (await client.get(url(project_url, identifier), headers=other_headers)).status_code == 200
     await revoke_all()
@@ -240,7 +240,7 @@ async def test_each_kind_needs_its_capabilities(
     author, headers, other_headers, project_url, person, kind, roles, read, write
 ):
     client, identifier = author[0], await draft(author, headers, project_url)
-    document = {"version": 2} if kind == "canvas" else test_data()
+    document = {"version": 2} if kind == "canvas" else document_of()
     await save(client, project_url, headers, identifier, document, kind=kind)
     await person[0](roles)
     assert (await client.get(url(project_url, identifier, kind), headers=other_headers)).status_code == read
@@ -252,39 +252,43 @@ async def test_sizes_are_bounded_per_kind(author, headers, project_url):
     client, identifier = author[0], await draft(author, headers, project_url)
     too_large = await save(client, project_url, headers, identifier, {"version": 2, "x": "x" * 262_144}, kind="canvas")
     assert too_large.status_code == 413 and too_large.json()["code"] == "WV-STUDIO-DOCUMENT-SIZE"
-    data = test_data(input={"value": "x" * 1_048_576, "source": "manual"})
+    data = document_of(input={"value": "x" * 1_048_576, "source": "manual"})
     assert (await save(client, project_url, headers, identifier, data)).status_code == 413
 
 
 async def test_another_tenant_reads_nothing(author, headers, other_headers, project_url):
     client, identifier = author[0], await draft(author, headers, project_url)
-    await save(client, project_url, headers, identifier, test_data())
+    await save(client, project_url, headers, identifier, document_of())
     assert (await client.get(url(project_url, identifier), headers=other_headers)).status_code in {403, 404}
 
 
 async def test_retiring_a_draft_deletes_its_documents(author, headers, project_url):
     client, identifier = author[0], await draft(author, headers, project_url)
-    await save(client, project_url, headers, identifier, test_data())
+    await save(client, project_url, headers, identifier, document_of())
     await save(client, project_url, headers, identifier, {"version": 2}, kind="canvas")
     retired = await client.delete(f"{project_url}/drafts/{identifier}", headers={**headers, "If-Match": '"1"'})
     assert retired.status_code == 200, retired.text
     for kind in ("test-data", "canvas"):
         assert (await client.get(url(project_url, identifier, kind), headers=headers)).status_code == 404
-    assert (await save(client, project_url, headers, identifier, test_data())).status_code == 409
+    assert (await save(client, project_url, headers, identifier, document_of())).status_code == 409
 
 
 async def test_saves_and_deletes_are_audited_without_values(author, headers, project_url, access_db):
     client, identifier = author[0], await draft(author, headers, project_url)
     await save(
-        client, project_url, headers, identifier, test_data(input={"value": {"name": "Ada"}, "source": "manual"})
+        client, project_url, headers, identifier, document_of(input={"value": {"name": "Ada"}, "source": "manual"})
     )
     deleted = await client.delete(url(project_url, identifier), headers={**headers, "If-Match": '"1"'})
     assert deleted.status_code == 204
-    sessions = access_db[0]
-    async with sessions.begin() as session:
+    # The app may only add audit rows; the owner session reads them, as the access tests do.
+    owner = access_db[1]
+    async with owner() as session:
         rows = (
             await session.execute(
-                text("SELECT action,details::text FROM access_audit WHERE action LIKE 'studio_document.%' ORDER BY id")
+                text(
+                    "SELECT action,(event->'details')::text FROM access_audit "
+                    "WHERE action LIKE 'studio_document.%' ORDER BY id"
+                )
             )
         ).all()
     assert [row[0] for row in rows] == ["studio_document.save", "studio_document.delete"]

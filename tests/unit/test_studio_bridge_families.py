@@ -212,6 +212,7 @@ def test_every_operation_crosses_the_bridge_exactly_when_its_family_or_id_is_adm
         "environment": ENVIRONMENT_ID,
         "collection": "workflows",
         "adapter": "weave-http-v2",
+        "kind": "canvas",
     }
     with client(tmp_path) as browser:
         studio = browser.app.state.studio
@@ -229,7 +230,8 @@ def test_every_operation_crosses_the_bridge_exactly_when_its_family_or_id_is_adm
     assert {"releases.create", "admin.grant", "admin.tenant"}.isdisjoint(crossing)
     # The AI setup operations add exactly these six, direct incident reads join the incidents
     # family, stale-worker retirement joins the workers family, and the environment summary,
-    # telemetry settings and release usage join as reads; every earlier crossing stays as it was.
+    # telemetry settings and release usage join as reads, and a draft's studio documents join with their own
+    # family; every earlier crossing stays as it was.
     approved_additions = {
         "ai_endpoints.list",
         "ai_models.list",
@@ -243,6 +245,9 @@ def test_every_operation_crosses_the_bridge_exactly_when_its_family_or_id_is_adm
         "operations_telemetry.read",
         "releases.usage",
         "runs.calls",
+        "studio_documents.read",
+        "studio_documents.save",
+        "studio_documents.delete",
     }
     assert approved_additions <= crossing
     preserved = crossing - approved_additions
@@ -455,3 +460,18 @@ def test_operator_and_credential_operations_never_reach_the_platform(tmp_path, o
         assert browser.app.state.studio.check_scope(path, row.method) == 404
         assert browser.request(row.method, f"/studio/api{path}", json={}, headers=headers).status_code == 404
     assert seen == []
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "status"),
+    [
+        ("GET", f"{PROJECT}/drafts/{RESOURCE}/studio/test-data", 200),
+        ("PUT", f"{PROJECT}/drafts/{RESOURCE}/studio/canvas", 200),
+        ("DELETE", f"{PROJECT}/drafts/{RESOURCE}/studio/test-data", 200),
+        ("GET", f"{PROJECT}/drafts/{RESOURCE}/studio/layout", 404),
+        ("GET", f"{OTHER_PROJECT}/drafts/{RESOURCE}/studio/canvas", 403),
+    ],
+)
+def test_studio_documents_cross_the_bridge_only_for_their_two_kinds(tmp_path, method, path, status):
+    with client(tmp_path) as browser:
+        assert browser.app.state.studio.check_scope(path, method) == status

@@ -74,8 +74,11 @@ async def probe(client: Any, row: Any, materialize: Any) -> tuple[int, str]:
             row.operation,
             identifier=uuid4() if row.identifier else None,
             collection=row.collection,
+            kind=row.kind,
             body=body,
             query=query,
+            # An operation that needs a precondition names revision 1 of the random target.
+            revision=1 if spec.revision == "required" else None,
             idempotency_key=f"j9-{uuid4().hex}" if spec.idempotency else None,
         )
     except WeaveError as error:

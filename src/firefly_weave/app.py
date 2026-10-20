@@ -62,6 +62,7 @@ from firefly_weave.api.providers import ProviderController
 from firefly_weave.api.run_views import RunViewController
 from firefly_weave.api.runs import RunController
 from firefly_weave.api.schedules import ScheduleController
+from firefly_weave.api.studio_documents import StudioDocumentController
 from firefly_weave.api.triggers import TriggerController
 from firefly_weave.api.workers import WorkerController
 from firefly_weave.connections.bindable import BindableConnectionService
@@ -360,6 +361,7 @@ def make_app(
                 AccessController,
                 CompilerController,
                 DefinitionController,
+                StudioDocumentController,
                 ConnectionController,
                 BindableConnectionController,
                 ConnectorDescriptorController,

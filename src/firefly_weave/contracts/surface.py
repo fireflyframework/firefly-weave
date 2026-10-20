@@ -188,6 +188,7 @@ from firefly_weave.contracts.runtime import (
     UnavailableRunAcknowledgment,
 )
 from firefly_weave.contracts.schedules import ScheduleOccurrence, ScheduleRequest, ScheduleView
+from firefly_weave.contracts.studio_documents import StudioDocument, StudioDocumentSave
 from firefly_weave.contracts.teams import TeamsReactivateRequest, TeamsReference, TeamsRevokeRequest
 from firefly_weave.contracts.values import JsonObjectData
 from firefly_weave.contracts.whatsapp import MessageId, WhatsAppDeliveryState, WhatsAppStatusFact
@@ -287,6 +288,8 @@ class Operation:
                 if name == "collection"
                 else AdapterName
                 if name == "adapter"
+                else Literal["canvas", "test-data"]
+                if name == "kind"
                 else UUID,
             )
             for name in re.findall(r"{([^}]+)}", self.path)
@@ -370,7 +373,10 @@ class Operation:
                 }
             )
         responses: dict[int | str, OpenAPIResponse] = {
-            status: OpenAPIResponse("Success", {"application/json": self.response}, response_headers)
+            # An operation without a response model answers without a body (204).
+            status: OpenAPIResponse(
+                "Success", {"application/json": self.response} if self.response is not None else {}, response_headers
+            )
             for status in self.statuses
         }
         if self.id.startswith("provider_ingress."):
@@ -1318,6 +1324,34 @@ OPERATIONS = {
             "definition.write",
             revision="required",
             etag=True,
+        ),
+        Operation(
+            "studio_documents.read",
+            PROJECT + "/drafts/{identifier}/studio/{kind}",
+            "GET",
+            StudioDocument,
+            "catalog.read",
+            etag=True,
+        ),
+        Operation(
+            "studio_documents.save",
+            PROJECT + "/drafts/{identifier}/studio/{kind}",
+            "PUT",
+            StudioDocument,
+            "definition.write",
+            StudioDocumentSave,
+            (200, 201),
+            revision="optional",
+            etag=True,
+        ),
+        Operation(
+            "studio_documents.delete",
+            PROJECT + "/drafts/{identifier}/studio/{kind}",
+            "DELETE",
+            None,
+            "definition.write",
+            statuses=(204,),
+            revision="required",
         ),
         Operation(
             "activations.create",

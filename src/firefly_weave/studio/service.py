@@ -107,6 +107,8 @@ STUDIO_FAMILIES = frozenset(
         "operations_telemetry",
         # Draft save/retire and Simulate are authorized server-side like every other family.
         "drafts",
+        # Draft canvases and test data: capabilities, run data and secrets are checked server-side.
+        "studio_documents",
         "debug",
     }
 )
@@ -352,6 +354,8 @@ class StudioService:
             return value in CATALOG_COLLECTIONS
         if name == "adapter":
             return ADAPTER.fullmatch(value) is not None
+        if name == "kind":
+            return value in ("canvas", "test-data")
         try:
             UUID(value)
         except ValueError:
