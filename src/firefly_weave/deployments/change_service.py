@@ -22,11 +22,13 @@ low-level plan and job operations stay available beside it.
 
 import builtins
 import json
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
+from datetime import datetime
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from pyfly.container import service
+from sqlalchemy import text
 
 from firefly_weave.access.audit import AuditContext
 from firefly_weave.access.authorization import AccessDenied, contains
@@ -57,12 +59,14 @@ from firefly_weave.contracts.deployments import (
     ObservationReport,
     PlanRequest,
 )
+from firefly_weave.contracts.integration_events import EventMetadata, IntegrationEvent
 from firefly_weave.contracts.workers import WorkerControlRequest
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.deployments.change_requests import (
     ACTIVE,
     DEFAULT_PLAN_SECONDS,
     ENDED,
+    RETENTION,
     drains,
     effective,
     plan_lifetime,
@@ -72,6 +76,7 @@ from firefly_weave.deployments.change_requests import (
 )
 from firefly_weave.deployments.repository import SCOPE, DeploymentRepository
 from firefly_weave.deployments.service import DeploymentService
+from firefly_weave.operations.outbox import OutboxService
 from firefly_weave.persistence.idempotency import Idempotency
 from firefly_weave.persistence.uow import Transaction, UnitOfWork
 from firefly_weave.workers.service import WorkerService
@@ -100,7 +105,57 @@ async def move(
         moved,
         extra={"state": state, "ended_at": now if state in ENDED else None},
     )
+    await OutboxService().append(repo.tx, transition_event(moved, now))
     return moved
+
+
+def transition_event(record: ChangeRequest, at: datetime) -> IntegrationEvent:
+    """The change_request.transition event: the change request's ID, new state and revision, nothing else."""
+    return IntegrationEvent(
+        event_id=uuid5(NAMESPACE_URL, f"change-request:{record.id}:{record.revision}"),
+        type="change_request.transition",
+        scope=record.scope,
+        resource_id=record.id,
+        correlation_id=record.id,
+        emitted_at=at,
+        payload=EventMetadata(change_state=record.state, revision=record.revision),
+    )
+
+
+async def persist_expiry(repo: DeploymentRepository, now: datetime, limit: int = 100) -> int:
+    """Store `expired` for planned change requests whose plan expired, oldest first; the count it stored."""
+    rows = await repo.rows(
+        f"SELECT payload FROM deployment_change_requests WHERE {SCOPE} AND state IN ({_PLANNED_SQL}) "
+        "AND (payload->>'plan_expires_at')::timestamptz<=:now "
+        "ORDER BY (payload->>'plan_expires_at')::timestamptz,id LIMIT :limit FOR UPDATE SKIP LOCKED",
+        now=now,
+        limit=limit,
+    )
+    for row in rows:
+        await move(repo, ChangeRequest.model_validate_json(json.dumps(row["payload"])), "expired", actor=None)
+    return len(rows)
+
+
+async def upkeep(tx: Transaction, step: Callable[[DeploymentRepository, datetime], Awaitable[int]]) -> int:
+    """Run one operations-loop upkeep step in the loop's scoped unit, at the database's clock."""
+    repo = DeploymentRepository(tx)
+    return await step(repo, await repo.now())
+
+
+# Ended change requests older than the retention period, oldest first, read through the end-time index.
+RETENTION_SQL = (
+    "WITH ended AS (SELECT id FROM deployment_change_requests WHERE tenant_id=:tenant AND project_id=:project "
+    "AND environment_id=:environment AND ended_at IS NOT NULL AND ended_at<:cutoff ORDER BY ended_at,id "
+    "LIMIT :limit) DELETE FROM deployment_change_requests WHERE id=ANY(ARRAY(SELECT id FROM ended))"
+)
+
+
+async def retention(repo: DeploymentRepository, now: datetime, limit: int = 100) -> int:
+    """Delete change requests that ended more than 90 days ago; the count it deleted."""
+    result = await repo.tx.session.execute(
+        text(RETENTION_SQL), {**repo.bound, "cutoff": now - RETENTION, "limit": limit}
+    )
+    return int(getattr(result, "rowcount", 0) or 0)
 
 
 async def follow_job(repo: DeploymentRepository, job: DeploymentJob, *, observation: ObservationReport | None) -> None:

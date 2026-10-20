@@ -52,7 +52,10 @@ class SubscriptionService:
         self.authorization.require(actor, tx.scope, "connection.bind", resource=str(revision.id))
         for kind in request.event_types:
             scope = tx.scope.model_copy(update={"environment_id": None}) if kind == "definition.published" else tx.scope
-            self.authorization.require(actor, scope, "run.read" if kind == "run.transition" else "catalog.read")
+            capability = {"run.transition": "run.read", "change_request.transition": "deployment.read"}.get(
+                kind, "catalog.read"
+            )
+            self.authorization.require(actor, scope, capability)
         if revision.adapter != "weave-http" or request.signing_slot not in revision.secret_refs:
             raise CatalogError(422, "WV-DELIVERY-CONFIG", "HTTP destination and signing reference required")
         if origin(str(revision.config.get("baseUrl", ""))) not in {origin(v) for v in revision.allowed_destinations}:

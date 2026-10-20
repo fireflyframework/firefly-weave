@@ -19,7 +19,8 @@ SPDX-License-Identifier: Apache-2.0
 # Notify your application about workflow events
 
 Weave can tell your application when something changes: a run moves to a new
-status, a definition is published, or an activation is activated or retired. A
+status, a definition is published, an activation is activated or retired, or an
+infrastructure change request moves to a new state. A
 **subscription** selects which of these future events to send and to which fixed
 HTTP destination. A **delivery** is the durable record of sending one event to
 one subscription revision, with every attempt.
@@ -54,6 +55,12 @@ workflow evidence.
 | `definition.published` | A definition version is published | The project; the environment is `null` |
 | `activation.activated` | A version is activated in an environment | That environment |
 | `activation.retired` | An activation is retired | That environment |
+| `change_request.transition` | A change request moves to a new state, such as awaiting approval or applied | The change request's environment |
+
+A `change_request.transition` event carries the change request's ID and, in its
+payload, `change_state` and `revision` only: never its title, reason, people or
+plan. Read the change request itself for the rest. A subscription selects at most
+five event types.
 
 The event's `correlation_id` is the stable UUID of the source resource. The
 change, the immutable event, and every matching delivery intent commit in the
@@ -157,8 +164,8 @@ so `signing_slot` is `token`.
 
 **Who may configure.** The configuring person needs `subscription.manage`,
 `connection.manage`, `connection.bind` on that exact connection, and read
-authority for the events: `run.read` for run events, `catalog.read` for catalog
-events. Publication events need project-wide catalog authority; an
+authority for the events: `run.read` for run events, `deployment.read` for change
+request events, `catalog.read` for catalog events. Publication events need project-wide catalog authority; an
 environment-only grant cannot export project metadata. Administration alone
 grants no business read permission. A request cannot choose its principal or
 carry secret bytes.
@@ -314,7 +321,7 @@ offline.
 | What you see | Why | What to do |
 | --- | --- | --- |
 | `subscriptions save` fails with `WV-DELIVERY-CONFIG` | The connection is not a `weave-http` v1 revision, `signing_slot` is not one of its secret slots, or its `baseUrl` origin is missing from `allowed_destinations` | Create a v1 bearer connection whose `allowed_destinations` include the `baseUrl` origin, and use `"signing_slot": "token"` |
-| No delivery appears | The event type does not match, the event happened before the subscription, or you lack read authority for it | Compare `event_types`, the subscription revision, and your `run.read` or `catalog.read` grant |
+| No delivery appears | The event type does not match, the event happened before the subscription, or you lack read authority for it | Compare `event_types`, the subscription revision, and your `run.read`, `deployment.read` or `catalog.read` grant |
 | Deliveries stay `pending` | No scheduler-enabled replica is running, or the database is not ready | Start a replica with the scheduler enabled; check readiness |
 | Status `retry` | The receiver did not return a configured success status | Check the receiver's logs and its status code |
 | Status `incident` | Attempts ran out, or authority or the binding was revoked | Read the `code` and `weave deliveries history`, fix the cause, then `weave deliveries retry` |
