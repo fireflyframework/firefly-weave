@@ -174,6 +174,21 @@ def test_native_document_uses_validation_and_serialization_aliases():
     assert set(response["properties"]) == {"output"}
 
 
+def test_a_bodyless_success_is_documented_without_content():
+    from pyfly.web import RouteMetadata
+
+    from firefly_weave.contracts.openapi import create_openapi_generator
+    from firefly_weave.contracts.surface import OPERATIONS
+
+    operation = OPERATIONS["studio_documents.delete"]
+    spec = create_openapi_generator("Weave", "1").generate(
+        [RouteMetadata(operation.path, "DELETE", 204, None, "delete", operation=operation.native())]
+    )
+    answer = spec["paths"][operation.path]["delete"]["responses"]["204"]
+    assert "content" not in answer
+    assert "X-Weave-Request-ID" in answer["headers"]
+
+
 if __name__ == "__main__":
     from pathlib import Path
 

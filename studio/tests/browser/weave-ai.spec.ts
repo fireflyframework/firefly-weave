@@ -206,6 +206,15 @@ test("Set up Weave AI with unsaved edits keeps the designer and its address when
   await page.route("**/lumi/status", (r) =>
     r.fulfill({ json: { configured: false } }),
   );
+  // The draft can't save, so its edits stay unsaved and leaving asks first.
+  await page.route("**/drafts/*", (r) =>
+    r.request().method() === "PUT"
+      ? r.fulfill({
+          status: 422,
+          json: { status: 422, code: "WV-VALIDATION", message: "Not saved." },
+        })
+      : r.fallback(),
+  );
   await newWorkflow(page);
   await page
     .locator(".palette")

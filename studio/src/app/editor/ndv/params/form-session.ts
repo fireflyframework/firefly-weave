@@ -76,6 +76,7 @@ import {
 } from "./drop";
 import { dragSchema } from "../panes/views";
 import { uiKey } from "../../state/browser-store";
+import { studioStorage } from "../../state/studio-storage";
 import {
   expressionRoot,
   pathStartsWith,
@@ -855,8 +856,9 @@ export class FormSession {
   private tipOnce() {
     try {
       const key = uiKey("weave.ndv.dropTip.v1");
-      if (localStorage.getItem(key)) return;
-      localStorage.setItem(key, "1");
+      const storage = studioStorage();
+      if (!storage || storage.getItem(key)) return;
+      storage.setItem(key, "1");
     } catch {
       return;
     }

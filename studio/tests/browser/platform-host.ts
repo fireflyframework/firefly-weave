@@ -199,6 +199,8 @@ export interface HostOptions {
   enforcedFlows?: Flow[];
   /** What the identity provider answers to revocation on sign-out and remove. */
   revocation?: Revocation;
+  /** Desktop: sign-out and remove report that some of the platform's data stayed on this computer. */
+  localDataKept?: boolean;
   /** `POST /studio/preferences` fails with this status. */
   preferencesStatus?: number;
   /** Removing with sign-out leaves the sign-in on this computer (store locked). */
@@ -602,6 +604,7 @@ export class PlatformHost {
           remote_revocation: revoked
             ? (this.options.revocation ?? "confirmed")
             : "not_requested",
+          ...(this.options.localDataKept ? { local_data_removed: false } : {}),
         }),
       });
     }

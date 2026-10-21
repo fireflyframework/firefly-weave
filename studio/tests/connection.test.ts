@@ -45,6 +45,7 @@ import {
   sessionUsable,
   signInMethods,
   signOutReport,
+  localDataKept,
   signedInText,
   stateLabel,
   workspaceKey,
@@ -588,6 +589,12 @@ describe("connection client", () => {
       },
     ]);
     expect(result.preferences.start).toBe("local");
+  });
+  it("tells when some of a platform's data stayed on this computer", () => {
+    expect(localDataKept({ local_data_removed: false })).toBe(true);
+    expect(localDataKept({ local_data_removed: true })).toBe(false);
+    expect(localDataKept({ remote_revocation: "confirmed" })).toBe(false);
+    expect(localDataKept(null)).toBe(false);
   });
   it("reports a sign-out the identity provider did not confirm", () => {
     expect(signOutReport({ remote_revocation: "confirmed" })).toBe("complete");

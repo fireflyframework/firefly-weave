@@ -77,6 +77,7 @@ def test_matrix_requests_fit_the_operation_contracts(row):
     operation = OPERATIONS[row.operation]
     assert row.identifier == ("{identifier}" in operation.path), row.operation
     assert (row.collection is not None) == ("{collection}" in operation.path), row.operation
+    assert (row.kind is not None) == ("{kind}" in operation.path), row.operation
     if operation.request is None:
         assert row.body is None, row.operation
     else:

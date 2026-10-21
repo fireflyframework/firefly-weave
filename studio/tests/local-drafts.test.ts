@@ -75,6 +75,21 @@ describe("drafts on this computer", () => {
     expect(drafts.failed).toBe(false);
   });
 
+  it("keeps drafts under the local prefix", () => {
+    const storage = new MemoryStorage();
+    const drafts = new LocalDrafts(() => storage);
+    const entry = {
+      id: "d-1",
+      name: "first",
+      version: "1.0.0",
+      savedAt: "2026-10-01T10:00:00Z",
+    };
+    expect(drafts.save(entry, document("kind: A", entry.savedAt))).toBe(true);
+    expect([...storage.items.keys()].sort()).toEqual([
+      "local:weave.localDraft.d-1",
+      "local:weave.localDrafts.v1",
+    ]);
+  });
   it("removes a draft and puts it back for Undo", () => {
     const storage = new MemoryStorage();
     const drafts = new LocalDrafts(() => storage);
@@ -134,8 +149,8 @@ describe("drafts on this computer", () => {
 });
 
 describe("where local work lives", () => {
-  it("names the desktop app's limit and the browser's", () => {
-    expect(localKeepLabel(true)).toBe("Kept until you quit");
+  it("says drafts are kept on this computer, in a browser and in the desktop app", () => {
+    expect(localKeepLabel(true)).toBe("Kept on this computer");
     expect(localKeepLabel(false)).toBe("Kept on this computer");
   });
 });

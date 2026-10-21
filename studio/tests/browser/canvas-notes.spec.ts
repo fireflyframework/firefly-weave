@@ -122,7 +122,8 @@ test.describe("sticky notes at 1440x900", () => {
     await expect
       .poll(() =>
         page.evaluate(
-          () => localStorage.getItem("weave.localDraft.notes-journey") ?? "",
+          () =>
+            localStorage.getItem("local:weave.localDraft.notes-journey") ?? "",
         ),
       )
       .toContain("Reviewed");

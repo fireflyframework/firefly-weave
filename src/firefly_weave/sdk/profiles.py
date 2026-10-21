@@ -685,3 +685,88 @@ def _updated(profile: PlatformProfile, **changes: Any) -> PlatformProfile:
 
 def _document(active: str | None, profiles: dict[str, PlatformProfile]) -> ProfileDocument:
     return ProfileDocument(active=active, profiles=profiles)
+
+
+class PrivateFolder:
+    """Small private files in their own folder, kept with the saved platforms' rules.
+
+    The same guarantees as `ProfileStore`, because it is that code: POSIX directory 0700 and files 0600, owner
+    only, no symlinks or hard links, descriptor-relative opens, atomic replacement and a cross-process lock;
+    Windows refuses links and junctions and locks with msvcrt. Errors are `WV-PROFILE-STORE` failures.
+    """
+
+    def __init__(self, directory: Path, lock: str = "store") -> None:
+        # Only the folder and the lock file name are used: `ProfileStore` keeps its files beside `path`.
+        self._files = ProfileStore(directory / lock)
+
+    @property
+    def directory(self) -> Path:
+        return self._files.path.parent
+
+    @contextmanager
+    def reading(self) -> Iterator[int | None]:
+        """The folder for reads without the lock; FileNotFoundError when it doesn't exist yet."""
+        with self._files._directory(create=False) as directory:
+            yield directory
+
+    @contextmanager
+    def changing(self) -> Iterator[int | None]:
+        """The folder, created or tightened, with the lock held."""
+        with self._files._transaction() as directory:
+            yield directory
+
+    def read(self, directory: int | None, name: str, limit: int) -> bytes | None:
+        return self._files._read_raw(directory, name, limit, "A stored value is larger than its limit.")
+
+    def write(self, directory: int | None, name: str, raw: bytes) -> None:
+        self._files._write_raw(directory, name, raw)
+
+    def remove(self, directory: int | None, name: str) -> bool:
+        try:
+            if directory is None:
+                (self.directory / name).unlink()
+            else:
+                os.unlink(name, dir_fd=directory)
+        except FileNotFoundError:
+            return False
+        return True
+
+    def names(self, directory: int | None) -> list[str]:
+        """The regular files of the folder, without the lock and temporary files."""
+        listed = os.listdir(self.directory if directory is None else directory)
+        return sorted(name for name in listed if not name.startswith(".") and not name.endswith(".lock"))
+
+    def discard(self, directory: int | None, name: str) -> bool:
+        """Remove an entry nobody can read without following it: a link is unlinked itself, a folder is removed
+        with its contents (``shutil.rmtree`` never follows links), anything else is unlinked."""
+        import shutil
+
+        try:
+            if directory is None:
+                path = self.directory / name
+                if path.is_dir() and not path.is_symlink():
+                    shutil.rmtree(path)
+                else:
+                    path.unlink()
+            else:
+                mode = os.stat(name, dir_fd=directory, follow_symlinks=False).st_mode
+                if stat.S_ISDIR(mode):
+                    shutil.rmtree(name, dir_fd=directory)
+                else:
+                    os.unlink(name, dir_fd=directory)
+        except FileNotFoundError:
+            return False
+        return True
+
+    def temporaries(self, directory: int | None) -> list[str]:
+        """Temporary copies a write left behind when its process ended before the rename (``.<name>.<hex>.tmp``)."""
+        listed = os.listdir(self.directory if directory is None else directory)
+        return sorted(name for name in listed if name.startswith(".") and name.endswith(".tmp"))
+
+    def size(self, directory: int | None, name: str) -> int:
+        try:
+            if directory is None:
+                return (self.directory / name).lstat().st_size
+            return os.stat(name, dir_fd=directory, follow_symlinks=False).st_size
+        except FileNotFoundError:
+            return 0

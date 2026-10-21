@@ -18,6 +18,7 @@ SPDX-License-Identifier: Apache-2.0
 import {
   canvasFile,
   canvasFromStored,
+  emptyCanvas,
   ownedRecipes,
   readCanvas,
   removeTrigger,
@@ -37,7 +38,47 @@ import type { ClipboardContent, PastePlan } from "./editor/state/clipboard";
 import type { TriggerKind } from "./editor/canvas/layout-ltr";
 import { DraftCanvases, type KeptWhere } from "./editor/state/draft-canvas";
 import { readImport } from "./import-files";
-import type { AccountScope } from "./editor/state/browser-store";
+import {
+  connectedPrefix,
+  storeKey,
+  uiKey,
+  type AccountScope,
+} from "./editor/state/browser-store";
+import {
+  bootStudioStorage,
+  onStudioStorageDropped,
+  recentRepair,
+  flushStudioStorage,
+  studioBackend,
+  studioStorage,
+} from "./editor/state/studio-storage";
+import { Autosave } from "./editor/state/autosave";
+import {
+  readStudioDocument,
+  saveStudioDocument,
+} from "./editor/state/studio-documents";
+import { CHECK_WORDS } from "./editor/state/test-data-check";
+import {
+  containsRunData,
+  emptyTestData,
+  entriesOf,
+  pruneEntries,
+  withPin,
+  withoutPin,
+  withoutRunData,
+} from "./editor/state/test-data-ops";
+import { readTestData } from "./editor/state/test-data-read";
+import {
+  TestDataService,
+  type TestDataPlace,
+} from "./editor/state/test-data-service";
+import type { StepFingerprints } from "./editor/state/fingerprints";
+import type {
+  PinEntry,
+  StudioDocument,
+  StudioDocumentKind,
+  StudioTestData,
+} from "./editor/state/test-data";
 import {
   stepDetailsEnabled,
   type StepDetailsHost,
@@ -87,6 +128,8 @@ import {
   revocationNote,
   sessionUsable,
   signOutReport,
+  localDataKept,
+  localDataKeptNote,
   signedInText,
   stateLabel,
 } from "./connection";
@@ -137,6 +180,7 @@ import {
   kinds,
   ownerLabel,
   renamedSteps,
+  sequencesOf,
   StructuredCanvasAdapter,
   Workflow,
   Node,
@@ -263,6 +307,7 @@ type PlatformNoticeKind =
   | "revoked"
   | "workspace"
   | "sign-out-incomplete"
+  | "local-data-kept"
   | "signing-in"
   | "sign-in-failed"
   | "revocation";
@@ -303,21 +348,44 @@ const EDITOR_NAV_FULL_MIN = 900;
 /** The inspector's width: 360–480 px by default, at most 640 px. */
 const INSPECTOR_MIN = 360;
 const INSPECTOR_MAX = 640;
-const inspectorWidthKey = "weave.studio.inspectorWidth";
-const inspectorSectionsKey = "weave.studio.inspectorSections";
+const inspectorWidthKey = uiKey("weave.studio.inspectorWidth");
+const inspectorSectionsKey = uiKey("weave.studio.inspectorSections");
+/** "12:04": local time, 24-hour, as Studio's other times. */
+const clockTime = (at: number) =>
+  new Date(at).toLocaleTimeString("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+/** The inspector width the person chose, if any is kept; otherwise the default. */
+function keptInspectorWidth() {
+  const kept = Number(stored(inspectorWidthKey));
+  return Number.isFinite(kept) && kept >= INSPECTOR_MIN && kept <= INSPECTOR_MAX
+    ? kept
+    : defaultInspectorWidth();
+}
 const defaultInspectorWidth = () =>
   Math.round(Math.min(480, Math.max(INSPECTOR_MIN, window.innerWidth * 0.25)));
+/** The inspector sections the person closed, by kind of step. */
+function keptSections(): Record<string, string[]> {
+  try {
+    const value = JSON.parse(stored(inspectorSectionsKey) ?? "{}");
+    return value && typeof value === "object" ? value : {};
+  } catch {
+    return {};
+  }
+}
 /** Reads a stored value; storage may be missing or refuse (privacy modes). */
 function stored(key: string): string | null {
   try {
-    return localStorage.getItem(key);
+    return studioStorage()?.getItem(key) ?? null;
   } catch {
     return null;
   }
 }
 function store(key: string, value: string) {
   try {
-    localStorage.setItem(key, value);
+    studioStorage()?.setItem(key, value);
   } catch {
     // Not kept: a convenience only.
   }
@@ -385,6 +453,21 @@ const sideEffects: Record<string, string> = {
   idempotency_key: "Retried with an idempotency key",
   non_idempotent: "Not idempotent — never retried automatically",
 };
+/** Each step as it is in a definition, by ID: a deleted step's test data returns only to the same step. */
+function stepIdentities(
+  definition: Workflow,
+): (id: string) => string | undefined {
+  // Read now: the definition may change in place afterwards.
+  const found = new Map(
+    [...sequencesOf(definition).values()]
+      .flat()
+      .map((step) => [step.id, JSON.stringify(step)]),
+  );
+  return (id) => found.get(id);
+}
+/** No pinned steps (before the test data tools load). */
+const NO_PINS: ReadonlyMap<string, { stale: string | null }> = new Map();
+
 @Component({
   selector: "weave-studio",
   standalone: true,
@@ -575,7 +658,7 @@ export class App implements CanvasHost {
   /** Visible outcomes: one toast at a time. */
   readonly toasts = inject(ToastService);
   private title = inject(Title);
-  /** Workflows kept on this computer (localStorage). */
+  /** Workflows kept on this computer (Studio's storage). */
   readonly localDrafts = new LocalDrafts();
   /** "On this computer", newest first; refreshed whenever it is shown. */
   localList: LocalDraftEntry[] = [];
@@ -663,15 +746,8 @@ export class App implements CanvasHost {
       : null;
   showPalette = false;
   paletteWidth = window.innerWidth <= 1440 ? 192 : 208;
-  /** The inspector's width; a width the person chose is kept in this browser. */
-  inspectorWidth = (() => {
-    const kept = Number(stored(inspectorWidthKey));
-    return Number.isFinite(kept) &&
-      kept >= INSPECTOR_MIN &&
-      kept <= INSPECTOR_MAX
-      ? kept
-      : defaultInspectorWidth();
-  })();
+  /** The inspector's width; a width the person chose is kept on this computer. */
+  inspectorWidth = keptInspectorWidth();
   readonly inspectorLimits = { min: INSPECTOR_MIN, max: INSPECTOR_MAX };
   /** Why a command the person pressed can't run; read under the toolbar. */
   commandNote = "";
@@ -1336,6 +1412,7 @@ export class App implements CanvasHost {
       const s = await this.api.pair();
       this.paired = s.paired;
       if (s.paired) {
+        await this.bootStorage();
         const designer = designerPath.exec(location.pathname);
         const route = viewFromPath(location.pathname);
         if (!designer && route && this.nav.some((n) => n.id === route.view))
@@ -1364,12 +1441,44 @@ export class App implements CanvasHost {
       this.cdr.markForCheck();
     }
   }
+  /**
+   * Before Studio reads what it keeps: the desktop fills its mirror from the
+   * host, and keys from before prefixes move once. Preferences read earlier
+   * are read again from there.
+   */
+  private async bootStorage() {
+    try {
+      await bootStudioStorage(this.api);
+    } catch {
+      // Nothing kept is lost: the keys stay where they were until the next start.
+    }
+    onStudioStorageDropped(() => this.storageDropped());
+    this.inspectorWidth = keptInspectorWidth();
+    this.closedSections = keptSections();
+  }
+  /** Said once a session: values dropped while the platform shows signed in. */
+  private droppedNoticeShown = false;
+  /**
+   * The host refused a value because it counts the platform as signed out.
+   * Right after a sign-out that is expected; while Studio shows the platform
+   * signed in, the person is told once, so the loss isn't silent.
+   */
+  private storageDropped() {
+    if (this.droppedNoticeShown || !this.profile || !this.identity) return;
+    this.droppedNoticeShown = true;
+    this.notify(
+      `This computer didn't keep some of your work for ${this.profile.name}: Studio still counts it as signed out here. Sign in again to keep it.`,
+      undefined,
+      "danger",
+    );
+  }
   async pair() {
     if (!this.pairCode.trim() || this.busy) return;
     this.busy = "pair";
     try {
       await this.api.pair(this.pairCode.trim());
       this.paired = true;
+      await this.bootStorage();
       this.pairCode = "";
       this.error = "";
       this.errorCode = "";
@@ -1420,15 +1529,11 @@ export class App implements CanvasHost {
   /** Records a desktop re-pairing reload; true when one already happened in the last minute. */
   private recentRepair() {
     try {
-      const key = "weave-studio-repair";
-      const last = Number(sessionStorage.getItem(key) ?? 0);
-      if (Date.now() - last < 60000) return true;
-      sessionStorage.setItem(key, String(Date.now()));
+      return recentRepair(sessionStorage);
     } catch {
       // Without storage a reload loop cannot be ruled out, so do not reload.
       return true;
     }
-    return false;
   }
   get profile() {
     return this.api.session.profile;
@@ -1736,11 +1841,26 @@ export class App implements CanvasHost {
     const before = this.model.source;
     if (leaving && (!this.leaveInspector() || !(await this.settleSource())))
       return;
+    // An output edit in step details not saved yet asks the same question as closing them.
+    const ask = leaving ? this.stepDetails.askBeforeLeaving : null;
+    if (ask && !(await ask())) return;
+    // A platform draft saves itself on the way out (waiting at most 2 s);
+    // work still unsaved, or a save still going, asks.
+    if (leaving && this.profile && this.dirty)
+      await Promise.race([
+        this.flushAutosave(),
+        new Promise((done) => setTimeout(done, 2000)),
+      ]);
     if (
       leaving &&
       this.dirty &&
-      this.saveState === "Unsaved" &&
-      !(await this.confirmLeave(typed && this.model.source !== before))
+      (this.saveState === "Unsaved" ||
+        this.saveState === "Not saved" ||
+        this.saveState === "Saving") &&
+      !(await this.confirmLeave(
+        typed && this.model.source !== before,
+        this.saveState === "Saving",
+      ))
     )
       return;
     if (view !== "connect") this.releaseWizard();
@@ -1770,12 +1890,13 @@ export class App implements CanvasHost {
    * applied on the way out, that question was the one about leaving, and
    * none follows it.
    */
-  private async confirmLeave(applied = false) {
+  private async confirmLeave(applied = false, saving = false) {
     if (this.profile || this.draftRevision !== undefined || this.published)
       return this.dialogs.confirm({
         title: "Leave the designer?",
-        message:
-          "Your edits stay in this Studio window, but they are not saved to a platform. Save a draft, or use Save to file, to keep a copy.",
+        message: saving
+          ? "Studio is still saving this draft and hasn't heard back from the platform. If you leave, Studio keeps a recovery copy of your edits on this computer."
+          : "Your edits stay in this Studio window, but they are not saved to a platform. Save a draft, or use Save to file, to keep a copy.",
         confirmLabel: "Leave designer",
         cancelLabel: "Keep editing",
       });
@@ -1785,9 +1906,7 @@ export class App implements CanvasHost {
       title: `Leave ${this.model.definition.metadata.name}?`,
       message: this.localDrafts.failed
         ? "Studio can't keep drafts in this browser. Save to file to keep your work."
-        : this.desktopShell
-          ? "It's kept under Workflows › On this computer until you quit Firefly Weave Studio. Save to file to keep a copy."
-          : "It's kept on this computer. You'll find it under Workflows › On this computer. Save to file to keep a copy you can share.",
+        : "It's kept on this computer. You'll find it under Workflows › On this computer. Save to file to keep a copy you can share.",
       confirmLabel: "Leave",
       cancelLabel: "Keep editing",
     });
@@ -1797,6 +1916,9 @@ export class App implements CanvasHost {
   private keepLocally() {
     if (this.profile) {
       this.keepDraftCanvas();
+      // A platform draft saves itself, and this computer keeps a recovery copy meanwhile.
+      this.autosave.touch();
+      this.keepRecovery();
       return;
     }
     if (this.localTimer) clearTimeout(this.localTimer);
@@ -1813,6 +1935,10 @@ export class App implements CanvasHost {
   /** The pending draft whose kept canvas is being read. */
   private draftCanvasReading: { draftId: string; opened: number } | null = null;
   /** The account a platform draft's canvas belongs to; null when it can't be told. */
+  /** Who run inputs remembered on this computer belong to. */
+  get runAccount(): AccountScope | null {
+    return this.accountScope();
+  }
   private accountScope(): AccountScope | null {
     const profile = this.profile;
     if (!profile?.tenantId || !profile.projectId) return null;
@@ -1870,7 +1996,27 @@ export class App implements CanvasHost {
     this.draftCanvasReading = pending;
     const model = this.model;
     const canvas = model.canvas;
-    const stored = await this.draftCanvases.read(scope, pending.draftId);
+    this.openTestData();
+    // The platform keeps the canvas; this computer's copy is for recovery, and goes up when the platform has none.
+    let platform: StudioDocument | null | undefined;
+    try {
+      platform = await readStudioDocument(this.api, pending.draftId, "canvas");
+    } catch {
+      platform = undefined;
+    }
+    if (this.platformDocs.draftId !== pending.draftId)
+      this.platformDocs = {
+        draftId: pending.draftId,
+        testData: null,
+        canvas: null,
+      };
+    if (platform) {
+      this.platformDocs.canvas = canonicalJson(platform.document);
+      this.platformDocs.canvasRevision = platform.revision;
+    }
+    const stored = platform
+      ? platform.document
+      : await this.draftCanvases.read(scope, pending.draftId);
     this.draftCanvasReading = null;
     if (this.draftCanvasPending === pending) this.draftCanvasPending = null;
     const same =
@@ -1978,6 +2124,8 @@ export class App implements CanvasHost {
   /** Edits not yet kept anywhere: on this computer or on the platform. */
   get unsavedWork() {
     if (this.inspectorProblem) return true;
+    // An output edit in step details not saved yet.
+    if (this.stepDetails.outputEditDirty?.()) return true;
     if (this.sourcePending) return true;
     if (!this.dirty) return false;
     if (this.profile || this.draftRevision !== undefined || this.published)
@@ -1991,6 +2139,9 @@ export class App implements CanvasHost {
     this.flushInspector();
     this.flushLocalSave();
     void this.flushDraftCanvas();
+    // Not awaited: the recovery copy covers what doesn't land.
+    void this.flushAutosave();
+    void flushStudioStorage();
     if (!this.unsavedWork) return;
     event.preventDefault();
     event.returnValue = "";
@@ -2035,6 +2186,7 @@ export class App implements CanvasHost {
     this.model = model;
     this.draftId = id;
     this.draftRevision = undefined;
+    this.autosave.cancel();
     this.published = null;
     this.activation = null;
     this.view = "designer";
@@ -2043,6 +2195,7 @@ export class App implements CanvasHost {
     this.resetValidation();
     this.changed();
     this.dirty = false;
+    this.openTestData();
     this.scheduleFit();
     this.cdr.markForCheck();
     return true;
@@ -2094,6 +2247,7 @@ export class App implements CanvasHost {
     void this.flushDraftCanvas();
     this.draftId = crypto.randomUUID();
     this.draftRevision = undefined;
+    this.autosave.cancel();
     this.published = record;
     this.draftCanvasPending = null;
     this.draftCanvasKept = "memory";
@@ -2110,13 +2264,19 @@ export class App implements CanvasHost {
     this.resetValidation();
     this.changed();
     this.dirty = false;
+    this.openTestData();
     this.view = "designer";
     this.activation = null;
     this.draftId = String(detail["id"]);
     this.draftRevision = Number(detail["revision"]);
     this.published = null;
     this.saveState = "Draft saved";
-    // Opening is no change to keep (changed() above scheduled one): the kept canvas comes back instead.
+    // Opening is no change to save or keep (changed() above scheduled both).
+    this.autosave.cancel();
+    if (this.recoveryTimer) clearTimeout(this.recoveryTimer);
+    this.recoveryTimer = null;
+    void this.offerRecovery(this.draftId, this.draftRevision);
+    // The kept canvas comes back instead.
     if (this.draftCanvasTimer) clearTimeout(this.draftCanvasTimer);
     this.draftCanvasTimer = null;
     this.draftCanvasWrite = null;
@@ -2176,6 +2336,7 @@ export class App implements CanvasHost {
     });
     this.draftId = crypto.randomUUID();
     this.draftRevision = undefined;
+    this.autosave.cancel();
     this.view = "designer";
     void this.router.navigateByUrl(`/workflows/${this.draftId}/designer`);
     this.openTab();
@@ -2184,6 +2345,7 @@ export class App implements CanvasHost {
     this.resetValidation();
     this.changed();
     this.dirty = false;
+    this.openTestData();
     this.scheduleFit();
   }
   /**
@@ -2700,10 +2862,10 @@ export class App implements CanvasHost {
   }
   /**
    * The status chip beside the version: "Unsaved changes", "Saving…",
-   * "Draft saved", "Kept on this computer", "Published 1.0.0" or
+   * "Saved 12:04", "Not saved: retry", "Published 1.0.0" or
    * "Active in Production". Null for a new local workflow with no edits.
    */
-  get statusChip(): { text: string; tone: string } | null {
+  get statusChip(): { text: string; tone: string; retry?: boolean } | null {
     if (this.inspectorProblem) return { text: "Unsaved", tone: "warning" };
     const version = String(
       this.published?.["version"] ?? this.model.definition.metadata.version,
@@ -2717,9 +2879,20 @@ export class App implements CanvasHost {
         return { text: this.savedDraftLabel(), tone: "" };
       return null;
     }
-    if (this.busy === "save") return { text: "Saving…", tone: "" };
-    if (this.saveState === "Not saved")
-      return { text: "Not saved", tone: "danger" };
+    const autosave = this.autosave.state();
+    if (autosave === "saving" || this.busy === "save")
+      return { text: "Saving…", tone: "" };
+    // Another draft's save waits for its answer (Check now): this one can't save before it.
+    const earlier = this.pendingMutation;
+    if (
+      (autosave === "failed" || this.saveState === "Not saved") &&
+      earlier?.method === "PUT" &&
+      earlier.path.includes("/drafts/") &&
+      !earlier.path.endsWith(`/drafts/${this.draftId}`)
+    )
+      return { text: "Waiting for an earlier save", tone: "warning" };
+    if (autosave === "failed" || this.saveState === "Not saved")
+      return { text: "Not saved: retry", tone: "danger", retry: true };
     switch (this.lifecycle) {
       case "active":
         return {
@@ -2728,16 +2901,21 @@ export class App implements CanvasHost {
         };
       case "published":
         return { text: `Published ${version}`, tone: "info" };
-      case "saved":
-        return { text: this.savedDraftLabel(), tone: "" };
+      case "saved": {
+        const at = this.autosave.savedAt();
+        return {
+          text: at === null ? this.savedDraftLabel() : `Saved ${clockTime(at)}`,
+          tone: "",
+        };
+      }
       default:
         return { text: "Unsaved", tone: "warning" };
     }
   }
   private savedDraftLabel() {
     return this.draftSavedAt
-      ? `Draft saved ${new Date(this.draftSavedAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false })}`
-      : "Draft saved";
+      ? `Saved ${clockTime(new Date(this.draftSavedAt).getTime())}`
+      : "Saved";
   }
   /** The open workflow has a copy kept on this computer. */
   private keptLocally = false;
@@ -2899,6 +3077,7 @@ export class App implements CanvasHost {
       return false;
     // Their inspector edits go with them.
     if (ids.includes(this.model.selected)) this.loadInspector();
+    const identities = stepIdentities(this.model.definition);
     this.perform(() =>
       one
         ? this.model.remove(one, { contents: contained > 0 })
@@ -2908,9 +3087,15 @@ export class App implements CanvasHost {
       this.cdr.markForCheck();
       return false;
     }
+    // Their test data goes with them; Undo (the toast's or the toolbar's) brings both back.
+    const steps = this.model.stepIdSet();
+    const pruned = this.testData.prune((id) => steps.has(id), identities);
     const what = one || `${ids.length} steps`;
     const revision = this.model.revision;
-    this.notify(`Deleted ${what}.`, {
+    const withData = pruned.length
+      ? ` and ${one ? "its" : "their"} pinned output`
+      : "";
+    this.notify(`Deleted ${what}${withData}.`, {
       label: "Undo",
       run: async () => {
         const done = await this.undoIfUnchanged(
@@ -2921,7 +3106,7 @@ export class App implements CanvasHost {
             `${one || "These steps"} can't come back from here: the workflow changed since. Use Undo in the toolbar.`,
           );
         if (done !== "undone") return;
-        this.notify(`Restored ${what}.`);
+        this.notify(`Restored ${what}${withData}.`);
         if (one) this.focusStep(one);
       },
     });
@@ -3004,6 +3189,8 @@ export class App implements CanvasHost {
     if (!(await this.ensureApplied())) return;
     try {
       const count = this.model.renameStep(id, value);
+      // The step's test data follows its new ID.
+      this.testData.rename(id, value.trim());
       this.dirty = true;
       this.changed();
       this.error = "";
@@ -3061,14 +3248,7 @@ export class App implements CanvasHost {
    * open unless the person closed them for this kind of step; that choice
    * is kept in this browser.
    */
-  private closedSections: Record<string, string[]> = (() => {
-    try {
-      const value = JSON.parse(stored(inspectorSectionsKey) ?? "{}");
-      return value && typeof value === "object" ? value : {};
-    } catch {
-      return {};
-    }
-  })();
+  private closedSections: Record<string, string[]> = keptSections();
   sectionOpen(section: string) {
     const kind = this.selected?.step.kind ?? "workflow";
     return !(this.closedSections[kind] ?? []).includes(section);
@@ -3593,8 +3773,11 @@ export class App implements CanvasHost {
     }
     this.flushInspector();
     const before = this.model.definition;
+    const steps = this.model.stepIdSet();
+    const identities = stepIdentities(before);
     this.model.undo();
-    this.stepDetails.followRenames(renamedSteps(before, this.model.definition));
+    this.followRenames(renamedSteps(before, this.model.definition));
+    this.followSteps(steps, identities);
     this.dirty = true;
     this.changed();
   }
@@ -3617,6 +3800,32 @@ export class App implements CanvasHost {
     this.undo();
     return "undone";
   }
+  /**
+   * After an Undo or Redo: steps that came back bring back the test data
+   * their deletion took, and steps it removed take theirs (kept to come
+   * back), so the toolbar and the delete toast's Undo agree.
+   */
+  private followSteps(
+    before: ReadonlySet<string>,
+    previous: (id: string) => string | undefined,
+  ) {
+    const after = this.model.stepIdSet();
+    // Only steps this Undo or Redo brought back, and only as they were.
+    // Read live: a retry after a change during the host's check sees the
+    // workflow as it is then (a later Redo may have removed the step again).
+    const model = this.model;
+    void this.testData.revive(
+      (id) =>
+        !before.has(id) && model === this.model && model.stepIdSet().has(id),
+      (id) => stepIdentities(model.definition)(id),
+    );
+    this.testData.prune((id) => after.has(id) || !before.has(id), previous);
+  }
+  /** Steps an Undo or Redo renamed: entries in step details and their test data follow. */
+  private followRenames(renames: { from: string; to: string }[]) {
+    this.stepDetails.followRenames(renames);
+    for (const { from, to } of renames) this.testData.rename(from, to);
+  }
   redo() {
     if (this.editingLocked) return;
     if (this.sourcePending) {
@@ -3625,8 +3834,11 @@ export class App implements CanvasHost {
     }
     this.cancelInspectorCommit();
     const before = this.model.definition;
+    const steps = this.model.stepIdSet();
+    const identities = stepIdentities(before);
     this.model.redo();
-    this.stepDetails.followRenames(renamedSteps(before, this.model.definition));
+    this.followRenames(renamedSteps(before, this.model.definition));
+    this.followSteps(steps, identities);
     this.dirty = true;
     this.changed();
   }
@@ -4077,6 +4289,7 @@ export class App implements CanvasHost {
       }),
     );
     if (this.error) return null;
+    if (Object.keys(planned.pins).length) void this.pastePins(planned.pins);
     const renamed = Object.keys(planned.renamed).length;
     this.notify(
       `Pasted ${planned.ids.length === 1 ? planned.ids[0] : `${planned.ids.length} steps`}.${
@@ -4086,6 +4299,54 @@ export class App implements CanvasHost {
       }`,
     );
     return planned;
+  }
+  /**
+   * Pasted steps bring their pinned output (never what runs recorded). Each
+   * value is checked as any pin is; one refused is dropped, and a toast says
+   * why once.
+   */
+  private async pastePins(pins: Readonly<Record<string, unknown>>) {
+    const service = this.testData;
+    const escape = (key: string) =>
+      key.replace(/~/g, "~0").replace(/\//g, "~1");
+    // What came from the clipboard is read as test data first: only well-formed pins go on.
+    const reading = readTestData({
+      ...emptyTestData(new Date().toISOString()),
+      pins,
+    });
+    let refusal = reading.ok ? "" : reading.reason;
+    let waiting: [string, PinEntry][] = reading.ok
+      ? Object.entries(reading.data.pins ?? {})
+      : [];
+    while (waiting.length) {
+      const at = new Date().toISOString();
+      let next = service.data();
+      for (const [key, entry] of waiting) next = withPin(next, key, entry, at);
+      const outcome = await service.change(
+        next,
+        waiting.map(([key]) => `/pins/${escape(key)}`),
+      );
+      if (outcome.ok) {
+        this.markForeign(waiting.map(([key]) => key));
+        break;
+      }
+      refusal ||= outcome.message;
+      const refused = waiting.find(
+        ([key]) => `/pins/${escape(key)}` === outcome.pointer,
+      );
+      // Nothing to drop by pointer (the document changed meanwhile, say): none is pasted.
+      if (!refused) {
+        waiting = [];
+        break;
+      }
+      waiting = waiting.filter((pair) => pair !== refused);
+    }
+    if (refusal)
+      this.notify(
+        `Some pinned output wasn't pasted: ${refusal}`,
+        undefined,
+        "danger",
+      );
   }
   /** Tidy layout on the new canvas: one undo step, with an Undo toast. */
   tidyCanvas(next: CanvasSidecar | null): boolean {
@@ -4182,6 +4443,7 @@ export class App implements CanvasHost {
     if (tab !== this.tab) {
       if (!this.leaveInspector()) return false;
       if (this.tab === "Source" && !(await this.settleSource())) return false;
+      void this.flushAutosave();
     }
     this.tab = tab;
     if (tab === "Designer") this.outlineNotice = false;
@@ -6479,6 +6741,7 @@ export class App implements CanvasHost {
           this.resetValidation();
           this.changed();
           this.dirty = false;
+          this.openTestData();
           this.view = "designer";
           this.activation = null;
           this.saveState = "Published";
@@ -6495,6 +6758,7 @@ export class App implements CanvasHost {
           this.resetValidation();
           this.changed();
           this.dirty = false;
+          this.openTestData();
           this.view = "designer";
           this.activation = null;
           this.saveState = "Published";
@@ -6733,39 +6997,727 @@ export class App implements CanvasHost {
       return;
     }
     this.busy = "save";
-    this.saveState = "Saving";
-    const source = this.model.source;
     const model = this.model;
     try {
+      // Save is the autosave, now, with its outcome said out loud.
+      this.saveForced = true;
+      this.autosave.touch();
+      if (await this.autosave.flush()) {
+        const note = await this.draftNote(model, this.draftCanvasKept);
+        this.notify(note ? `Draft saved. ${note}` : "Draft saved.");
+      } else if (this.autosaveFailure) this.fail(this.autosaveFailure);
+    } finally {
+      this.cdr.markForCheck();
+      this.busy = "";
+    }
+  }
+  // --- autosave of platform drafts ---------------------------------------
+  /** Platform drafts save themselves 2 s after the last change, at most every 10 s. */
+  private readonly autosave: Autosave = new Autosave((generation) =>
+    this.autosaveDraft(generation),
+  );
+  /** Save draft was pressed: the draft saves even when nothing changed since it opened. */
+  private saveForced = false;
+  /** Why the last autosave failed, when it wasn't a conflict (the compare flow shows those). */
+  private autosaveFailure: unknown = null;
+  /** Saves pending edits of a platform draft now (closing step details, switching tabs, leaving). */
+  flushAutosave(): Promise<boolean> {
+    return this.profile ? this.autosave.flush() : Promise.resolve(true);
+  }
+  /** "Not saved: retry". */
+  retrySave() {
+    this.autosave.touch();
+    void this.autosave.flush().then(() => this.cdr.markForCheck());
+  }
+  /**
+   * One save of the open platform draft, without a toast; false when it didn't
+   * save. The draft, its content and its revision are read once, when the save
+   * starts; after each answer the save goes on only while that draft is still
+   * the open one (`generation`, which opening a draft changes).
+   */
+  private async autosaveDraft(generation: number): Promise<boolean> {
+    const current = () => this.autosave.current(generation);
+    if (!current()) return true;
+    this.autosaveFailure = null;
+    if (!this.profile) return true;
+    const forced = this.saveForced;
+    this.saveForced = false;
+    // The compare flow is open: nothing saves until the person chooses.
+    if (this.conflict?.["draftId"] === this.draftId) return false;
+    // Nothing changed in the workflow (test data or the canvas did): only they save.
+    if (!this.dirty && !forced)
+      return this.draftRevision === undefined
+        ? true
+        : await this.flushPlatformDocuments(generation);
+    this.flushInspector();
+    if (
+      this.model.readonly ||
+      this.model.unplaced.length ||
+      this.inspectorProblem ||
+      this.sourcePending
+    )
+      return false;
+    const draftId = this.draftId;
+    const source = this.model.source;
+    const document = structuredClone(this.model.definition);
+    let revision = this.draftRevision;
+    this.saveState = "Saving";
+    this.cdr.markForCheck();
+    try {
+      // A save whose answer never came is sent again first, with its own key, so it can't apply twice.
+      const settled = await this.settlePendingDraftSave(draftId, generation);
+      if (!current()) return true;
+      if (settled === false) return false;
+      if (settled !== true) revision = settled;
       const result = await this.safeMutation<{
         id: string;
         revision: number;
         document: Workflow;
       }>(
-        `${this.api.project}/drafts/${this.draftId}`,
+        `${this.api.project}/drafts/${draftId}`,
         "PUT",
-        { document: this.model.definition },
-        this.draftRevision,
+        { document },
+        revision,
         "Save draft",
+        false,
       );
+      if (!current()) return true;
       this.draftRevision = result.revision;
-      this.saveState = source === this.model.source ? "Draft saved" : "Unsaved";
+      const unchanged = source === this.model.source;
+      this.saveState = unchanged ? "Draft saved" : "Unsaved";
       this.draftSavedAt = new Date().toISOString();
-      if (source === this.model.source) this.dirty = false;
+      if (unchanged) {
+        this.dirty = false;
+        this.forgetRecovery(draftId);
+      }
       this.error = "";
-      const note = await this.draftNote(model, await this.flushDraftCanvas());
-      this.notify(note ? `Draft saved. ${note}` : "Draft saved.");
+      await this.flushDraftCanvas();
+      if (!current()) return true;
+      // Test data and the canvas follow the draft, naming the revision just saved.
+      return await this.flushPlatformDocuments(generation);
     } catch (e) {
+      if (!current()) return false;
       this.saveState = "Not saved";
-      if (e instanceof ApiError && e.status === 409) {
-        this.conflict = { local: this.model.definition, server: e.detail };
-        this.error =
-          "Someone else saved this draft. Your version is still here. Compare them before you save.";
-      } else this.fail(e);
+      if (e instanceof ApiError && (e.status === 409 || e.status === 412))
+        await this.draftConflict(draftId, document, e, generation);
+      else this.autosaveFailure = e;
+      return false;
     } finally {
-      this.cdr.markForCheck();
-      this.busy = "";
+      if (current()) this.cdr.markForCheck();
     }
+  }
+  /**
+   * Someone else saved the draft (409, or 412 for a stale revision): the
+   * compare flow shows theirs beside this one, and autosave waits for a choice.
+   */
+  private async draftConflict(
+    draftId: string,
+    local: Workflow,
+    e: ApiError,
+    generation: number,
+  ) {
+    let server: unknown = e.detail;
+    if (e.status === 412)
+      try {
+        server = await this.api.request<Record<string, unknown>>(
+          `${this.api.project}/drafts/${draftId}`,
+        );
+      } catch {
+        // Their version couldn't be read: the compare flow shows the refusal.
+      }
+    if (!this.autosave.current(generation)) return;
+    this.conflict = { draftId, local, server };
+    this.error =
+      "Someone else saved this draft. Your version is still here. Compare them before you save.";
+  }
+  /**
+   * True once no save of this draft is waiting for an answer, or the revision
+   * that save made; false while another command's is. The revision is the
+   * open draft's only while `generation` is current.
+   */
+  private async settlePendingDraftSave(
+    draftId: string,
+    generation: number,
+  ): Promise<boolean | number> {
+    const pending = this.pendingMutation;
+    if (!pending) return true;
+    if (
+      pending.method !== "PUT" ||
+      !pending.path.endsWith(`/drafts/${draftId}`)
+    )
+      return false;
+    const result = await this.api.mutate<Record<string, unknown>>(
+      pending.path,
+      pending.method,
+      pending.body,
+      pending.revision,
+      pending.key,
+    );
+    if (this.pendingMutation === pending) {
+      this.pendingMutation = null;
+      this.unknownCommand = false;
+    }
+    const revision = Number(result["revision"]);
+    if (this.autosave.current(generation) && draftId === this.draftId)
+      this.draftRevision = revision;
+    return revision;
+  }
+  // --- test data and the canvas of a platform draft, on the platform -------
+  /** The open workflow's test data: test input and pinned output. */
+  readonly testData = new TestDataService({
+    api: this.api,
+    backend: studioBackend(),
+    now: () => new Date(),
+    // The schemas a check needs come with the tools, loaded on first use.
+    inputs: async () =>
+      (await this.loadTools()).checkInputsOf(
+        this.model.definition,
+        this.catalogContracts,
+      ),
+    // A platform draft saves its test data with the draft.
+    changed: () => {
+      if (this.profile) this.autosave.touch();
+    },
+  });
+  /** The place and opening the test data was last opened for. */
+  private testDataKey = "";
+  /**
+   * Opens the test data of the workflow and account shown now: next to a
+   * local draft, under the account for a platform draft (then the platform's
+   * copy over it), in memory when no account can own it. False when it is
+   * open already.
+   */
+  /** The test data opening now; a file's test data waits for it. */
+  private testDataOpening: Promise<unknown> = Promise.resolve();
+  openTestData(): boolean {
+    if (!this.testData || !this.model) return false;
+    const scope = this.profile ? this.accountScope() : null;
+    const place: TestDataPlace = !this.profile
+      ? { kind: "local", draftId: this.draftId }
+      : scope?.subject
+        ? { kind: "connected", scope, draftId: this.draftId }
+        : { kind: "memory" };
+    const key = JSON.stringify([place, this.model.opened]);
+    if (key === this.testDataKey) return false;
+    // The same workflow, opened in memory until the account was known: what
+    // was set meanwhile is carried into the account's copy.
+    const carry =
+      place.kind !== "memory" &&
+      this.testDataKey ===
+        JSON.stringify([{ kind: "memory" }, this.model.opened]);
+    this.testDataKey = key;
+    // A failure is said where it happens; nothing waits on this one.
+    this.loadTools().catch(() => undefined);
+    // Another workflow's test data: no pin here came from elsewhere yet.
+    this.foreignPins.clear();
+    this.foreignVersion++;
+    // Failures are said where they happen; this only orders what waits.
+    this.testDataOpening = (
+      place.kind === "connected"
+        ? this.openPlatformTestData(place.scope, place.draftId, carry)
+        : this.testData.open(place, { carry })
+    )
+      .then(() => this.carryTestData())
+      .catch(() => undefined);
+    return true;
+  }
+  /** Every step's fingerprints now, memoized on the workflow, its canvas and the test input. */
+  private printsMemo: {
+    revision: number;
+    canvas: unknown;
+    version: number;
+    prints: ReadonlyMap<string, StepFingerprints>;
+  } | null = null;
+  /**
+   * Pins pasted from the clipboard or loaded from a workflow's test data
+   * file while this workflow is open: stamped by another workflow, so out
+   * of date here until kept or pinned again. Their badge says so plainly.
+   */
+  private readonly foreignPins = new Set<string>();
+  private foreignVersion = 0;
+  private markForeign(keys: Iterable<string>) {
+    for (const key of keys) this.foreignPins.add(key);
+    this.foreignVersion++;
+  }
+  /** Test data's tools: fingerprints, pin states, the check's schemas (a lazy chunk). */
+  private tools: typeof import("./editor/state/test-data-tools") | null = null;
+  private toolsLoading: Promise<
+    typeof import("./editor/state/test-data-tools")
+  > | null = null;
+  /** Bumped when the tools arrive, so what reads them draws again. */
+  private readonly toolsReady = signal(0);
+  /** The tools' chunk (a test replaces it). */
+  private importTools = () => import("./editor/state/test-data-tools");
+  /**
+   * Loads the tools once; a failed load (a network blip, or a new version
+   * deployed while the window is open) is tried once more, then said in
+   * plain words, and the next call tries afresh.
+   */
+  private loadTools() {
+    this.toolsLoading ??= this.importTools()
+      .catch(() => this.importTools())
+      .then(
+        (tools) => {
+          this.tools = tools;
+          this.toolsReady.update((n) => n + 1);
+          this.cdr.markForCheck();
+          return tools;
+        },
+        (error: unknown) => {
+          this.toolsLoading = null;
+          this.notify(
+            "Studio couldn't load what test data needs. Reload the page to try again.",
+            undefined,
+            "danger",
+          );
+          throw error;
+        },
+      );
+    return this.toolsLoading;
+  }
+  private pinStatesMemo: {
+    prints: ReadonlyMap<string, StepFingerprints>;
+    data: StudioTestData;
+    foreign: number;
+    states: ReadonlyMap<string, { stale: string | null }>;
+  } | null = null;
+  /** Each pinned step's stale words for the canvas (null when current). */
+  pinStates(): ReadonlyMap<string, { stale: string | null }> {
+    const prints = this.testDataPrints();
+    // Until the tools load (a moment after the first page), no badges.
+    if (!prints || !this.tools) return NO_PINS;
+    const data = this.testData.data();
+    const memo = this.pinStatesMemo;
+    if (
+      memo &&
+      memo.prints === prints &&
+      memo.data === data &&
+      memo.foreign === this.foreignVersion
+    )
+      return memo.states;
+    const states = this.tools.pinStatesOf(data, prints, this.foreignPins);
+    this.pinStatesMemo = { prints, data, foreign: this.foreignVersion, states };
+    return states;
+  }
+  private simulationDataMemo: {
+    data: StudioTestData;
+    value: { input?: Json; pins: Record<string, Json> } | null;
+  } | null = null;
+  /** What the simulation's editors start from: the test input and each step's pinned output, or null. */
+  simulationTestData(): { input?: Json; pins: Record<string, Json> } | null {
+    this.testData.version();
+    this.toolsReady();
+    const data = this.testData.data();
+    if (this.simulationDataMemo?.data === data)
+      return this.simulationDataMemo.value;
+    const value = this.tools ? this.tools.simulationDataOf(data) : null;
+    this.simulationDataMemo = { data, value };
+    return value;
+  }
+  pinFromElsewhere(id: string): boolean {
+    this.pinStates();
+    return this.foreignPins.has(id);
+  }
+  pinsForCopy(): Readonly<Record<string, PinEntry>> {
+    return this.testData.data().pins ?? {};
+  }
+  /** P on the canvas and the step menu: unpins the pinned steps as one Undo; never makes data (Ruling 19). */
+  togglePins(ids: readonly string[]): void {
+    const pinned = ids.filter((id) => this.pinStates().has(id));
+    if (!pinned.length) {
+      this.notify("Set test output or generate a sample to pin it.");
+      return;
+    }
+    const service = this.testData;
+    const previous = service.data();
+    const at = new Date().toISOString();
+    let next = previous;
+    for (const id of pinned) next = withoutPin(next, id, at);
+    void service.change(next, []).then((outcome) => {
+      if (!outcome.ok) return this.notify(outcome.message, undefined, "danger");
+      const version = service.version();
+      this.notify(
+        pinned.length === 1
+          ? `Unpinned ${pinned[0]}.`
+          : `Unpinned ${pinned.length} steps.`,
+        {
+          label: "Undo",
+          run: () => {
+            if (!service.restore(outcome.previous, version))
+              this.notify("The test data changed since, so Undo did nothing.");
+          },
+        },
+      );
+    });
+  }
+  /**
+   * Every step's fingerprints now, or null until the test data tools load
+   * (step details then compute their own).
+   */
+  testDataPrints(): ReadonlyMap<string, StepFingerprints> | null {
+    this.toolsReady();
+    const tools = this.tools;
+    if (!tools) return null;
+    const model = this.model;
+    const version = this.testData.version();
+    const memo = this.printsMemo;
+    if (
+      memo &&
+      memo.revision === model.revision &&
+      memo.canvas === model.canvas &&
+      memo.version === version
+    )
+      return memo.prints;
+    const prints = tools.printsOf(model, this.testData.data().input?.value);
+    this.printsMemo = {
+      revision: model.revision,
+      canvas: model.canvas,
+      version,
+      prints,
+    };
+    return prints;
+  }
+  /** What the platform last saved of each document of the open draft (canonical JSON, revision). */
+  private platformDocs: {
+    draftId: string;
+    testData: string | null;
+    canvas: string | null;
+    canvasRevision?: number;
+    /** "Use theirs" on a canvas Studio can't read: theirs stays on the platform, and this canvas never saves over it. */
+    canvasHeld?: boolean;
+  } = { draftId: "", testData: null, canvas: null };
+  /** "Someone else changed the test data" (or the canvas): Keep mine or Use theirs. */
+  documentConflict: {
+    kind: StudioDocumentKind;
+    draftId: string;
+    theirs: StudioDocument;
+  } | null = null;
+  /** Opens a platform draft's test data: this computer's copy, then the platform's over it. */
+  /**
+   * Test data set before the account was known joins the account's copy;
+   * where both hold a value for the same entry, the person chooses.
+   */
+  private async carryTestData() {
+    const carried = await this.testData.carryOver((conflicts) =>
+      this.dialogs
+        .choose({
+          title: "Keep the test data you just set?",
+          message: `This workflow's saved test data has other values for ${conflicts.length === 1 ? "an entry" : `${conflicts.length} entries`} you set while Studio was checking your sign-in.`,
+          confirmLabel: "Keep mine",
+          cancelLabel: "Use the saved values",
+        })
+        .then((choice) => choice === "confirm"),
+    );
+    if (carried.length) this.cdr.markForCheck();
+  }
+  private async openPlatformTestData(
+    scope: AccountScope,
+    draftId: string,
+    carry = false,
+  ) {
+    await this.testData.open({ kind: "connected", scope, draftId }, { carry });
+    if (draftId !== this.draftId) return;
+    let document: StudioDocument | null;
+    try {
+      document = await readStudioDocument(this.api, draftId, "test-data");
+    } catch {
+      return;
+    }
+    if (draftId !== this.draftId) return;
+    this.testData.syncFrom(document);
+    if (this.platformDocs.draftId !== draftId)
+      this.platformDocs = { draftId, testData: null, canvas: null };
+    this.platformDocs.testData = document
+      ? canonicalJson(this.testData.toPlatform().document)
+      : null;
+    this.cdr.markForCheck();
+  }
+  /** After the draft saves: test data and the canvas, each when it changed since its last save. */
+  private async flushPlatformDocuments(
+    generation: number = this.autosave.generation,
+  ): Promise<boolean> {
+    const current = () => this.autosave.current(generation);
+    const draftId = this.draftId;
+    if (!current() || !this.profile || this.draftRevision === undefined)
+      return true;
+    if (this.platformDocs.draftId !== draftId)
+      this.platformDocs = { draftId, testData: null, canvas: null };
+    let ok = true;
+    const place = this.testData.place();
+    if (place.kind === "connected" && place.draftId === draftId) {
+      await this.testData.flush();
+      if (!current()) return true;
+      const { document } = this.testData.toPlatform();
+      const text = canonicalJson(document);
+      const nothing =
+        !entriesOf(document).length && this.platformDocs.testData === null;
+      if (text !== this.platformDocs.testData && !nothing)
+        ok = (await this.savePlatformDocument("test-data", document)) && ok;
+      if (!current()) return true;
+    }
+    // A canvas still being read from this computer isn't the draft's canvas yet.
+    if (
+      this.draftCanvasPending?.draftId !== draftId &&
+      !this.platformDocs.canvasHeld
+    ) {
+      const canvas = this.model.canvas;
+      const text = canonicalJson(canvas);
+      const nothing =
+        canonicalJson(emptyCanvas()) === text &&
+        this.platformDocs.canvas === null;
+      if (text !== this.platformDocs.canvas && !nothing)
+        ok =
+          (await this.savePlatformDocument(
+            "canvas",
+            canvas as unknown as Record<string, unknown>,
+          )) && ok;
+    }
+    return ok;
+  }
+  /** One save of a studio document; refusals and conflicts are handled here. */
+  private async savePlatformDocument(
+    kind: StudioDocumentKind,
+    document: object,
+    revision = kind === "test-data"
+      ? this.testData.revision()
+      : this.platformDocs.canvasRevision,
+    again = true,
+  ): Promise<boolean> {
+    const draftId = this.draftId;
+    const draftRevision = this.draftRevision;
+    const generation = this.autosave.generation;
+    const open = () =>
+      draftId === this.draftId && this.autosave.current(generation);
+    if (draftRevision === undefined) return false;
+    const answer = await saveStudioDocument(
+      this.api,
+      draftId,
+      kind,
+      { draft_revision: draftRevision, document: document as never },
+      revision,
+    );
+    if (!open()) return true;
+    if (answer.ok) {
+      const text = canonicalJson(answer.document.document);
+      if (kind === "test-data") {
+        this.testData.savedOnPlatform(answer.document.revision);
+        this.platformDocs.testData = text;
+      } else {
+        this.platformDocs.canvas = text;
+        this.platformDocs.canvasRevision = answer.document.revision;
+      }
+      return true;
+    }
+    if (answer.status === 412) {
+      try {
+        const theirs = await readStudioDocument(this.api, draftId, kind);
+        if (theirs && open()) this.documentConflict = { kind, draftId, theirs };
+      } catch {
+        // The conflict shows at the next save.
+      }
+      this.cdr.markForCheck();
+      return false;
+    }
+    if (kind === "test-data" && answer.code === "WV-STUDIO-DOCUMENT-SECRET") {
+      await this.testData.dropSecret(answer.paths);
+      if (!open()) return true;
+      for (const _ of answer.paths)
+        this.notify(CHECK_WORDS["WV-SCHEMA-SECRET_VALUE"], undefined, "danger");
+      if (!again) return false;
+      return this.savePlatformDocument(
+        kind,
+        this.testData.toPlatform().document,
+        revision,
+        false,
+      );
+    }
+    if (
+      kind === "test-data" &&
+      answer.code === "WV-STUDIO-DOCUMENT-UNCLASSIFIED" &&
+      again
+    ) {
+      this.testData.markLocalOnly(answer.paths);
+      return this.savePlatformDocument(
+        kind,
+        this.testData.toPlatform().document,
+        revision,
+        false,
+      );
+    }
+    return false;
+  }
+  /** Keep mine: saved again over theirs. */
+  async keepMyDocument() {
+    const conflict = this.documentConflict;
+    this.documentConflict = null;
+    if (!conflict || conflict.draftId !== this.draftId) return;
+    const mine =
+      conflict.kind === "test-data"
+        ? this.testData.toPlatform().document
+        : (this.model.canvas as unknown as Record<string, unknown>);
+    await this.savePlatformDocument(
+      conflict.kind,
+      mine,
+      conflict.theirs.revision,
+    );
+    this.cdr.markForCheck();
+  }
+  /** Use theirs: the platform's document replaces this one (test data with an Undo toast). */
+  useTheirDocument() {
+    const conflict = this.documentConflict;
+    this.documentConflict = null;
+    if (!conflict || conflict.draftId !== this.draftId) return;
+    const text = canonicalJson(conflict.theirs.document);
+    if (conflict.kind === "test-data") {
+      const previous: StudioTestData = this.testData.data();
+      this.testData.syncFrom(conflict.theirs);
+      this.platformDocs.testData = text;
+      const version = this.testData.version();
+      this.notify("Using the test data saved on the platform.", {
+        label: "Undo",
+        run: () => {
+          if (this.testData.restore(previous, version)) this.autosave.touch();
+        },
+      });
+    } else {
+      const model = this.model;
+      const read = canvasFromStored(
+        conflict.theirs.document,
+        model.definition,
+        model.stepIdSet(),
+      );
+      if (!read.problems.length) {
+        model.amend(() => (model.canvas = read.canvas));
+        this.tick.update((n) => n + 1);
+      } else {
+        // Theirs can't be shown: it stays on the platform untouched, and this layout stays here.
+        this.platformDocs.canvasHeld = true;
+        this.notify(
+          "Studio couldn't read the canvas saved on the platform, so it keeps that one there and this layout here. Layout changes to this draft aren't saved to the platform until you open it again.",
+          undefined,
+          "danger",
+        );
+      }
+      this.platformDocs.canvas = text;
+      this.platformDocs.canvasRevision = conflict.theirs.revision;
+    }
+    this.cdr.markForCheck();
+  }
+  // --- the recovery copy of a platform draft -------------------------------
+  private recoveryTimer: ReturnType<typeof setTimeout> | null = null;
+  private recoveryPending: { draftId: string; revision: number } | null = null;
+  /** Unsaved changes this computer kept for the draft being opened: Restore or Discard. */
+  recoveryOffer: {
+    key: string;
+    draftId: string;
+    source: string;
+    format: "yaml" | "json";
+    canvas: unknown;
+  } | null = null;
+  private async recoveryKey(draftId: string): Promise<string | null> {
+    const scope = this.accountScope();
+    const prefix = scope
+      ? await connectedPrefix(scope).catch(() => null)
+      : null;
+    return prefix ? storeKey(prefix, `recovery.${draftId}`) : null;
+  }
+  /** 800 ms after a change, this computer keeps the draft as it is now, under the account's prefix. */
+  private keepRecovery() {
+    if (this.recoveryTimer) clearTimeout(this.recoveryTimer);
+    const draftId = this.draftId;
+    this.recoveryTimer = setTimeout(() => {
+      this.recoveryTimer = null;
+      if (draftId !== this.draftId || !this.dirty) return;
+      const copy = {
+        savedAt: Date.now(),
+        draftRevision: this.draftRevision ?? null,
+        source: this.model.source,
+        format: this.model.format,
+        canvas: this.model.canvas,
+      };
+      void this.recoveryKey(draftId).then((key) => {
+        if (!key) return;
+        try {
+          studioStorage()?.setItem(key, JSON.stringify(copy));
+        } catch {
+          // Not kept: the platform has the last save.
+        }
+      });
+    }, 800);
+  }
+  private forgetRecovery(draftId: string) {
+    if (this.recoveryTimer) clearTimeout(this.recoveryTimer);
+    this.recoveryTimer = null;
+    void this.recoveryKey(draftId).then((key) => {
+      if (!key) return;
+      try {
+        studioStorage()?.removeItem(key);
+      } catch {
+        // Nothing to remove.
+      }
+    });
+  }
+  /**
+   * Opening a platform draft: a recovery copy of the same revision with other
+   * content is offered; one of an older revision is dropped (the platform
+   * moved on, and its own compare flow handles conflicts).
+   */
+  private async offerRecovery(draftId: string, revision: number) {
+    this.recoveryOffer = null;
+    const key = await this.recoveryKey(draftId);
+    if (draftId !== this.draftId) return;
+    // Before the account is known there is no key: ask again once it is.
+    this.recoveryPending = key ? null : { draftId, revision };
+    if (!key) return;
+    let copy: Record<string, unknown> | null = null;
+    try {
+      const value: unknown = JSON.parse(
+        studioStorage()?.getItem(key) ?? "null",
+      );
+      copy =
+        value && typeof value === "object" && !Array.isArray(value)
+          ? (value as Record<string, unknown>)
+          : null;
+    } catch {
+      copy = null;
+    }
+    if (!copy) return;
+    const source = copy["source"];
+    const format = copy["format"] === "json" ? "json" : "yaml";
+    if (
+      copy["draftRevision"] !== revision ||
+      typeof source !== "string" ||
+      source === this.model.source
+    ) {
+      studioStorage()?.removeItem(key);
+      return;
+    }
+    this.recoveryOffer = {
+      key,
+      draftId,
+      source,
+      format,
+      canvas: copy["canvas"],
+    };
+    this.cdr.markForCheck();
+  }
+  restoreRecovery() {
+    const offer = this.recoveryOffer;
+    this.recoveryOffer = null;
+    if (!offer || offer.draftId !== this.draftId) return;
+    this.perform(() =>
+      this.model.batch(() => {
+        this.model.setSource(offer.source, offer.format);
+        if (offer.canvas && typeof offer.canvas === "object")
+          this.model.updateCanvas(offer.canvas as never);
+      }),
+    );
+  }
+  discardRecovery() {
+    const offer = this.recoveryOffer;
+    this.recoveryOffer = null;
+    if (offer) studioStorage()?.removeItem(offer.key);
+    this.cdr.markForCheck();
   }
   /**
    * A platform draft holds the workflow only: what Save draft adds when the
@@ -7437,6 +8389,11 @@ export class App implements CanvasHost {
       // The project catalog changed: compiles cached before it are stale.
       this.validation?.invalidate();
       this.ownedPublishedNow += published;
+      // Entries kept on this computer until the action was published go up with the next save.
+      if (this.testData.localOnly().size) {
+        this.testData.releaseLocalOnly();
+        if (this.profile) this.autosave.touch();
+      }
     }
     return result;
   }
@@ -7551,6 +8508,17 @@ export class App implements CanvasHost {
             ),
           },
     ];
+    // The new editor's test data goes beside the workflow, after a word about run data.
+    if (this.editorNext) {
+      const testData = await this.testDataForFile();
+      if (testData === undefined) return;
+      if (testData)
+        files.push({
+          name: `${filename}.testdata.json`,
+          mime: "application/json",
+          content: JSON.stringify(testData, null, 2),
+        });
+    }
     const model = this.model;
     const deliveries = files.map((file) =>
       exportFile(file.name, file.mime, file.content),
@@ -7574,6 +8542,30 @@ export class App implements CanvasHost {
       console.error("Studio couldn't load the note for Save to file", error);
     }
     this.cdr.markForCheck();
+  }
+  /**
+   * The test data to save beside the workflow: null when it has nothing,
+   * undefined when the person cancelled. Data recorded from runs is saved
+   * only when they say so; otherwise it is left out.
+   */
+  private async testDataForFile(): Promise<StudioTestData | null | undefined> {
+    await this.testData.flush();
+    const data = this.testData.data();
+    if (!entriesOf(data).length) return null;
+    if (!containsRunData(data)) return data;
+    const run = entriesOf(data)
+      .map(({ entry }) => (entry as { runId?: unknown }).runId)
+      .find((id): id is string => typeof id === "string");
+    const choice = await this.dialogs.choose({
+      title: "Save data recorded from runs?",
+      message: `This file will include data from ${run ? `run ${run.slice(0, 4)}…` : "a run"}. Anyone with the file can read it.`,
+      confirmLabel: "Save without run data",
+      alternateLabel: "Save anyway",
+    });
+    if (choice === null) return undefined;
+    if (choice === "alternate") return data;
+    const kept = withoutRunData(data, new Date().toISOString());
+    return entriesOf(kept).length ? kept : null;
   }
   async copyExport(file: ExportedFile) {
     try {
@@ -7611,7 +8603,11 @@ export class App implements CanvasHost {
     input.value = "";
     if (file) await this.importWorkflow(file);
   }
-  async importWorkflow(file: File, canvasFile: File | null = null) {
+  async importWorkflow(
+    file: File,
+    canvasFile: File | null = null,
+    testDataFile: File | null = null,
+  ) {
     if (this.view === "designer" && !this.leaveInspector()) return;
     this.flushLocalSave();
     if (file.size > 1024 * 1024) {
@@ -7619,7 +8615,7 @@ export class App implements CanvasHost {
       return;
     }
     const generation = ++this.importGeneration;
-    const read = await readImport(file, canvasFile);
+    const read = await readImport(file, canvasFile, testDataFile);
     if (!read) {
       if (generation === this.importGeneration) {
         this.error =
@@ -7636,6 +8632,7 @@ export class App implements CanvasHost {
     this.draftId = crypto.randomUUID();
     this.openedFromFiles.add(this.draftId);
     this.draftRevision = undefined;
+    this.autosave.cancel();
     this.published = null;
     this.activation = null;
     this.model.setSource(
@@ -7655,7 +8652,72 @@ export class App implements CanvasHost {
     this.resetValidation();
     this.changed();
     this.dirty = false;
+    this.openTestData();
     this.scheduleFit();
+    if (read.testData !== null) void this.offerTestDataFile(read.testData);
+    else if (read.testDataUnreadable)
+      this.notify(
+        "The workflow opened without its test data: Studio couldn't read that file.",
+      );
+  }
+  /**
+   * A workflow opened with its .testdata.json: Load or Not now. The file is
+   * read as any test data and every entry is checked (secrets never stay).
+   */
+  private async offerTestDataFile(text: string) {
+    const opened = this.model.opened;
+    const draftId = this.draftId;
+    const still = () =>
+      this.model.opened === opened && this.draftId === draftId;
+    const load = await this.dialogs.confirm({
+      title: "Load the test data saved with this workflow?",
+      message:
+        "Its test input and pinned output replace this workflow's test data.",
+      confirmLabel: "Load",
+      cancelLabel: "Not now",
+    });
+    if (!load || !still()) return;
+    let value: unknown;
+    try {
+      value = JSON.parse(text);
+    } catch {
+      value = undefined;
+    }
+    const reading = readTestData(value);
+    if (!reading.ok) {
+      this.notify(
+        `The test data wasn't loaded: ${reading.reason}`,
+        undefined,
+        "danger",
+      );
+      return;
+    }
+    await this.testDataOpening;
+    if (!still()) return;
+    // Entries for steps this workflow doesn't have are left out, and named.
+    const steps = this.model.stepIdSet();
+    const { data, removed } = pruneEntries(
+      reading.data,
+      (id) => steps.has(id),
+      new Date().toISOString(),
+    );
+    const outcome = await this.testData.change(
+      data,
+      entriesOf(data).map((entry) => entry.path),
+    );
+    if (!still()) return;
+    if (outcome.ok) {
+      this.markForeign(Object.keys(data.pins ?? {}));
+      const left = removed.length
+        ? ` Left out test data for ${removed.length === 1 ? "a step" : "steps"} this workflow doesn't have: ${removed.join(", ")}.`
+        : "";
+      this.notify(`Loaded the test data saved with this workflow.${left}`);
+    } else
+      this.notify(
+        `The test data wasn't loaded: ${outcome.message}`,
+        undefined,
+        "danger",
+      );
   }
   /** The canvas file chosen with a workflow; a file Studio can't use is set aside with a reason. */
   private applyCanvasFile(text: string) {
@@ -7698,6 +8760,18 @@ export class App implements CanvasHost {
   pretty(value: unknown) {
     return JSON.stringify(value, null, 2);
   }
+  /**
+   * The account is known (from the API, or a saved platform's sign-in
+   * check): a platform draft opened before it gets its canvas, its test data
+   * and its recovery offer now.
+   */
+  private draftAfterIdentity() {
+    void this.restoreDraftCanvas();
+    if (this.view === "designer") this.openTestData();
+    const recovery = this.recoveryPending;
+    if (recovery && recovery.draftId === this.draftId)
+      void this.offerRecovery(recovery.draftId, recovery.revision);
+  }
   loadIdentity() {
     return this.trackIdentity(this.readIdentity());
   }
@@ -7709,8 +8783,7 @@ export class App implements CanvasHost {
         "/studio/api/api/v1/identity",
       );
       this.catalogAfterIdentity();
-      // A platform draft opened before the account was known gets its canvas now.
-      void this.restoreDraftCanvas();
+      this.draftAfterIdentity();
     } catch (error) {
       const plain = describeError(error);
       if (
@@ -7860,6 +8933,7 @@ export class App implements CanvasHost {
       this.api.adopt(result.session);
       this.identity = result.identity;
       this.catalogAfterIdentity();
+      this.draftAfterIdentity();
       this.refreshRunTaskAfterIdentity();
       this.renewedStatus();
       this.platformNotice = result.workspace_revoked
@@ -8076,6 +9150,7 @@ export class App implements CanvasHost {
     if (this.draftRevision === undefined && !this.published) return;
     this.draftId = crypto.randomUUID();
     this.draftRevision = undefined;
+    this.autosave.cancel();
     this.published = null;
     this.activation = null;
     this.saveState = "Unsaved";
@@ -8119,6 +9194,8 @@ export class App implements CanvasHost {
     const report = signOutReport(result);
     if (report === "incomplete")
       this.platformNotice = { kind: "sign-out-incomplete", name };
+    else if (localDataKept(result))
+      this.platformNotice = { kind: "local-data-kept", name };
     else if (report === "unconfirmed")
       this.platformNotice = { kind: "revocation", name };
   }
@@ -8166,6 +9243,7 @@ export class App implements CanvasHost {
     this.api.adopt(result.session);
     this.identity = result.identity;
     this.catalogAfterIdentity();
+    this.draftAfterIdentity();
     this.platformNotice = null;
     this.renewedStatus();
     this.cdr.markForCheck();
@@ -8292,6 +9370,8 @@ export class App implements CanvasHost {
       // Signing out ends a pending sign-in on the host too.
       this.loginWatcher.stop();
       this.platformGeneration++;
+      // The account's test data leaves memory, and nothing waiting is written back under its key.
+      this.testData.forget();
       this.clearPlatformState();
       this.platformNotice = null;
       this.reportSignOut(result, name);
@@ -8325,6 +9405,7 @@ export class App implements CanvasHost {
     this.cdr.markForCheck();
     try {
       const result = await this.connection.remove(name, true);
+      if (active) this.testData.forget();
       this.applyConnection(result, active, name);
       this.notify(`Removed ${name}.`);
       void this.draftCanvases.forgetPlatform(name);
@@ -8380,6 +9461,7 @@ export class App implements CanvasHost {
         this.openWizard("server", { server: notice.server });
         break;
       case "sign-out-incomplete":
+      case "local-data-kept":
       case "revocation":
         this.platformNotice = null;
         break;
@@ -8417,6 +9499,8 @@ export class App implements CanvasHost {
         return `Choose a workspace on ${notice.name} to publish and run work.`;
       case "sign-out-incomplete":
         return `Studio removed ${notice.name || "the platform"}, but couldn't remove its sign-in from this computer's credential store.`;
+      case "local-data-kept":
+        return localDataKeptNote;
       case "revocation":
         return revocationNote;
       case "signing-in":
@@ -8922,6 +10006,8 @@ export class App implements CanvasHost {
     body: unknown,
     revision: number | undefined = undefined,
     label: string = "Command",
+    /** False for a save that runs in the background (autosave): it never sets or clears `busy`. */
+    busy = true,
   ) {
     if (this.pendingMutation)
       throw Error("Resolve the pending mutation before another action.");
@@ -8934,7 +10020,7 @@ export class App implements CanvasHost {
       label,
     };
     this.pendingMutation = pending;
-    this.busy = label;
+    if (busy) this.busy = label;
     try {
       const result = await this.api.mutate<T>(
         path,
@@ -8957,7 +10043,7 @@ export class App implements CanvasHost {
       );
     } finally {
       this.cdr.markForCheck();
-      this.busy = "";
+      if (busy) this.busy = "";
     }
   }
   async retryExact() {
@@ -8976,7 +10062,8 @@ export class App implements CanvasHost {
       this.unknownCommand = false;
       if (p.path.includes("/human-tasks/")) this.selectedRecord = r;
       else if (p.path.includes("/email/")) this.emailSubmission = r;
-      if (p.path.includes("/drafts/")) {
+      // A draft save sets the revision and status only of its own draft, when it is the open one.
+      if (p.path.endsWith(`/drafts/${this.draftId}`)) {
         this.draftRevision = Number(r["revision"]);
         this.saveState =
           JSON.stringify((p.body as { document: unknown }).document) ===
@@ -9162,6 +10249,14 @@ export class App implements CanvasHost {
     const position = event.state?.weavePosition;
     if (this.restoringHistory && position === this.historyPosition) {
       this.restoringHistory = false;
+      return;
+    }
+    if (this.view === "designer" && this.stepDetails.outputEditDirty?.()) {
+      // An output edit in step details not saved yet: stay, ask, then go on.
+      const again = this.stayInHistory(position);
+      void this.stepDetails.askBeforeLeaving?.().then((go) => {
+        if (go) again();
+      });
       return;
     }
     if (this.view === "designer") {

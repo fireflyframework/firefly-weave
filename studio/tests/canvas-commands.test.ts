@@ -88,6 +88,8 @@ describe("canvas keys", () => {
       "addStickyNote",
     );
     expect(canvasCommand(press("ArrowLeft"), on)).toBe("previousStep");
+    expect(canvasCommand(press("p"), on)).toBe("togglePin");
+    expect(canvasCommand(press("p"), { ...on, typing: true })).toBeNull();
     expect(
       canvasCommand(
         press("T", { altKey: true, shiftKey: true, code: "KeyT" }),
@@ -98,7 +100,6 @@ describe("canvas keys", () => {
 
   it("leave rows for features the canvas doesn't have yet to those features", () => {
     for (const key of [
-      press("p"),
       press("Enter", { ctrlKey: true }),
       press("F9"),
       press("l"),
@@ -204,14 +205,11 @@ describe("canvas keys", () => {
       "Cut",
       "Paste",
       "Add a sticky note",
+      "Pin output or unpin",
       "Tidy layout",
     ])
       expect(canvas).toContain(label);
-    for (const label of [
-      "Pin output or unpin",
-      "Execute workflow",
-      "Toggle a breakpoint",
-    ])
+    for (const label of ["Execute workflow", "Toggle a breakpoint"])
       expect(canvas).not.toContain(label);
   });
 

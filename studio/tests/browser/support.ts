@@ -148,6 +148,9 @@ export interface ConnectedOptions {
   catalogFailures?: number;
   // Milliseconds to hold the identity answer (a slow platform check).
   identityDelay?: number;
+  // Workspace IDs; UUIDs let Studio keep this account's data on this computer.
+  tenantId?: string;
+  projectId?: string;
 }
 export interface Recorder {
   catalogPages: number;
@@ -158,8 +161,11 @@ export async function connected(
   options: ConnectedOptions = {},
 ): Promise<Recorder> {
   const recorder: Recorder = { catalogPages: 0, exports: [] };
+  await routeTestDataCheck(page);
   const capabilities = options.capabilities ?? allCapabilities;
   const catalog = options.catalog ?? defaultCatalog;
+  const tenant = options.tenantId ?? profile.tenantId;
+  const project = options.projectId ?? profile.projectId;
   await page.route("**/studio/session", (r) =>
     r.fulfill({
       json: {
@@ -167,7 +173,7 @@ export async function connected(
         csrfToken: "test-csrf",
         version: "1",
         mode: "connected",
-        profile,
+        profile: { ...profile, tenantId: tenant, projectId: project },
       },
     }),
   );
@@ -188,8 +194,8 @@ export async function connected(
           {
             role: "test",
             scope: {
-              tenant_id: "tenant",
-              project_id: "project",
+              tenant_id: tenant,
+              project_id: project,
               environment_id: "development",
             },
             resources: [],
@@ -201,7 +207,7 @@ export async function connected(
       },
     });
   });
-  await page.route("**/projects/project/actions?*", async (r) => {
+  await page.route(`**/projects/${project}/actions?*`, async (r) => {
     const delay = options.catalogDelays?.[recorder.catalogPages] ?? 0;
     recorder.catalogPages++;
     if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
@@ -227,17 +233,20 @@ export async function connected(
       .catch(() => undefined);
   });
   for (const entry of catalog)
-    await page.route(`**/projects/project/actions/${entry.id}/export`, (r) => {
-      recorder.exports.push(entry.id);
-      return r.fulfill({
-        json: {
-          id: entry.id,
-          name: entry.document.metadata.name,
-          version: entry.document.metadata.version,
-          document: entry.document,
-        },
-      });
-    });
+    await page.route(
+      `**/projects/${project}/actions/${entry.id}/export`,
+      (r) => {
+        recorder.exports.push(entry.id);
+        return r.fulfill({
+          json: {
+            id: entry.id,
+            name: entry.document.metadata.name,
+            version: entry.document.metadata.version,
+            document: entry.document,
+          },
+        });
+      },
+    );
   await page.route("**/studio/local/validate", (r) =>
     r.fulfill({
       json: {
@@ -345,7 +354,92 @@ export async function tokenColor(page: Page, token: string): Promise<string> {
     return color;
   }, token);
 }
+
+/**
+ * The Studio host's test data check, as a test double: the dev server has no
+ * host. Each entry is checked against its own schema the way the host does it
+ * for the cases these tests use: the test input against the workflow's input
+ * schema, a pin against its action's output schema from the definitions sent;
+ * a present value under `x-secret` or `writeOnly` is refused, and a pin whose
+ * action schema isn't known is unresolved.
+ */
+export async function routeTestDataCheck(page: Page) {
+  type Json = Record<string, unknown>;
+  const secretIn = (schema: unknown, value: unknown): boolean => {
+    if (!schema || typeof schema !== "object" || value === undefined)
+      return false;
+    const s = schema as Json;
+    if (s["x-secret"] === true || s["writeOnly"] === true) return true;
+    const properties = s["properties"] as Json | undefined;
+    if (
+      properties &&
+      value &&
+      typeof value === "object" &&
+      !Array.isArray(value)
+    )
+      return Object.entries(value as Json).some(([key, item]) =>
+        secretIn(properties[key], item),
+      );
+    if (Array.isArray(value) && s["items"])
+      return value.some((item) => secretIn(s["items"], item));
+    return false;
+  };
+  const stepsOf = (steps: unknown): Json[] =>
+    Array.isArray(steps)
+      ? (steps as Json[]).flatMap((step) => [
+          step,
+          ...stepsOf(step["steps"]),
+          ...((step["cases"] as Json[] | undefined) ?? []).flatMap((c) =>
+            stepsOf(c["steps"]),
+          ),
+          ...stepsOf((step["default"] as Json | undefined)?.["steps"]),
+          ...stepsOf((step["body"] as Json | undefined)?.["steps"]),
+        ])
+      : [];
+  await page.route("**/studio/local/testdata/check", async (route) => {
+    const body = route.request().postDataJSON() as {
+      source: string;
+      definitions: Json[];
+      testData: Json;
+    };
+    const workflow = JSON.parse(body.source) as Json;
+    const spec = (workflow["spec"] ?? {}) as Json;
+    const entries: Json[] = [];
+    const input = body.testData["input"] as Json | undefined;
+    if (input)
+      entries.push(
+        secretIn(spec["inputSchema"], input["value"])
+          ? { path: "/input", ok: false, code: "WV-SCHEMA-SECRET_VALUE" }
+          : { path: "/input", ok: true },
+      );
+    for (const [key, pin] of Object.entries(
+      (body.testData["pins"] as Json | undefined) ?? {},
+    )) {
+      const id = key.split(/[[#~]/)[0];
+      const step = stepsOf(spec["steps"]).find((item) => item["id"] === id);
+      const definition = body.definitions.find(
+        (item) =>
+          `${(item["metadata"] as Json)?.["name"]}@${(item["metadata"] as Json)?.["version"]}` ===
+          step?.["uses"],
+      );
+      const schema = (definition?.["spec"] as Json | undefined)?.[
+        "outputSchema"
+      ];
+      const path = `/pins/${key.replace(/~/g, "~0").replace(/\//g, "~1")}`;
+      entries.push(
+        step?.["kind"] !== "action" || schema === undefined
+          ? { path, ok: false, code: "WV-STUDIO-TESTDATA-UNRESOLVED" }
+          : secretIn(schema, (pin as Json)["output"])
+            ? { path, ok: false, code: "WV-SCHEMA-SECRET_VALUE" }
+            : { path, ok: true },
+      );
+    }
+    await route.fulfill({ json: { entries } });
+  });
+}
+
 export async function offline(page: Page) {
+  await routeTestDataCheck(page);
   await page.route("**/studio/session", (r) =>
     r.fulfill({
       json: {

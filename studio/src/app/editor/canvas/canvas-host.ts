@@ -22,6 +22,7 @@ SPDX-License-Identifier: Apache-2.0
 import type { Signal } from "@angular/core";
 import type { AnchorRect } from "../../designer/popover-placement";
 import type { StructuredCanvasAdapter, Workflow } from "../../model";
+import type { PinEntry } from "../state/test-data";
 import type { CanvasSidecar } from "../state/canvas-sidecar";
 import type { ClipboardContent, PastePlan } from "../state/clipboard";
 import type { KindContext } from "../ndv/registry";
@@ -101,6 +102,15 @@ export interface CanvasHost {
     content: ClipboardContent,
     at: Insertion,
   ): Promise<PastePlan | null>;
+  /**
+   * Each pinned step's stale words (null when current); a step that isn't
+   * here has no pin. The same map until test data or the workflow changes.
+   */
+  pinStates(): ReadonlyMap<string, { stale: string | null }>;
+  /** The workflow's pinned output, for copying with the steps (run-recorded pins stay behind). */
+  pinsForCopy(): Readonly<Record<string, PinEntry>>;
+  /** P and the menu, for pinnable steps: unpins the pinned ones as one Undo; others say how to pin. */
+  togglePins(ids: readonly string[]): void;
   /** Tidy layout: clears legacy positions and moves notes as one undo step, with a toast; false when refused. */
   tidyCanvas(next: CanvasSidecar | null): boolean;
 }

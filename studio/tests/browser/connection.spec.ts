@@ -1379,14 +1379,25 @@ test.describe("startup and saved platforms", () => {
       platforms: [acmePlatform(), globexPlatform()],
       active: "Acme",
     });
+    // The first save lands; later ones are refused, so the second change stays unsaved.
+    let saves = 0;
     await page.route("**/drafts/*", (route) =>
-      route.fulfill({
-        json: {
-          id: "draft",
-          revision: 1,
-          document: route.request().postDataJSON()?.document,
-        },
-      }),
+      saves++ === 0
+        ? route.fulfill({
+            json: {
+              id: "draft",
+              revision: 1,
+              document: route.request().postDataJSON()?.document,
+            },
+          })
+        : route.fulfill({
+            status: 422,
+            json: {
+              status: 422,
+              code: "WV-VALIDATION",
+              message: "Not saved.",
+            },
+          }),
     );
     await expect(page.locator(".platform-indicator")).toHaveAccessibleName(
       /Signed in/,
@@ -1400,7 +1411,7 @@ test.describe("startup and saved platforms", () => {
       .click();
     await page.getByRole("button", { name: "Save draft" }).click();
     await expect(page.locator(".editor-identity .status-chip")).toHaveText(
-      /Draft saved \d{2}:\d{2}/,
+      /^Saved \d{2}:\d{2}$/,
     );
     await page
       .locator(".palette-step")
@@ -2200,6 +2211,31 @@ test.describe("signing out", () => {
     await expect(note).toContainText(
       "Signed out on this computer. Your identity provider did not confirm the sign-out.",
     );
+  });
+
+  test("a sign-out that left some of the platform's data on this computer says so", async ({
+    page,
+  }) => {
+    await platformHost(page, {
+      platforms: [acmePlatform()],
+      active: "Acme",
+      localDataKept: true,
+    });
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await page.getByRole("button", { name: "Sign out of Acme" }).click();
+    await page
+      .getByRole("dialog")
+      .getByRole("button", { name: "Sign out" })
+      .click();
+    const note = page.locator(".platform-banner");
+    await expect(note).toHaveText(
+      "Signed out, but some of this platform's data stayed on this computer. Studio removes it the next time it starts.",
+    );
+    await expect(note).toHaveClass(/warning/);
+    await note
+      .getByRole("button", { name: "Dismiss platform message" })
+      .click();
+    await expect(note).toHaveCount(0);
   });
 
   test("a confirmed sign-out shows no note", async ({ page }) => {

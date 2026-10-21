@@ -104,12 +104,24 @@ import type { App } from "../app";
             </button>
           }
           @if (h.statusChip; as chip) {
-            <span
-              class="pill status-chip"
-              [attr.data-tone]="chip.tone || null"
-              [attr.title]="chip.text"
-              ><span class="status-text">{{ chip.text }}</span></span
-            >
+            @if (chip.retry) {
+              <button
+                type="button"
+                class="pill status-chip status-retry"
+                [attr.data-tone]="chip.tone || null"
+                [attr.title]="chip.text"
+                (click)="h.retrySave()"
+              >
+                <span class="status-text">{{ chip.text }}</span>
+              </button>
+            } @else {
+              <span
+                class="pill status-chip"
+                [attr.data-tone]="chip.tone || null"
+                [attr.title]="chip.text"
+                ><span class="status-text">{{ chip.text }}</span></span
+              >
+            }
           }
         </div>
         <ol class="workflow-progress" aria-label="Workflow progress">
@@ -310,6 +322,27 @@ import type { App } from "../app";
     }}</span>
     <span class="sr-only" id="primary-blocked">{{ h.primaryBlocker }}</span>
     <p class="command-note" role="status">{{ h.commandNote }}</p>
+    @if (h.recoveryOffer) {
+      <div class="recovery-note" role="status">
+        <weave-icon name="info" [size]="16" />
+        <span class="recovery-text"
+          >This computer has changes to this draft that weren't saved. Restore
+          them?</span
+        >
+        <span class="recovery-actions">
+          <button
+            type="button"
+            class="sm primary"
+            (click)="h.restoreRecovery()"
+          >
+            Restore
+          </button>
+          <button type="button" class="sm" (click)="h.discardRecovery()">
+            Discard
+          </button>
+        </span>
+      </div>
+    }
     <div
       class="editor-grid"
       [class.side-open]="
@@ -1188,6 +1221,7 @@ import type { App } from "../app";
         @defer (on immediate) {
           <weave-simulation-panel
             [artifact]="h.simulation.artifact"
+            [testData]="h.simulationTestData()"
             [session]="h.simulationSession"
             [busy]="h.busy !== ''"
             [error]="h.simulationError"

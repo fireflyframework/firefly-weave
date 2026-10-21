@@ -51,6 +51,9 @@ import {
 } from "../ndv/owned/owned-actions";
 import { ownedActionsOf, unpublished } from "../ndv/owned/owned-store";
 import { emptyCanvas, type CanvasSidecar } from "./canvas-sidecar";
+import { instanceStep } from "./instance-keys";
+// Run data as test data reads it: from a run or a test call, or naming a run.
+import { runDerived } from "./test-data-ops";
 import type { PinEntry } from "./test-data";
 
 export const CLIPBOARD_HEADER = "# Firefly Weave steps. Paste into Studio.";
@@ -127,9 +130,6 @@ export interface PastePlan {
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === "object" && !Array.isArray(value);
-const runDerived = (entry: unknown) =>
-  isRecord(entry) &&
-  (entry["source"] === "run" || entry["source"] === "test-call");
 const holder = (steps: Step[]): Workflow => ({
   apiVersion: "",
   kind: "Workflow",
@@ -312,9 +312,7 @@ export function stepTree(step: Step): Step[] {
 }
 
 /** The step an instance key belongs to: `send[2]` and `support#2.1` belong to send and support. */
-export function instanceStep(key: string): string {
-  return /^[A-Za-z0-9][A-Za-z0-9_.-]*/.exec(key)?.[0] ?? key;
-}
+export { instanceStep } from "./instance-keys";
 
 export function copySteps(
   workflow: Workflow,

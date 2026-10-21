@@ -446,6 +446,11 @@ def _merge(existing: PlatformProfile | None, candidate: PlatformProfile) -> Plat
     )
 
 
+def _local_data(removed: bool | None) -> dict[str, bool]:
+    """``local_data_removed`` for an answer: whether everything this computer kept for the platform went."""
+    return {} if removed is None else {"local_data_removed": removed}
+
+
 @service
 class StudioConnectionService:
     def __init__(self, studio: StudioService) -> None:
@@ -860,6 +865,7 @@ class StudioConnectionService:
                 return profile_problem(error)
             if self.platform is not None and self.platform.name == removed.name:
                 await self._switch(None, None)
+        local = await asyncio.to_thread(self.studio.forget_profile_data, removed.name)
         outcome: dict[str, Any] = {"credentials_removed": False, "remote_revocation": "not_requested"}
         if request.sign_out:
             # Best effort and bounded; the network part runs without holding the connection lock.
@@ -873,7 +879,7 @@ class StudioConnectionService:
                 }
             except (CredentialError, AuthError, TimeoutError, OSError):
                 outcome = {"credentials_removed": False, "remote_revocation": "unconfirmed"}
-        return await self._changed(sign_out=outcome)
+        return await self._changed(sign_out=outcome, **_local_data(local))
 
     async def logout(self, request: SignOut) -> Response:
         async with self.lock:
@@ -887,6 +893,8 @@ class StudioConnectionService:
             self.flow = LoginFlow()
             self.session_account = None
             self.studio.connection_generation += 1
+        # This computer's data goes first, so a credential store that refuses below can't keep it.
+        local = await asyncio.to_thread(self.studio.forget_profile_data, platform.name) if platform else None
         revocation = "unconfirmed"
         try:
             async with asyncio.timeout(2 * provider.config.timeout + 5):
@@ -901,7 +909,7 @@ class StudioConnectionService:
                 await asyncio.to_thread(self.store.set_account, platform.name, None)
                 if self.platform is not None and self.platform.name == platform.name:
                     self.platform = self.platform.model_copy(update={"account": None})
-        return await self._changed(remote_revocation=revocation)
+        return await self._changed(remote_revocation=revocation, **_local_data(local))
 
     # --- owned sign-in --------------------------------------------------------------------------------------------
 
@@ -966,6 +974,8 @@ class StudioConnectionService:
             async with asyncio.timeout(provider.config.login_timeout + provider.config.timeout):
                 result = await provider.login(flow=method, instructions=instructions, browser=browser, prompt=prompt)
             await self._remember_account(provider, result)
+            if self.oauth is provider and self.platform is not None:
+                self.studio.remember_profile_data(self.platform.name)
             if self.oauth is provider:
                 # The new credential may belong to another account: fence results of the previous one.
                 self.studio.connection_generation += 1

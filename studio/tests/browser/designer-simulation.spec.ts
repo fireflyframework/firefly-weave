@@ -28,10 +28,15 @@ import {
   closeSheet,
   command,
   connected,
+  defaultCatalog,
   newWorkflow,
 } from "./support";
 import { DesignerPage } from "./designer-po";
-import { settingsGear, withNewEditor } from "./step-details-po";
+import {
+  StepDetailsPage,
+  settingsGear,
+  withNewEditor,
+} from "./step-details-po";
 import { python, pythonAvailable, repository } from "../python-path";
 
 const project = "**/studio/api/api/v1/tenants/tenant/projects/project";
@@ -271,7 +276,15 @@ for (const viewport of [
       const { commands } = await simulator(page);
       let release = () => {};
       const held = new Promise<void>((resolve) => (release = resolve));
+      // The draft's own saves are refused until Save draft is pressed, so the
+      // workflow stays unsaved; that save is then held while the panel waits.
+      let holding = false;
       await page.route(`${project}/drafts/*`, async (r) => {
+        if (!holding)
+          return r.fulfill({
+            status: 422,
+            json: { status: 422, code: "WV-VALIDATION", message: "Not now." },
+          });
         await held;
         return r.fulfill({
           json: { id: "draft", revision: 1, document: {} },
@@ -301,6 +314,7 @@ for (const viewport of [
         await expect(simulation).not.toHaveAttribute("aria-modal", "true");
       }
       await save.scrollIntoViewIfNeeded();
+      holding = true;
       await save.click();
       if (modal)
         await simulation
@@ -564,5 +578,100 @@ test.describe("Simulate over text typed in Source", () => {
     await expect(
       page.getByRole("dialog", { name: "Workflow settings" }),
     ).toBeVisible();
+  });
+});
+
+// The simulation's forms start from the workflow's test data: the trigger's
+// test input and each step's pinned output (an action's result).
+test.describe("Simulate from test data", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+  test.skip(!artifact, "Needs the repository's Python environment.");
+
+  test("the setup starts from the pinned output", async ({ page }) => {
+    await withNewEditor(page);
+    // The action's contract, so its pinned output can be checked.
+    const checkCustomer = {
+      apiVersion: "weave/v1alpha1",
+      kind: "Action",
+      metadata: { name: "onboarding.check-customer", version: "1.0.0" },
+      spec: {
+        implementation: {
+          kind: "worker",
+          taskType: "onboarding.check-customer",
+          taskVersion: "1.0.0",
+        },
+        sideEffect: "read_only",
+        timeoutSeconds: 60,
+        inputSchema: {
+          type: "object",
+          required: ["customerId"],
+          properties: { customerId: { type: "string", minLength: 1 } },
+        },
+        outputSchema: {
+          type: "object",
+          required: ["eligible"],
+          properties: { eligible: { type: "boolean" } },
+        },
+      },
+    };
+    await connected(page, {
+      capabilities: [...allCapabilities, "compile"],
+      catalog: [...defaultCatalog, { id: "cc", document: checkCustomer }],
+    });
+    const { creates } = await simulator(page);
+    await newWorkflow(page);
+    await new DesignerPage(page).setSource(source);
+    await closeSheet(page);
+    const details = new StepDetailsPage(page);
+    await details.open("action-1");
+    const pane = details.dialog.locator("weave-output-pane");
+    await pane.getByRole("button", { name: "Edit output" }).click();
+    const editor = pane.getByRole("textbox", { name: "Output of action-1" });
+    await editor.click();
+    await page.keyboard.press("ControlOrMeta+a");
+    await page.keyboard.press("Backspace");
+    await page.keyboard.insertText('{"eligible": true}');
+    await pane.getByRole("button", { name: "Save" }).click();
+    await expect(pane.locator(".pinned-banner")).toBeVisible();
+    await details.close();
+    await command(page, "Simulate");
+    const setup = page.getByRole("dialog", { name: "Simulate this workflow" });
+    await expect(setup).toBeVisible();
+    await setup.getByLabel(/customer ?id/i).fill("c-104");
+    await setup.getByRole("tab", { name: /Action results/ }).click();
+    await expect(
+      setup.locator('[data-node="action-1"]').getByLabel(/eligible/i),
+    ).toBeChecked();
+    await setup.getByRole("button", { name: "Start simulation" }).click();
+    await expect.poll(() => creates.length).toBe(1);
+    expect(creates[0]["mocks"]).toEqual({
+      "node:action-1": { eligible: true },
+    });
+    // A newer pin replaces what the last simulation started from.
+    await simulationPanel(page)
+      .getByRole("button", { name: "Close simulation" })
+      .click();
+    await expect(simulationPanel(page)).toHaveCount(0);
+    await details.open("action-1");
+    await pane.getByRole("button", { name: "Edit output" }).click();
+    await editor.click();
+    await page.keyboard.press("ControlOrMeta+a");
+    await page.keyboard.press("Backspace");
+    await page.keyboard.insertText('{"eligible": false}');
+    await pane.getByRole("button", { name: "Save" }).click();
+    await expect(pane.locator(".pinned-banner")).toBeVisible();
+    await details.close();
+    await command(page, "Simulate");
+    await expect(setup).toBeVisible();
+    await setup.getByLabel(/customer ?id/i).fill("c-104");
+    await setup.getByRole("tab", { name: /Action results/ }).click();
+    await expect(
+      setup.locator('[data-node="action-1"]').getByLabel(/eligible/i),
+    ).not.toBeChecked();
+    await setup.getByRole("button", { name: "Start simulation" }).click();
+    await expect.poll(() => creates.length).toBe(2);
+    expect(creates[1]["mocks"]).toEqual({
+      "node:action-1": { eligible: false },
+    });
   });
 });

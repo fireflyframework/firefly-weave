@@ -177,6 +177,11 @@ describe("formula previews", () => {
       value: 1,
     });
   });
+  it("reads an object field named literal as a field, not as a literal", () => {
+    expect(
+      referencesOf({ object: { literal: { ref: "/steps/check/output" } } }),
+    ).toEqual(["/steps/check/output"]);
+  });
   it("reads a literal that looks like a reference as data, not as a read", () => {
     const literal = { literal: { ref: "/input/password" } };
     expect(referencesOf(literal)).toEqual([]);
@@ -319,5 +324,10 @@ describe("formula previews", () => {
     if (parsed.kind !== "ok") throw new Error();
     expect(sourceLabel(parsed.expression, data(input))).toBe("From test input");
     expect(sourceLabel({ literal: 1 }, data(input))).toBe("");
+    const pinned = { ref: "/steps/lookup/output/tier" };
+    expect(sourceLabel(pinned, data(input, { lookup: { tier: "a" } }))).toBe(
+      "From pinned output",
+    );
+    expect(sourceLabel(pinned, data(input))).toBe("");
   });
 });

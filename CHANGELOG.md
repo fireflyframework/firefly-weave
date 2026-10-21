@@ -20,6 +20,25 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+- Studio keeps test data for each workflow: the trigger's test input and
+  pinned output on steps. Step details offer **Pin output**, **Edit output**
+  (a JSON editor), **Unpin** with Undo and **Generate sample**; the Input pane
+  shows values beside each field; formula previews read pinned output; tiles
+  and the Output pane mark pinned output that may be out of date, with **Keep
+  pinned**. **P** pins or unpins in step details and on the canvas. Pinned
+  output follows copy and paste, renames and deletions, and the simulation
+  starts from it. **Save to file** adds `<name>.testdata.json`, asking first
+  about data recorded from runs.
+- Platform drafts save themselves and keep their canvas and test data on the
+  platform (`studio_documents.read`, `.save` and `.delete`). Test data recorded
+  from runs needs `run.read` in each environment it came from, and secret
+  values are refused with document pointers only. Migration
+  `0036_editor_studio_documents`.
+- The desktop app keeps local drafts and their test data in a private store,
+  so they survive quitting.
+- Studio keeps everything it stores on this computer under account, local or
+  preference prefixes, and deletes a platform's keys when you sign out of it
+  or remove it. Remembered run-form values from earlier versions are removed.
 - The workflow language gains **transactions**. A `transaction` step groups
   steps that change other systems, and each of them says how it is undone:
   `confirm` and `cancel` (reserve, then confirm), `compensate` (an action or a

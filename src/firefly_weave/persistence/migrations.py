@@ -29,7 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 
 from firefly_weave.settings import Settings, operations_from_env
 
-SCHEMA_VERSION = "0035_principal_idempotency"
+SCHEMA_VERSION = "0036_editor_studio_documents"
 
 
 async def check_schema(connection: AsyncConnection) -> None:

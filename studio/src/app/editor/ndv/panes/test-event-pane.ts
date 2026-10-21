@@ -51,9 +51,7 @@ interface SampleForm {
       <h3 class="sd-pane-title">Test event</h3>
     </header>
     <div class="pane-sub">
-      <span class="pane-count"
-        >Sample input stays in memory while this workflow is open.</span
-      >
+      <span class="pane-count">{{ kept() }}</span>
     </div>
     <div class="sd-pane-body">
       <div class="pane-content">
@@ -80,6 +78,12 @@ export class TestEventPane {
   readonly problem = signal("");
   private readonly lifetime = inject(DestroyRef);
   private form: SampleForm | null = null;
+  /** Where the test input is kept: with the workflow, or only while it is open (no account owns it). */
+  kept(): string {
+    return this.session().controller.testData.place().kind === "memory"
+      ? "Test input is kept until you close this workflow."
+      : "Test input is saved with this workflow.";
+  }
   private schema(): unknown {
     return this.session().host.model.definition.spec["inputSchema"] ?? {};
   }
@@ -129,13 +133,24 @@ export class TestEventPane {
       canonicalJson(this.schema()) === form.signature
     );
   }
-  generate(): void {
+  async generate(): Promise<void> {
     const form = this.forms()[0];
     if (!this.owns(form)) return;
     try {
       const sample = sampleFromSchema(this.schema());
       if (!this.owns(form)) return;
-      form.session.controller.setTestEvent(sample);
+      // The form on show is replaced: its own late writes (defaults) don't count.
+      this.form = null;
+      const next = this.forms()[0];
+      const refused = await form.session.controller.setTestEvent(
+        sample as Json,
+        "schema",
+      );
+      if (!this.owns(next)) return;
+      if (refused) {
+        this.problem.set(refused);
+        return;
+      }
       this.form = null;
       this.forms();
       this.problem.set("");
@@ -144,10 +159,11 @@ export class TestEventPane {
       if (this.owns(form)) this.problem.set((error as Error).message);
     }
   }
-  changed(data: Record<string, unknown>, form: SampleForm): void {
+  async changed(data: Record<string, unknown>, form: SampleForm) {
     if (!this.owns(form)) return;
-    form.session.controller.setTestEvent(
+    const refused = await form.session.controller.setTestEvent(
       (form.wrapped ? data["value"] : data) as Json | undefined,
     );
+    if (this.owns(form)) this.problem.set(refused ?? "");
   }
 }

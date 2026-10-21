@@ -27,6 +27,8 @@ import type { AiSheetRequest } from "../../integrations/ai-connection-sheet";
 import type { ToastAction } from "../../toast";
 import type { StepDetailsRequest } from "./step-details-service";
 import { editorNextEnabled } from "../state/editor-flag";
+import type { StepFingerprints } from "../state/fingerprints";
+import type { TestDataService } from "../state/test-data-service";
 
 export interface StepDetailsHost {
   readonly model: StructuredCanvasAdapter;
@@ -80,6 +82,17 @@ export interface StepDetailsHost {
   blocker(command: "simulate"): string;
   /** Settles unapplied inspector edits; false when they can't be applied. */
   ensureApplied(): Promise<boolean>;
+  /** The open workflow's test data (test input, pinned output), outside undo. */
+  readonly testData?: TestDataService;
+  /** Every step's fingerprints now (memoized on the workflow, the canvas and the test input). */
+  /** Null while the shell's copy isn't ready: step details compute their own. */
+  testDataPrints?(): ReadonlyMap<string, StepFingerprints> | null;
+  /** Opens the test data of the workflow and account shown now; false when it was open already. */
+  openTestData?(): boolean;
+  /** This step's pin came from another workflow (pasted, or loaded from a file) and isn't kept yet. */
+  pinFromElsewhere?(id: string): boolean;
+  /** Saves a platform draft's pending edits now (closing step details); true when nothing is left. */
+  flushAutosave?(): Promise<boolean>;
   /**
    * Opens step details on a step, the trigger or End the way every opener
    * does: pending inspector edits are applied first and the step becomes the

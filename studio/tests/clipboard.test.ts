@@ -125,6 +125,25 @@ describe("copying steps", () => {
     ]);
     expect(copied.document).not.toHaveProperty("actions");
   });
+  it("leaves out a pin that names a run, whatever its source", () => {
+    const named = {
+      ...pin("simulated"),
+      runId: "0b9b5a59-6c63-4f3e-9d58-6a3c8f0e2b11",
+      runEnvironmentId: "5f0c2d4e-7a1b-4c3d-8e9f-0a1b2c3d4e5f",
+    };
+    const copied = copySteps(model().definition, ["check-customer"], {
+      "check-customer": named as never,
+    });
+    expect(copied.document.pins).toEqual({});
+    // Pasting a clipboard written elsewhere leaves it out too.
+    const planned = planPaste(
+      model().definition,
+      { ...copied.document, actions: {}, pins: { "check-customer": named } },
+      { owner: "root", index: 0 },
+      new Set(),
+    );
+    expect("pins" in planned && planned.pins).toEqual({});
+  });
 });
 
 describe("reading the clipboard", () => {

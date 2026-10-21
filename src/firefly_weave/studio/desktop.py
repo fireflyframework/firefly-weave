@@ -128,6 +128,9 @@ def saved_platforms() -> ProfileStore | None:
 
 
 def run_desktop(profile_path: Path | None, assets: Path) -> None:
+    from firefly_weave.sdk.profiles import default_config_dir
+    from firefly_weave.studio.local_store import STORE_DIRECTORY
+
     profile = None
     provider = None
     store = None
@@ -150,6 +153,8 @@ def run_desktop(profile_path: Path | None, assets: Path) -> None:
             # The pairing code never leaves the native shell, so a reload may pair again (with or
             # without a profile file), for example after the 8-hour Studio session ends.
             reusable_pairing=True,
+            # The window keeps no browser storage after it quits: drafts and test data live with the host.
+            store_directory=default_config_dir() / STORE_DIRECTORY,
         )
         app = make_studio_app(options)
         server = DesktopServer(

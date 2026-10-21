@@ -335,6 +335,15 @@ in [client configuration](../operations/configuration.md#client-configuration-cl
 The app reads it only from the environment it starts in. An app opened from
 Finder, the Start menu, or a desktop launcher normally uses the default folder.
 
+## What the app keeps on this computer
+
+Local drafts, their canvas and their test data are kept in Studio's private
+store under your configuration folder (`studio-store`), so they survive
+quitting the app. A platform draft keeps an unsaved copy and its test data
+there too, under that platform's account. Signing out of a platform, or
+removing it, deletes what Studio kept for it; if something can't be deleted
+then, Studio deletes it the next time it starts.
+
 ## Where sign-ins are stored
 
 **Tokens stay in your operating system's credential store,** under the service

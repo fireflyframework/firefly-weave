@@ -1273,3 +1273,161 @@ async def test_switching_platforms_during_a_check_discards_the_old_identity(plat
         released.set()
         await asyncio.gather(pending, return_exceptions=True)
         await studio.close()
+
+
+@pytest.mark.parametrize("path", ["/studio/connection/logout", "/studio/connection/remove"])
+def test_signing_out_or_removing_forgets_what_this_computer_keeps_for_the_platform(platforms, tmp_path, path):
+    from firefly_weave.studio.local_store import LocalStore, profile_prefix
+
+    folder = tmp_path / "studio-store"
+    store = LocalStore(folder)
+    kept = profile_prefix("Acme") + "0123456789abcdef:t:p:testData.d-1"
+    store.put("local:weave.localDraft.d-3", "{}")
+    with platforms.client(store_directory=folder) as browser:
+        headers = pair(browser)
+        connected(browser, headers)
+        store.put(kept, "{}")
+        # Another platform's keys, written while this host runs, stay.
+        store.put(profile_prefix("Other") + "0123456789abcdef:t:p:testData.d-2", "{}")
+        body = {"name": "Acme"} if path.endswith("remove") else {}
+        assert browser.post(path, headers=headers, json=body).status_code == 200
+    left = store.keys()
+    assert kept not in left
+    assert len(left) == 2
+
+
+@pytest.mark.parametrize("path", ["/studio/connection/logout", "/studio/connection/remove"])
+def test_a_purge_that_could_not_finish_is_reported(platforms, tmp_path, path, monkeypatch):
+    from firefly_weave.studio.local_store import LocalStore, Purge
+
+    folder = tmp_path / "studio-store"
+    with platforms.client(store_directory=folder) as browser:
+        headers = pair(browser)
+        connected(browser, headers)
+        monkeypatch.setattr(LocalStore, "forget", lambda self, prefix: Purge(removed=1, failed=1))
+        body = {"name": "Acme"} if path.endswith("remove") else {}
+        answer = browser.post(path, headers=headers, json=body)
+        assert answer.status_code == 200 and answer.json()["local_data_removed"] is False
+
+
+def test_signing_out_with_a_locked_credential_store_still_forgets_this_computer_s_data(
+    platforms, tmp_path, monkeypatch
+):
+    from firefly_weave.sdk.auth import OAuthSession
+    from firefly_weave.studio.local_store import LocalStore, profile_prefix
+
+    folder = tmp_path / "studio-store"
+    store = LocalStore(folder)
+    with platforms.client(store_directory=folder) as browser:
+        headers = pair(browser)
+        connected(browser, headers)
+        store.put(profile_prefix("Acme") + "0123456789abcdef:t:p:testData.d-1", "{}")
+
+        async def locked(self, *args, **kwargs):
+            raise CredentialError()
+
+        monkeypatch.setattr(OAuthSession, "logout", locked)
+        assert browser.post("/studio/connection/logout", headers=headers, json={}).status_code == 503
+    assert store.keys() == []
+
+
+def test_a_signed_out_platform_s_keys_are_not_written_again_until_it_signs_in(platforms, tmp_path):
+    from firefly_weave.studio.local_store import profile_prefix
+
+    key = profile_prefix("Acme") + "0123456789abcdef:t:p:testData.d-1"
+    with platforms.client(store_directory=tmp_path / "studio-store") as browser:
+        headers = pair(browser)
+        connected(browser, headers)
+        assert browser.put(f"/studio/local/store/{key}", headers=headers, json={"value": "{}"}).status_code == 204
+        assert browser.post("/studio/connection/logout", headers=headers, json={}).status_code == 200
+        # A late autosave from the page that just signed out can't bring the platform's data back.
+        late = browser.put(f"/studio/local/store/{key}", headers=headers, json={"value": "{}"})
+        assert late.status_code == 409 and late.json()["code"] == "WV-STUDIO-STORE-SIGNED-OUT"
+        assert browser.get(f"/studio/local/store/{key}", headers=headers).status_code == 404
+        local = browser.put("/studio/local/store/local:weave.localDraft.d-1", headers=headers, json={"value": "{}"})
+        assert local.status_code == 204
+        sign_in_with_browser(browser, headers)
+        assert browser.put(f"/studio/local/store/{key}", headers=headers, json={"value": "{}"}).status_code == 204
+
+
+def test_starting_studio_purges_signed_out_platforms_and_leaves_unknown_ones(platforms, tmp_path):
+    from firefly_weave.studio.local_store import LocalStore, profile_prefix
+
+    folder = tmp_path / "studio-store"
+    store = LocalStore(folder)
+    key = profile_prefix("Acme") + "0123456789abcdef:t:p:testData.d-1"
+    unknown = profile_prefix("Gone") + "0123456789abcdef:t:p:testData.d-2"
+    with platforms.client(store_directory=folder) as browser:
+        headers = pair(browser)
+        connected(browser, headers)
+        assert browser.post("/studio/connection/logout", headers=headers, json={}).status_code == 200
+    # Written behind Studio's back after the sign-out, and a platform this Studio never knew.
+    store.put(key, "{}")
+    store.put(unknown, "{}")
+    store.put("local:weave.localDraft.d-3", "{}")
+    with platforms.client(store_directory=folder) as browser:
+        headers = pair(browser)
+        assert store.keys() == sorted(["local:weave.localDraft.d-3", unknown])
+        # The tombstone outlives the restart: the signed-out platform's keys wait for a sign-in.
+        late = browser.put(f"/studio/local/store/{key}", headers=headers, json={"value": "{}"})
+        assert late.status_code == 409
+        sign_in_with_browser(browser, headers)
+        assert browser.put(f"/studio/local/store/{key}", headers=headers, json={"value": "{}"}).status_code == 204
+    assert store.tombstones() == []
+
+
+def test_a_platform_removed_and_added_again_keeps_its_data_only_after_a_new_sign_in(platforms, tmp_path):
+    from firefly_weave.studio.local_store import LocalStore, profile_prefix
+
+    folder = tmp_path / "studio-store"
+    key = profile_prefix("Acme") + "0123456789abcdef:t:p:testData.d-1"
+    with platforms.client(store_directory=folder) as browser:
+        headers = pair(browser)
+        connected(browser, headers)
+        assert browser.post("/studio/connection/remove", headers=headers, json={"name": "Acme"}).status_code == 200
+        assert save(browser, headers).status_code == 200
+        refused = browser.put(f"/studio/local/store/{key}", headers=headers, json={"value": "{}"})
+        assert refused.status_code == 409
+        sign_in_with_browser(browser, headers)
+        assert browser.put(f"/studio/local/store/{key}", headers=headers, json={"value": "{}"}).status_code == 204
+    assert LocalStore(folder).tombstones() == []
+
+
+def test_a_platform_signed_in_outside_studio_keeps_its_data_after_studio_s_next_identity_check(platforms, tmp_path):
+    from firefly_weave.studio.local_store import LocalStore, profile_prefix
+
+    folder = tmp_path / "studio-store"
+    key = profile_prefix("Acme") + "0123456789abcdef:t:p:testData.d-1"
+    with platforms.client(store_directory=folder) as browser:
+        headers = pair(browser)
+        connected(browser, headers)
+        credentials = {path: path.read_bytes() for path in platforms.credentials.glob("*.json")}
+        assert browser.post("/studio/connection/logout", headers=headers, json={}).status_code == 200
+        assert browser.put(f"/studio/local/store/{key}", headers=headers, json={"value": "{}"}).status_code == 409
+        # Signed in again from the command line: the credential is back, without Studio's sign-in.
+        for path, raw in credentials.items():
+            path.write_bytes(raw)
+            path.chmod(0o600)
+        checked = browser.get("/studio/api/api/v1/identity", headers=headers)
+        assert checked.status_code == 200, checked.text
+        assert browser.put(f"/studio/local/store/{key}", headers=headers, json={"value": "{}"}).status_code == 204
+    assert LocalStore(folder).tombstones() == []
+
+
+def test_a_refused_identity_check_lifts_no_tombstone(platforms, tmp_path):
+    from firefly_weave.studio.local_store import LocalStore, profile_prefix
+
+    folder = tmp_path / "studio-store"
+    key = profile_prefix("Acme") + "0123456789abcdef:t:p:testData.d-1"
+    with platforms.client(store_directory=folder) as browser:
+        headers = pair(browser)
+        connected(browser, headers)
+        credentials = {path: path.read_bytes() for path in platforms.credentials.glob("*.json")}
+        assert browser.post("/studio/connection/logout", headers=headers, json={}).status_code == 200
+        for path, raw in credentials.items():
+            path.write_bytes(raw)
+            path.chmod(0o600)
+        platforms.identity_status = 401
+        assert browser.get("/studio/api/api/v1/identity", headers=headers).status_code == 401
+        assert browser.put(f"/studio/local/store/{key}", headers=headers, json={"value": "{}"}).status_code == 409
+    assert LocalStore(folder).tombstones() == [profile_prefix("Acme")]

@@ -190,6 +190,9 @@ interface ToolbarView {
   trigger: { intent: string; label: string } | null;
 }
 
+/** Ruling 19: the canvas never makes data, so a step without output says how to pin it. */
+export const NO_PIN_YET = "Set test output or generate a sample to pin it.";
+
 @Component({
   selector: "weave-canvas-view",
   standalone: true,
@@ -495,6 +498,7 @@ export class CanvasView implements OnInit, DoCheck {
       run: CanvasRun | null,
       canvas: CanvasSidecar,
       _gapsVersion: number,
+      pins: ReadonlyMap<string, { stale: string | null }>,
     ): TileView[] => {
       const ctx = this.host().kindContext();
       // A selected group shows every step inside it as selected.
@@ -516,6 +520,7 @@ export class CanvasView implements OnInit, DoCheck {
               : tile.kind === "trigger"
                 ? stepNoteLine(canvas, triggerNoteKey(tile.id, canvas))
                 : "",
+            pin: tile.step ? pins.get(tile.id) : undefined,
           },
         );
       });
@@ -531,6 +536,7 @@ export class CanvasView implements OnInit, DoCheck {
       h.canvasRun(),
       h.model.canvas,
       this.pasteGapsVersion,
+      h.pinStates(),
     );
   }
   private position(tile: LtrTile): Point {
@@ -552,6 +558,8 @@ export class CanvasView implements OnInit, DoCheck {
       pulse: boolean;
       /** The first line of the step's note when it shows on the canvas. */
       note: string;
+      /** Its pinned output, and why it may be out of date. */
+      pin?: { stale: string | null };
     },
   ): TileView {
     const h = this.host();
@@ -597,8 +605,8 @@ export class CanvasView implements OnInit, DoCheck {
       ...facts,
       run: state.run,
       failure: state.run === "failed" ? {} : null,
-      stale: null,
-      pinned: false,
+      stale: state.pin?.stale ?? null,
+      pinned: !!state.pin,
       selected: state.selected,
     };
     const badge = tileBadge(shown);
@@ -1098,6 +1106,34 @@ export class CanvasView implements OnInit, DoCheck {
         }
       : facts;
   }
+  /** Pin output or Unpin in a step's menu; the canvas never makes data, so without output it says how. */
+  private pinItem(id: string): RowMenuItem {
+    const h = this.host();
+    const pinned = h.pinStates().has(id);
+    const blocked = pinned
+      ? null
+      : !this.pinnable(id)
+        ? "This step's output can't be pinned."
+        : NO_PIN_YET;
+    return {
+      label: pinned ? "Unpin" : "Pin output",
+      disabled: !!blocked,
+      ...(blocked ? { detail: blocked } : {}),
+      run: () => h.togglePins([id]),
+    };
+  }
+  /** Whether a step's output can be pinned (actions, AI steps; not what is computed from the input). */
+  private pinnable(id: string): boolean {
+    const step =
+      this.host()
+        .model.nodes()
+        .find((node) => node.step.id === id)?.step ?? null;
+    const descriptor = step ? ndvRegistry.kind(step.kind) : undefined;
+    if (!step || !descriptor) return false;
+    return typeof descriptor.pinnable === "function"
+      ? descriptor.pinnable(step)
+      : descriptor.pinnable;
+  }
   private menuFor(tile: LtrTile, locked: boolean): RowMenuItem[] {
     const h = this.host();
     const id = tile.id;
@@ -1109,6 +1145,7 @@ export class CanvasView implements OnInit, DoCheck {
         run: () => void h.openStep(id, "rename"),
       },
       { label: "Copy", run: () => void this.copyIds([id], false) },
+      this.pinItem(id),
       {
         label: "Duplicate",
         disabled: locked,
@@ -1732,6 +1769,20 @@ export class CanvasView implements OnInit, DoCheck {
         return true;
       case "selectAll":
         return this.selectAll(step);
+      case "togglePin": {
+        const chosen = this.selection.ids.length
+          ? [...this.selection.ids]
+          : step
+            ? [step]
+            : [];
+        if (!chosen.length) return false;
+        const pinnable = chosen.filter(
+          (id) => places.has(id) && this.pinnable(id),
+        );
+        if (pinnable.length) h.togglePins(pinnable);
+        else h.notify("This step's output can't be pinned.");
+        return true;
+      }
       case "duplicate": {
         const chosen = this.keyTargets(target, step);
         const reason =
@@ -2170,7 +2221,7 @@ export class CanvasView implements OnInit, DoCheck {
     const copied = copySteps(
       h.model.definition,
       ids,
-      {},
+      h.pinsForCopy(),
       ownedActionsOf(h.model.canvas),
     );
     if (!(await this.writeClipboard(copied)))

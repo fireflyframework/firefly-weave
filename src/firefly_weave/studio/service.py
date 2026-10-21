@@ -24,6 +24,7 @@ import re
 import secrets
 import time
 from collections.abc import Callable, Mapping
+from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
@@ -108,6 +109,8 @@ STUDIO_FAMILIES = frozenset(
         "operations_telemetry",
         # Draft save/retire and Simulate are authorized server-side like every other family.
         "drafts",
+        # Draft canvases and test data: capabilities, run data and secrets are checked server-side.
+        "studio_documents",
         "debug",
     }
 )
@@ -177,6 +180,8 @@ class StudioOptions:
     reusable_pairing: bool = False
     # Client configuration, provider discovery and sign-in requests; None uses the network.
     sign_in_transport: Callable[[], httpx.AsyncBaseTransport] | None = field(default=None, repr=False)
+    # Desktop only: where Studio keeps what it would keep in browser storage; None keeps it in the browser.
+    store_directory: Path | None = None
 
     def __post_init__(self) -> None:
         if self.profile_store is not None and (self.profile is not None or self.token_provider is not None):
@@ -221,6 +226,58 @@ class StudioService:
         self.client = httpx.AsyncClient(
             timeout=30, follow_redirects=False, trust_env=False, transport=options.transport
         )
+        from firefly_weave.studio.local_store import LocalStore
+
+        self.local_store = LocalStore(options.store_directory) if options.store_directory is not None else None
+        # Platforms signed out or removed while this host runs: their keys aren't written again until a sign-in.
+        self.forgotten: set[str] = set()
+        if self.local_store is not None:
+            self._finish_purges()
+
+    def _finish_purges(self) -> None:
+        """Purge every platform signed out or removed (its tombstone) again, and refuse its keys until a sign-in."""
+        from firefly_weave.sdk.profiles import ProfileError
+        from firefly_weave.studio.local_store import StoreUnavailable, profile_prefix
+
+        assert self.local_store is not None
+        saved: set[str] | None = None
+        if self.options.profile_store is not None:
+            try:
+                saved = {profile_prefix(name) for name in self.options.profile_store.load().profiles}
+            except ProfileError:
+                saved = None
+        with suppress(StoreUnavailable):
+            self.forgotten.update(self.local_store.tombstones())
+            self.local_store.finish_purges(saved)
+
+    def forget_profile_data(self, name: str) -> bool | None:
+        """Sign-out and removal delete what this computer keeps for that platform. True when everything went, False
+        when something stayed (the purge is finished at the next start), None without a store. Never raises."""
+        from firefly_weave.studio.local_store import StoreUnavailable, profile_prefix
+
+        if self.local_store is None:
+            return None
+        prefix = profile_prefix(name)
+        self.forgotten.add(prefix)
+        try:
+            return self.local_store.forget(prefix).complete
+        except StoreUnavailable:
+            return False
+
+    def remember_profile_data(self, name: str) -> None:
+        """A sign-in to this platform lets Studio keep its data on this computer again."""
+        from firefly_weave.studio.local_store import StoreUnavailable, profile_prefix
+
+        prefix = profile_prefix(name)
+        self.forgotten.discard(prefix)
+        if self.local_store is not None:
+            # Best effort: a tombstone left behind only purges again at the next start.
+            with suppress(StoreUnavailable):
+                self.local_store.remember(prefix)
+
+    def keeps(self, key: str) -> bool:
+        """Whether Studio may write this key: never one of a platform signed out or removed since."""
+        return not any(key.startswith(prefix) for prefix in self.forgotten)
 
     async def close(self) -> None:
         self.connection_generation += 1
@@ -305,6 +362,8 @@ class StudioService:
             return value in CATALOG_COLLECTIONS
         if name == "adapter":
             return ADAPTER.fullmatch(value) is not None
+        if name == "kind":
+            return value in ("canvas", "test-data")
         try:
             UUID(value)
         except ValueError:
@@ -402,7 +461,18 @@ class StudioService:
                         raise
                     # The browser left: nobody reads this answer, and the server logs no traceback for it.
                     return Response(status_code=CLIENT_GONE)
-            return await forward()
+            response = await forward()
+            if (
+                path == "/api/v1/identity"
+                and request.method == "GET"
+                and response.status_code == 200
+                and self.connection_generation == generation
+                and self.options.profile is profile
+            ):
+                # The platform knows this person again (a sign-in from the command line, say): Studio keeps the
+                # platform's data on this computer again.
+                await asyncio.to_thread(self.remember_profile_data, profile.name)
+            return response
         except (AuthError, CredentialError):
             return problem(401, "WV-AUTH-REQUIRED", "Sign in again with weave auth login using the selected profile")
         except (httpx.HTTPError, TimeoutError):

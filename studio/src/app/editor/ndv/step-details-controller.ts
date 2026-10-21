@@ -54,7 +54,26 @@ import {
   type CanvasSidecar,
   type StepNote,
 } from "../state/canvas-sidecar";
-import { CANVAS_MAX_BYTES } from "../state/test-data";
+import { CANVAS_MAX_BYTES, type DataSource } from "../state/test-data";
+import { TestDataService } from "../state/test-data-service";
+import { checkInputsOf } from "../state/test-data-inputs";
+import {
+  withInput,
+  withPin,
+  withoutInput,
+  withoutPin,
+} from "../state/test-data-ops";
+import { fingerprints, type StepFingerprints } from "../state/fingerprints";
+import {
+  contractOf,
+  keepPinned as keepPin,
+  ownedContract,
+  pinsView,
+  stampedPin,
+  type PinView,
+} from "../state/pins-stale";
+import { sampleFromSchema } from "./panes/sample";
+import type { StoreBackend } from "../state/browser-store";
 import { nameOfUses, type OwnedRecipe } from "./owned/owned-actions";
 import {
   formEnv,
@@ -115,6 +134,10 @@ export type ControllerHost = Pick<
   | "cacheDecisionContract"
   | "can"
   | "refreshView"
+  | "testData"
+  | "testDataPrints"
+  | "openTestData"
+  | "pinFromElsewhere"
 >;
 /** A diagnostic of one step, located in it. */
 export interface StepDiagnostic {
@@ -140,9 +163,53 @@ const beneath = (path: string, root: string): boolean =>
   path === root || path.startsWith(`${root}/`);
 const BURST_MS = 600;
 
+/** Generate sample on output fields Studio can't sample. */
+export const CANT_SAMPLE =
+  "Can't make a sample for this output; set it by hand.";
+
 export class StepDetailsController {
-  private eventSchema = "";
-  private readonly event = signal<Json | undefined>(undefined);
+  // --- test data: the test input and pinned output --------------------------
+  /** The shell's test data, or this controller's own, in memory (tests, a shell without one). */
+  private ownTestData: TestDataService | null = null;
+  get testData(): TestDataService {
+    if (this.host.testData) return this.host.testData;
+    this.ownTestData ??= this.memoryTestData();
+    return this.ownTestData;
+  }
+  private memoryTestData(): TestDataService {
+    const nothing: StoreBackend = {
+      keys: async () => [],
+      get: async () => null,
+      set: async () => false,
+      remove: async () => false,
+    };
+    // Without the shell nothing is kept and no host is asked: the test input
+    // reaches here with its secret fields removed already (safeSample), and
+    // nothing else is accepted without a check.
+    return new TestDataService({
+      api: {
+        request: async <T>() =>
+          ({ entries: [{ path: "/input", ok: true }] }) as T,
+      },
+      backend: nothing,
+      now: () => new Date(),
+      inputs: () => {
+        let contracts: ReadonlyMap<string, Record<string, unknown>>;
+        try {
+          contracts = this.host.catalogContracts;
+        } catch {
+          contracts = new Map();
+        }
+        const inputs = checkInputsOf(this.host.model.definition, contracts);
+        return {
+          ...inputs,
+          schemaOf: (pointer: string) =>
+            inputs.schemaOf(pointer) ?? (pointer === "/input" ? {} : undefined),
+        };
+      },
+    });
+  }
+  /** The workflow, connection and account test data belongs to. */
   private eventScope: {
     model: StructuredCanvasAdapter;
     opened: number;
@@ -150,6 +217,8 @@ export class StepDetailsController {
     account: string | undefined;
     api: ControllerHost["api"];
   } | null = null;
+  /** An opening of the test data that belonged to the previous workflow or account: shown as nothing. */
+  private hidden: number | null = null;
   private syncTestEvent(): void {
     const { model, profile, api } = this.host;
     if (
@@ -160,6 +229,7 @@ export class StepDetailsController {
       this.eventScope.api === api
     )
       return;
+    const first = this.eventScope === null;
     this.eventScope = {
       model,
       opened: model.opened,
@@ -167,40 +237,229 @@ export class StepDetailsController {
       account: this.host.stepDataScope,
       api,
     };
-    this.eventSchema = "";
-    untracked(() => this.event.set(undefined));
+    if (first) {
+      this.host.openTestData?.();
+      return;
+    }
+    // Another workflow, platform or account: what is open belongs to the
+    // previous one until the right test data opens.
+    if (!this.host.testData) {
+      this.ownTestData = this.memoryTestData();
+      return;
+    }
+    const generation = this.host.testData.generation();
+    if (this.host.openTestData?.() !== false)
+      untracked(() => (this.hidden = generation));
+  }
+  /** True while the test data on show belongs to an earlier workflow or account. */
+  private stale(): boolean {
+    if (this.hidden === null) return false;
+    if (this.testData.generation() !== this.hidden) this.hidden = null;
+    return this.hidden !== null;
   }
   testEvent(): Json | undefined {
     this.syncTestEvent();
-    const schema = this.host.model.definition.spec["inputSchema"];
-    const signature = canonicalJson(schema);
-    if (this.eventSchema !== signature) {
-      this.eventSchema = signature;
-      untracked(() => this.event.set(safeSample(schema, this.event())));
-    }
-    return this.event();
+    const service = this.testData;
+    service.version();
+    if (this.stale()) return undefined;
+    return safeSample(
+      this.host.model.definition.spec["inputSchema"],
+      service.data().input?.value,
+    );
   }
   /** Deferred pane work belongs to the workflow and connection that created it. */
   testEventOwner(): () => boolean {
     this.syncTestEvent();
     const scope = this.eventScope;
+    const service = this.testData;
+    const generation = service.generation();
     return () => {
       this.syncTestEvent();
-      return this.eventScope === scope;
+      return (
+        this.eventScope === scope &&
+        this.testData === service &&
+        service.generation() === generation &&
+        !this.stale()
+      );
     };
   }
-  setTestEvent(value: Json | undefined): void {
-    this.syncTestEvent();
-    this.event.set(
-      safeSample(this.host.model.definition.spec["inputSchema"], value),
+  /** Keeps the trigger's Test event as the test input; null when kept, else why not. */
+  private eventWrite: Promise<unknown> = Promise.resolve();
+  private eventTicket = 0;
+  /** Typing writes in order, and only the latest value waiting is checked and kept. */
+  setTestEvent(
+    value: Json | undefined,
+    source: "manual" | "schema" = "manual",
+  ): Promise<string | null> {
+    const ticket = ++this.eventTicket;
+    const run = this.eventWrite.then(() =>
+      ticket === this.eventTicket ? this.writeTestEvent(value, source) : null,
     );
+    this.eventWrite = run.catch(() => null);
+    return run;
   }
-  /** What formula previews read: the trigger's test event; step outputs arrive with test data. */
+  private async writeTestEvent(
+    value: Json | undefined,
+    source: "manual" | "schema",
+  ): Promise<string | null> {
+    this.syncTestEvent();
+    if (this.stale()) return "This workflow's test data is still opening.";
+    const service = this.testData;
+    const now = new Date().toISOString();
+    // A secret field never reaches the check, nor anything it keeps.
+    const safe = safeSample(
+      this.host.model.definition.spec["inputSchema"],
+      value,
+    );
+    const data = service.data();
+    const outcome =
+      safe === undefined
+        ? await service.change(withoutInput(data, now), [])
+        : await service.change(withInput(data, safe, source, now), ["/input"]);
+    return outcome.ok ? null : outcome.message;
+  }
+  /** Every step's fingerprints now: the shell's (memoized), or computed here. */
+  prints(): ReadonlyMap<string, StepFingerprints> {
+    const shared = this.host.testDataPrints?.();
+    if (shared) return shared;
+    const model = this.host.model;
+    return fingerprints({
+      workflow: model.definition,
+      testInput: this.testData.data().input?.value,
+      contractOf: (step) =>
+        contractOf(step, {
+          owned: (uses) => ownedContract(model.canvas, uses),
+          profiles:
+            (model.definition.spec["llmProfiles"] as
+              | Record<string, unknown>
+              | undefined) ?? {},
+        }),
+    });
+  }
+  /** A step's own pin (its step ID) and whether it is out of date; null without one. */
+  pinOfTarget(target: string): PinView | null {
+    this.syncTestEvent();
+    const service = this.testData;
+    service.version();
+    if (this.stale() || !service.data().pins?.[target]) return null;
+    return pinsView(service.data(), this.prints()).get(target) ?? null;
+  }
+  /** A step's pinned output as previews may read it: secret fields left out. */
+  pinnedOutput(stepId: string): Json | undefined {
+    const pin = this.pinOfTarget(stepId);
+    if (!pin) return undefined;
+    const schema = this.descriptor(stepId)?.outputSchema(
+      this.step(stepId)!,
+      this.kindContext(),
+    );
+    return safeSample(schema ?? {}, pin.entry.output);
+  }
+  /** Whether this step's output can be pinned (actions, AI tasks, Call a workflow that waits…). */
+  pinnable(target: string): boolean {
+    const step = this.step(target);
+    const descriptor = this.descriptor(target);
+    if (!step || !descriptor) return false;
+    return typeof descriptor.pinnable === "function"
+      ? descriptor.pinnable(step)
+      : descriptor.pinnable;
+  }
+  private pinPointer = (target: string) =>
+    `/pins/${target.replace(/~/g, "~0").replace(/\//g, "~1")}`;
+  /** Pins this output (stamped with the step's fingerprints of now); null when kept, else why not. */
+  async pin(
+    target: string,
+    value: Json,
+    source: DataSource,
+  ): Promise<string | null> {
+    if (!this.pinnable(target)) return "This step's output can't be pinned.";
+    if (this.stale()) return "This workflow's test data is still opening.";
+    const now = this.prints().get(target);
+    if (!now) return "This step's output can't be pinned.";
+    const service = this.testData;
+    const at = new Date().toISOString();
+    const replacing = !!service.data().pins?.[target];
+    const outcome = await service.change(
+      withPin(service.data(), target, stampedPin(value, source, now, at), at),
+      [this.pinPointer(target)],
+    );
+    if (!outcome.ok) return outcome.message;
+    if (replacing)
+      this.offerUndo(
+        `Replaced the pinned output of ${target}.`,
+        outcome.previous,
+      );
+    return null;
+  }
+  /** Unpins the step's output, with an Undo toast. */
+  unpin(target: string): void {
+    const service = this.testData;
+    if (!service.data().pins?.[target]) return;
+    const previous = service.data();
+    const at = new Date().toISOString();
+    void service
+      .change(withoutPin(previous, target, at), [])
+      .then((outcome) => {
+        if (outcome.ok) this.offerUndo(`Unpinned ${target}.`, outcome.previous);
+      });
+  }
+  /** This step's pin came from another workflow and isn't kept here yet. */
+  pinFromElsewhere(target: string): boolean {
+    return !!this.host.pinFromElsewhere?.(target);
+  }
+  /** Keep pinned: the same output, current again (today's fingerprints). */
+  keepPinned(target: string): void {
+    const service = this.testData;
+    const entry = service.data().pins?.[target];
+    const now = this.prints().get(target);
+    if (!entry || !now) return;
+    const at = new Date().toISOString();
+    void service
+      .change(withPin(service.data(), target, keepPin(entry, now), at), [])
+      .then((outcome) => {
+        if (outcome.ok) this.host.notify(`Kept pinned output for ${target}.`);
+      });
+  }
+  /** Pins a sample made from the step's output fields. */
+  async generateOutput(target: string): Promise<string | null> {
+    const step = this.step(target);
+    const schema = step
+      ? this.descriptor(target)?.outputSchema(step, this.kindContext())
+      : null;
+    if (!schema) return "Studio doesn't know this step's output fields yet.";
+    let sample: Json;
+    try {
+      sample = sampleFromSchema(schema) as Json;
+    } catch {
+      // anyOf, allOf, an unknown format or bounds no value meets.
+      return CANT_SAMPLE;
+    }
+    return this.pin(target, sample, "schema");
+  }
+  /** Test data is outside the workflow's undo: a toast offers to put the previous document back. */
+  private offerUndo(
+    text: string,
+    previous: ReturnType<TestDataService["data"]>,
+  ) {
+    const service = this.testData;
+    const version = service.version();
+    this.host.notify(text, {
+      label: "Undo",
+      run: () => {
+        if (!service.restore(previous, version))
+          this.host.notify("The test data changed since, so Undo did nothing.");
+      },
+    });
+  }
+  /** What formula previews read: the test input and pinned output. */
   previewData(): PreviewData {
     return {
       input: () => this.testEvent(),
-      output: () => undefined,
-      stamp: () => [this.host.model.revision, this.testEvent()],
+      output: (id) => this.pinnedOutput(id),
+      stamp: () => [
+        this.host.model.revision,
+        this.testData.version(),
+        this.testData.generation(),
+      ],
     };
   }
 
@@ -463,6 +722,8 @@ export class StepDetailsController {
   /** A rename made in step details (or its Undo): the step's entries follow it. */
   renamePending(from: string, to: string): void {
     this.pendingStore().rename(from, to);
+    // Test data follows the rename: the step's pins and frames.
+    this.testData.rename(from, to);
   }
   /**
    * Forgets the entries of steps that are gone, so a step made again with
@@ -831,17 +1092,39 @@ export class StepDetailsController {
           (d) => !fieldPath || beneath(d.path, pointer(fieldPath)),
         ),
       sample: {
-        context: () => {
+        context: (fieldPath) => {
           const input = this.testEvent();
-          return input === undefined ? null : { input, steps: {} };
+          const steps: Record<string, { output: Json }> = {};
+          for (const visible of referenceScope(
+            host.model.definition,
+            step.id,
+            pointer(fieldPath),
+            this.scopeOptions(),
+          ).steps) {
+            const output = this.pinnedOutput(visible.id);
+            if (output !== undefined) steps[visible.id] = { output };
+          }
+          return input === undefined && !Object.keys(steps).length
+            ? null
+            : { input: input ?? {}, steps };
         },
         resolvedInput: () => none,
-        output: () => none,
-        setPin: async () => ({
-          ok: false,
-          message: "Pinning output isn't available yet.",
-        }),
-        clearPin: () => undefined,
+        output: () => {
+          const pin = this.pinOfTarget(target);
+          return pin
+            ? {
+                state: "available" as const,
+                value: this.pinnedOutput(target) ?? {},
+                source: "pinned" as const,
+                stale: pin.stale,
+              }
+            : none;
+        },
+        setPin: async (value) => {
+          const message = await this.pin(target, value, "manual");
+          return message === null ? { ok: true } : { ok: false, message };
+        },
+        clearPin: () => this.unpin(target),
         script: () => null,
         setScript: async () => ({
           ok: false,

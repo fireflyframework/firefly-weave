@@ -978,6 +978,11 @@ class DefinitionService:
                 **result.model_dump(exclude={"retired"}),
                 principal=actor.id,
             )
+            # A retired draft keeps no canvas and no test data.
+            await repository.execute(
+                "DELETE FROM studio_documents WHERE tenant_id=:tenant AND project_id=:project AND draft_id=:id",
+                id=identifier,
+            )
             await audit(
                 enlisted.session,
                 actor,

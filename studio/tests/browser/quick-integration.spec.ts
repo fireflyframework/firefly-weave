@@ -634,8 +634,8 @@ for (const [width, height] of [
       // The builder's hand-off belongs to this workflow: another workflow
       // with a slot of the same name starts its connection form empty.
       await closeInspector(page);
+      // The workflow saves itself on the way out: leaving asks nothing.
       await page.getByRole("button", { name: "Home", exact: true }).click();
-      await page.getByRole("button", { name: "Leave designer" }).click();
       await page
         .getByRole("button", { name: "New workflow", exact: true })
         .click();

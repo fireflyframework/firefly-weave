@@ -209,6 +209,8 @@ export class StepDetailsMount {
   closed(target: string) {
     this.details.close();
     const host = this.host();
+    // A platform draft saves what changed in step details at once.
+    void host.flushAutosave?.();
     const model = host.model;
     const opened = model.opened;
     const opening = this.details.opening();

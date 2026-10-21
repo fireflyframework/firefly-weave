@@ -1,0 +1,467 @@
+# Copyright 2026 Firefly Software Foundation.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# Author: Firefly Software Foundation
+# SPDX-License-Identifier: Apache-2.0
+
+"""Test data entries are checked against their own schemas, and secrets are never kept."""
+
+import json
+from pathlib import Path
+from typing import Any
+
+import pytest
+import yaml
+from starlette.testclient import TestClient
+
+from firefly_weave.compiler.catalog import CatalogSnapshot
+from firefly_weave.compiler.test_data import check_test_data
+from firefly_weave.contracts.definitions import load_definition
+from firefly_weave.contracts.studio_documents import StudioTestData
+from firefly_weave.studio.host import make_studio_app
+from firefly_weave.studio.service import StudioOptions
+
+ORIGIN = "http://127.0.0.1:8766"
+CODE = "terminal-only-pairing-code"
+
+
+def client(tmp_path: Path) -> TestClient:
+    assets = tmp_path / "assets"
+    assets.mkdir()
+    (assets / "index.html").write_text("<!doctype html><title>Weave Studio</title>")
+    return TestClient(make_studio_app(StudioOptions(origin=ORIGIN, assets=assets, pairing_code=CODE)), base_url=ORIGIN)
+
+
+def pair(browser: TestClient) -> dict[str, str]:
+    result = browser.post("/studio/session", json={"code": CODE}, headers={"Origin": ORIGIN})
+    assert result.status_code == 200
+    return {"Origin": ORIGIN, "X-Weave-CSRF": result.json()["csrfToken"]}
+
+
+ACTION = yaml.safe_load(Path("examples/definitions/check-customer.action.yaml").read_text("utf-8"))
+SECRET_ACTION: dict[str, Any] = {
+    **ACTION,
+    "metadata": {"name": "onboarding.issue-token", "version": "1.0.0"},
+    "spec": {
+        **ACTION["spec"],
+        "outputSchema": {
+            "type": "object",
+            "properties": {"token": {"type": "string", "x-secret": True}, "id": {"type": "string"}},
+        },
+    },
+}
+WORKFLOW: dict[str, Any] = {
+    "apiVersion": "weave/v1alpha1",
+    "kind": "Workflow",
+    "metadata": {"name": "orders", "version": "1.0.0"},
+    "spec": {
+        "inputSchema": {
+            "type": "object",
+            "properties": {"customerId": {"type": "string"}, "password": {"type": "string", "x-secret": True}},
+        },
+        "outputSchema": {},
+        "steps": [
+            {"id": "check", "kind": "action", "uses": "onboarding.check-customer@1.0.0", "with": {"literal": {}}},
+            {"id": "token", "kind": "action", "uses": "onboarding.issue-token@1.0.0", "with": {"literal": {}}},
+            {"id": "unknown", "kind": "action", "uses": "crm.lookup@1.0.0", "with": {"literal": {}}},
+            {
+                "id": "route",
+                "kind": "switch",
+                "cases": [
+                    {
+                        "when": {"literal": True},
+                        "steps": [
+                            {
+                                "id": "paid",
+                                "kind": "signal",
+                                "name": "paid",
+                                "timeoutSeconds": 60,
+                                "payloadSchema": {
+                                    "type": "object",
+                                    "properties": {"pin": {"type": "string", "writeOnly": True}},
+                                },
+                            },
+                            {
+                                "id": "review",
+                                "kind": "humanTask",
+                                "assignment": "reviewers",
+                                "title": {"literal": "Review"},
+                                "context": {"literal": {}},
+                                "formSchema": {"type": "object", "properties": {"note": {"type": "string"}}},
+                                "decisions": ["approve", "reject"],
+                            },
+                        ],
+                        "output": {"literal": {}},
+                    }
+                ],
+                "default": {"steps": [], "output": {"literal": {}}},
+            },
+            {"id": "shape", "kind": "transform", "value": {"literal": 1}},
+        ],
+        "output": {"literal": None},
+    },
+}
+PIN = {
+    "source": "manual",
+    "pinnedAt": "2026-10-20T10:00:00Z",
+    "configHash": "fnv1a64:0000000000000001",
+    "contractHash": "fnv1a64:0000000000000002",
+    "upstreamHash": "fnv1a64:0000000000000003",
+}
+
+
+def data(**fields: Any) -> StudioTestData:
+    document = {"schemaVersion": 1, "kind": "weave.studio/testData", "updatedAt": "2026-10-20T10:00:00Z", **fields}
+    return StudioTestData.model_validate_json(json.dumps(document), by_alias=True, by_name=False)
+
+
+def check(document: StudioTestData, *definitions: dict[str, Any]) -> dict[str, str | None]:
+    catalog = CatalogSnapshot.from_definitions([load_definition(d) for d in definitions])
+    return dict(check_test_data(WORKFLOW, document, catalog))
+
+
+def test_each_entry_is_checked_against_its_own_schema():
+    result = check(
+        data(
+            input={"value": {"customerId": "c-1"}, "source": "manual"},
+            pins={
+                "check": {**PIN, "output": {"eligible": True}},
+                "check[2]": {**PIN, "output": {"eligible": "yes"}},
+                "token": {**PIN, "output": {"id": "t-1"}},
+            },
+            signals={"paid": {"payload": {}}},
+            humans={"review": {"decision": "approve", "data": {"note": "ok"}}},
+        ),
+        ACTION,
+        SECRET_ACTION,
+    )
+    assert result == {
+        "/input": None,
+        "/pins/check": None,
+        "/pins/check[2]": "WV-STUDIO-TESTDATA-SCHEMA",
+        "/pins/token": None,
+        "/signals/paid": None,
+        "/humans/review": None,
+    }
+
+
+def test_a_present_secret_value_is_refused_wherever_it_sits():
+    result = check(
+        data(
+            input={"value": {"customerId": "c-1", "password": "s3cret"}, "source": "manual"},
+            pins={"token": {**PIN, "output": {"id": "t-1", "token": "abc"}}},
+            signals={"paid": {"payload": {"pin": "1234"}}},
+        ),
+        ACTION,
+        SECRET_ACTION,
+    )
+    assert set(result.values()) == {"WV-SCHEMA-SECRET_VALUE"}
+
+
+def test_entries_without_a_known_schema_are_unresolved_never_accepted():
+    result = check(
+        data(
+            pins={
+                "unknown": {**PIN, "output": {}},
+                "gone": {**PIN, "output": {}},
+                "shape": {**PIN, "output": 1},
+            },
+            humans={"review": {"decision": "escalate", "data": {}}},
+            aiTurns={"support": {"turns": []}},
+            workflows={"notify@1.0.0": {"mocks": {"send": {"output": {}, "source": "manual"}}}},
+        ),
+        ACTION,
+    )
+    assert result == {
+        "/pins/unknown": "WV-STUDIO-TESTDATA-UNRESOLVED",
+        "/pins/gone": "WV-STUDIO-TESTDATA-UNRESOLVED",
+        # A transform's output comes from its input: nothing to pin.
+        "/pins/shape": "WV-STUDIO-TESTDATA-SCHEMA",
+        "/humans/review": "WV-STUDIO-TESTDATA-SCHEMA",
+        "/aiTurns/support": "WV-STUDIO-TESTDATA-UNRESOLVED",
+        "/workflows/notify@1.0.0/mocks/send": "WV-STUDIO-TESTDATA-UNRESOLVED",
+    }
+
+
+def test_timeouts_and_expiries_carry_no_value_to_check():
+    result = check(data(signals={"paid": {"outcome": "timeout"}}, humans={"review": {"outcome": "expire"}}))
+    assert result == {"/signals/paid": None, "/humans/review": None}
+
+
+def body(document: StudioTestData, *definitions: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "source": json.dumps(WORKFLOW),
+        "format": "json",
+        "definitions": list(definitions),
+        "catalog": "none",
+        "testData": document.model_dump(mode="json", by_alias=True),
+    }
+
+
+def test_the_host_route_needs_a_paired_session_and_answers_every_entry(tmp_path):
+    document = data(
+        input={"value": {"password": "s3cret"}, "source": "manual"},
+        pins={"check": {**PIN, "output": {"eligible": True}}},
+    )
+    with client(tmp_path) as browser:
+        origin = {"Origin": ORIGIN}
+        unpaired = browser.post("/studio/local/testdata/check", json=body(document, ACTION), headers=origin)
+        assert unpaired.status_code == 401
+        headers = pair(browser)
+        without_csrf = browser.post("/studio/local/testdata/check", json=body(document, ACTION), headers=origin)
+        assert without_csrf.status_code == 403
+        answer = browser.post("/studio/local/testdata/check", json=body(document, ACTION), headers=headers)
+        assert answer.status_code == 200
+        assert answer.json() == {
+            "entries": [
+                {"path": "/input", "ok": False, "code": "WV-SCHEMA-SECRET_VALUE"},
+                {"path": "/pins/check", "ok": True},
+            ]
+        }
+        # Values never come back: the answer names pointers and codes only.
+        assert "s3cret" not in answer.text
+        malformed = browser.post(
+            "/studio/local/testdata/check", json={**body(document), "testData": {"kind": "x"}}, headers=headers
+        )
+        assert malformed.status_code == 422
+
+
+@pytest.mark.parametrize("source", ["{not json", json.dumps([1, 2])])
+def test_a_source_that_does_not_read_leaves_every_entry_unresolved(tmp_path, source):
+    document = data(pins={"check": {**PIN, "output": {"eligible": True}}})
+    with client(tmp_path) as browser:
+        headers = pair(browser)
+        answer = browser.post(
+            "/studio/local/testdata/check", json={**body(document, ACTION), "source": source}, headers=headers
+        )
+    assert answer.json() == {"entries": [{"path": "/pins/check", "ok": False, "code": "WV-STUDIO-TESTDATA-UNRESOLVED"}]}
+
+
+def test_an_undo_phase_entry_is_unresolved_never_checked_against_the_step_it_undoes():
+    # `check#confirm` is the confirm phase of step check, which runs another action: its output schema isn't the
+    # step's, so a value that fits the step (or a secret only the phase's schema marks) is never accepted for it.
+    result = check(
+        data(
+            pins={
+                "check#2": {**PIN, "output": {"eligible": True}},
+                "check#confirm": {**PIN, "output": {"eligible": True}},
+                "check[2]#cancel": {**PIN, "output": {"eligible": True}},
+                "token#undo": {**PIN, "output": {"id": "t-1"}},
+            },
+        ),
+        ACTION,
+        SECRET_ACTION,
+    )
+    assert result == {
+        "/pins/check#2": None,
+        "/pins/check#confirm": "WV-STUDIO-TESTDATA-UNRESOLVED",
+        "/pins/check[2]#cancel": "WV-STUDIO-TESTDATA-UNRESOLVED",
+        "/pins/token#undo": "WV-STUDIO-TESTDATA-UNRESOLVED",
+    }
+
+
+SHAPES: dict[str, dict[str, Any]] = {
+    "behind-ref": {
+        "type": "object",
+        "$defs": {"token": {"type": "string", "x-secret": True}},
+        "properties": {"token": {"$ref": "#/$defs/token"}},
+    },
+    "behind-any-of": {"anyOf": [{"type": "object", "properties": {"token": {"type": "string", "writeOnly": True}}}]},
+    "behind-additional": {"type": "object", "additionalProperties": {"type": "string", "x-secret": True}},
+    "unknown-ref": {"type": "object", "properties": {"token": {"$ref": "#/$defs/missing"}}},
+}
+
+
+def shaped(name: str, schema: dict[str, Any]) -> dict[str, Any]:
+    return {
+        **ACTION,
+        "metadata": {"name": f"shapes.{name}", "version": "1.0.0"},
+        "spec": {**ACTION["spec"], "outputSchema": schema},
+    }
+
+
+@pytest.mark.parametrize(
+    ("shape", "code"),
+    [
+        ("behind-ref", "WV-SCHEMA-SECRET_VALUE"),
+        ("behind-any-of", "WV-SCHEMA-SECRET_VALUE"),
+        ("behind-additional", "WV-SCHEMA-SECRET_VALUE"),
+        # A value the platform can't classify is refused too, never accepted for want of a rule.
+        ("unknown-ref", "WV-SCHEMA-CLASSIFICATION"),
+    ],
+)
+def test_a_secret_hidden_in_the_schema_or_a_value_that_can_t_be_classified_is_refused(shape, code):
+    workflow = {
+        **WORKFLOW,
+        "spec": {
+            **WORKFLOW["spec"],
+            "steps": [{"id": "s", "kind": "action", "uses": f"shapes.{shape}@1.0.0", "with": {"literal": {}}}],
+        },
+    }
+    definition = shaped(shape, SHAPES[shape])
+    catalog = CatalogSnapshot.from_definitions([load_definition(definition)])
+    result = dict(check_test_data(workflow, data(pins={"s": {**PIN, "output": {"token": "abc"}}}), catalog))
+    assert result == {"/pins/s": code}
+
+
+@pytest.mark.parametrize("failure", [RecursionError, ArithmeticError])
+def test_a_value_too_deep_or_too_large_to_classify_is_refused(monkeypatch, failure):
+    from firefly_weave.compiler import test_data
+
+    def give_up(*args: Any) -> None:
+        raise failure()
+
+    monkeypatch.setattr(test_data, "classify", give_up)
+    result = check(data(pins={"check": {**PIN, "output": {"eligible": True}}}), ACTION)
+    assert result == {"/pins/check": "WV-SCHEMA-CLASSIFICATION"}
+
+
+CALLEE: dict[str, Any] = {
+    "apiVersion": "weave/v1alpha1",
+    "kind": "Workflow",
+    "metadata": {"name": "enrich", "version": "1.0.0"},
+    "spec": {
+        "inputSchema": {"type": "object"},
+        "outputSchema": {},
+        "steps": [
+            {"id": "check", "kind": "action", "uses": "onboarding.issue-token@1.0.0", "with": {"literal": {}}},
+            {
+                "id": "paid",
+                "kind": "signal",
+                "name": "paid",
+                "timeoutSeconds": 60,
+                "payloadSchema": {"type": "object", "properties": {"code": {"type": "string", "x-secret": True}}},
+            },
+            {
+                "id": "review",
+                "kind": "humanTask",
+                "assignment": "reviewers",
+                "title": {"literal": "Review"},
+                "context": {"literal": {}},
+                "formSchema": {"type": "object", "properties": {"note": {"type": "string", "x-secret": True}}},
+                "decisions": ["approve", "reject"],
+            },
+        ],
+        "output": {"literal": None},
+    },
+}
+NESTED: dict[str, Any] = {
+    **WORKFLOW,
+    "spec": {
+        **WORKFLOW["spec"],
+        "steps": [
+            *WORKFLOW["spec"]["steps"],
+            {
+                "id": "fan",
+                "kind": "parallel",
+                "branches": {
+                    "a": {
+                        "steps": [
+                            {
+                                "id": "issue",
+                                "kind": "action",
+                                "uses": "onboarding.issue-token@1.0.0",
+                                "with": {"literal": {}},
+                            }
+                        ],
+                        "output": {"literal": None},
+                    }
+                },
+            },
+            {
+                "id": "each",
+                "kind": "forEach",
+                "items": {"literal": [1]},
+                "body": {
+                    "steps": [
+                        {
+                            "id": "again",
+                            "kind": "action",
+                            "uses": "onboarding.check-customer@1.0.0",
+                            "with": {"literal": {}},
+                        }
+                    ],
+                    "output": {"literal": None},
+                },
+            },
+            {"id": "enrich", "kind": "callWorkflow", "uses": "enrich@1.0.0", "mode": "wait", "with": {"literal": {}}},
+            {"id": "support", "kind": "agent"},
+        ],
+    },
+}
+
+
+def check_nested(document: StudioTestData) -> dict[str, str | None]:
+    definitions = [load_definition(d) for d in (ACTION, SECRET_ACTION, CALLEE)]
+    return dict(check_test_data(NESTED, document, CatalogSnapshot.from_definitions(definitions)))
+
+
+def test_steps_inside_parallel_branches_and_loops_are_checked():
+    result = check_nested(
+        data(pins={"issue": {**PIN, "output": {"token": "abc"}}, "again": {**PIN, "output": {"eligible": "yes"}}})
+    )
+    assert result == {"/pins/issue": "WV-SCHEMA-SECRET_VALUE", "/pins/again": "WV-STUDIO-TESTDATA-SCHEMA"}
+
+
+def test_signals_and_answers_in_a_frame_are_checked_against_the_called_workflow():
+    result = check_nested(
+        data(
+            signals={"paid": {"payload": {"code": "1"}, "frame": "enrich"}},
+            humans={"review": {"decision": "approve", "data": {"note": "x"}, "frame": "enrich"}},
+        )
+    )
+    assert result == {"/signals/paid": "WV-SCHEMA-SECRET_VALUE", "/humans/review": "WV-SCHEMA-SECRET_VALUE"}
+    # The same entries without the frame are this workflow's steps, whose schemas mark nothing secret there.
+    unframed = check_nested(
+        data(
+            signals={"paid": {"payload": {"code": "1"}}},
+            humans={"review": {"decision": "approve", "data": {"note": "x"}}},
+        )
+    )
+    assert unframed == {"/signals/paid": None, "/humans/review": None}
+
+
+def test_mocks_of_a_called_workflow_are_checked_against_its_own_steps():
+    result = check_nested(
+        data(workflows={"enrich@1.0.0": {"mocks": {"check": {"output": {"token": "abc"}, "source": "manual"}}}})
+    )
+    assert result == {"/workflows/enrich@1.0.0/mocks/check": "WV-SCHEMA-SECRET_VALUE"}
+
+
+def test_an_ai_agent_s_pin_stays_unresolved():
+    assert check_nested(data(pins={"support": {**PIN, "output": {}}})) == {
+        "/pins/support": "WV-STUDIO-TESTDATA-UNRESOLVED"
+    }
+
+
+def test_the_host_keeps_the_first_copy_of_a_definition(tmp_path):
+    first = {**SECRET_ACTION, "metadata": ACTION["metadata"]}
+    document = data(pins={"check": {**PIN, "output": {"token": "abc"}}})
+    with client(tmp_path) as browser:
+        headers = pair(browser)
+        answer = browser.post("/studio/local/testdata/check", json=body(document, first, ACTION), headers=headers)
+    assert answer.json() == {"entries": [{"path": "/pins/check", "ok": False, "code": "WV-SCHEMA-SECRET_VALUE"}]}
+
+
+def test_phase_entries_of_called_workflows_and_dotted_activations_stay_unresolved():
+    result = check_nested(
+        data(
+            # The callee's check step would accept this value: the phase runs another action, so it isn't checked.
+            workflows={"enrich@1.0.0": {"mocks": {"check#confirm": {"output": {"id": "t-1"}, "source": "manual"}}}},
+            pins={"check#2.cancel": {**PIN, "output": {"eligible": True}}, "check#2.1": {**PIN, "output": {}}},
+        )
+    )
+    assert result["/workflows/enrich@1.0.0/mocks/check#confirm"] == "WV-STUDIO-TESTDATA-UNRESOLVED"
+    assert result["/pins/check#2.cancel"] == "WV-STUDIO-TESTDATA-UNRESOLVED"
+    # An activation that ends in a number is the step itself.
+    assert result["/pins/check#2.1"] != "WV-STUDIO-TESTDATA-UNRESOLVED"

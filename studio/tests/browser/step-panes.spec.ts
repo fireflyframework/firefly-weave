@@ -615,6 +615,14 @@ for (const size of [
           const rows = await boxes(pane.locator(".data-row"));
           left.push(rows[0].x);
           left.push((await textBox(pane.locator(".pane-caption"))).x);
+        } else {
+          // Pin, then Edit at the sub-row's end, on the count's line (as the design has them).
+          const pin = await box(pane.locator(".pane-pin"));
+          const edit = await box(pane.locator(".pane-edit"));
+          expectAligned([pin.middle, edit.middle, count.middle], "sub-row", 2);
+          expectAligned([edit.right, edges.right], "sub-row right edge");
+          expect(pin.x).toBeGreaterThan(count.right);
+          expect(pin.right).toBeLessThanOrEqual(edit.x);
         }
         expectAligned(left, `${name} pane left edge`);
         expect(await clippedText(details.dialog)).toEqual([]);

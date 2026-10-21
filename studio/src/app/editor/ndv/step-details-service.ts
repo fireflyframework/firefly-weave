@@ -115,6 +115,13 @@ export class StepDetailsService {
    */
   readonly held = signal<ReadonlyMap<string, readonly HeldFact[]>>(new Map());
   private renames: StepRename[] = [];
+  /**
+   * Asks about an unsaved output edit in the open step details before the
+   * editor goes; true to go on. Set while step details are on screen.
+   */
+  askBeforeLeaving: (() => Promise<boolean>) | null = null;
+  /** Whether an output edit in the open step details isn't saved (Back asks before it goes). */
+  outputEditDirty: (() => boolean) | null = null;
   /** Steps an Undo or Redo renamed, for their entries to follow on the next change. */
   followRenames(renames: readonly StepRename[]): void {
     this.renames.push(...renames);

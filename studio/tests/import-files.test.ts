@@ -25,10 +25,12 @@ describe("what an import holds", () => {
     expect(chooseImport([file("order-intake.yaml")])).toEqual({
       workflow: 0,
       canvas: null,
+      testData: null,
     });
     expect(chooseImport([file("order-intake.json")])).toEqual({
       workflow: 0,
       canvas: null,
+      testData: null,
     });
   });
 
@@ -38,13 +40,13 @@ describe("what an import holds", () => {
         file("order-intake.canvas.json"),
         file("order-intake.yml"),
       ]),
-    ).toEqual({ workflow: 1, canvas: 0 });
+    ).toEqual({ workflow: 1, canvas: 0, testData: null });
     expect(
       chooseImport([
         file("order-intake.yaml"),
         file("order-intake.layout.json"),
       ]),
-    ).toEqual({ workflow: 0, canvas: 1 });
+    ).toEqual({ workflow: 0, canvas: 1, testData: null });
   });
 
   it("says what to choose instead", () => {
@@ -53,17 +55,20 @@ describe("what an import holds", () => {
         "Choose the workflow file too: a canvas file opens only with its workflow.",
     });
     expect(chooseImport([file("a.yaml"), file("b.yaml")])).toEqual({
-      error: "Choose one workflow file, and its canvas file if you have one.",
+      error:
+        "Choose one workflow file, and its canvas and test data files if you have them.",
     });
     expect(
       chooseImport([file("a.canvas.json"), file("b.layout.json")]),
     ).toEqual({
-      error: "Choose one workflow file, and its canvas file if you have one.",
+      error:
+        "Choose one workflow file, and its canvas and test data files if you have them.",
     });
     expect(
       chooseImport([file("a.yaml"), file("b.yaml"), file("a.canvas.json")]),
     ).toEqual({
-      error: "Choose one workflow file, and its canvas file if you have one.",
+      error:
+        "Choose one workflow file, and its canvas and test data files if you have them.",
     });
     expect(chooseImport([file("notes.txt")])).toEqual({
       error: "Choose a .yaml, .yml or .json workflow file.",
@@ -80,6 +85,55 @@ describe("what an import holds", () => {
   });
 });
 
+describe("a workflow with its test data", () => {
+  it("comes with at most one canvas and one test data file", () => {
+    expect(
+      chooseImport([
+        file("orders.testdata.json"),
+        file("orders.yaml"),
+        file("orders.canvas.json"),
+      ]),
+    ).toEqual({ workflow: 1, canvas: 2, testData: 0 });
+    expect(
+      chooseImport([file("orders.json"), file("orders.testdata.json")]),
+    ).toEqual({ workflow: 0, canvas: null, testData: 1 });
+    expect(
+      chooseImport([
+        file("orders.yaml"),
+        file("a.testdata.json"),
+        file("b.testdata.json"),
+      ]),
+    ).toEqual({
+      error:
+        "Choose one workflow file, and its canvas and test data files if you have them.",
+    });
+    expect(chooseImport([file("orders.testdata.json")])).toEqual({
+      error:
+        "Choose the workflow file too: a test data file opens only with its workflow.",
+    });
+    expect(
+      chooseImport([file("a.yaml"), file("a.testdata.json", 1_048_577)]),
+    ).toEqual({
+      error:
+        "This test data file is larger than 1 MB. Choose the workflow file without it.",
+    });
+  });
+  it("reads the test data file, and opens the workflow without it when it can't", async () => {
+    const text = (value: string) => ({ text: async () => value });
+    const unreadable = { text: async () => Promise.reject(new Error("gone")) };
+    expect(await readImport(text("kind: Workflow"), null, text("{}"))).toEqual({
+      source: "kind: Workflow",
+      canvas: null,
+      canvasUnreadable: false,
+      testData: "{}",
+      testDataUnreadable: false,
+    });
+    expect(
+      await readImport(text("kind: Workflow"), null, unreadable),
+    ).toMatchObject({ testData: null, testDataUnreadable: true });
+  });
+});
+
 describe("reading what was chosen", () => {
   const text = (value: string) => ({ text: async () => value });
   const unreadable = { text: async () => Promise.reject(new Error("gone")) };
@@ -88,11 +142,15 @@ describe("reading what was chosen", () => {
       source: "kind: Workflow",
       canvas: "{}",
       canvasUnreadable: false,
+      testData: null,
+      testDataUnreadable: false,
     });
     expect(await readImport(text("kind: Workflow"), null)).toEqual({
       source: "kind: Workflow",
       canvas: null,
       canvasUnreadable: false,
+      testData: null,
+      testDataUnreadable: false,
     });
   });
   it("still reads the workflow when its canvas file can't be read", async () => {
@@ -100,6 +158,8 @@ describe("reading what was chosen", () => {
       source: "kind: Workflow",
       canvas: null,
       canvasUnreadable: true,
+      testData: null,
+      testDataUnreadable: false,
     });
     expect(await readImport(unreadable, text("{}"))).toBeNull();
   });

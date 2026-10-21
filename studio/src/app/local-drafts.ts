@@ -15,20 +15,22 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
+import { studioStorage } from "./editor/state/studio-storage";
 import { isDesktopShell } from "./export-file";
-// Workflows kept on this computer: the browser's localStorage holds an index
+// Workflows kept on this computer: Studio's storage (the browser's, or the
+// desktop host's) holds an index
 // and one document per draft. Storage can be missing, full or blocked, so
 // every read and write is guarded and reports failure instead of throwing.
 
-export const indexKey = "weave.localDrafts.v1";
-export const draftKey = (id: string) => `weave.localDraft.${id}`;
+export const indexKey = "local:weave.localDrafts.v1";
+export const draftKey = (id: string) => `local:weave.localDraft.${id}`;
 
 /**
- * Where local work lives. The desktop app's window keeps no browser data after
- * it quits, so there a draft lasts only until Studio quits.
+ * Where local work lives: on this computer, in the browser's storage or, in
+ * the desktop app, in the Studio host's store (which outlives quitting).
  */
-export function localKeepLabel(desktop = isDesktopShell()) {
-  return desktop ? "Kept until you quit" : "Kept on this computer";
+export function localKeepLabel(_desktop = isDesktopShell()) {
+  return "Kept on this computer";
 }
 /** One row of "On this computer". */
 export interface LocalDraftEntry {
@@ -53,7 +55,7 @@ export interface RemovedDraft {
   document: LocalDraftDocument | null;
 }
 
-/** The storage surface the drafts use (localStorage in the browser). */
+/** The storage surface the drafts use (Studio's storage). */
 export type DraftStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -89,8 +91,7 @@ function documentOf(value: unknown): LocalDraftDocument | null {
 export class LocalDrafts {
   failed = false;
   constructor(
-    private storage: () => DraftStorage | null = () =>
-      typeof localStorage === "undefined" ? null : localStorage,
+    private storage: () => DraftStorage | null = () => studioStorage(),
   ) {}
 
   private guard<T>(work: (storage: DraftStorage) => T, fallback: T): T {

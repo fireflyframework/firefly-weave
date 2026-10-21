@@ -133,6 +133,24 @@ answers = [{ status = 501, code = "WV-UNAVAILABLE", until = "logs" }]
 capability = "run.read"
 identifier = "random"
 
+# Canvas rows: a canvas needs exactly the listed capability (test data also needs simulate and, for run data,
+# run.read). A random draft has no document, so a permitted call answers 404 and nothing is stored.
+[operations."studio_documents.delete"]
+capability = "definition.write"
+identifier = "random"
+kind = "canvas"
+
+[operations."studio_documents.read"]
+capability = "catalog.read"
+identifier = "random"
+kind = "canvas"
+
+[operations."studio_documents.save"]
+capability = "definition.write"
+identifier = "random"
+kind = "canvas"
+body = { draft_revision = 1, document = {} }
+
 # A permitted call is a dry run, so no worker is retired.
 [operations."workers.retire_stale"]
 capability = "release.retire"

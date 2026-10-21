@@ -16,7 +16,14 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 import { describe, expect, it } from "vitest";
-import { rememberable } from "../src/app/run/run-memory";
+import { afterEach, vi } from "vitest";
+import { connectedPrefix } from "../src/app/editor/state/browser-store";
+import {
+  remember,
+  rememberable,
+  remembered,
+  runInputKey,
+} from "../src/app/run/run-memory";
 
 describe("remembered run input", () => {
   it("leaves out secret and write-only values at any depth", () => {
@@ -74,5 +81,36 @@ describe("remembered run input", () => {
     expect(rememberable({ type: "object" }, { a: { b: [1] } })).toEqual({
       a: { b: [1] },
     });
+  });
+});
+
+describe("where run inputs are kept", () => {
+  const scope = {
+    profileName: "Acme",
+    subject: "user-1",
+    tenantId: "7b0c1c43-3f5a-4cde-9f0e-3c2d5a6b7c8d",
+    projectId: "9b1c2d3e-4f50-4a61-8b72-c3d4e5f60718",
+  };
+  afterEach(() => vi.unstubAllGlobals());
+  it("keeps run inputs under the account's prefix, or in memory only", async () => {
+    expect(await runInputKey(scope, "v-1")).toBe(
+      `${await connectedPrefix(scope)}runInput.v-1`,
+    );
+    expect(await runInputKey(null, "v-1")).toBeNull();
+    expect(await runInputKey({ ...scope, subject: null }, "v-1")).toBeNull();
+    const refuse = () => {
+      throw new Error("storage must not be touched");
+    };
+    vi.stubGlobal("localStorage", {
+      getItem: refuse,
+      setItem: refuse,
+      removeItem: refuse,
+      key: refuse,
+      get length() {
+        return refuse();
+      },
+    });
+    remember(null, { amount: 1 });
+    expect(remembered(null)).toEqual({ amount: 1 });
   });
 });

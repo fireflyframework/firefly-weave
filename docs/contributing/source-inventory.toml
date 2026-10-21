@@ -540,6 +540,15 @@ author = "Firefly Software Foundation"
 license = "Apache-2.0"
 
 [[exceptions]]
+path = "studio/tests/fixtures/test-data-cases.json"
+kind = "generated"
+source = "scripts/studio_test_data_cases.py"
+reason = "Strict JSON test data documents and whether the platform's models accept each; Studio's reader must give the same answers. Regenerate with the generator, which also checks freshness."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
 path = "studio/tests/fixtures/language/transactions.json"
 kind = "generated"
 source = "scripts/language_fixtures.py"

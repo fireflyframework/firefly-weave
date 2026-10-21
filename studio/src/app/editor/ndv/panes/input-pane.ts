@@ -18,7 +18,9 @@ SPDX-License-Identifier: Apache-2.0
 // The Input pane: what the step can read. The source selector lists the
 // earlier steps the step can see, nearest first, then the workflow input;
 // Schema shows that source's fields (draggable), with the other sources as
-// "Also available". Table and JSON wait for data. Compact (Edit formula's
+// "Also available". With test data (the test input, an earlier step's pinned
+// output) Schema shows each field's value and JSON the data; Table waits for
+// execution. Compact (Edit formula's
 // column): the fields to drag, with the search and the source on one row,
 // and no header or empty-state text.
 import {
@@ -44,7 +46,9 @@ import {
   filterRows,
   inputSources,
   radioKey,
+  rootOf,
   savedView,
+  withSamples,
   writeView,
   sourceRows,
   type DataView,
@@ -61,7 +65,8 @@ import { ndvRegistry, type Json } from "../registry";
   host: { "[class.is-compact]": "compact()" },
   template: `@let sources = this.sources();
     @let chosen = selectedSource();
-    @let all = rows(chosen);
+    @let data = dataOf(chosen);
+    @let all = rows(chosen, data);
     @let shown = filter(all);
     @if (!compact()) {
       <header class="sd-pane-head">
@@ -131,6 +136,11 @@ import { ndvRegistry, type Json } from "../registry";
           />
         </span>
       }
+      @if (data !== undefined && sources.length) {
+        <span class="pill pane-source-tag" data-tone="info">{{
+          chosen === "input" ? "Test input" : "Pinned"
+        }}</span>
+      }
       <span class="pane-count">{{
         countLabel(all.length, query() ? shown.length : undefined)
       }}</span>
@@ -139,7 +149,7 @@ import { ndvRegistry, type Json } from "../registry";
       <div class="pane-content">
         @if (!sources.length) {
           <p class="pane-empty-text">This step doesn't read data.</p>
-        } @else if (value() !== undefined && shownView() !== "schema") {
+        } @else if (data !== undefined && shownView() !== "schema") {
           @if (shownView() === "table") {
             <p class="pane-empty-text">
               Table view isn't available for this sample yet.
@@ -147,11 +157,11 @@ import { ndvRegistry, type Json } from "../registry";
             <button type="button" (click)="setView('json')">View JSON</button>
           } @else {
             <pre class="pane-json" tabindex="0" aria-label="Input data">{{
-              json(value())
+              json(data)
             }}</pre>
           }
         } @else {
-          @if (!compact()) {
+          @if (!compact() && data === undefined) {
             <div class="pane-empty">
               <span class="pane-empty-icon" aria-hidden="true"
                 ><weave-icon name="play" [size]="20"
@@ -288,8 +298,20 @@ export class InputPane implements OnInit {
     const scope = this.scope();
     return scope.found ? inputSources(scope) : [];
   }
-  rows(source: string): TreeRow[] {
-    return sourceRows(this.scope().entries, source);
+  /** The chosen source's data: the test input, an earlier step's pinned output, or what the step received. */
+  dataOf(source: string): Json | undefined {
+    const controller = this.session().controller;
+    if (source === "input") return controller.testEvent() ?? this.value();
+    if (source.startsWith("step:"))
+      return controller.pinnedOutput(source.slice(5)) ?? this.value();
+    return this.value();
+  }
+  rows(source: string, data?: Json): TreeRow[] {
+    return withSamples(
+      sourceRows(this.scope().entries, source),
+      data,
+      rootOf(source),
+    );
   }
   filter(rows: TreeRow[]): TreeRow[] {
     return filterRows(rows, this.query());

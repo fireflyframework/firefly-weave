@@ -547,6 +547,28 @@ current grants, and the latest revision.
   leave retired drafts out by default, and a later save cannot bring the ID
   back.
 
+**Studio documents.** A draft also keeps two documents beside its workflow:
+`drafts/{identifier}/studio/canvas` (notes, trigger choices and the recipes of
+actions the workflow owns) and `drafts/{identifier}/studio/test-data` (test
+input and pinned output). `GET` reads the latest revision, `PUT` saves a new
+one, and `DELETE` removes the document.
+
+- `canvas` needs `catalog.read` to read and `definition.write` to change.
+  `test-data` also needs `simulate`, and a document holding data recorded
+  from runs needs `run.read` in every environment it came from.
+- The server derives `contains_run_data` and `source_environment_ids` from the
+  document; both stay set for later revisions, and a client can't send them.
+- A save names the draft revision it belongs to (`draft_revision`). An update
+  or a delete needs the current revision in `If-Match`; a stale one answers
+  HTTP 412 (`WV-ETAG`). The server keeps the latest two revisions.
+- A canvas holds at most 256 KiB and test data at most 1 MiB; a larger one
+  answers HTTP 413 (`WV-STUDIO-DOCUMENT-SIZE`).
+- Test data never holds secrets: a value its schema marks secret answers
+  HTTP 422 `WV-STUDIO-DOCUMENT-SECRET`, and one the platform can't classify
+  answers `WV-STUDIO-DOCUMENT-UNCLASSIFIED`. Both list document pointers in
+  `result.paths`, never values.
+- Retiring a draft deletes its documents.
+
 **Published versions and connections never change.** A change publishes a new
 version; retiring a version keeps its history. Updating a connection creates a
 new connection revision with a new ID.
@@ -1000,6 +1022,9 @@ operation in the [full API reference](api-explorer.md); to generate a client,
 | `definitions.retire` | `POST /api/v1/tenants/{tenant}/projects/{project}/{collection}/{identifier}/retire` | release.retire |
 | `drafts.save` | `PUT /api/v1/tenants/{tenant}/projects/{project}/drafts/{identifier}` | definition.write |
 | `drafts.retire` | `DELETE /api/v1/tenants/{tenant}/projects/{project}/drafts/{identifier}` | definition.write |
+| `studio_documents.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/drafts/{identifier}/studio/{kind}` | catalog.read |
+| `studio_documents.save` | `PUT /api/v1/tenants/{tenant}/projects/{project}/drafts/{identifier}/studio/{kind}` | definition.write |
+| `studio_documents.delete` | `DELETE /api/v1/tenants/{tenant}/projects/{project}/drafts/{identifier}/studio/{kind}` | definition.write |
 | `activations.create` | `POST /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/activations` | release.activate |
 | `activations.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/activations` | catalog.read |
 | `activations.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/activations/{identifier}` | catalog.read |

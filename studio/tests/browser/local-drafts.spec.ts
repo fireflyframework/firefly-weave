@@ -48,7 +48,9 @@ for (const viewport of [
         // The autosave waits 800 ms after the last change.
         await expect
           .poll(() =>
-            page.evaluate(() => localStorage.getItem("weave.localDrafts.v1")),
+            page.evaluate(() =>
+              localStorage.getItem("local:weave.localDrafts.v1"),
+            ),
           )
           .toContain("untitled-workflow");
         await page.reload();
@@ -177,10 +179,10 @@ for (const viewport of [
     },
   );
 
-test("the desktop app says local drafts last until it quits", async ({
+test("the desktop app keeps local drafts on this computer, through the host", async ({
   page,
 }) => {
-  // The desktop window keeps no browser data after the app quits.
+  // The desktop window keeps no browser data after the app quits: Studio keeps drafts in the host's store.
   await page.addInitScript(() => {
     (window as unknown as Record<string, unknown>)["__TAURI_INTERNALS__"] = {};
   });
@@ -188,22 +190,25 @@ test("the desktop app says local drafts last until it quits", async ({
   await newWorkflow(page);
   await insertStep(page, "Transform");
   await expect(page.locator(".status-chip")).toContainText(
-    /Draft saved \d{2}:\d{2}/,
+    /^Saved \d{2}:\d{2}$/,
     { timeout: 10_000 },
   );
   await page.getByRole("button", { name: "Workflows", exact: true }).click();
   const leave = page.getByRole("dialog", { name: "Leave untitled-workflow?" });
   await expect(leave).toContainText(
-    "until you quit Firefly Weave Studio. Save to file to keep a copy.",
+    "It's kept on this computer. You'll find it under Workflows › On this computer.",
   );
   await leave.getByRole("button", { name: "Leave", exact: true }).click();
   await page.getByRole("button", { name: "On this computer" }).click();
-  await expect(page.locator(".local-quit-notice")).toContainText(
-    "The desktop app keeps these drafts only until you quit it.",
-  );
   await expect(
     page.locator(".resource-row").filter({ hasText: "untitled-workflow" }),
-  ).toContainText("Kept until you quit");
+  ).toContainText("Kept on this computer");
+  // Nothing of the draft is in the window's own storage: the mirror writes through to the host.
+  expect(
+    await page.evaluate(() =>
+      Object.keys(localStorage).filter((key) => key.startsWith("local:")),
+    ),
+  ).toEqual([]);
 });
 
 test("a link to a workflow that isn't here explains and opens Workflows", async ({
@@ -293,7 +298,7 @@ test("the reload guard holds only edits that aren't kept anywhere", async ({
   expect(await guarded()).toBe(false);
   await expect
     .poll(() =>
-      page.evaluate(() => localStorage.getItem("weave.localDrafts.v1")),
+      page.evaluate(() => localStorage.getItem("local:weave.localDrafts.v1")),
     )
     .toContain("untitled-workflow");
   // A browser that refuses storage keeps nothing: the guard asks.
@@ -335,7 +340,7 @@ test("a draft whose notes and settings can't be read opens without them and says
   await newWorkflow(page);
   await insertStep(page, "Transform");
   await expect(page.locator(".status-chip")).toContainText(
-    /Draft saved \d{2}:\d{2}/,
+    /^Saved \d{2}:\d{2}$/,
     { timeout: 10_000 },
   );
   const toast = page.getByRole("alert").locator(".toast");
@@ -345,8 +350,10 @@ test("a draft whose notes and settings can't be read opens without them and says
   await expect(toast).toHaveCount(0);
   // One saved by a newer Studio can't be read: the workflow still opens.
   await page.evaluate(() => {
-    const [entry] = JSON.parse(localStorage.getItem("weave.localDrafts.v1")!);
-    const key = `weave.localDraft.${entry.id}`;
+    const [entry] = JSON.parse(
+      localStorage.getItem("local:weave.localDrafts.v1")!,
+    );
+    const key = `local:weave.localDraft.${entry.id}`;
     const draft = JSON.parse(localStorage.getItem(key)!);
     draft.canvas = { schemaVersion: 3, kind: "weave.studio/canvas" };
     localStorage.setItem(key, JSON.stringify(draft));

@@ -289,7 +289,7 @@ for (const viewport of [
     for (const step of ["Decision", "Wait for time", "Human task"])
       await insertStep(page, step);
     await expect(page.locator(".editor-identity .status-chip")).toHaveText(
-      /Draft saved \d{2}:\d{2}/,
+      /^Saved \d{2}:\d{2}$/,
     );
     const name = page.locator(".editor-identity h1");
     await expect(name).toHaveText("untitled-workflow");

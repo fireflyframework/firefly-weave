@@ -30,7 +30,7 @@ import { StructuredCanvasAdapter } from "../src/app/model";
 import { StepDetailsController } from "../src/app/editor/ndv/step-details-controller";
 afterAll(() => vi.unstubAllGlobals());
 
-function fixture() {
+async function fixture() {
   const app = Object.create(App.prototype) as App;
   app.api = new StudioApi();
   app.api.session.profile = {
@@ -67,6 +67,7 @@ function fixture() {
     closeSimulation() {},
     refreshConnectionStatus: async () => {},
     catalogAfterIdentity() {},
+    draftAfterIdentity() {},
     renewedStatus() {},
     refreshRunTaskAfterIdentity() {},
     loadIdentity: async () => {},
@@ -74,15 +75,15 @@ function fixture() {
     loginWatcher: { stop() {} },
   });
   const controller = new StepDetailsController(app);
-  controller.setTestEvent({ name: "private sample" });
+  await controller.setTestEvent({ name: "private sample" });
   return { app, controller };
 }
 
 describe("sample ownership at the real App account boundary", () => {
   it.each(["expired", "not-linked"] as const)(
     "clears on %s with the same API, profile and workflow",
-    (kind) => {
-      const { app, controller } = fixture();
+    async (kind) => {
+      const { app, controller } = await fixture();
       const owner = controller.testEventOwner();
       const profile = app.profile,
         api = app.api,
@@ -95,8 +96,8 @@ describe("sample ownership at the real App account boundary", () => {
       expect(owner()).toBe(false);
     },
   );
-  it("retains on same-account verification with a fresh profile object", () => {
-    const { app, controller } = fixture();
+  it("retains on same-account verification with a fresh profile object", async () => {
+    const { app, controller } = await fixture();
     const owner = controller.testEventOwner();
     app.wizardVerified({
       session: structuredClone(app.api.session),
@@ -105,24 +106,24 @@ describe("sample ownership at the real App account boundary", () => {
     expect(controller.testEvent()).toEqual({ name: "private sample" });
     expect(owner()).toBe(true);
   });
-  it("clears on a different verified principal", () => {
-    const { app, controller } = fixture();
+  it("clears on a different verified principal", async () => {
+    const { app, controller } = await fixture();
     app.wizardVerified({
       session: structuredClone(app.api.session),
       identity: { ...app.identity, principal_id: "other" },
     } as never);
     expect(controller.testEvent()).toBeUndefined();
   });
-  it("clears on workspace change even when profile values are unchanged", () => {
-    const { app, controller } = fixture();
+  it("clears on workspace change even when profile values are unchanged", async () => {
+    const { app, controller } = await fixture();
     app.wizardWorkspace({
       session: app.api.session,
       identity: app.identity,
     } as never);
     expect(controller.testEvent()).toBeUndefined();
   });
-  it("clears on a connection switch with the same open workflow", () => {
-    const { app, controller } = fixture();
+  it("clears on a connection switch with the same open workflow", async () => {
+    const { app, controller } = await fixture();
     app.applyConnection({ session: app.api.session });
     expect(controller.testEvent()).toBeUndefined();
   });
@@ -138,7 +139,7 @@ describe("sample ownership during background platform checks", () => {
     { status: 401, detail: {} },
     { status: 403, detail: { code: "WV-AUTH-NOT-LINKED" } },
   ])("clears on authoritative rejection %j", async ({ status, detail }) => {
-    const { app, controller } = fixture();
+    const { app, controller } = await fixture();
     const owner = controller.testEventOwner();
     Object.assign(app, {
       connection: {
@@ -155,7 +156,7 @@ describe("sample ownership during background platform checks", () => {
   it.each([0, 503])(
     "retains the sample during transient offline status %i",
     async (status) => {
-      const { app, controller } = fixture();
+      const { app, controller } = await fixture();
       const owner = controller.testEventOwner();
       Object.assign(app, {
         connection: {
@@ -170,7 +171,7 @@ describe("sample ownership during background platform checks", () => {
     },
   );
   it("retains the sample on same-account background renewal", async () => {
-    const { app, controller } = fixture();
+    const { app, controller } = await fixture();
     const owner = controller.testEventOwner();
     Object.assign(app, {
       connection: {
@@ -190,7 +191,7 @@ describe("sample ownership through the real identity fallback", () => {
   it.each([0, 503, 401, 403])(
     "handles identity lookup failure %i without conflating offline and sign-out",
     async (status) => {
-      const { app, controller } = fixture();
+      const { app, controller } = await fixture();
       const owner = controller.testEventOwner();
       Reflect.deleteProperty(app, "loadIdentity");
       app.api.request = vi
@@ -217,7 +218,7 @@ describe("sample ownership through the real identity fallback", () => {
 it.each([false, true])(
   "does not let an old identity rejection invalidate a newer sample scope (reset=%s)",
   async (reset) => {
-    const { app, controller } = fixture();
+    const { app, controller } = await fixture();
     Reflect.deleteProperty(app, "loadIdentity");
     let reject!: (reason: unknown) => void;
     app.api.request = vi.fn().mockImplementation(
@@ -238,7 +239,7 @@ it.each([false, true])(
         truncated: false,
       },
     } as never);
-    controller.setTestEvent({ name: "new sample" });
+    await controller.setTestEvent({ name: "new sample" });
     const owner = controller.testEventOwner();
     reject(new ApiError(401, {}));
     await pending;
@@ -251,7 +252,7 @@ for (const status of [401, 403]) {
   it.each(["replacement", "renewal", "reset"])(
     `scopes a pending platform rejection ${status} across %s`,
     async (change) => {
-      const { app, controller } = fixture();
+      const { app, controller } = await fixture();
       let reject!: (reason: unknown) => void;
       Object.assign(app, {
         connection: {
@@ -275,7 +276,7 @@ for (const status of [401, 403]) {
           truncated: false,
         },
       } as never);
-      controller.setTestEvent({ name: "new sample" });
+      await controller.setTestEvent({ name: "new sample" });
       const owner = controller.testEventOwner();
       reject(
         new ApiError(

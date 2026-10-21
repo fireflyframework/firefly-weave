@@ -17,7 +17,7 @@ SPDX-License-Identifier: Apache-2.0
 */
 // "Start a run": the run input is a form built from the activated
 // version's input schema (with a JSON alternative), problems are explained in
-// the dialog, and the last input per version is remembered in this browser.
+// the dialog, and the last input per version is remembered on this computer.
 import {
   ChangeDetectorRef,
   Component,
@@ -33,7 +33,8 @@ import { StudioApi } from "../api";
 import type { FileAccess } from "../forms/core/file-reference";
 import { TaskForm } from "../task-form";
 import { type Schema, groupedObject, missingRequired } from "../task-schema";
-import { remember, remembered, rememberable } from "./run-memory";
+import type { AccountScope } from "../editor/state/browser-store";
+import { remember, remembered, rememberable, runInputKey } from "./run-memory";
 
 export { rememberable } from "./run-memory";
 
@@ -267,7 +268,9 @@ export class StartRunDialog implements OnChanges {
   busyLabel = input("Starting…");
   /** Option labels by activation ID, such as "Same version (1.0.0)". */
   labels = input<ReadonlyMap<string, string>>(new Map());
-  /** The input to start from instead of the input remembered in this browser. */
+  /** Who the remembered input belongs to; without an account it stays in memory. */
+  account = input<AccountScope | null>(null);
+  /** The input to start from instead of the input remembered on this computer. */
   initialInput = input<Record<string, unknown> | null>(null);
   /** Business and correlation keys to start from. */
   initialKeys = input<{ business_key?: string; correlation_key?: string }>({});
@@ -293,8 +296,8 @@ export class StartRunDialog implements OnChanges {
   problem = "";
   /** "Choose a version to run.": shown under the version field. */
   versionProblem = "";
-  /** The version whose input is remembered; the activation when unknown. */
-  private memoryKey = "";
+  /** Where the version's input is remembered (the activation when the version is unknown); null: in memory. */
+  private memoryKey: string | null = null;
   /**
    * True once the version's input schema is loaded. Without it Studio can't
    * tell which values are secret, so the input is not remembered.
@@ -384,7 +387,8 @@ export class StartRunDialog implements OnChanges {
     const request = (activation?.["request"] ?? {}) as Json;
     const versionId =
       typeof request["version_id"] === "string" ? request["version_id"] : "";
-    this.memoryKey = versionId || id;
+    this.memoryKey = await runInputKey(this.account(), versionId || id);
+    if (generation !== this.generation) return;
     this.schemaKnown = false;
     const last = id
       ? (this.initialInput() ?? remembered(this.memoryKey))
@@ -393,6 +397,8 @@ export class StartRunDialog implements OnChanges {
     this.formData = last ?? {};
     this.formSeed = this.formData;
     this.formValid = true;
+    // The key came after an await: show what it found.
+    this.cdr.markForCheck();
     if (!id) return;
     if (!versionId) {
       this.note = "Enter the run input as JSON.";

@@ -31,7 +31,8 @@ import {
   type ResolveOptions,
 } from "../../../forms/core/resolve";
 import type { Step } from "../../../model";
-import { uiKey } from "../../state/browser-store";
+import { uiKey, type BrowserStorage } from "../../state/browser-store";
+import { studioStorage } from "../../state/studio-storage";
 
 export type DataView = "schema" | "table" | "json";
 export const VIEWS_KEY = uiKey("weave.ndv.views.v1");
@@ -41,9 +42,9 @@ const DEFAULT_VIEWS = {
 };
 const isView = (v: unknown): v is DataView =>
   v === "schema" || v === "table" || v === "json";
-const defaultStorage = (): Storage | null => {
+const defaultStorage = (): BrowserStorage | null => {
   try {
-    return typeof localStorage === "undefined" ? null : localStorage;
+    return studioStorage();
   } catch {
     return null;
   }
@@ -90,6 +91,8 @@ export interface TreeRow {
   ref?: string;
   breadcrumb?: string;
   schema?: Schema;
+  /** The field's value in the test data, on one line (Schema view with data). */
+  sample?: string;
 }
 
 const isObject = (value: unknown): value is Schema =>
@@ -174,7 +177,7 @@ export function inputSources(scope: {
 export const defaultSource = (sources: Source[]): string =>
   sources[0]?.id ?? "input";
 
-const rootOf = (source: string): string =>
+export const rootOf = (source: string): string =>
   source === "input"
     ? "/input"
     : `/steps/${source.slice(5).replace(/~/g, "~0").replace(/\//g, "~1")}/output`;
@@ -202,6 +205,50 @@ export function sourceRows(entries: ScopeEntry[], source: string): TreeRow[] {
     ].join(" › "),
     schema: entry.schema,
   }));
+}
+
+/** The value at a JSON pointer below `root` in `data`, or undefined. */
+function valueAt(data: unknown, root: string, ref: string): unknown {
+  if (ref !== root && !ref.startsWith(`${root}/`)) return undefined;
+  let value = data;
+  for (const raw of ref.slice(root.length).split("/").slice(1)) {
+    const segment = raw.replace(/~1/g, "/").replace(/~0/g, "~");
+    if (Array.isArray(value)) value = value[Number(segment)];
+    else if (
+      value &&
+      typeof value === "object" &&
+      Object.hasOwn(value, segment)
+    )
+      value = (value as Record<string, unknown>)[segment];
+    else return undefined;
+  }
+  return value;
+}
+/**
+ * Rows with each field's value from the source's data, as the Schema view
+ * shows it: text in quotes, numbers and Yes/No as written, groups and lists
+ * by their size; 60 characters at most.
+ */
+export function withSamples(
+  rows: TreeRow[],
+  data: unknown,
+  root: string,
+): TreeRow[] {
+  if (data === undefined) return rows;
+  return rows.map((row) => {
+    // Input rows carry their reference; output rows their pointer below the output.
+    const value = valueAt(data, root, row.ref ?? row.key);
+    if (value === undefined) return row;
+    const text = Array.isArray(value)
+      ? `${value.length} ${value.length === 1 ? "item" : "items"}`
+      : value && typeof value === "object"
+        ? `${Object.keys(value).length} ${Object.keys(value).length === 1 ? "field" : "fields"}`
+        : JSON.stringify(value);
+    return {
+      ...row,
+      sample: text.length > 60 ? `${text.slice(0, 59)}…` : text,
+    };
+  });
 }
 
 export function filterRows(rows: TreeRow[], query: string): TreeRow[] {

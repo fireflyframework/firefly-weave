@@ -18,11 +18,11 @@ SPDX-License-Identifier: Apache-2.0
 // "Try the new editor": a per-viewer preference stored under the ui: prefix,
 // and `?editor=next` in the URL for tests. It is off unless turned on.
 import { uiKey } from "./browser-store";
+import { studioStorage } from "./studio-storage";
 
 export const EDITOR_NEXT_KEY = uiKey("weave.editorNext");
 export type FlagStorage = Pick<Storage, "getItem" | "setItem">;
-const defaultStorage = (): FlagStorage | null =>
-  typeof localStorage === "undefined" ? null : localStorage;
+const defaultStorage = (): FlagStorage | null => studioStorage();
 const currentSearch = () =>
   typeof location === "undefined" ? "" : location.search;
 

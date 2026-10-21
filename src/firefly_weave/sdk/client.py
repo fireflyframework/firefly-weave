@@ -114,6 +114,7 @@ from firefly_weave.contracts.runtime import (
     UnavailableRunAcknowledgment,
 )
 from firefly_weave.contracts.schedules import ScheduleOccurrence, ScheduleRequest, ScheduleView
+from firefly_weave.contracts.studio_documents import StudioDocument, StudioDocumentKind, StudioDocumentSave
 from firefly_weave.contracts.surface import OPERATIONS
 from firefly_weave.contracts.teams import TeamsReactivateRequest, TeamsReference, TeamsRevokeRequest
 from firefly_weave.contracts.values import JsonObject
@@ -234,6 +235,7 @@ class WeaveClient:
         idempotency_key: str | None = None,
         query: Mapping[str, str | int | list[str]] | None = None,
         adapter: str | None = None,
+        kind: str | None = None,
     ) -> Any:
         """Typed registry boundary also used by the thin CLI; no arbitrary URL input."""
         import httpx
@@ -250,6 +252,7 @@ class WeaveClient:
             "state_id": state_id,
             "collection": collection,
             "adapter": adapter,
+            "kind": kind,
         }
         if collection is not None and collection not in {
             "drafts",
@@ -261,6 +264,8 @@ class WeaveClient:
             raise ValueError("Unknown catalog collection")
         if adapter is not None and not ADAPTER.fullmatch(adapter):
             raise ValueError("Invalid connector adapter name")
+        if kind is not None and kind not in {"canvas", "test-data"}:
+            raise ValueError("Unknown studio document kind")
         import re
 
         if any(values[name] is None for name in re.findall(r"{([^}]+)}", spec.path)):
@@ -327,6 +332,11 @@ class WeaveClient:
                     raise (PreconditionFailed if problem.status == 412 else WeaveError)(problem)
                 if response.status_code not in spec.statuses:
                     raise ValueError("Unexpected response status")
+                if spec.response is None:
+                    # A bodyless success (204) has nothing to parse.
+                    if content:
+                        raise ValueError("Unexpected response body")
+                    return None
                 return TypeAdapter(spec.response).validate_json(content)
         except httpx.HTTPError:
             raise TransportError(
@@ -418,6 +428,30 @@ class WeaveClient:
 
     async def delete_draft(self, identifier: UUID, *, revision: int) -> DraftRetirement:
         return cast(DraftRetirement, await self.invoke("drafts.retire", identifier=identifier, revision=revision))
+
+    async def read_studio_document(self, draft: UUID, kind: StudioDocumentKind) -> StudioDocument:
+        """A draft's canvas or test data, as the platform keeps it."""
+        return cast(StudioDocument, await self.invoke("studio_documents.read", identifier=draft, kind=kind))
+
+    async def save_studio_document(
+        self,
+        draft: UUID,
+        kind: StudioDocumentKind,
+        *,
+        draft_revision: int,
+        document: JsonObject,
+        revision: int | None = None,
+    ) -> StudioDocument:
+        """Save a draft's canvas or test data; an update needs the current revision."""
+        body = StudioDocumentSave(draft_revision=draft_revision, document=document)
+        return cast(
+            StudioDocument,
+            await self.invoke("studio_documents.save", identifier=draft, kind=kind, body=body, revision=revision),
+        )
+
+    async def delete_studio_document(self, draft: UUID, kind: StudioDocumentKind, *, revision: int) -> None:
+        """Delete a draft's canvas or test data at its current revision."""
+        await self.invoke("studio_documents.delete", identifier=draft, kind=kind, revision=revision)
 
     async def read_draft(self, identifier: UUID) -> DraftView:
         return cast(DraftView, await self.invoke("definitions.read", collection="drafts", identifier=identifier))

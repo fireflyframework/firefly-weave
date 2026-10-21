@@ -152,12 +152,8 @@ for (const size of sizes) {
     });
     await page.getByRole("button", { name: "Cancel", exact: true }).click();
 
+    // The inserted step saves itself on the way out: leaving asks nothing.
     await page.getByRole("button", { name: "Runs", exact: true }).click();
-    // The inserted step is unsaved, so leaving asks first.
-    await page
-      .getByRole("dialog")
-      .getByRole("button", { name: "Leave designer" })
-      .click();
     await page.locator(".resource-row").first().click();
     await expect(page.locator(".record-detail")).toBeVisible();
     await expectGeometry(page, "runs");

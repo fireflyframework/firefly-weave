@@ -49,6 +49,13 @@ function fixture() {
     },
     loadInspector() {},
     focusStep() {},
+    // No test data: deleting prunes nothing.
+    testData: {
+      data: () => ({}),
+      prune: () => [],
+      version: () => 0,
+      restore: () => true,
+    },
     notify(text: string, action?: ToastAction) {
       toasts.push({ text, action });
     },

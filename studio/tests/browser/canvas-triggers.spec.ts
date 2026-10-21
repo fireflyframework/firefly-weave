@@ -194,7 +194,7 @@ test("trigger choices survive a reload", async ({ page }) => {
   await expect
     .poll(() =>
       page.evaluate(() =>
-        localStorage.getItem("weave.localDraft.triggers-reload"),
+        localStorage.getItem("local:weave.localDraft.triggers-reload"),
       ),
     )
     .not.toContain("trigger-1b2c3d4e");
