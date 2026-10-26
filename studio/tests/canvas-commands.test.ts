@@ -98,11 +98,13 @@ describe("canvas keys", () => {
     ).toBe("tidyLayout");
   });
 
-  it("execute the workflow with Ctrl/Cmd+Enter, and leave rows for features still to come", () => {
+  it("execute the workflow, toggle the run log and breakpoints, and leave rows for features still to come", () => {
     expect(canvasCommand(press("Enter", { ctrlKey: true }), on)).toBe(
       "executeWorkflow",
     );
-    for (const key of [press("F9"), press("l"), press("r")])
+    expect(canvasCommand(press("l"), on)).toBe("toggleRunLog");
+    expect(canvasCommand(press("F9"), on)).toBe("toggleBreakpoint");
+    for (const key of [press("r")])
       expect(canvasCommand(key, on), key.key).toBeNull();
   });
 
@@ -206,10 +208,9 @@ describe("canvas keys", () => {
       "Pin output or unpin",
       "Tidy layout",
       "Execute workflow",
+      "Toggle a breakpoint",
     ])
       expect(canvas).toContain(label);
-    for (const label of ["Toggle a breakpoint"])
-      expect(canvas).not.toContain(label);
   });
 
   it("keep the minimap choice under the ui: prefix", () => {

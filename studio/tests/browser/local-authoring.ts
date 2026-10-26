@@ -22,7 +22,7 @@ SPDX-License-Identifier: Apache-2.0
 import { ChildProcess, spawn, spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import { createInterface } from "node:readline";
-import type { Page } from "@playwright/test";
+import type { Page, Route } from "@playwright/test";
 import { python, pythonAvailable, repository } from "../python-path";
 
 export { python };
@@ -274,7 +274,7 @@ export async function localAuthoring(page: Page): Promise<LocalCalls[]> {
         .catch(() => undefined);
     });
   // Step-through sessions: create, read, command (with If-Match) and delete.
-  await page.route("**/studio/local/debug/sessions**", async (route) => {
+  const sessions = async (route: Route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
     const raw = request.postData() ?? "{}";
@@ -290,6 +290,9 @@ export async function localAuthoring(page: Page): Promise<LocalCalls[]> {
           : { status: reply.status, json: reply.body },
       )
       .catch(() => undefined);
-  });
+  };
+  // Globs match a segment at a time: the collection, then its members.
+  await page.route("**/studio/local/debug/sessions", sessions);
+  await page.route("**/studio/local/debug/sessions/**", sessions);
   return calls;
 }

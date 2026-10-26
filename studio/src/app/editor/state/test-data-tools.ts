@@ -37,6 +37,7 @@ export {
 } from "../canvas/trace-playback";
 export { summaryLine } from "./run-summary";
 export { findStep } from "../ndv/step-walk";
+export { staleResults } from "./last-results";
 
 /** Executes on the Studio host and keeps the last results; it loads with the tools too. */
 export function createExecutionService(host: ExecutionHost): ExecutionService {

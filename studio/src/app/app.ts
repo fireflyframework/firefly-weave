@@ -64,7 +64,9 @@ import type {
 import type {
   ExecuteOutcome,
   ExecutionService,
+  HostSession,
 } from "./editor/state/execution-service";
+import type { HumanEntry, SignalEntry } from "./editor/state/test-data";
 import type { ExecuteResponse, ExecuteTarget } from "./editor/state/execution";
 import type { StepFingerprints } from "./editor/state/fingerprints";
 import type {
@@ -7260,6 +7262,11 @@ export class App implements CanvasHost {
           : null;
     if (draftId !== this.draftId) return;
     this.executionPlace = prefix ? { prefix } : null;
+    // Another draft: its own run log, breakpoints and playback.
+    this.runSession.set(null);
+    this.playback.set(null);
+    this.runAnnouncement.set(null);
+    this.lastTarget = null;
     await service.open(draftId);
     this.cdr.markForCheck();
   }
@@ -7273,6 +7280,7 @@ export class App implements CanvasHost {
       return { kind: "failed", message: "Studio is still loading Execute." };
     if (!(await this.ensureApplied()))
       return { kind: "failed", message: "Fix the field being edited first." };
+    this.lastTarget = target;
     let outcome = await service.execute(target);
     if (outcome.kind === "busy") return outcome;
     if (
@@ -7286,8 +7294,10 @@ export class App implements CanvasHost {
       }))
     )
       outcome = await service.execute(target, { catalog: "none" });
-    if (outcome.kind === "done") this.playRun(outcome.response);
-    else if (outcome.kind !== "stale")
+    if (outcome.kind === "done") {
+      this.runLogOpen.set(true);
+      this.playRun(outcome.response);
+    } else if (outcome.kind !== "stale")
       this.runAnnouncement.set({
         text:
           outcome.kind === "refused" || outcome.kind === "failed"
@@ -7298,9 +7308,127 @@ export class App implements CanvasHost {
     this.cdr.markForCheck();
     return outcome;
   }
-  /** Execute workflow: the editor bar, the trigger's button, Ctrl/Cmd+Enter on the canvas. */
+  /**
+   * Execute workflow: the editor bar, the trigger's button, Ctrl/Cmd+Enter
+   * on the canvas. With breakpoints, or waits that don't advance by
+   * themselves, it runs as a session the run log steps through.
+   */
   executeWorkflow(): void {
-    void this.executeIn({ mode: "workflow" });
+    const stepThrough =
+      this.breakpoints().size > 0 ||
+      this.testData?.data().waits?.autoAdvance === false;
+    if (stepThrough) void this.startSession();
+    else void this.executeIn({ mode: "workflow" });
+  }
+  // --- the run log ----------------------------------------------------------
+  /** The run log beside the canvas (L, or any execution, opens it). */
+  readonly runLogOpen = signal(false);
+  toggleRunLog(): void {
+    this.runLogOpen.update((open) => !open);
+  }
+  /** What the last execution ran: answering the run log's question runs it again. */
+  lastTarget: ExecuteTarget | null = null;
+  /** Steps a step-through session pauses before (F9), for the open draft, in memory. */
+  readonly breakpoints = signal<ReadonlySet<string>>(new Set());
+  private breakpointsDraft = "";
+  toggleBreakpoint(id: string): void {
+    const marks = new Set(
+      this.breakpointsDraft === this.draftId ? this.breakpoints() : [],
+    );
+    this.breakpointsDraft = this.draftId;
+    if (marks.delete(id)) this.notify(`Removed the breakpoint on ${id}.`);
+    else {
+      marks.add(id);
+      this.notify(`Execute workflow pauses before ${id}.`);
+    }
+    this.breakpoints.set(marks);
+  }
+  /** The step-through session the run log shows, or null. */
+  readonly runSession = signal<HostSession | null>(null);
+  private async startSession() {
+    const service = this.execution;
+    if (!service || !(await this.ensureApplied())) return;
+    try {
+      await service.sessions.close();
+      let session = await service.sessions.create();
+      const marks =
+        this.breakpointsDraft === this.draftId ? [...this.breakpoints()] : [];
+      if (session && marks.length)
+        session = await service.sessions.command({
+          kind: "breakpoints",
+          node_ids: marks,
+        });
+      if (session)
+        session = await service.sessions.command({ kind: "continue" });
+      this.runSession.set(session);
+      this.runLogOpen.set(true);
+    } catch (error) {
+      this.notify(describeError(error).message, undefined, "danger");
+    }
+    this.cdr.markForCheck();
+  }
+  /** Next and Continue in the run log; a stale revision shows the latest session. */
+  async sessionCommand(command: DebugCommandBody): Promise<void> {
+    const service = this.execution;
+    if (!service) return;
+    try {
+      this.runSession.set(await service.sessions.command(command));
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409) {
+        this.runSession.set(await service.sessions.read().catch(() => null));
+        this.notify("The run log changed; showing the latest.");
+      } else this.notify(describeError(error).message, undefined, "danger");
+    }
+    this.cdr.markForCheck();
+  }
+  async stopSession(): Promise<void> {
+    await this.execution?.sessions.close();
+    this.runSession.set(null);
+    this.cdr.markForCheck();
+  }
+  /**
+   * The run log's answer to "Send signal …" or "Decide for …": kept as the
+   * step's test answer (checked like all test data), then the last execution
+   * runs again, so the next one doesn't ask.
+   */
+  async answerScript(
+    section: "signals" | "humans",
+    stepId: string,
+    entry: SignalEntry | HumanEntry,
+  ): Promise<boolean> {
+    const service = await this.requireTestData();
+    const tools = await this.loadTools();
+    const escape = (key: string) =>
+      key.replace(/~/g, "~0").replace(/\//g, "~1");
+    const outcome = await service.change(
+      tools.testDataOps.withScript(
+        service.data(),
+        section,
+        stepId,
+        { ...entry, source: "manual" } as SignalEntry | HumanEntry,
+        new Date().toISOString(),
+      ),
+      [`/${section}/${escape(stepId)}`],
+    );
+    if (!outcome.ok) {
+      this.notify(outcome.message, undefined, "danger");
+      return false;
+    }
+    if (this.lastTarget) await this.executeIn(this.lastTarget);
+    return true;
+  }
+  /** An entry's step details, on its Input or Output when asked. */
+  openEntry(id: string, pane?: "input" | "output"): void {
+    void this.openStepDetails(id, {
+      focus: pane ? { kind: "region", region: pane } : { kind: "first" },
+    });
+  }
+  /** Results whose step changed since they ran ("Out of date" in the run log). */
+  staleEntries(): ReadonlySet<string> {
+    const tools = this.tools;
+    const prints = this.testDataPrints();
+    if (!tools || !prints) return new Set();
+    return tools.staleResults(this.execution?.results() ?? null, prints);
   }
   /** The simulated run as the canvas draws it: the playback frame, then how it ended. */
   readonly playback = signal<CanvasRun | null>(null);

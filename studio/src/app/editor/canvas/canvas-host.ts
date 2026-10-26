@@ -121,6 +121,10 @@ export interface CanvasHost {
   runFailure?(stepId: string): { code?: string; message?: string } | null;
   /** Changes whenever the last results change (the summary lines follow it). */
   runStamp?(): unknown;
+  /** L: shows or hides the run log. */
+  toggleRunLog?(): void;
+  /** F9: Execute workflow pauses before this step (or no longer). */
+  toggleBreakpoint?(stepId: string): void;
   /** What the canvas's live region says once a playback ends. */
   runAnnouncement?(): { text: string; urgent: boolean } | null;
   /** Tidy layout: clears legacy positions and moves notes as one undo step, with a toast; false when refused. */

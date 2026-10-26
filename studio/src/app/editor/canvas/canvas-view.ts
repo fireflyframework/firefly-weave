@@ -1876,6 +1876,16 @@ export class CanvasView implements OnInit, DoCheck {
         if (!h.executeWorkflow) return false;
         h.executeWorkflow();
         return true;
+      case "toggleRunLog":
+        if (!h.toggleRunLog) return false;
+        h.toggleRunLog();
+        return true;
+      case "toggleBreakpoint": {
+        const at = step ?? this.selection.ids[0];
+        if (!at || !h.toggleBreakpoint) return false;
+        h.toggleBreakpoint(at);
+        return true;
+      }
       default:
         return false;
     }

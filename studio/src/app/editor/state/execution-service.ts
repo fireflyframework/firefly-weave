@@ -241,6 +241,16 @@ export class ExecutionService {
       if (generation !== this.generation) return null;
       return (this.session = session);
     },
+    /** The session as the host keeps it now (after a 409, say). */
+    read: async (): Promise<HostSession | null> => {
+      const session = this.session;
+      if (!session) return null;
+      const latest = await this.host.api.request<HostSession>(
+        `${SESSIONS}/${encodeURIComponent(session.id)}`,
+      );
+      if (this.session?.id !== session.id) return null;
+      return (this.session = latest);
+    },
     command: async (command: DebugCommandBody): Promise<HostSession | null> => {
       const session = this.session;
       if (!session) return null;

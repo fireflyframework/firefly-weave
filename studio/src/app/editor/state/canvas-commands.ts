@@ -60,6 +60,8 @@ export const CANVAS_COMMANDS: ReadonlySet<KeymapCommand> =
     "escape",
     "showShortcuts",
     "executeWorkflow",
+    "toggleRunLog",
+    "toggleBreakpoint",
   ]);
 
 /** Commands about steps: only from a step or the canvas, never from a "+", a tool or a menu. */

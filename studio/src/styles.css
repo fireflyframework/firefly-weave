@@ -3240,6 +3240,18 @@ details.disclosure[open] > summary::before {
   background: var(--canvas);
   position: relative;
 }
+/* The run log docks beside the canvas on wide windows; the canvas keeps the rest. */
+@media (min-width: 768px) {
+  .canvas-panel.with-run-log {
+    padding-right: 320px;
+  }
+}
+/* Below 768 px it is a sheet under the canvas. */
+@media (max-width: 767px) {
+  .canvas-panel.with-run-log {
+    padding-bottom: 40%;
+  }
+}
 /* Simulating: the workflow can't change until the simulation stops. */
 .editing-paused {
   display: flex;
