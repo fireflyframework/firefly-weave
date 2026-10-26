@@ -1,0 +1,19 @@
+{
+  "generator": "scripts/studio_slice_cases.py",
+  "cases": [
+    {"stepId": "first", "kept": ["first"]},
+    {"stepId": "route", "kept": ["first", "route", "big", "after-big", "small"]},
+    {"stepId": "big", "kept": ["first", "route", "big"]},
+    {"stepId": "after-big", "kept": ["first", "route", "big", "after-big"]},
+    {"stepId": "small", "kept": ["first", "route", "small"]},
+    {"stepId": "both", "kept": ["first", "route", "big", "after-big", "small", "both", "l1", "r1", "r2"]},
+    {"stepId": "l1", "kept": ["first", "route", "big", "after-big", "small", "both", "l1"]},
+    {"stepId": "r1", "kept": ["first", "route", "big", "after-big", "small", "both", "r1"]},
+    {"stepId": "r2", "kept": ["first", "route", "big", "after-big", "small", "both", "r1", "r2"]},
+    {"stepId": "each", "kept": ["first", "route", "big", "after-big", "small", "both", "l1", "r1", "r2", "each", "item", "item-after"]},
+    {"stepId": "item", "kept": ["first", "route", "big", "after-big", "small", "both", "l1", "r1", "r2", "each", "item"]},
+    {"stepId": "item-after", "kept": ["first", "route", "big", "after-big", "small", "both", "l1", "r1", "r2", "each", "item", "item-after"]},
+    {"stepId": "last", "kept": ["first", "route", "big", "after-big", "small", "both", "l1", "r1", "r2", "each", "item", "item-after", "last"]},
+    {"stepId": "broken", "kept": ["first", "route", "big", "after-big", "small", "both", "l1", "r1", "r2", "each", "item", "item-after", "last", "broken"]}
+  ]
+}
