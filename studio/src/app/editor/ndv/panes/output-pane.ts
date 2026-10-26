@@ -16,11 +16,11 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 // The Output pane: the shape later steps can map (Schema), and what this
-// step returns: its pinned test output (Schema with values, and JSON) until
-// it runs. A step whose output can be pinned has Pin output (P) in the
-// header, and without a pin offers Set test output and Generate sample.
-// Steps with no output say why; steps that compute their output from their
-// input say to pin the steps they read instead.
+// step returns: its pinned test output, else what it returned in the last
+// execution ("Simulated"), as Schema with values and JSON. Without data it
+// offers Execute step and, for a step whose output can be pinned (Pin
+// output, P, in the header), Set test output and Generate sample. Steps with
+// no output say why.
 import {
   ChangeDetectionStrategy,
   Component,
@@ -166,8 +166,10 @@ import { ndvRegistry, type Json } from "../registry";
               [stale]="pin.stale !== null"
               [reason]="pinFromElsewhere() ? 'elsewhere' : pin.stale"
               [localOnly]="localOnly()"
+              [canExecute]="session().controller.canExecute()"
               (unpin)="unpin()"
               (keep)="keepPinned()"
+              (execute)="execute()"
             />
           }
           @if (problem()) {
@@ -190,6 +192,8 @@ import { ndvRegistry, type Json } from "../registry";
           }
           @if (none) {
             <p class="pane-empty-text">{{ none }}</p>
+          } @else if (returnedNull()) {
+            <p class="pane-empty-text">This step returned no data (null).</p>
           } @else if (event() !== undefined && view() !== "schema") {
             @if (view() === "table") {
               <p class="pane-empty-text">
@@ -205,30 +209,42 @@ import { ndvRegistry, type Json } from "../registry";
             @if (session().target === "$trigger" && event() === undefined) {
               <p class="pane-empty-text">No test event yet</p>
             }
-            @if (computed()) {
-              <p class="pane-empty-text">
-                Output is computed from the input; pin the steps it reads
-                instead.
-              </p>
-            }
-            @if (canPin && !pin) {
-              <div class="pane-empty">
-                <span class="pane-empty-icon" aria-hidden="true"
-                  ><weave-icon name="pin" [size]="20"
-                /></span>
-                <h4>No output yet</h4>
-                <p>
-                  Set test output, or generate a sample from the output fields.
-                </p>
-                <div class="pane-empty-actions">
-                  <button type="button" class="sm" (click)="setOutput()">
-                    Set test output
-                  </button>
-                  <button type="button" class="sm" (click)="generate()">
-                    <weave-icon name="refresh" [size]="16" />Generate sample
-                  </button>
+            @if (session().target !== "$trigger" && event() === undefined) {
+              @if (session().controller.running(); as runs) {
+                <div class="pane-empty" role="status">
+                  <span class="loading-spinner small" aria-hidden="true"></span>
+                  <h4>Executing…</h4>
                 </div>
-              </div>
+              } @else if (!notice()) {
+                <div class="pane-empty">
+                  <span class="pane-empty-icon" aria-hidden="true"
+                    ><weave-icon name="execute" [size]="20"
+                  /></span>
+                  <h4>No output yet</h4>
+                  <p>
+                    Execute this step to see its output.{{
+                      canPin
+                        ? " You can also set test output, or generate a sample."
+                        : ""
+                    }}
+                  </p>
+                  <div class="pane-empty-actions">
+                    @if (session().controller.canExecute()) {
+                      <button type="button" class="sm" (click)="execute()">
+                        <weave-icon name="execute" [size]="16" />Execute step
+                      </button>
+                    }
+                    @if (canPin) {
+                      <button type="button" class="sm" (click)="setOutput()">
+                        Set test output
+                      </button>
+                      <button type="button" class="sm" (click)="generate()">
+                        <weave-icon name="refresh" [size]="16" />Generate sample
+                      </button>
+                    }
+                  </div>
+                </div>
+              }
             }
             @if (rows.length) {
               <weave-data-tree [rows]="shown" label="Output fields" />
@@ -299,6 +315,17 @@ export class OutputPane {
       ? controller.testEvent()
       : controller.stepData(target)?.value;
   }
+  /** The step ran and returned null. */
+  returnedNull(): boolean {
+    const { controller, target } = this.session();
+    if (target.startsWith("$")) return false;
+    const data = controller.stepData(target);
+    return data?.source === "simulated" && data.value === null;
+  }
+  /** Execute step from the pane (its empty state, the stale pin's banner). */
+  execute() {
+    this.session().controller.requestExecute("step");
+  }
   /** What the step returned in the last execution, when no pin stands for it. */
   simulated(): boolean {
     const { controller, target } = this.session();
@@ -322,14 +349,6 @@ export class OutputPane {
   pinnable(): boolean {
     const { controller, target } = this.session();
     return !target.startsWith("$") && controller.pinnable(target);
-  }
-  /** Kinds whose output comes from their input (transform, decision, parallel…): nothing to pin. */
-  computed(): boolean {
-    const { controller, target } = this.session();
-    const step = controller.step(target);
-    return (
-      !!step && !this.pinnable() && !this.noOutput() && !target.startsWith("$")
-    );
   }
   /** The pin came from another workflow and isn't kept here yet. */
   pinFromElsewhere(): boolean {

@@ -26,6 +26,8 @@ import { TestDataService } from "../src/app/editor/state/test-data-service";
 import { withPin, emptyTestData } from "../src/app/editor/state/test-data-ops";
 import type { StoreBackend } from "../src/app/editor/state/browser-store";
 import { StructuredCanvasAdapter } from "../src/app/model";
+import { signal } from "@angular/core";
+import type { LastResults } from "../src/app/editor/state/last-results";
 
 beforeAll(() => loadKindRegistrations());
 
@@ -157,5 +159,90 @@ describe("step details read test data", () => {
     await controller.generateOutput("lookup");
     controller.renamePending("lookup", "find");
     expect(Object.keys(testData.data().pins ?? {})).toEqual(["find"]);
+  });
+});
+
+describe("step details read the last execution", () => {
+  const at = "2026-10-20T10:00:00Z";
+  const pinOf = (output: unknown) => ({
+    output: output as never,
+    source: "manual" as const,
+    pinnedAt: at,
+    configHash: "fnv1a64:0000000000000001",
+    contractHash: "fnv1a64:0000000000000002",
+    upstreamHash: "fnv1a64:0000000000000003",
+  });
+  /** A controller whose host has executed lookup and route, with `execution` fingerprints for lookup. */
+  function executed(lookupExecution?: string) {
+    const made = setup();
+    const prints = made.controller.prints();
+    const results = signal<LastResults | null>({
+      schemaVersion: 1,
+      at,
+      status: "completed",
+      steps: {
+        lookup: {
+          status: "completed",
+          execution: (lookupExecution ??
+            prints.get("lookup")!.execution) as never,
+          input: { customerId: "c-run" },
+          output: { customerId: "c-run", token: "abc" },
+        },
+        route: {
+          status: "completed",
+          execution: prints.get("route")!.execution,
+          output: { customerId: "c-run" },
+        },
+      },
+    });
+    made.host.execution = { results } as never;
+    return { ...made, results };
+  }
+  it("resolvedInput and output come from the same precedence", async () => {
+    const { controller, testData } = executed();
+    const output = () => controller.ndvContext("lookup").sample.output();
+    // A last result, secret fields left out, current.
+    expect(output()).toEqual({
+      state: "available",
+      value: { customerId: "c-run" },
+      source: "simulated",
+      stale: null,
+    });
+    expect(controller.previewData().output("lookup")).toEqual({
+      customerId: "c-run",
+    });
+    expect(
+      controller.ndvContext("route").sample.context(["value"])?.steps,
+    ).toEqual({ lookup: { output: { customerId: "c-run" } } });
+    expect(controller.ndvContext("lookup").sample.resolvedInput()).toEqual({
+      state: "available",
+      value: { customerId: "c-run" },
+      source: "simulated",
+      stale: null,
+    });
+    // A pin goes before the last result, everywhere.
+    await testData.change(
+      withPin(emptyTestData(at), "lookup", pinOf({ customerId: "c-pin" }), at),
+      ["/pins/lookup"],
+    );
+    expect(output()).toMatchObject({
+      value: { customerId: "c-pin" },
+      source: "pinned",
+    });
+    expect(controller.previewData().output("lookup")).toEqual({
+      customerId: "c-pin",
+    });
+  });
+  it("a last result shows as simulated, and an out-of-date one is still used", () => {
+    const { controller } = executed("fnv1a64:00000000000000ff");
+    expect(controller.ndvContext("lookup").sample.output()).toEqual({
+      state: "available",
+      value: { customerId: "c-run" },
+      source: "simulated",
+      stale: "upstream",
+    });
+    expect(controller.previewData().output("lookup")).toEqual({
+      customerId: "c-run",
+    });
   });
 });

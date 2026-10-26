@@ -833,6 +833,11 @@ export class StepDetails {
   }
   /** What Execute asks first: errors to fix, or whether to unpin. */
   readonly question = signal<ExecuteQuestion | null>(null);
+  /** The panes' Execute step and Execute previous steps buttons run step details' Execute. */
+  private readonly executeHook = effect(() => {
+    const controller = this.controller();
+    controller.executeHook = (mode) => void this.execute(mode);
+  });
   /**
    * Execute step (or Execute previous steps): asks first about errors in the
    * steps it runs and, for a pinned step, about its pin; then executes on the

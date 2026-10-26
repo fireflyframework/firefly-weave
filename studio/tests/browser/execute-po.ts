@@ -61,7 +61,9 @@ export const executeButton = (dialog: Locator): Locator =>
 export const moreWays = (dialog: Locator): Locator =>
   dialog.getByRole("button", { name: "More ways to execute" });
 export const stopButton = (dialog: Locator): Locator =>
-  dialog.getByRole("button", { name: "Stop", exact: true });
+  dialog
+    .locator(".sd-execute")
+    .getByRole("button", { name: "Stop", exact: true });
 export const gateDialog = (page: Page): Locator =>
   page.locator('.execute-dialog[role="alertdialog"]');
 export const executions = (calls: LocalCalls[]): LocalCalls[] =>

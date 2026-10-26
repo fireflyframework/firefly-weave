@@ -164,15 +164,68 @@ import { ndvRegistry, type Json } from "../registry";
             }}</pre>
           }
         } @else {
-          @if (!compact() && data === undefined) {
+          @if (!compact() && session().controller.running()) {
+            <div class="pane-empty" role="status">
+              <span class="loading-spinner small" aria-hidden="true"></span>
+              <h4>Executing previous steps…</h4>
+              <div class="pane-empty-actions">
+                <button type="button" class="sm" (click)="stop()">
+                  <weave-icon name="close" [size]="16" />Stop
+                </button>
+              </div>
+            </div>
+          } @else if (!compact() && data === undefined) {
+            @let missing = notRun(chosen);
             <div class="pane-empty">
               <span class="pane-empty-icon" aria-hidden="true"
                 ><weave-icon name="play" [size]="20"
               /></span>
-              <h4>No input data yet</h4>
+              @if (missing) {
+                <p>
+                  {{ missing }} hasn't run yet. Execute previous steps, or map
+                  from the fields below.
+                </p>
+              } @else {
+                <h4>No input data yet</h4>
+                <p>
+                  Execute the previous steps to see what this step receives, or
+                  add test input.
+                </p>
+              }
+              <div class="pane-empty-actions">
+                @if (session().controller.canExecute()) {
+                  <button
+                    type="button"
+                    class="sm"
+                    title="Runs from the trigger up to this step, reusing pinned and current results"
+                    (click)="executePrevious()"
+                  >
+                    <weave-icon name="play" [size]="16" />Execute previous steps
+                  </button>
+                }
+                @if (!missing) {
+                  <button type="button" class="sm" (click)="addTestInput()">
+                    Add test input
+                  </button>
+                }
+              </div>
+            </div>
+          } @else if (!compact() && staleSource(chosen)) {
+            <div class="pinned-banner pane-stale" data-tone="warning">
+              <weave-icon name="stale" [size]="16" aria-hidden="true" />
               <p>
-                Fields below show what this step can read. Executing previous
-                steps isn’t available yet.
+                <span role="status"
+                  >Earlier steps changed since this data was produced.</span
+                >&ngsp;
+                @if (session().controller.canExecute()) {
+                  <button
+                    type="button"
+                    class="text-link"
+                    (click)="executePrevious()"
+                  >
+                    Execute previous steps
+                  </button>
+                }
               </p>
             </div>
           }
@@ -308,6 +361,28 @@ export class InputPane implements OnInit {
     if (source.startsWith("step:"))
       return controller.stepData(source.slice(5))?.value ?? this.value();
     return this.value();
+  }
+  /** The earlier step chosen as the source, when it has no data yet (it hasn't run). */
+  notRun(source: string): string | null {
+    if (!source.startsWith("step:")) return null;
+    const id = source.slice(5);
+    return this.session().controller.stepData(id) ? null : id;
+  }
+  /** The chosen source's last result is out of date. */
+  staleSource(source: string): boolean {
+    if (!source.startsWith("step:")) return false;
+    const data = this.session().controller.stepData(source.slice(5));
+    return data?.source === "simulated" && data.stale !== null;
+  }
+  executePrevious() {
+    this.session().controller.requestExecute("before");
+  }
+  stop() {
+    this.session().host.execution?.stop();
+  }
+  /** Add test input: the trigger's Test event. */
+  addTestInput() {
+    void this.session().host.openStepDetails("$trigger");
   }
   /** Where the chosen source's data comes from: test input, a pin, or the last execution. */
   sourceTag(source: string): string {

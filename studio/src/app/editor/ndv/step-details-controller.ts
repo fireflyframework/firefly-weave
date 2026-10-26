@@ -409,6 +409,19 @@ export class StepDetailsController {
   }
   /** What the last execution asked of this step, or why it couldn't run (shown in its Output). */
   readonly executeNotice = signal<ExecuteNotice | null>(null);
+  /** Step details' Execute, for the panes' own buttons (set by step details). */
+  executeHook: ((mode: "step" | "before") => void) | null = null;
+  requestExecute(mode: "step" | "before"): void {
+    this.executeHook?.(mode);
+  }
+  /** What runs now: Execute's target, or null. */
+  running() {
+    return this.host.execution?.running() ?? null;
+  }
+  /** Whether Execute is available here at all (the host loaded it). */
+  canExecute(): boolean {
+    return !!this.host.execution && !this.readOnlyReason();
+  }
 
   /** Whether this step's output can be pinned (actions, AI tasks, Call a workflow that waits…). */
   pinnable(target: string): boolean {
@@ -512,11 +525,13 @@ export class StepDetailsController {
   previewData(): PreviewData {
     return {
       input: () => this.testEvent(),
-      output: (id) => this.pinnedOutput(id),
+      // The same precedence as the Output pane: a pin, else the last result.
+      output: (id) => this.stepData(id)?.value,
       stamp: () => [
         this.host.model.revision,
         this.testData.version(),
         this.testData.generation(),
+        this.host.execution?.results() ?? null,
       ],
     };
   }
@@ -1166,7 +1181,18 @@ export class StepDetailsController {
             ? null
             : { input: input ?? {}, steps };
         },
-        resolvedInput: () => none,
+        resolvedInput: () => {
+          // What the step received in the last execution (an action's input).
+          const result = this.lastResult(target);
+          if (!result || result.input === undefined) return none;
+          const now = this.prints().get(target)?.execution;
+          return {
+            state: "available" as const,
+            value: result.input,
+            source: "simulated" as const,
+            stale: now === result.execution ? null : ("upstream" as const),
+          };
+        },
         output: () => {
           const data = this.stepData(target);
           return data ? { state: "available" as const, ...data } : none;

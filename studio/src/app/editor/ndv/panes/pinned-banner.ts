@@ -17,7 +17,8 @@ SPDX-License-Identifier: Apache-2.0
 */
 // The banner over pinned output: what a pin does, how to remove it, and
 // (when the step, what it calls or what it reads changed) that the pin may
-// be out of date, with Keep pinned. Announced once, not on every render.
+// be out of date, with Execute step and Keep pinned. Announced once, not on
+// every render.
 import {
   ChangeDetectionStrategy,
   Component,
@@ -50,6 +51,11 @@ import type { StaleReason } from "../registry";
       }}</span
       >&ngsp;
       @if (stale()) {
+        @if (canExecute()) {
+          <button type="button" class="text-link" (click)="execute.emit()">
+            Execute step
+          </button>
+        }
         <button type="button" class="text-link" (click)="keep.emit()">
           Keep pinned
         </button>
@@ -82,6 +88,9 @@ export class PinnedBanner {
     }
   }
   localOnly = input(false);
+  /** Execute step is offered beside Keep pinned when the pin may be out of date. */
+  canExecute = input(false);
+  readonly execute = output<void>();
   readonly unpin = output<void>();
   readonly keep = output<void>();
 }
