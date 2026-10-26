@@ -767,7 +767,7 @@ describe("step details context", () => {
     });
     expect(await context.sample.setScript(null)).toEqual({
       ok: false,
-      message: "Test scripts aren't available yet.",
+      message: "Only signals and people take a test answer.",
     });
   });
 });
