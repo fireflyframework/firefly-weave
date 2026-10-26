@@ -29,7 +29,10 @@ vi.hoisted(() =>
 import { App } from "../src/app/app";
 afterAll(() => vi.unstubAllGlobals());
 
-type Loader = { loadTools(): Promise<unknown> };
+type Loader = {
+  loadTools(): Promise<unknown>;
+  requireTestData(): Promise<unknown>;
+};
 
 function fixture(importer: () => Promise<unknown>) {
   const app = Object.create(App.prototype) as App;
@@ -45,7 +48,15 @@ function fixture(importer: () => Promise<unknown>) {
   });
   // A signal the App reads; a stand-in that counts.
   Object.assign(app, { toolsReady: Object.assign(() => 0, { update() {} }) });
-  return { app: app as unknown as Loader, said };
+  const ready: boolean[] = [];
+  Object.assign(app, {
+    testData: null,
+    testDataLoading: null,
+    testDataReady: Object.assign(() => ready.at(-1) ?? false, {
+      set: (value: boolean) => ready.push(value),
+    }),
+  });
+  return { app: app as unknown as Loader, said, ready };
 }
 
 describe("loading the test data tools", () => {
@@ -76,5 +87,62 @@ describe("loading the test data tools", () => {
     ]);
     fail = false;
     await expect(app.loadTools()).resolves.toBe(tools);
+  });
+});
+
+describe("the test data service", () => {
+  it("is made by the tools, so it loads with them", async () => {
+    const tools = await import("../src/app/editor/state/test-data-tools");
+    const { TestDataService } = await import(
+      "../src/app/editor/state/test-data-service"
+    );
+    const service = tools.createTestDataService({
+      api: { request: async <T>() => ({ entries: [] }) as T },
+      backend: {
+        keys: async () => [],
+        get: async () => null,
+        set: async () => true,
+        remove: async () => true,
+      },
+      now: () => new Date("2026-10-26T10:00:00Z"),
+      inputs: () => ({ source: "", definitions: [], schemaOf: () => null }),
+    });
+    expect(service).toBeInstanceOf(TestDataService);
+    expect(tools.testDataOps.emptyTestData("2026-10-26T10:00:00Z").kind).toBe(
+      "weave.studio/testData",
+    );
+    expect(typeof tools.readTestData).toBe("function");
+    expect(tools.CHECK_WORDS["WV-SCHEMA-SECRET_VALUE"]).toBeTruthy();
+  });
+  it("is made once, only when the tools load, and then the designer may open", async () => {
+    let made = 0;
+    const service = { kind: "service" };
+    const { app, ready } = fixture(async () => ({
+      createTestDataService: () => (made++, service),
+    }));
+    expect(made).toBe(0);
+    const [first, second] = await Promise.all([
+      app.requireTestData(),
+      app.requireTestData(),
+    ]);
+    expect(first).toBe(service);
+    expect(second).toBe(service);
+    await expect(app.requireTestData()).resolves.toBe(service);
+    expect(made).toBe(1);
+    expect(ready).toEqual([true]);
+  });
+  it("tries afresh after the tools fail to load", async () => {
+    let fail = true;
+    const service = { kind: "service" };
+    const { app, ready } = fixture(async () => {
+      if (fail)
+        throw new TypeError("Failed to fetch dynamically imported module");
+      return { createTestDataService: () => service };
+    });
+    await expect(app.requireTestData()).rejects.toThrow();
+    expect(ready).toEqual([]);
+    fail = false;
+    await expect(app.requireTestData()).resolves.toBe(service);
+    expect(ready).toEqual([true]);
   });
 });

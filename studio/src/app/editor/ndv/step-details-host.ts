@@ -82,8 +82,8 @@ export interface StepDetailsHost {
   blocker(command: "simulate"): string;
   /** Settles unapplied inspector edits; false when they can't be applied. */
   ensureApplied(): Promise<boolean>;
-  /** The open workflow's test data (test input, pinned output), outside undo. */
-  readonly testData?: TestDataService;
+  /** The open workflow's test data (test input, pinned output), outside undo; null until it loads. */
+  readonly testData?: TestDataService | null;
   /** Every step's fingerprints now (memoized on the workflow, the canvas and the test input). */
   /** Null while the shell's copy isn't ready: step details compute their own. */
   testDataPrints?(): ReadonlyMap<string, StepFingerprints> | null;

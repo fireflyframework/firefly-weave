@@ -57,20 +57,9 @@ import {
   readStudioDocument,
   saveStudioDocument,
 } from "./editor/state/studio-documents";
-import { CHECK_WORDS } from "./editor/state/test-data-check";
-import {
-  containsRunData,
-  emptyTestData,
-  entriesOf,
-  pruneEntries,
-  withPin,
-  withoutPin,
-  withoutRunData,
-} from "./editor/state/test-data-ops";
-import { readTestData } from "./editor/state/test-data-read";
-import {
+import type {
   TestDataService,
-  type TestDataPlace,
+  TestDataPlace,
 } from "./editor/state/test-data-service";
 import type { StepFingerprints } from "./editor/state/fingerprints";
 import type {
@@ -1882,7 +1871,11 @@ export class App implements CanvasHost {
     this.search = "";
     this.error = "";
     if (view !== "designer") await this.refresh();
-    else this.scheduleFit();
+    else {
+      // The designer waits for the test data service; a failure is said where it happens.
+      this.requireTestData().catch(() => undefined);
+      this.scheduleFit();
+    }
   }
   /**
    * Leaving a workflow with edits. A local one is kept on this computer, so
@@ -3089,7 +3082,8 @@ export class App implements CanvasHost {
     }
     // Their test data goes with them; Undo (the toast's or the toolbar's) brings both back.
     const steps = this.model.stepIdSet();
-    const pruned = this.testData.prune((id) => steps.has(id), identities);
+    const pruned =
+      this.testData?.prune((id) => steps.has(id), identities) ?? [];
     const what = one || `${ids.length} steps`;
     const revision = this.model.revision;
     const withData = pruned.length
@@ -3190,7 +3184,7 @@ export class App implements CanvasHost {
     try {
       const count = this.model.renameStep(id, value);
       // The step's test data follows its new ID.
-      this.testData.rename(id, value.trim());
+      this.testData?.rename(id, value.trim());
       this.dirty = true;
       this.changed();
       this.error = "";
@@ -3814,17 +3808,17 @@ export class App implements CanvasHost {
     // Read live: a retry after a change during the host's check sees the
     // workflow as it is then (a later Redo may have removed the step again).
     const model = this.model;
-    void this.testData.revive(
+    void this.testData?.revive(
       (id) =>
         !before.has(id) && model === this.model && model.stepIdSet().has(id),
       (id) => stepIdentities(model.definition)(id),
     );
-    this.testData.prune((id) => after.has(id) || !before.has(id), previous);
+    this.testData?.prune((id) => after.has(id) || !before.has(id), previous);
   }
   /** Steps an Undo or Redo renamed: entries in step details and their test data follow. */
   private followRenames(renames: { from: string; to: string }[]) {
     this.stepDetails.followRenames(renames);
-    for (const { from, to } of renames) this.testData.rename(from, to);
+    for (const { from, to } of renames) this.testData?.rename(from, to);
   }
   redo() {
     if (this.editingLocked) return;
@@ -4306,7 +4300,11 @@ export class App implements CanvasHost {
    * why once.
    */
   private async pastePins(pins: Readonly<Record<string, unknown>>) {
-    const service = this.testData;
+    const service = await this.requireTestData();
+    const {
+      readTestData,
+      testDataOps: { emptyTestData, withPin },
+    } = await this.loadTools();
     const escape = (key: string) =>
       key.replace(/~/g, "~0").replace(/\//g, "~1");
     // What came from the clipboard is read as test data first: only well-formed pins go on.
@@ -7163,22 +7161,47 @@ export class App implements CanvasHost {
     return revision;
   }
   // --- test data and the canvas of a platform draft, on the platform -------
-  /** The open workflow's test data: test input and pinned output. */
-  readonly testData = new TestDataService({
-    api: this.api,
-    backend: studioBackend(),
-    now: () => new Date(),
-    // The schemas a check needs come with the tools, loaded on first use.
-    inputs: async () =>
-      (await this.loadTools()).checkInputsOf(
-        this.model.definition,
-        this.catalogContracts,
-      ),
-    // A platform draft saves its test data with the draft.
-    changed: () => {
-      if (this.profile) this.autosave.touch();
-    },
-  });
+  /**
+   * The open workflow's test data: test input and pinned output. Null until
+   * its tools load (a moment after the first page); the designer waits for it.
+   */
+  testData: TestDataService | null = null;
+  /** True once the test data service is made. */
+  readonly testDataReady = signal(false);
+  private testDataLoading: Promise<TestDataService> | null = null;
+  /**
+   * The test data service, made once when the test data tools load. A failed
+   * load is said by `loadTools`, and the next call tries afresh.
+   */
+  requireTestData(): Promise<TestDataService> {
+    this.testDataLoading ??= this.loadTools().then(
+      (tools) => {
+        this.testData ??= tools.createTestDataService({
+          api: this.api,
+          backend: studioBackend(),
+          now: () => new Date(),
+          // The schemas a check needs come with the tools.
+          inputs: async () =>
+            (await this.loadTools()).checkInputsOf(
+              this.model.definition,
+              this.catalogContracts,
+            ),
+          // A platform draft saves its test data with the draft.
+          changed: () => {
+            if (this.profile) this.autosave.touch();
+          },
+        });
+        this.testDataReady.set(true);
+        this.cdr.markForCheck();
+        return this.testData;
+      },
+      (error: unknown) => {
+        this.testDataLoading = null;
+        throw error;
+      },
+    );
+    return this.testDataLoading;
+  }
   /** The place and opening the test data was last opened for. */
   private testDataKey = "";
   /**
@@ -7190,7 +7213,8 @@ export class App implements CanvasHost {
   /** The test data opening now; a file's test data waits for it. */
   private testDataOpening: Promise<unknown> = Promise.resolve();
   openTestData(): boolean {
-    if (!this.testData || !this.model) return false;
+    // Null until the service loads; undefined only in a shell made without test data.
+    if (this.testData === undefined || !this.model) return false;
     const scope = this.profile ? this.accountScope() : null;
     const place: TestDataPlace = !this.profile
       ? { kind: "local", draftId: this.draftId }
@@ -7206,16 +7230,18 @@ export class App implements CanvasHost {
       this.testDataKey ===
         JSON.stringify([{ kind: "memory" }, this.model.opened]);
     this.testDataKey = key;
-    // A failure is said where it happens; nothing waits on this one.
-    this.loadTools().catch(() => undefined);
     // Another workflow's test data: no pin here came from elsewhere yet.
     this.foreignPins.clear();
     this.foreignVersion++;
-    // Failures are said where they happen; this only orders what waits.
-    this.testDataOpening = (
+    const open = (service: TestDataService) =>
       place.kind === "connected"
-        ? this.openPlatformTestData(place.scope, place.draftId, carry)
-        : this.testData.open(place, { carry })
+        ? this.openPlatformTestData(service, place.scope, place.draftId, carry)
+        : service.open(place, { carry });
+    // Once loaded, the service opens at once; before, when its tools arrive.
+    // Failures are said where they happen; this only orders what waits.
+    const service = this.testData;
+    this.testDataOpening = (
+      service ? open(service) : this.requireTestData().then(open)
     )
       .then(() => this.carryTestData())
       .catch(() => undefined);
@@ -7285,7 +7311,7 @@ export class App implements CanvasHost {
   pinStates(): ReadonlyMap<string, { stale: string | null }> {
     const prints = this.testDataPrints();
     // Until the tools load (a moment after the first page), no badges.
-    if (!prints || !this.tools) return NO_PINS;
+    if (!prints || !this.tools || !this.testData) return NO_PINS;
     const data = this.testData.data();
     const memo = this.pinStatesMemo;
     if (
@@ -7305,9 +7331,11 @@ export class App implements CanvasHost {
   } | null = null;
   /** What the simulation's editors start from: the test input and each step's pinned output, or null. */
   simulationTestData(): { input?: Json; pins: Record<string, Json> } | null {
-    this.testData.version();
+    const service = this.testData;
+    if (!service) return null;
+    service.version();
     this.toolsReady();
-    const data = this.testData.data();
+    const data = service.data();
     if (this.simulationDataMemo?.data === data)
       return this.simulationDataMemo.value;
     const value = this.tools ? this.tools.simulationDataOf(data) : null;
@@ -7319,7 +7347,7 @@ export class App implements CanvasHost {
     return this.foreignPins.has(id);
   }
   pinsForCopy(): Readonly<Record<string, PinEntry>> {
-    return this.testData.data().pins ?? {};
+    return this.testData?.data().pins ?? {};
   }
   /** P on the canvas and the step menu: unpins the pinned steps as one Undo; never makes data (Ruling 19). */
   togglePins(ids: readonly string[]): void {
@@ -7329,10 +7357,12 @@ export class App implements CanvasHost {
       return;
     }
     const service = this.testData;
+    const tools = this.tools;
+    if (!service || !tools) return;
     const previous = service.data();
     const at = new Date().toISOString();
     let next = previous;
-    for (const id of pinned) next = withoutPin(next, id, at);
+    for (const id of pinned) next = tools.testDataOps.withoutPin(next, id, at);
     void service.change(next, []).then((outcome) => {
       if (!outcome.ok) return this.notify(outcome.message, undefined, "danger");
       const version = service.version();
@@ -7357,9 +7387,10 @@ export class App implements CanvasHost {
   testDataPrints(): ReadonlyMap<string, StepFingerprints> | null {
     this.toolsReady();
     const tools = this.tools;
-    if (!tools) return null;
+    const service = this.testData;
+    if (!tools || !service) return null;
     const model = this.model;
-    const version = this.testData.version();
+    const version = service.version();
     const memo = this.printsMemo;
     if (
       memo &&
@@ -7368,7 +7399,7 @@ export class App implements CanvasHost {
       memo.version === version
     )
       return memo.prints;
-    const prints = tools.printsOf(model, this.testData.data().input?.value);
+    const prints = tools.printsOf(model, service.data().input?.value);
     this.printsMemo = {
       revision: model.revision,
       canvas: model.canvas,
@@ -7398,7 +7429,9 @@ export class App implements CanvasHost {
    * where both hold a value for the same entry, the person chooses.
    */
   private async carryTestData() {
-    const carried = await this.testData.carryOver((conflicts) =>
+    const service = this.testData;
+    if (!service) return;
+    const carried = await service.carryOver((conflicts) =>
       this.dialogs
         .choose({
           title: "Keep the test data you just set?",
@@ -7411,11 +7444,12 @@ export class App implements CanvasHost {
     if (carried.length) this.cdr.markForCheck();
   }
   private async openPlatformTestData(
+    service: TestDataService,
     scope: AccountScope,
     draftId: string,
     carry = false,
   ) {
-    await this.testData.open({ kind: "connected", scope, draftId }, { carry });
+    await service.open({ kind: "connected", scope, draftId }, { carry });
     if (draftId !== this.draftId) return;
     let document: StudioDocument | null;
     try {
@@ -7424,11 +7458,11 @@ export class App implements CanvasHost {
       return;
     }
     if (draftId !== this.draftId) return;
-    this.testData.syncFrom(document);
+    service.syncFrom(document);
     if (this.platformDocs.draftId !== draftId)
       this.platformDocs = { draftId, testData: null, canvas: null };
     this.platformDocs.testData = document
-      ? canonicalJson(this.testData.toPlatform().document)
+      ? canonicalJson(service.toPlatform().document)
       : null;
     this.cdr.markForCheck();
   }
@@ -7443,14 +7477,23 @@ export class App implements CanvasHost {
     if (this.platformDocs.draftId !== draftId)
       this.platformDocs = { draftId, testData: null, canvas: null };
     let ok = true;
-    const place = this.testData.place();
-    if (place.kind === "connected" && place.draftId === draftId) {
-      await this.testData.flush();
+    // Before the test data service is made, there is no test data to save.
+    const service = this.testData;
+    const tools = this.tools;
+    const place = service?.place();
+    if (
+      service &&
+      tools &&
+      place?.kind === "connected" &&
+      place.draftId === draftId
+    ) {
+      await service.flush();
       if (!current()) return true;
-      const { document } = this.testData.toPlatform();
+      const { document } = service.toPlatform();
       const text = canonicalJson(document);
       const nothing =
-        !entriesOf(document).length && this.platformDocs.testData === null;
+        !tools.testDataOps.entriesOf(document).length &&
+        this.platformDocs.testData === null;
       if (text !== this.platformDocs.testData && !nothing)
         ok = (await this.savePlatformDocument("test-data", document)) && ok;
       if (!current()) return true;
@@ -7479,7 +7522,7 @@ export class App implements CanvasHost {
     kind: StudioDocumentKind,
     document: object,
     revision = kind === "test-data"
-      ? this.testData.revision()
+      ? this.testData?.revision()
       : this.platformDocs.canvasRevision,
     again = true,
   ): Promise<boolean> {
@@ -7500,7 +7543,7 @@ export class App implements CanvasHost {
     if (answer.ok) {
       const text = canonicalJson(answer.document.document);
       if (kind === "test-data") {
-        this.testData.savedOnPlatform(answer.document.revision);
+        this.testData?.savedOnPlatform(answer.document.revision);
         this.platformDocs.testData = text;
       } else {
         this.platformDocs.canvas = text;
@@ -7518,28 +7561,40 @@ export class App implements CanvasHost {
       this.cdr.markForCheck();
       return false;
     }
-    if (kind === "test-data" && answer.code === "WV-STUDIO-DOCUMENT-SECRET") {
-      await this.testData.dropSecret(answer.paths);
+    const service = this.testData;
+    const tools = this.tools;
+    if (
+      kind === "test-data" &&
+      service &&
+      tools &&
+      answer.code === "WV-STUDIO-DOCUMENT-SECRET"
+    ) {
+      await service.dropSecret(answer.paths);
       if (!open()) return true;
       for (const _ of answer.paths)
-        this.notify(CHECK_WORDS["WV-SCHEMA-SECRET_VALUE"], undefined, "danger");
+        this.notify(
+          tools.CHECK_WORDS["WV-SCHEMA-SECRET_VALUE"],
+          undefined,
+          "danger",
+        );
       if (!again) return false;
       return this.savePlatformDocument(
         kind,
-        this.testData.toPlatform().document,
+        service.toPlatform().document,
         revision,
         false,
       );
     }
     if (
       kind === "test-data" &&
+      service &&
       answer.code === "WV-STUDIO-DOCUMENT-UNCLASSIFIED" &&
       again
     ) {
-      this.testData.markLocalOnly(answer.paths);
+      service.markLocalOnly(answer.paths);
       return this.savePlatformDocument(
         kind,
-        this.testData.toPlatform().document,
+        service.toPlatform().document,
         revision,
         false,
       );
@@ -7553,8 +7608,9 @@ export class App implements CanvasHost {
     if (!conflict || conflict.draftId !== this.draftId) return;
     const mine =
       conflict.kind === "test-data"
-        ? this.testData.toPlatform().document
+        ? this.testData?.toPlatform().document
         : (this.model.canvas as unknown as Record<string, unknown>);
+    if (!mine) return;
     await this.savePlatformDocument(
       conflict.kind,
       mine,
@@ -7569,14 +7625,16 @@ export class App implements CanvasHost {
     if (!conflict || conflict.draftId !== this.draftId) return;
     const text = canonicalJson(conflict.theirs.document);
     if (conflict.kind === "test-data") {
-      const previous: StudioTestData = this.testData.data();
-      this.testData.syncFrom(conflict.theirs);
+      const service = this.testData;
+      if (!service) return;
+      const previous: StudioTestData = service.data();
+      service.syncFrom(conflict.theirs);
       this.platformDocs.testData = text;
-      const version = this.testData.version();
+      const version = service.version();
       this.notify("Using the test data saved on the platform.", {
         label: "Undo",
         run: () => {
-          if (this.testData.restore(previous, version)) this.autosave.touch();
+          if (service.restore(previous, version)) this.autosave.touch();
         },
       });
     } else {
@@ -8390,7 +8448,7 @@ export class App implements CanvasHost {
       this.validation?.invalidate();
       this.ownedPublishedNow += published;
       // Entries kept on this computer until the action was published go up with the next save.
-      if (this.testData.localOnly().size) {
+      if (this.testData?.localOnly().size) {
         this.testData.releaseLocalOnly();
         if (this.profile) this.autosave.touch();
       }
@@ -8549,8 +8607,12 @@ export class App implements CanvasHost {
    * only when they say so; otherwise it is left out.
    */
   private async testDataForFile(): Promise<StudioTestData | null | undefined> {
-    await this.testData.flush();
-    const data = this.testData.data();
+    const service = await this.requireTestData();
+    const { entriesOf, containsRunData, withoutRunData } = (
+      await this.loadTools()
+    ).testDataOps;
+    await service.flush();
+    const data = service.data();
     if (!entriesOf(data).length) return null;
     if (!containsRunData(data)) return data;
     const run = entriesOf(data)
@@ -8683,7 +8745,10 @@ export class App implements CanvasHost {
     } catch {
       value = undefined;
     }
-    const reading = readTestData(value);
+    const tools = await this.loadTools().catch(() => null);
+    if (!tools || !still()) return;
+    const { entriesOf, pruneEntries } = tools.testDataOps;
+    const reading = tools.readTestData(value);
     if (!reading.ok) {
       this.notify(
         `The test data wasn't loaded: ${reading.reason}`,
@@ -8701,7 +8766,9 @@ export class App implements CanvasHost {
       (id) => steps.has(id),
       new Date().toISOString(),
     );
-    const outcome = await this.testData.change(
+    const outcome = await (
+      await this.requireTestData()
+    ).change(
       data,
       entriesOf(data).map((entry) => entry.path),
     );
@@ -9371,7 +9438,7 @@ export class App implements CanvasHost {
       this.loginWatcher.stop();
       this.platformGeneration++;
       // The account's test data leaves memory, and nothing waiting is written back under its key.
-      this.testData.forget();
+      this.testData?.forget();
       this.clearPlatformState();
       this.platformNotice = null;
       this.reportSignOut(result, name);
@@ -9405,7 +9472,7 @@ export class App implements CanvasHost {
     this.cdr.markForCheck();
     try {
       const result = await this.connection.remove(name, true);
-      if (active) this.testData.forget();
+      if (active) this.testData?.forget();
       this.applyConnection(result, active, name);
       this.notify(`Removed ${name}.`);
       void this.draftCanvases.forgetPlatform(name);
