@@ -110,3 +110,49 @@ def test_studio_admits_the_statistics_family():
     from firefly_weave.studio.service import STUDIO_FAMILIES
 
     assert "run_statistics" in STUDIO_FAMILIES
+
+
+def test_the_cli_takes_the_range_and_the_query_of_each_read():
+    from firefly_weave.cli.remote import statistics_query
+
+    assert statistics_query(
+        "run_statistics.series",
+        {
+            "range_from": "2026-10-26T00:00:00Z",
+            "range_to": "2026-10-27T00:00:00Z",
+            "signals": ("failure_rate", "runs_started"),
+            "group_by": "workflow",
+            "top": 3,
+            "granularity": None,
+            "workflow": None,
+            "workflow_version": None,
+        },
+    ) == {
+        "from": "2026-10-26T00:00:00Z",
+        "to": "2026-10-27T00:00:00Z",
+        "signals": ["failure_rate", "runs_started"],
+        "group_by": "workflow",
+        "top": 3,
+    }
+    assert statistics_query(
+        "run_statistics.steps",
+        {"range_from": "a", "range_to": "b", "workflow": "orders", "workflow_version": "1.2.0", "granularity": "1h"},
+    ) == {"from": "a", "to": "b", "workflow": "orders", "version": "1.2.0", "granularity": "1h"}
+
+
+@pytest.mark.parametrize(
+    ("verb", "options"),
+    [
+        ("series", ["--from", "--to", "--granularity", "--signal", "--workflow", "--version", "--group-by", "--top"]),
+        ("workflows", ["--from", "--to", "--granularity"]),
+        ("steps", ["--from", "--to", "--granularity", "--workflow", "--version"]),
+    ],
+)
+def test_the_cli_offers_the_query_options_of_each_read(verb, options):
+    from firefly_weave.cli.main import cli
+
+    result = CliRunner().invoke(cli, ["operations", "statistics", verb, "--help"])
+    assert result.exit_code == 0, result.output
+    for option in options:
+        assert option in result.output, option
+    assert ("--signal" in result.output) == (verb == "series")

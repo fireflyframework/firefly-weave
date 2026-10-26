@@ -153,6 +153,21 @@ def resolve_target(ctx: click.Context, operation: Any, options: dict[str, Any]) 
     return _profile_target(operation, options)
 
 
+def statistics_query(operation_id: str, options: dict[str, Any]) -> dict[str, Any]:
+    """The query of a run statistics read from its command-line options; the server checks the rules."""
+    query: dict[str, Any] = {"from": options.get("range_from"), "to": options.get("range_to")}
+    names = {"granularity": "granularity", "workflow": "workflow", "workflow_version": "version"}
+    if operation_id == "run_statistics.series":
+        query["signals"] = list(options.get("signals") or ())
+        names |= {"group_by": "group_by", "top": "top"}
+    elif operation_id == "run_statistics.workflows":
+        names = {"granularity": "granularity"}
+    for option, key in names.items():
+        if options.get(option) is not None:
+            query[key] = options[option]
+    return {key: value for key, value in query.items() if value is not None}
+
+
 def command(operation_id: str, name: str | None = None) -> click.Command:
     from firefly_weave.contracts.surface import OPERATIONS
 
@@ -201,6 +216,8 @@ def command(operation_id: str, name: str | None = None) -> click.Command:
             ):
                 if options.get(key) is not None:
                     query[key] = str(options[key]).lower() if isinstance(options[key], bool) else options[key]
+            if operation_id.startswith("run_statistics."):
+                query = statistics_query(operation_id, options)
             async with WeaveClient(base_url, provider, scope) as sdk:
                 if operation_id == "activations.create" and options.get("pin_current_calls"):
                     from firefly_weave.contracts.catalog import ActivationRequest
@@ -370,6 +387,27 @@ def command(operation_id: str, name: str | None = None) -> click.Command:
             ),
             click.Option(["--include-archived"], is_flag=True),
         ]
+    if operation_id.startswith("run_statistics."):
+        params += [
+            click.Option(["--from", "range_from"], required=True, help="Start of the range (RFC 3339)."),
+            click.Option(["--to", "range_to"], required=True, help="End of the range (RFC 3339)."),
+            click.Option(
+                ["--granularity"],
+                type=click.Choice(["5m", "1h", "1d"]),
+                help="Bucket size (default: chosen from the range).",
+            ),
+        ]
+        if operation_id != "run_statistics.workflows":
+            params += [
+                click.Option(["--workflow"], required=operation_id == "run_statistics.steps"),
+                click.Option(["--version", "workflow_version"], help="One version of --workflow."),
+            ]
+        if operation_id == "run_statistics.series":
+            params += [
+                click.Option(["--signal", "signals"], multiple=True, required=True, help="Repeat for each signal."),
+                click.Option(["--group-by"], type=click.Choice(["none", "workflow", "status", "task_type"])),
+                click.Option(["--top"], type=click.IntRange(1, 20), help="Groups shown before (other)."),
+            ]
     return click.Command(
         name or operation_id.split(".")[-1].replace("_", "-"),
         params=params,
