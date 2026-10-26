@@ -35,6 +35,8 @@ import {
 } from "@angular/core";
 import { Icon } from "../../../icon";
 import { DataTree } from "./data-tree";
+import { DataTable } from "./data-table";
+import { tableCount } from "./table-view";
 import { PinnedBanner } from "./pinned-banner";
 import { OutputEditor } from "./output-editor";
 import {
@@ -58,7 +60,7 @@ import { ndvRegistry, type Json } from "../registry";
   selector: "weave-output-pane",
   standalone: true,
   changeDetection: ChangeDetectionStrategy.Eager,
-  imports: [Icon, DataTree, PinnedBanner, OutputEditor],
+  imports: [Icon, DataTree, DataTable, PinnedBanner, OutputEditor],
   template: `@let none = noOutput();
     @let pin = pinned();
     @let canPin = pinnable();
@@ -118,9 +120,11 @@ import { ndvRegistry, type Json } from "../registry";
       <span class="pane-count">{{
         none
           ? ""
-          : event() !== undefined && view() !== "schema"
-            ? sampleCount(event())
-            : countLabel(rows.length, query() ? shown.length : undefined)
+          : event() !== undefined && view() === "table"
+            ? tableCount(event(), query())
+            : event() !== undefined && view() !== "schema"
+              ? sampleCount(event())
+              : countLabel(rows.length, query() ? shown.length : undefined)
       }}</span>
       @if (canPin) {
         <button
@@ -196,10 +200,11 @@ import { ndvRegistry, type Json } from "../registry";
             <p class="pane-empty-text">This step returned no data (null).</p>
           } @else if (event() !== undefined && view() !== "schema") {
             @if (view() === "table") {
-              <p class="pane-empty-text">
-                Table view isn't available for this sample yet.
-              </p>
-              <button type="button" (click)="setView('json')">View JSON</button>
+              <weave-data-table
+                [value]="event()"
+                label="Output data"
+                [query]="query()"
+              />
             } @else {
               <pre class="pane-json" tabindex="0" aria-label="Output data">{{
                 json(event())
@@ -287,6 +292,7 @@ export class OutputPane {
   readonly query = signal("");
   readonly countLabel = countLabel;
   readonly sampleCount = sampleCount;
+  readonly tableCount = tableCount;
   readonly views: { id: DataView; label: string; icon: string }[] = [
     { id: "schema", label: "Schema", icon: "schemaView" },
     { id: "table", label: "Table", icon: "tableView" },

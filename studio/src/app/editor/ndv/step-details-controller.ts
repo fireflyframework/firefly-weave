@@ -145,6 +145,12 @@ export type ControllerHost = Pick<
   | "execution"
 >;
 /** A diagnostic of one step, located in it. */
+/** Whether a schema marks any value secret, anywhere in it. */
+const marksSecret = (schema: unknown): boolean =>
+  schema !== null &&
+  schema !== undefined &&
+  /"(x-secret|writeOnly)"\s*:\s*true/.test(JSON.stringify(schema));
+
 /** The last execution's answer about a step, in its Output pane. */
 export interface ExecuteNotice {
   /** The step it is about. */
@@ -398,7 +404,12 @@ export class StepDetailsController {
     const schema = step
       ? this.descriptor(stepId)?.outputSchema(step, this.kindContext())
       : null;
-    const value = safeSample(schema ?? {}, result.output);
+    // The host refused every secret value before it simulated, so a result
+    // too large to copy field by field is shown as it is unless its output
+    // fields mark something secret.
+    const value =
+      safeSample(schema ?? {}, result.output) ??
+      (marksSecret(schema) ? undefined : result.output);
     if (value === undefined) return undefined;
     const now = this.prints().get(stepId)?.execution;
     return {

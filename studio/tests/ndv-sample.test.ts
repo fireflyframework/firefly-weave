@@ -245,4 +245,31 @@ describe("step details read the last execution", () => {
       customerId: "c-run",
     });
   });
+  it("a result too large to copy field by field still shows, unless its fields mark a secret", () => {
+    const { controller, results, model } = executed();
+    model.insert("transform", "root", undefined, {
+      id: "plain",
+      value: { literal: [] },
+    });
+    const rows = Array.from({ length: 1200 }, (_, i) => ({ i }));
+    const current = results()!;
+    const plain = controller.prints().get("plain")!.execution;
+    const lookup = controller.prints().get("lookup")!.execution;
+    results.set({
+      ...current,
+      steps: {
+        plain: { status: "completed", execution: plain, output: rows },
+        lookup: {
+          status: "completed",
+          execution: lookup,
+          output: Array.from({ length: 1200 }, () => ({
+            token: "abc",
+          })) as never,
+        },
+      },
+    });
+    expect(controller.stepData("plain")?.value).toEqual(rows);
+    // lookup's fields mark token secret: withheld rather than shown unchecked.
+    expect(controller.stepData("lookup")).toBeUndefined();
+  });
 });

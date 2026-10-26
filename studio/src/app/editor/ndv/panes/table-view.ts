@@ -88,3 +88,27 @@ export function tableOf(value: Json | undefined): TableData {
     note: null,
   };
 }
+
+/** The rows any of whose cells holds every word of `query` (case-insensitive). */
+export function filterTable(table: TableData, query: string): string[][] {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return table.rows;
+  return table.rows.filter((row) => {
+    const text = row.join(" ").toLowerCase();
+    return words.every((word) => text.includes(word));
+  });
+}
+
+/** The pane's count for its Table: "12 items", or "3 of 12 items" while filtering. */
+export function tableCount(value: Json | undefined, query: string): string {
+  const table = tableOf(value);
+  const noun = Array.isArray(value)
+    ? "item"
+    : table.columns.length === 2 && table.columns[0] === "Field"
+      ? "field"
+      : "value";
+  const plural = (n: number) =>
+    `${n.toLocaleString("en-US")} ${noun}${n === 1 ? "" : "s"}`;
+  if (!query.trim()) return plural(table.total);
+  return `${filterTable(table, query).length.toLocaleString("en-US")} of ${plural(table.total)}`;
+}

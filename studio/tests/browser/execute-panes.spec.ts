@@ -225,3 +225,94 @@ test("a formula preview reads the step's last result once executed", async ({
   // score returned lookup's tier: notify's Customer ID reads it.
   await expect(fieldLine(details, "input.customerId")).toContainText("=");
 });
+
+/** A workflow whose one step returns `value`, executed, with its Output shown. */
+async function executedOutput(page: Page, value: unknown) {
+  const file = yamlFile(
+    "listed.yaml",
+    `apiVersion: weave/v1alpha1
+kind: Workflow
+metadata: {name: listed, version: 1.0.0}
+spec:
+  inputSchema: {type: object}
+  outputSchema: {}
+  steps:
+    - id: rows
+      kind: transform
+      value: {literal: ${JSON.stringify(value)}}
+  output: {literal: null}
+`,
+  );
+  const { details } = await openExecuteWorkflow(page, file);
+  await details.open("rows");
+  await (await shownExecute(details)).click();
+  const pane = await outputPane(details);
+  await expect(pane.locator(".pane-source-tag")).toHaveText("Simulated");
+  return { details, pane };
+}
+
+test.describe("the Table view", () => {
+  test("a list of objects opens on Table, and choosing JSON is remembered", async ({
+    page,
+  }) => {
+    const { details, pane } = await executedOutput(page, [
+      { a: 1 },
+      { a: 2, b: "x" },
+    ]);
+    await expect(pane.getByRole("radio", { name: "Table" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    const table = pane.getByRole("table", { name: "Output data" });
+    await expect(table.getByRole("columnheader")).toHaveText(["a", "b"]);
+    await expect(table.locator("tbody tr")).toHaveCount(2);
+    await expect(pane.locator(".pane-count")).toHaveText("2 items");
+    await pane.getByRole("radio", { name: "JSON" }).click();
+    await details.close();
+    await details.open("rows");
+    const again = await outputPane(details);
+    await expect(again.getByRole("radio", { name: "JSON" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    await expect(again.locator(".pane-json")).toContainText('"b": "x"');
+  });
+
+  test("the Table filter counts what it shows", async ({ page }) => {
+    const rows = Array.from({ length: 12 }, (_, i) => ({
+      id: i,
+      tier: i % 4 === 0 ? "gold" : "silver",
+    }));
+    const { pane } = await executedOutput(page, rows);
+    await pane.locator(".pane-content").click();
+    await page.keyboard.press("/");
+    const search = pane.getByRole("textbox", { name: "Search output" });
+    await expect(search).toBeFocused();
+    await page.keyboard.type("gold");
+    await expect(pane.locator("tbody tr")).toHaveCount(3);
+    await expect(pane.locator(".pane-count")).toHaveText("3 of 12 items");
+  });
+
+  test("an object shows as fields and values, a scalar in one cell", async ({
+    page,
+  }) => {
+    const { pane } = await executedOutput(page, { a: [1, 2], b: null });
+    await pane.getByRole("radio", { name: "Table" }).click();
+    const table = pane.getByRole("table", { name: "Output data" });
+    await expect(table.getByRole("columnheader")).toHaveText([
+      "Field",
+      "Value",
+    ]);
+    await expect(table.locator("tbody tr").first()).toHaveText(/a\s*2 items/);
+    await expect(table.locator("tbody tr").nth(1)).toHaveText(/b\s*null/);
+  });
+
+  test("a long list says how much it shows", async ({ page }) => {
+    const rows = Array.from({ length: 1200 }, (_, i) => ({ i }));
+    const { pane } = await executedOutput(page, rows);
+    await expect(pane.locator("tbody tr")).toHaveCount(500);
+    await expect(pane.locator(".data-table-note")).toHaveText(
+      "Showing 500 of 1,200",
+    );
+  });
+});

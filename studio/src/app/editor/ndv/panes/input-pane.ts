@@ -18,9 +18,9 @@ SPDX-License-Identifier: Apache-2.0
 // The Input pane: what the step can read. The source selector lists the
 // earlier steps the step can see, nearest first, then the workflow input;
 // Schema shows that source's fields (draggable), with the other sources as
-// "Also available". With test data (the test input, an earlier step's pinned
-// output) Schema shows each field's value and JSON the data; Table waits for
-// execution. Compact (Edit formula's
+// "Also available". With data (the test input, an earlier step's pin or last
+// result) Schema shows each field's value, Table its rows and JSON the data.
+// Compact (Edit formula's
 // column): the fields to drag, with the search and the source on one row,
 // and no header or empty-state text.
 import {
@@ -40,6 +40,8 @@ import {
   WORKFLOW,
 } from "../../../forms/core/scope";
 import { DataTree } from "./data-tree";
+import { DataTable } from "./data-table";
+import { tableCount } from "./table-view";
 import {
   countLabel,
   defaultSource,
@@ -61,7 +63,7 @@ import { ndvRegistry, type Json } from "../registry";
   selector: "weave-input-pane",
   standalone: true,
   changeDetection: ChangeDetectionStrategy.Eager,
-  imports: [Icon, DataTree],
+  imports: [Icon, DataTree, DataTable],
   host: { "[class.is-compact]": "compact()" },
   template: `@let sources = this.sources();
     @let chosen = selectedSource();
@@ -145,7 +147,9 @@ import { ndvRegistry, type Json } from "../registry";
         >
       }
       <span class="pane-count">{{
-        countLabel(all.length, query() ? shown.length : undefined)
+        data !== undefined && shownView() === "table"
+          ? tableCount(data, query())
+          : countLabel(all.length, query() ? shown.length : undefined)
       }}</span>
     </div>
     <div class="sd-pane-body">
@@ -154,10 +158,11 @@ import { ndvRegistry, type Json } from "../registry";
           <p class="pane-empty-text">This step doesn't read data.</p>
         } @else if (data !== undefined && shownView() !== "schema") {
           @if (shownView() === "table") {
-            <p class="pane-empty-text">
-              Table view isn't available for this sample yet.
-            </p>
-            <button type="button" (click)="setView('json')">View JSON</button>
+            <weave-data-table
+              [value]="data"
+              label="Input data"
+              [query]="query()"
+            />
           } @else {
             <pre class="pane-json" tabindex="0" aria-label="Input data">{{
               json(data)
@@ -287,6 +292,7 @@ export class InputPane implements OnInit {
   readonly query = signal("");
   readonly selectId = `input-source-${Math.random().toString(36).slice(2, 8)}`;
   readonly countLabel = countLabel;
+  readonly tableCount = tableCount;
   readonly defaultSource = defaultSource;
   readonly views: { id: DataView; label: string; icon: string }[] = [
     { id: "schema", label: "Schema", icon: "schemaView" },
