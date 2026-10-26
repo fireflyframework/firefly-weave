@@ -165,16 +165,25 @@ def _query_kind(annotation: object) -> Literal["array", "boolean", "integer", "s
     return "integer" if annotation is int else "string"
 
 
+_FILTER_CODES = {
+    "weave_filter": "WV-FILTER",
+    "weave_stats_range": "WV-STATS-RANGE",
+    "weave_stats_series": "WV-STATS-SERIES",
+}
+
+
 @cache
 def _query_kinds(model: type[BaseModel]) -> dict[str, Literal["array", "boolean", "integer", "string"]]:
-    return {name: _query_kind(field.annotation) for name, field in model.model_fields.items()}
+    # A field named after a Python keyword is sent under its alias, such as ``from``.
+    return {field.alias or name: _query_kind(field.annotation) for name, field in model.model_fields.items()}
 
 
 def parse_query[M: BaseModel](params: object, model: type[M]) -> M:
     """Strict query decoding: known names only, one value per scalar, JSON-typed values.
 
     Filter combinations rejected by the model answer 422 WV-FILTER, naming the rule that failed (the model's own
-    messages are fixed, safe strings); other invalid values answer WV-VALIDATION.
+    messages are fixed, safe strings); a statistics range with too many points answers 422 WV-STATS-RANGE and one
+    with too many series 422 WV-STATS-SERIES; other invalid values answer WV-VALIDATION.
     """
     from starlette.datastructures import QueryParams
 
@@ -204,6 +213,6 @@ def parse_query[M: BaseModel](params: object, model: type[M]) -> M:
         return model.model_validate_json(json.dumps(values))
     except ValidationError as error:
         for item in error.errors(include_url=False, include_context=False, include_input=False):
-            if item["type"] == "weave_filter":
-                raise CatalogError(422, "WV-FILTER", item["msg"]) from None
+            if item["type"] in _FILTER_CODES:
+                raise CatalogError(422, _FILTER_CODES[item["type"]], item["msg"]) from None
         raise
