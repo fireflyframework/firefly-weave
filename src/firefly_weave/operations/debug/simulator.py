@@ -70,7 +70,7 @@ from firefly_weave.runtime.kernel import (
     validate,
     validate_action,
 )
-from firefly_weave.runtime.models import CallIntent, Deadline, RunState, RuntimeEvent, TaskIntent
+from firefly_weave.runtime.models import CallIntent, Deadline, HumanTaskIntent, RunState, RuntimeEvent, TaskIntent
 
 _DEFAULT_LIMITS = DebugLimits()
 
@@ -602,6 +602,8 @@ class Simulator:
         run.cursor = _advance_owned(cursor, called.prepared)
         for change in run.cursor.result.steps[changed:]:
             self._grown(change.output)
+            if change.status == "completed":
+                d.outputs[_path(key, change.node_id)] = change.output
         d.boundaries.append(boundary)
         if run.cursor.done:
             result = run.cursor.result
@@ -615,7 +617,10 @@ class Simulator:
                 elif isinstance(command, CallIntent):
                     if not self._call(key, run, called, command):
                         return True
+                elif isinstance(command, HumanTaskIntent):
+                    d.inputs[_path(key, command.node_id)] = {"title": command.title, "context": command.context}
                 elif isinstance(command, TaskIntent):
+                    d.inputs[_path(key, command.node_id)] = command.input
                     # A step mock applies to every instance of the step.
                     mock = "node:" + command.node_id
                     if mock not in called.mocks:
