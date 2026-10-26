@@ -22,14 +22,10 @@ import type { Step, Workflow } from "../../model";
 import type { Json } from "../ndv/registry";
 import type { ExecuteRequest, ExecuteTarget, MockKey } from "./execution";
 import { instanceStep } from "./instance-keys";
+import type { LastResults } from "./last-results";
 import type { StudioTestData } from "./test-data";
 
 type JsonObject = { [key: string]: Json };
-
-/** What a request reads of the last results: each step's (or iteration's) output. */
-export interface ResultOutputs {
-  readonly steps: Readonly<Record<string, { readonly output?: Json }>>;
-}
 
 /** The step lists a step holds, as the host's slicing walks them (transactions included). */
 function branchesOf(step: Step): Step[][] {
@@ -106,7 +102,7 @@ export interface ExecuteParts {
   definitions: JsonObject[];
   connected: boolean;
   testData: StudioTestData;
-  results: ResultOutputs | null;
+  results: LastResults | null;
   /** The workflow input to use when test data has none (a sample of its fields). */
   sampleInput: Json;
   target: ExecuteTarget;
