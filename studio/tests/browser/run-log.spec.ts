@@ -29,6 +29,7 @@ import { hasPython } from "./local-authoring";
 import { applySource } from "./owned-actions";
 import { yamlFile } from "./step-details-po";
 import { sourceText } from "./support";
+import { outputPane } from "./test-data-po";
 
 test.skip(!hasPython, "Create the Python development environment first.");
 test.use({ viewport: { width: 1440, height: 900 } });
@@ -249,4 +250,102 @@ test("the classic simulation panel isn't used with the new editor", async ({
     page.getByRole("dialog", { name: "Simulate this workflow" }),
   ).toHaveCount(0);
   expect(platform).toEqual([]);
+});
+
+test("a signal's test answer edited in step details is used by the next execution", async ({
+  page,
+}) => {
+  const { details, calls } = await openExecuteWorkflow(page, ASKING);
+  await details.open("paid");
+  const pane = await outputPane(details);
+  const answer = pane.getByRole("region", { name: "Test answer" });
+  await answer.getByLabel("Payload (JSON)").fill('{"paid": true}');
+  await answer.getByRole("button", { name: "Save answer" }).click();
+  await expect(
+    answer.getByRole("button", { name: "Remove answer" }),
+  ).toBeVisible();
+  await details.close();
+  await executeInBar(page).click();
+  await expect(runLog(page).locator(".run-log-status")).toHaveText(
+    "Waiting · Decide for approval",
+  );
+  const scripts = executions(calls).at(-1)!.body["scripts"] as {
+    signals: Record<string, { payload: unknown }>;
+  };
+  expect(scripts.signals["paid"].payload).toEqual({ paid: true });
+});
+
+test("letting a person's task expire takes its expiry path", async ({
+  page,
+}) => {
+  const expiring = yamlFile(
+    "expiring.yaml",
+    `apiVersion: weave/v1alpha1
+kind: Workflow
+metadata: {name: expiring, version: 1.0.0}
+spec:
+  inputSchema: {type: object}
+  outputSchema: {}
+  steps:
+    - id: approval
+      kind: humanTask
+      assignment: reviewers
+      title: {literal: Approve}
+      context: {literal: {}}
+      formSchema: {type: object}
+      decisions: [approve, reject]
+      expirySeconds: 3600
+  output: {literal: null}
+`,
+  );
+  const { details } = await openExecuteWorkflow(page, expiring);
+  await details.open("approval");
+  const pane = await outputPane(details);
+  const answer = pane.getByRole("region", { name: "Test answer" });
+  await answer.getByLabel("Let it expire instead").check();
+  await answer.getByRole("button", { name: "Save answer" }).click();
+  await expect(
+    answer.getByRole("button", { name: "Remove answer" }),
+  ).toBeVisible();
+  await details.close();
+  await executeInBar(page).click();
+  await expect(runLog(page).locator(".run-log-status")).toHaveText(
+    "Failed at approval",
+  );
+});
+
+test("an answer holding a value marked secret is refused and never sent", async ({
+  page,
+}) => {
+  const secret = yamlFile(
+    "secret-signal.yaml",
+    `apiVersion: weave/v1alpha1
+kind: Workflow
+metadata: {name: secret-signal, version: 1.0.0}
+spec:
+  inputSchema: {type: object}
+  outputSchema: {}
+  steps:
+    - id: paid
+      kind: signal
+      name: order-paid
+      timeoutSeconds: 600
+      payloadSchema:
+        type: object
+        properties:
+          code: {type: string, x-secret: true}
+  output: {literal: null}
+`,
+  );
+  const { calls } = await openExecuteWorkflow(page, secret);
+  await executeInBar(page).click();
+  const log = runLog(page);
+  await expect(log.locator(".run-log-status")).toHaveText(
+    "Waiting · Send signal order-paid",
+  );
+  await log.getByLabel("Payload (JSON)").fill('{"code": "7731"}');
+  await log.getByRole("button", { name: "Send" }).click();
+  await expect(page.locator(".toast-region")).toContainText("secret");
+  expect(executions(calls)).toHaveLength(1);
+  expect(JSON.stringify(calls)).not.toContain("7731");
 });

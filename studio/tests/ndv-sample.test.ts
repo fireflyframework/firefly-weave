@@ -81,7 +81,23 @@ function setup() {
           (key) => `/pins/${key}`,
         ),
       ];
-      return { entries: paths.map((path) => ({ path, ok: true })) } as T;
+      const entries: { path: string; ok: boolean; code?: string }[] = paths.map(
+        (path) => ({ path, ok: true }),
+      );
+      // Test answers: a payload with `code` stands for a value marked secret.
+      for (const [key, entry] of Object.entries(
+        (data["signals"] as Record<string, { payload?: object }>) ?? {},
+      ))
+        entries.push(
+          entry.payload && "code" in entry.payload
+            ? {
+                path: `/signals/${key}`,
+                ok: false,
+                code: "WV-SCHEMA-SECRET_VALUE",
+              }
+            : { path: `/signals/${key}`, ok: true },
+        );
+      return { entries } as T;
     },
   };
   const testData = new TestDataService({
@@ -271,5 +287,57 @@ describe("step details read the last execution", () => {
     expect(controller.stepData("plain")?.value).toEqual(rows);
     // lookup's fields mark token secret: withheld rather than shown unchecked.
     expect(controller.stepData("lookup")).toBeUndefined();
+  });
+});
+
+describe("test answers for signals and people", () => {
+  function answering() {
+    const made = setup();
+    made.model.insert("signal", "root", undefined, {
+      id: "paid",
+      name: "order-paid",
+      timeoutSeconds: 600,
+      payloadSchema: {
+        type: "object",
+        properties: { code: { type: "string", "x-secret": true } },
+      },
+    });
+    return made;
+  }
+  it("script returns the iteration's answer before the step's", async () => {
+    const { controller, testData } = answering();
+    const at = "2026-10-20T10:00:00Z";
+    await testData.change(
+      {
+        ...emptyTestData(at),
+        signals: {
+          paid: { payload: { who: "step" } },
+          "paid[1]": { payload: { who: "second" } },
+        },
+      },
+      ["/signals/paid", "/signals/paid[1]"],
+    );
+    expect(controller.ndvContext("paid").sample.script()).toEqual({
+      payload: { who: "step" },
+    });
+    expect(controller.scriptOf("paid[1]")).toEqual({
+      payload: { who: "second" },
+    });
+  });
+  it("setScript keeps an answer, and refuses a secret keeping nothing", async () => {
+    const { controller, testData } = answering();
+    const sample = controller.ndvContext("paid").sample;
+    expect(await sample.setScript({ payload: { paid: true } })).toEqual({
+      ok: true,
+    });
+    expect(testData.data().signals?.["paid"]).toEqual({
+      payload: { paid: true },
+      source: "manual",
+    });
+    const refused = await sample.setScript({ payload: { code: "7731" } });
+    expect(refused.ok).toBe(false);
+    expect(JSON.stringify(testData.data())).not.toContain("7731");
+    expect(await sample.setScript(null)).toEqual({ ok: true });
+    expect(testData.data().signals).toBeUndefined();
   });
 });

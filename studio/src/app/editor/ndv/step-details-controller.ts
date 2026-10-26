@@ -54,7 +54,12 @@ import {
   type CanvasSidecar,
   type StepNote,
 } from "../state/canvas-sidecar";
-import { CANVAS_MAX_BYTES, type DataSource } from "../state/test-data";
+import {
+  CANVAS_MAX_BYTES,
+  type DataSource,
+  type HumanEntry,
+  type SignalEntry,
+} from "../state/test-data";
 import { TestDataService } from "../state/test-data-service";
 import { checkInputsOf } from "../state/test-data-inputs";
 import {
@@ -62,6 +67,7 @@ import {
   withPin,
   withoutInput,
   withoutPin,
+  withScript,
 } from "../state/test-data-ops";
 import { fingerprints, type StepFingerprints } from "../state/fingerprints";
 import {
@@ -432,6 +438,63 @@ export class StepDetailsController {
   /** Whether Execute is available here at all (the host loaded it). */
   canExecute(): boolean {
     return !!this.host.execution && !this.readOnlyReason();
+  }
+
+  // --------------------------------------------------- test answers
+  /** Where a step's test answer lives: signals, humans, or nowhere. */
+  private answerSection(key: string): "signals" | "humans" | null {
+    const kind = this.step(instanceStep(key))?.kind as string | undefined;
+    return kind === "signal"
+      ? "signals"
+      : kind === "humanTask"
+        ? "humans"
+        : null;
+  }
+  /** A signal's or a person's test answer: the iteration's first, then the step's; null without one. */
+  scriptOf(key: string): Json | null {
+    const section = this.answerSection(key);
+    if (!section) return null;
+    this.testData.version();
+    const answers = (this.testData.data()[section] ?? {}) as unknown as Record<
+      string,
+      Json
+    >;
+    return answers[key] ?? answers[instanceStep(key)] ?? null;
+  }
+  /**
+   * Keeps (or, with null, removes, with Undo) the step's test answer, checked
+   * as all test data is: a value marked secret is refused and nothing is kept.
+   */
+  async setScript(
+    key: string,
+    value: Json | null,
+  ): Promise<{ ok: true } | { ok: false; message: string }> {
+    const section = this.answerSection(key);
+    if (!section)
+      return {
+        ok: false,
+        message: "Only signals and people take a test answer.",
+      };
+    const service = this.testData;
+    const previous = service.data();
+    // A time-out or an expiry is no value: it has no source.
+    const entry =
+      value === null
+        ? null
+        : ((typeof value === "object" && value !== null && "outcome" in value
+            ? value
+            : { ...(value as object), source: "manual" }) as unknown as
+            | SignalEntry
+            | HumanEntry);
+    const pointer = `/${section}/${key.replace(/~/g, "~0").replace(/\//g, "~1")}`;
+    const outcome = await service.change(
+      withScript(previous, section, key, entry, new Date().toISOString()),
+      entry === null ? [] : [pointer],
+    );
+    if (!outcome.ok) return { ok: false, message: outcome.message };
+    if (entry === null)
+      this.offerUndo(`Removed the test answer of ${key}.`, outcome.previous);
+    return { ok: true };
   }
 
   /** Whether this step's output can be pinned (actions, AI tasks, Call a workflow that waits…). */
@@ -1213,11 +1276,8 @@ export class StepDetailsController {
           return message === null ? { ok: true } : { ok: false, message };
         },
         clearPin: () => this.unpin(target),
-        script: () => null,
-        setScript: async () => ({
-          ok: false,
-          message: "Test scripts aren't available yet.",
-        }),
+        script: () => this.scriptOf(target),
+        setScript: (value) => this.setScript(target, value),
       },
       catalog: {
         actions: async () =>

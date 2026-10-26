@@ -37,6 +37,7 @@ import { Icon } from "../../../icon";
 import { DataTree } from "./data-tree";
 import { DataTable } from "./data-table";
 import { PathList } from "./path-list";
+import { ScriptEditor } from "./script-editor";
 import { pathRows, type PathRow } from "../../state/run-summary";
 import { tableCount } from "./table-view";
 import { PinnedBanner } from "./pinned-banner";
@@ -62,7 +63,15 @@ import { ndvRegistry, type Json } from "../registry";
   selector: "weave-output-pane",
   standalone: true,
   changeDetection: ChangeDetectionStrategy.Eager,
-  imports: [Icon, DataTree, DataTable, PathList, PinnedBanner, OutputEditor],
+  imports: [
+    Icon,
+    DataTree,
+    DataTable,
+    PathList,
+    PinnedBanner,
+    OutputEditor,
+    ScriptEditor,
+  ],
   template: `@let none = noOutput();
     @let pin = pinned();
     @let canPin = pinnable();
@@ -218,6 +227,9 @@ import { ndvRegistry, type Json } from "../registry";
           } @else if (view() === "schema" && paths) {
             <weave-path-list [rows]="paths.rows" [result]="paths.result" />
           } @else if (view() === "schema") {
+            @if (answerable()) {
+              <weave-script-editor [session]="session()" />
+            }
             @if (session().target === "$trigger" && event() === undefined) {
               <p class="pane-empty-text">No test event yet</p>
             }
@@ -357,6 +369,12 @@ export class OutputPane {
           : `Took ${taken.label.toLowerCase()}`,
       result: branch?.output,
     };
+  }
+  /** Signals and human tasks take a test answer. */
+  answerable(): boolean {
+    const { controller, target } = this.session();
+    const kind = controller.step(target)?.kind as string | undefined;
+    return kind === "signal" || kind === "humanTask";
   }
   /** The step ran and returned null. */
   returnedNull(): boolean {
