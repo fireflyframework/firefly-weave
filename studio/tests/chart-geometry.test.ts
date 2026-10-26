@@ -18,6 +18,7 @@ SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from "vitest";
 import {
   CHAR_PX,
+  axisTicks,
   chartFrame,
   columnLayout,
   metricText,
@@ -99,6 +100,15 @@ describe("Metrics chart geometry", () => {
     expect(ticks(6, tickCount(6))).toEqual([0, 2, 4, 6]);
     expect(ticks(15_000, tickCount(15_000))).toEqual([0, 5000, 10000, 15000]);
     expect(ticks(1, tickCount(1))).toEqual([0, 0.25, 0.5, 0.75, 1]);
+  });
+
+  it("steps small whole counts by one and fractional averages by readable steps", () => {
+    expect(axisTicks(1, "count")).toEqual([0, 1]);
+    expect(axisTicks(5, "count")).toEqual([0, 1, 2, 3, 4, 5]);
+    // Sampled counts are averages: a fractional maximum still gets a scale.
+    expect(axisTicks(0.4, "count")).toEqual([0, 0.1, 0.2, 0.3, 0.4]);
+    expect(axisTicks(2.5, "count")).toEqual([0, 0.5, 1, 1.5, 2, 2.5]);
+    expect(axisTicks(1, "ratio")).toEqual([0, 0.25, 0.5, 0.75, 1]);
   });
 
   it("reads durations under a second in milliseconds", () => {

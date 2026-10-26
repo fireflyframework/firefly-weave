@@ -486,6 +486,62 @@ test.describe("states", () => {
     expect(requests).toEqual([]);
   });
 
+  test("a platform without run statistics says so plainly and stops asking", async ({
+    page,
+  }) => {
+    // A fake clock from the start, so the page's own timers are the ones it moves.
+    await page.clock.install();
+    const requests = await metrics(page, every, {
+      series: () => ({
+        status: 501,
+        json: { code: "WV-UNAVAILABLE", message: "Not served" },
+      }),
+      workflows: () => ({
+        status: 501,
+        json: { code: "WV-UNAVAILABLE", message: "Not served" },
+      }),
+    });
+    await open(page);
+    await expect(
+      page.getByRole("heading", {
+        name: "This platform doesn't keep run statistics yet",
+      }),
+    ).toBeVisible();
+    await expect(page.locator(".operate-problem")).toHaveCount(0);
+    const asked = requests.length;
+    await page.clock.runFor(130_000);
+    expect(requests.length).toBe(asked);
+  });
+
+  test("a new range shows each chart loading, never failed", async ({
+    page,
+  }) => {
+    let hold: (() => void) | null = null;
+    await metrics(page, every, {
+      series: (url) => ({ json: seriesAnswer(url) }),
+    });
+    await open(page);
+    await expect(page.locator("svg.chart-frame")).toHaveCount(6);
+    // Hold the next answers until the cards have been looked at.
+    const held = new Promise<void>((resolve) => (hold = resolve));
+    await page.route(
+      `${environment}/run-statistics/series?*`,
+      async (route) => {
+        await held;
+        await route.fallback();
+      },
+    );
+    await page.getByRole("button", { name: "7 d", exact: true }).click();
+    await expect(
+      page.locator(".chart-card weave-operate-state .skeleton"),
+    ).toHaveCount(6);
+    await expect(
+      page.getByText("This section could not be loaded."),
+    ).toHaveCount(0);
+    hold!();
+    await expect(page.locator("svg.chart-frame")).toHaveCount(6);
+  });
+
   test("a range without runs says so and keeps the charts", async ({
     page,
   }) => {

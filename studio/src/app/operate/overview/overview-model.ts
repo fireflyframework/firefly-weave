@@ -602,10 +602,5 @@ export function dayHeadline(day: RunsDaySection): string {
   return parts.join(" · ");
 }
 
-/** A statistics read this server doesn't serve: Overview shows what it showed before, with no error. */
-export function statisticsMissing(error: {
-  status?: number;
-  code: string;
-}): boolean {
-  return error.status === 501 || error.status === 404;
-}
+// A statistics read this server doesn't serve: Overview shows what it showed before, with no error.
+export { statisticsMissing } from "../metrics/chart-model";

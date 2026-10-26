@@ -39,8 +39,7 @@ import {
   seriesStyle,
   seriesName,
   stackColumns,
-  tickCount,
-  ticks,
+  axisTicks,
   timeLabel,
   xLabelIndices,
   type Granularity,
@@ -123,7 +122,7 @@ let nextId = 0;
         <g [attr.transform]="'translate(' + g.left + ',' + top + ')'">
           @for (tick of g.yTicks; track $index) {
             <line
-              class="chart-grid"
+              class="chart-gridline"
               x1="0"
               [attr.x2]="g.plotWidth"
               [attr.y1]="tick.y"
@@ -304,11 +303,7 @@ export class TimeChart {
       ...lines.flatMap((item) => item.points.map(([, value]) => value ?? 0)),
     );
     const max = niceMax(Math.max(lineMax, ...sums));
-    // Small counts step by whole numbers: no 0.25 of a run.
-    const yValues = ticks(
-      max,
-      unit === "count" && max <= 6 ? max : tickCount(max),
-    );
+    const yValues = axisTicks(max, unit);
     const yLabels = yValues.map((value) => metricText(unit, value));
     const frame = chartFrame(this.width(), yLabels);
     const layout = columnLayout(count, frame.plotWidth);
@@ -462,6 +457,8 @@ export class Sparkline {
   /** The figure's name, as the accessible description says it. */
   name = input.required<string>();
   unit = input<Unit>("count");
+  /** The span the points cover, as the description says it. */
+  period = input("the last hour");
   readonly path = computed(() => {
     const points = this.points();
     if (points.filter((value) => value !== null).length < 2) return "";
@@ -476,6 +473,6 @@ export class Sparkline {
       (value): value is number => value !== null,
     );
     const unit = this.unit();
-    return `${this.name()} over the last hour: from ${metricText(unit, known[0] ?? null)} to ${metricText(unit, known.at(-1) ?? null)}`;
+    return `${this.name()} over ${this.period()}: from ${metricText(unit, known[0] ?? null)} to ${metricText(unit, known.at(-1) ?? null)}`;
   });
 }

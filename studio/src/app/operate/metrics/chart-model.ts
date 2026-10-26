@@ -62,6 +62,12 @@ export function tickCount(max: number): number {
   return 4;
 }
 
+/** The y-axis ticks of a chart: small whole counts step by one (no 0.25 of a run), others by readable steps. */
+export function axisTicks(max: number, unit: Unit): number[] {
+  const whole = unit === "count" && Number.isInteger(max) && max <= 6;
+  return ticks(max, whole ? max : tickCount(max));
+}
+
 /** Evenly spaced tick values from 0 to max. */
 export function ticks(max: number, count: number): number[] {
   return Array.from({ length: count + 1 }, (_, index) =>
@@ -303,4 +309,12 @@ export function xLabelIndices(
   const indices: number[] = [];
   for (let index = 0; index < count; index += every) indices.push(index);
   return indices;
+}
+
+/** A statistics read this server doesn't serve (an older platform): pages say so quietly, never as an error. */
+export function statisticsMissing(error: {
+  status?: number;
+  code: string;
+}): boolean {
+  return error.status === 501 || error.status === 404;
 }

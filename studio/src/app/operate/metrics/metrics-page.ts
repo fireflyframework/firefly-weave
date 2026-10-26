@@ -48,7 +48,7 @@ import { OperateState } from "../operate-state";
 import { Poller } from "../operate-store";
 import { timeAbsolute, timeIso } from "../operate-time";
 import { RefreshStatus } from "../refresh-status";
-import type { Unit } from "./chart-model";
+import { statisticsMissing, type Unit } from "./chart-model";
 import { LineChart, Sparkline, TimeChart } from "./charts";
 import {
   chartRequests,
@@ -194,6 +194,12 @@ function listed<T extends object>(value: T, key: keyof T): T {
       <ng-container *ngTemplateOutlet="skeleton" />
     } @else if (!readable || forbidden) {
       <weave-operate-state kind="access" capability="status.read" />
+    } @else if (unsupported) {
+      <weave-operate-state
+        kind="empty"
+        heading="This platform doesn't keep run statistics yet"
+        text="Upgrade the platform to see throughput, failures and durations here."
+      />
     } @else {
       <div class="metrics-controls">
         <div class="range-group" role="group" aria-label="Range">
@@ -291,12 +297,19 @@ function listed<T extends object>(value: T, key: keyof T): T {
                       [empty]="chart.empty"
                     />
                   }
-                } @else {
+                } @else if (chartErrors[chart.id]; as failure) {
                   <h3 class="chart-title">{{ chart.label }}</h3>
                   <weave-operate-state
                     kind="partial"
-                    [code]="chartErrors[chart.id]?.code ?? ''"
+                    [code]="failure.code"
                     (retry)="poller.refresh()"
+                  />
+                } @else {
+                  <h3 class="chart-title">{{ chart.label }}</h3>
+                  <weave-operate-state
+                    kind="loading"
+                    [noun]="chart.label"
+                    [rows]="4"
                   />
                 }
               </section>
@@ -469,6 +482,7 @@ function listed<T extends object>(value: T, key: keyof T): T {
                                 <weave-sparkline
                                   [points]="points"
                                   [name]="'Runs started of ' + row.workflow"
+                                  period="the last 24 hours"
                                 />
                               }
                             </td>
@@ -529,6 +543,8 @@ export class MetricsPage implements DoCheck, OnInit, OnDestroy {
   lines = new Map<string, Array<number | null>>();
   completeUntil: string | null = null;
   loaded = false;
+  /** The server answers none of the statistics reads: an older platform. */
+  unsupported = false;
   error: PlainError | null = null;
   forbidden = false;
   private scopeKey = "";
@@ -567,6 +583,8 @@ export class MetricsPage implements DoCheck, OnInit, OnDestroy {
     // Another platform, environment or person: nothing from before stays.
     this.scopeKey = key;
     this.forget(true);
+    // An older platform stopped the reads; another one may serve them.
+    this.poller.start(false);
     if (environmentOf(this.host) && this.host.identity && this.readable)
       void this.poller.refresh();
   }
@@ -583,6 +601,7 @@ export class MetricsPage implements DoCheck, OnInit, OnDestroy {
       this.lines = new Map();
       this.completeUntil = null;
       this.loaded = false;
+      this.unsupported = false;
       this.error = null;
       this.forbidden = false;
     }
@@ -621,6 +640,17 @@ export class MetricsPage implements DoCheck, OnInit, OnDestroy {
       );
       const answered = series.some((result) => result.status === "fulfilled");
       if (!answered && workflows.status === "rejected") {
+        if (
+          failures.every((result) =>
+            statisticsMissing(
+              describeError((result as PromiseRejectedResult).reason),
+            ),
+          )
+        ) {
+          this.unsupported = true;
+          this.poller.stop();
+          return false;
+        }
         const reason = (failures[0] as PromiseRejectedResult).reason;
         ({ error: this.error, forbidden: this.forbidden } =
           listFailure(reason));
