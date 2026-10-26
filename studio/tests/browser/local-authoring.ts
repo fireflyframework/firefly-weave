@@ -28,7 +28,7 @@ import { python, pythonAvailable, repository } from "../python-path";
 export { python };
 export const hasPython = pythonAvailable();
 
-// Mirrors the three handlers in src/firefly_weave/studio/host.py, and answers
+// Mirrors the local handlers in src/firefly_weave/studio/host.py, and answers
 // a test compile against a catalog the test keeps.
 const helper = `
 import json, sys
@@ -53,6 +53,21 @@ def test_catalog(definitions):
         adapters=[HTTP_ADAPTER, "weave-email"],
     )
 
+def refused(status, code, message, paths=()):
+    return {"__status": status, "status": status, "code": code, "message": message, **({"result": {"paths": list(paths)}} if paths else {})}
+
+def execute_reply(raw):
+    # As the host's execute route answers offline (catalog "none": the tests mock the platform).
+    from firefly_weave.studio.local_contracts import ExecuteRequest
+    from firefly_weave.studio.simulation import CatalogConflict, SimulationRefused, execute
+    body = ExecuteRequest.model_validate_json(raw)
+    try:
+        return execute(body, None).model_dump(mode="json", by_alias=True, exclude_unset=True)
+    except SimulationRefused as error:
+        return refused(error.status, error.code, error.message, error.paths)
+    except CatalogConflict:
+        return refused(409, "WV-STUDIO-CATALOG-CONFLICT", "A definition on this computer has the same name and version as a different one in the catalog")
+
 def handle(path, raw):
     if path == "/test/compile":
         from firefly_weave.compiler.api import compile_source
@@ -64,6 +79,8 @@ def handle(path, raw):
     if path == "/studio/local/openapi/inventory":
         body = OpenAPIInventoryRequest.model_validate_json(raw)
         return dump(inventory(body.source, source_format=body.format, relaxations=body.relaxations))
+    if path == "/studio/local/debug/execute":
+        return execute_reply(raw)
     body = OpenAPIImportRequest.model_validate_json(raw)
     if body.mixed():
         raise ValueError("mixed")
@@ -85,7 +102,9 @@ def handle(path, raw):
 for line in sys.stdin:
     request = json.loads(line)
     try:
-        reply = {"status": 200, "body": handle(request["path"], request["body"])}
+        body = handle(request["path"], request["body"])
+        status = body.pop("__status", 200) if isinstance(body, dict) else 200
+        reply = {"status": status, "body": body}
     except (ValidationError, ValueError):
         reply = {"status": 422, "body": {"code": "WV-STUDIO-REQUEST", "message": "Invalid request"}}
     print(json.dumps(reply), flush=True)
@@ -196,13 +215,14 @@ export async function platformCompile(body: {
   return reply.body as Record<string, unknown>;
 }
 
-/** Answers /studio/local/{http-action,openapi/*} with the real Python code. */
+/** Answers /studio/local/{http-action,openapi/*,debug/execute} with the real Python code. */
 export async function localAuthoring(page: Page): Promise<LocalCalls[]> {
   const calls: LocalCalls[] = [];
   for (const path of [
     "/studio/local/http-action",
     "/studio/local/openapi/inventory",
     "/studio/local/openapi/import",
+    "/studio/local/debug/execute",
   ])
     await page.route(`**${path}`, async (route) => {
       const raw = route.request().postData() ?? "{}";

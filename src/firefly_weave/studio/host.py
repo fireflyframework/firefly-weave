@@ -21,7 +21,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Literal
@@ -149,15 +149,16 @@ class _LocalWork:
     """Worker slots for local analysis. A thread cannot be cancelled, so the thread itself frees its
     slot when the work ends, not the request that gave up waiting: abandoned analyses stay bounded."""
 
-    def __init__(self) -> None:
+    def __init__(self, slots: int = LOCAL_WORKERS) -> None:
         import threading
 
         self.lock = threading.Lock()
         self.running = 0
+        self.slots = slots
 
     def claim(self) -> bool:
         with self.lock:
-            if self.running >= LOCAL_WORKERS:
+            if self.running >= self.slots:
                 return False
             self.running += 1
             return True
@@ -168,6 +169,8 @@ class _LocalWork:
 
 
 _LOCAL_WORK = _LocalWork()
+# Simulated runs get their own slot, so a long one never starves validation's two.
+_DEBUG_WORK = _LocalWork(1)
 
 
 def _settled(future: asyncio.Future[Any]) -> None:
@@ -177,19 +180,24 @@ def _settled(future: asyncio.Future[Any]) -> None:
 
 
 async def local_work(
-    work: Any, *, slow: str = "The document took too long to analyze; select fewer operations"
+    work: Any,
+    *,
+    slow: str = "The document took too long to analyze; select fewer operations",
+    pool: _LocalWork = _LOCAL_WORK,
+    busy: str = "Studio is still analyzing an earlier document; try again shortly",
+    respond: Callable[[Any], Response] | None = None,
 ) -> Response:
     """Run pure, CPU-bound authoring work off the event loop with a bounded wait; never any I/O."""
     from firefly_weave.compiler.canonical import canonical_bytes
 
-    if not _LOCAL_WORK.claim():
-        return problem(503, "WV-STUDIO-BUSY", "Studio is still analyzing an earlier document; try again shortly")
+    if not pool.claim():
+        return problem(503, "WV-STUDIO-BUSY", busy)
 
     def run() -> Any:
         try:
             return work()
         finally:
-            _LOCAL_WORK.release()
+            pool.release()
 
     future = asyncio.get_running_loop().run_in_executor(None, run)
     future.add_done_callback(_settled)
@@ -198,6 +206,8 @@ async def local_work(
             value = await asyncio.shield(future)
     except TimeoutError:
         return problem(503, "WV-STUDIO-BUSY", slow)
+    if respond is not None:
+        return respond(value)
     return Response(canonical_bytes(value), media_type="application/json")
 
 
@@ -606,6 +616,52 @@ class StudioController:
             return CheckTestDataResult(entries=entries).model_dump(mode="json", by_alias=True, exclude_none=True)
 
         return await local_work(work, slow="Checking this test data took too long; simplify the workflow")
+
+    @post_mapping("/studio/local/debug/execute")
+    async def debug_execute(self, request: Request) -> Response:
+        from firefly_weave.studio.local_contracts import ExecuteRequest
+        from firefly_weave.studio.simulation import CatalogConflict, SimulationRefused, execute
+
+        try:
+            body = ExecuteRequest.model_validate_json(await request.body())
+        except ValidationError:
+            return problem(422, "WV-STUDIO-REQUEST", "Provide a bounded source, its format, test data and a target")
+        project = None
+        if body.catalog == "project" and self.service.options.profile is not None:
+            project = await self.service.project_catalog(refresh=body.refreshCatalog)
+            if project is None:
+                return problem(502, "WV-STUDIO-CATALOG", "Studio couldn't read the project's catalog")
+
+        def work() -> Any:
+            try:
+                answer = execute(body, project)
+            except SimulationRefused as refused:
+                return refused
+            except CatalogConflict as conflict:
+                return conflict
+            return answer.model_dump(mode="json", by_alias=True, exclude_unset=True)
+
+        def respond(value: Any) -> Response:
+            from firefly_weave.compiler.canonical import canonical_bytes
+
+            if isinstance(value, SimulationRefused):
+                result = {"paths": value.paths} if value.paths else None
+                return problem(value.status, value.code, value.message, result)
+            if isinstance(value, CatalogConflict):
+                return problem(
+                    409,
+                    "WV-STUDIO-CATALOG-CONFLICT",
+                    "A definition on this computer has the same name and version as a different one in the catalog",
+                )
+            return Response(canonical_bytes(value), media_type="application/json")
+
+        return await local_work(
+            work,
+            pool=_DEBUG_WORK,
+            slow="Executing took longer than 30 seconds; execute fewer steps",
+            busy="Studio is still executing; wait for it to finish",
+            respond=respond,
+        )
 
     @post_mapping("/studio/local/openapi/inventory")
     async def openapi_inventory(self, request: Request) -> Response:
