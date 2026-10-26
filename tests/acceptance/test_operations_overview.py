@@ -355,8 +355,10 @@ def fixture_worker(run: Any) -> tuple[str, str]:
     return str(worker), str(release)
 
 
-async def lite_activation(platform: Platform, release: str) -> dict:
-    """Publish and activate order-review-lite: one step that sleeps on the fixture worker."""
+async def lite_activation(
+    platform: Platform, release: str, *, name: str = LITE, action: str = LITE_ACTION, timeout_seconds: int = 300
+) -> dict:
+    """Publish and activate order-review-lite (or a copy named ``name``): one step that sleeps on the fixture worker."""
     manifest = json.loads(
         (Path(__file__).resolve().parents[2] / "tests/fixtures/operations-worker/manifest.json").read_text(
             encoding="utf-8"
@@ -372,7 +374,7 @@ async def lite_activation(platform: Platform, release: str) -> dict:
                     {
                         "apiVersion": "weave/v1alpha1",
                         "kind": "Action",
-                        "metadata": {"name": LITE_ACTION, "version": "1.0.0"},
+                        "metadata": {"name": action, "version": "1.0.0"},
                         "spec": {
                             "implementation": {"kind": "worker", "taskType": SLEEP_TASK, "taskVersion": "1.0.0"},
                             **{key: manifest[key] for key in ("inputSchema", "outputSchema", "sideEffect")},
@@ -392,16 +394,16 @@ async def lite_activation(platform: Platform, release: str) -> dict:
                     {
                         "apiVersion": "weave/v1alpha1",
                         "kind": "Workflow",
-                        "metadata": {"name": LITE, "version": "1.0.0"},
+                        "metadata": {"name": name, "version": "1.0.0"},
                         "spec": {
                             "inputSchema": manifest["inputSchema"],
                             "outputSchema": {"type": "object"},
-                            "timeoutSeconds": 300,
+                            "timeoutSeconds": timeout_seconds,
                             "steps": [
                                 {
                                     "id": "sleep",
                                     "kind": "action",
-                                    "uses": LITE_ACTION + "@1.0.0",
+                                    "uses": action + "@1.0.0",
                                     "with": {"ref": "/input"},
                                 }
                             ],
@@ -484,6 +486,109 @@ def test_j5_02_a_drained_worker_holds_ready_tasks_until_it_resumes(run):
     worker, release = fixture_worker(run)
     journey = asyncio.run(drained_runs(run, platform, worker, release))
     (run.evidence / "operations-drain.json").write_text(json.dumps(journey, indent=2) + "\n", encoding="utf-8")
+
+
+# J5.4 counts its own copy of order-review-lite, so the runs of J5.2 never change its figures. A run of it times
+# out after RUN_TIMEOUT seconds: three planted runs sleep longer and end as timed out, which counts as a failure.
+METRICS_LITE = "order-review-lite-metrics-" + SUFFIX
+METRICS_ACTION = "order-review-lite-metrics-sleep-" + SUFFIX
+RUN_TIMEOUT = 10
+STATISTICS_SECONDS = 180
+
+
+async def statistics(client: httpx.AsyncClient, platform: Platform, read: str, **params: Any) -> dict:
+    response = await client.get(platform.environment + "/run-statistics/" + read, params=params)
+    assert response.status_code == 200, (read, response.status_code, response.text[:500])
+    return dict(response.json())
+
+
+async def counted_runs(platform: Platform, release: str) -> dict:
+    """Twenty runs, three of them timed out; the statistics count them as the run list does."""
+    from datetime import UTC, datetime, timedelta
+
+    activation = await lite_activation(
+        platform, release, name=METRICS_LITE, action=METRICS_ACTION, timeout_seconds=RUN_TIMEOUT
+    )
+    began = datetime.now(UTC) - timedelta(minutes=1)
+    async with platform.client() as client:
+
+        async def start(inputs: list[dict]) -> list[str]:
+            return [
+                (
+                    await post(
+                        client, platform.environment + "/runs", {"activation_id": activation["id"], "input": item}
+                    )
+                )["id"]
+                for item in inputs
+            ]
+
+        async def ended(runs: list[str], status: str) -> None:
+            deadline = time.monotonic() + 180
+            while True:
+                listed = await get(client, platform.environment + "/run-summaries", workflow=METRICS_LITE, limit=100)
+                statuses = {item["id"]: item.get("status") for item in listed["items"]}
+                if all(statuses.get(run) == status for run in runs):
+                    return
+                assert time.monotonic() < deadline, statuses
+                await asyncio.sleep(1)
+
+        # The short runs first, so none waits for a slot long enough to time out; then the three that time out.
+        short = await start([{"ms": 50}] * 17)
+        await ended(short, "succeeded")
+        planted = await start([{"ms": RUN_TIMEOUT * 3000}] * 3)
+        await ended(planted, "timed_out")
+        listed = await get(client, platform.environment + "/run-summaries", workflow=METRICS_LITE, limit=100)
+        statuses = [item.get("status") for item in listed["items"]]
+        window = {"from": began.isoformat().replace("+00:00", "Z")}
+        # The rollup recomputes the last ten minutes every cycle: wait until it counted every run.
+        deadline = time.monotonic() + STATISTICS_SECONDS
+        while True:
+            window["to"] = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+            table = await statistics(client, platform, "workflows", **window)
+            row = next((item for item in table["workflows"] if item["workflow"] == METRICS_LITE), None)
+            if row is not None and row["runs"] == 20:
+                break
+            assert time.monotonic() < deadline, row
+            await asyncio.sleep(5)
+        series = await statistics(
+            client,
+            platform,
+            "series",
+            **window,
+            workflow=METRICS_LITE,
+            signals=["runs_started", "runs_succeeded", "runs_failed", "runs_cancelled"],
+        )
+        steps = await statistics(client, platform, "steps", **window, workflow=METRICS_LITE)
+    totals = {
+        item["signal"]: sum(value or 0 for _, value in item["points"])
+        for item in series["series"]
+        if not item["labels"]
+    }
+    return {
+        "row": row,
+        "totals": totals,
+        "statuses": statuses,
+        "steps": steps["steps"],
+        "complete_until": table["complete_until"],
+    }
+
+
+@pytest.mark.journey_step("J5.4")
+def test_j5_04_metrics_count_runs_failures_and_durations_as_the_run_list_does(run):
+    platform = Platform(run)
+    _, release = fixture_worker(run)
+    counted = asyncio.run(counted_runs(platform, release))
+    row, totals, statuses = counted["row"], counted["totals"], counted["statuses"]
+    # The run list and the statistics agree: 20 started, 17 succeeded, 3 timed out, which count as failed.
+    assert sorted(statuses) == ["succeeded"] * 17 + ["timed_out"] * 3, statuses
+    assert (row["runs"], row["succeeded"], row["failed"], row["cancelled"]) == (20, 17, 3, 0), row
+    assert row["failure_rate"] == pytest.approx(0.15), row
+    assert totals == {"runs_started": 20, "runs_succeeded": 17, "runs_failed": 3, "runs_cancelled": 0}, totals
+    assert row["duration_p50_ms"] is not None and row["duration_p95_ms"] >= row["duration_p50_ms"], row
+    (step,) = counted["steps"]
+    assert step["node_id"] == "sleep" and step["kind"] == "action", step
+    assert step["duration_p50_ms"] is not None and step["duration_p95_ms"] is not None, step
+    (run.evidence / "operations-metrics.json").write_text(json.dumps(counted, indent=2) + "\n", encoding="utf-8")
 
 
 def fixture_container(run: Any) -> str:

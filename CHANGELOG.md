@@ -20,6 +20,19 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+- Run metrics: **Operate › Metrics** in Studio shows runs started, success and
+  failure rates, p50 and p95 run duration and the oldest ready task for a
+  range (1 hour to 30 days) and optionally one workflow, with charts of
+  throughput, failure rate, durations, ready tasks by task type, outbox backlog
+  and worker utilization, a table of workflows with their steps, table views of
+  every chart and CSV export. Overview gains a line for the last hour under
+  each Load figure and a **Last 24 h** band. The platform keeps the figures
+  itself: the operations loop rolls finished runs and steps into 5-minute,
+  hourly and daily histograms and samples shared capacity every minute; test
+  runs never count. New reads `run_statistics.series`, `.workflows` and
+  `.steps` (`status.read`; `weave operations statistics`), errors
+  `WV-STATS-RANGE` and `WV-STATS-SERIES`, and the summary's optional
+  `runs_24h`. Migration `0039_operations_statistics`.
 - Studio keeps test data for each workflow: the trigger's test input and
   pinned output on steps. Step details offer **Pin output**, **Edit output**
   (a JSON editor), **Unpin** with Undo and **Generate sample**; the Input pane

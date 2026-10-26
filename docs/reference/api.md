@@ -866,7 +866,11 @@ section in the same transaction that reloads those grants.
   force), shared by its queries: each runs under what is left. One that runs
   out, or meets a transient database failure, is `{"state": "unavailable"}`
   while the others are still served with `200`. Neither state is ever reported
-  as zero. The answer has no 24-hour run figures yet.
+  as zero.
+- `runs_24h`, on servers with run statistics, counts the runs of the last 24
+  hours: `started`, `succeeded`, `failed` (timed-out runs included) and
+  `failure_rate` (a fraction from 0 to 1, or `null` when no run ended), test
+  runs left out. Servers without run statistics leave it out.
 
 Loop states follow these rules. A loop is `disabled` when its setting turns it
 off (API-only replicas disable every scheduler loop) and `down` while its task
@@ -882,6 +886,39 @@ is not ready or while no delivery slot is free, is neither a success nor a
 failure, so a loop that keeps waiting turns `degraded` without counting
 failures. Ages use the process's monotonic clock; the times shown come from
 its wall clock.
+
+**Run statistics.** `run_statistics.series`, `run_statistics.workflows` and
+`run_statistics.steps` (`GET …/environments/{environment}/run-statistics/series`,
+`/workflows` and `/steps`; `weave operations statistics series|workflows|steps`)
+answer [run metrics](../operations/metrics.md) from the platform's own tables,
+not from telemetry export. Each needs `status.read` on both the token and the
+current principal.
+
+- Every read takes `from` and `to` (RFC 3339; `from` before `to`, at most 400
+  days apart) and an optional `granularity` (`5m`, `1h` or `1d`). Without it
+  the server picks 5 minutes up to 6 hours, 1 hour up to 7 days and 1 day
+  beyond; points start on whole UTC buckets.
+- `series` takes one or more `signals` (repeat the parameter): `runs_started`,
+  `runs_succeeded`, `runs_failed`, `runs_cancelled`, `failure_rate`,
+  `duration_p50`, `duration_p95`, `tasks_ready`, `oldest_ready_seconds`,
+  `outbox_pending`, `worker_utilization`, `runs_active`, `waits_active` and
+  `provider_pending`; `workflow` and `version` (run signals only);
+  `group_by` (`none`, `workflow`, `status` or `task_type`) and `top` (1–20,
+  default 4, with the rest under `(other)`). It answers `{from, to,
+  granularity, complete_until, series: [{signal, labels, unit, points}]}`, each
+  point `[time, value]` with `null` where nothing is known. Units are `count`,
+  `ratio` (0–1), `ms` and `seconds`.
+- `workflows` answers up to 200 workflows by ended runs with their versions,
+  outcome counts, `failure_rate`, p50 and p95 duration and last run, plus
+  `totals` for the whole range. `steps` takes `workflow` (and `version`) and
+  answers up to 500 steps with their kind, executions, failures (timed out
+  included), and p50 and p95 duration and queue wait.
+- A series holds at most 500 points (`422 WV-STATS-RANGE`) and an answer at
+  most 21 series (`422 WV-STATS-SERIES`); contradictory filters answer
+  `422 WV-FILTER`. `complete_until` is the time up to which buckets no longer
+  change, or `null` before the first rollup.
+- Test runs never count. Runs whose details the platform withholds count under
+  the workflow `(other)`. `runs_failed` and `failed` count timed-out runs.
 
 **Telemetry settings.** `operations_telemetry.read`
 (`GET …/projects/{project}/operations/telemetry`, `weave operations
