@@ -58,6 +58,13 @@ export function withExecution(
   at: string,
 ): LastResults {
   const steps: Record<string, LastResult> = { ...(previous?.steps ?? {}) };
+  // A step it reached replaces all of its results: a loop that ran fewer
+  // items this time keeps no result for the ones it no longer reached.
+  const reached = new Set(
+    response.trace.filter((entry) => !entry.frame).map((entry) => entry.nodeId),
+  );
+  for (const key of Object.keys(steps))
+    if (reached.has(instanceStep(key))) delete steps[key];
   for (const entry of response.trace) {
     if (entry.frame) continue;
     const print = prints.get(entry.nodeId);

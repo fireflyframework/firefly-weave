@@ -17,7 +17,12 @@ SPDX-License-Identifier: Apache-2.0
 */
 // The Table view's rows, columns and note.
 import { describe, expect, it } from "vitest";
-import { cellText, tableOf } from "../src/app/editor/ndv/panes/table-view";
+import {
+  cellText,
+  filterTable,
+  tableCount,
+  tableOf,
+} from "../src/app/editor/ndv/panes/table-view";
 
 describe("the Table view", () => {
   it("puts a list of objects in rows under the union of their keys", () => {
@@ -57,5 +62,15 @@ describe("the Table view", () => {
       note: null,
     });
     expect(cellText(undefined)).toBe("");
+  });
+});
+
+describe("the Table filter", () => {
+  it("searches every row, then shows at most 500", () => {
+    const rows = Array.from({ length: 1200 }, (_, i) => ({
+      tier: i >= 1000 ? "gold" : "silver",
+    }));
+    expect(tableCount(rows, "gold")).toBe("200 of 1,200 items");
+    expect(filterTable(tableOf(rows), "gold", rows)).toHaveLength(200);
   });
 });

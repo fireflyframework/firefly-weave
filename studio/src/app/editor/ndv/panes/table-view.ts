@@ -89,14 +89,35 @@ export function tableOf(value: Json | undefined): TableData {
   };
 }
 
-/** The rows any of whose cells holds every word of `query` (case-insensitive). */
-export function filterTable(table: TableData, query: string): string[][] {
+/** The rows of the whole value (not only the first 500) that hold every word of `query`, case-insensitive. */
+export function filterTable(
+  table: TableData,
+  query: string,
+  value?: Json,
+): string[][] {
   const words = query.toLowerCase().split(/\s+/).filter(Boolean);
   if (!words.length) return table.rows;
-  return table.rows.filter((row) => {
+  const rows =
+    value !== undefined && table.total > table.rows.length
+      ? allRows(table, value)
+      : table.rows;
+  return rows.filter((row) => {
     const text = row.join(" ").toLowerCase();
     return words.every((word) => text.includes(word));
   });
+}
+
+/** Every row of a value, under the table's columns. */
+function allRows(table: TableData, value: Json): string[][] {
+  if (Array.isArray(value))
+    return (value as Record<string, Json>[]).map((row) =>
+      table.columns.map((key) =>
+        cellText(isObject(row) ? row[key] : undefined),
+      ),
+    );
+  if (isObject(value))
+    return Object.entries(value).map(([key, item]) => [key, cellText(item)]);
+  return table.rows;
 }
 
 /** The pane's count for its Table: "12 items", or "3 of 12 items" while filtering. */
@@ -110,5 +131,5 @@ export function tableCount(value: Json | undefined, query: string): string {
   const plural = (n: number) =>
     `${n.toLocaleString("en-US")} ${noun}${n === 1 ? "" : "s"}`;
   if (!query.trim()) return plural(table.total);
-  return `${filterTable(table, query).length.toLocaleString("en-US")} of ${plural(table.total)}`;
+  return `${filterTable(table, query, value).length.toLocaleString("en-US")} of ${plural(table.total)}`;
 }

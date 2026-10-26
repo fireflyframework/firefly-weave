@@ -25,7 +25,7 @@ import {
   input,
 } from "@angular/core";
 import type { Json } from "../registry";
-import { filterTable, tableOf } from "./table-view";
+import { filterTable, TABLE_ROWS, tableOf } from "./table-view";
 
 @Component({
   selector: "weave-data-table",
@@ -63,5 +63,8 @@ export class DataTable {
   readonly label = input("Data");
   readonly query = input("");
   readonly table = computed(() => tableOf(this.value()));
-  readonly shown = computed(() => filterTable(this.table(), this.query()));
+  /** The matching rows of the whole value, then at most 500 of them. */
+  readonly shown = computed(() =>
+    filterTable(this.table(), this.query(), this.value()).slice(0, TABLE_ROWS),
+  );
 }

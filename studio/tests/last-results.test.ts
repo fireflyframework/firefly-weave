@@ -117,3 +117,23 @@ describe("last results", () => {
       expect(readResults(text)).toBeNull();
   });
 });
+
+describe("last results of a loop", () => {
+  const ran = (count: number) => ({
+    ...RESPONSE,
+    trace: Array.from({ length: count }, (_, i) => ({
+      index: i,
+      nodeId: "send",
+      instanceKey: `send[${i}]`,
+      kind: "action",
+      status: "completed" as const,
+      output: { id: i },
+    })),
+  });
+  it("forget iterations an execution no longer reached", () => {
+    const prints = new Map([["send", print(2)]]);
+    const three = withExecution(null, ran(3), prints, "a");
+    const two = withExecution(three, ran(2), prints, "b");
+    expect(Object.keys(two.steps)).toEqual(["send[0]", "send[1]"]);
+  });
+});
