@@ -255,18 +255,23 @@ test("a step the test data doesn't reach says which path was taken", async ({
 test("a secret in test input is refused and named, never shown", async ({
   page,
 }) => {
+  const answers: string[] = [];
+  page.on("response", async (response) => {
+    if (response.url().includes("/studio/local/debug/execute"))
+      answers.push(await response.text().catch(() => ""));
+  });
   const { details, calls } = await openExecuteFixture(page);
-  await page.route("**/studio/local/debug/execute", (route) =>
-    route.fulfill({
-      status: 422,
-      json: {
-        status: 422,
-        code: "WV-SCHEMA-SECRET_VALUE",
-        message: "Test data can't hold values marked secret; leave them out",
-        result: { paths: ["/input"] },
-      },
-    }),
-  );
+  // Studio's form never takes a secret, so the test puts one in the request the
+  // host receives; the repository's real host code answers it.
+  await page.route("**/studio/local/debug/execute", (route) => {
+    const body = route.request().postDataJSON() as Record<string, unknown>;
+    return route.fallback({
+      postData: JSON.stringify({
+        ...body,
+        input: { customerId: "c-1", amount: 1, password: "hunter2" },
+      }),
+    });
+  });
   await pinSample(details, "lookup");
   await details.open("score");
   await (await shownExecute(details)).click();
@@ -274,9 +279,42 @@ test("a secret in test input is refused and named, never shown", async ({
   await expect(pane.locator(".pane-notice")).toContainText(
     "The test input holds a value marked secret. Remove it from the test input.",
   );
-  expect(
-    calls.filter((call) => JSON.stringify(call.body).includes("hunter2")),
-  ).toEqual([]);
+  expect(JSON.stringify(executions(calls).at(-1)!.body)).toContain("hunter2");
+  expect(answers.length).toBeGreaterThan(0);
+  for (const answer of answers) expect(answer).not.toContain("hunter2");
+  await expect(details.dialog).not.toContainText("hunter2");
+  await expect(page.locator(".toast-region")).not.toContainText("hunter2");
+});
+
+test("Execute step on an earlier step uses only the test data of the steps it runs", async ({
+  page,
+}) => {
+  const { details, calls } = await openExecuteFixture(page);
+  await pinSample(details, "lookup");
+  await pinSample(details, "notify");
+  await details.open("score");
+  await (await shownExecute(details)).click();
+  const pane = await outputPane(details);
+  await expect(pane.locator(".pane-source-tag")).toHaveText("Simulated");
+  expect(Object.keys(executions(calls)[0].body["mocks"] as object)).toEqual([
+    "node:lookup",
+  ]);
+});
+
+test("Ctrl/Cmd+Enter in a field being edited executes what it holds", async ({
+  page,
+}) => {
+  const { details, calls } = await openExecuteFixture(page);
+  await details.open("summarize");
+  const prompt = details.dialog.getByRole("textbox", { name: /^Prompt/ });
+  await prompt.click();
+  await page.keyboard.press("End");
+  await page.keyboard.type(" quickly");
+  await page.keyboard.press("ControlOrMeta+Enter");
+  await expect.poll(() => executions(calls).length).toBe(1);
+  expect(String(executions(calls)[0].body["source"])).toContain(
+    "Summarize the order quickly",
+  );
 });
 
 test("switching drafts while executing leaves the other draft's panes alone", async ({
