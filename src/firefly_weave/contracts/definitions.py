@@ -95,6 +95,8 @@ def _omit_absent_default(schema: JsonSchemaValue) -> None:
 
 # None represents an omitted field internally, never a supplied JSON null.
 type OmissionOnly[T] = Annotated[T | SkipJsonSchema[None], BeforeValidator(_reject_explicit_null)]
+# What a step's final failure does: stop the run (the default), continue with no output, or run the step's error path.
+type StepErrorPolicy = Literal["stop", "continue", "errorOutput"]
 
 
 class ContractModel(BaseModel):
@@ -265,6 +267,14 @@ def _undo_forms(step: ActionStep | CallWorkflowStep) -> None:
         raise ValueError("holdSeconds applies only to a step that is confirmed or cancelled")
 
 
+def _error_handling(step: ErrorHandlingStep) -> None:
+    """An error path goes with errorOutput and nothing else; a call handles its errors only when it waits."""
+    if (step.on_error == "errorOutput") != (step.error_path is not None):
+        raise ValueError("errorPath goes with onError: errorOutput")
+    if isinstance(step, CallWorkflowStep) and step.mode == "detach" and step.on_error is not None:
+        raise ValueError("onError applies only when the call waits for its result")
+
+
 class ActionStep(ContractModel):
     id: ResourceName
     kind: Literal["action"]
@@ -290,9 +300,18 @@ class ActionStep(ContractModel):
         default=None, alias="holdSeconds", exclude_if=_is_absent, json_schema_extra=_omit_absent_default
     )
 
+    # What the step's final failure does; omitted means stop. The error path runs only with errorOutput.
+    on_error: OmissionOnly[StepErrorPolicy] = Field(
+        default=None, alias="onError", exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+    error_path: OmissionOnly[Branch] = Field(
+        default=None, alias="errorPath", exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+
     @model_validator(mode="after")
     def one_undo_form(self) -> ActionStep:
         _undo_forms(self)
+        _error_handling(self)
         return self
 
 
@@ -304,12 +323,36 @@ class LLMStep(ContractModel):
     prompt: Expression
     context: Expression
     connection: ResourceName
+    # What the step's final failure does; omitted means stop. The error path runs only with errorOutput.
+    on_error: OmissionOnly[StepErrorPolicy] = Field(
+        default=None, alias="onError", exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+    error_path: OmissionOnly[Branch] = Field(
+        default=None, alias="errorPath", exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+
+    @model_validator(mode="after")
+    def error_handling(self) -> LLMStep:
+        _error_handling(self)
+        return self
 
 
 class TransformStep(ContractModel):
     id: ResourceName
     kind: Literal["transform"]
     value: Expression
+    # What the step's final failure does; omitted means stop. The error path runs only with errorOutput.
+    on_error: OmissionOnly[StepErrorPolicy] = Field(
+        default=None, alias="onError", exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+    error_path: OmissionOnly[Branch] = Field(
+        default=None, alias="errorPath", exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+
+    @model_validator(mode="after")
+    def error_handling(self) -> TransformStep:
+        _error_handling(self)
+        return self
 
 
 class DecisionRule(ContractModel):
@@ -348,6 +391,18 @@ class DecisionTableStep(ContractModel):
     kind: Literal["decisionTable"]
     uses: VersionedReference
     input: Expression = Field(alias="with")
+    # What the step's final failure does; omitted means stop. The error path runs only with errorOutput.
+    on_error: OmissionOnly[StepErrorPolicy] = Field(
+        default=None, alias="onError", exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+    error_path: OmissionOnly[Branch] = Field(
+        default=None, alias="errorPath", exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+
+    @model_validator(mode="after")
+    def error_handling(self) -> DecisionTableStep:
+        _error_handling(self)
+        return self
 
 
 class Branch(ContractModel):
@@ -385,6 +440,18 @@ class SignalStep(ContractModel):
     name: ResourceName
     timeout_seconds: PositiveInt = Field(alias="timeoutSeconds")
     payload_schema: JsonObjectData = Field(alias="payloadSchema")
+    # What the step's final failure does; omitted means stop. The error path runs only with errorOutput.
+    on_error: OmissionOnly[StepErrorPolicy] = Field(
+        default=None, alias="onError", exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+    error_path: OmissionOnly[Branch] = Field(
+        default=None, alias="errorPath", exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+
+    @model_validator(mode="after")
+    def error_handling(self) -> SignalStep:
+        _error_handling(self)
+        return self
 
 
 class HumanTaskStep(ContractModel):
@@ -402,10 +469,19 @@ class HumanTaskStep(ContractModel):
         default=None, alias="expirySeconds", exclude_if=_is_absent, json_schema_extra=_omit_absent_default
     )
 
+    # What the step's final failure does; omitted means stop. The error path runs only with errorOutput.
+    on_error: OmissionOnly[StepErrorPolicy] = Field(
+        default=None, alias="onError", exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+    error_path: OmissionOnly[Branch] = Field(
+        default=None, alias="errorPath", exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+
     @model_validator(mode="after")
     def unique_decisions(self) -> HumanTaskStep:
         if len(set(self.decisions)) != len(self.decisions):
             raise ValueError("Decision identifiers must be unique")
+        _error_handling(self)
         return self
 
 
@@ -460,6 +536,14 @@ class CallWorkflowStep(ContractModel):
         default=None, alias="holdSeconds", exclude_if=_is_absent, json_schema_extra=_omit_absent_default
     )
 
+    # What the step's final failure does; omitted means stop. The error path runs only with errorOutput.
+    on_error: OmissionOnly[StepErrorPolicy] = Field(
+        default=None, alias="onError", exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+    error_path: OmissionOnly[Branch] = Field(
+        default=None, alias="errorPath", exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+
     @model_validator(mode="after")
     def failure_needs_wait(self) -> CallWorkflowStep:
         if self.mode == "detach" and self.on_failure is not None:
@@ -468,6 +552,7 @@ class CallWorkflowStep(ContractModel):
         undo = (self.confirm, self.cancel, self.compensate, self.irreversible)
         if self.mode == "detach" and any(value is not None for value in undo):
             raise ValueError("Only a call that waits for its result can be undone")
+        _error_handling(self)
         return self
 
 
@@ -510,6 +595,18 @@ class TransactionStep(ContractModel):
     )
     steps: list[Step] = Field(min_length=1)
     output: Expression
+    # What the step's final failure does; omitted means stop. The error path runs only with errorOutput.
+    on_error: OmissionOnly[StepErrorPolicy] = Field(
+        default=None, alias="onError", exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+    error_path: OmissionOnly[Branch] = Field(
+        default=None, alias="errorPath", exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+
+    @model_validator(mode="after")
+    def error_handling(self) -> TransactionStep:
+        _error_handling(self)
+        return self
 
 
 type Step = Annotated[
@@ -528,6 +625,19 @@ type Step = Annotated[
     | TransactionStep,
     Field(discriminator="kind"),
 ]
+
+
+# The steps that accept onError. An AI agent step joins them when it is added.
+type ErrorHandlingStep = (
+    ActionStep
+    | LLMStep
+    | TransformStep
+    | DecisionTableStep
+    | SignalStep
+    | HumanTaskStep
+    | CallWorkflowStep
+    | TransactionStep
+)
 
 
 type CallerNames = Annotated[

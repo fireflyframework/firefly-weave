@@ -27,7 +27,7 @@ from firefly_weave.compiler.api import compile_source, validate_authoring, valid
 from firefly_weave.compiler.catalog import CatalogSnapshot
 from firefly_weave.compiler.language_support import COMPILED_FEATURES, UnsupportedUse, unsupported_uses
 from firefly_weave.contracts import definitions
-from firefly_weave.contracts.language_features import ADVERTISED_FEATURES
+from firefly_weave.contracts.language_features import ADVERTISED_FEATURES, ERROR_KINDS
 
 CODE = "WV-COMP-UNSUPPORTED_FEATURE"
 CONCAT = {"op": {"name": "concat", "args": [{"literal": "Invoice "}, {"ref": "/input/number"}]}}
@@ -352,7 +352,29 @@ def test_every_expression_field_of_every_step_kind_is_scanned():
 
 def test_only_kinds_the_scan_walks_hold_blocks():
     holders = {_kind(model) for model in _step_models() if _holds_blocks(model)}
-    assert {"switch", "parallel"} <= holders <= {"switch", "parallel", "forEach"}
+    # Every kind that handles its errors holds an error path, which the scan walks for any kind.
+    assert {"switch", "parallel"} <= holders <= {"switch", "parallel", "forEach", *ERROR_KINDS}
+
+
+def test_the_scan_walks_error_paths_and_reports_the_setting_until_it_is_compiled(monkeypatch):
+    monkeypatch.setattr(support, "COMPILED_FEATURES", frozenset())
+    document = workflow(
+        [
+            {
+                "id": "send",
+                "kind": "transform",
+                "value": NULL,
+                "onError": "errorOutput",
+                "errorPath": {"steps": [{"id": "label", "kind": "transform", "value": CONCAT}], "output": JOIN},
+            }
+        ]
+    )
+    assert [(use.path, use.feature) for use in unsupported_uses(document)] == [
+        ("/spec/steps/0/errorPath", "flow.onError"),
+        ("/spec/steps/0/errorPath/output/op/name", "text.join"),
+        ("/spec/steps/0/errorPath/steps/0/value/op/name", "text.concat"),
+        ("/spec/steps/0/onError", "flow.onError"),
+    ]
 
 
 def test_every_expression_field_outside_steps_is_scanned():

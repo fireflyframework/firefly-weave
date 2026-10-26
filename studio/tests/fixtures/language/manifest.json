@@ -686,6 +686,33 @@
         },
         "only_inside": "transaction",
         "studio": "pending"
+      },
+      {
+        "name": "onError",
+        "feature": "flow.onError",
+        "kinds": [
+          "action",
+          "llm",
+          "transform",
+          "decisionTable",
+          "callWorkflow",
+          "humanTask",
+          "signal",
+          "transaction"
+        ],
+        "values": [
+          "stop",
+          "continue",
+          "errorOutput"
+        ],
+        "path": "/onError",
+        "default": "stop",
+        "block": {
+          "name": "errorPath",
+          "path": "/errorPath",
+          "label": "On error"
+        },
+        "studio": "pending"
       }
     ]
   }

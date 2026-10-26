@@ -50,6 +50,7 @@ def test_feature_vocabulary_is_frozen():
         "flow.callWorkflow",
         "flow.eventTrigger",
         "flow.forEach",
+        "flow.onError",
         "flow.transaction",
         "text.concat",
         "text.join",
@@ -231,7 +232,7 @@ def test_new_constructs_stay_pending_until_studio_ships_them():
         "callable",
         "eventTrigger",
     }
-    assert {entry.name for entry in manifest.step_fields if entry.studio == "pending"} == {"undo"}
+    assert {entry.name for entry in manifest.step_fields if entry.studio == "pending"} == {"undo", "onError"}
 
 
 def test_loop_and_join_entries_match_the_spec_example():
