@@ -670,3 +670,46 @@ weave-input-pane.is-compact .pane-source-field::before {
     height: 44px;
   }
 }
+
+/* A decision's paths (Output, after an execution): 32 px rows, 44 px on touch. */
+.path-list {
+  margin: 0 0 var(--space-3);
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+.path-row {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 32px;
+  padding: 0 var(--space-2);
+  border-bottom: 1px solid var(--line);
+  font: var(--type-small);
+}
+.path-row:last-child {
+  border-bottom: 0;
+}
+.path-row-icon {
+  display: inline-flex;
+  color: var(--success-ink);
+}
+.path-row-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.path-row-outcome {
+  color: var(--muted);
+  white-space: nowrap;
+}
+.path-result-caption {
+  text-transform: uppercase;
+}
+@media (max-width: 767px), (pointer: coarse) {
+  .path-row {
+    min-height: 44px;
+  }
+}

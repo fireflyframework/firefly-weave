@@ -36,6 +36,8 @@ import {
 import { Icon } from "../../../icon";
 import { DataTree } from "./data-tree";
 import { DataTable } from "./data-table";
+import { PathList } from "./path-list";
+import { pathRows, type PathRow } from "../../state/run-summary";
 import { tableCount } from "./table-view";
 import { PinnedBanner } from "./pinned-banner";
 import { OutputEditor } from "./output-editor";
@@ -60,7 +62,7 @@ import { ndvRegistry, type Json } from "../registry";
   selector: "weave-output-pane",
   standalone: true,
   changeDetection: ChangeDetectionStrategy.Eager,
-  imports: [Icon, DataTree, DataTable, PinnedBanner, OutputEditor],
+  imports: [Icon, DataTree, DataTable, PathList, PinnedBanner, OutputEditor],
   template: `@let none = noOutput();
     @let pin = pinned();
     @let canPin = pinnable();
@@ -117,14 +119,17 @@ import { ndvRegistry, type Json } from "../registry";
       } @else if (event() !== undefined && value() === undefined) {
         <span class="pill" data-tone="info">Sample</span>
       }
+      @let paths = this.paths();
       <span class="pane-count">{{
         none
           ? ""
-          : event() !== undefined && view() === "table"
-            ? tableCount(event(), query())
-            : event() !== undefined && view() !== "schema"
-              ? sampleCount(event())
-              : countLabel(rows.length, query() ? shown.length : undefined)
+          : paths
+            ? paths.took
+            : event() !== undefined && view() === "table"
+              ? tableCount(event(), query())
+              : event() !== undefined && view() !== "schema"
+                ? sampleCount(event())
+                : countLabel(rows.length, query() ? shown.length : undefined)
       }}</span>
       @if (canPin) {
         <button
@@ -210,6 +215,8 @@ import { ndvRegistry, type Json } from "../registry";
                 json(event())
               }}</pre>
             }
+          } @else if (view() === "schema" && paths) {
+            <weave-path-list [rows]="paths.rows" [result]="paths.result" />
           } @else if (view() === "schema") {
             @if (session().target === "$trigger" && event() === undefined) {
               <p class="pane-empty-text">No test event yet</p>
@@ -286,7 +293,11 @@ export class OutputPane {
   value = input<Json | undefined>(undefined);
   readonly chosenView = signal<DataView | undefined>(savedView("output"));
   view(): DataView {
-    return this.chosenView() ?? defaultOutputView(this.event());
+    // A decision that ran opens on its paths (Schema).
+    return (
+      this.chosenView() ??
+      (this.paths() ? "schema" : defaultOutputView(this.event()))
+    );
   }
   readonly searching = signal(false);
   readonly query = signal("");
@@ -321,12 +332,39 @@ export class OutputPane {
       ? controller.testEvent()
       : controller.stepData(target)?.value;
   }
+  /**
+   * A decision that ran: its paths as the last execution took them, the
+   * count's words ("Took path 1") and the taken path's result; null otherwise.
+   */
+  paths(): { rows: PathRow[]; took: string; result: Json | undefined } | null {
+    const { controller, target, host } = this.session();
+    const step = controller.step(target);
+    if (step?.kind !== "switch" || this.pinned()) return null;
+    const variables = host.execution?.last()?.variables;
+    const rows = pathRows(step, variables, host.model.definition);
+    const taken = rows?.find((row) => row.outcome === "taken");
+    if (!rows || !taken) return null;
+    const branches = (variables?.["branches"] ?? {}) as Record<
+      string,
+      { owner?: unknown; output?: Json }
+    >;
+    const branch = Object.values(branches).find((b) => b?.owner === step.id);
+    return {
+      rows,
+      took:
+        taken.label === "Otherwise"
+          ? "Took Otherwise"
+          : `Took ${taken.label.toLowerCase()}`,
+      result: branch?.output,
+    };
+  }
   /** The step ran and returned null. */
   returnedNull(): boolean {
     const { controller, target } = this.session();
     if (target.startsWith("$")) return false;
     const data = controller.stepData(target);
-    return data?.source === "simulated" && data.value === null;
+    // A decision whose path has no result says so in its path list.
+    return data?.source === "simulated" && data.value === null && !this.paths();
   }
   /** Execute step from the pane (its empty state, the stale pin's banner). */
   execute() {

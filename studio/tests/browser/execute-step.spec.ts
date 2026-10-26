@@ -330,6 +330,10 @@ test("switching drafts while executing leaves the other draft's panes alone", as
   if (await show.isVisible()) await show.click();
   await expect(canvas).toBeVisible();
   const settings = page.getByRole("dialog", { name: "Workflow settings" });
+  // A workflow opened from a file may open its settings a moment later.
+  await settings
+    .waitFor({ state: "visible", timeout: 3000 })
+    .catch(() => undefined);
   if (await settings.isVisible().catch(() => false)) {
     await settings.getByRole("button", { name: "Close" }).click();
     await expect(settings).toBeHidden();

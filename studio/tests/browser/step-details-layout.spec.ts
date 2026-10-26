@@ -72,10 +72,9 @@ for (const size of sizes)
       await expect(
         dialog.getByRole("button", { name: "Rename lookup" }),
       ).toBeVisible();
-      const execute = dialog.getByRole("button", {
-        name: "Execute step",
-        exact: true,
-      });
+      const execute = dialog
+        .locator(".sd-execute")
+        .getByRole("button", { name: "Execute step", exact: true });
       // Execute step is the one primary action: the accent tokens, its menu half too.
       await expect(execute).not.toHaveAttribute("aria-disabled", "true");
       const tokens = await execute.evaluate((el) => {
@@ -1092,7 +1091,9 @@ for (const size of [
       const subtitle = await textBox(dialog.locator(".sd-subtitle"));
       const block = await box(dialog.locator(".sd-name-block"));
       const execute = await box(
-        dialog.getByRole("button", { name: "Execute step", exact: true }),
+        dialog
+          .locator(".sd-execute")
+          .getByRole("button", { name: "Execute step", exact: true }),
       );
       const toggle = await box(
         dialog.getByRole("button", { name: "More ways to execute" }),
