@@ -24,6 +24,7 @@ from pydantic import AwareDatetime, Field
 
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.definitions import ContractModel
+from firefly_weave.contracts.transactions import Effect, ParticipantStatus, PhaseOperation, TransactionState, UndoMode
 from firefly_weave.contracts.values import JsonData, JsonObjectData
 
 
@@ -45,6 +46,7 @@ class RuntimeEvent(ContractModel):
         "incident_resolved",
         "cancelled",
         "call_completed",
+        "step_failed",
     ]
     data: JsonObjectData = Field(default_factory=dict)
     timestamp: AwareDatetime
@@ -102,6 +104,74 @@ class IncidentState(ContractModel):
     node_id: str
     generation: int = Field(default=0, ge=0)
     code: str
+    # The failure that put a transaction in doubt, when the incident's own code is a transaction code.
+    origin_code: str | None = Field(default=None, exclude_if=lambda v: v is None)
+
+
+class TransactionCause(ContractModel):
+    """Why a transaction is undone or in doubt: a code and the instance where it happened."""
+
+    code: str
+    instance_key: str
+    # Whether the failing step may have applied anything; absent for causes that are not a step failure.
+    effect: Effect | None = Field(default=None, exclude_if=lambda v: v is None)
+
+
+class ParticipantRecord(ContractModel):
+    """One step of a transaction that changes another system, recorded before it is dispatched.
+
+    ``status`` follows the participant's forward step, then its confirm, cancel or undo. ``effect`` folds every
+    failed attempt of the forward step: it is ``none`` only while no attempt may have applied anything.
+    """
+
+    key: str
+    mode: UndoMode
+    status: ParticipantStatus = "dispatched"
+    effect: Effect = "none"
+    # The forward outcome its undo is told: "done" after a success, "unknown" after a failure that may have applied.
+    outcome: Literal["done", "unknown"] | None = Field(default=None, exclude_if=lambda v: v is None)
+    # Attempts of the phase in progress (confirm, cancel or undo).
+    attempts: int = Field(default=0, ge=0, exclude_if=lambda v: not v)
+    # When the forward step must have settled (its task deadline or its called workflow's time limit).
+    deadline: datetime | None = Field(default=None, exclude_if=lambda v: v is None)
+    # A reservation's expiry: registration plus its hold, or the earlier expiry the step reported.
+    expires_at: datetime | None = Field(default=None, exclude_if=lambda v: v is None)
+    # What the step's undo phases read besides the input: the bindings and loop roots they reference, and its output.
+    scope: JsonObjectData = Field(default_factory=dict, exclude_if=lambda v: not v)
+
+
+class TransactionRecord(ContractModel):
+    """One instance of a ``transaction`` step and its participants, in registration order."""
+
+    status: TransactionState = "open"
+    business_key: str | None = Field(default=None, exclude_if=lambda v: v is None)
+    cause: TransactionCause | None = Field(default=None, exclude_if=lambda v: v is None)
+    # An abort that arrived while the step that can't be undone was in flight; its result decides.
+    pending_abort: TransactionCause | None = Field(default=None, exclude_if=lambda v: v is None)
+    opened_at: datetime
+    decided_at_sequence: int | None = Field(default=None, exclude_if=lambda v: v is None)
+    ended_at: datetime | None = Field(default=None, exclude_if=lambda v: v is None)
+    hold_by: datetime | None = Field(default=None, exclude_if=lambda v: v is None)
+    settle_by: datetime | None = Field(default=None, exclude_if=lambda v: v is None)
+    # Settle deadlines armed so far; the next one is armed at this generation.
+    generation: int = Field(default=0, ge=0, exclude_if=lambda v: not v)
+    # The in-doubt incident's key while the transaction is in doubt.
+    incident: str | None = Field(default=None, exclude_if=lambda v: v is None)
+    # Set once the transaction starts going back: the rest of its body never runs.
+    rollback: bool = Field(default=False, exclude_if=lambda v: not v)
+    participants: list[ParticipantRecord] = Field(default_factory=list)
+    # Body steps that wait for every reservation to be confirmed.
+    resume: list[str] = Field(default_factory=list, exclude_if=lambda v: not v)
+    # Changes since the projection was written; persisted with the state.
+    revision: int = Field(default=1, ge=1)
+
+
+class RunEnding(ContractModel):
+    """A run that is ending once its transactions settle: the status and outcome it ends with."""
+
+    status: Literal["failed", "cancelled", "timed_out"]
+    code: str | None = Field(default=None, exclude_if=lambda v: v is None)
+    output: JsonData = Field(default=None, exclude_if=lambda v: v is None)
 
 
 class RunState(ContractModel):
@@ -124,12 +194,29 @@ class RunState(ContractModel):
     loops: dict[str, LoopState] = Field(default_factory=dict, exclude_if=lambda v: not v)
     incidents: dict[str, IncidentState] = Field(default_factory=dict)
     deferred_results: list[RuntimeEvent] = Field(default_factory=list)
+    # The run's ID, recorded at start for workflows whose undo steps name operation keys.
+    run_id: UUID | None = Field(default=None, exclude_if=lambda v: v is None)
+    transactions: dict[str, TransactionRecord] = Field(default_factory=dict, exclude_if=lambda v: not v)
+    # Steps a barrier stopped in the middle of an event; they continue when it lifts.
+    parked: list[str] = Field(default_factory=list, exclude_if=lambda v: not v)
+    ending: RunEnding | None = Field(default=None, exclude_if=lambda v: v is None)
 
 
 class TerminalControl(ContractModel):
     id: UUID
     scope: Scope
     state: RunState
+
+
+class TaskTransaction(ContractModel):
+    """What a task runs for its transaction: the transaction and participant instance keys, the phase and mode."""
+
+    id: str
+    branch: str
+    phase: PhaseOperation
+    mode: UndoMode
+    # The forward outcome an undo is told; absent for forward steps and confirms.
+    outcome: Literal["done", "unknown"] | None = Field(default=None, exclude_if=lambda v: v is None)
 
 
 class TaskIntent(ContractModel):
@@ -142,6 +229,11 @@ class TaskIntent(ContractModel):
     task_type: str | None
     task_version: str | None
     deadline: datetime
+    transaction: TaskTransaction | None = Field(default=None, exclude_if=lambda v: v is None)
+    # Replaces the action's own retry policy (an undo phase's policy); wire names as in definitions.
+    retry_policy: JsonObjectData | None = Field(default=None, exclude_if=lambda v: v is None)
+    # Settlement work: it runs while the run is paused or held by another incident.
+    settlement: bool = Field(default=False, exclude_if=lambda v: not v)
 
 
 class HumanTaskIntent(ContractModel):
@@ -170,6 +262,8 @@ class CallIntent(ContractModel):
     mode: Literal["wait", "detach"]
     on_failure: Literal["stop", "continue"] | None = Field(default=None, exclude_if=lambda v: v is None)
     business_key: str | None = Field(default=None, exclude_if=lambda v: v is None)
+    transaction: TaskTransaction | None = Field(default=None, exclude_if=lambda v: v is None)
+    settlement: bool = Field(default=False, exclude_if=lambda v: not v)
 
 
 class Deadline(ContractModel):
@@ -187,7 +281,10 @@ class StepChange(ContractModel):
 
 
 class ControlCommand(ContractModel):
-    kind: Literal["spawn_branch", "accept_output", "join", "revoke_leases", "terminate"]
+    """``settle`` makes a step's in-flight work settlement work, revoking it if unclaimed and cancelling a child run
+    it waits for; ``transaction`` records that a transaction changed."""
+
+    kind: Literal["spawn_branch", "accept_output", "join", "revoke_leases", "terminate", "settle", "transaction"]
     node_id: str
     branch: str | None = None
     # The element position for a loop iteration's spawn and output; absent otherwise.

@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from types import MappingProxyType
 from typing import cast
+from uuid import UUID
 
 from pydantic import Field
 
@@ -54,6 +55,14 @@ from firefly_weave.compiler.schemas import validate_payload
 from firefly_weave.contracts.definitions import ActionDefinition, ContractModel, WorkerImplementation, load_definition
 from firefly_weave.contracts.instance_keys import node_of
 from firefly_weave.contracts.limits import Limits
+from firefly_weave.contracts.transactions import (
+    HOLD_MARGIN_SECONDS,
+    IN_DOUBT_CODES,
+    TRANSACTION_MESSAGES,
+    UndoPhase,
+    phase_key,
+    split_phase,
+)
 from firefly_weave.contracts.values import JsonObject, JsonValue
 from firefly_weave.runtime.capacity import (
     ADMISSION_OUTPUT_BYTES,
@@ -93,11 +102,32 @@ from firefly_weave.runtime.models import (
     IncidentState,
     JoinState,
     LoopState,
+    ParticipantRecord,
+    RunEnding,
     RunState,
     RuntimeEvent,
     StepChange,
     TaskIntent,
+    TaskTransaction,
+    TransactionCause,
+    TransactionRecord,
     Transition,
+)
+from firefly_weave.runtime.transactions import (
+    IN_PROGRESS,
+    STEP_FAILURE_CODES,
+    STUCK,
+    UNDOABLE,
+    UNSETTLED,
+    TransactionShapes,
+    deadline_key,
+    fold,
+    in_transaction,
+    participant_index,
+    settlement_event,
+    shapes,
+    split_deadline,
+    undo_scope,
 )
 
 
@@ -128,8 +158,14 @@ def deadline_order(node_id: str, due: datetime, duration_nodes: set[str]) -> tup
 
 
 def duration_steps(ir: WorkflowIR) -> set[str]:
-    """Steps whose deadlines elapse and continue the run: duration waits, and loops resuming after a yield."""
-    return {node.id for node in ir.graph.nodes if isinstance(node, (WaitNode, ForEachNode))}
+    """Steps whose deadlines elapse and continue the run: duration waits, loops resuming after a yield, and the hold
+    and settle deadlines of transactions."""
+    return {node.id for node in ir.graph.nodes if isinstance(node, (WaitNode, ForEachNode, TransactionNode))}
+
+
+def unsettled(state: RunState) -> bool:
+    """Whether a transaction of the run still holds work, so the run cannot end yet."""
+    return any(record.status in UNSETTLED for record in state.transactions.values())
 
 
 def workflow(artifact: CompiledArtifact) -> WorkflowIR:
@@ -201,6 +237,7 @@ class PreparedWorkflow:
     body_intents: Mapping[str, int]
     nested_blocks: frozenset[str]
     contexts: ContextShapes
+    transactions: TransactionShapes | None = None
 
 
 def prepare(artifact: CompiledArtifact) -> PreparedWorkflow:
@@ -221,7 +258,7 @@ def prepare(artifact: CompiledArtifact) -> PreparedWorkflow:
                 for node in body
                 if isinstance(node, (ActionNode, WaitNode, SignalNode, HumanTaskNode, ForEachNode, CallWorkflowNode))
             )
-            if any(isinstance(node, (SwitchNode, ParallelNode, ForEachNode)) for node in body):
+            if any(isinstance(node, (SwitchNode, ParallelNode, ForEachNode, TransactionNode)) for node in body):
                 nested.add(loop.id)
     return PreparedWorkflow(
         ir=ir,
@@ -231,6 +268,7 @@ def prepare(artifact: CompiledArtifact) -> PreparedWorkflow:
         body_intents=MappingProxyType(intents),
         nested_blocks=frozenset(nested),
         contexts=ContextShapes(),
+        transactions=shapes(ir),
     )
 
 
@@ -332,6 +370,9 @@ class KernelCursor(ContractModel):
     # (at most MAX_INTENTS // 2); both reset per event.
     turn_units: int = Field(default=0, ge=0, exclude_if=lambda v: not v)
     turn_intents: int = Field(default=0, ge=0, exclude_if=lambda v: not v)
+    # Steps inside transactions whose evaluation failed in an earlier pass of this event, with the failure code: the
+    # event is reduced again and each of them fails its transaction instead of being evaluated.
+    failing: dict[str, str] = Field(default_factory=dict, exclude_if=lambda v: not v)
 
 
 def begin(state: RunState, event: RuntimeEvent, artifact: CompiledArtifact | None) -> KernelCursor:
@@ -344,7 +385,8 @@ def begin(state: RunState, event: RuntimeEvent, artifact: CompiledArtifact | Non
 
 
 def transition(state: RunState, event: RuntimeEvent, artifact: CompiledArtifact | None) -> Transition:
-    if event.type in {"cancelled", "timed_out"}:
+    # A run whose transactions still hold work ends only after they settle: its stop is ordinary work.
+    if event.type in {"cancelled", "timed_out"} and not unsettled(state):
         # An allocation-limited retained state can still use terminal control.
         # The service falls back to bounded SQL persistence if this ceiling is exceeded.
         token = capacity_failures.set(None)
@@ -514,10 +556,10 @@ def _advance_owned(
             if item.path == path and item.purpose == purpose:
                 validate(ir, ir.schemas[item.schema_ref], value)
 
-    def incident(node_id: str, code: str, generation: int = 0) -> None:
+    def incident(node_id: str, code: str, generation: int = 0, origin: str | None = None) -> None:
         nonlocal current_state
         current_state.incidents[f"{node_id}:{generation}"] = IncidentState(
-            node_id=node_id, generation=generation, code=code
+            node_id=node_id, generation=generation, code=code, origin_code=origin
         )
         current_state = current_state.model_copy(
             update={"status": "suspended", "incident": current_state.incidents[min(current_state.incidents)].code}
@@ -595,6 +637,8 @@ def _advance_owned(
                 del current_state.branches[name]
         for name in [name for name in current_state.joins if inside(node_of(name), loop_suffix(name))]:
             del current_state.joins[name]
+        for name in [name for name in current_state.transactions if inside(node_of(name), loop_suffix(name))]:
+            del current_state.transactions[name]
         growing = growing_containers.get()
         for name in [name for name in current_state.loops if inside(node_of(name), loop_suffix(name))]:
             if growing is not None:
@@ -627,12 +671,520 @@ def _advance_owned(
         result.commands.append(ControlCommand(kind="terminate", node_id=current))
         queue.clear()
 
+    txns = prepared.transactions
+    failing = cursor.failing
+
+    def barrier() -> bool:
+        return current_state.status == "suspended" or current_state.manual_paused
+
+    def owner_of(key: str) -> str | None:
+        return None if txns is None else txns.owner_key(key)
+
+    def record(key: str) -> TransactionRecord:
+        return current_state.transactions[key]
+
+    def update(key: str, **changes: object) -> TransactionRecord:
+        changed = current_state.transactions[key]
+        changed = changed.model_copy(update={**changes, "revision": changed.revision + 1})
+        current_state.transactions[key] = changed
+        if not any(
+            isinstance(command, ControlCommand) and command.kind == "transaction" and command.node_id == key
+            for command in result.commands
+        ):
+            result.commands.append(ControlCommand(kind="transaction", node_id=key))
+        return changed
+
+    def participant(key: str, index: int, **changes: object) -> TransactionRecord:
+        participants = list(record(key).participants)
+        participants[index] = participants[index].model_copy(update=changes)
+        return update(key, participants=participants)
+
+    def proceed(keys: list[str]) -> None:
+        # Forward work waits behind a barrier; settlement work never does.
+        if barrier():
+            current_state.parked.extend(keys)
+        else:
+            queue.extend(keys)
+
+    def confirming(transaction: TransactionRecord) -> bool:
+        return any(item.status in {"confirming", "confirm_stuck"} for item in transaction.participants)
+
+    def runs_now(node: Node, key: str) -> bool:
+        """Whether a queued step runs now: its transaction, the run's ending and barriers hold it back or drop it."""
+        owner = owner_of(key)
+        if owner is not None:
+            transaction = record(owner)
+            if transaction.rollback or transaction.status not in {"open", "deciding", "committing", "in_doubt"}:
+                # Its transaction is being undone: the rest of the body never runs.
+                return False
+            if transaction.decided_at_sequence is not None and (
+                transaction.status == "in_doubt" or confirming(transaction)
+            ):
+                # After the point of no return, the body waits until every reservation is confirmed.
+                update(owner, resume=[*transaction.resume, key])
+                return False
+        elif current_state.ending is not None and not (isinstance(node, JoinNode) and node.mode == "transaction"):
+            # An ending run starts no new work outside its transactions.
+            return False
+        if barrier():
+            current_state.parked.append(key)
+            return False
+        return True
+
+    def in_doubt(key: str, code: str, at: str, generation: int, origin: str | None) -> None:
+        update(key, status="in_doubt", incident=f"{at}:{generation}")
+        incident(at, code, generation, origin)
+
+    def arm_hold(key: str) -> None:
+        transaction = record(key)
+        expiries = [
+            item.expires_at
+            for item in transaction.participants
+            if item.mode == "reserve" and item.expires_at is not None and item.status in {"dispatched", *UNDOABLE}
+        ]
+        if transaction.status not in {"open", "deciding"} or not expiries:
+            return
+        due = min(expiries) - timedelta(seconds=HOLD_MARGIN_SECONDS)
+        if transaction.hold_by is None or due < transaction.hold_by:
+            update(key, hold_by=due)
+            result.commands.append(Deadline(node_id=deadline_key(key, "hold"), deadline=due))
+
+    def arm_settle(key: str) -> None:
+        flying = [item.deadline for item in record(key).participants if item.status == "dispatched" and item.deadline]
+        if flying:
+            # The latest own deadline of a step in flight, plus the margin; never less than the margin from now, so
+            # a step whose deadline already passed still gets recovery's verdict first.
+            due = max(*flying, event.timestamp) + timedelta(seconds=HOLD_MARGIN_SECONDS)
+            update(key, settle_by=due)
+            result.commands.append(Deadline(node_id=deadline_key(key, "settle"), deadline=due))
+
+    def within_body(transaction: TransactionNode, suffix: str, node_id: str, key_suffix: str) -> bool:
+        inner = [*transaction.scope, transaction.id, "body"]
+        return nodes[node_id].scope[: len(inner)] == inner and key_suffix.startswith(suffix)
+
+    def cancel_scope(key: str) -> None:
+        """Stop the body of a transaction that is being undone, except participants still in flight."""
+        transaction = cast(TransactionNode, nodes[node_of(key)])
+        suffix = loop_suffix(key)
+        for name, branch in list(current_state.branches.items()):
+            here = frame_suffix(name, branch)
+            mine = (branch.owner == transaction.id and here == suffix) or within_body(
+                transaction, suffix, branch.owner, here
+            )
+            if branch.status in {"pending", "running"} and mine:
+                current_state.branches[name] = branch.model_copy(update={"status": "cancelled"})
+        for name, join in list(current_state.joins.items()):
+            if join.status == "waiting" and within_body(transaction, suffix, node_of(name), loop_suffix(name)):
+                current_state.joins[name] = join.model_copy(update={"status": "terminated"})
+        for name, loop in list(current_state.loops.items()):
+            if loop.status == "running" and within_body(transaction, suffix, node_of(name), loop_suffix(name)):
+                current_state.loops[name] = loop.model_copy(update={"status": "terminated"})
+        flying = {item.key for item in record(key).participants if item.status == "dispatched"}
+        for name in list(current_state.active):
+            if name not in flying and within_body(transaction, suffix, node_of(name), loop_suffix(name)):
+                current_state.active.remove(name)
+                current_state.waits.pop(name, None)
+                result.commands.append(ControlCommand(kind="settle", node_id=name))
+        queue[:] = [name for name in queue if not within_body(transaction, suffix, node_of(name), loop_suffix(name))]
+
+    def abort(key: str, why: TransactionCause) -> None:
+        transaction = record(key)
+        if transaction.status == "deciding":
+            # The step that can't be undone is in flight: its result decides the direction.
+            if transaction.pending_abort is None:
+                update(key, pending_abort=why)
+            return
+        if transaction.status != "open":
+            return
+        update(key, status="compensating", cause=why, rollback=True)
+        rollback(key)
+
+    def rollback(key: str) -> None:
+        cancel_scope(key)
+        for item in record(key).participants:
+            if item.status == "dispatched":
+                result.commands.append(ControlCommand(kind="settle", node_id=item.key))
+        arm_settle(key)
+        settle_progress(key)
+
+    def settle_progress(key: str) -> None:
+        """Once nothing is in flight, undo the next participant in reverse registration order, one at a time."""
+        transaction = record(key)
+        if transaction.status != "compensating" or any(i.status == "dispatched" for i in transaction.participants):
+            return
+        for index in range(len(transaction.participants) - 1, -1, -1):
+            item = transaction.participants[index]
+            if item.status in IN_PROGRESS or item.status in STUCK:
+                return
+            if item.status in UNDOABLE and item.mode in {"reserve", "compensate"}:
+                issue(key, index, "cancel" if item.mode == "reserve" else "compensate")
+                return
+        undone = any(item.status == "undone" for item in transaction.participants)
+        update(key, status="compensated" if undone else "cancelled", ended_at=event.timestamp)
+        if current_state.ending is not None:
+            maybe_end()
+        else:
+            proceed([cast(TransactionNode, nodes[node_of(key)]).join + loop_suffix(key)])
+
+    def commit(key: str) -> None:
+        update(key, status="committing", decided_at_sequence=event.sequence, pending_abort=None)
+        for index, item in enumerate(record(key).participants):
+            if item.mode == "reserve" and item.status == "done":
+                issue(key, index, "confirm")
+                if record(key).status != "committing":
+                    return
+        commit_progress(key)
+
+    def commit_progress(key: str) -> None:
+        transaction = record(key)
+        if transaction.status == "committing" and not confirming(transaction) and transaction.resume:
+            update(key, resume=[])
+            proceed(list(transaction.resume))
+
+    def undo_context(key: str, item: ParticipantRecord) -> JsonObject:
+        if current_state.run_id is None:
+            raise KernelError("WV-RUNTIME-STATE")
+        scope = dict(item.scope)
+        steps = dict(cast(JsonObject, scope.pop("steps", {})))
+        steps[node_of(item.key)] = {"output": scope.pop("output", None)}
+        return {
+            "input": current_state.input,
+            "steps": steps,
+            "participant": {"operationKey": f"{current_state.run_id}:{item.key}", "outcome": item.outcome or "unknown"},
+            "transaction": {"id": f"{current_state.run_id}:{key}", "businessKey": record(key).business_key},
+            **scope,
+        }
+
+    def issue(key: str, index: int, phase: UndoPhase) -> None:
+        """Dispatch a participant's confirm, cancel or undo as settlement work at its own instance key."""
+        item = record(key).participants[index]
+        node = cast(ActionNode | CallWorkflowNode, nodes[node_of(item.key)])
+        assert node.txn is not None
+        step = node.txn.phases[phase]
+        transaction = cast(TransactionNode, nodes[node_of(key)])
+        name = phase_key(item.key, phase)
+        context = TaskTransaction(
+            id=key, branch=item.key, phase=phase, mode=item.mode, outcome=None if phase == "confirm" else item.outcome
+        )
+        try:
+            value = evaluate(cast(JsonObject, step.input.model_dump(by_alias=True)), undo_context(key, item))
+            if step.kind == "action":
+                guard(f"{node.path}/{phase}/with", "undo_input", value)
+                dependency = next(d for d in ir.dependencies if d.digest == step.dependency and d.kind == "Action")
+                definition = load_definition(dependency.document)
+                assert isinstance(definition, ActionDefinition)
+                validate_action(ir, definition, "input", value)
+                implementation = definition.spec.implementation
+                worker = implementation if isinstance(implementation, WorkerImplementation) else None
+                intent: TaskIntent | CallIntent = TaskIntent(
+                    node_id=name,
+                    action_digest=step.dependency,
+                    action_reference=dependency.reference,
+                    input=value,
+                    connection_slot=step.connection,
+                    task_type=worker.task_type if worker else None,
+                    task_version=worker.task_version if worker else None,
+                    deadline=checked_deadline(event.timestamp, transaction.policy.undo_timeout_seconds),
+                    transaction=context,
+                    retry_policy=cast(JsonObject, transaction.policy.undo_retry.model_dump(mode="json", by_alias=True)),
+                    settlement=True,
+                )
+            else:
+                guard(f"{node.path}/{phase}/with", "call_input", value)
+                dependency = next(d for d in ir.dependencies if d.kind == "Workflow" and d.digest == step.dependency)
+                validate(ir, cast(JsonObject, cast(JsonObject, dependency.document["spec"])["inputSchema"]), value)
+                intent = CallIntent(
+                    node_id=name,
+                    workflow_digest=step.dependency,
+                    workflow_reference=dependency.reference,
+                    input=value,
+                    mode="wait",
+                    on_failure="continue",
+                    transaction=context,
+                    settlement=True,
+                )
+        except (ExpressionFailure, KernelError) as error:
+            # An undo whose input cannot even be built cannot finish: a person decides.
+            phase_failed(name, error.code if isinstance(error, ExpressionFailure) else str(error), 0)
+            return
+        result.commands.append(intent)
+        current_state.active.append(name)
+        result.steps.append(StepChange(node_id=name, status="waiting"))
+        progress = {"confirm": "confirming", "cancel": "cancelling", "compensate": "undoing"}[phase]
+        participant(key, index, status=progress, attempts=1)
+
+    def phase_failed(name: str, code: str, generation: int) -> None:
+        forward, phase = cast(tuple[str, UndoPhase], split_phase(name))
+        key = cast(str, owner_of(forward))
+        index = cast(int, participant_index(record(key).participants, forward))
+        if name in current_state.active:
+            current_state.active.remove(name)
+        stuck = {"confirm": "confirm_stuck", "cancel": "cancel_stuck", "compensate": "undo_stuck"}[phase]
+        participant(key, index, status=stuck)
+        incident_code = {"confirm": "WV-TXN-CONFIRM-STUCK", "cancel": "WV-TXN-CANCEL-STUCK"}.get(
+            phase, "WV-TXN-UNDO-STUCK"
+        )
+        in_doubt(key, incident_code, name, generation, code)
+
+    def phase_result(name: str, completion: RuntimeEvent) -> None:
+        forward, phase = cast(tuple[str, UndoPhase], split_phase(name))
+        key = cast(str, owner_of(forward))
+        index = cast(int, participant_index(record(key).participants, forward))
+        node = cast(ActionNode | CallWorkflowNode, nodes[node_of(forward)])
+        assert node.txn is not None
+        step = node.txn.phases[phase]
+        generation = completion.data.get("generation", 0)
+        generation = generation if isinstance(generation, int) and not isinstance(generation, bool) else 0
+        if completion.type == "step_failed":
+            code = completion.data.get("code")
+            phase_failed(name, code if isinstance(code, str) else "WV-TASK-FAILED", generation)
+            return
+        if "output" not in completion.data:
+            raise KernelError("WV-RUNTIME-EVENT")
+        output = completion.data["output"]
+        if completion.type == "task_completed" and step.kind == "action":
+            dependency = next(d for d in ir.dependencies if d.digest == step.dependency and d.kind == "Action")
+            definition = load_definition(dependency.document)
+            assert isinstance(definition, ActionDefinition)
+            validate_action(ir, definition, "output", output)
+        elif completion.type == "call_completed" and step.kind == "callWorkflow":
+            if completion.data.get("status") != "succeeded":
+                # A called undo that ended badly is never run again on its own.
+                failure = output if isinstance(output, dict) else {}
+                code = failure.get("code")
+                phase_failed(name, code if isinstance(code, str) else "WV-CALL-FAILED", generation)
+                return
+            dependency = next(d for d in ir.dependencies if d.kind == "Workflow" and d.digest == step.dependency)
+            validate(ir, cast(JsonObject, cast(JsonObject, dependency.document["spec"])["outputSchema"]), output)
+        else:
+            raise KernelError("WV-RUNTIME-EVENT")
+        current_state.active.remove(name)
+        result.steps.append(StepChange(node_id=name, status="completed", output=output))
+        participant(key, index, status={"confirm": "confirmed", "cancel": "cancelled"}.get(phase, "undone"))
+        if phase == "confirm":
+            commit_progress(key)
+        else:
+            settle_progress(key)
+
+    def route_failure(name: str, code: str, effect: object, generation: int = 0) -> None:
+        """A step inside a transaction failed for good: undo the transaction, decide it, or put it in doubt."""
+        if split_phase(name) is not None:
+            phase_failed(name, code, generation)
+            return
+        key = owner_of(name)
+        if key is None:
+            raise KernelError("WV-RUNTIME-EVENT")
+        if name in current_state.active:
+            current_state.active.remove(name)
+        current_state.waits.pop(name, None)
+        transaction = record(key)
+        index = participant_index(transaction.participants, name)
+        if index is None:
+            # A step that changes nothing failed: it undoes the transaction like any failure.
+            if transaction.status in {"open", "deciding"}:
+                abort(key, TransactionCause(code=code, instance_key=name, effect="none"))
+            elif transaction.status == "committing":
+                in_doubt(key, "WV-TXN-AFTER-PIVOT-STUCK", name, generation, code)
+            return
+        item = transaction.participants[index]
+        folded = fold(item.effect, effect)
+        transaction = participant(
+            key,
+            index,
+            effect=folded,
+            status="unknown" if folded == "unknown" else "failed",
+            outcome="unknown" if folded == "unknown" else None,
+        )
+        why = TransactionCause(code=code, instance_key=name, effect=folded)
+        if transaction.status == "open":
+            abort(key, why)
+        elif transaction.status == "deciding" and item.mode == "irreversible" and item.status == "dispatched":
+            if folded == "none":
+                # Nothing happened: the transaction goes back, for whichever cause came first.
+                first = transaction.pending_abort or why
+                update(key, status="compensating", cause=first, pending_abort=None, rollback=True)
+                rollback(key)
+            else:
+                update(key, cause=why)
+                in_doubt(key, "WV-TXN-PIVOT-UNKNOWN", name, generation, code)
+        elif transaction.status == "committing":
+            update(key, cause=why)
+            in_doubt(key, "WV-TXN-AFTER-PIVOT-STUCK", name, generation, code)
+        elif transaction.status == "compensating":
+            settle_progress(key)
+
+    def settled(node: ActionNode | CallWorkflowNode, name: str, value: JsonValue) -> bool:
+        """Record a participant's success; True when its transaction is no longer going forward."""
+        key = cast(str, owner_of(name))
+        index = cast(int, participant_index(record(key).participants, name))
+        assert txns is not None
+        scope = record(key).participants[index].scope
+        if txns.reads[node.id].own_output:
+            scope = {**scope, "output": value}
+        transaction = participant(key, index, status="done", outcome="done", scope=scope)
+        if transaction.status == "deciding" and transaction.participants[index].mode == "irreversible":
+            commit(key)
+            return False
+        if transaction.status == "compensating":
+            settle_progress(key)
+        return transaction.status not in {"open", "committing"}
+
+    def admit(node: ActionNode | CallWorkflowNode, name: str, timeout: int) -> bool:
+        """Whether a participant may be dispatched now: the step that can't be undone first checks every hold."""
+        assert node.txn is not None
+        key = cast(str, owner_of(name))
+        transaction = record(key)
+        if transaction.status not in {"open", "committing"}:
+            raise KernelError("WV-RUNTIME-STATE")
+        if node.txn.mode != "irreversible" or transaction.status != "open":
+            return True
+        need = event.timestamp + timedelta(seconds=timeout + HOLD_MARGIN_SECONDS)
+        if all(
+            item.expires_at is None or item.expires_at >= need
+            for item in transaction.participants
+            if item.mode == "reserve" and item.status == "done"
+        ):
+            return True
+        abort(key, TransactionCause(code="WV-TXN-HOLD-INSUFFICIENT", instance_key=name, effect="none"))
+        return False
+
+    def register(node: ActionNode | CallWorkflowNode, name: str, deadline: datetime) -> tuple[TaskTransaction, bool]:
+        """Record a participant in the transition that dispatches it; the step that can't be undone starts deciding."""
+        assert node.txn is not None and txns is not None
+        key = cast(str, owner_of(name))
+        transaction = record(key)
+        pivot = node.txn.mode == "irreversible" and transaction.status == "open"
+        scope = undo_scope(
+            txns.reads[node.id], bindings(current_state, node, name), loop_scope(nodes, current_state, node, name)
+        )
+        expires = (
+            checked_deadline(event.timestamp, node.txn.hold_seconds)
+            if node.txn.mode == "reserve" and node.txn.hold_seconds is not None
+            else None
+        )
+        entry = ParticipantRecord(key=name, mode=node.txn.mode, deadline=deadline, expires_at=expires, scope=scope)
+        update(key, participants=[*transaction.participants, entry], **({"status": "deciding"} if pivot else {}))
+        arm_hold(key)
+        return TaskTransaction(
+            id=key, branch=name, phase="try" if node.txn.mode == "reserve" else "forward", mode=node.txn.mode
+        ), pivot
+
+    def runs_task(name: str) -> bool:
+        """Whether the instance ``name`` is a task: an action step, or an action that confirms, cancels or undoes."""
+        phase = split_phase(name)
+        node = nodes[node_of(name)]
+        if phase is None:
+            return isinstance(node, ActionNode)
+        participation = node.txn if isinstance(node, (ActionNode, CallWorkflowNode)) else None
+        return participation is not None and participation.phases[phase[1]].kind == "action"
+
+    def observe(name: str, data: JsonObject) -> None:
+        """Fold one failed attempt into a participant's effect, and count the attempts of a phase."""
+        key = owner_of(name)
+        if key is None or key not in current_state.transactions:
+            return
+        transaction = record(key)
+        generation = data.get("generation", 0)
+        phase = split_phase(name)
+        if phase is not None:
+            index = participant_index(transaction.participants, phase[0])
+            if index is not None and isinstance(generation, int) and not isinstance(generation, bool):
+                participant(key, index, attempts=max(transaction.participants[index].attempts, generation))
+            return
+        index = participant_index(transaction.participants, name)
+        if index is not None:
+            participant(key, index, effect=fold(transaction.participants[index].effect, data.get("effect", "unknown")))
+
+    def deadline_due(name: str, completion: RuntimeEvent) -> None:
+        """A transaction's hold or settle deadline: stale ones (rearmed or no longer relevant) change nothing."""
+        key, kind = cast(tuple[str, str], split_deadline(name))
+        transaction = current_state.transactions.get(key)
+        due = transaction.hold_by if transaction is not None and kind == "hold" else None
+        if transaction is not None and kind == "settle":
+            due = transaction.settle_by
+        if transaction is None or due is None or completion.data.get("deadline") != due.isoformat():
+            return
+        if completion.timestamp < due:
+            raise KernelError("WV-RUNTIME-EARLY-WAKEUP")
+        if kind == "hold" and transaction.status in {"open", "deciding"}:
+            abort(key, TransactionCause(code="WV-TXN-HOLD-EXPIRED", instance_key=key))
+        elif (
+            kind == "settle"
+            and transaction.status == "compensating"
+            and any(item.status == "dispatched" for item in transaction.participants)
+        ):
+            in_doubt(key, "WV-TXN-SETTLE-TIMEOUT", key, transaction.generation, None)
+
+    def maybe_end() -> None:
+        nonlocal current_state
+        ending = current_state.ending
+        if ending is None or unsettled(current_state) or current_state.status in RUN_TERMINAL:
+            return
+        terminate(ending.status, ending.code)
+        if ending.output is not None:
+            current_state = current_state.model_copy(update={"output": ending.output})
+
+    def end_run(status: str, code: str | None = None, output: JsonValue = None) -> None:
+        """End the run, or start ending it once its transactions settle: they are undone first, never abandoned."""
+        nonlocal current_state
+        if not unsettled(current_state):
+            terminate(status, code)
+            if output is not None:
+                current_state = current_state.model_copy(update={"output": output})
+            return
+        if current_state.ending is None:
+            ending = RunEnding.model_validate({"status": status, "code": code, "output": output})
+            current_state = current_state.model_copy(update={"ending": ending})
+        why = {"cancelled": "WV-TXN-RUN-CANCELLED", "timed_out": "WV-TXN-RUN-TIMED-OUT"}.get(status, code)
+        for key, transaction in list(current_state.transactions.items()):
+            if transaction.status in {"open", "deciding"}:
+                abort(key, TransactionCause(code=why or "WV-TXN-RUN-CANCELLED", instance_key=key))
+        # Work no unsettled transaction needs stops now.
+        for name in list(current_state.active):
+            holder = None if split_phase(name) is not None else owner_of(name)
+            if split_phase(name) is not None or (holder is not None and record(holder).status in UNSETTLED):
+                continue
+            current_state.active.remove(name)
+            current_state.waits.pop(name, None)
+            result.commands.append(ControlCommand(kind="settle", node_id=name))
+        queue[:] = [name for name in queue if owner_of(name) is not None]
+        maybe_end()
+
+    def lift() -> None:
+        """A barrier lifted: run the steps it stopped, then the results it deferred."""
+        nonlocal current_state
+        deferred, parked = current_state.deferred_results, current_state.parked
+        current_state = current_state.model_copy(update={"status": "waiting", "deferred_results": [], "parked": []})
+        queue.extend(parked)
+        for completion in deferred:
+            if current_state.status in RUN_TERMINAL:
+                break
+            accept(completion)
+
     def accept(completion: RuntimeEvent) -> None:
         nonlocal current, current_state
         identifier = completion.data.get("node_id")
+        generation = completion.data.get("generation", 0)
+        generation = generation if isinstance(generation, int) and not isinstance(generation, bool) else 0
+        if isinstance(identifier, str) and identifier in failing:
+            # Its result failed validation in an earlier pass: the step ran, so it may have applied.
+            route_failure(identifier, failing[identifier], "unknown", generation)
+            return
+        if completion.type == "wait_elapsed" and split_deadline(identifier) is not None:
+            deadline_due(cast(str, identifier), completion)
+            return
         if not isinstance(identifier, str) or identifier not in current_state.active:
             raise KernelError("WV-RUNTIME-EVENT")
+        if split_phase(identifier) is not None:
+            phase_result(identifier, completion)
+            return
         node = nodes[node_of(identifier)]
+        if completion.type == "step_failed":
+            code = completion.data.get("code")
+            if not isinstance(code, str) or not code or owner_of(identifier) is None:
+                raise KernelError("WV-RUNTIME-EVENT")
+            route_failure(identifier, code, completion.data.get("effect", "unknown"), generation)
+            return
         if isinstance(node, ForEachNode) and completion.type == "wait_elapsed" and "~" in identifier:
             due = current_state.waits.get(identifier)
             if due is None or completion.data.get("deadline") != due.isoformat() or completion.timestamp < due:
@@ -642,18 +1194,37 @@ def _advance_owned(
             start_iterations(identifier.partition("~")[0])
             return
         if isinstance(node, CallWorkflowNode) and completion.type == "call_completed":
+            holder = owner_of(identifier) if node.txn is not None else None
+            if (
+                holder is not None
+                and completion.data.get("reconciled") is not True
+                and completion.data.get("status") != "succeeded"
+                and (node.on_failure != "continue" or record(holder).status not in {"open", "committing"})
+            ):
+                # A called participant that did not succeed fails its step; its own effect says what may remain.
+                failure = completion.data.get("output")
+                code = failure.get("code") if isinstance(failure, dict) else None
+                route_failure(
+                    identifier,
+                    code if isinstance(code, str) else "WV-CALL-FAILED",
+                    completion.data.get("effect", "unknown"),
+                    generation,
+                )
+                return
             value = call_result(ir, node, completion.data)
             if value is None:
                 # A waiting call that stops on failure fails the run with the child's code and message.
                 current = identifier
                 failure = cast(JsonObject, completion.data["output"])
-                terminate("failed", cast(str, failure["code"]))
-                current_state = current_state.model_copy(update={"output": failure})
+                current_state.active.remove(identifier)
+                end_run("failed", cast(str, failure["code"]), failure)
                 return
             if node.on_failure != "continue":
                 guard(node.path, "call_output", value)
             complete(node, identifier, value)
             current_state.active.remove(identifier)
+            if node.txn is not None and settled(node, identifier, value):
+                return
             queue.append(successor(identifier))
             return
         if isinstance(node, WaitNode) and completion.type == "wait_elapsed":
@@ -691,6 +1262,8 @@ def _advance_owned(
         complete(node, identifier, value)
         current_state.active.remove(identifier)
         current_state.waits.pop(identifier, None)
+        if isinstance(node, ActionNode) and node.txn is not None and settled(node, identifier, value):
+            return
         queue.append(successor(identifier))
 
     try:
@@ -704,25 +1277,40 @@ def _advance_owned(
                 )
                 if paused or current_state.incidents or current_state.incident is not None:
                     return checkpoint(result.model_copy(update={"state": current_state}))
-                deferred = current_state.deferred_results
-                current_state = current_state.model_copy(update={"deferred_results": [], "status": "waiting"})
-                for completion in deferred:
-                    if current_state.status in RUN_TERMINAL:
-                        break
-                    accept(completion)
+                lift()
                 return checkpoint(result.model_copy(update={"state": current_state}), done=not queue)
             if event.type == "cancelled":
-                terminate("cancelled")
-                return checkpoint(result.model_copy(update={"state": current_state}))
+                end_run("cancelled")
+                return checkpoint(result.model_copy(update={"state": current_state}), done=not queue)
             if event.type == "incident_resolved":
                 key = event.data.get("incident_key")
                 kind = event.data.get("kind")
                 prior = current_state.incidents.get(str(key))
                 if state.status != "suspended" or (prior is None and key != "@legacy"):
                     raise KernelError("WV-RUNTIME-STATE")
+                if prior is not None and prior.code in IN_DOUBT_CODES:
+                    # A transaction in doubt moves only through the resolutions made for it.
+                    raise KernelError("WV-RUNTIME-STATE")
                 if kind == "terminate":
-                    terminate("cancelled")
-                    return checkpoint(result.model_copy(update={"state": current_state}))
+                    if not unsettled(current_state):
+                        terminate("cancelled")
+                        return checkpoint(result.model_copy(update={"state": current_state}))
+                    # Its transactions are undone first; the incident is resolved now.
+                    current_state.incidents.pop(str(key), None)
+                    current_state = current_state.model_copy(
+                        update={
+                            "incident": current_state.incidents[min(current_state.incidents)].code
+                            if current_state.incidents
+                            else None
+                        }
+                    )
+                    end_run("cancelled")
+                    if current_state.status not in RUN_TERMINAL and not current_state.incidents:
+                        if current_state.manual_paused:
+                            current_state = current_state.model_copy(update={"status": "waiting"})
+                        else:
+                            lift()
+                    return checkpoint(result.model_copy(update={"state": current_state}), done=not queue)
                 if prior is None or kind not in {"retry_safe", "accept_reconciled_result"}:
                     raise KernelError("WV-RUNTIME-EVENT")
                 current_state.incidents.pop(str(key))
@@ -749,13 +1337,7 @@ def _advance_owned(
                     current_state.deferred_results.append(completion)
                 if current_state.incidents or current_state.manual_paused:
                     return checkpoint(result.model_copy(update={"state": current_state}))
-                current_state = current_state.model_copy(update={"status": "waiting"})
-                deferred = current_state.deferred_results
-                current_state = current_state.model_copy(update={"deferred_results": []})
-                for completion in deferred:
-                    if current_state.status in RUN_TERMINAL:
-                        break
-                    accept(completion)
+                lift()
             elif event.type == "timed_out":
                 deadline = event.data.get("deadline")
                 if not isinstance(deadline, str):
@@ -766,11 +1348,46 @@ def _advance_owned(
                     raise KernelError("WV-RUNTIME-EVENT") from error
                 if due.tzinfo is None or event.timestamp < due:
                     raise KernelError("WV-RUNTIME-EARLY-TIMEOUT")
+                if unsettled(current_state):
+                    # The run's transactions settle first; the run then ends timed out.
+                    end_run("timed_out")
+                    return checkpoint(result.model_copy(update={"state": current_state}), done=not queue)
                 terminate("timed_out")
                 # Retain historical sequential timeout transition shape.
                 if not state.branches and not state.loops:
                     result.commands.clear()
                 return checkpoint(result.model_copy(update={"state": current_state}))
+            elif event.type == "step_failed":
+                # A step inside a transaction failed for good: it closes the step's interim failure incident, as a
+                # scheduled retry does, then fails its transaction (or waits behind another barrier).
+                if current not in current_state.active or not in_transaction(txns, current):
+                    raise KernelError("WV-RUNTIME-EVENT")
+                generation = event.data.get("generation", 0)
+                if not isinstance(generation, int) or isinstance(generation, bool) or generation < 0:
+                    raise KernelError("WV-RUNTIME-EVENT")
+                interim = current_state.incidents.get(f"{current}:{generation}")
+                if interim is not None and interim.code != "WV-TASK-FAILED":
+                    raise KernelError("WV-RUNTIME-STATE")
+                current_state.incidents.pop(f"{current}:{generation}", None)
+                current_state = current_state.model_copy(
+                    update={
+                        "incident": current_state.incidents[min(current_state.incidents)].code
+                        if current_state.incidents
+                        else None,
+                        "status": "suspended" if current_state.incidents else current_state.status,
+                    }
+                )
+                observe(current, event.data)
+                if (current_state.incidents or current_state.manual_paused) and not settlement_event(
+                    txns, state, event
+                ):
+                    if any(e.data.get("node_id") == current for e in current_state.deferred_results):
+                        raise KernelError("WV-RUNTIME-EVENT")
+                    current_state.deferred_results.append(event.model_copy(deep=True))
+                    return checkpoint(result.model_copy(update={"state": current_state}))
+                accept(event)
+                if current_state.status == "suspended" and not (current_state.incidents or current_state.manual_paused):
+                    lift()
             elif event.type in {"task_failed", "incident_opened", "recovery_scheduled"}:
                 if current not in current_state.active:
                     raise KernelError("WV-RUNTIME-EVENT")
@@ -801,21 +1418,18 @@ def _advance_owned(
                             else None
                         }
                     )
+                    observe(current, event.data)
                     if current_state.incidents or current_state.manual_paused:
                         return checkpoint(result.model_copy(update={"state": current_state}))
-                    current_state = current_state.model_copy(update={"status": "waiting"})
-                    deferred = current_state.deferred_results
-                    current_state = current_state.model_copy(update={"deferred_results": []})
-                    for completion in deferred:
-                        if current_state.status in RUN_TERMINAL:
-                            break
-                        accept(completion)
+                    lift()
                 else:
                     code = "WV-TASK-FAILED" if event.type == "task_failed" else event.data.get("code")
                     if not isinstance(code, str) or not code:
                         raise KernelError("WV-RUNTIME-EVENT")
-                    if event.type == "task_failed" and not isinstance(nodes[node_of(current)], ActionNode):
+                    if event.type == "task_failed" and not runs_task(current):
                         raise KernelError("WV-RUNTIME-EVENT")
+                    if event.type == "task_failed":
+                        observe(current, event.data)
                     incident(current, code, generation)
                     return checkpoint(result.model_copy(update={"state": current_state}))
             elif event.type == "started":
@@ -825,13 +1439,20 @@ def _advance_owned(
                 if event.data.get("admission_policy") == "classified-v1":
                     state = state.model_copy(update={"admission_policy": "classified-v1"})
                     current_state = current_state.model_copy(update={"admission_policy": "classified-v1"})
+                if txns is not None:
+                    # Undo steps name operation keys, which start with the run's ID.
+                    try:
+                        run_id = UUID(str(event.data.get("run_id")))
+                    except ValueError as error:
+                        raise KernelError("WV-RUNTIME-EVENT") from error
+                    current_state = current_state.model_copy(update={"run_id": run_id})
                 queue.append(ir.graph.entry)
                 if ir.timeout_seconds:
                     result.commands.append(
                         Deadline(node_id="@run", deadline=checked_deadline(event.timestamp, ir.timeout_seconds))
                     )
             else:
-                if state.status == "suspended" or state.manual_paused:
+                if (state.status == "suspended" or state.manual_paused) and not settlement_event(txns, state, event):
                     # Validate the immutable fact now, but keep every continuation behind the barrier.
                     accept(event)
                     if any(e.data.get("node_id") == current for e in state.deferred_results):
@@ -846,7 +1467,12 @@ def _advance_owned(
             current = queue.pop(0)
             node = nodes[node_of(current)]
             suffix = loop_suffix(current)
-            if isinstance(node, StartNode):
+            if current in failing:
+                # Its evaluation failed in an earlier pass of this event: the step fails its transaction instead.
+                route_failure(current, failing[current], "none")
+            elif not runs_now(node, current):
+                pass
+            elif isinstance(node, StartNode):
                 queue.append(successor(current))
             elif isinstance(node, EndNode):
                 output = mapping(node, current, cast(JsonObject, node.output.model_dump(by_alias=True)))
@@ -878,14 +1504,45 @@ def _advance_owned(
                 )
                 queue.append(successor(current))
             elif isinstance(node, FailNode):
-                terminate("failed", node.code)
-                current_state = current_state.model_copy(
-                    update={"output": {"code": node.code, "message": node.message}}
-                )
-                return checkpoint(result.model_copy(update={"state": current_state}))
+                if owner_of(current) is not None:
+                    # An explicit abort inside a transaction undoes it; the block then fails with this code.
+                    route_failure(current, node.code, "none")
+                else:
+                    end_run("failed", node.code, {"code": node.code, "message": node.message})
+                    if current_state.status in RUN_TERMINAL:
+                        return checkpoint(result.model_copy(update={"state": current_state}))
             elif isinstance(node, TransactionNode):
-                # Import refuses transactions until this runtime runs them; never run their steps unprotected.
-                raise KernelError("WV-RUNTIME-ARTIFACT")
+                if current in current_state.transactions or current in current_state.joins:
+                    raise KernelError("WV-RUNTIME-ACTIVATION")
+                business_key = None
+                if node.business_key is not None:
+                    business_key = mapping(node, current, cast(JsonObject, node.business_key.model_dump(by_alias=True)))
+                    validate(ir, BUSINESS_KEY_SCHEMA, business_key)
+                if current_state.run_id is None:
+                    raise KernelError("WV-RUNTIME-STATE")
+                current_state.transactions[current] = TransactionRecord(
+                    business_key=cast(str | None, business_key), opened_at=event.timestamp
+                )
+                result.commands.append(ControlCommand(kind="transaction", node_id=current))
+                # The body runs as one block frame, joined at the transaction's join.
+                key = branch_key(node.id, "body", suffix)
+                current_state.branches[key] = BranchState(
+                    owner=node.id,
+                    name="body",
+                    target=node.target,
+                    parent=frame_key(node, current),
+                    visible=deepcopy(bindings(current_state, node, current)),
+                )
+                join = JoinState(
+                    owner=current,
+                    node_id=node.join + suffix,
+                    mode="selected",
+                    branches=[key],
+                    concurrency=1,
+                    required_count=1,
+                )
+                current_state.joins[current] = join
+                spawn(join)
             elif isinstance(node, CallWorkflowNode):
                 if current in current_state.active:
                     raise KernelError("WV-RUNTIME-ACTIVATION")
@@ -899,6 +1556,15 @@ def _advance_owned(
                     business_key = mapping(node, current, cast(JsonObject, node.business_key.model_dump(by_alias=True)))
                     validate(ir, BUSINESS_KEY_SCHEMA, business_key)
                 waits = node.mode == "wait"
+                joined: tuple[TaskTransaction, bool] | None = None
+                if node.txn is not None:
+                    # A called participant is bounded by its called workflow's own time limit.
+                    limit = cast(int, callee["timeoutSeconds"])
+                    if not admit(node, current, limit):
+                        if queue:
+                            return checkpoint(result.model_copy(update={"state": current_state}), done=False)
+                        continue
+                    joined = register(node, current, checked_deadline(event.timestamp, limit))
                 result.commands.append(
                     CallIntent(
                         node_id=current,
@@ -908,6 +1574,8 @@ def _advance_owned(
                         mode=node.mode,
                         on_failure=(node.on_failure or "stop") if waits else None,
                         business_key=cast(str | None, business_key),
+                        transaction=joined[0] if joined else None,
+                        settlement=bool(joined and joined[1]),
                     )
                 )
                 if waits:
@@ -1031,6 +1699,45 @@ def _advance_owned(
                     growing.discard(loop.items)
                     growing.discard(loop.outputs)
                 queue.append(successor(current))
+            elif isinstance(node, JoinNode) and node.mode == "transaction":
+                owner = node.owner + suffix
+                join = current_state.joins[owner]
+                transaction = record(owner)
+                if transaction.status == "open":
+                    # The body ended on a path without a step that can't be undone: that decides the transaction.
+                    commit(owner)
+                    transaction = record(owner)
+                if transaction.status == "committing" and confirming(transaction):
+                    update(owner, resume=[*transaction.resume, current])
+                elif transaction.status == "committing":
+                    if join.status != "waiting" or join.completed_count != join.required_count:
+                        raise KernelError("WV-RUNTIME-JOIN")
+                    value = joined_output(current_state, join)
+                    measure_value(value)
+                    complete(nodes[node.owner], owner, value)
+                    result.steps.append(StepChange(node_id=current, status="completed", output=value))
+                    result.commands.append(ControlCommand(kind="join", node_id=current))
+                    current_state.joins[owner] = join.model_copy(update={"status": "joined"})
+                    update(owner, status="completed", ended_at=event.timestamp)
+                    if current_state.ending is not None:
+                        maybe_end()
+                    else:
+                        queue.append(successor(current))
+                elif transaction.status in {"compensated", "cancelled"}:
+                    # A clean rollback fails the block: with the code of the fail step that asked for it, or as undone.
+                    why = transaction.cause
+                    asked = nodes.get(node_of(why.instance_key)) if why is not None else None
+                    if isinstance(asked, FailNode) and why is not None and why.code == asked.code:
+                        failure = {"code": asked.code, "message": asked.message}
+                    else:
+                        failure = {"code": "WV-TXN-ROLLED-BACK", "message": TRANSACTION_MESSAGES["WV-TXN-ROLLED-BACK"]}
+                    current_state.joins[owner] = join.model_copy(update={"status": "terminated"})
+                    current = owner
+                    end_run("failed", failure["code"], cast(JsonObject, failure))
+                    if current_state.status in RUN_TERMINAL:
+                        return checkpoint(result.model_copy(update={"state": current_state}))
+                else:
+                    raise KernelError("WV-RUNTIME-JOIN")
             elif isinstance(node, JoinNode):
                 owner = node.owner + suffix
                 join = current_state.joins[owner]
@@ -1071,6 +1778,15 @@ def _advance_owned(
             elif isinstance(node, (ActionNode, SignalNode, WaitNode, HumanTaskNode)):
                 if current in current_state.active:
                     raise KernelError("WV-RUNTIME-ACTIVATION")
+                # A step that can't be undone is not dispatched when a reservation would not outlast it.
+                if (
+                    isinstance(node, ActionNode)
+                    and node.txn is not None
+                    and not admit(node, current, action(node)[1].spec.timeout_seconds)
+                ):
+                    if queue:
+                        return checkpoint(result.model_copy(update={"state": current_state}), done=False)
+                    continue
                 current_state.active.append(current)
                 result.steps.append(StepChange(node_id=current, status="waiting"))
                 if isinstance(node, HumanTaskNode):
@@ -1099,6 +1815,8 @@ def _advance_owned(
                     value = mapping(node, current, cast(JsonObject, node.input.model_dump(by_alias=True)))
                     validate_action(ir, definition, "input", value)
                     implementation = definition.spec.implementation
+                    due_by = checked_deadline(event.timestamp, definition.spec.timeout_seconds)
+                    joined = register(node, current, due_by) if node.txn is not None else None
                     result.commands.append(
                         TaskIntent(
                             node_id=current,
@@ -1112,7 +1830,9 @@ def _advance_owned(
                             task_version=implementation.task_version
                             if isinstance(implementation, WorkerImplementation)
                             else None,
-                            deadline=checked_deadline(event.timestamp, definition.spec.timeout_seconds),
+                            deadline=due_by,
+                            transaction=joined[0] if joined else None,
+                            settlement=bool(joined and joined[1]),
                         )
                     )
                 else:
@@ -1129,10 +1849,41 @@ def _advance_owned(
                     )
             if queue:
                 return checkpoint(result.model_copy(update={"state": current_state}), done=False)
-        current_state = current_state.model_copy(update={"status": "waiting"})
+        if current_state.status not in RUN_TERMINAL:
+            # A transaction that went into doubt during this event keeps the run held.
+            status = "suspended" if current_state.incidents else "waiting"
+            current_state = current_state.model_copy(update={"status": status})
         return checkpoint(result.model_copy(update={"state": current_state}))
     except (ExpressionFailure, DecisionFailure, KernelError) as error:
         code = error.code if isinstance(error, (ExpressionFailure, DecisionFailure)) else str(error)
+        step_failure = (
+            isinstance(error, (ExpressionFailure, DecisionFailure))
+            or code.startswith("WV-SCHEMA-")
+            or code in STEP_FAILURE_CODES
+        )
+        if step_failure and current not in failing and in_transaction(txns, current):
+            # A step inside a transaction failed: reduce the event again, failing that step instead of evaluating it.
+            fresh = Transition(state=cursor.origin.model_copy(deep=True))
+            growing = growing_containers.get()
+            if growing is not None:
+                for container in (fresh.steps, fresh.commands, fresh.state.input):
+                    if isinstance(container, (list, dict)):
+                        growing.add(container)
+                for loop in fresh.state.loops.values():
+                    growing.add(loop.items)
+                    growing.add(loop.outputs)
+            return cursor.model_copy(
+                update={
+                    "result": fresh,
+                    "ready": [],
+                    "admitted": False,
+                    "done": False,
+                    "current": None,
+                    "turn_units": 0,
+                    "turn_intents": 0,
+                    "failing": {**failing, current: code},
+                }
+            )
         current_state = state.model_copy(deep=True)
         current_state = current_state.model_copy(update={"accepted_sequence": event.sequence})
         incident(current, code)
