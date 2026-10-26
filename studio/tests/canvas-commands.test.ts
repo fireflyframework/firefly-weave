@@ -21,6 +21,8 @@ import {
   canvasSheet,
   keyPlatform,
   noteCommand,
+  STEP_DETAILS_COMMANDS,
+  stepDetailsSheet,
   typingIn,
 } from "../src/app/editor/state/canvas-commands";
 import {
@@ -160,6 +162,7 @@ describe("canvas keys", () => {
       "Canvas",
       "Sticky notes",
       "Add a step panel",
+      "Run log",
       "Differences from n8n",
     ]);
     expect(sheet[2].entries).toEqual([
@@ -271,5 +274,34 @@ describe("canvas keys", () => {
     expect(editorNavExpanded(1280, blocked)).toBe(false);
     expect(setEditorNavExpanded(true, blocked)).toBe(false);
     expect(setEditorNavExpanded(true, () => null)).toBe(false);
+  });
+});
+
+describe("the step details sheet", () => {
+  it("lists what works everywhere, in step details and in the run log, P among them", () => {
+    const sheet = stepDetailsSheet("other");
+    expect(sheet.slice(0, 3).map((section) => section.title)).toEqual([
+      "Everywhere",
+      "Step details",
+      "Run log",
+    ]);
+    const details = sheet[1].entries.map((entry) => entry.label);
+    expect(details).toContain("Execute step");
+    expect(details).toContain("Pin output or unpin");
+    expect(details).toContain("Show keyboard shortcuts");
+    const log = sheet[2].entries.map((entry) => entry.label);
+    expect(log).toEqual(
+      expect.arrayContaining([
+        "Show or hide the run log",
+        "Show the entry's input",
+        "Show the entry's output",
+      ]),
+    );
+    expect(STEP_DETAILS_COMMANDS.has("executeStep")).toBe(true);
+  });
+  it("adds the run log to the canvas sheet", () => {
+    expect(canvasSheet("mac").map((section) => section.title)).toContain(
+      "Run log",
+    );
   });
 });

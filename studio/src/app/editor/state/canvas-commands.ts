@@ -150,14 +150,50 @@ export function noteCommand(
   return command && NOTE_COMMANDS.has(command) ? command : null;
 }
 
-/** The "?" sheet for the canvas: what works everywhere, on the canvas and in Add a step. */
+/** The run log's own keys (L also from the canvas and the outline). */
+export const RUN_LOG_COMMANDS: ReadonlySet<KeymapCommand> =
+  new Set<KeymapCommand>([
+    "toggleRunLog",
+    "focusEntryInput",
+    "focusEntryOutput",
+  ]);
+
+/** Every key step details handles, typing or not. */
+export const STEP_DETAILS_COMMANDS: ReadonlySet<KeymapCommand> =
+  new Set<KeymapCommand>([
+    "mapTo",
+    "searchPane",
+    "previousStepDetails",
+    "nextStepDetails",
+    "renameStep",
+    "undo",
+    "redo",
+    "save",
+    "nextRegion",
+    "previousRegion",
+    "executeStep",
+    "togglePin",
+    "showShortcuts",
+    "escape",
+  ]);
+
+/** The "?" sheet in step details: what works everywhere, in step details and in the run log. */
+export function stepDetailsSheet(platform: KeyPlatform): SheetSection[] {
+  return shortcutSheet(platform, {
+    surfaces: ["any", "stepDetails", "runLog"],
+    available: new Set([...STEP_DETAILS_COMMANDS, ...RUN_LOG_COMMANDS]),
+  });
+}
+
+/** The "?" sheet for the canvas: what works everywhere, on the canvas, in Add a step and in the run log. */
 export function canvasSheet(platform: KeyPlatform): SheetSection[] {
   return shortcutSheet(platform, {
-    surfaces: ["any", "canvas", "note", "addStep"],
+    surfaces: ["any", "canvas", "note", "addStep", "runLog"],
     available: new Set([
       ...CANVAS_COMMANDS,
       ...NOTE_COMMANDS,
       ...PANEL_COMMANDS,
+      ...RUN_LOG_COMMANDS,
     ]),
   });
 }

@@ -63,6 +63,8 @@ import { sliceStepIds } from "../state/execute-request";
 import type { ExecuteTarget } from "../state/execution";
 import type { ExecuteOutcome } from "../state/execution-service";
 import { allSteps } from "./step-walk";
+import { stepDetailsSheet } from "../state/canvas-commands";
+import type { SheetSection } from "../state/keymap";
 import { TestEventPane } from "./panes/test-event-pane";
 import { Icon } from "../../icon";
 import { coveredBy, keepUsable } from "../../modal-sheet";
@@ -831,6 +833,14 @@ export class StepDetails {
         run: () => void this.execute("before"),
       },
     ];
+  }
+  /** The "?" sheet: the keys of step details and the run log; null while closed. */
+  readonly sheet = signal<SheetSection[] | null>(null);
+  closeSheet() {
+    this.sheet.set(null);
+    setTimeout(() =>
+      this.dialog().nativeElement.focus({ preventScroll: true }),
+    );
   }
   /** What Execute asks first: errors to fix, or whether to unpin. */
   readonly question = signal<ExecuteQuestion | null>(null);
@@ -1681,6 +1691,11 @@ export class StepDetails {
         // Also while typing: Ctrl/Cmd+Enter never types anything.
         event.preventDefault();
         if (this.canExecute()) void this.execute("step");
+        return;
+      case "showShortcuts":
+        if (isTyping(event.target as HTMLElement)) return;
+        event.preventDefault();
+        this.sheet.set(stepDetailsSheet(KEY_PLATFORM));
         return;
       case "togglePin": {
         const target = this.session().target;

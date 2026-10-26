@@ -467,6 +467,40 @@ SPDX-License-Identifier: Apache-2.0
 @if (guarding()) {
   <weave-close-guard (answer)="answerGuard($event)" />
 }
+@if (sheet(); as sections) {
+  <weave-modal
+    heading="Keyboard shortcuts"
+    closeLabel="Close keyboard shortcuts"
+    describedBy="step-details-shortcuts-note"
+    (dismiss)="closeSheet()"
+  >
+    <p id="step-details-shortcuts-note" class="dialog-message">
+      In step details.
+    </p>
+    @for (section of sections; track section.title) {
+      <h3
+        class="shortcut-section"
+        [attr.tabindex]="$first ? -1 : null"
+        [attr.data-initial-focus]="$first ? '' : null"
+      >
+        {{ section.title }}
+      </h3>
+      <dl class="shortcut-list">
+        @for (entry of section.entries; track $index) {
+          <dt>
+            @for (key of entry.keys; track $index) {
+              <kbd>{{ key }}</kbd>
+            }
+          </dt>
+          <dd>{{ entry.label }}</dd>
+        }
+      </dl>
+    }
+    <div class="dialog-actions">
+      <button type="button" class="primary" (click)="closeSheet()">Done</button>
+    </div>
+  </weave-modal>
+}
 @if (question(); as asked) {
   <weave-execute-dialog
     [question]="asked"
