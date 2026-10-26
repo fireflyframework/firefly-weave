@@ -235,6 +235,7 @@ def test_text_loops_calls_and_transactions_compile_and_nothing_is_advertised_tha
     assert set(COMPILED_FEATURES) == {
         "flow.callWorkflow",
         "flow.forEach",
+        "flow.onError",
         "flow.transaction",
         "text.concat",
         "text.join",

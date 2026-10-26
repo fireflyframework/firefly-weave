@@ -173,7 +173,7 @@ def _steps(block: object) -> list[JsonObject]:
         elif isinstance(value, dict):
             if isinstance(value.get("id"), str) and isinstance(value.get("kind"), str):
                 found.append(cast(JsonObject, value))
-            for key in ("steps", "cases", "default", "branches", "body"):
+            for key in ("steps", "cases", "default", "branches", "body", "errorPath"):
                 child = value.get(key)
                 pending.extend(child.values() if key == "branches" and isinstance(child, dict) else [child])
     return found

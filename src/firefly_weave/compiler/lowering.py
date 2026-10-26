@@ -114,19 +114,63 @@ class _Lowerer:
         self.budget.charge(edge)
         self.edges.append(edge)
 
+    def error_path(self, step: AnalyzedStep, base: JsonObject, following: str) -> str:
+        """Lower a step's error path; returns where the step's success continues: its error join."""
+        path = next(branch for branch in step.branches if branch.name == "errorPath")
+        output_id = f"@branch:{step.id}:{len(step.branches) - 1}"
+        # A transaction's own join already holds the step's join name.
+        join_id = "@join:" + step.id + (":errorPath" if step.kind == "transaction" else "")
+        target = self.block(path.steps, output_id)
+        scope = cast(list[JsonValue], list(step.scope) + [step.id, "errorPath"])
+        self.node(
+            {
+                "id": output_id,
+                "kind": "branch-output",
+                "scope": scope,
+                "path": path.path + "/output",
+                "owner": step.id,
+                "branch": "errorPath",
+                "output": path.output.value,
+                "completes": path.completes,
+            }
+        )
+        if path.completes:
+            self.edge(output_id, join_id, "join", "errorPath")
+        self.edge(step.id, target, "error", "errorPath")
+        self.node(
+            {
+                "id": join_id,
+                "kind": "join",
+                "scope": list(step.scope),
+                "path": step.path,
+                "owner": step.id,
+                "mode": "error",
+                "branches": [output_id],
+                "completes": step.completes or path.completes,
+            }
+        )
+        if step.completes or path.completes:
+            self.edge(join_id, following)
+        base.update({"onError": "errorOutput", "errorTarget": target, "errorJoin": join_id})
+        return join_id
+
     def block(self, steps: tuple[AnalyzedStep, ...], successor: str) -> str:
         entry = steps[0].id if steps else successor
         for i, step in enumerate(steps):
             following = steps[i + 1].id if i + 1 < len(steps) else successor
             value = step.definition.value
             base: JsonObject = {"id": step.id, "kind": step.kind, "scope": list(step.scope), "path": step.path}
+            if value.get("onError") == "continue":
+                base["onError"] = "continue"
+            elif value.get("onError") == "errorOutput":
+                following = self.error_path(step, base, following)
             if step.kind in {"switch", "parallel", "forEach", "transaction"}:
                 join_id = "@join:" + step.id
                 branch_ids: list[JsonValue] = []
                 branches: list[JsonValue] = []
                 cases = cast(list[JsonObject], value.get("cases", []))
                 default = ""
-                for index, branch in enumerate(step.branches):
+                for index, branch in enumerate(b for b in step.branches if b.name != "errorPath"):
                     output_id = f"@branch:{step.id}:{index}"
                     branch_ids.append(output_id)
                     target = self.block(branch.steps, output_id)
@@ -227,7 +271,7 @@ class _Lowerer:
                         }
                     )
                 else:
-                    base.update({k: v for k, v in value.items() if k not in {"id", "kind"}})
+                    base.update({k: v for k, v in value.items() if k not in {"id", "kind", "onError", "errorPath"}})
                 if step.participation is not None:
                     base["txn"] = self.participation(step)
                 if step.completes:

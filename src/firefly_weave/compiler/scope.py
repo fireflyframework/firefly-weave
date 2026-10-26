@@ -38,9 +38,10 @@ from firefly_weave.contracts.definitions import (
     _is_absent,
     _omit_absent_default,
 )
+from firefly_weave.contracts.step_errors import STEP_ERROR_SCHEMA
 from firefly_weave.contracts.values import JsonObject, JsonObjectData, JsonValue
 
-type ScopeSource = Literal["input", "step", "item", "index"]
+type ScopeSource = Literal["input", "step", "item", "index", "error"]
 type JsonType = Literal["array", "boolean", "integer", "null", "number", "object", "string"]
 
 # Deepest property path expanded below a root, and the most suggestions returned, roots included.
@@ -116,9 +117,16 @@ def scope_at(document: JsonObject, path: JsonPointer, *, catalog: CatalogSnapsho
     roots: list[JsonObject] = [_root("/input", "input", "Workflow input", "Workflow input", capture.input_schema)]
     for depth, loop in enumerate(reversed(capture.loops)):
         roots.extend(_loop_roots(loop, innermost=depth == 0))
+    errors = {identifier: (kind, always) for identifier, kind, always in capture.errors}
+    # Inside an error path, the failed step's error comes first: the step has no output there.
+    for identifier, (kind, always) in errors.items():
+        if always:
+            roots.append(_error_root(identifier, kind, optional=False))
     for identifier, kind, schema in capture.steps:
         step = _root(f"/steps/{_escape(identifier)}/output", "step", identifier, identifier, schema)
         roots.append(step | {"stepId": identifier, "stepKind": kind})
+        if identifier in errors and not errors[identifier][1]:
+            roots.append(_error_root(identifier, kind, optional=True))
     entries, truncated = _expand(roots)
     return ScopeResult(
         found=True,
@@ -134,6 +142,12 @@ def _escape(segment: str) -> str:
 
 def _root(ref: str, source: str, label: str, breadcrumb: str, schema: JsonObject) -> JsonObject:
     return {"ref": ref, "source": source, "path": [], "label": label, "breadcrumb": breadcrumb, "schema": schema}
+
+
+def _error_root(identifier: str, kind: str, *, optional: bool) -> JsonObject:
+    """The error object of a step that handles its failures; optional after the step, where it may have succeeded."""
+    root = _root(f"/steps/{_escape(identifier)}/error", "error", "Error", f"{identifier} › Error", STEP_ERROR_SCHEMA)
+    return root | {"stepId": identifier, "stepKind": kind, "optional": optional}
 
 
 def _loop_roots(loop: LoopScope, *, innermost: bool) -> list[JsonObject]:
