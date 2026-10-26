@@ -942,6 +942,9 @@ operation in the [full API reference](api-explorer.md); to generate a client,
 | `compatibility.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/operations/compatibility` | status.read |
 | `operations_summary.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/operations/summary` | status.read |
 | `operations_telemetry.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/operations/telemetry` | status.read |
+| `run_statistics.series` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/run-statistics/series` | status.read |
+| `run_statistics.workflows` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/run-statistics/workflows` | status.read |
+| `run_statistics.steps` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/run-statistics/steps` | status.read |
 | `compatibility.check` | `POST /api/v1/tenants/{tenant}/projects/{project}/operations/compatibility/check` | compatibility.check |
 | `retention.plan` | `POST /api/v1/tenants/{tenant}/projects/{project}/operations/retention/plans` | retention.plan |
 | `retention.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/operations/retention/plans/{identifier}` | retention.plan |

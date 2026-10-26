@@ -32,6 +32,9 @@ EXPECTED = {
 }
 
 
+# Run statistics are published before the server reads them; they answer 501 until then.
+UNSERVED = {"run_statistics.series", "run_statistics.workflows", "run_statistics.steps"}
+
 spec = cache(export_openapi)
 
 
@@ -48,7 +51,7 @@ def test_operation_availability_matches_served_reads(identifier):
     assert operation.capability == "run.read"
     assert operation.served is (identifier != "runs.logs")
     assert operation.page is False and operation.request is None
-    assert all(other.served for key, other in OPERATIONS.items() if key not in EXPECTED)
+    assert all(other.served for key, other in OPERATIONS.items() if key not in EXPECTED and key not in UNSERVED)
 
 
 @pytest.mark.parametrize("identifier", sorted(EXPECTED))
@@ -90,5 +93,5 @@ def test_query_parameters_keep_their_constraints_and_defaults():
 
 def test_every_other_operation_documents_no_501():
     for identifier, operation in OPERATIONS.items():
-        if identifier not in EXPECTED:
+        if identifier not in EXPECTED and identifier not in UNSERVED:
             assert "501" not in spec()["paths"][operation.canonical_path][operation.method.lower()]["responses"]

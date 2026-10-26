@@ -107,6 +107,8 @@ STUDIO_FAMILIES = frozenset(
         # The environment summary and telemetry settings re-check each section's capability server-side.
         "operations_summary",
         "operations_telemetry",
+        # Run statistics are environment reads; status.read is checked server-side.
+        "run_statistics",
         # Draft save/retire and Simulate are authorized server-side like every other family.
         "drafts",
         # Draft canvases and test data: capabilities, run data and secrets are checked server-side.
