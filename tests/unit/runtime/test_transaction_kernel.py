@@ -252,6 +252,22 @@ def test_a_hold_deadline_undoes_the_transaction_before_reservations_expire():
     assert release.node_id == "hold#cancel"
 
 
+def test_a_later_reservation_that_holds_for_less_time_moves_the_hold_deadline_earlier():
+    run = Run(flow(hold("first", holdSeconds=600), hold("second", holdSeconds=120), add(), submit()))
+    [first] = deadlines(run.start())
+    assert first.deadline == run.now + timedelta(seconds=570)
+    run.later(10)
+    [second] = deadlines(run.done("first", {"holdId": "h-1"}))
+    # The earliest expiry wins: the second reservation's 120 s, less the 30 s margin, from its dispatch.
+    assert (second.node_id, second.deadline) == ("move#hold", run.now + timedelta(seconds=90))
+    assert run.txn().hold_by == second.deadline
+    # A later reservation that holds longer never moves the deadline back.
+    assert deadlines(run.later(5).done("second", {"holdId": "h-2"})) == []
+    expired = run.fire("move#hold")
+    assert run.txn().cause.model_dump() == {"code": "WV-TXN-HOLD-EXPIRED", "instance_key": "move"}
+    assert controls(expired, "settle") == ["add"]
+
+
 def test_steps_still_running_are_settled_first_and_a_settle_deadline_bounds_the_wait():
     run = Run(flow(hold(), branches(), submit()))
     run.start()

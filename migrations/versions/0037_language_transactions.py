@@ -82,6 +82,8 @@ def settlement() -> None:
     op.execute("ALTER TABLE run_calls ADD COLUMN effect text CHECK(effect IN ('none','unknown'))")
     op.execute("ALTER TABLE task_leases ADD COLUMN transaction_aware boolean NOT NULL DEFAULT false")
     op.execute("GRANT UPDATE(settlement) ON task_intents TO weave_app")
+    # A transaction's hold or settle deadline is armed again on its one row when an earlier time is needed.
+    op.execute("GRANT UPDATE(deadline) ON run_deadlines TO weave_app")
     # An in-doubt incident replaces the interim failure incident at the same key and keeps the failure behind it.
     op.execute("GRANT UPDATE(origin_code) ON incidents TO weave_app")
     op.execute("GRANT UPDATE(settlement,effect) ON run_calls TO weave_app")

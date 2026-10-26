@@ -298,10 +298,20 @@ class RuntimeRepository:
 
                 await create_task(self, view, command, event.timestamp)
             elif isinstance(command, Deadline):
+                from firefly_weave.runtime.transactions import split_deadline
+
+                # A transaction's deadline keeps one row per key: arming it again moves that row's time, so the row
+                # (and the wakeup that names it) stays the same. Any other key is armed once.
+                rearm = (
+                    " ON CONFLICT(run_id,node_id) DO UPDATE SET deadline=excluded.deadline "
+                    "WHERE NOT run_deadlines.consumed"
+                    if split_deadline(command.node_id) is not None
+                    else ""
+                )
                 await self.execute(
                     "INSERT INTO "
                     "run_deadlines(tenant_id,project_id,environment_id,run_id,node_id,deadline,consumed) "
-                    "VALUES(:tenant,:project,:environment,:run,:node,:deadline,false)",
+                    "VALUES(:tenant,:project,:environment,:run,:node,:deadline,false)" + rearm,
                     run=view.id,
                     node=command.node_id,
                     deadline=command.deadline,
@@ -326,8 +336,6 @@ class RuntimeRepository:
                 run=view.id,
                 node=event.data["node_id"],
             )
-        from firefly_weave.runtime.transactions import split_deadline
-
         if event.type == "timed_out" and result.state.status not in {"succeeded", "failed", "cancelled", "timed_out"}:
             # The run's timeout fired, and the run ends once its transactions settle: it fires once.
             await self.execute(
@@ -335,14 +343,7 @@ class RuntimeRepository:
                 run=view.id,
                 wait=event.data["wait_id"],
             )
-        if event.type == "wait_elapsed" and split_deadline(event.data.get("node_id")) is not None:
-            # A transaction's hold deadline is armed again when an earlier one is needed: consume only this one.
-            await self.execute(
-                f"UPDATE run_deadlines SET consumed=true WHERE {SCOPE} AND run_id=:run AND id=:wait",
-                run=view.id,
-                wait=event.data["wait_id"],
-            )
-        elif event.type in {"signal_received", "wait_elapsed", "human_completed"}:
+        if event.type in {"signal_received", "wait_elapsed", "human_completed"}:
             await self.execute(
                 f"UPDATE run_deadlines SET consumed=true WHERE {SCOPE} AND run_id=:run AND node_id=:node",
                 run=view.id,
@@ -851,12 +852,9 @@ class RuntimeRepository:
                     )
         if event.type in {"wait_elapsed", "timed_out", "signal_received"}:
             due = await self.rows(
-                f"SELECT id FROM run_deadlines WHERE {SCOPE} AND run_id=:run AND node_id=:node "
-                # A rearmed transaction deadline has several rows: the event names the one that fired.
-                "ORDER BY (cast(id AS text)=cast(:wait AS text)) DESC",
+                f"SELECT id FROM run_deadlines WHERE {SCOPE} AND run_id=:run AND node_id=:node",
                 run=view.id,
                 node=event.data.get("node_id"),
-                wait=str(event.data.get("wait_id")),
             )
             signals = await self.rows(
                 f"SELECT id,name,accepted_at FROM signal_receipts WHERE {SCOPE} "

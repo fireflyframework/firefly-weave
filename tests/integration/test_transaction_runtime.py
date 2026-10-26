@@ -256,6 +256,33 @@ async def test_a_hold_deadline_releases_the_reservation_before_it_expires(platfo
     assert (await platform.state(run.id))["status"] == "failed"
 
 
+async def test_a_later_reservation_that_holds_for_less_time_moves_the_hold_deadline_earlier(platform):
+    from datetime import datetime, timedelta
+
+    activation = await platform.publish(
+        workflow("move", [transaction(hold("first", holdSeconds=600), hold("second", holdSeconds=120), add())])
+    )
+    run = await platform.start(activation)
+    [armed] = await platform.query(
+        "SELECT id,deadline FROM run_deadlines WHERE run_id=:run AND node_id='move#hold'", run=run.id
+    )
+    # Completing the first reservation registers the second, whose shorter hold needs an earlier deadline.
+    await platform.complete(await platform.lease("first"))
+    [rearmed] = await platform.query(
+        "SELECT id,deadline,consumed FROM run_deadlines WHERE run_id=:run AND node_id='move#hold'", run=run.id
+    )
+    assert (rearmed["id"], rearmed["consumed"]) == (armed["id"], False)
+    assert armed["deadline"] - rearmed["deadline"] > timedelta(seconds=400)
+    hold_by = (await platform.state(run.id))["transactions"]["move"]["hold_by"]
+    assert datetime.fromisoformat(hold_by) == rearmed["deadline"]
+    await platform.complete(await platform.lease("second"))
+    await platform.complete(await platform.lease("add"))
+    await platform.complete(await platform.lease("first#confirm"))
+    await platform.complete(await platform.lease("second#confirm"))
+    assert (await platform.state(run.id))["status"] == "succeeded"
+    assert (await platform.record(run.id))["state"] == "completed"
+
+
 def called(identifier: str, uses: str) -> dict:
     """A called participant whose effects are reversed by removing the quantity it added."""
     return {
