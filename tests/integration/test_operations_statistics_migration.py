@@ -200,8 +200,10 @@ async def test_rows_belong_to_their_environment_and_the_app_may_replace_them(upg
     async with engine.begin() as connection:
         await scope_as_app(connection, ids, environment=ids["other_environment"])
         assert await connection.scalar(text(f"SELECT count(*) FROM {table}")) == 0
-        with pytest.raises(DBAPIError):
-            await write(connection, ids)
+        with pytest.raises(DBAPIError) as caught:
+            async with connection.begin_nested():
+                await write(connection, ids)
+        assert caught.value.orig.sqlstate == "42501"
 
 
 @pytest.mark.parametrize(
@@ -231,8 +233,11 @@ async def test_the_tables_refuse_what_the_rollup_never_writes(upgraded, table, o
     engine, ids = upgraded
     async with engine.begin() as connection:
         await scope_as_app(connection, ids)
-        with pytest.raises(DBAPIError):
-            await INSERTS[table](connection, ids, **overrides)
+        with pytest.raises(DBAPIError) as caught:
+            async with connection.begin_nested():
+                await INSERTS[table](connection, ids, **overrides)
+        # A check constraint refuses it, not some unrelated error.
+        assert caught.value.orig.sqlstate == "23514"
 
 
 async def test_a_step_row_with_its_queue_histogram_is_accepted(upgraded):
