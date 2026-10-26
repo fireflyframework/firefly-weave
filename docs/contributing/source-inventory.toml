@@ -549,6 +549,14 @@ author = "Firefly Software Foundation"
 license = "Apache-2.0"
 
 [[exceptions]]
+path = "tests/fixtures/studio/slice-workflow.json"
+kind = "commentless"
+reason = "Strict JSON workflow shared by the host's slice and Studio's mirror of it; both suites must answer the same."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
 path = "studio/tests/fixtures/language/transactions.json"
 kind = "generated"
 source = "scripts/language_fixtures.py"
