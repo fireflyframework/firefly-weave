@@ -198,6 +198,21 @@ const compiler: Record<string, Copy> = {
     text: "A temporary failure can't mean that nothing was applied.",
     hint: "Remove temporary failure codes from the definite failures.",
   },
+  ERROR_PATH: {
+    text: "A step has an error path only when its On error setting is Continue with error output.",
+    hint: "Set On error to Continue with error output, or remove the error path.",
+  },
+  ERROR_PATH_OUTPUT: {
+    text: "Inside its own error path, this step has no output.",
+    hint: "Read the step's error instead.",
+  },
+  ERROR_REFERENCE: {
+    text: "That step records an error only when its On error setting is Continue or Continue with error output.",
+    hint: "Set its On error setting, or read its output instead.",
+  },
+  ON_ERROR_AMBIGUOUS: {
+    text: "This step changes data and is never retried, so if its outcome is unknown, the run still stops with an incident until someone checks it.",
+  },
   CATALOG_PENDING: {
     text: "This is checked against the project catalog when you validate while connected to a platform.",
   },
