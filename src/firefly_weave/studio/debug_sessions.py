@@ -102,6 +102,7 @@ class HostSessions:
         if revision != kept.revision:
             raise SimulationRefused(409, "WV-DEBUG-REVISION", "The run log changed since; reload it")
         simulator = self._restored(kept)
+        _refuse_secret_answer(simulator, command)
         try:
             simulator.command(command)
         except DebugError as error:
@@ -131,6 +132,8 @@ class HostSessions:
         if now - kept.touched > IDLE_SECONDS:
             del self._kept[identifier]
             raise SimulationRefused(410, "WV-DEBUG-EXPIRED", "This run log expired; execute again")
+        # Every request frees the other sessions left idle, not only a create.
+        self._expire(now)
         return kept
 
     def _expire(self, now: float) -> None:
@@ -158,3 +161,35 @@ class HostSessions:
 
 def _not_found() -> SimulationRefused:
     return SimulationRefused(404, "WV-STUDIO-DEBUG-NOT-FOUND", "This run log isn't open anymore")
+
+
+def _refuse_secret_answer(simulator: Simulator, command: DebugCommand) -> None:
+    """A signal's payload or a person's answer holding a value marked secret is refused by pointer, never kept."""
+    from firefly_weave.compiler.ir import HumanTaskNode, SignalNode
+    from firefly_weave.compiler.schemas import _Failure
+    from firefly_weave.operations.redaction import classify
+
+    ir = simulator.ir
+    bundle = dict(ir.schemas)
+    checks: list[tuple[str, object, object]] = []
+    if command.kind == "signal":
+        for node in ir.graph.nodes:
+            if isinstance(node, SignalNode) and node.name == command.name:
+                checks.append(("/payload", ir.schemas.get(node.schema_ref), command.payload))
+    elif command.kind == "human_decision" and isinstance(command.payload, dict):
+        step = (command.name or "").split("[", 1)[0].rsplit("/", 1)[-1]
+        for node in ir.graph.nodes:
+            if isinstance(node, HumanTaskNode) and node.id == step:
+                checks.append(("/payload/data", node.form_schema, command.payload.get("data")))
+    for path, schema, value in checks:
+        if not isinstance(schema, dict):
+            continue
+        try:
+            classify(schema, value, bundle)  # type: ignore[arg-type]
+        except _Failure as failure:
+            code = "WV-SCHEMA-SECRET_VALUE" if failure.code == "SECRET_VALUE" else "WV-SCHEMA-RESOURCE_LIMIT"
+            raise SimulationRefused(422, code, "A test answer can't hold values marked secret", [path]) from None
+        except (RecursionError, ArithmeticError):
+            raise SimulationRefused(
+                422, "WV-SCHEMA-RESOURCE_LIMIT", "This answer is too large to check", [path]
+            ) from None

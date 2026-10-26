@@ -197,3 +197,63 @@ def test_session_routes_keep_the_boundary(tmp_path):
         assert unconditional.status_code == 428 and unconditional.json()["code"] == "WV-STUDIO-REQUEST"
         extra = browser.post(SESSIONS, json=body(workflow(SHAPE)) | {"target": {"mode": "workflow"}}, headers=headers)
         assert extra.status_code == 422
+
+
+def test_idle_sessions_expire_whenever_the_host_is_asked():
+    sessions = HostSessions()
+    first = sessions.create(request(workflow(CHECK, SHAPE), mocks=PIN), None, now=0)
+    second = sessions.create(request(workflow(CHECK, SHAPE), mocks=PIN), None, now=1000)
+    sessions.read(second.id, now=2000)
+    # The first was idle more than 30 minutes: reading another one frees it.
+    assert sessions.count() == 1
+    assert refusal(lambda: sessions.read(first.id, now=2001)).status == 404
+
+
+SECRET_SIGNAL = {
+    "id": "paid",
+    "kind": "signal",
+    "name": "order-paid",
+    "timeoutSeconds": 600,
+    "payloadSchema": {"type": "object", "properties": {"code": {"type": "string", "x-secret": True}}},
+}
+SECRET_TASK = {
+    "id": "approval",
+    "kind": "humanTask",
+    "assignment": "reviewers",
+    "title": {"literal": "Approve"},
+    "context": {"literal": {}},
+    "formSchema": {"type": "object", "properties": {"pin": {"type": "string", "x-secret": True}}},
+    "decisions": ["approve", "reject"],
+}
+
+
+def test_a_secret_signal_payload_is_refused_with_its_pointer_and_the_session_stays():
+    sessions = HostSessions()
+    session = sessions.create(request(workflow(SECRET_SIGNAL)), None, now=0)
+    running = sessions.command(session.id, 1, DebugCommand(kind="continue"), now=1)
+    secret = refusal(
+        lambda: sessions.command(
+            session.id,
+            running.revision,
+            DebugCommand(kind="signal", name="order-paid", payload={"code": "7731"}),
+            now=2,
+        )
+    )
+    assert (secret.status, secret.code, secret.paths) == (422, "WV-SCHEMA-SECRET_VALUE", ["/payload"])
+    assert "7731" not in repr(secret.__dict__)
+    assert sessions.read(session.id, now=3).revision == running.revision
+
+
+def test_a_secret_in_a_person_s_answer_is_refused_with_its_pointer():
+    sessions = HostSessions()
+    session = sessions.create(request(workflow(SECRET_TASK)), None, now=0)
+    running = sessions.command(session.id, 1, DebugCommand(kind="continue"), now=1)
+    secret = refusal(
+        lambda: sessions.command(
+            session.id,
+            running.revision,
+            DebugCommand(kind="human_decision", name="approval", payload={"decision": "approve", "data": {"pin": "9"}}),
+            now=2,
+        )
+    )
+    assert (secret.status, secret.code, secret.paths) == (422, "WV-SCHEMA-SECRET_VALUE", ["/payload/data"])
