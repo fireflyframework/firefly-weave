@@ -20,14 +20,20 @@ needs, the catalog a simulation compiles against, stubs for what isn't there, an
 Pure: no network, no clock and no files. The host fetches the project catalog itself and passes it in.
 """
 
+from __future__ import annotations
+
 import copy
 import functools
-from collections.abc import Iterable, Iterator
-from typing import Any, cast
+import math
+from collections.abc import Iterable, Iterator, Mapping
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from firefly_weave.compiler.catalog import CatalogResource, CatalogSnapshot
 from firefly_weave.contracts.definitions import ActionDefinition, load_definition
 from firefly_weave.contracts.values import JsonObject, JsonValue
+
+if TYPE_CHECKING:
+    from firefly_weave.studio.local_contracts import ExecuteRequest, ExecuteResponse, SimulationRequest
 
 NULL: JsonObject = {"literal": None}
 
@@ -272,3 +278,342 @@ def simulation_catalog(
             ]
         )
     return merged, sorted(actions | callees)
+
+
+# --- the simulated run -------------------------------------------------------------------------------------------
+
+
+class SimulationRefused(ValueError):
+    """A request the host answers with a problem: ``status``, ``code`` and, for values, JSON pointers only."""
+
+    def __init__(self, status: int, code: str, message: str, paths: Iterable[str] = ()) -> None:
+        self.status, self.code, self.message, self.paths = status, code, message, list(paths)
+        super().__init__(code)
+
+
+ROUNDS = 1000
+
+
+def _pointer(*parts: str) -> str:
+    return "".join("/" + part.replace("~", "~0").replace("/", "~1") for part in parts)
+
+
+def secret_paths(document: JsonObject, request: SimulationRequest, catalog: CatalogSnapshot) -> list[str]:
+    """Pointers into the request of values a schema marks secret, or that can't be classified: never simulated."""
+    from firefly_weave.compiler.schemas import _Failure
+    from firefly_weave.compiler.test_data import output_target, step_at
+    from firefly_weave.operations.redaction import classify
+
+    bundle = {name: schema.value for name, schema in catalog.schemas.items()}
+    spec = document.get("spec") if isinstance(document.get("spec"), dict) else {}
+    found: list[str] = []
+
+    def check(path: str, schema: object, value: JsonValue) -> None:
+        if not isinstance(schema, dict):
+            return
+        try:
+            classify(schema, value, bundle)
+        except (_Failure, RecursionError, ArithmeticError):
+            found.append(path)
+
+    check("/input", cast(JsonObject, spec).get("inputSchema"), request.input)
+    for key, value in request.mocks.items():
+        if key.startswith("node:"):
+            step = step_at(document, key.removeprefix("node:"))
+            check(_pointer("mocks", key), output_target(document, step, catalog), value)
+    for key, signal in request.scripts.signals.items():
+        step = step_at(document, key)
+        payload = signal.model_dump(mode="json", by_alias=True).get("payload")
+        check(_pointer("scripts", "signals", key, "payload"), (step or {}).get("payloadSchema"), payload)
+    for key, answer in request.scripts.humans.items():
+        step = step_at(document, key)
+        data = answer.model_dump(mode="json", by_alias=True).get("data")
+        check(_pointer("scripts", "humans", key, "data"), (step or {}).get("formSchema"), data)
+    return found
+
+
+def _label(switch: JsonObject, branch: str) -> str:
+    """A decision's path in plain words: "path 2" for its second case, "Otherwise" for its default."""
+    if branch.startswith("case:") and branch[5:].isdigit():
+        return f"path {int(branch[5:]) + 1}"
+    return "Otherwise"
+
+
+def _enclosing(document: JsonObject, step_id: str) -> list[JsonObject]:
+    """The decisions holding a step, outermost first."""
+    found: list[JsonObject] = []
+
+    def walk(steps: object, outer: list[JsonObject]) -> bool:
+        if not isinstance(steps, list):
+            return False
+        for step in steps:
+            if not isinstance(step, dict):
+                continue
+            if step.get("id") == step_id:
+                found.extend(outer)
+                return True
+            chain = [*outer, step] if step.get("kind") == "switch" else outer
+            if any(walk(branch.get("steps"), chain) for branch in _branches(step)):
+                return True
+        return False
+
+    spec = document.get("spec")
+    walk(spec.get("steps") if isinstance(spec, dict) else None, [])
+    return found
+
+
+def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> ExecuteResponse:
+    """Simulate the target of an Execute request; the answer is ``ExecuteResponse``.
+
+    Raises ``SimulationRefused`` for a request the host must refuse, and ``CatalogConflict`` for a local definition
+    that conflicts with the catalog. Nothing here reads the network, the clock or files.
+    """
+    from firefly_weave.compiler.api import compile_source
+    from firefly_weave.compiler.ir import HumanTaskNode, SignalNode
+    from firefly_weave.compiler.parser import ParseFailure, parse_source
+    from firefly_weave.contracts.diagnostics import Diagnostic
+    from firefly_weave.contracts.instance_keys import node_of
+    from firefly_weave.operations.debug.ai_turns import with_ai_turns
+    from firefly_weave.operations.debug.models import DebugError
+    from firefly_weave.operations.debug.simulator import TERMINAL, Simulator, first_instance
+    from firefly_weave.runtime.kernel import KernelError
+    from firefly_weave.studio.local_contracts import (
+        Blocked,
+        CompileSummary,
+        ExecuteResponse,
+        LoopProgress,
+        SelectedScope,
+        TraceEntry,
+    )
+
+    if not request.scripts.autoAdvanceWaits:
+        raise SimulationRefused(422, "WV-STUDIO-REQUEST", "Execute advances waits; step through a session instead")
+    target = request.target
+    try:
+        document: JsonObject = parse_source(request.source, format=request.format).value
+    except ParseFailure as failure:
+        summary = CompileSummary(ok=False, sliced=False, diagnostics=list(failure.diagnostics), stubs=[])
+        return ExecuteResponse(status="failed", compile=summary, trace=[])
+    whole = document
+    sliced = False
+    if target.mode != "workflow":
+        part = slice_for_target(document, cast(str, target.stepId))
+        if part is None:
+            raise SimulationRefused(422, "WV-STUDIO-REQUEST", "That step isn't in this workflow")
+        document, sliced = part, True
+    catalog, stubs = simulation_catalog(document, request.definitions, project, stub_unresolved=request.stubUnresolved)
+    refused = secret_paths(whole, request, catalog)
+    if refused:
+        raise SimulationRefused(
+            422, "WV-SCHEMA-SECRET_VALUE", "Test data can't hold values marked secret; leave them out", refused
+        )
+    result = compile_source(document, format="object", catalog=catalog)
+    summary = CompileSummary(
+        ok=result.ok,
+        sliced=sliced,
+        artifactDigest=result.artifact.digest if result.artifact is not None else None,
+        diagnostics=list(result.diagnostics),
+        stubs=stubs,
+    )
+    if not result.ok or result.artifact is None:
+        return ExecuteResponse(status="failed", compile=summary.model_copy(update={"ok": False}), trace=[])
+    artifact = result.artifact
+    scripts = request.scripts
+    misfits = misfitting_mocks(whole, request.mocks, catalog)
+    ai_turns = {key: entry.model_dump(mode="json", by_alias=True) for key, entry in scripts.aiTurns.items()}
+    try:
+        mocks = with_ai_turns(artifact, {k: v for k, v in request.mocks.items() if k not in misfits}, ai_turns)
+        try:
+            simulator = Simulator(artifact, mocks=mocks, input=request.input, now=request.now)
+        except KernelError as error:
+            # The test input doesn't fit the workflow's input fields: said with its pointer, never its value.
+            raise SimulationRefused(
+                422, str(error), "The test input doesn't fit the input fields", ["/input"]
+            ) from None
+        if target.mode == "before":
+            simulator.set_breakpoints({target.instanceKey or first_instance(simulator.ir, cast(str, target.stepId))})
+        try:
+            blocked = _drive(simulator, scripts, SignalNode, HumanTaskNode, TERMINAL)
+        except KernelError as error:
+            # A step the runtime refused (a condition that isn't true or false, say): the run fails there.
+            stopped = Diagnostic(
+                code=str(error), severity="error", stage="evaluation", path="", message="The simulated run stopped."
+            )
+            return ExecuteResponse(status="failed", compile=summary, trace=[], diagnostics=[stopped])
+    except DebugError as error:
+        if error.code == "WV-DEBUG-LIMIT":
+            return ExecuteResponse(status="limit", compile=summary, trace=[])
+        raise SimulationRefused(422, error.code, "The simulation couldn't use this test data") from None
+    view = simulator.inspect()
+    data = simulator.data
+    steps = {step.get("id") for step in steps_of(cast(JsonObject, whole["spec"]).get("steps"))}
+    trace: list[TraceEntry] = []
+    seen: set[tuple[str | None, str]] = set()
+    failed = view.status == "failed" and not view.diagnostics
+    for boundary in data.boundaries:
+        if boundary.kind != "node" or boundary.node_id is None or boundary.frame is not None:
+            continue
+        key = boundary.node_id
+        if node_of(key) not in steps or (None, key) in seen:
+            continue
+        seen.add((None, key))
+        reached = "completed" if key in data.outputs else "waiting" if key in view.active_nodes else "running"
+        entry: dict[str, Any] = {
+            "index": len(trace),
+            "nodeId": node_of(key),
+            "instanceKey": "" if key == node_of(key) else key,
+            "kind": cast(str, boundary.node_kind),
+            "status": reached,
+        }
+        if key in data.inputs:
+            entry["input"] = data.inputs[key]
+        if key in data.outputs:
+            entry["output"] = data.outputs[key]
+        trace.append(TraceEntry.model_validate(entry))
+    if failed and trace and trace[-1].status != "completed":
+        trace[-1] = trace[-1].model_copy(update={"status": "failed"})
+    missing = next((d for d in view.diagnostics if d.code == "WV-DEBUG-MISSING_MOCK"), None)
+    if blocked is None and missing is not None:
+        last = next(reversed(data.inputs), None) if data.inputs else None
+        if last is not None and last not in data.outputs:
+            step = node_of(last)
+            blocked = Blocked(
+                reason="missing_mock",
+                nodeId=step,
+                instanceKey="" if last == step else last,
+                message=(
+                    f"The pinned output of {step} doesn't fit its output fields. Edit it, or unpin it."
+                    if {"node:" + last, "node:" + step} & misfits
+                    else f"Step {step} needs test data."
+                ),
+            )
+    if blocked is None and target.mode != "workflow" and view.status not in {"paused"} and not view.diagnostics:
+        step = cast(str, target.stepId)
+        if not any(entry.nodeId == step for entry in trace):
+            for switch in reversed(_enclosing(whole, step)):
+                taken = next(
+                    (
+                        cast(JsonObject, b)
+                        for k, b in cast(JsonObject, view.variables.get("branches", {})).items()
+                        if cast(JsonObject, b).get("owner") == switch["id"]
+                    ),
+                    None,
+                )
+                if taken is not None:
+                    blocked = Blocked(
+                        reason="path",
+                        nodeId=step,
+                        instanceKey="",
+                        message=(
+                            f"With this test data, {switch['id']} takes {_label(switch, cast(str, taken['name']))},"
+                            f" so {step} isn't reached."
+                        ),
+                    )
+                    break
+    if blocked is not None:
+        status: Literal["completed", "blocked", "failed", "limit"] = "blocked"
+    elif view.diagnostics or view.status == "failed":
+        status = "failed"
+    else:
+        status = "completed"
+    return ExecuteResponse(
+        status=status,
+        compile=summary,
+        trace=trace,
+        loops=[
+            LoopProgress(
+                nodeId=loop.node_id,
+                instanceKey=loop.instance_key,
+                count=loop.count,
+                completed=loop.completed,
+                running=loop.running,
+                nextIndex=loop.next_index,
+                status="completed"
+                if loop.status == "joined"
+                else "failed"
+                if loop.status == "terminated"
+                else "running",
+            )
+            for loop in view.loops
+        ],
+        selectedScope=(
+            SelectedScope.model_validate(view.selected_scope.model_dump(mode="json"))
+            if view.selected_scope is not None
+            else None
+        ),
+        blocked=blocked,
+        variables=view.variables,
+        diagnostics=[d for d in view.diagnostics if d.code != "WV-DEBUG-MISSING_MOCK" or blocked is None],
+    )
+
+
+def _drive(simulator: Any, scripts: Any, signal_node: Any, human_node: Any, terminal: set[str]) -> Any:
+    """Run until the end, the target, or a signal or a person nobody scripted; waits advance by themselves."""
+    from firefly_weave.contracts.instance_keys import node_of
+    from firefly_weave.studio.local_contracts import Blocked
+
+    nodes = {node.id: node for node in simulator.ir.graph.nodes}
+    for _ in range(ROUNDS):
+        view = simulator.continue_until_breakpoint()
+        data = simulator.data
+        if view.diagnostics or view.status in terminal or data.paused is not None:
+            return None
+        moved = False
+        for key in list(view.active_nodes):
+            node = nodes.get(node_of(key))
+            if isinstance(node, signal_node):
+                script = scripts.signals.get(key) or scripts.signals.get(node.id)
+                if script is None:
+                    return Blocked(
+                        reason="signal",
+                        nodeId=node.id,
+                        instanceKey="" if key == node.id else key,
+                        message=f"Send signal {node.name}",
+                    )
+                entry = script.model_dump(mode="json", by_alias=True)
+                if entry.get("outcome") == "timeout":
+                    continue
+                if entry.get("afterSeconds"):
+                    simulator.advance_time(int(entry["afterSeconds"]))
+                simulator.signal(node.name, entry.get("payload"))
+                moved = True
+            elif isinstance(node, human_node):
+                script = scripts.humans.get(key) or scripts.humans.get(node.id)
+                if script is None:
+                    return Blocked(
+                        reason="human",
+                        nodeId=node.id,
+                        instanceKey="" if key == node.id else key,
+                        message=f"Decide for {node.id}",
+                    )
+                entry = script.model_dump(mode="json", by_alias=True)
+                if entry.get("outcome") == "expire":
+                    continue
+                simulator.human_decision(key, {"decision": entry["decision"], "data": entry.get("data", {})})
+                moved = True
+            if moved:
+                break
+        if moved:
+            continue
+        due = [d.deadline for d in data.deadlines if d.deadline >= data.now]
+        if not due:
+            return None
+        simulator.advance_time(max(0, math.ceil((min(due) - data.now).total_seconds())))
+    return None
+
+
+def misfitting_mocks(document: JsonObject, mocks: Mapping[str, JsonValue], catalog: CatalogSnapshot) -> set[str]:
+    """Step mocks that no longer fit their step's output fields: left out, so the step asks for test data instead of
+    the whole run being refused for a pin it may never reach."""
+    from firefly_weave.compiler.schemas import validate_payload
+    from firefly_weave.compiler.test_data import output_target, step_at
+
+    bundle = {name: schema.value for name, schema in catalog.schemas.items()}
+    misfits = set()
+    for key, value in mocks.items():
+        if not key.startswith("node:"):
+            continue
+        target = output_target(document, step_at(document, key.removeprefix("node:")), catalog)
+        if isinstance(target, dict) and validate_payload(target, value, bundle):
+            misfits.add(key)
+    return misfits
