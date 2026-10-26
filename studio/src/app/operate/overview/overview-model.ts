@@ -129,6 +129,15 @@ export interface OperationsSummary {
   targets: TargetsSection | ForbiddenSection | UnavailableSection;
   incidents: IncidentsSection | ForbiddenSection | UnavailableSection;
   attention: AttentionItem[] | UnavailableSection;
+  /** Servers with run statistics only; test runs left out, failed counts timed-out runs. */
+  runs_24h?: RunsDaySection | UnavailableSection;
+}
+export interface RunsDaySection {
+  started: number;
+  succeeded: number;
+  failed: number;
+  /** A fraction from 0 to 1; null when no run ended. */
+  failure_rate: number | null;
 }
 
 /** The environment summary for the environment Studio is in. */
@@ -505,4 +514,98 @@ export function isQuiet(summary: OperationsSummary): boolean {
     figures.outbox_pending === 0 &&
     figures.provider_pending === 0
   );
+}
+
+// Run statistics on Overview: the hour's lines under the Load figures and the
+// Last 24 h band. A server that keeps statistics says so with runs_24h in its
+// summary; any other server sees no statistics request at all.
+
+const second = (at: number) =>
+  new Date(Math.floor(at / 1000) * 1000).toISOString().replace(".000Z", "Z");
+function seriesQuery(
+  now: number,
+  spanMs: number,
+  signals: string[],
+  extra: Record<string, string> = {},
+): string {
+  const to = Math.floor(now / 1000) * 1000;
+  const params = new URLSearchParams({
+    from: second(to - spanMs),
+    to: second(to),
+  });
+  for (const signal of signals) params.append("signals", signal);
+  for (const [name, value] of Object.entries(extra)) params.set(name, value);
+  return params.toString();
+}
+
+/** The last hour of the five Load figures; the server answers in five-minute buckets. */
+export function loadSeriesQuery(now: number, offset = 0): string {
+  return seriesQuery(now + offset, 3_600_000, [
+    "runs_active",
+    "tasks_ready",
+    "waits_active",
+    "outbox_pending",
+    "provider_pending",
+  ]);
+}
+
+/** The last 24 hours of outcomes, runs started and the failure rate, hour by hour. */
+export function dayQuery(now: number, offset = 0): string {
+  return seriesQuery(
+    now + offset,
+    24 * 3_600_000,
+    [
+      "runs_succeeded",
+      "runs_failed",
+      "runs_cancelled",
+      "runs_started",
+      "failure_rate",
+    ],
+    { granularity: "1h" },
+  );
+}
+
+interface SeriesLine {
+  signal: string;
+  labels: Record<string, string>;
+  points: [string, number | null][];
+}
+/** Each Load figure's line for the hour, keyed by the figure's ID (its signal). */
+export function loadSparklines(
+  answer: { series: SeriesLine[] } | null,
+): Map<string, Array<number | null>> {
+  const lines = new Map<string, Array<number | null>>();
+  for (const item of answer?.series ?? [])
+    if (!Object.keys(item.labels).length)
+      lines.set(
+        item.signal,
+        item.points.map(([, value]) => value),
+      );
+  return lines;
+}
+
+/** Whether this server keeps run statistics: its summary has a runs_24h section. */
+export function keepsStatistics(summary: OperationsSummary): boolean {
+  return summary.runs_24h !== undefined && summary.runs_24h !== null;
+}
+
+const percent = new Intl.NumberFormat("en-US", {
+  style: "percent",
+  maximumFractionDigits: 1,
+});
+/** "240 runs · 6 failed · 2.5% failure rate"; no rate when no run ended. */
+export function dayHeadline(day: RunsDaySection): string {
+  const runs = `${countText(day.started)} ${day.started === 1 ? "run" : "runs"}`;
+  const parts = [runs, `${countText(day.failed)} failed`];
+  if (day.failure_rate !== null)
+    parts.push(`${percent.format(day.failure_rate)} failure rate`);
+  return parts.join(" · ");
+}
+
+/** A statistics read this server doesn't serve: Overview shows what it showed before, with no error. */
+export function statisticsMissing(error: {
+  status?: number;
+  code: string;
+}): boolean {
+  return error.status === 501 || error.status === 404;
 }

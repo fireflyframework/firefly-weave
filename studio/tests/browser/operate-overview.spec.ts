@@ -238,7 +238,7 @@ async function overview(
   let pauseNext: (() => void) | null = null;
   page.on("request", (request) => {
     if (
-      /\/(statistics|run-statistics|logs)(\?|$)/.test(
+      /\/(statistics|run-statistics|logs)(\/|\?|$)/.test(
         new URL(request.url()).pathname,
       )
     )
@@ -445,8 +445,8 @@ for (const viewport of [
       );
       await expect(attention).toHaveCount(7);
       await expect(attention.nth(1)).toContainText("Expires in 4 min");
-      // The 24-hour chart and the sparklines arrive with run statistics: none
-      // is drawn yet, and nothing asks for statistics or logs.
+      // A summary without runs_24h comes from a server without run
+      // statistics: no chart or sparkline, and nothing asks for statistics or logs.
       await expect(
         page.getByRole("heading", { name: "Last 24 h", exact: true }),
       ).toHaveCount(0);
@@ -1148,4 +1148,190 @@ test.describe("layout", () => {
         `overview-${viewport.width}x${viewport.height}-layout-end`,
       );
     });
+});
+
+test.describe("run statistics", () => {
+  const hourLine = (signal: string, values: Array<number | null>) => ({
+    signal,
+    labels: {},
+    unit: signal === "failure_rate" ? "ratio" : "count",
+    points: values.map((value, index) => [
+      new Date(Date.parse("2026-10-26T13:35:00Z") + index * 300_000)
+        .toISOString()
+        .replace(".000", ""),
+      value,
+    ]),
+  });
+  const dayLine = (signal: string, value: (index: number) => number) => ({
+    ...hourLine(signal, []),
+    points: Array.from({ length: 24 }, (_, index) => [
+      new Date(Date.parse("2026-10-25T15:00:00Z") + index * 3_600_000)
+        .toISOString()
+        .replace(".000", ""),
+      value(index),
+    ]),
+  });
+  /** Answers the hour's load lines and the day's hours; returns every statistics request. */
+  async function statistics(page: Page, status = 200) {
+    const requests: URL[] = [];
+    await page.route(`${environment}/run-statistics/series?*`, (route) => {
+      const url = new URL(route.request().url());
+      requests.push(url);
+      if (status !== 200)
+        return route.fulfill({
+          status,
+          json: { code: "WV-UNAVAILABLE", message: "Not served" },
+        });
+      const hourly = url.searchParams.get("granularity") === "1h";
+      return route.fulfill({
+        json: {
+          from: url.searchParams.get("from"),
+          to: url.searchParams.get("to"),
+          granularity: hourly ? "1h" : "5m",
+          complete_until: "2026-10-26T14:30:00Z",
+          series: hourly
+            ? [
+                dayLine("runs_succeeded", (index) => 9 + (index % 3)),
+                dayLine("runs_failed", (index) => (index % 8 === 0 ? 2 : 0)),
+                dayLine("runs_cancelled", () => 0),
+                dayLine("runs_started", (index) => 10 + (index % 3)),
+                dayLine("failure_rate", (index) =>
+                  index % 8 === 0 ? 0.18 : 0,
+                ),
+              ]
+            : url.searchParams.getAll("signals").map((signal, offset) =>
+                hourLine(
+                  signal,
+                  Array.from(
+                    { length: 12 },
+                    (_, index) => (index + offset) % 4,
+                  ),
+                ),
+              ),
+        },
+      });
+    });
+    return requests;
+  }
+  const day = { started: 240, succeeded: 231, failed: 6, failure_rate: 0.025 };
+
+  for (const viewport of [
+    { width: 1440, height: 900 },
+    { width: 600, height: 500 },
+  ])
+    test(`${viewport.width}x${viewport.height}: the Load figures carry the hour's lines and Last 24 h shows the day`, async ({
+      page,
+    }) => {
+      await page.setViewportSize(viewport);
+      const { unexpected } = await overview(page, every, [
+        () => ({ json: summary({ runs_24h: day }) }),
+      ]);
+      const requests = await statistics(page);
+      await open(page);
+      const lines = page.locator("li.figure weave-sparkline svg");
+      await expect(lines).toHaveCount(5);
+      await expect(
+        page.getByRole("img", {
+          name: "Active runs over the last hour: from 0 to 3",
+        }),
+      ).toBeVisible();
+      const heading = page.getByRole("heading", {
+        name: "Last 24 h",
+        exact: true,
+      });
+      await expect(heading).toBeVisible();
+      await expect(page.locator(".band-headline")).toHaveText(
+        "240 runs · 6 failed · 2.5% failure rate",
+      );
+      await expect(
+        page.getByRole("img", { name: "Runs per hour", exact: true }),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("img", { name: "Failure rate", exact: true }),
+      ).toBeVisible();
+      // One request for the hour's lines and one for the day, no more.
+      expect(requests).toHaveLength(2);
+      expect(
+        requests
+          .find((url) => !url.searchParams.has("granularity"))
+          ?.searchParams.getAll("signals"),
+      ).toEqual([
+        "runs_active",
+        "tasks_ready",
+        "waits_active",
+        "outbox_pending",
+        "provider_pending",
+      ]);
+      // Statistics are asked for only through the series read; never logs.
+      expect(
+        unexpected.filter((url) => !url.includes("/run-statistics/series?")),
+      ).toEqual([]);
+      // Each line starts at its figure's left edge, and lines of figures in
+      // one row of the band share one baseline.
+      const geometry = await page.locator("li.figure").evaluateAll((figures) =>
+        figures.map((figure) => {
+          const label = figure.querySelector(".figure-label")!;
+          const line = figure.querySelector("weave-sparkline")!;
+          const a = label.getBoundingClientRect();
+          const b = line.getBoundingClientRect();
+          return {
+            left: b.left - a.left,
+            row: Math.round(figure.getBoundingClientRect().top),
+            top: b.top,
+            height: b.height,
+          };
+        }),
+      );
+      for (const item of geometry) {
+        expect(Math.abs(item.left)).toBeLessThanOrEqual(1);
+        expect(Math.round(item.height)).toBe(24);
+        for (const other of geometry.filter((each) => each.row === item.row))
+          expect(Math.abs(other.top - item.top)).toBeLessThanOrEqual(1);
+      }
+      await shot(
+        page,
+        `overview-${viewport.width}x${viewport.height}-statistics`,
+      );
+      await expectNoClipping(page);
+    });
+
+  test("a server without run statistics is never asked for them", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await overview(page, every);
+    const requests = await statistics(page);
+    await open(page);
+    await expect(page.locator("li.health-tile")).toHaveCount(6);
+    await page.getByRole("button", { name: "Refresh", exact: true }).click();
+    await expect(page.locator(".refresh-status .updated")).toHaveText(
+      "Updated just now",
+    );
+    expect(requests).toEqual([]);
+    await expect(
+      page.getByRole("heading", { name: "Last 24 h", exact: true }),
+    ).toHaveCount(0);
+  });
+
+  test("statistics a server doesn't serve leave Overview as it was, with no error", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await overview(page, every, [() => ({ json: summary({ runs_24h: day }) })]);
+    const requests = await statistics(page, 501);
+    await open(page);
+    await expect.poll(() => requests.length).toBe(2);
+    await expect(page.locator("li.figure")).toHaveCount(5);
+    await expect(page.locator("li.figure weave-sparkline")).toHaveCount(0);
+    await expect(
+      page.getByRole("heading", { name: "Last 24 h", exact: true }),
+    ).toHaveCount(0);
+    await expect(page.locator(".operate-problem")).toHaveCount(0);
+    // Refreshing the summary never asks again.
+    await page.getByRole("button", { name: "Refresh", exact: true }).click();
+    await expect(page.locator(".refresh-status .updated")).toHaveText(
+      "Updated just now",
+    );
+    expect(requests).toHaveLength(2);
+  });
 });
