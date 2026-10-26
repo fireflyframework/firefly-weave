@@ -408,7 +408,7 @@ class StudioService:
             return None
         try:
             snapshot = CatalogSnapshot.from_lock(json.loads(bytes(response.body)))
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, KeyError, AttributeError):
             return None
         self.catalog_cache = (generation, profile.project_id, now, snapshot)
         return snapshot

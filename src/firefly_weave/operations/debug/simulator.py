@@ -615,6 +615,7 @@ class Simulator:
                 if isinstance(command, Deadline):
                     run.deadlines.append(command)
                 elif isinstance(command, CallIntent):
+                    d.inputs[_path(key, command.node_id)] = command.input
                     if not self._call(key, run, called, command):
                         return True
                 elif isinstance(command, HumanTaskIntent):

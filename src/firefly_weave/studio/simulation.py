@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import copy
 import functools
+import json
 import math
 from collections.abc import Iterable, Iterator, Mapping
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -299,29 +300,57 @@ def _pointer(*parts: str) -> str:
     return "".join("/" + part.replace("~", "~0").replace("/", "~1") for part in parts)
 
 
-def secret_paths(document: JsonObject, request: SimulationRequest, catalog: CatalogSnapshot) -> list[str]:
-    """Pointers into the request of values a schema marks secret, or that can't be classified: never simulated."""
+def _action_output(catalog: CatalogSnapshot, reference: str) -> object:
+    resource = catalog.resources.get(("Action", reference))
+    spec = resource.definition.value.get("spec") if resource is not None else None
+    return spec.get("outputSchema") if isinstance(spec, dict) else None
+
+
+def classify_test_data(
+    document: JsonObject,
+    request: SimulationRequest,
+    catalog: CatalogSnapshot,
+    callees: Mapping[str, JsonObject] | None = None,
+) -> tuple[list[str], list[str]]:
+    """Pointers into the request of values a schema marks secret, and of values too large or too deep to classify.
+
+    Only typed values are classified, each against its own schema: the input, each step mock by its step's output
+    fields, each action mock by its action's, each mock inside a called workflow by that workflow's step, each signal
+    payload and each person's answer. Both lists are refused before anything is simulated.
+    """
     from firefly_weave.compiler.schemas import _Failure
     from firefly_weave.compiler.test_data import output_target, step_at
     from firefly_weave.operations.redaction import classify
 
     bundle = {name: schema.value for name, schema in catalog.schemas.items()}
     spec = document.get("spec") if isinstance(document.get("spec"), dict) else {}
-    found: list[str] = []
+    secret: list[str] = []
+    unclassified: list[str] = []
 
     def check(path: str, schema: object, value: JsonValue) -> None:
         if not isinstance(schema, dict):
             return
         try:
             classify(schema, value, bundle)
-        except (_Failure, RecursionError, ArithmeticError):
-            found.append(path)
+        except _Failure as failure:
+            (secret if failure.code == "SECRET_VALUE" else unclassified).append(path)
+        except (RecursionError, ArithmeticError):
+            unclassified.append(path)
+
+    def mocks_of(workflow: JsonObject, mocks: Mapping[str, JsonValue], *prefix: str) -> None:
+        for key, value in mocks.items():
+            if key.startswith("node:"):
+                step = step_at(workflow, key.removeprefix("node:"))
+                check(_pointer(*prefix, key), output_target(workflow, step, catalog), value)
+            elif key.startswith("action:"):
+                check(_pointer(*prefix, key), _action_output(catalog, key.removeprefix("action:")), value)
 
     check("/input", cast(JsonObject, spec).get("inputSchema"), request.input)
-    for key, value in request.mocks.items():
-        if key.startswith("node:"):
-            step = step_at(document, key.removeprefix("node:"))
-            check(_pointer("mocks", key), output_target(document, step, catalog), value)
+    mocks_of(document, request.mocks, "mocks")
+    for reference, callee in request.workflows.items():
+        called = (callees or {}).get(reference)
+        if called is not None:
+            mocks_of(called, callee.mocks, "workflows", reference, "mocks")
     for key, signal in request.scripts.signals.items():
         step = step_at(document, key)
         payload = signal.model_dump(mode="json", by_alias=True).get("payload")
@@ -330,7 +359,34 @@ def secret_paths(document: JsonObject, request: SimulationRequest, catalog: Cata
         step = step_at(document, key)
         data = answer.model_dump(mode="json", by_alias=True).get("data")
         check(_pointer("scripts", "humans", key, "data"), (step or {}).get("formSchema"), data)
-    return found
+    return secret, unclassified
+
+
+def secret_paths(document: JsonObject, request: SimulationRequest, catalog: CatalogSnapshot) -> list[str]:
+    """Pointers into the request of values that can't be simulated: marked secret, or too large to classify."""
+    secret, unclassified = classify_test_data(document, request, catalog)
+    return [*secret, *unclassified]
+
+
+def refuse_test_data(
+    document: JsonObject,
+    request: SimulationRequest,
+    catalog: CatalogSnapshot,
+    callees: Mapping[str, JsonObject] | None = None,
+) -> None:
+    """Refuses test data that holds a value marked secret, or one too large or too deep to check, by pointer."""
+    secret, unclassified = classify_test_data(document, request, catalog, callees)
+    if secret:
+        raise SimulationRefused(
+            422, "WV-SCHEMA-SECRET_VALUE", "Test data can't hold values marked secret; leave them out", secret
+        )
+    if unclassified:
+        raise SimulationRefused(
+            422,
+            "WV-SCHEMA-RESOURCE_LIMIT",
+            "This test data is too large or too deeply nested to check; make it smaller",
+            unclassified,
+        )
 
 
 def _label(switch: JsonObject, branch: str) -> str:
@@ -363,6 +419,98 @@ def _enclosing(document: JsonObject, step_id: str) -> list[JsonObject]:
     return found
 
 
+def _callees(request: SimulationRequest, catalog: CatalogSnapshot, stubs: Iterable[str]) -> dict[str, JsonObject]:
+    """The called workflows test data has mocks for, as documents: a local draft's source, or the catalog's copy.
+
+    Stubs (callees nobody has) are left out: their output comes from a pin on the call.
+    """
+    from firefly_weave.compiler.parser import ParseFailure, parse_source
+
+    stubbed = set(stubs)
+    documents: dict[str, JsonObject] = {}
+    for reference, callee in request.workflows.items():
+        if reference in stubbed:
+            continue
+        if callee.source is not None and callee.format is not None:
+            try:
+                documents[reference] = parse_source(callee.source, format=callee.format).value
+            except ParseFailure:
+                continue
+        elif (resource := catalog.resources.get(("Workflow", reference))) is not None:
+            documents[reference] = resource.definition.value
+    return documents
+
+
+def _called(
+    artifact: Any, request: SimulationRequest, documents: Mapping[str, JsonObject], catalog: CatalogSnapshot
+) -> dict[str, Any]:
+    """Compiled called workflows the run reaches, with the mocks test data holds for their steps."""
+    from firefly_weave.compiler.api import compile_source
+    from firefly_weave.operations.debug.models import CalledWorkflow
+
+    called: dict[str, Any] = {}
+    pending = [artifact]
+    while pending:
+        current = pending.pop()
+        for dependency in _dependencies(current):
+            reference = dependency.reference
+            if dependency.kind != "Workflow" or reference in called or reference not in documents:
+                continue
+            result = compile_source(documents[reference], format="object", catalog=catalog)
+            if not result.ok or result.artifact is None:
+                continue
+            called[reference] = CalledWorkflow(
+                artifact=json.loads(result.artifact.to_bytes()),
+                mocks=dict(request.workflows[reference].mocks),
+            )
+            pending.append(result.artifact)
+    return called
+
+
+def _dependencies(artifact: Any) -> list[Any]:
+    from firefly_weave.runtime.kernel import prepare
+
+    return list(prepare(artifact).ir.dependencies)
+
+
+def _in_slice(document: JsonObject, whole: JsonObject, mocks: Mapping[str, JsonValue]) -> dict[str, JsonValue]:
+    """The mocks for steps the compiled document runs: a later step's pin never blocks executing an earlier one.
+
+    A key that names no step (or action) anywhere in the workflow stays, so the simulator still refuses it.
+    """
+    from firefly_weave.contracts.instance_keys import InvalidInstanceKey, node_of
+
+    def ids(workflow: JsonObject) -> set[str]:
+        spec = workflow.get("spec")
+        return {cast(str, step.get("id")) for step in steps_of(spec.get("steps") if isinstance(spec, dict) else None)}
+
+    def actions(workflow: JsonObject) -> set[str]:
+        spec = workflow.get("spec")
+        return {
+            cast(str, step.get("uses"))
+            for step in steps_of(spec.get("steps") if isinstance(spec, dict) else None)
+            if step.get("kind") == "action"
+        }
+
+    kept_ids, all_ids = ids(document), ids(whole)
+    kept_actions, all_actions = actions(document), actions(whole)
+    out: dict[str, JsonValue] = {}
+    for key, value in mocks.items():
+        if key.startswith("node:"):
+            try:
+                step = node_of(key.removeprefix("node:"))
+            except InvalidInstanceKey:
+                step = key.removeprefix("node:")
+            if step in all_ids and step not in kept_ids:
+                continue
+        elif key.startswith("action:"):
+            reference = key.removeprefix("action:")
+            if reference in all_actions and reference not in kept_actions:
+                continue
+        out[key] = value
+    return out
+
+
 def simulator_for(
     request: SimulationRequest,
     project: CatalogSnapshot | None,
@@ -373,9 +521,11 @@ def simulator_for(
 ) -> tuple[CompileSummary, Simulator | None, set[str]]:
     """Compile ``document`` (the workflow, or its slice) for a simulation and start it with the request's test data.
 
-    Secrets are checked against the whole workflow before compiling; mocks that no longer fit are left out (and
-    returned) before the simulator sees them; AI tasks replay their saved turns. The simulator is None when the
-    workflow doesn't compile. Raises ``SimulationRefused``, ``CatalogConflict`` or ``DebugError``.
+    Test data is checked against the whole workflow before compiling (secrets, and values too large to check);
+    mocks for steps the slice doesn't run, and mocks that no longer fit, are left out before the simulator sees
+    them (the misfits are returned); called workflows run with the mocks test data holds for their steps; AI tasks
+    replay their saved turns. The simulator is None when the workflow doesn't compile. Raises
+    ``SimulationRefused``, ``CatalogConflict`` or ``DebugError``.
     """
     from firefly_weave.compiler.api import compile_source
     from firefly_weave.operations.debug.ai_turns import with_ai_turns
@@ -384,11 +534,8 @@ def simulator_for(
     from firefly_weave.studio.local_contracts import CompileSummary
 
     catalog, stubs = simulation_catalog(document, request.definitions, project, stub_unresolved=request.stubUnresolved)
-    refused = secret_paths(whole, request, catalog)
-    if refused:
-        raise SimulationRefused(
-            422, "WV-SCHEMA-SECRET_VALUE", "Test data can't hold values marked secret; leave them out", refused
-        )
+    callees = _callees(request, catalog, stubs)
+    refuse_test_data(whole, request, catalog, callees)
     result = compile_source(document, format="object", catalog=catalog)
     summary = CompileSummary(
         ok=result.ok,
@@ -402,9 +549,11 @@ def simulator_for(
     artifact = result.artifact
     misfits = misfitting_mocks(whole, request.mocks, catalog)
     ai_turns = {key: entry.model_dump(mode="json", by_alias=True) for key, entry in request.scripts.aiTurns.items()}
-    mocks = with_ai_turns(artifact, {k: v for k, v in request.mocks.items() if k not in misfits}, ai_turns)
+    kept = _in_slice(document, whole, {k: v for k, v in request.mocks.items() if k not in misfits})
+    mocks = with_ai_turns(artifact, kept, ai_turns)
+    workflows = _called(artifact, request, callees, catalog)
     try:
-        simulator = Simulator(artifact, mocks=mocks, input=request.input, now=request.now)
+        simulator = Simulator(artifact, mocks=mocks, input=request.input, now=request.now, workflows=workflows)
     except KernelError as error:
         # The test input doesn't fit the workflow's input fields: said with its pointer, never its value.
         raise SimulationRefused(422, str(error), "The test input doesn't fit the input fields", ["/input"]) from None
@@ -473,7 +622,9 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
     steps = {step.get("id") for step in steps_of(cast(JsonObject, whole["spec"]).get("steps"))}
     trace: list[TraceEntry] = []
     seen: set[tuple[str | None, str]] = set()
-    failed = view.status == "failed" and not view.diagnostics
+    # A run that timed out (a deadline passed) or was cancelled stopped too: it failed where it waited.
+    timed_out = view.status in {"timed_out", "cancelled"}
+    failed = (view.status == "failed" or timed_out) and not view.diagnostics
     for boundary in data.boundaries:
         if boundary.kind != "node" or boundary.node_id is None or boundary.frame is not None:
             continue
@@ -496,6 +647,27 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
         trace.append(TraceEntry.model_validate(entry))
     if failed and trace and trace[-1].status != "completed":
         trace[-1] = trace[-1].model_copy(update={"status": "failed"})
+    extra: list[Diagnostic] = []
+    if timed_out:
+        at = trace[-1] if trace and trace[-1].status == "failed" else None
+        node = next((n for n in simulator.ir.graph.nodes if at is not None and n.id == at.nodeId), None)
+        if view.status == "cancelled":
+            words = "The simulated run was cancelled."
+        elif isinstance(node, SignalNode):
+            words = f"The deadline of {node.name} passed before the signal arrived."
+        elif isinstance(node, HumanTaskNode):
+            words = f"The task {node.id} expired before anyone decided."
+        else:
+            words = "A deadline passed, so the simulated run stopped."
+        extra.append(
+            Diagnostic(
+                code="WV-DEBUG-TIMED-OUT" if view.status == "timed_out" else "WV-DEBUG-CANCELLED",
+                severity="error",
+                stage="evaluation",
+                path="",
+                message=words,
+            )
+        )
     missing = next((d for d in view.diagnostics if d.code == "WV-DEBUG-MISSING_MOCK"), None)
     if blocked is None and missing is not None:
         last = next(reversed(data.inputs), None) if data.inputs else None
@@ -536,7 +708,7 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
                     break
     if blocked is not None:
         status: Literal["completed", "blocked", "failed", "limit"] = "blocked"
-    elif view.diagnostics or view.status == "failed":
+    elif view.diagnostics or view.status == "failed" or timed_out:
         status = "failed"
     else:
         status = "completed"
@@ -566,8 +738,12 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
             else None
         ),
         blocked=blocked,
-        variables=view.variables,
-        diagnostics=[d for d in view.diagnostics if d.code != "WV-DEBUG-MISSING_MOCK" or blocked is None],
+        # Only what Studio reads: the paths decisions took. The run's values are in the trace already.
+        variables={"branches": view.variables["branches"]} if "branches" in view.variables else {},
+        diagnostics=[
+            *(d for d in view.diagnostics if d.code != "WV-DEBUG-MISSING_MOCK" or blocked is None),
+            *extra,
+        ],
     )
 
 

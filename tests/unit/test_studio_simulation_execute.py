@@ -329,3 +329,131 @@ def test_a_signal_script_that_arrives_later_advances_time_first():
         workflow(PAID), scripts={"signals": {"paid": {"payload": {"a": 1}, "afterSeconds": 700, "source": "manual"}}}
     )
     assert "output" not in late["trace"][0]
+
+
+# --- fixes from review ------------------------------------------------------------------------------------------
+
+LATER = CHECK | {"id": "later"}
+
+
+def test_a_later_step_s_mock_never_blocks_executing_an_earlier_one():
+    answer = run(
+        workflow(CHECK, SHAPE, LATER),
+        mocks={"node:check": {"eligible": True}, "node:later": {"eligible": False}},
+        target={"mode": "step", "stepId": "shape"},
+    )
+    assert answer["status"] == "completed"
+    assert answer["trace"][-1]["output"] == {"ok": True}
+
+
+def test_a_mock_for_no_step_at_all_is_still_refused():
+    with pytest.raises(SimulationRefused) as refused:
+        run(workflow(CHECK, SHAPE), mocks={"node:check": {"eligible": True}, "node:nowhere": {}})
+    assert refused.value.code == "WV-DEBUG-MOCK-KEY"
+
+
+AFTER = {"id": "after", "kind": "transform", "value": {"literal": 1}}
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        {"payload": {}, "afterSeconds": 900, "source": "manual"},
+        {"outcome": "timeout"},
+    ],
+)
+def test_a_signal_whose_deadline_passes_fails_the_step_and_the_run(script):
+    answer = run(workflow(PAID, AFTER), scripts={"signals": {"paid": script}})
+    assert answer["status"] == "failed"
+    assert [(e["nodeId"], e["status"]) for e in answer["trace"]] == [("paid", "failed")]
+    assert [d["message"] for d in answer["diagnostics"]] == [
+        "The deadline of order-paid passed before the signal arrived."
+    ]
+
+
+def test_a_person_s_task_that_expires_fails_the_step_and_the_run():
+    expiring = APPROVAL | {"expirySeconds": 3600}
+    answer = run(workflow(expiring, AFTER), scripts={"humans": {"approval": {"outcome": "expire"}}})
+    assert answer["status"] == "failed"
+    assert [(e["nodeId"], e["status"]) for e in answer["trace"]] == [("approval", "failed")]
+    assert [d["message"] for d in answer["diagnostics"]] == ["The task approval expired before anyone decided."]
+
+
+CALL = {"id": "enrich", "kind": "callWorkflow", "uses": "enrich@1.0.0", "mode": "wait", "with": {"literal": {}}}
+
+
+def test_an_unpinned_call_that_waits_needs_test_data():
+    answer = run(workflow(CALL), stubUnresolved=True)
+    assert answer["status"] == "blocked"
+    assert answer["blocked"] == {
+        "reason": "missing_mock",
+        "nodeId": "enrich",
+        "instanceKey": "",
+        "message": "Step enrich needs test data.",
+    }
+    pinned = run(workflow(CALL), stubUnresolved=True, mocks={"node:enrich": {"ok": True}})
+    assert pinned["status"] == "completed"
+
+
+def callee_definition() -> dict[str, Any]:
+    return {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {"name": "enrich", "version": "1.0.0"},
+        "spec": {
+            "inputSchema": {},
+            "outputSchema": {},
+            "callable": {},
+            "steps": [CHECK | {"with": {"object": {"customerId": {"literal": "c-9"}}}}],
+            "output": {"ref": "/steps/check/output"},
+        },
+    }
+
+
+def test_mocks_for_steps_inside_a_called_workflow_are_used():
+    answer = run(
+        workflow(CALL),
+        definitions=[ACTION, callee_definition()],
+        workflows={"enrich@1.0.0": {"mocks": {"node:check": {"eligible": True}}}},
+    )
+    assert answer["status"] == "completed", answer
+    assert answer["trace"][0]["output"] == {"eligible": True}
+
+
+def test_a_secret_in_a_called_workflow_s_mock_is_refused_with_its_pointer():
+    secret = json.loads(json.dumps(ACTION))
+    secret["spec"]["outputSchema"]["properties"]["eligible"]["x-secret"] = True
+    with pytest.raises(SimulationRefused) as refused:
+        run(
+            workflow(CALL),
+            definitions=[secret, callee_definition()],
+            workflows={"enrich@1.0.0": {"mocks": {"node:check": {"eligible": True}}}},
+        )
+    assert refused.value.code == "WV-SCHEMA-SECRET_VALUE"
+    assert refused.value.paths == ["/workflows/enrich@1.0.0/mocks/node:check"]
+
+
+def test_a_secret_in_an_action_mock_is_refused_with_its_pointer():
+    secret = json.loads(json.dumps(ACTION))
+    secret["spec"]["outputSchema"]["properties"]["eligible"]["x-secret"] = True
+    with pytest.raises(SimulationRefused) as refused:
+        run(
+            workflow(CHECK),
+            definitions=[secret],
+            mocks={"action:onboarding.check-customer@1.0.0": {"eligible": True}},
+        )
+    assert refused.value.code == "WV-SCHEMA-SECRET_VALUE"
+    assert refused.value.paths == ["/mocks/action:onboarding.check-customer@1.0.0"]
+
+
+def test_test_data_too_large_to_check_is_refused_as_too_large():
+    with pytest.raises(SimulationRefused) as refused:
+        run(workflow(SHAPE | {"value": {"literal": 1}}), input={"id": "x" * (1536 * 1024)})
+    assert refused.value.code != "WV-SCHEMA-SECRET_VALUE"
+    assert refused.value.paths == ["/input"]
+    assert "secret" not in refused.value.message
+
+
+def test_the_answer_keeps_only_the_paths_decisions_took():
+    answer = run(workflow(CHECK, SHAPE), mocks={"node:check": {"eligible": True}})
+    assert set(answer.get("variables", {})) <= {"branches"}
