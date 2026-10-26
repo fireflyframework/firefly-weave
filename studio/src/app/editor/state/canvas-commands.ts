@@ -59,6 +59,7 @@ export const CANVAS_COMMANDS: ReadonlySet<KeymapCommand> =
     "save",
     "escape",
     "showShortcuts",
+    "executeWorkflow",
   ]);
 
 /** Commands about steps: only from a step or the canvas, never from a "+", a tool or a menu. */

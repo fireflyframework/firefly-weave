@@ -30,6 +30,13 @@ export { checkInputsOf } from "./test-data-inputs";
 export * as testDataOps from "./test-data-ops";
 export { readTestData } from "./test-data-read";
 export { CHECK_WORDS } from "./test-data-check";
+export {
+  finalAnnouncement,
+  playbackFrames,
+  PLAYBACK_STEP_MS,
+} from "../canvas/trace-playback";
+export { summaryLine } from "./run-summary";
+export { findStep } from "../ndv/step-walk";
 
 /** Executes on the Studio host and keeps the last results; it loads with the tools too. */
 export function createExecutionService(host: ExecutionHost): ExecutionService {

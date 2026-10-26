@@ -226,17 +226,30 @@ import type { App } from "../app";
               h.busy === "validate" ? "Validating…" : "Validate"
             }}</span>
           </button>
-          <button
-            type="button"
-            class="wide-only"
-            [attr.aria-disabled]="!!h.blocker('simulate') || null"
-            [attr.aria-describedby]="
-              h.blocker('simulate') ? 'simulate-blocked' : null
-            "
-            (click)="h.runCommand('simulate')"
-          >
-            {{ h.busy === "simulate" ? "Simulating…" : "Simulate" }}
-          </button>
+          @if (h.editorNext && h.execution) {
+            <button
+              type="button"
+              class="primary execute-workflow"
+              title="Execute workflow (Ctrl/Cmd+Enter)"
+              (click)="h.executeWorkflow()"
+            >
+              <weave-icon name="execute" /><span class="execute-label"
+                >Execute workflow</span
+              >
+            </button>
+          } @else {
+            <button
+              type="button"
+              class="wide-only"
+              [attr.aria-disabled]="!!h.blocker('simulate') || null"
+              [attr.aria-describedby]="
+                h.blocker('simulate') ? 'simulate-blocked' : null
+              "
+              (click)="h.runCommand('simulate')"
+            >
+              {{ h.busy === "simulate" ? "Simulating…" : "Simulate" }}
+            </button>
+          }
         </div>
         @if (!h.profile) {
           <details

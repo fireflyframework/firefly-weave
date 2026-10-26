@@ -111,6 +111,18 @@ export interface CanvasHost {
   pinsForCopy(): Readonly<Record<string, PinEntry>>;
   /** P and the menu, for pinnable steps: unpins the pinned ones as one Undo; others say how to pin. */
   togglePins(ids: readonly string[]): void;
+  /** Execute workflow (simulated, on the Studio host); absent where Execute isn't offered. */
+  executeWorkflow?(): void;
+  /** The line under a step that has data ("3 fields", "Path: amount > 1000"), or null. */
+  summaryOf?(stepId: string): string | null;
+  /** Why the simulated run stopped at a step ("Step check needs test data."), or null. */
+  runNote?(stepId: string): string | null;
+  /** The code and message of the step a simulated run failed at, or null. */
+  runFailure?(stepId: string): { code?: string; message?: string } | null;
+  /** Changes whenever the last results change (the summary lines follow it). */
+  runStamp?(): unknown;
+  /** What the canvas's live region says once a playback ends. */
+  runAnnouncement?(): { text: string; urgent: boolean } | null;
   /** Tidy layout: clears legacy positions and moves notes as one undo step, with a toast; false when refused. */
   tidyCanvas(next: CanvasSidecar | null): boolean;
 }

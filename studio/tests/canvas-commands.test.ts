@@ -98,13 +98,11 @@ describe("canvas keys", () => {
     ).toBe("tidyLayout");
   });
 
-  it("leave rows for features the canvas doesn't have yet to those features", () => {
-    for (const key of [
-      press("Enter", { ctrlKey: true }),
-      press("F9"),
-      press("l"),
-      press("r"),
-    ])
+  it("execute the workflow with Ctrl/Cmd+Enter, and leave rows for features still to come", () => {
+    expect(canvasCommand(press("Enter", { ctrlKey: true }), on)).toBe(
+      "executeWorkflow",
+    );
+    for (const key of [press("F9"), press("l"), press("r")])
       expect(canvasCommand(key, on), key.key).toBeNull();
   });
 
@@ -207,9 +205,10 @@ describe("canvas keys", () => {
       "Add a sticky note",
       "Pin output or unpin",
       "Tidy layout",
+      "Execute workflow",
     ])
       expect(canvas).toContain(label);
-    for (const label of ["Execute workflow", "Toggle a breakpoint"])
+    for (const label of ["Toggle a breakpoint"])
       expect(canvas).not.toContain(label);
   });
 

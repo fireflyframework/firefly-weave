@@ -187,7 +187,8 @@ interface ToolbarView {
   locked: boolean;
   tabIndex: 0 | -1;
   menu: RowMenuItem[];
-  trigger: { intent: string; label: string } | null;
+  /** A trigger's buttons: Execute workflow, and Remove for a chosen trigger. */
+  trigger: { intent: string | null; label: string; execute: boolean } | null;
 }
 
 /** Ruling 19: the canvas never makes data, so a step without output says how to pin it. */
@@ -499,6 +500,7 @@ export class CanvasView implements OnInit, DoCheck {
       canvas: CanvasSidecar,
       _gapsVersion: number,
       pins: ReadonlyMap<string, { stale: string | null }>,
+      _runStamp: unknown,
     ): TileView[] => {
       const ctx = this.host().kindContext();
       // A selected group shows every step inside it as selected.
@@ -521,6 +523,7 @@ export class CanvasView implements OnInit, DoCheck {
                 ? stepNoteLine(canvas, triggerNoteKey(tile.id, canvas))
                 : "",
             pin: tile.step ? pins.get(tile.id) : undefined,
+            simulated: run?.mode === "simulated",
           },
         );
       });
@@ -537,6 +540,7 @@ export class CanvasView implements OnInit, DoCheck {
       h.model.canvas,
       this.pasteGapsVersion,
       h.pinStates(),
+      h.runStamp?.() ?? null,
     );
   }
   private position(tile: LtrTile): Point {
@@ -560,6 +564,8 @@ export class CanvasView implements OnInit, DoCheck {
       note: string;
       /** Its pinned output, and why it may be out of date. */
       pin?: { stale: string | null };
+      /** The run drawn is a simulation Studio played back. */
+      simulated?: boolean;
     },
   ): TileView {
     const h = this.host();
@@ -575,6 +581,7 @@ export class CanvasView implements OnInit, DoCheck {
       tabIndex: state.active ? (0 as const) : (-1 as const),
       pulse: state.pulse,
       note: state.note,
+      output: "",
     };
     if (!tile.step) {
       const trigger =
@@ -604,28 +611,32 @@ export class CanvasView implements OnInit, DoCheck {
     const shown = {
       ...facts,
       run: state.run,
-      failure: state.run === "failed" ? {} : null,
+      failure: state.run === "failed" ? (h.runFailure?.(tile.id) ?? {}) : null,
       stale: state.pin?.stale ?? null,
       pinned: !!state.pin,
       selected: state.selected,
+      simulated: !!state.simulated,
     };
     const badge = tileBadge(shown);
+    // Where the simulated run stopped: what it needs ("Step check needs test data.").
+    const note = state.run ? (h.runNote?.(tile.id) ?? "") : "";
     return {
       ...common,
       step: true,
       icon: descriptor?.icon ?? "action",
       title: tile.id,
       subtitle: summary || kindLabel,
+      output: h.summaryOf?.(tile.id) ?? "",
       name: tileName({
         id: tile.id,
         kindLabel,
         summary,
-        status: runText(state.run, tile.kind) || badge?.text || "",
+        status: note || runText(state.run, tile.kind) || badge?.text || "",
         index: tile.index,
         count: tile.count,
         place: tile.place,
       }),
-      tooltip: [`${tile.id}, ${kindLabel}`, badge?.text]
+      tooltip: [`${tile.id}, ${kindLabel}`, note || badge?.text]
         .filter(Boolean)
         .join(". "),
       badge,
@@ -856,7 +867,10 @@ export class CanvasView implements OnInit, DoCheck {
       if (id) void this.openTile(id, event);
     } else if (action === "insert") this.insertAt(control);
     else if (action === "templates") this.host().showTemplates = true;
-    else if (action === "remove-trigger") {
+    else if (action === "execute-workflow") {
+      if (control.getAttribute("aria-disabled") !== "true")
+        this.host().executeWorkflow?.();
+    } else if (action === "remove-trigger") {
       const id = control.dataset["target"];
       if (id && control.getAttribute("aria-disabled") !== "true")
         void this.host().removeTrigger(id);
@@ -976,6 +990,7 @@ export class CanvasView implements OnInit, DoCheck {
       canvas: CanvasSidecar,
       zoom: number,
       coarse: boolean,
+      execute: boolean,
     ) =>
       [...new Set([focused, hovered])].flatMap((id): ToolbarView[] => {
         const tile =
@@ -988,9 +1003,13 @@ export class CanvasView implements OnInit, DoCheck {
           const intent = canvas.triggers?.find(
             (item) => `$trigger:${item.id}` === tile.id,
           );
-          if (!intent) return [];
-          const label = TRIGGER_LABELS[intent.kind];
-          const spot = toolbarSpot(tile, layout, zoom, { buttons: 1, coarse });
+          // The trigger runs the workflow: Execute workflow on hover and focus.
+          if (!intent && !execute) return [];
+          const label = TRIGGER_LABELS[intent?.kind ?? "manual"];
+          const spot = toolbarSpot(tile, layout, zoom, {
+            buttons: intent && execute ? 2 : 1,
+            coarse,
+          });
           return [
             {
               id: tile.id,
@@ -1003,7 +1022,7 @@ export class CanvasView implements OnInit, DoCheck {
               locked,
               tabIndex,
               menu: [],
-              trigger: { intent: intent.id, label },
+              trigger: { intent: intent?.id ?? null, label, execute },
             },
           ];
         }
@@ -1041,6 +1060,7 @@ export class CanvasView implements OnInit, DoCheck {
       this.host().model.canvas,
       this.view.zoom,
       this.coarse?.matches ?? false,
+      !!this.host().executeWorkflow,
     );
   }
   /**
@@ -1851,6 +1871,10 @@ export class CanvasView implements OnInit, DoCheck {
         return this.escape(target);
       case "showShortcuts":
         this.sheetOpen = true;
+        return true;
+      case "executeWorkflow":
+        if (!h.executeWorkflow) return false;
+        h.executeWorkflow();
         return true;
       default:
         return false;

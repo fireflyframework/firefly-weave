@@ -65,7 +65,7 @@ import type {
   ExecuteOutcome,
   ExecutionService,
 } from "./editor/state/execution-service";
-import type { ExecuteTarget } from "./editor/state/execution";
+import type { ExecuteResponse, ExecuteTarget } from "./editor/state/execution";
 import type { StepFingerprints } from "./editor/state/fingerprints";
 import type {
   PinEntry,
@@ -2954,7 +2954,7 @@ export class App implements CanvasHost {
   get moreItems(): RowMenuItem[] {
     const narrow = this.windowWidth <= 767;
     const items: RowMenuItem[] = [];
-    if (narrow) {
+    if (narrow)
       items.push(
         {
           label: "Undo",
@@ -2966,13 +2966,15 @@ export class App implements CanvasHost {
           disabled: !this.model.canRedo || this.editingLocked,
           run: () => this.redo(),
         },
-        {
-          label: "Simulate",
-          detail: this.blocker("simulate"),
-          run: () => void this.runCommand("simulate"),
-        },
       );
-    }
+    // With the new editor the bar holds Execute workflow; the classic
+    // simulation stays in this menu until the run log replaces it.
+    if (narrow || (this.editorNext && this.execution))
+      items.push({
+        label: "Simulate",
+        detail: this.blocker("simulate"),
+        run: () => void this.runCommand("simulate"),
+      });
     for (const command of this.secondaryCommands)
       items.push({
         label: commandLabels[command],
@@ -3920,6 +3922,8 @@ export class App implements CanvasHost {
   /** Today's simulation as the canvas draws it; null when none is open. */
   canvasRun(): CanvasRun | null {
     const session = this.simulationSession;
+    // With the new editor, the canvas plays back Execute's simulated run.
+    if (!session && this.editorNext) return this.playback();
     if (
       this.runCache.nodes !== this.simNodes ||
       this.runCache.session !== session
@@ -7270,6 +7274,7 @@ export class App implements CanvasHost {
     if (!(await this.ensureApplied()))
       return { kind: "failed", message: "Fix the field being edited first." };
     let outcome = await service.execute(target);
+    if (outcome.kind === "busy") return outcome;
     if (
       outcome.kind === "catalog" &&
       (await this.dialogs.confirm({
@@ -7281,8 +7286,96 @@ export class App implements CanvasHost {
       }))
     )
       outcome = await service.execute(target, { catalog: "none" });
+    if (outcome.kind === "done") this.playRun(outcome.response);
+    else if (outcome.kind !== "stale")
+      this.runAnnouncement.set({
+        text:
+          outcome.kind === "refused" || outcome.kind === "failed"
+            ? outcome.message
+            : "The execution didn't run.",
+        urgent: true,
+      });
     this.cdr.markForCheck();
     return outcome;
+  }
+  /** Execute workflow: the editor bar, the trigger's button, Ctrl/Cmd+Enter on the canvas. */
+  executeWorkflow(): void {
+    void this.executeIn({ mode: "workflow" });
+  }
+  /** The simulated run as the canvas draws it: the playback frame, then how it ended. */
+  readonly playback = signal<CanvasRun | null>(null);
+  /** What the canvas's live region says once a playback ends (urgent: an error). */
+  readonly runAnnouncement = signal<{ text: string; urgent: boolean } | null>(
+    null,
+  );
+  private playTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Walks the trace on the tiles, 120 ms per step; with reduced motion only the end shows. */
+  private playRun(response: ExecuteResponse) {
+    const tools = this.tools;
+    if (!tools) return;
+    clearTimeout(this.playTimer);
+    const reduced =
+      typeof matchMedia === "function" &&
+      matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const frames = tools.playbackFrames(response, reduced);
+    const draftId = this.draftId;
+    this.runAnnouncement.set(null);
+    let at = 0;
+    const next = () => {
+      if (draftId !== this.draftId) return;
+      this.playback.set(frames[at] ?? null);
+      this.cdr.markForCheck();
+      at++;
+      if (at < frames.length)
+        this.playTimer = setTimeout(next, tools.PLAYBACK_STEP_MS);
+      else
+        this.runAnnouncement.set({
+          text: tools.finalAnnouncement(response),
+          urgent: response.status === "failed",
+        });
+    };
+    next();
+  }
+  /** Changes whenever the last results change. */
+  runStamp(): unknown {
+    return this.execution?.results() ?? null;
+  }
+  /** The line under a step's tile: what its pin or its last result holds ("3 fields"), or null. */
+  summaryOf(stepId: string): string | null {
+    const tools = this.tools;
+    const step = tools?.findStep(
+      this.model.definition.spec.steps ?? [],
+      (item) => item.id === stepId,
+    );
+    if (!tools || !step) return null;
+    const pin = this.testData?.data().pins?.[stepId];
+    const result = this.execution?.results()?.steps[stepId];
+    // Only a step with data has a line: a pin, or a result of the last execution.
+    if (!pin && !result) return null;
+    const output = pin ? (pin.output as Json) : result?.output;
+    return tools.summaryLine(
+      step,
+      output,
+      this.execution?.last()?.variables as Record<string, Json> | undefined,
+      this.model.definition,
+    );
+  }
+  /** Why the simulated run stopped at a step (it needs test data, a path it didn't take), or null. */
+  runNote(stepId: string): string | null {
+    const last = this.execution?.last();
+    if (last?.blocked?.nodeId === stepId) return last.blocked.message;
+    return null;
+  }
+  /** The code and message of the step a simulated run failed at, or null. */
+  runFailure(stepId: string): { code?: string; message?: string } | null {
+    const last = this.execution?.last();
+    if (!last || last.status !== "failed") return null;
+    const failed = last.trace.find((entry) => entry.status === "failed");
+    if (failed?.nodeId !== stepId) return null;
+    const diagnostic = last.diagnostics?.[0];
+    return diagnostic
+      ? { code: diagnostic.code, message: diagnostic.message }
+      : {};
   }
   /** The place and opening the test data was last opened for. */
   private testDataKey = "";
