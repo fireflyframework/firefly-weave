@@ -461,6 +461,23 @@ function stepIdentities(
   );
   return (id) => found.get(id);
 }
+/** The references every step of a workflow uses (actions, called workflows). */
+function allUses(workflow: { spec: { steps?: unknown } }): string[] {
+  const found: string[] = [];
+  const visit = (value: unknown) => {
+    if (Array.isArray(value)) return value.forEach(visit);
+    if (!value || typeof value !== "object") return;
+    const record = value as Record<string, unknown>;
+    if (
+      typeof record["uses"] === "string" &&
+      typeof record["kind"] === "string"
+    )
+      found.push(record["uses"]);
+    for (const item of Object.values(record)) visit(item);
+  };
+  visit(workflow.spec.steps);
+  return found;
+}
 /** No pinned steps (before the test data tools load). */
 const NO_PINS: ReadonlyMap<string, { stale: string | null }> = new Map();
 
@@ -7219,8 +7236,13 @@ export class App implements CanvasHost {
               : null,
           place: () => this.executionPlace,
           connected: () => !!this.profile,
-          definitions: () =>
-            [...this.catalogContracts.values()] as { [key: string]: Json }[],
+          // The contracts of the actions this workflow uses, nothing else Studio cached.
+          definitions: () => {
+            const uses = new Set(allUses(this.model.definition));
+            return [...this.catalogContracts]
+              .filter(([reference]) => uses.has(reference))
+              .map(([, document]) => document) as { [key: string]: Json }[];
+          },
           testData: () =>
             this.testData?.data() ?? {
               schemaVersion: 1,
@@ -7283,6 +7305,7 @@ export class App implements CanvasHost {
     this.lastTarget = target;
     let outcome = await service.execute(target);
     if (outcome.kind === "busy") return outcome;
+    const draftId = this.draftId;
     if (
       outcome.kind === "catalog" &&
       (await this.dialogs.confirm({
@@ -7291,7 +7314,9 @@ export class App implements CanvasHost {
           "Studio couldn't read the project's catalog. Execute with what's on this computer?",
         confirmLabel: "Execute anyway",
         cancelLabel: "Cancel",
-      }))
+      })) &&
+      // Another workflow opened while the question was open: nothing runs.
+      draftId === this.draftId
     )
       outcome = await service.execute(target, { catalog: "none" });
     if (outcome.kind === "done") {
@@ -7533,6 +7558,11 @@ export class App implements CanvasHost {
       this.testDataKey ===
         JSON.stringify([{ kind: "memory" }, this.model.opened]);
     this.testDataKey = key;
+    // The last results, the run log and the playback belong to what was open:
+    // nothing of it shows or is sent until this workflow's own are read.
+    this.execution?.forget();
+    this.runSession.set(null);
+    this.playback.set(null);
     // Another workflow's test data: no pin here came from elsewhere yet.
     this.foreignPins.clear();
     this.foreignVersion++;

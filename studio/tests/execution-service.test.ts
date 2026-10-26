@@ -328,4 +328,58 @@ describe("the execution service", () => {
     await closed;
     expect(service.sessions.current()).toBeNull();
   });
+  it("never uses another draft's results, even before that draft's own open", async () => {
+    const { service, sent, state, values } = fixture();
+    await service.open("d-1");
+    const first = service.execute({ mode: "workflow" });
+    await settle();
+    sent[0].answer(RESPONSE);
+    await first;
+    // Draft B shows before its results are read (its test data is still on the way).
+    state.draft = { id: "d-2", revision: 1 };
+    const second = service.execute({ mode: "workflow" });
+    await settle();
+    expect((sent[1].body as { mocks: object }).mocks).toEqual({});
+    sent[1].answer({ ...RESPONSE, trace: [] });
+    expect((await second).kind).toBe("done");
+    expect(service.results()?.steps).toEqual({});
+    expect(
+      JSON.parse(values.get("p:s:t:pr:weave.lastExecution.d-2")!).steps,
+    ).toEqual({});
+  });
+
+  it("says the host took too long instead of retrying it as busy", async () => {
+    const { service, sent } = fixture();
+    await service.open("d-1");
+    const slow = service.execute({ mode: "workflow" });
+    await settle();
+    sent[0].refuse(
+      new ApiError(503, {
+        status: 503,
+        code: "WV-STUDIO-TIMEOUT",
+        message: "Executing took longer than 30 seconds; execute fewer steps",
+      }),
+    );
+    expect(await slow).toEqual({
+      kind: "failed",
+      message: "Executing took longer than 30 seconds; execute fewer steps",
+    });
+    expect(sent).toHaveLength(1);
+  });
+
+  it("after Stop, a busy host is finishing the stopped execution", async () => {
+    vi.useFakeTimers();
+    const { service, sent } = fixture();
+    await service.open("d-1");
+    void service.execute({ mode: "workflow" });
+    await vi.advanceTimersByTimeAsync(0);
+    service.stop();
+    const again = service.execute({ mode: "workflow" });
+    await vi.advanceTimersByTimeAsync(0);
+    const busy = new ApiError(503, { status: 503, code: "WV-STUDIO-BUSY" });
+    sent[1].refuse(busy);
+    await vi.advanceTimersByTimeAsync(500);
+    sent[2].refuse(busy);
+    expect(await again).toEqual({ kind: "busy", stopping: true });
+  });
 });

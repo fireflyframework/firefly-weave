@@ -190,6 +190,7 @@ async def local_work(
     pool: _LocalWork = _LOCAL_WORK,
     busy: str = "Studio is still analyzing an earlier document; try again shortly",
     respond: Callable[[Any], Response] | None = None,
+    slow_code: str = "WV-STUDIO-BUSY",
 ) -> Response:
     """Run pure, CPU-bound authoring work off the event loop with a bounded wait; never any I/O."""
     from firefly_weave.compiler.canonical import canonical_bytes
@@ -209,7 +210,7 @@ async def local_work(
         async with asyncio.timeout(LOCAL_WORK_SECONDS):
             value = await asyncio.shield(future)
     except TimeoutError:
-        return problem(503, "WV-STUDIO-BUSY", slow)
+        return problem(503, slow_code, slow)
     if respond is not None:
         return respond(value)
     return Response(canonical_bytes(value), media_type="application/json")
@@ -677,6 +678,8 @@ class StudioController:
             slow="Executing took longer than 30 seconds; execute fewer steps",
             busy="Studio is still executing; wait for it to finish",
             respond=respond,
+            # Not busy: trying again would take as long.
+            slow_code="WV-STUDIO-TIMEOUT",
         )
 
     # --- step-through sessions for the run log -------------------------------------------------------------------
@@ -713,6 +716,7 @@ class StudioController:
             slow="The run log took longer than 30 seconds; execute fewer steps",
             busy="Studio is still executing; wait for it to finish",
             respond=respond,
+            slow_code="WV-STUDIO-TIMEOUT",
         )
 
     @post_mapping("/studio/local/debug/sessions")

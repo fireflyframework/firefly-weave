@@ -81,7 +81,8 @@ export interface ExecutionHost {
 
 export type ExecuteOutcome =
   | { kind: "done"; response: ExecuteResponse }
-  | { kind: "busy" }
+  /** The host's one slot is taken; `stopping`: by the execution Stop left running there. */
+  | { kind: "busy"; stopping?: boolean }
   | { kind: "stale" }
   | { kind: "refused"; code: string; message: string; paths: string[] }
   | { kind: "conflict" }
@@ -123,6 +124,10 @@ export class ExecutionService {
   /** Bumped by every execution and by Stop: only the newest answer lands. */
   private ticket = 0;
   private session: HostSession | null = null;
+  /** The draft `results` belong to: another draft's are never sent or merged. */
+  private resultsDraft: string | null = null;
+  /** Stop leaves the host's slot busy until that execution ends there. */
+  private stopped = false;
 
   constructor(private readonly host: ExecutionHost) {}
 
@@ -132,13 +137,15 @@ export class ExecutionService {
     this.running.set(null);
     this.results.set(null);
     this.last.set(null);
+    this.resultsDraft = draftId;
     const place = this.host.place();
     const backend = this.host.backend;
     if (!place || !backend) return;
     const text = await backend
       .get(lastResultsKey(place.prefix, draftId))
       .catch(() => null);
-    if (generation === this.generation) this.results.set(readResults(text));
+    if (generation === this.generation && this.resultsDraft === draftId)
+      this.results.set(readResults(text));
   }
 
   /** Sign-out, an account switch or a closed workflow: nothing stays in memory. */
@@ -153,6 +160,7 @@ export class ExecutionService {
 
   /** Stops waiting for the running execution; its answer is dropped. */
   stop(): void {
+    if (this.running()) this.stopped = true;
     this.ticket++;
     this.running.set(null);
   }
@@ -170,6 +178,12 @@ export class ExecutionService {
     const ticket = ++this.ticket;
     const place = this.host.place();
     const prints = this.host.prints();
+    // Results kept for another draft (this one's aren't read yet) stay out.
+    if (this.resultsDraft !== draft.id) {
+      this.resultsDraft = draft.id;
+      this.results.set(null);
+      this.last.set(null);
+    }
     const previous = this.results();
     const body: ExecuteRequest = executeRequest({
       source: draft.source,
@@ -200,7 +214,11 @@ export class ExecutionService {
       !sameSteps(prints, this.host.prints())
     )
       return { kind: "stale" };
-    if ("kind" in answer) return answer;
+    if ("kind" in answer)
+      return answer.kind === "busy" && this.stopped
+        ? { kind: "busy", stopping: true }
+        : answer;
+    this.stopped = false;
     let results = withExecution(
       previous,
       answer,
@@ -288,6 +306,7 @@ export class ExecutionService {
         );
       } catch (error) {
         const outcome = outcomeOf(error);
+        // Only a busy slot is worth one more try; a timeout would just time out again.
         if (outcome.kind !== "busy" || attempt > 1) return outcome;
         await new Promise((done) => setTimeout(done, BUSY_RETRY_MS));
       }
@@ -318,7 +337,10 @@ function outcomeOf(error: unknown): ExecuteOutcome {
       message:
         "Studio couldn't reach its host. Check that Weave Studio is running.",
     };
-  if (error.status === 503) return { kind: "busy" };
+  if (error.status === 503 && error.code === "WV-STUDIO-BUSY")
+    return { kind: "busy" };
+  if (error.status === 503)
+    return { kind: "failed", message: error.plain.message };
   if (error.status === 409) return { kind: "conflict" };
   if (error.status === 502) return { kind: "catalog" };
   const detail = (error.detail ?? {}) as {

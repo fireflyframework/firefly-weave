@@ -201,8 +201,9 @@ export function noticeOf(
     case "busy":
       return {
         target,
-        message:
-          "Studio is still executing. Wait for it to finish, then try again.",
+        message: outcome.stopping
+          ? "Studio is finishing what you stopped. Try again in a moment."
+          : "Studio is still executing. Wait for it to finish, then try again.",
         reason: null,
       };
     case "conflict":

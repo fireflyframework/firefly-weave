@@ -256,3 +256,23 @@ def test_an_oversized_execute_body_is_refused_before_it_is_read(tmp_path):
     with client(tmp_path) as browser:
         huge = BODY | {"input": {"id": "x" * (2 * 1024 * 1024)}}
         assert browser.post("/studio/local/debug/execute", json=huge, headers=pair(browser)).status_code == 413
+
+
+def test_an_execution_that_takes_too_long_says_so_and_isn_t_busy(tmp_path, monkeypatch):
+    import time
+
+    from firefly_weave.studio import simulation
+
+    monkeypatch.setattr(host, "LOCAL_WORK_SECONDS", 0.05)
+    real = simulation.execute
+
+    def slow(*args, **kwargs):
+        time.sleep(0.3)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(simulation, "execute", slow)
+    with client(tmp_path) as browser:
+        answer = browser.post("/studio/local/debug/execute", json=BODY, headers=pair(browser))
+        assert answer.status_code == 503
+        assert answer.json()["code"] == "WV-STUDIO-TIMEOUT"
+        assert "30 seconds" in answer.json()["message"]
