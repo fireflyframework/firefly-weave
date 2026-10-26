@@ -166,20 +166,27 @@ const SIGNAL_NAMES: Record<string, string> = {
   provider_pending: "Provider backlog",
 };
 
-function seriesName(series: StatisticsSeries): string {
+/** A series' name in legends, tooltips and tables: "Ready tasks · email". */
+export function seriesName(series: StatisticsSeries): string {
   const label =
     series.labels.workflow ?? series.labels.task_type ?? series.labels.status;
   const name = SIGNAL_NAMES[series.signal] ?? series.signal;
   return label ? `${name} · ${label}` : name;
 }
 
-function valueText(unit: Unit, value: number | null): string {
+const whole = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
+/** A value in its unit: "1,200", "20%", "450 ms", "1 min 30 s"; nothing as a dash. */
+export function metricText(unit: Unit, value: number | null): string {
   if (value === null) return "—";
   if (unit === "ratio") return percentText(value);
-  if (unit === "ms") return durationText(value);
-  if (unit === "seconds") return durationText(value * 1000);
-  return String(value);
+  const ms = unit === "seconds" ? value * 1000 : value;
+  if (unit === "ms" || unit === "seconds") {
+    if (ms >= 1000) return durationText(ms);
+    return ms < 10 ? `${Number(ms.toFixed(1))} ms` : `${Math.round(ms)} ms`;
+  }
+  return whole.format(value);
 }
+const valueText = metricText;
 
 /** The table a chart toggles to: one row per bucket, one column per series. */
 export function chartRows(series: StatisticsSeries[]): string[][] {
@@ -204,4 +211,85 @@ export function csv(rows: string[][]): string {
     return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
   };
   return rows.map((row) => row.map(cell).join(",") + "\r\n").join("");
+}
+
+const clock = new Intl.DateTimeFormat("en-US", {
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+});
+const day = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  day: "numeric",
+});
+/** A bucket's label on the time axis, in local time: "14:30", or "Oct 26" for daily buckets. */
+export function timeLabel(iso: string, granularity: Granularity): string {
+  const at = new Date(iso);
+  return granularity === "1d" ? day.format(at) : clock.format(at);
+}
+
+/** Estimated width of one character of tabular figures at the axis size. */
+export const CHAR_PX = 8;
+const LABEL_GAP = 8;
+/** Room the edge labels need on either side of the plot. */
+const EDGE = 24;
+
+/** The left margin that holds the widest y-axis tick label. */
+export function yAxisWidth(labels: string[]): number {
+  return (
+    Math.max(0, ...labels.map((label) => label.length)) * CHAR_PX + LABEL_GAP
+  );
+}
+
+export interface ChartFrame {
+  left: number;
+  right: number;
+  plotWidth: number;
+}
+
+/** Margins and plot width of a chart this wide whose y axis shows these labels. */
+export function chartFrame(width: number, yLabels: string[]): ChartFrame {
+  const left = Math.max(EDGE, yAxisWidth(yLabels));
+  return { left, right: EDGE, plotWidth: Math.max(0, width - left - EDGE) };
+}
+
+export interface ColumnLayout {
+  band: number;
+  column: number;
+  gap: number;
+  /** Left edge of a bucket's column, from the plot's left. */
+  x(index: number): number;
+  /** Center of a bucket's column, where lines meet it. */
+  center(index: number): number;
+}
+
+/** Equal bands per bucket; the column leaves a gap of a fifth of the band, at least 1 px. */
+export function columnLayout(count: number, plotWidth: number): ColumnLayout {
+  const band = count > 0 ? plotWidth / count : plotWidth;
+  const gap = Math.max(1, band / 5);
+  const column = Math.max(0, band - gap);
+  return {
+    band,
+    column,
+    gap,
+    x: (index) => index * band + gap / 2,
+    center: (index) => index * band + band / 2,
+  };
+}
+
+/** Buckets that get a time label: every nth from the first, so labels never overlap. */
+export function xLabelIndices(
+  count: number,
+  plotWidth: number,
+  labelChars: number,
+): number[] {
+  if (count <= 0) return [];
+  const band = plotWidth / count;
+  const every = Math.max(
+    1,
+    Math.ceil((labelChars * CHAR_PX + LABEL_GAP) / band),
+  );
+  const indices: number[] = [];
+  for (let index = 0; index < count; index += every) indices.push(index);
+  return indices;
 }

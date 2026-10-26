@@ -1,0 +1,181 @@
+/*
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+*/
+
+/* Charts: gridlines --line, axis --border, axis text --subtle in tabular figures. */
+:host(.time-chart),
+:host(.line-chart) {
+  display: block;
+  min-width: 0;
+}
+
+.chart-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 32px;
+}
+
+.chart-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.chart-toggle {
+  flex: none;
+  min-height: 32px;
+}
+
+.chart-frame {
+  display: block;
+  max-width: 100%;
+  overflow: visible;
+}
+
+.chart-grid {
+  stroke: var(--line);
+  stroke-width: 1;
+  shape-rendering: crispEdges;
+}
+
+.chart-axis {
+  stroke: var(--border);
+  stroke-width: 1;
+  shape-rendering: crispEdges;
+}
+
+.chart-tick {
+  fill: var(--subtle);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.chart-line {
+  fill: none;
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.chart-column {
+  shape-rendering: crispEdges;
+}
+
+.chart-hover {
+  fill: transparent;
+  pointer-events: all;
+}
+
+.chart-hover:hover {
+  fill: var(--line);
+  fill-opacity: 0.35;
+}
+
+.chart-empty {
+  fill: var(--muted);
+  font-size: 13px;
+}
+
+/* The legend wraps; it never clips. */
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.legend-swatch {
+  flex: none;
+}
+
+.legend-swatch line {
+  stroke-width: 2;
+}
+
+.chart-table-wrap {
+  max-height: 240px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.chart-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.chart-table th,
+.chart-table td {
+  height: 32px;
+  padding: 0 8px;
+  text-align: left;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--line);
+}
+
+.chart-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.chart-table td.numeric {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+:host(.sparkline) {
+  display: block;
+  height: 24px;
+}
+
+.sparkline-line {
+  fill: none;
+  stroke: var(--series-2);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+@media (pointer: coarse), (max-width: 767px) {
+  .chart-toggle,
+  .chart-head {
+    min-height: 44px;
+  }
+
+  .chart-table th,
+  .chart-table td {
+    height: 44px;
+  }
+}
