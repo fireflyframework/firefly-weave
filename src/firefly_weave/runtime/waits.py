@@ -78,14 +78,6 @@ async def settle(repository: RuntimeRepository, row: dict[str, Any], *, terminal
         elapsed = step in duration_nodes
         if terminal_only and elapsed:
             continue
-        if not elapsed:
-            await repository.execute("SELECT weave_control_begin('run',:id)", id=view.id)
-        await repository.execute(
-            "INSERT INTO wait_wakeups VALUES(:tenant,:project,:environment,:wait,:kind,:now)",
-            kind="elapsed" if elapsed else "timeout",
-            wait=deadline["id"],
-            now=now,
-        )
         event = RuntimeEvent(
             id=uuid4(),
             type="wait_elapsed" if elapsed else "timed_out",
@@ -108,6 +100,15 @@ async def settle(repository: RuntimeRepository, row: dict[str, Any], *, terminal
 
             await persist_terminal(repository, row, event, canonical_digest({"timeout": str(deadline["id"])}))
             return 1
+        if not elapsed and result.state.status in TERMINAL:
+            # A timeout that ends the run is terminal control; one whose transactions settle first is ordinary work.
+            await repository.execute("SELECT weave_control_begin('run',:id)", id=view.id)
+        await repository.execute(
+            "INSERT INTO wait_wakeups VALUES(:tenant,:project,:environment,:wait,:kind,:now)",
+            kind="elapsed" if elapsed else "timeout",
+            wait=deadline["id"],
+            now=now,
+        )
         await repository.persist(
             view.model_copy(update={"state": result.state}),
             event,
@@ -120,6 +121,9 @@ async def settle(repository: RuntimeRepository, row: dict[str, Any], *, terminal
     from firefly_weave.runtime.calls import deliver_calls
 
     view, _ = await deliver_calls(repository, view, artifact)
+    from firefly_weave.runtime.settlement import deliver_revoked
+
+    view, _ = await deliver_revoked(repository, view, artifact)
     # Consume the durable winner even behind the barrier: the kernel defers its
     # continuation, while its settled deadline no longer occupies scanner pages.
     while view.state.status in {"waiting", "suspended"}:

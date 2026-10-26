@@ -280,9 +280,9 @@ class RuntimeRepository:
                 )
                 await self.execute(
                     "WITH inserted AS (INSERT INTO task_intents(id,tenant_id,project_id,environment_id,run_id,node_id,"
-                    "payload,worker_release_id,operation_key,status) "
+                    "payload,worker_release_id,operation_key,status,settlement) "
                     "VALUES(:id,:tenant,:project,:environment,:run,:node,"
-                    "cast(:payload AS jsonb),:release,:operation,'ready') RETURNING id) "
+                    "cast(:payload AS jsonb),:release,:operation,'ready',:settlement) RETURNING id) "
                     "INSERT INTO task_facts(tenant_id,project_id,environment_id,task_id,run_id,node_id,instance_key,"
                     "task_type,status,created_at,ready_since) SELECT :tenant,:project,:environment,id,:run,"
                     ":fact_node,:instance,:task_type,'ready',:at,:at FROM inserted",
@@ -291,6 +291,7 @@ class RuntimeRepository:
                     payload=json.dumps(payload),
                     release=release,
                     operation=f"{view.id}:{command.node_id}",
+                    settlement=command.settlement,
                 )
             elif isinstance(command, HumanTaskIntent):
                 from firefly_weave.human_tasks.service import create_task
@@ -309,6 +310,12 @@ class RuntimeRepository:
             from firefly_weave.runtime.calls import record_calls
 
             await record_calls(self, view, result, event.timestamp)
+            from firefly_weave.runtime.settlement import project_transactions, settle_work
+
+            for command in result.commands:
+                if isinstance(command, ControlCommand) and command.kind == "settle":
+                    await settle_work(self, view.id, command.node_id, event.timestamp)
+            await project_transactions(self, view, result, event)
             await self.record_evidence(view, event, result, task_timing)
         if event.type == "task_completed":
             await self.execute(
@@ -319,9 +326,36 @@ class RuntimeRepository:
                 run=view.id,
                 node=event.data["node_id"],
             )
-        if event.type in {"signal_received", "wait_elapsed", "human_completed"}:
+        from firefly_weave.runtime.transactions import split_deadline
+
+        if event.type == "timed_out" and result.state.status not in {"succeeded", "failed", "cancelled", "timed_out"}:
+            # The run's timeout fired, and the run ends once its transactions settle: it fires once.
+            await self.execute(
+                f"UPDATE run_deadlines SET consumed=true WHERE {SCOPE} AND run_id=:run AND id=:wait",
+                run=view.id,
+                wait=event.data["wait_id"],
+            )
+        if event.type == "wait_elapsed" and split_deadline(event.data.get("node_id")) is not None:
+            # A transaction's hold deadline is armed again when an earlier one is needed: consume only this one.
+            await self.execute(
+                f"UPDATE run_deadlines SET consumed=true WHERE {SCOPE} AND run_id=:run AND id=:wait",
+                run=view.id,
+                wait=event.data["wait_id"],
+            )
+        elif event.type in {"signal_received", "wait_elapsed", "human_completed"}:
             await self.execute(
                 f"UPDATE run_deadlines SET consumed=true WHERE {SCOPE} AND run_id=:run AND node_id=:node",
+                run=view.id,
+                node=event.data["node_id"],
+            )
+        if event.type == "step_failed":
+            # A step whose failure its transaction handled is done with: no revoke, recovery or claim touches it.
+            await self.execute(
+                task_fact_update(
+                    f"UPDATE task_intents SET status='handled',next_attempt_at=NULL WHERE {SCOPE} AND run_id=:run "
+                    "AND node_id=:node"
+                ),
+                at=event.timestamp,
                 run=view.id,
                 node=event.data["node_id"],
             )
@@ -519,7 +553,10 @@ class RuntimeRepository:
             "WHERE runs.state->'active' ? (n->>'id')))) "
             # A waiting call whose child ended is delivered under this run's lock (index run_calls_undelivered).
             "OR EXISTS (SELECT 1 FROM run_calls c WHERE c.caller_run_id=runs.id AND c.mode='wait' "
-            "AND NOT c.delivered AND c.status IN ('succeeded','failed','cancelled','timed_out'))) "
+            "AND NOT c.delivered AND c.status IN ('succeeded','failed','cancelled','timed_out')) "
+            # A participant task revoked before any worker claimed it is reported to its transaction
+            # (index task_intents_revoked).
+            "OR EXISTS (SELECT 1 FROM task_intents t WHERE t.run_id=runs.id AND t.status='revoked')) "
             "AND (id NOT IN (SELECT run_id FROM run_policy_blocks UNION SELECT run_id FROM "
             "runtime_capacity_blocks WHERE active) OR EXISTS "
             "(SELECT 1 FROM run_deadlines d WHERE d.run_id=runs.id AND NOT d.consumed "
@@ -546,7 +583,9 @@ class RuntimeRepository:
             f"SELECT id FROM task_intents WHERE {SCOPE} AND status='ready' "
             "AND run_id NOT IN (SELECT run_id FROM run_policy_blocks UNION SELECT run_id FROM "
             "runtime_capacity_blocks WHERE active) "
-            f"AND run_id IN (SELECT id FROM runs WHERE {SCOPE} AND state->>'status'='waiting') "
+            # Settlement work also expires while its run is held by another incident.
+            f"AND run_id IN (SELECT id FROM runs WHERE {SCOPE} AND (state->>'status'='waiting' "
+            "OR (task_intents.settlement AND state->>'status'='suspended'))) "
             "AND cast(payload->>'deadline' AS timestamptz)<=clock_timestamp() "
             f"AND (SELECT {runnable('r')} FROM runs r WHERE r.id=task_intents.run_id) ORDER BY id LIMIT :limit",
             limit=limit,
@@ -566,8 +605,11 @@ class RuntimeRepository:
                 "WITH changed AS (INSERT INTO incidents(id,tenant_id,project_id,environment_id,run_id,incident_key,"
                 "node_id,generation,origin_code,code,status,revision) VALUES("
                 "md5(cast(cast(:run AS uuid) AS text) || ':' || :key)::uuid,:tenant,:project,:environment,:run,:key,"
-                ":node,:generation,:code,:code,'active',1) ON CONFLICT(run_id,incident_key) DO UPDATE "
-                "SET code=excluded.code,revision=incidents.revision+1 "
+                ":node,:generation,coalesce(:origin,:code),:code,'active',1) "
+                "ON CONFLICT(run_id,incident_key) DO UPDATE "
+                # A transaction in doubt keeps the failure that put it there.
+                "SET code=excluded.code,origin_code=CASE WHEN :origin IS NULL THEN incidents.origin_code "
+                "ELSE excluded.origin_code END,revision=incidents.revision+1 "
                 "WHERE incidents.status='active' AND incidents.code<>excluded.code RETURNING id) "
                 "INSERT INTO incident_facts(tenant_id,project_id,environment_id,incident_id,node_id,instance_key,"
                 "opened_at,updated_at,workflow_name,workflow_version,test) SELECT :tenant,:project,:environment,"
@@ -582,6 +624,7 @@ class RuntimeRepository:
                 node=value["node_id"],
                 generation=value["generation"],
                 code=value["code"],
+                origin=value.get("origin_code"),
             )
         await self.execute(
             f"WITH closed AS (UPDATE incidents SET status='closed',revision=revision+1 WHERE {SCOPE} AND run_id=:run "
@@ -808,9 +851,12 @@ class RuntimeRepository:
                     )
         if event.type in {"wait_elapsed", "timed_out", "signal_received"}:
             due = await self.rows(
-                f"SELECT id FROM run_deadlines WHERE {SCOPE} AND run_id=:run AND node_id=:node",
+                f"SELECT id FROM run_deadlines WHERE {SCOPE} AND run_id=:run AND node_id=:node "
+                # A rearmed transaction deadline has several rows: the event names the one that fired.
+                "ORDER BY (cast(id AS text)=cast(:wait AS text)) DESC",
                 run=view.id,
                 node=event.data.get("node_id"),
+                wait=str(event.data.get("wait_id")),
             )
             signals = await self.rows(
                 f"SELECT id,name,accepted_at FROM signal_receipts WHERE {SCOPE} "

@@ -46,6 +46,7 @@ from firefly_weave.contracts.runtime import (
     StartRunRequest,
     UnavailableRunAcknowledgment,
 )
+from firefly_weave.contracts.values import JsonValue
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.definitions.service import DefinitionService
 from firefly_weave.operations.fact_positions import RunPosition
@@ -59,7 +60,6 @@ from firefly_weave.runtime.models import RunState, RuntimeEvent, TerminalControl
 from firefly_weave.runtime.repository import RuntimeRepository
 
 if TYPE_CHECKING:
-    from firefly_weave.contracts.values import JsonValue
     from firefly_weave.runtime.calls import ChildStart
     from firefly_weave.workers.models import VerifiedTask
 
@@ -237,20 +237,19 @@ class RuntimeService:
             now = await repository.now()
             if not_after is not None and now >= not_after:
                 raise CatalogError(409, "WV-SCHEDULE-STALE", "Occurrence grace expired during admission")
-            event = RuntimeEvent(
-                id=uuid4(),
-                type="started",
-                timestamp=now,
-                sequence=1,
-                data={"admission_policy": "classified-v1", "origin": start_facts.origin},
-            )
+            run_id = uuid4()
+            data: dict[str, JsonValue] = {"admission_policy": "classified-v1", "origin": start_facts.origin}
+            if any(node.kind == "transaction" for node in ir.graph.nodes):
+                # Undo steps name operation keys, which start with the run's ID.
+                data["run_id"] = str(run_id)
+            event = RuntimeEvent(id=uuid4(), type="started", timestamp=now, sequence=1, data=data)
             result = await transition(RunState(input=request.input), event, artifact)
             self.require(await load_principal(enlisted.session, actor.id), scope, "run.start", context)
             self.definitions.registry.require_operational()
             if not_after is not None and await repository.now() >= not_after:
                 raise CatalogError(409, "WV-SCHEDULE-STALE", "Occurrence grace expired during reduction")
             view = RunView(
-                id=uuid4(),
+                id=run_id,
                 activation=activation,
                 artifact_digest=artifact.digest,
                 state=result.state,
@@ -440,14 +439,36 @@ class RuntimeService:
         repository = RuntimeRepository(tx, self.definitions.outbox)
         previous = view_of(verified.run)
         artifact = import_artifact(verified.run["artifact"])
+        key, generation = verified.task["node_id"], verified.attempt["generation"]
+        data: dict[str, JsonValue] = {
+            "node_id": key,
+            "generation": generation,
+            **({"code": rejection_code} if rejection_code else {"output": output}),
+        }
+        kind = "incident_opened" if rejection_code else ("task_failed" if failed else "task_completed")
+        participation = verified.task["payload"].get("transaction")
+        if participation is not None and participation["phase"] in {"try", "forward"} and failed:
+            # Whether the attempt may have applied, judged by the release that claimed it.
+            from firefly_weave.runtime.transactions import failure_effect
+
+            action = next(
+                d["document"]["spec"]
+                for d in verified.run["artifact"]["executable"]["dependencies"]
+                if d["kind"] == "Action" and d["digest"] == verified.task["payload"]["action_digest"]
+            )
+            data["effect"] = failure_effect(
+                action,
+                output if isinstance(output, dict) else {},
+                transaction_aware=verified.attempt["transaction_aware"],
+            )
+        if participation is not None and rejection_code:
+            # The step ran and its output was refused: it failed for good and may have applied.
+            kind = "step_failed"
+            data.update(outcome="unknown", attempts=generation, effect="unknown")
         event = RuntimeEvent(
             id=completion_id,
-            type="incident_opened" if rejection_code else ("task_failed" if failed else "task_completed"),
-            data={
-                "node_id": verified.task["node_id"],
-                "generation": verified.attempt["generation"],
-                **({"code": rejection_code} if rejection_code else {"output": output}),
-            },
+            type=kind,  # type: ignore[arg-type]
+            data=data,
             timestamp=await repository.now(),
             sequence=previous.state.accepted_sequence + 1,
         )
@@ -480,7 +501,7 @@ class RuntimeService:
                 kind="live_admission", checked_at=verified.checked_at, effective_deadline=verified.attempt["deadline"]
             ),
         )
-        if rejection_code:
+        if rejection_code and event.type == "incident_opened":
             await repository.task_status(verified.task["id"], "incident", at=event.timestamp)
         elif failed:
             await repository.task_status(verified.task["id"], "failed", at=event.timestamp)
@@ -499,8 +520,10 @@ class RuntimeService:
             d for d in ir.dependencies if d.kind == "Action" and d.digest == verified.task["payload"]["action_digest"]
         )
         step = node_of(verified.task["node_id"])
-        node = next(n for n in ir.graph.nodes if n.id == step)
-        assert isinstance(node, ActionNode)
+        found = next(n for n in ir.graph.nodes if n.id == step)
+        # A confirm, cancel or undo runs its own action, possibly for a called participant: only a step's own
+        # action carries a model profile.
+        node = found if isinstance(found, ActionNode) and "#" not in verified.task["node_id"] else None
         bundle = {d.reference: d.document for d in ir.dependencies if d.kind == "Schema"}
         try:
             from firefly_weave.contracts.definitions import ActionDefinition, load_definition
@@ -521,8 +544,9 @@ class RuntimeService:
     ) -> RunView | UnavailableRunAcknowledgment | CapacityRunAcknowledgment:
         return await self._cancel(tx, run_id, reason, actor=actor, scope=scope, context=context)
 
-    async def cancel_child(self, tx: Transaction, run_id: UUID, caller_run_id: UUID) -> None:
-        """Cancel a child run because its caller ended: the caller's ended call is the authority, not a grant.
+    async def cancel_child(self, tx: Transaction, run_id: UUID, caller_run_id: UUID, *, reason: str = "") -> None:
+        """Cancel a child run because its caller ended or its caller's transaction is undone: the caller's call is the
+        authority, not a grant.
 
         The cancellation is audited under the principal the child runs as, with the caller run's ID.
         """
@@ -530,7 +554,13 @@ class RuntimeService:
 
         principal = await self._stored_principal(tx, run_id)
         await self._cancel(
-            tx, run_id, CALLER_ENDED, actor=principal, scope=tx.scope, context=AuditContext(), caller=caller_run_id
+            tx,
+            run_id,
+            reason or CALLER_ENDED,
+            actor=principal,
+            scope=tx.scope,
+            context=AuditContext(),
+            caller=caller_run_id,
         )
 
     @staticmethod
@@ -618,6 +648,13 @@ class RuntimeService:
                 )
             if previous.state.status in TERMINAL:
                 raise CatalogError(409, "WV-RUNTIME-TERMINAL", "Historical terminal runs cannot be cancelled")
+            if any(record.status == "in_doubt" for record in previous.state.transactions.values()):
+                from firefly_weave.contracts.transactions import TRANSACTION_MESSAGES
+
+                raise CatalogError(409, "WV-TXN-IN-DOUBT", TRANSACTION_MESSAGES["WV-TXN-IN-DOUBT"])
+            if previous.state.ending is not None and isinstance(previous, RunView):
+                # Already undoing its transactions before it ends.
+                return previous.model_copy(update={"pending_undo": True})
             event = RuntimeEvent(
                 id=uuid4(),
                 type="cancelled",
@@ -628,7 +665,6 @@ class RuntimeService:
                     **({"code": "WV-LEGACY-UNAVAILABLE"} if quarantined else {"reason": request.reason}),
                 },
             )
-            await repository.execute("SELECT weave_control_begin('run',:id)", id=run_id)
             from firefly_weave.runtime.capacity import RuntimeCapacityError
 
             try:
@@ -648,9 +684,15 @@ class RuntimeService:
                     details={"external_effects_may_continue": True, "reason": request.reason, **cascade},
                 )
                 return capacity_ack
+            draining = result.state.status not in TERMINAL
+            if not draining:
+                # Terminal control spends the run's reserve, so a stop works at a full quota. A run that undoes its
+                # transactions first is ordinary work until they settle.
+                await repository.execute("SELECT weave_control_begin('run',:id)", id=run_id)
             view = previous.model_copy(update={"state": result.state})
             if isinstance(view, RunView):
-                view = view.model_copy(update={"external_effects_may_continue": True})
+                # A run that undoes its transactions first leaves nothing of them applied once it ends.
+                view = view.model_copy(update={"external_effects_may_continue": not draining, "pending_undo": draining})
             ack = (
                 UnavailableRunAcknowledgment(id=run_id, accepted_sequence=result.state.accepted_sequence)
                 if quarantined
@@ -666,7 +708,8 @@ class RuntimeService:
                 capability="run.cancel",
                 context=context.model_copy(update={"run_id": run_id}),
                 details={
-                    "external_effects_may_continue": True,
+                    "external_effects_may_continue": not draining,
+                    **({"pending_undo": True} if draining else {}),
                     **({} if quarantined else {"reason": request.reason}),
                     **cascade,
                 },

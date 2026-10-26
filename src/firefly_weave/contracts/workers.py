@@ -25,6 +25,7 @@ from pydantic import AwareDatetime, Field, model_validator
 from firefly_weave.compiler.catalog import TaskCapability
 from firefly_weave.contracts.connectors import ResolvedSecret
 from firefly_weave.contracts.definitions import ContractModel, ResourceName, SemVer
+from firefly_weave.contracts.transactions import PhaseOperation, UndoMode
 from firefly_weave.contracts.values import JsonData, JsonObjectData
 from firefly_weave.operations.redaction import Omission
 
@@ -179,6 +180,21 @@ class LeaseProof(ContractModel):
     token: str = Field(min_length=1, max_length=200, repr=False)
 
 
+class LeaseTransaction(ContractModel):
+    """What a task does for its workflow transaction, so a participant can fence its effects by operation key.
+
+    ``id`` is the transaction's ``"{run_id}:{instance key}"`` and ``branch_key`` the operation key of the step it
+    belongs to: the forward step's own key, which its confirm, cancel or undo name too.
+    """
+
+    id: str
+    branch_key: str
+    phase: PhaseOperation
+    mode: UndoMode
+    # What an undo is told about the step it reverses: "done", or "unknown" when the step may or may not have applied.
+    forward_outcome: Literal["done", "unknown"] | None = Field(default=None, exclude_if=lambda value: value is None)
+
+
 class TaskLease(ContractModel):
     proof: LeaseProof
     input: JsonData
@@ -187,6 +203,7 @@ class TaskLease(ContractModel):
     expires_at: AwareDatetime
     capability: str
     worker_release_id: UUID
+    transaction: LeaseTransaction | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class CompletionReceipt(ContractModel):

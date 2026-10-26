@@ -182,6 +182,13 @@ async def persist_terminal(
         at=event.timestamp,
         run=row["id"],
     )
+    # A run too large for its own state cannot undo its transactions: they end recorded as force ended.
+    await repository.execute(
+        "UPDATE run_transactions SET state='force_ended',revision=revision+1,ended_at=:at "
+        f"WHERE {SCOPE} AND run_id=:run AND state IN ('open','deciding','committing','compensating','in_doubt')",
+        at=event.timestamp,
+        run=row["id"],
+    )
     from firefly_weave.runtime.calls import caller_ended, child_ended
 
     await caller_ended(repository, row["id"], event.timestamp)
