@@ -124,14 +124,22 @@ export function executeRequest(parts: ExecuteParts): ExecuteRequest {
     }
   };
   visit(workflow.spec.steps ?? []);
+  // Executing one step sends only the test data of the steps it runs.
+  const runs =
+    parts.target.mode === "workflow" || !parts.target.stepId
+      ? null
+      : new Set(sliceStepIds(workflow, parts.target.stepId) ?? []);
+  const sent = (key: string) => !runs || runs.has(instanceStep(key));
   const mocks: Record<MockKey, Json> = {};
   const pins = testData.pins ?? {};
   for (const [key, pin] of Object.entries(pins))
-    if (mocked(steps.get(instanceStep(key)))) mocks[`node:${key}`] = pin.output;
+    if (sent(key) && mocked(steps.get(instanceStep(key))))
+      mocks[`node:${key}`] = pin.output;
   for (const [key, result] of Object.entries(results?.steps ?? {})) {
     const step = instanceStep(key);
     if (
       result.output === undefined ||
+      !sent(key) ||
       !mocked(steps.get(step)) ||
       Object.hasOwn(pins, key) ||
       Object.hasOwn(pins, step)

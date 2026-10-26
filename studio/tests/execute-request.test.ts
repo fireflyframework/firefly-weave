@@ -239,3 +239,26 @@ describe("an execution request", () => {
     expect(request.now).toBe("2026-10-26T10:00:00.000Z");
   });
 });
+
+describe("an execution request for one step", () => {
+  it("sends only the test data of the steps it runs", () => {
+    const testData: StudioTestData = {
+      ...parts().testData,
+      pins: {
+        check: { ...PIN, output: { eligible: true } },
+        summarize: { ...PIN, output: { result: "pinned" } },
+      },
+    };
+    const request = executeRequest(
+      parts({ testData, target: { mode: "step", stepId: "big" } }),
+    );
+    expect(request.mocks).toEqual({ "node:check": { eligible: true } });
+    const before = executeRequest(
+      parts({ testData, target: { mode: "before", stepId: "summarize" } }),
+    );
+    expect(Object.keys(before.mocks ?? {})).toEqual([
+      "node:check",
+      "node:summarize",
+    ]);
+  });
+});
