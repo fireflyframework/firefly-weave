@@ -234,8 +234,22 @@ class WorkflowStatistics(ContractModel):
     last_run_at: AwareDatetime | None
 
 
+class RunTotals(ContractModel):
+    """Every ended run of the range across all workflows, with percentiles from the merged histograms."""
+
+    runs: Count
+    succeeded: Count
+    failed: Count
+    cancelled: Count
+    failure_rate: Ratio | None
+    duration_p50_ms: Milliseconds | None
+    duration_p95_ms: Milliseconds | None
+
+
 class WorkflowStatisticsAnswer(_Answer):
     workflows: Annotated[list[WorkflowStatistics], Field(max_length=MAX_WORKFLOWS)]
+    # The range's totals for the Metrics page's figures; percentiles don't add, so they can't come from the rows.
+    totals: RunTotals | None = None
 
 
 class StepStatistics(ContractModel):

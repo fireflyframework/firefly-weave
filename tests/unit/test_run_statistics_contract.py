@@ -29,11 +29,13 @@ from firefly_weave.contracts.run_statistics import (
     MAX_SERIES,
     SIGNAL_UNITS,
     RunsDaySection,
+    RunTotals,
     StatisticsSeries,
     StatisticsSeriesAnswer,
     StatisticsSeriesQuery,
     StatisticsStepsQuery,
     StatisticsWorkflowsQuery,
+    WorkflowStatisticsAnswer,
     automatic_granularity,
 )
 from firefly_weave.definitions.models import CatalogError
@@ -182,3 +184,18 @@ def test_the_last_day_reports_rates_as_fractions_or_nothing():
     assert RunsDaySection(started=0, succeeded=0, failed=0, failure_rate=None).model_dump()["failure_rate"] is None
     with pytest.raises(ValidationError):
         RunsDaySection(started=1, succeeded=0, failed=1, failure_rate=1.5)
+
+
+def test_the_workflow_table_may_carry_the_range_totals_and_answers_without_them_still_parse():
+    window = {"from": TO - timedelta(hours=24), "to": TO, "granularity": "1h", "complete_until": TO}
+    totals = RunTotals(
+        runs=25, succeeded=20, failed=5, cancelled=0, failure_rate=0.2, duration_p50_ms=120.0, duration_p95_ms=900.5
+    )
+    body = WorkflowStatisticsAnswer(**window, workflows=[], totals=totals).model_dump(mode="json")
+    assert body["totals"]["failure_rate"] == 0.2 and body["totals"]["duration_p95_ms"] == 900.5
+    old = WorkflowStatisticsAnswer.model_validate({**window, "workflows": []})
+    assert old.totals is None and "totals" not in old.model_dump(mode="json", exclude_none=True)
+    with pytest.raises(ValidationError):
+        RunTotals(
+            runs=1, succeeded=0, failed=1, cancelled=0, failure_rate=2, duration_p50_ms=None, duration_p95_ms=None
+        )
