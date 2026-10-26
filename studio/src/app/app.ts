@@ -2810,6 +2810,7 @@ export class App implements CanvasHost {
   }
   /** Why a platform command is unavailable, or "" when it can run. */
   blocker(command: Command): string {
+    if (command === "simulate" && this.editorNext && this.execution) return "";
     const verb = {
       save: "save drafts",
       publish: "publish workflows",
@@ -2966,7 +2967,12 @@ export class App implements CanvasHost {
     if (command === "save") return this.save();
     if (command === "publish") return this.publish();
     if (command === "activate") return this.activate();
-    if (command === "simulate") return this.simulate();
+    if (command === "simulate") {
+      // The new editor executes on this computer: nothing publishes first,
+      // and no account or platform is needed.
+      if (this.editorNext && this.execution) return this.executeWorkflow();
+      return this.simulate();
+    }
     return this.startRun();
   }
   /** The toolbar's "More" menu: secondary commands, Save to file, and on phones the rest. */
@@ -2986,9 +2992,15 @@ export class App implements CanvasHost {
           run: () => this.redo(),
         },
       );
-    // With the new editor the bar holds Execute workflow; the classic
-    // simulation stays in this menu until the run log replaces it.
-    if (narrow || (this.editorNext && this.execution))
+    // With the new editor, Execute workflow (simulated on this computer)
+    // takes the classic simulation's place.
+    if (this.editorNext && this.execution) {
+      if (narrow)
+        items.push({
+          label: "Execute workflow",
+          run: () => this.executeWorkflow(),
+        });
+    } else if (narrow)
       items.push({
         label: "Simulate",
         detail: this.blocker("simulate"),

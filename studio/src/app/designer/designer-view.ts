@@ -1238,7 +1238,7 @@ import type { App } from "../app";
           </footer>
         }
       </section>
-      @if (h.simulation) {
+      @if (h.simulation && !h.editorNext) {
         @defer (on immediate) {
           <weave-simulation-panel
             [artifact]="h.simulation.artifact"
