@@ -27,8 +27,8 @@ SPDX-License-Identifier: Apache-2.0
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  min-height: 32px;
+  gap: var(--space-2);
+  min-height: var(--control-md);
 }
 
 .chart-title {
@@ -40,7 +40,7 @@ SPDX-License-Identifier: Apache-2.0
 
 .chart-toggle {
   flex: none;
-  min-height: 32px;
+  min-height: var(--control-md);
 }
 
 .chart-frame {
@@ -75,11 +75,13 @@ SPDX-License-Identifier: Apache-2.0
 }
 
 .chart-column {
+  stroke: none;
   shape-rendering: crispEdges;
 }
 
 .chart-hover {
   fill: transparent;
+  stroke: none;
   pointer-events: all;
 }
 
@@ -97,8 +99,8 @@ SPDX-License-Identifier: Apache-2.0
 .chart-legend {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 16px;
-  margin: 4px 0 0;
+  gap: var(--space-1) var(--space-4);
+  margin: var(--space-1) 0 0;
   padding: 0;
   list-style: none;
   color: var(--muted);
@@ -136,8 +138,8 @@ SPDX-License-Identifier: Apache-2.0
 
 .chart-table th,
 .chart-table td {
-  height: 32px;
-  padding: 0 8px;
+  height: var(--control-sm);
+  padding: 0 var(--space-2);
   text-align: left;
   white-space: nowrap;
   border-bottom: 1px solid var(--line);
@@ -171,11 +173,272 @@ SPDX-License-Identifier: Apache-2.0
 @media (pointer: coarse), (max-width: 767px) {
   .chart-toggle,
   .chart-head {
-    min-height: 44px;
+    min-height: var(--control-touch);
   }
 
   .chart-table th,
   .chart-table td {
-    height: 44px;
+    height: var(--control-touch);
   }
+}
+
+/* Operate › Metrics, in design tokens only: 36 px controls and 32 px rows
+   with a fine pointer on a wide screen, 44 px on touch or narrow screens.
+   Charts sit two a row and stack into one column when narrow. */
+:host(.metrics-page) {
+  --section-gap: var(--space-6);
+  --group-gap: var(--space-3);
+  --row: var(--control-sm);
+  --target: var(--control-md);
+  display: block;
+  min-width: 0;
+  container: metrics / inline-size;
+}
+@media (max-width: 767px), (pointer: coarse) {
+  :host(.metrics-page) {
+    --section-gap: var(--space-4);
+    --group-gap: var(--space-2);
+    --row: var(--control-touch);
+    --target: var(--control-touch);
+  }
+}
+
+.metrics-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--group-gap) var(--space-5);
+  margin-bottom: var(--section-gap);
+}
+.range-group {
+  display: inline-flex;
+  flex-wrap: wrap;
+  border: thin solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+.range-option {
+  min-height: var(--target);
+  min-width: var(--target);
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.range-option + .range-option {
+  border-left: thin solid var(--border);
+}
+.range-option[aria-pressed="true"] {
+  background: var(--selection);
+  color: var(--text);
+  font-weight: 600;
+}
+.workflow-field {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  color: var(--muted);
+}
+.workflow-field select {
+  min-height: var(--target);
+  max-width: 24ch;
+}
+.freshness {
+  font: var(--type-small);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.metrics {
+  display: grid;
+  gap: var(--group-gap);
+  min-width: 0;
+}
+.metrics weave-operate-state {
+  margin: 0;
+}
+.kpis {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: var(--group-gap);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.kpi {
+  display: grid;
+  align-content: start;
+  gap: var(--space-1);
+  min-width: 0;
+  padding: var(--group-gap);
+  border: thin solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+.kpi-label {
+  font: var(--type-caption);
+  color: var(--muted);
+}
+.kpi-value {
+  font: var(--type-title-sm);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.kpis .skeleton-block {
+  height: calc(var(--control-touch) * 1.5);
+}
+.metrics-note,
+.band-note {
+  margin: 0;
+  color: var(--muted);
+  font: var(--type-small);
+}
+.metrics-empty {
+  padding: var(--group-gap);
+  border: thin solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+.metrics-empty p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.chart-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--group-gap);
+  margin-top: var(--section-gap);
+}
+.chart-card {
+  display: grid;
+  align-content: start;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--group-gap);
+  border: thin solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+.chart-skeleton {
+  height: 240px;
+  background: var(--skeleton);
+}
+
+.metrics-table-band {
+  display: grid;
+  gap: var(--group-gap);
+  min-width: 0;
+  margin-top: var(--section-gap);
+}
+.table-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--group-gap);
+}
+.table-heading h2 {
+  margin: 0;
+  font: var(--type-title-sm);
+  overflow-wrap: anywhere;
+}
+.table-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--group-gap);
+}
+.table-actions button,
+.back-link {
+  min-height: var(--target);
+}
+.back-link {
+  display: inline-flex;
+  align-items: center;
+  color: var(--link);
+}
+.metrics-table-wrap {
+  min-width: 0;
+  overflow-x: auto;
+  border: thin solid var(--border);
+  border-radius: var(--radius-md);
+}
+.metrics-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.metrics-table th,
+.metrics-table td {
+  height: var(--row);
+  padding: 0 var(--space-3);
+  text-align: left;
+  white-space: nowrap;
+  border-bottom: thin solid var(--line);
+}
+.metrics-table tbody tr:last-child > * {
+  border-bottom: 0;
+}
+.metrics-table thead th {
+  font: var(--type-caption);
+  color: var(--muted);
+  background: var(--surface);
+}
+/* The name takes the room the figures leave, and ends in an ellipsis. */
+.metrics-table .name-cell {
+  width: 100%;
+  max-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 600;
+}
+.metrics-table .numeric-cell {
+  text-align: right;
+}
+.metrics-table .spark-cell {
+  width: 120px;
+}
+.metrics-table .spark-cell weave-sparkline {
+  width: 120px;
+}
+
+@container metrics (max-width: 959px) {
+  .kpis {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .chart-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+/* Narrower tables keep the name and the figures; details go first. */
+@container metrics (max-width: 959px) {
+  .metrics-table [data-wide] {
+    display: none;
+  }
+}
+@container metrics (max-width: 639px) {
+  .kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@container metrics (max-width: 479px) {
+  .metrics-table [data-narrow] {
+    display: none;
+  }
+  .metrics-table th,
+  .metrics-table td {
+    padding: 0 var(--space-2);
+  }
+}
+.metrics-table .name-cell a,
+.back-link {
+  color: var(--link);
+  text-decoration: none;
+}
+.metrics-table .name-cell a:hover,
+.back-link:hover {
+  text-decoration: underline;
 }

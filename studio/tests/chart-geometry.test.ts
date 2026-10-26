@@ -21,6 +21,8 @@ import {
   chartFrame,
   columnLayout,
   metricText,
+  tickCount,
+  ticks,
   timeLabel,
   xLabelIndices,
   yAxisWidth,
@@ -80,6 +82,23 @@ describe("Metrics chart geometry", () => {
     const frame = chartFrame(320, ["0", "100%"]);
     expect(frame.left).toBe(yAxisWidth(["0", "100%"]));
     expect(frame.plotWidth).toBe(320 - frame.left - frame.right);
+  });
+
+  it("divides every readable axis maximum into readable steps", () => {
+    for (const max of [
+      1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10, 0.25, 15_000, 120,
+    ])
+      for (const value of ticks(max, tickCount(max)).slice(1)) {
+        const step = value / (ticks(max, tickCount(max))[1] ?? 1);
+        expect(Number.isInteger(Math.round(step * 1e9) / 1e9)).toBe(true);
+      }
+    expect(tickCount(0.25)).toBe(5);
+    expect(ticks(0.25, tickCount(0.25))).toEqual([
+      0, 0.05, 0.1, 0.15, 0.2, 0.25,
+    ]);
+    expect(ticks(6, tickCount(6))).toEqual([0, 2, 4, 6]);
+    expect(ticks(15_000, tickCount(15_000))).toEqual([0, 5000, 10000, 15000]);
+    expect(ticks(1, tickCount(1))).toEqual([0, 0.25, 0.5, 0.75, 1]);
   });
 
   it("reads durations under a second in milliseconds", () => {

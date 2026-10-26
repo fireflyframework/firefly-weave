@@ -39,6 +39,7 @@ import {
   seriesStyle,
   seriesName,
   stackColumns,
+  tickCount,
   ticks,
   timeLabel,
   xLabelIndices,
@@ -50,7 +51,6 @@ import {
 const HEIGHT = 160;
 const TOP = 8;
 const AXIS = 22;
-const TICKS = 4;
 interface Drawn {
   key: string;
   name: string;
@@ -180,6 +180,7 @@ let nextId = 0;
           @for (hover of g.hovers; track $index) {
             <rect
               class="chart-hover"
+              fill="transparent"
               [attr.x]="hover.x"
               y="0"
               [attr.width]="g.band"
@@ -303,7 +304,11 @@ export class TimeChart {
       ...lines.flatMap((item) => item.points.map(([, value]) => value ?? 0)),
     );
     const max = niceMax(Math.max(lineMax, ...sums));
-    const yValues = ticks(max, TICKS);
+    // Small counts step by whole numbers: no 0.25 of a run.
+    const yValues = ticks(
+      max,
+      unit === "count" && max <= 6 ? max : tickCount(max),
+    );
     const yLabels = yValues.map((value) => metricText(unit, value));
     const frame = chartFrame(this.width(), yLabels);
     const layout = columnLayout(count, frame.plotWidth);
@@ -391,7 +396,7 @@ export class TimeChart {
           ),
         ].join("\n"),
       })),
-      legend: series.map((item) => {
+      legend: [...stacked, ...lines].map((item) => {
         const style = styles.get(keyOf(item))!;
         return {
           key: keyOf(item),

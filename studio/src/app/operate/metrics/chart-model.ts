@@ -51,6 +51,17 @@ export function niceMax(value: number): number {
   return exact(scale(10));
 }
 
+const READABLE_STEPS = [1, 2, 2.5, 5];
+/** How many intervals divide an axis maximum into readable steps (1, 2, 2.5 or 5 × 10^k), preferring 4. */
+export function tickCount(max: number): number {
+  for (const count of [4, 5, 3, 2, 6]) {
+    const step = max / count;
+    const mantissa = exact(step / 10 ** Math.floor(Math.log10(step)));
+    if (READABLE_STEPS.includes(mantissa)) return count;
+  }
+  return 4;
+}
+
 /** Evenly spaced tick values from 0 to max. */
 export function ticks(max: number, count: number): number[] {
   return Array.from({ length: count + 1 }, (_, index) =>

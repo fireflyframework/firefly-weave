@@ -252,6 +252,7 @@ import {
 import { ClustersPage } from "./operate/clusters/clusters-page";
 import { WorkersPage } from "./operate/workers/workers-page";
 import { IncidentsPage } from "./operate/incidents/incidents-page";
+import { MetricsPage } from "./operate/metrics/metrics-page";
 import { OverviewPage } from "./operate/overview/overview-page";
 import { RunsPage } from "./operate/runs/runs-page";
 import {
@@ -296,6 +297,7 @@ export type View =
   | "connections"
   | "workers"
   | "clusters"
+  | "metrics"
   | "settings"
   | "connect";
 type PlatformNoticeKind =
@@ -489,6 +491,7 @@ const NO_PINS: ReadonlyMap<string, { stale: string | null }> = new Map();
     DesignerView,
     RecordsView,
     ClustersPage,
+    MetricsPage,
     WorkersPage,
     IncidentsPage,
     OverviewPage,
@@ -787,13 +790,17 @@ export class App implements CanvasHost {
     { id: "incidents", label: "Incidents" },
     { id: "workers", label: "Workers" },
     { id: "clusters", label: "Clusters" },
+    { id: "metrics", label: "Metrics" },
     { id: "settings", label: "Settings" },
   ];
   private readonly navSections: [string, View[]][] = [
     ["", ["home"]],
     ["Build", ["workflows", "connections"]],
     ["Work", ["tasks", "email"]],
-    ["Operate", ["overview", "runs", "incidents", "workers", "clusters"]],
+    [
+      "Operate",
+      ["overview", "runs", "incidents", "workers", "clusters", "metrics"],
+    ],
   ];
   private navCache: {
     key: string;
@@ -6612,6 +6619,7 @@ export class App implements CanvasHost {
       this.view === "connect" ||
       this.view === "overview" ||
       this.view === "clusters" ||
+      this.view === "metrics" ||
       this.view === "workers" ||
       this.view === "incidents"
     )
