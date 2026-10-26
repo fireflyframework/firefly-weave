@@ -68,7 +68,42 @@ def execute_reply(raw):
     except CatalogConflict:
         return refused(409, "WV-STUDIO-CATALOG-CONFLICT", "A definition on this computer has the same name and version as a different one in the catalog")
 
-def handle(path, raw):
+SESSIONS = None
+
+def session_reply(path, raw, method, match):
+    # As the host's session routes answer: one set of sessions per helper process.
+    import time
+    from uuid import UUID
+    from firefly_weave.operations.debug.models import DebugCommand
+    from firefly_weave.studio.debug_sessions import HostSessions
+    from firefly_weave.studio.local_contracts import SimulationRequest
+    from firefly_weave.studio.simulation import SimulationRefused
+    global SESSIONS
+    SESSIONS = SESSIONS or HostSessions()
+    parts = path.removeprefix("/studio/local/debug/sessions").strip("/").split("/")
+    try:
+        if parts == [""]:
+            session = SESSIONS.create(SimulationRequest.model_validate_json(raw), None, time.monotonic())
+            return {"__status": 201, **json.loads(session.model_dump_json(by_alias=True))}
+        identifier = UUID(parts[0])
+        if method == "DELETE":
+            SESSIONS.delete(identifier)
+            return {"__status": 204}
+        if len(parts) == 1:
+            session = SESSIONS.read(identifier, time.monotonic())
+        else:
+            match = (match or "").strip().strip('"')
+            if not match.isdigit():
+                return refused(428, "WV-STUDIO-REQUEST", "Send the run log's revision in If-Match")
+            command = DebugCommand.model_validate_json(raw)
+            session = SESSIONS.command(identifier, int(match), command, time.monotonic())
+        return json.loads(session.model_dump_json(by_alias=True))
+    except SimulationRefused as error:
+        return refused(error.status, error.code, error.message, error.paths)
+
+def handle(path, raw, method="POST", match=None):
+    if path.startswith("/studio/local/debug/sessions"):
+        return session_reply(path, raw, method, match)
     if path == "/test/compile":
         from firefly_weave.compiler.api import compile_source
         body = json.loads(raw)
@@ -102,7 +137,7 @@ def handle(path, raw):
 for line in sys.stdin:
     request = json.loads(line)
     try:
-        body = handle(request["path"], request["body"])
+        body = handle(request["path"], request["body"], request.get("method", "POST"), request.get("match"))
         status = body.pop("__status", 200) if isinstance(body, dict) else 200
         reply = {"status": status, "body": body}
     except (ValidationError, ValueError):
@@ -152,13 +187,19 @@ function start() {
 }
 
 /** One request at a time, in order, like the host's bounded worker slots. */
-function ask(path: string, body: string) {
+function ask(
+  path: string,
+  body: string,
+  request: { method?: string; match?: string } = {},
+) {
   const answer = queue.then(
     () =>
       new Promise<{ status: number; body: unknown }>((done) => {
         const helperProcess = start();
         waiting.push((line) => done(JSON.parse(line)));
-        helperProcess.stdin!.write(JSON.stringify({ path, body }) + "\n");
+        helperProcess.stdin!.write(
+          JSON.stringify({ path, body, ...request }) + "\n",
+        );
       }),
   );
   queue = answer.catch(() => undefined);
@@ -215,7 +256,7 @@ export async function platformCompile(body: {
   return reply.body as Record<string, unknown>;
 }
 
-/** Answers /studio/local/{http-action,openapi/*,debug/execute} with the real Python code. */
+/** Answers /studio/local/{http-action,openapi/*,debug/*} with the real Python code. */
 export async function localAuthoring(page: Page): Promise<LocalCalls[]> {
   const calls: LocalCalls[] = [];
   for (const path of [
@@ -232,5 +273,23 @@ export async function localAuthoring(page: Page): Promise<LocalCalls[]> {
         .fulfill({ status: reply.status, json: reply.body })
         .catch(() => undefined);
     });
+  // Step-through sessions: create, read, command (with If-Match) and delete.
+  await page.route("**/studio/local/debug/sessions**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    const raw = request.postData() ?? "{}";
+    calls.push({ path, body: JSON.parse(raw) });
+    const reply = await ask(path, raw, {
+      method: request.method(),
+      match: (await request.allHeaders())["if-match"],
+    });
+    await route
+      .fulfill(
+        reply.status === 204
+          ? { status: 204 }
+          : { status: reply.status, json: reply.body },
+      )
+      .catch(() => undefined);
+  });
   return calls;
 }

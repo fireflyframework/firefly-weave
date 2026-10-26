@@ -33,7 +33,8 @@ from firefly_weave.contracts.definitions import ActionDefinition, load_definitio
 from firefly_weave.contracts.values import JsonObject, JsonValue
 
 if TYPE_CHECKING:
-    from firefly_weave.studio.local_contracts import ExecuteRequest, ExecuteResponse, SimulationRequest
+    from firefly_weave.operations.debug.simulator import Simulator
+    from firefly_weave.studio.local_contracts import CompileSummary, ExecuteRequest, ExecuteResponse, SimulationRequest
 
 NULL: JsonObject = {"literal": None}
 
@@ -362,20 +363,66 @@ def _enclosing(document: JsonObject, step_id: str) -> list[JsonObject]:
     return found
 
 
+def simulator_for(
+    request: SimulationRequest,
+    project: CatalogSnapshot | None,
+    document: JsonObject,
+    *,
+    whole: JsonObject,
+    sliced: bool,
+) -> tuple[CompileSummary, Simulator | None, set[str]]:
+    """Compile ``document`` (the workflow, or its slice) for a simulation and start it with the request's test data.
+
+    Secrets are checked against the whole workflow before compiling; mocks that no longer fit are left out (and
+    returned) before the simulator sees them; AI tasks replay their saved turns. The simulator is None when the
+    workflow doesn't compile. Raises ``SimulationRefused``, ``CatalogConflict`` or ``DebugError``.
+    """
+    from firefly_weave.compiler.api import compile_source
+    from firefly_weave.operations.debug.ai_turns import with_ai_turns
+    from firefly_weave.operations.debug.simulator import Simulator
+    from firefly_weave.runtime.kernel import KernelError
+    from firefly_weave.studio.local_contracts import CompileSummary
+
+    catalog, stubs = simulation_catalog(document, request.definitions, project, stub_unresolved=request.stubUnresolved)
+    refused = secret_paths(whole, request, catalog)
+    if refused:
+        raise SimulationRefused(
+            422, "WV-SCHEMA-SECRET_VALUE", "Test data can't hold values marked secret; leave them out", refused
+        )
+    result = compile_source(document, format="object", catalog=catalog)
+    summary = CompileSummary(
+        ok=result.ok,
+        sliced=sliced,
+        artifactDigest=result.artifact.digest if result.artifact is not None else None,
+        diagnostics=list(result.diagnostics),
+        stubs=stubs,
+    )
+    if not result.ok or result.artifact is None:
+        return summary.model_copy(update={"ok": False}), None, set()
+    artifact = result.artifact
+    misfits = misfitting_mocks(whole, request.mocks, catalog)
+    ai_turns = {key: entry.model_dump(mode="json", by_alias=True) for key, entry in request.scripts.aiTurns.items()}
+    mocks = with_ai_turns(artifact, {k: v for k, v in request.mocks.items() if k not in misfits}, ai_turns)
+    try:
+        simulator = Simulator(artifact, mocks=mocks, input=request.input, now=request.now)
+    except KernelError as error:
+        # The test input doesn't fit the workflow's input fields: said with its pointer, never its value.
+        raise SimulationRefused(422, str(error), "The test input doesn't fit the input fields", ["/input"]) from None
+    return summary, simulator, misfits
+
+
 def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> ExecuteResponse:
     """Simulate the target of an Execute request; the answer is ``ExecuteResponse``.
 
     Raises ``SimulationRefused`` for a request the host must refuse, and ``CatalogConflict`` for a local definition
     that conflicts with the catalog. Nothing here reads the network, the clock or files.
     """
-    from firefly_weave.compiler.api import compile_source
     from firefly_weave.compiler.ir import HumanTaskNode, SignalNode
     from firefly_weave.compiler.parser import ParseFailure, parse_source
     from firefly_weave.contracts.diagnostics import Diagnostic
     from firefly_weave.contracts.instance_keys import node_of
-    from firefly_weave.operations.debug.ai_turns import with_ai_turns
     from firefly_weave.operations.debug.models import DebugError
-    from firefly_weave.operations.debug.simulator import TERMINAL, Simulator, first_instance
+    from firefly_weave.operations.debug.simulator import TERMINAL, first_instance
     from firefly_weave.runtime.kernel import KernelError
     from firefly_weave.studio.local_contracts import (
         Blocked,
@@ -392,8 +439,8 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
     try:
         document: JsonObject = parse_source(request.source, format=request.format).value
     except ParseFailure as failure:
-        summary = CompileSummary(ok=False, sliced=False, diagnostics=list(failure.diagnostics), stubs=[])
-        return ExecuteResponse(status="failed", compile=summary, trace=[])
+        unparsed = CompileSummary(ok=False, sliced=False, diagnostics=list(failure.diagnostics), stubs=[])
+        return ExecuteResponse(status="failed", compile=unparsed, trace=[])
     whole = document
     sliced = False
     if target.mode != "workflow":
@@ -401,35 +448,12 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
         if part is None:
             raise SimulationRefused(422, "WV-STUDIO-REQUEST", "That step isn't in this workflow")
         document, sliced = part, True
-    catalog, stubs = simulation_catalog(document, request.definitions, project, stub_unresolved=request.stubUnresolved)
-    refused = secret_paths(whole, request, catalog)
-    if refused:
-        raise SimulationRefused(
-            422, "WV-SCHEMA-SECRET_VALUE", "Test data can't hold values marked secret; leave them out", refused
-        )
-    result = compile_source(document, format="object", catalog=catalog)
-    summary = CompileSummary(
-        ok=result.ok,
-        sliced=sliced,
-        artifactDigest=result.artifact.digest if result.artifact is not None else None,
-        diagnostics=list(result.diagnostics),
-        stubs=stubs,
-    )
-    if not result.ok or result.artifact is None:
-        return ExecuteResponse(status="failed", compile=summary.model_copy(update={"ok": False}), trace=[])
-    artifact = result.artifact
     scripts = request.scripts
-    misfits = misfitting_mocks(whole, request.mocks, catalog)
-    ai_turns = {key: entry.model_dump(mode="json", by_alias=True) for key, entry in scripts.aiTurns.items()}
+    summary: CompileSummary | None = None
     try:
-        mocks = with_ai_turns(artifact, {k: v for k, v in request.mocks.items() if k not in misfits}, ai_turns)
-        try:
-            simulator = Simulator(artifact, mocks=mocks, input=request.input, now=request.now)
-        except KernelError as error:
-            # The test input doesn't fit the workflow's input fields: said with its pointer, never its value.
-            raise SimulationRefused(
-                422, str(error), "The test input doesn't fit the input fields", ["/input"]
-            ) from None
+        summary, simulator, misfits = simulator_for(request, project, document, whole=whole, sliced=sliced)
+        if simulator is None:
+            return ExecuteResponse(status="failed", compile=summary, trace=[])
         if target.mode == "before":
             simulator.set_breakpoints({target.instanceKey or first_instance(simulator.ir, cast(str, target.stepId))})
         try:
@@ -441,7 +465,7 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
             )
             return ExecuteResponse(status="failed", compile=summary, trace=[], diagnostics=[stopped])
     except DebugError as error:
-        if error.code == "WV-DEBUG-LIMIT":
+        if error.code == "WV-DEBUG-LIMIT" and summary is not None:
             return ExecuteResponse(status="limit", compile=summary, trace=[])
         raise SimulationRefused(422, error.code, "The simulation couldn't use this test data") from None
     view = simulator.inspect()
