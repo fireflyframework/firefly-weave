@@ -53,6 +53,16 @@ import {
 import { InputPane } from "./panes/input-pane";
 import { OutputPane } from "./panes/output-pane";
 import { CloseGuard, type GuardAnswer } from "./panes/close-guard";
+import {
+  ExecuteDialog,
+  type ExecuteIssue,
+  type ExecuteQuestion,
+} from "./execute-dialogs";
+import { executeGate } from "../state/execute-gate";
+import { sliceStepIds } from "../state/execute-request";
+import type { ExecuteTarget } from "../state/execution";
+import type { ExecuteOutcome } from "../state/execution-service";
+import { allSteps } from "./step-walk";
 import { TestEventPane } from "./panes/test-event-pane";
 import { Icon } from "../../icon";
 import { coveredBy, keepUsable } from "../../modal-sheet";
@@ -89,7 +99,10 @@ import { reservedActionNames } from "./owned/insert-owned";
 import { SettingsTab } from "./settings/settings-tab";
 import { retryOn, settingsChanged } from "./settings/settings-rules";
 import { stepNotesOf } from "../state/canvas-sidecar";
-import type { StepDetailsController } from "./step-details-controller";
+import type {
+  ExecuteNotice,
+  StepDetailsController,
+} from "./step-details-controller";
 import type { StepDetailsHost } from "./step-details-host";
 import {
   StepDetailsService,
@@ -109,9 +122,6 @@ interface MapMenu {
   left: number;
 }
 
-export const EXECUTE_REASON =
-  "Executing a single step isn't available yet. Simulate the workflow runs every step.";
-
 /** Whether the element is wholly inside what the person sees of its scrolling pane. */
 const inView = (element: HTMLElement): boolean => {
   const scroller = scrollingParent(element);
@@ -127,6 +137,94 @@ const FOCUSABLE =
 const CONTROL =
   'input:not([type="hidden"]):not([disabled]), textarea:not([disabled]), select:not([disabled]), [role="combobox"], [role="switch"], [role="radio"][tabindex="0"], button:not([disabled]):not([tabindex="-1"])';
 /** What the live region says when step details move on from a step that keeps entries. */
+/** The words the Output shows for an execution's answer, or null when it ran. */
+export function noticeOf(
+  outcome: ExecuteOutcome,
+  target: string,
+): ExecuteNotice | null {
+  switch (outcome.kind) {
+    case "done": {
+      const blocked = outcome.response.blocked;
+      if (blocked && blocked.nodeId === target)
+        return { target, message: blocked.message, reason: blocked.reason };
+      if (outcome.response.status === "failed")
+        return {
+          target,
+          message:
+            outcome.response.compile.ok === false
+              ? "The workflow doesn't compile. Fix the issues it lists, then execute again."
+              : "The simulated run failed. Check the run's issues, then execute again.",
+          reason: null,
+        };
+      if (blocked)
+        return {
+          target,
+          message: `${blocked.message} Open ${blocked.nodeId} to continue.`,
+          reason: null,
+        };
+      return null;
+    }
+    case "refused": {
+      const input = outcome.paths.some((path) => path === "/input");
+      if (outcome.code === "WV-SCHEMA-SECRET_VALUE") {
+        const mock = outcome.paths
+          .find((path) => path.startsWith("/mocks/node:"))
+          ?.slice("/mocks/node:".length)
+          .replace(/~1/g, "/")
+          .replace(/~0/g, "~");
+        return input
+          ? {
+              target,
+              message:
+                "The test input holds a value marked secret. Remove it from the test input.",
+              reason: null,
+              input: true,
+            }
+          : {
+              target,
+              message: mock
+                ? `The pinned output of ${mock} holds a value marked secret. Unpin it.`
+                : "The test data holds a value marked secret. Remove it.",
+              reason: null,
+            };
+      }
+      if (input)
+        return {
+          target,
+          message:
+            "The test input doesn't fit the workflow's input fields. Edit it in the trigger's Test event.",
+          reason: null,
+          input: true,
+        };
+      return { target, message: outcome.message, reason: null };
+    }
+    case "busy":
+      return {
+        target,
+        message:
+          "Studio is still executing. Wait for it to finish, then try again.",
+        reason: null,
+      };
+    case "conflict":
+      return {
+        target,
+        message:
+          "An action on this computer has the same name and version as a different one in the catalog. Give it a new version.",
+        reason: null,
+      };
+    case "catalog":
+      return {
+        target,
+        message: "Studio couldn't read the project's catalog, so nothing ran.",
+        reason: null,
+      };
+    case "failed":
+      return { target, message: outcome.message, reason: null };
+    case "stale":
+      return null;
+  }
+}
+
 export const keptText = (name: string, count: number): string =>
   `${name} keeps ${count} ${count === 1 ? "entry that isn't" : "entries that aren't"} applied yet.`;
 const isTyping = (element: Element | null): boolean =>
@@ -154,6 +252,7 @@ const visible = (element: HTMLElement): boolean =>
     OutputPane,
     TestEventPane,
     CloseGuard,
+    ExecuteDialog,
     SettingsTab,
     IssuesIndicator,
   ],
@@ -260,7 +359,6 @@ export class StepDetails {
   yamlOpen = false;
   yamlText = "";
   yamlError = "";
-  readonly executeReason = EXECUTE_REASON;
 
   constructor() {
     // Leaving the editor asks the same question about an unsaved output edit.
@@ -712,31 +810,159 @@ export class StepDetails {
     return this.target() === "$trigger" ? "Execute workflow" : "Execute step";
   }
   canExecute(): boolean {
-    return this.target() !== "$end" && !this.controller().readOnlyReason();
+    return (
+      this.target() !== "$end" &&
+      !this.controller().readOnlyReason() &&
+      !!this.host().executeIn
+    );
   }
-  explainExecute() {
-    // Execute step shows every message of the step, required ones too.
-    this.controller().reveal(this.target());
-    this.host().notify(EXECUTE_REASON);
+  /** True while an execution runs; the primary button then reads Stop. */
+  executing(): boolean {
+    return !!this.host().execution?.running();
   }
   executeItems(): RowMenuItem[] {
-    const blocked = this.host().blocker("simulate");
+    if (this.target() === "$trigger") return [];
     return [
       {
-        label: "Simulate the workflow",
+        label: "Execute previous steps",
         detail:
-          blocked ||
-          "Runs every step with test data. No real systems are called.",
-        disabled: !!blocked,
-        run: () => {
-          const host = this.host();
-          this.guard(() => {
-            this.closeNow();
-            void host.runCommand("simulate");
-          });
-        },
+          "Runs from the trigger up to this step, reusing pinned and current results",
+        run: () => void this.execute("before"),
       },
     ];
+  }
+  /** What Execute asks first: errors to fix, or whether to unpin. */
+  readonly question = signal<ExecuteQuestion | null>(null);
+  /**
+   * Execute step (or Execute previous steps): asks first about errors in the
+   * steps it runs and, for a pinned step, about its pin; then executes on the
+   * Studio host. While one runs, the primary button stops it.
+   */
+  async execute(mode: "step" | "before"): Promise<void> {
+    const host = this.host();
+    if (!this.canExecute()) return;
+    if (this.executing()) return this.stop();
+    const id = this.target();
+    const controller = this.controller();
+    const workflow = host.model.definition;
+    const target: ExecuteTarget =
+      id === "$trigger" ? { mode: "workflow" } : { mode, stepId: id };
+    // Execute step shows every message of the step, required ones too.
+    controller.reveal(id);
+    const runs =
+      target.mode === "workflow"
+        ? allSteps(workflow.spec.steps).map((step) => step.id)
+        : (sliceStepIds(workflow, id) ?? [id]).filter(
+            (step) => mode === "step" || step !== id,
+          );
+    const issues = this.blockingIssues(runs);
+    const gate = executeGate(
+      issues,
+      runs,
+      mode === "step" && target.mode === "step" && !!controller.pinOfTarget(id),
+    );
+    if (gate.kind === "fix") {
+      this.question.set({ ...gate, issues: gate.issues as ExecuteIssue[] });
+      return;
+    }
+    if (gate.kind === "unpin") {
+      this.question.set({ ...gate, stepId: id });
+      return;
+    }
+    await this.executeNow(target);
+  }
+  /** The errors in the steps an execution runs: the host's check, and this step's own. */
+  private blockingIssues(runs: readonly string[]): ExecuteIssue[] {
+    const controller = this.controller();
+    const id = this.target();
+    const found: ExecuteIssue[] = [];
+    for (const stepId of runs) {
+      if (stepId === id) continue;
+      for (const diagnostic of controller.diagnostics(stepId))
+        if (diagnostic.severity === "error")
+          found.push({
+            stepId,
+            severity: "error",
+            message: diagnostic.message,
+            at: diagnostic.at,
+          });
+    }
+    if (runs.includes(id))
+      for (const issue of this.issues())
+        if (issue.severity === "error")
+          found.push({
+            stepId: id,
+            severity: "error",
+            message: issue.message,
+            key: issue.key,
+          });
+    return found;
+  }
+  /** Executes, then shows the answer in this step's panes. */
+  private async executeNow(target: ExecuteTarget): Promise<void> {
+    const host = this.host();
+    const controller = this.controller();
+    const id = this.target();
+    controller.executeNotice.set(null);
+    const outcome = await host.executeIn!(target);
+    if (this.lifetime.destroyed) return;
+    const notice = noticeOf(outcome, id);
+    controller.executeNotice.set(notice);
+    if (outcome.kind === "done") {
+      const blocked = outcome.response.blocked;
+      this.say(
+        blocked
+          ? blocked.message
+          : target.mode === "before"
+            ? `Executed the steps before ${id}.`
+            : `Executed ${target.mode === "workflow" ? "the workflow" : id}.`,
+      );
+    } else if (notice) this.say(notice.message);
+  }
+  /** Stop: the running execution's answer is dropped. */
+  stop() {
+    this.host().execution?.stop();
+    this.say("Stopped executing.");
+  }
+  /** Fix: the question closes and the field that holds the issue gets focus. */
+  fixIssue(issue: ExecuteIssue) {
+    this.question.set(null);
+    if (issue.stepId === this.target()) {
+      const found = this.issues().find((item) => item.key === issue.key);
+      if (found) return this.goToIssue(found);
+      return;
+    }
+    const request = this.request();
+    void moveToStep(
+      this.host(),
+      issue.stepId,
+      {
+        tab: "parameters",
+        focus: issue.at
+          ? { kind: "path", path: issue.at }
+          : { kind: "firstIssue" },
+        fresh: false,
+        revealAll: true,
+      },
+      () => !this.lifetime.destroyed && this.details.request() === request,
+    );
+  }
+  /** Unpin and execute: unpins (with Undo, as the pin toggle does), then executes. */
+  async unpinAndExecute() {
+    const asked = this.question();
+    this.question.set(null);
+    if (asked?.kind !== "unpin") return;
+    if (!(await this.controller().unpin(asked.stepId))) return;
+    await this.executeNow({ mode: "step", stepId: asked.stepId });
+  }
+  closeQuestion() {
+    this.question.set(null);
+    setTimeout(() => this.focusExecute());
+  }
+  private focusExecute() {
+    this.dialog()
+      .nativeElement.querySelector<HTMLElement>(".sd-execute > button")
+      ?.focus({ preventScroll: true });
   }
 
   // -------------------------------------------------------------- issues
@@ -1446,8 +1672,9 @@ export class StepDetails {
         event.preventDefault();
         return this.cycleRegion(-1);
       case "executeStep":
+        // Also while typing: Ctrl/Cmd+Enter never types anything.
         event.preventDefault();
-        if (this.canExecute()) this.explainExecute();
+        if (this.canExecute()) void this.execute("step");
         return;
       case "togglePin": {
         const target = this.session().target;

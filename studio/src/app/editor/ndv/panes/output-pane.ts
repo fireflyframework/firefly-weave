@@ -106,9 +106,12 @@ import { ndvRegistry, type Json } from "../registry";
         />
       </div>
     }
+    @let ran = simulated();
     <div class="pane-sub">
       @if (pin) {
         <span class="pill" data-tone="info">Pinned</span>
+      } @else if (ran) {
+        <span class="pill pane-source-tag">Simulated</span>
       } @else if (event() !== undefined && value() === undefined) {
         <span class="pill" data-tone="info">Sample</span>
       }
@@ -169,6 +172,21 @@ import { ndvRegistry, type Json } from "../registry";
           }
           @if (problem()) {
             <p class="pane-problem" role="alert">{{ problem() }}</p>
+          }
+          @if (notice(); as said) {
+            <div class="pane-notice" role="status">
+              <p class="pane-notice-text">{{ said.message }}</p>
+              @if (said.reason === "missing_mock" && canPin && !pin) {
+                <div class="pane-empty-actions">
+                  <button type="button" class="sm" (click)="setOutput()">
+                    Set test output
+                  </button>
+                  <button type="button" class="sm" (click)="generate()">
+                    <weave-icon name="refresh" [size]="16" />Generate sample
+                  </button>
+                </div>
+              }
+            </div>
           }
           @if (none) {
             <p class="pane-empty-text">{{ none }}</p>
@@ -273,13 +291,27 @@ export class OutputPane {
     const step = this.session().controller.step(this.session().target);
     return step ? noOutputSentence(step) : null;
   }
-  /** The step's data: its output once known, its pinned output, and the trigger's test event. */
+  /** The step's data: its output once known, its pin or its last result, and the trigger's test event. */
   event(): Json | undefined {
     if (this.value() !== undefined) return this.value();
     const { controller, target } = this.session();
     return target === "$trigger"
       ? controller.testEvent()
-      : controller.pinnedOutput(target);
+      : controller.stepData(target)?.value;
+  }
+  /** What the step returned in the last execution, when no pin stands for it. */
+  simulated(): boolean {
+    const { controller, target } = this.session();
+    return (
+      !target.startsWith("$") &&
+      controller.stepData(target)?.source === "simulated"
+    );
+  }
+  /** What the last execution said about this step (it needs test data, a path it didn't take…). */
+  notice() {
+    const { controller, target } = this.session();
+    const notice = controller.executeNotice();
+    return notice?.target === target ? notice : null;
   }
   readonly noPinYet = "Set test output or generate a sample to pin it.";
   readonly problem = signal("");

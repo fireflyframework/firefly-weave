@@ -29,6 +29,11 @@ import type { StepDetailsRequest } from "./step-details-service";
 import { editorNextEnabled } from "../state/editor-flag";
 import type { StepFingerprints } from "../state/fingerprints";
 import type { TestDataService } from "../state/test-data-service";
+import type { ExecuteTarget } from "../state/execution";
+import type {
+  ExecuteOutcome,
+  ExecutionService,
+} from "../state/execution-service";
 
 export interface StepDetailsHost {
   readonly model: StructuredCanvasAdapter;
@@ -89,6 +94,10 @@ export interface StepDetailsHost {
   testDataPrints?(): ReadonlyMap<string, StepFingerprints> | null;
   /** Opens the test data of the workflow and account shown now; false when it was open already. */
   openTestData?(): boolean;
+  /** Executes on the Studio host and keeps the last results; null until it loads. */
+  readonly execution?: ExecutionService | null;
+  /** Runs one execution (Execute step, Execute previous steps, Execute workflow). */
+  executeIn?(target: ExecuteTarget): Promise<ExecuteOutcome>;
   /** This step's pin came from another workflow (pasted, or loaded from a file) and isn't kept yet. */
   pinFromElsewhere?(id: string): boolean;
   /** Saves a platform draft's pending edits now (closing step details); true when nothing is left. */

@@ -216,24 +216,34 @@ SPDX-License-Identifier: Apache-2.0
         <span class="sd-spacer"></span>
         <div class="sd-actions">
           @if (canExecute()) {
-            <div class="sd-execute">
-              <button
-                type="button"
-                class="primary"
-                aria-disabled="true"
-                aria-describedby="sd-execute-reason"
-                (click)="explainExecute()"
-              >
-                <weave-icon name="execute" [size]="16" />{{ executeLabel() }}
-              </button>
-              <weave-row-menu
-                label="More ways to execute"
-                icon="chevronDown"
-                [items]="executeItems()"
-              />
-              <span id="sd-execute-reason" class="sr-only">{{
-                executeReason
-              }}</span>
+            @let ways = executeItems();
+            <div class="sd-execute" [class.is-single]="!ways.length">
+              @if (executing()) {
+                <button
+                  type="button"
+                  class="primary"
+                  title="Stop executing"
+                  (click)="stop()"
+                >
+                  <weave-icon name="close" [size]="16" />Stop
+                </button>
+              } @else {
+                <button
+                  type="button"
+                  class="primary"
+                  [title]="executeLabel() + ' (Ctrl/Cmd+Enter)'"
+                  (click)="execute('step')"
+                >
+                  <weave-icon name="execute" [size]="16" />{{ executeLabel() }}
+                </button>
+              }
+              @if (ways.length) {
+                <weave-row-menu
+                  label="More ways to execute"
+                  icon="chevronDown"
+                  [items]="ways"
+                />
+              }
             </div>
           }
           @if (moreItems().length) {
@@ -456,4 +466,12 @@ SPDX-License-Identifier: Apache-2.0
 </section>
 @if (guarding()) {
   <weave-close-guard (answer)="answerGuard($event)" />
+}
+@if (question(); as asked) {
+  <weave-execute-dialog
+    [question]="asked"
+    (fix)="fixIssue($event)"
+    (confirm)="unpinAndExecute()"
+    (cancel)="closeQuestion()"
+  />
 }

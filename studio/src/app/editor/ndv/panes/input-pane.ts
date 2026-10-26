@@ -137,9 +137,12 @@ import { ndvRegistry, type Json } from "../registry";
         </span>
       }
       @if (data !== undefined && sources.length) {
-        <span class="pill pane-source-tag" data-tone="info">{{
-          chosen === "input" ? "Test input" : "Pinned"
-        }}</span>
+        @let tag = sourceTag(chosen);
+        <span
+          class="pill pane-source-tag"
+          [attr.data-tone]="tag === 'Simulated' ? null : 'info'"
+          >{{ tag }}</span
+        >
       }
       <span class="pane-count">{{
         countLabel(all.length, query() ? shown.length : undefined)
@@ -303,8 +306,16 @@ export class InputPane implements OnInit {
     const controller = this.session().controller;
     if (source === "input") return controller.testEvent() ?? this.value();
     if (source.startsWith("step:"))
-      return controller.pinnedOutput(source.slice(5)) ?? this.value();
+      return controller.stepData(source.slice(5))?.value ?? this.value();
     return this.value();
+  }
+  /** Where the chosen source's data comes from: test input, a pin, or the last execution. */
+  sourceTag(source: string): string {
+    if (source === "input") return "Test input";
+    const data = source.startsWith("step:")
+      ? this.session().controller.stepData(source.slice(5))
+      : undefined;
+    return data?.source === "simulated" ? "Simulated" : "Pinned";
   }
   rows(source: string, data?: Json): TreeRow[] {
     return withSamples(

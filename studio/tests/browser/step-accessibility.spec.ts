@@ -228,11 +228,11 @@ for (const size of [
       const details = await openStepFixture(page);
       await expect(page.locator(".diagnostics")).toBeVisible();
       await details.openWithKeyboard("summarize");
-      // Execute step explains, in a toast, that it isn't available yet.
+      // P without a pin explains, in a toast, how to pin.
       await details.dialog
         .getByRole("button", { name: /^Execute step/ })
         .focus();
-      await page.keyboard.press("Enter");
+      await page.keyboard.press("p");
       const toast = page.locator(".toast-region .toast");
       await expect(toast).toBeVisible();
       // The tab's last control, scrolled to the bottom of the screen.

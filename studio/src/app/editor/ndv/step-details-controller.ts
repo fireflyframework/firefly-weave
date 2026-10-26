@@ -102,9 +102,13 @@ import {
   type NdvContext,
   type ParamSpec,
   type Path,
+  type StaleReason,
   type StepKindDescriptor,
 } from "./registry";
 import type { StepDetailsHost } from "./step-details-host";
+import type { BlockedReason } from "../state/execution";
+import type { LastResult } from "../state/last-results";
+import { instanceStep } from "../state/instance-keys";
 import type { HostDiagnostic } from "../../integrations/http-action-client";
 import {
   PendingEntries,
@@ -138,8 +142,19 @@ export type ControllerHost = Pick<
   | "testDataPrints"
   | "openTestData"
   | "pinFromElsewhere"
+  | "execution"
 >;
 /** A diagnostic of one step, located in it. */
+/** The last execution's answer about a step, in its Output pane. */
+export interface ExecuteNotice {
+  /** The step it is about. */
+  target: string;
+  message: string;
+  /** Why the run stopped there; null for a refusal or a failure. */
+  reason: BlockedReason | null;
+  /** "Edit test input" is the way out. */
+  input?: boolean;
+}
 export interface StepDiagnostic {
   code: string;
   severity: string;
@@ -354,6 +369,47 @@ export class StepDetailsController {
     );
     return safeSample(schema ?? {}, pin.entry.output);
   }
+  // --------------------------------------------------- executed data
+  /** A step's (or an iteration's) last result, from the last execution on this computer, or null. */
+  lastResult(key: string): LastResult | null {
+    return this.host.execution?.results()?.steps[key] ?? null;
+  }
+  /**
+   * What a step's output reads now, the same for the Output pane, the Input
+   * pane and formula previews: its pin, else its last result (still used when
+   * out of date), else nothing. Secret fields are left out.
+   */
+  stepData(
+    key: string,
+  ):
+    | { value: Json; source: "pinned" | "simulated"; stale: StaleReason | null }
+    | undefined {
+    const stepId = instanceStep(key);
+    const pin = this.pinOfTarget(key) ?? this.pinOfTarget(stepId);
+    if (pin)
+      return {
+        value: this.pinnedOutput(pin.key) ?? {},
+        source: "pinned",
+        stale: pin.stale,
+      };
+    const result = this.lastResult(key);
+    if (!result || result.output === undefined) return undefined;
+    const step = this.step(stepId);
+    const schema = step
+      ? this.descriptor(stepId)?.outputSchema(step, this.kindContext())
+      : null;
+    const value = safeSample(schema ?? {}, result.output);
+    if (value === undefined) return undefined;
+    const now = this.prints().get(stepId)?.execution;
+    return {
+      value,
+      source: "simulated",
+      stale: now === result.execution ? null : "upstream",
+    };
+  }
+  /** What the last execution asked of this step, or why it couldn't run (shown in its Output). */
+  readonly executeNotice = signal<ExecuteNotice | null>(null);
+
   /** Whether this step's output can be pinned (actions, AI tasks, Call a workflow that waits…). */
   pinnable(target: string): boolean {
     const step = this.step(target);
@@ -391,15 +447,17 @@ export class StepDetailsController {
     return null;
   }
   /** Unpins the step's output, with an Undo toast. */
-  unpin(target: string): void {
+  /** Unpins with an Undo toast; resolves true once the pin is gone. */
+  unpin(target: string): Promise<boolean> {
     const service = this.testData;
-    if (!service.data().pins?.[target]) return;
+    if (!service.data().pins?.[target]) return Promise.resolve(false);
     const previous = service.data();
     const at = new Date().toISOString();
-    void service
+    return service
       .change(withoutPin(previous, target, at), [])
       .then((outcome) => {
         if (outcome.ok) this.offerUndo(`Unpinned ${target}.`, outcome.previous);
+        return outcome.ok;
       });
   }
   /** This step's pin came from another workflow and isn't kept here yet. */
@@ -1101,7 +1159,7 @@ export class StepDetailsController {
             pointer(fieldPath),
             this.scopeOptions(),
           ).steps) {
-            const output = this.pinnedOutput(visible.id);
+            const output = this.stepData(visible.id)?.value;
             if (output !== undefined) steps[visible.id] = { output };
           }
           return input === undefined && !Object.keys(steps).length
@@ -1110,15 +1168,8 @@ export class StepDetailsController {
         },
         resolvedInput: () => none,
         output: () => {
-          const pin = this.pinOfTarget(target);
-          return pin
-            ? {
-                state: "available" as const,
-                value: this.pinnedOutput(target) ?? {},
-                source: "pinned" as const,
-                stale: pin.stale,
-              }
-            : none;
+          const data = this.stepData(target);
+          return data ? { state: "available" as const, ...data } : none;
         },
         setPin: async (value) => {
           const message = await this.pin(target, value, "manual");

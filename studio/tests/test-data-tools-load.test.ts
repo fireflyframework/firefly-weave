@@ -119,6 +119,7 @@ describe("the test data service", () => {
     const service = { kind: "service" };
     const { app, ready } = fixture(async () => ({
       createTestDataService: () => (made++, service),
+      createExecutionService: () => ({}),
     }));
     expect(made).toBe(0);
     const [first, second] = await Promise.all([
@@ -137,7 +138,10 @@ describe("the test data service", () => {
     const { app, ready } = fixture(async () => {
       if (fail)
         throw new TypeError("Failed to fetch dynamically imported module");
-      return { createTestDataService: () => service };
+      return {
+        createTestDataService: () => service,
+        createExecutionService: () => ({}),
+      };
     });
     await expect(app.requireTestData()).rejects.toThrow();
     expect(ready).toEqual([]);

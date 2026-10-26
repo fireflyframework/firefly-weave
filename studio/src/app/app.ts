@@ -61,6 +61,11 @@ import type {
   TestDataService,
   TestDataPlace,
 } from "./editor/state/test-data-service";
+import type {
+  ExecuteOutcome,
+  ExecutionService,
+} from "./editor/state/execution-service";
+import type { ExecuteTarget } from "./editor/state/execution";
 import type { StepFingerprints } from "./editor/state/fingerprints";
 import type {
   PinEntry,
@@ -7191,6 +7196,36 @@ export class App implements CanvasHost {
             if (this.profile) this.autosave.touch();
           },
         });
+        this.execution ??= tools.createExecutionService({
+          api: this.api,
+          backend: studioBackend(),
+          now: () => new Date(),
+          draft: () =>
+            this.model
+              ? {
+                  id: this.draftId,
+                  // What the editor holds now, applied: the revision fences the answer.
+                  source: JSON.stringify(this.model.definition),
+                  format: "json",
+                  revision: this.model.revision,
+                  workflow: this.model.definition,
+                }
+              : null,
+          place: () => this.executionPlace,
+          connected: () => !!this.profile,
+          definitions: () =>
+            [...this.catalogContracts.values()] as { [key: string]: Json }[],
+          testData: () =>
+            this.testData?.data() ?? {
+              schemaVersion: 1,
+              kind: "weave.studio/testData",
+              updatedAt: new Date(0).toISOString(),
+            },
+          prints: () => this.testDataPrints(),
+          inputSchema: () =>
+            (this.model.definition.spec["inputSchema"] as Json | undefined) ??
+            {},
+        });
         this.testDataReady.set(true);
         this.cdr.markForCheck();
         return this.testData;
@@ -7201,6 +7236,53 @@ export class App implements CanvasHost {
       },
     );
     return this.testDataLoading;
+  }
+  /** Execute step, Execute previous steps and Execute workflow (null until the test data tools load). */
+  execution: ExecutionService | null = null;
+  /** Where the open draft's last results are kept: the test data's account, or memory. */
+  private executionPlace: { prefix: string } | null = null;
+  /** Opens the last results of the draft whose test data just opened, under the same account. */
+  private async openExecution() {
+    const service = this.execution;
+    const testData = this.testData;
+    if (!service || !testData) return;
+    const draftId = this.draftId;
+    const place = testData.place();
+    const prefix =
+      place.kind === "local"
+        ? "local:"
+        : place.kind === "connected"
+          ? await connectedPrefix(place.scope).catch(() => null)
+          : null;
+    if (draftId !== this.draftId) return;
+    this.executionPlace = prefix ? { prefix } : null;
+    await service.open(draftId);
+    this.cdr.markForCheck();
+  }
+  /**
+   * Runs an execution from step details or the canvas. When the project's
+   * catalog can't be read, asks before executing with what's on this computer.
+   */
+  async executeIn(target: ExecuteTarget): Promise<ExecuteOutcome> {
+    const service = this.execution;
+    if (!service)
+      return { kind: "failed", message: "Studio is still loading Execute." };
+    if (!(await this.ensureApplied()))
+      return { kind: "failed", message: "Fix the field being edited first." };
+    let outcome = await service.execute(target);
+    if (
+      outcome.kind === "catalog" &&
+      (await this.dialogs.confirm({
+        title: "Execute without the project's catalog?",
+        message:
+          "Studio couldn't read the project's catalog. Execute with what's on this computer?",
+        confirmLabel: "Execute anyway",
+        cancelLabel: "Cancel",
+      }))
+    )
+      outcome = await service.execute(target, { catalog: "none" });
+    this.cdr.markForCheck();
+    return outcome;
   }
   /** The place and opening the test data was last opened for. */
   private testDataKey = "";
@@ -7244,6 +7326,7 @@ export class App implements CanvasHost {
       service ? open(service) : this.requireTestData().then(open)
     )
       .then(() => this.carryTestData())
+      .then(() => this.openExecution())
       .catch(() => undefined);
     return true;
   }
@@ -9439,6 +9522,8 @@ export class App implements CanvasHost {
       this.platformGeneration++;
       // The account's test data leaves memory, and nothing waiting is written back under its key.
       this.testData?.forget();
+      this.execution?.forget();
+      this.executionPlace = null;
       this.clearPlatformState();
       this.platformNotice = null;
       this.reportSignOut(result, name);
@@ -9472,7 +9557,11 @@ export class App implements CanvasHost {
     this.cdr.markForCheck();
     try {
       const result = await this.connection.remove(name, true);
-      if (active) this.testData?.forget();
+      if (active) {
+        this.testData?.forget();
+        this.execution?.forget();
+        this.executionPlace = null;
+      }
       this.applyConnection(result, active, name);
       this.notify(`Removed ${name}.`);
       void this.draftCanvases.forgetPlatform(name);

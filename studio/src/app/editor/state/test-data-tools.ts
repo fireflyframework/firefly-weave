@@ -25,10 +25,16 @@ import { fingerprints, type StepFingerprints } from "./fingerprints";
 import { contractOf, ownedContract, pinsView, staleText } from "./pins-stale";
 import type { StudioTestData } from "./test-data";
 import { TestDataService, type TestDataHost } from "./test-data-service";
+import { ExecutionService, type ExecutionHost } from "./execution-service";
 export { checkInputsOf } from "./test-data-inputs";
 export * as testDataOps from "./test-data-ops";
 export { readTestData } from "./test-data-read";
 export { CHECK_WORDS } from "./test-data-check";
+
+/** Executes on the Studio host and keeps the last results; it loads with the tools too. */
+export function createExecutionService(host: ExecutionHost): ExecutionService {
+  return new ExecutionService(host);
+}
 
 /** The open workflow's test data service, made here so it loads with the tools, after the first page. */
 export function createTestDataService(host: TestDataHost): TestDataService {
