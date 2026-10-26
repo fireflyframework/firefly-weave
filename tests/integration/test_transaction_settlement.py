@@ -150,3 +150,33 @@ async def build_fresh(platform, services, access_db):
             "leased": {},
         }
     )
+
+
+async def test_a_step_in_flight_when_its_transaction_goes_back_is_settled_and_never_tried_again(platform):
+    activation = await platform.publish(workflow("move", [transaction(hold(), add(), submit())]))
+    run = await platform.start(activation)
+    holding = await platform.lease("hold")
+    async with platform.runtime.definitions.transaction(platform.scope, None) as tx:
+        view = await platform.runtime.cancel(
+            tx, run.id, "stop", actor=platform.actor, scope=platform.scope, context=AuditContext()
+        )
+    assert view.pending_undo
+    # The reservation's worker went silent while the transaction went back. Outside a rollback its action's retry
+    # policy (here three attempts, as an action may declare) would try it again; here it settles as "may have
+    # applied" and its reservation is released instead.
+    await platform.execute(
+        "UPDATE task_leases SET policy=jsonb_set(policy,'{retry}',"
+        '\'{"maxAttempts": 3, "initialDelaySeconds": 1, "maxDelaySeconds": 1}\') '
+        "WHERE task_id=:task",
+        task=holding.proof.task_id,
+    )
+    await platform.expire(holding)
+    await platform.scan()
+    await platform.complete(await platform.lease("hold#cancel"))
+    assert (await platform.state(run.id))["status"] == "cancelled"
+    assert await platform.keys(run.id) == ["hold", "hold#cancel"]
+    attempts = await platform.query(
+        "SELECT count(*) AS n FROM task_leases WHERE task_id=:task", task=holding.proof.task_id
+    )
+    assert attempts == [{"n": 1}]
+    assert (await platform.record(run.id))["state"] == "cancelled"
