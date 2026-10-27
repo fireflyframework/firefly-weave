@@ -567,9 +567,14 @@ class CallService:
     async def cancel_children(self, tx: Transaction, limit: int) -> int:
         """Cancel at most one started child run whose caller ended; the rule cascades to grandchildren."""
         repository = RuntimeRepository(tx, self.runtime.definitions.outbox)
+        # A child already undoing its own transactions before it ends, or one in doubt, accepted its stop or waits
+        # for a person: it is left out here, so it never holds back the cancels behind it.
         candidates = await repository.rows(
             f"SELECT id,child_run_id,caller_run_id,settlement FROM run_calls WHERE {SCOPE} AND cancel_requested "
-            "AND status='started' ORDER BY requested_at,id LIMIT :limit",
+            "AND status='started' AND EXISTS (SELECT 1 FROM runs r WHERE r.id=run_calls.child_run_id "
+            "AND r.state->'ending' IS NULL AND NOT EXISTS (SELECT 1 FROM jsonb_each(CASE WHEN "
+            "jsonb_typeof(r.state->'transactions')='object' THEN r.state->'transactions' ELSE '{}'::jsonb END) t "
+            "WHERE t.value->>'status'='in_doubt')) ORDER BY requested_at,id LIMIT :limit",
             limit=limit,
         )
         for candidate in candidates:

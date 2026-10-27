@@ -199,3 +199,41 @@ async def test_a_release_whose_oldest_ready_tasks_belong_to_paused_runs_still_cl
     await platform.scan()
     await platform.complete(await platform.lease("hold#cancel"))
     assert (await platform.state(run.id))["status"] == "failed"
+
+
+async def test_children_still_undoing_never_hold_back_the_cancel_of_another_child(platform):
+    child = await platform.publish(workflow("child-look", [lookup("first")], callable_=True, timeout=300))
+    caller = await platform.publish(
+        workflow(
+            "parent-look",
+            [
+                {
+                    "id": "elsewhere",
+                    "kind": "callWorkflow",
+                    "uses": "child-look@1.0.0",
+                    "with": {"object": {"moveId": {"ref": "/input/moveId"}, "quantity": {"ref": "/input/quantity"}}},
+                }
+            ],
+        ),
+        **{"child-look": child.id},
+    )
+    runs = [await platform.start(caller, move=f"M-{index}") for index in range(12)]
+    await platform.scan()
+    children = {}
+    for run in runs:
+        [call] = await platform.query("SELECT child_run_id FROM run_calls WHERE caller_run_id=:run", run=run.id)
+        children[run.id] = call["child_run_id"]
+    # The eleven oldest children are already undoing their own transactions before they end: a cancel leaves them
+    # alone until they drain, which may take as long as a person needs to resolve them.
+    for run in runs[:11]:
+        await platform.execute(
+            "UPDATE runs SET state=jsonb_set(state,'{ending}','{\"status\": \"cancelled\"}') WHERE id=:id",
+            id=children[run.id],
+        )
+    for run in runs:
+        async with platform.runtime.definitions.transaction(platform.scope, None) as tx:
+            await platform.runtime.cancel(
+                tx, run.id, "stop", actor=platform.actor, scope=platform.scope, context=AuditContext()
+            )
+    await platform.scan()
+    assert (await platform.state(children[runs[11].id]))["status"] == "cancelled"
