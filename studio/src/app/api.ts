@@ -283,12 +283,13 @@ export class StudioApi {
     environment = false,
     cursor?: string,
     filters: Record<string, string> = {},
+    limit = 50,
   ) {
     return this.request<{
       items: Record<string, unknown>[];
       next_cursor: string | null;
     }>(
-      `${environment ? this.environment : this.project}/${collection}?limit=50${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}${Object.entries(
+      `${environment ? this.environment : this.project}/${collection}?limit=${limit}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}${Object.entries(
         filters,
       )
         .filter(([, value]) => value)

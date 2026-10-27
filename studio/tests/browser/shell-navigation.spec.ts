@@ -100,6 +100,7 @@ for (const viewport of [
             "Incidents",
             "Workers",
             "Clusters",
+            "Metrics",
             "Settings",
             "Collapse sidebar",
           ]);
@@ -223,6 +224,23 @@ for (const viewport of [
       });
     },
   );
+
+test("Home reads only the five runs of each list it shows", async ({
+  page,
+}) => {
+  await connected(page, { capabilities: allCapabilities });
+  const limits: string[] = [];
+  await page.route(`${environment}/runs?*`, (r) => {
+    const query = new URL(r.request().url()).searchParams;
+    limits.push(`${query.get("status") ?? "all"}:${query.get("limit")}`);
+    return r.fulfill({ json: { items: [], next_cursor: null } });
+  });
+  await page.getByRole("button", { name: "Runs", exact: true }).click();
+  await page.getByRole("button", { name: "Home", exact: true }).click();
+  await expect
+    .poll(() => [...new Set(limits)].sort())
+    .toEqual(["all:5", "failed:5", "waiting:5"]);
+});
 
 test("at 360 px a signed-out platform keeps a word beside the dot", async ({
   page,

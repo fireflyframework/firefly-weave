@@ -241,6 +241,41 @@ weave-operate-state {
   color: var(--muted);
   overflow-wrap: anywhere;
 }
+/* The hour's line sits on a fourth shared row, under every figure alike. */
+.figures.with-lines .figure {
+  grid-row: span 4;
+}
+.figure-line {
+  align-self: end;
+  min-width: 0;
+}
+
+/* Last 24 h: the day's figures beside the title, then two charts. */
+.band-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--inline-gap) var(--group-gap);
+}
+.band-headline {
+  font: var(--type-small);
+  color: var(--muted);
+}
+.day-charts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--group-gap);
+}
+.day-skeleton {
+  height: 240px;
+}
+.chart-card {
+  min-width: 0;
+  padding: var(--group-gap);
+  border: thin solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
 .band-empty {
   display: grid;
   justify-items: start;
@@ -416,6 +451,9 @@ a.attention-title {
   }
 }
 @container overview (max-width: 959px) {
+  .day-charts {
+    grid-template-columns: minmax(0, 1fr);
+  }
   .figures {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }

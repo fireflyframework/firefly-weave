@@ -95,7 +95,7 @@ def test_openapi_documents_bearer_security_and_the_response_schema(identifier):
     assert {"401", "403"} <= set(document["responses"])
 
 
-def test_sections_are_successful_objects_or_explicit_states_and_never_runs_24h():
+def test_sections_are_successful_objects_or_explicit_states_and_the_last_day_only_when_read():
     body = summary().model_dump(mode="json")
     assert set(body) == {"observed_at", "api", "health", "load", "workers", "targets", "incidents", "attention"}
     assert body["targets"] == body["incidents"] == {"state": "forbidden"}
@@ -153,9 +153,10 @@ def test_telemetry_answers_hosts_only():
     assert set(TelemetryMetricEndpoint.model_fields) == {"configured", "host", "interval_seconds"}
 
 
-def test_exported_schemas_include_both_answers_without_runs_24h():
+def test_exported_schemas_include_both_answers_with_an_optional_last_day():
     schemas = export_schemas()
-    assert "runs_24h" not in schemas["operations-summary"]["properties"]
+    assert "runs_24h" in schemas["operations-summary"]["properties"]
+    assert "runs_24h" not in schemas["operations-summary"].get("required", [])
     assert schemas["operations-summary"]["properties"]["attention"]
     assert set(schemas["operations-telemetry"]["properties"]) == {"enabled", "traces", "metrics", "dropped"}
     assert "authorization" not in json.dumps(schemas["operations-telemetry"])

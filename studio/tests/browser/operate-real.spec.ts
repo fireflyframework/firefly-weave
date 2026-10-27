@@ -283,7 +283,8 @@ test("a viewer sees the sections they may not read as needing access", async ({
   const summary = (await response.json()) as Record<string, unknown>;
   expect(summary["targets"]).toEqual({ state: "forbidden" });
   expect(summary["incidents"]).toEqual({ state: "forbidden" });
-  expect(JSON.stringify(summary)).not.toContain("runs_24h");
+  // The last day's runs need only status.read, which a viewer has.
+  expect(summary).toHaveProperty("runs_24h.started");
   const live = page.getByTestId("overview-meaningful");
   await expect(live).toBeVisible();
   await expect(live).toContainText("deployment.read");
@@ -333,6 +334,40 @@ test("Runs lists the newest run first without test runs, and Refresh finds a run
     page.locator(".runs-table .run-row").first().locator(".cell-run code"),
   ).toHaveText(runId.slice(0, 8), { timeout: 30_000 });
   await shot(page, "runs-newest");
+  expect(s.errors).toEqual([]);
+  await removePlatform(page, name);
+  expectNoCredentialsLeft();
+});
+
+test("Metrics shows the failure rate the J5.4 runs produced", async ({
+  page,
+}) => {
+  test.setTimeout(240_000);
+  // J5.4 runs before the browser suites and records its workflow and figures next to this suite's evidence.
+  const file = evidence ? join(evidence, "..", "operations-metrics.json") : "";
+  let counted: { row: { workflow: string; runs: number } } | null = null;
+  try {
+    counted = JSON.parse(readFileSync(file, "utf8"));
+  } catch {
+    counted = null;
+  }
+  test.skip(!counted, "J5.4 did not record its runs in this acceptance run");
+  const { person } = setup();
+  const s = await session(page);
+  const name = uniqueName("e2e-metrics");
+  await pair(page, s.host!, "metrics-pairing");
+  await connectAndSignIn(page, name, person);
+  await openSidebar(page, "Metrics");
+  await page
+    .getByRole("combobox", { name: "Workflow" })
+    .selectOption(counted!.row.workflow);
+  const figure = (id: string) =>
+    page.locator(`li.kpi[data-kpi="${id}"] .kpi-value`);
+  // 20 runs, 3 of them timed out: 15% in Studio, as the API answered 0.15.
+  await expect(figure("started")).toHaveText("20", { timeout: 30_000 });
+  await expect(figure("failure")).toHaveText("15%");
+  await shot(page, "metrics-live");
+  record("metrics_failure_rate_text", await figure("failure").textContent());
   expect(s.errors).toEqual([]);
   await removePlatform(page, name);
   expectNoCredentialsLeft();

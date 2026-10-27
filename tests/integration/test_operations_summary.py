@@ -271,7 +271,8 @@ async def test_summary_denied_sections_are_not_healthy_zero(operations_case):
     assert body["incidents"] == {"state": "forbidden"}
     assert body["targets"] == {"state": "forbidden"}
     assert all(item["kind"] not in {"incident", "approval", "job", "runner", "run"} for item in body["attention"])
-    assert "runs_24h" not in body
+    # The last day's runs need only status.read; nothing has been rolled up in this test.
+    assert body["runs_24h"] == {"started": 0, "succeeded": 0, "failed": 0, "failure_rate": None}
     # The same environment, read by its operator with every capability, lists what the worker operator may not see.
     everything = await principal_with(
         case,
@@ -837,7 +838,18 @@ async def test_native_routes_serve_the_summary_and_telemetry_hosts(operations_ca
     first = await client.get(environment + "/operations/summary", headers=headers)
     assert first.status_code == 200, first.text
     body = first.json()
-    assert set(body) == {"observed_at", "api", "health", "load", "workers", "targets", "incidents", "attention"}
+    assert set(body) == {
+        "observed_at",
+        "api",
+        "health",
+        "load",
+        "workers",
+        "targets",
+        "incidents",
+        "attention",
+        "runs_24h",
+    }
+    assert body["runs_24h"] == {"started": 0, "succeeded": 0, "failed": 0, "failure_rate": None}
     assert body["incidents"] == body["targets"] == {"state": "forbidden"}
     components = [item["component"] for item in body["health"]]
     assert components[0] == "database" and components[-2:] == ["native_executors", "telemetry"]

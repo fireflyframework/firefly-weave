@@ -44,23 +44,36 @@ import { OperateState } from "../operate-state";
 import { Poller } from "../operate-store";
 import { timeAbsolute, timeIso } from "../operate-time";
 import { RefreshStatus } from "../refresh-status";
+import type { StatisticsSeries } from "../metrics/chart-model";
+import { LineChart, Sparkline, TimeChart } from "../metrics/charts";
 import {
   attentionLabels,
   attentionLink,
   clockOffset,
   countText,
+  dayHeadline,
+  dayQuery,
   healthTiles,
   isQuiet,
+  keepsStatistics,
   loadFigures,
+  loadSeriesQuery,
+  loadSparklines,
   readSummary,
   sectionOf,
   slotMeter,
+  statisticsMissing,
   type AttentionItem,
   type HealthState,
   type HealthTile,
   type OperationsSummary,
+  type RunsDaySection,
   type TileId,
 } from "./overview-model";
+
+// The first statistics read waits this long after the summary, so the page's opening reads (Home's too,
+// when it was just open) have finished: a poll's byte budget counts each refresh on its own.
+const STATISTICS_DELAY_MS = 5_000;
 
 @Component({
   selector: "weave-overview-page",
@@ -69,9 +82,12 @@ import {
   imports: [
     AnchoredPopover,
     Icon,
+    LineChart,
     NgTemplateOutlet,
     OperateState,
     RefreshStatus,
+    Sparkline,
+    TimeChart,
   ],
   styleUrls: ["../operate.css", "./overview.css"],
   template: `
@@ -275,14 +291,25 @@ import {
                 </button>
               </div>
             } @else {
-              <ul class="figures" role="list">
+              <ul
+                class="figures"
+                role="list"
+                [class.with-lines]="loadLines.size > 0"
+              >
                 @for (figure of figures(); track figure.id) {
-                  <li class="figure">
+                  <li class="figure" [attr.data-figure]="figure.id">
                     <span class="figure-label">{{ figure.label }}</span
                     ><span class="figure-value numeric">{{
                       count(figure.value)
                     }}</span
                     ><span class="figure-detail">{{ figure.detail }}</span>
+                    @if (loadLines.size) {
+                      <weave-sparkline
+                        class="figure-line"
+                        [points]="loadLines.get(figure.id) ?? []"
+                        [name]="figure.label"
+                      />
+                    }
                   </li>
                 }
               </ul>
@@ -291,6 +318,61 @@ import {
             <weave-operate-state kind="partial" (retry)="poller.refresh()" />
           }
         </section>
+
+        @let dayBand = dayState(s);
+        @if (dayBand !== "none") {
+          <section class="band" aria-labelledby="overview-day">
+            <div class="band-head">
+              <h2 id="overview-day" class="band-title">Last 24 h</h2>
+              @if (dayOf(s); as runs) {
+                <span class="band-headline numeric">{{ headline(runs) }}</span>
+              }
+            </div>
+            @if (dayBand === "unavailable") {
+              <weave-operate-state
+                kind="partial"
+                (retry)="statisticsPoller.refresh()"
+              />
+            } @else if (dayBand === "loading") {
+              <div class="day-charts" role="status">
+                <span class="sr-only">Loading the last 24 hours…</span>
+                <span
+                  class="chart-card skeleton-block day-skeleton"
+                  aria-hidden="true"
+                ></span>
+                <span
+                  class="chart-card skeleton-block day-skeleton"
+                  aria-hidden="true"
+                ></span>
+              </div>
+            } @else {
+              <div class="day-charts">
+                <div class="chart-card">
+                  <weave-time-chart
+                    label="Runs per hour"
+                    [series]="dayRuns"
+                    [stacked]="[
+                      'runs_succeeded',
+                      'runs_failed',
+                      'runs_cancelled',
+                    ]"
+                    [lines]="['runs_started']"
+                    granularity="1h"
+                  />
+                </div>
+                <div class="chart-card">
+                  <weave-line-chart
+                    label="Failure rate"
+                    unit="ratio"
+                    [series]="dayRate"
+                    granularity="1h"
+                    empty="No runs ended in the last 24 hours"
+                  />
+                </div>
+              </div>
+            }
+          </section>
+        }
 
         <section class="band" aria-labelledby="overview-capacity">
           <h2 id="overview-capacity" class="band-title">
@@ -504,6 +586,20 @@ export class OverviewPage implements DoCheck, OnInit, OnDestroy {
   private cdr = inject(ChangeDetectorRef);
   private router = inject(Router);
   readonly poller = new Poller(() => this.load(), 15_000);
+  // Run statistics refresh every minute, only on a server that keeps them.
+  readonly statisticsPoller = new Poller(() => this.loadStatistics(), 60_000);
+  /** The hour's line under each Load figure, by figure ID. */
+  loadLines = new Map<string, Array<number | null>>();
+  /** The last 24 hours, hour by hour; null until read, or on a server without statistics. */
+  day: StatisticsSeries[] | null = null;
+  dayRuns: StatisticsSeries[] = [];
+  dayRate: StatisticsSeries[] = [];
+  private statisticsStarted = false;
+  private statisticsSoon: ReturnType<typeof setTimeout> | undefined;
+  /** False once the server answered that it keeps no run statistics. */
+  private statisticsServed = true;
+  /** The last read of the day's hours failed for another reason than missing statistics. */
+  private dayFailed = false;
   readonly sectionOf = sectionOf;
   readonly count = countText;
   readonly iso = timeIso;
@@ -528,7 +624,9 @@ export class OverviewPage implements DoCheck, OnInit, OnDestroy {
   }
   ngOnDestroy() {
     clearInterval(this.ticker);
+    clearTimeout(this.statisticsSoon);
     this.poller.stop();
+    this.statisticsPoller.stop();
     this.generation++;
   }
   ngDoCheck() {
@@ -542,6 +640,15 @@ export class OverviewPage implements DoCheck, OnInit, OnDestroy {
     this.forbidden = false;
     this.open = null;
     this.offset = 0;
+    this.statisticsPoller.stop();
+    clearTimeout(this.statisticsSoon);
+    this.statisticsStarted = false;
+    this.statisticsServed = true;
+    this.dayFailed = false;
+    this.loadLines = new Map();
+    this.day = null;
+    this.dayRuns = [];
+    this.dayRate = [];
     if (environmentOf(this.host) && this.host.identity && this.readable)
       void this.poller.refresh();
   }
@@ -558,6 +665,17 @@ export class OverviewPage implements DoCheck, OnInit, OnDestroy {
       this.offset = clockOffset(value.observed_at, Date.now());
       this.error = null;
       this.forbidden = false;
+      if (!this.statisticsStarted && keepsStatistics(value)) {
+        this.statisticsStarted = true;
+        // A moment after the summary, as a refresh of its own: the page's first
+        // reads and the statistics never share one poll's byte budget.
+        this.statisticsPoller.start(false);
+        clearTimeout(this.statisticsSoon);
+        this.statisticsSoon = setTimeout(
+          () => void this.statisticsPoller.refresh(),
+          STATISTICS_DELAY_MS,
+        );
+      }
       return true;
     } catch (error) {
       if (generation !== this.generation || key !== scopeKeyOf(this.host))
@@ -575,6 +693,81 @@ export class OverviewPage implements DoCheck, OnInit, OnDestroy {
   /** Now, by the server's clock. */
   private now() {
     return new Date(Date.now() + this.offset);
+  }
+  /**
+   * The hour's Load lines and the last 24 hours. A read the server doesn't
+   * serve stops these reads quietly; any other failure keeps what was shown.
+   */
+  private async loadStatistics(): Promise<boolean> {
+    if (!environmentOf(this.host) || !this.host.identity || !this.readable)
+      return false;
+    const key = scopeKeyOf(this.host),
+      generation = this.generation,
+      now = Date.now();
+    const path = `${this.host.api.environment}/run-statistics/series?`;
+    const [load, day] = await Promise.allSettled([
+      this.host.api.request<{ series: StatisticsSeries[] }>(
+        path + loadSeriesQuery(now, this.offset),
+      ),
+      this.host.api.request<{ series: StatisticsSeries[] }>(
+        path + dayQuery(now, this.offset),
+      ),
+    ]);
+    if (generation !== this.generation || key !== scopeKeyOf(this.host))
+      return false;
+    try {
+      for (const result of [load, day])
+        if (
+          result.status === "rejected" &&
+          statisticsMissing(describeError(result.reason))
+        ) {
+          this.statisticsPoller.stop();
+          this.statisticsServed = false;
+          this.loadLines = new Map();
+          this.day = null;
+          this.dayRuns = [];
+          this.dayRate = [];
+          return false;
+        }
+      if (load.status === "fulfilled")
+        this.loadLines = loadSparklines(
+          Array.isArray(load.value?.series) ? load.value : null,
+        );
+      this.dayFailed = day.status === "rejected";
+      if (day.status === "fulfilled") {
+        this.day = Array.isArray(day.value?.series) ? day.value.series : null;
+        this.dayRuns = (this.day ?? []).filter(
+          (item) => item.signal !== "failure_rate",
+        );
+        this.dayRate = (this.day ?? []).filter(
+          (item) => item.signal === "failure_rate",
+        );
+      }
+      return load.status === "fulfilled" || day.status === "fulfilled";
+    } finally {
+      this.cdr.markForCheck();
+    }
+  }
+  /**
+   * The Last 24 h band on a server that keeps statistics: loading until the
+   * hours answer, unavailable when the summary or the hours could not be read.
+   */
+  dayState(
+    summary: OperationsSummary,
+  ): "none" | "loading" | "unavailable" | "ready" {
+    const runs = summary.runs_24h;
+    if (!runs || !this.statisticsServed) return "none";
+    if ("state" in runs || this.dayFailed) return "unavailable";
+    return this.day ? "ready" : "loading";
+  }
+  /** The Last 24 h band shows when the summary has the day's runs and the hours answered. */
+  dayOf(summary: OperationsSummary): RunsDaySection | null {
+    const runs = summary.runs_24h;
+    if (!runs || !this.day || "state" in runs) return null;
+    return runs;
+  }
+  headline(runs: RunsDaySection) {
+    return dayHeadline(runs);
   }
   tiles(): HealthTile[] {
     return this.summary ? healthTiles(this.summary, this.now()) : [];

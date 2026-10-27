@@ -59,6 +59,7 @@ from firefly_weave.api.lumi import LumiController
 from firefly_weave.api.operations import OperationsController
 from firefly_weave.api.operations_summary import OperationsSummaryController
 from firefly_weave.api.providers import ProviderController
+from firefly_weave.api.run_statistics import RunStatisticsController
 from firefly_weave.api.run_views import RunViewController
 from firefly_weave.api.runs import RunController
 from firefly_weave.api.schedules import ScheduleController
@@ -375,6 +376,7 @@ def make_app(
                 RunViewController,
                 WorkerController,
                 OperationsSummaryController,
+                RunStatisticsController,
             ):
                 pyfly.context.get_bean(required)
             app.state.authentication = pyfly.context.get_bean(AuthenticationService)

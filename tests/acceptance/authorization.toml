@@ -116,6 +116,18 @@ capability = "status.read"
 capability = "catalog.read"
 identifier = "random"
 
+[operations."run_statistics.series"]
+capability = "status.read"
+query = { from = "2026-10-01T00:00:00Z", to = "2026-10-02T00:00:00Z", signals = "runs_started" }
+
+[operations."run_statistics.steps"]
+capability = "status.read"
+query = { from = "2026-10-01T00:00:00Z", to = "2026-10-02T00:00:00Z", workflow = "order-review-lite" }
+
+[operations."run_statistics.workflows"]
+capability = "status.read"
+query = { from = "2026-10-01T00:00:00Z", to = "2026-10-02T00:00:00Z" }
+
 [operations."run_summaries.list"]
 capability = "run.read"
 

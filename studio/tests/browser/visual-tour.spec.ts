@@ -3744,6 +3744,177 @@ spec:
       page.getByText("This section could not be loaded.", { exact: true }),
     ).toBeVisible();
     await shot("79-overview-sections", { end: ".page-content" });
+    // A platform that keeps run statistics: the hour's lines and the Last 24 h band.
+    const hours = (count: number, step: number, start: number) =>
+      Array.from({ length: count }, (_, index) =>
+        new Date(start + index * step).toISOString().replace(".000", ""),
+      );
+    await page.route(`${environment}/run-statistics/series?*`, (r) => {
+      const query = new URL(r.request().url()).searchParams;
+      const hourly = query.get("granularity") === "1h";
+      const times = hourly
+        ? hours(24, 3_600_000, now - 24 * 3_600_000)
+        : hours(12, 300_000, now - 3_600_000);
+      return r.fulfill({
+        json: {
+          from: query.get("from"),
+          to: query.get("to"),
+          granularity: hourly ? "1h" : "5m",
+          complete_until: ago(300),
+          series: query.getAll("signals").map((signal, offset) => ({
+            signal,
+            labels: {},
+            unit: signal === "failure_rate" ? "ratio" : "count",
+            points: times.map((at, index) => [
+              at,
+              signal === "failure_rate"
+                ? index % 6 === 0
+                  ? 0.12
+                  : 0
+                : signal === "runs_failed"
+                  ? index % 6 === 0
+                    ? 1
+                    : 0
+                  : signal === "runs_cancelled"
+                    ? 0
+                    : 4 + ((index * 7 + offset) % 5),
+            ]),
+          })),
+        },
+      });
+    });
+    await page.unroute(`${environment}/operations/summary`);
+    await page.route(`${environment}/operations/summary`, (r) =>
+      r.fulfill({
+        json: {
+          ...summary,
+          runs_24h: {
+            started: 151,
+            succeeded: 145,
+            failed: 4,
+            failure_rate: 0.0268,
+          },
+        },
+      }),
+    );
+    await page.getByRole("button", { name: "Refresh", exact: true }).click();
+    // The first statistics read waits a few seconds after the summary.
+    await expect(page.locator("svg.chart-frame")).toHaveCount(2, {
+      timeout: 15_000,
+    });
+    await shot("155-overview-statistics", { end: ".page-content" });
+  },
+
+  async metrics({ page, shot }) {
+    await connected(page, {
+      capabilities: [...allCapabilities, "status.read"],
+    });
+    const hours = Array.from({ length: 24 }, (_, index) =>
+      new Date(Date.parse("2026-10-25T15:00:00Z") + index * 3_600_000)
+        .toISOString()
+        .replace(".000", ""),
+    );
+    const range = {
+      from: "2026-10-25T14:32:10Z",
+      to: "2026-10-26T14:32:10Z",
+      granularity: "1h",
+      complete_until: "2026-10-26T14:30:00Z",
+    };
+    const figures: Record<string, (index: number) => number> = {
+      runs_started: (index) => 6 + ((index * 7) % 5),
+      runs_succeeded: (index) => 5 + ((index * 7) % 5),
+      runs_failed: (index) => (index % 6 === 0 ? 1 : 0),
+      runs_cancelled: (index) => (index === 9 ? 1 : 0),
+      failure_rate: (index) => (index % 6 === 0 ? 0.14 : 0),
+      duration_p50: (index) => 420 + ((index * 37) % 120),
+      duration_p95: (index) => 2_400 + ((index * 53) % 900),
+      tasks_ready: (index) => (index * 3) % 7,
+      oldest_ready_seconds: (index) => 5 + ((index * 11) % 40),
+      outbox_pending: (index) => (index * 5) % 4,
+      worker_utilization: (index) => 0.35 + ((index * 13) % 30) / 100,
+    };
+    const units: Record<string, string> = {
+      failure_rate: "ratio",
+      worker_utilization: "ratio",
+      duration_p50: "ms",
+      duration_p95: "ms",
+      oldest_ready_seconds: "seconds",
+    };
+    await page.route(`${environment}/run-statistics/series?*`, (r) => {
+      const query = new URL(r.request().url()).searchParams;
+      const labels =
+        query.get("group_by") === "task_type"
+          ? [{ task_type: "email" }, { task_type: "file" }]
+          : query.get("group_by") === "workflow"
+            ? [{ workflow: "expense-review" }, { workflow: "invoice-intake" }]
+            : [{}];
+      return r.fulfill({
+        json: {
+          ...range,
+          series: query.getAll("signals").flatMap((signal) =>
+            labels.map((label, offset) => ({
+              signal,
+              labels: label,
+              unit: units[signal] ?? "count",
+              points: hours.map((at, index) => [
+                at,
+                (figures[signal] ?? (() => 0))(index + offset * 3),
+              ]),
+            })),
+          ),
+        },
+      });
+    });
+    await page.route(`${environment}/run-statistics/workflows?*`, (r) =>
+      r.fulfill({
+        json: {
+          ...range,
+          workflows: [
+            {
+              workflow: "expense-review",
+              versions: ["1.4.0", "1.3.2"],
+              runs: 142,
+              succeeded: 135,
+              failed: 5,
+              cancelled: 2,
+              failure_rate: 0.0352,
+              duration_p50_ms: 460,
+              duration_p95_ms: 2_900,
+              last_run_at: "2026-10-26T14:31:00Z",
+            },
+            {
+              workflow: "invoice-intake",
+              versions: ["2.0.1"],
+              runs: 58,
+              succeeded: 57,
+              failed: 1,
+              cancelled: 0,
+              failure_rate: 0.0172,
+              duration_p50_ms: 1_250,
+              duration_p95_ms: 8_400,
+              last_run_at: "2026-10-26T13:58:00Z",
+            },
+          ],
+          totals: {
+            runs: 200,
+            succeeded: 192,
+            failed: 6,
+            cancelled: 2,
+            failure_rate: 0.03,
+            duration_p50_ms: 520,
+            duration_p95_ms: 4_100,
+          },
+        },
+      }),
+    );
+    await open(page, "Metrics");
+    await expect(page.locator("svg.chart-frame")).toHaveCount(6);
+    await shot("153-metrics", { end: ".page-content" });
+    await page
+      .locator(".metrics-table-band")
+      .scrollIntoViewIfNeeded()
+      .catch(() => undefined);
+    await shot("154-metrics-workflows");
   },
 
   async "canvas-v2-empty"({ page, shot, size }) {

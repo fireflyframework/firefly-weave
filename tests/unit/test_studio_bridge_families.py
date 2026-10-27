@@ -231,8 +231,12 @@ def test_every_operation_crosses_the_bridge_exactly_when_its_family_or_id_is_adm
     # The AI setup operations add exactly these six, direct incident reads join the incidents
     # family, stale-worker retirement joins the workers family, and the environment summary,
     # telemetry settings and release usage join as reads, change requests join as their own family, and a
-    # draft's studio documents join with their own family; every earlier crossing stays as it was.
+    # draft's studio documents join with their own family, and run statistics join as their own family of reads;
+    # every earlier crossing stays as it was.
     approved_additions = {
+        "run_statistics.series",
+        "run_statistics.workflows",
+        "run_statistics.steps",
         "ai_endpoints.list",
         "ai_models.list",
         "ai_readiness.read",
@@ -490,3 +494,19 @@ def test_operator_and_credential_operations_never_reach_the_platform(tmp_path, o
 def test_studio_documents_cross_the_bridge_only_for_their_two_kinds(tmp_path, method, path, status):
     with client(tmp_path) as browser:
         assert browser.app.state.studio.check_scope(path, method) == status
+
+
+def test_repeated_query_parameters_reach_the_platform_in_order(tmp_path):
+    seen = []
+
+    async def upstream(request):
+        seen.append(request.url.query.decode())
+        return httpx.Response(200, json={})
+
+    query = "from=2026-10-27T13%3A00%3A00Z&to=2026-10-27T14%3A00%3A00Z&signals=runs_active&signals=tasks_ready"
+    with client(tmp_path, transport=httpx.MockTransport(upstream)) as browser:
+        headers = pair(browser)
+        response = browser.get(f"/studio/api{ENVIRONMENT}/run-statistics/series?{query}", headers=headers)
+        assert response.status_code == 200
+    # Every value of a repeated parameter crosses the bridge, not only the last one.
+    assert seen == [query]

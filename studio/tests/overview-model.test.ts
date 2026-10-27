@@ -23,14 +23,20 @@ import {
   attentionLink,
   clockOffset,
   countText,
+  dayHeadline,
+  dayQuery,
   healthComponents,
   healthStates,
   healthTiles,
   isQuiet,
+  keepsStatistics,
   loadFigures,
+  loadSeriesQuery,
+  loadSparklines,
   readSummary,
   sectionOf,
   slotMeter,
+  statisticsMissing,
   uptimeSeconds,
   type OperationsSummary,
 } from "../src/app/operate/overview/overview-model";
@@ -511,4 +517,85 @@ describe("Overview model", () => {
       });
     },
   );
+});
+
+describe("Overview run statistics", () => {
+  const now = Date.parse("2026-10-26T14:32:10.400Z");
+  const day = { started: 240, succeeded: 231, failed: 6, failure_rate: 0.025 };
+  const line = (signal: string, values: Array<number | null>) => ({
+    signal,
+    labels: {},
+    unit: "count" as const,
+    points: values.map(
+      (value, index) =>
+        [
+          `2026-10-26T13:${String(35 + index * 5).padStart(2, "0")}:00Z`,
+          value,
+        ] as [string, number | null],
+    ),
+  });
+
+  it("asks for the hour's load lines and the day's hourly outcomes", () => {
+    const load = new URLSearchParams(loadSeriesQuery(now));
+    expect(load.getAll("signals")).toEqual([
+      "runs_active",
+      "tasks_ready",
+      "waits_active",
+      "outbox_pending",
+      "provider_pending",
+    ]);
+    expect([load.get("from"), load.get("to")]).toEqual([
+      "2026-10-26T13:32:10Z",
+      "2026-10-26T14:32:10Z",
+    ]);
+    // An hour is answered in five-minute buckets: the server picks them.
+    expect(load.has("granularity")).toBe(false);
+    const hours = new URLSearchParams(dayQuery(now, 1_000));
+    expect(hours.getAll("signals")).toEqual([
+      "runs_succeeded",
+      "runs_failed",
+      "runs_cancelled",
+      "runs_started",
+      "failure_rate",
+    ]);
+    expect(hours.get("granularity")).toBe("1h");
+    expect([hours.get("from"), hours.get("to")]).toEqual([
+      "2026-10-25T14:32:11Z",
+      "2026-10-26T14:32:11Z",
+    ]);
+  });
+
+  it("keys the hour's lines by the figure they sit under", () => {
+    const lines = loadSparklines({
+      series: [line("runs_active", [1, 2, 3]), line("tasks_ready", [0, null])],
+    });
+    expect(lines.get("runs_active")).toEqual([1, 2, 3]);
+    expect(lines.get("tasks_ready")).toEqual([0, null]);
+    expect(lines.has("waits_active")).toBe(false);
+    expect(loadSparklines(null).size).toBe(0);
+  });
+
+  it("reads the last day only from a server that keeps statistics", () => {
+    const base = { observed_at: observed } as OperationsSummary;
+    expect(keepsStatistics(base)).toBe(false);
+    expect(keepsStatistics({ ...base, runs_24h: day })).toBe(true);
+    expect(
+      keepsStatistics({ ...base, runs_24h: { state: "unavailable" } }),
+    ).toBe(true);
+    expect(dayHeadline(day)).toBe("240 runs · 6 failed · 2.5% failure rate");
+    expect(
+      dayHeadline({ started: 1, succeeded: 0, failed: 0, failure_rate: null }),
+    ).toBe("1 run · 0 failed");
+  });
+
+  it("stays quiet about statistics a server doesn't serve, and only about those", () => {
+    expect(statisticsMissing({ status: 501, code: "WV-UNAVAILABLE" })).toBe(
+      true,
+    );
+    expect(statisticsMissing({ status: 404, code: "WV-NOT-FOUND" })).toBe(true);
+    expect(statisticsMissing({ status: 503, code: "WV-UNAVAILABLE" })).toBe(
+      false,
+    );
+    expect(statisticsMissing({ status: 403, code: "WV-DENIED" })).toBe(false);
+  });
 });
