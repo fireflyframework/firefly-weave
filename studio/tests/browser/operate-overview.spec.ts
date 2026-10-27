@@ -1374,4 +1374,28 @@ test.describe("run statistics", () => {
     await page.getByRole("button", { name: "Refresh", exact: true }).click();
     await expect(band).toContainText("This section could not be loaded.");
   });
+
+  test("statistics are read as their own refresh, after the summary", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const summaries: number[] = [];
+    await overview(page, every, [
+      () => {
+        summaries.push(Date.now());
+        return { json: summary({ runs_24h: day }) };
+      },
+    ]);
+    const requests = await statistics(page);
+    const asked: number[] = [];
+    page.on("request", (request) => {
+      if (request.url().includes("/run-statistics/series"))
+        asked.push(Date.now());
+    });
+    await open(page);
+    await expect(page.locator("li.figure weave-sparkline svg")).toHaveCount(5);
+    // A separate refresh: the poll budget counts it on its own, not with the summary and the page's first reads.
+    expect(Math.min(...asked) - summaries[0]).toBeGreaterThanOrEqual(1_000);
+    expect(requests).toHaveLength(2);
+  });
 });

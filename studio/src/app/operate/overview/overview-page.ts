@@ -71,6 +71,9 @@ import {
   type TileId,
 } from "./overview-model";
 
+// The first statistics read waits this long after the summary.
+const STATISTICS_DELAY_MS = 1_500;
+
 @Component({
   selector: "weave-overview-page",
   standalone: true,
@@ -591,6 +594,7 @@ export class OverviewPage implements DoCheck, OnInit, OnDestroy {
   dayRuns: StatisticsSeries[] = [];
   dayRate: StatisticsSeries[] = [];
   private statisticsStarted = false;
+  private statisticsSoon: ReturnType<typeof setTimeout> | undefined;
   /** False once the server answered that it keeps no run statistics. */
   private statisticsServed = true;
   /** The last read of the day's hours failed for another reason than missing statistics. */
@@ -619,6 +623,7 @@ export class OverviewPage implements DoCheck, OnInit, OnDestroy {
   }
   ngOnDestroy() {
     clearInterval(this.ticker);
+    clearTimeout(this.statisticsSoon);
     this.poller.stop();
     this.statisticsPoller.stop();
     this.generation++;
@@ -635,6 +640,7 @@ export class OverviewPage implements DoCheck, OnInit, OnDestroy {
     this.open = null;
     this.offset = 0;
     this.statisticsPoller.stop();
+    clearTimeout(this.statisticsSoon);
     this.statisticsStarted = false;
     this.statisticsServed = true;
     this.dayFailed = false;
@@ -660,7 +666,14 @@ export class OverviewPage implements DoCheck, OnInit, OnDestroy {
       this.forbidden = false;
       if (!this.statisticsStarted && keepsStatistics(value)) {
         this.statisticsStarted = true;
-        this.statisticsPoller.start();
+        // A moment after the summary, as a refresh of its own: the page's first
+        // reads and the statistics never share one poll's byte budget.
+        this.statisticsPoller.start(false);
+        clearTimeout(this.statisticsSoon);
+        this.statisticsSoon = setTimeout(
+          () => void this.statisticsPoller.refresh(),
+          STATISTICS_DELAY_MS,
+        );
       }
       return true;
     } catch (error) {
