@@ -51,6 +51,40 @@ let sequence = 0;
   standalone: true,
   changeDetection: ChangeDetectionStrategy.Eager,
   host: { class: "modal-backdrop", "(mousedown)": "hold($event)" },
+  styles: `
+    /* One row per issue: the step and its message, Fix on the row's center. */
+    .execute-issues {
+      display: grid;
+      gap: var(--space-2);
+      margin: var(--space-3) 0 0;
+      padding: 0;
+      list-style: none;
+    }
+    .execute-issue {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: var(--space-3);
+      padding: var(--space-2) var(--space-3);
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
+      background: var(--sunken);
+    }
+    .execute-issue-text {
+      display: grid;
+      gap: 2px;
+      min-width: 0;
+    }
+    .execute-issue-step {
+      font: var(--type-label);
+      overflow-wrap: anywhere;
+    }
+    .execute-issue-message {
+      font: var(--type-small);
+      color: var(--muted);
+      overflow-wrap: anywhere;
+    }
+  `,
   template: `@let asked = question();
     <section
       class="modal-panel execute-dialog"
@@ -77,12 +111,11 @@ let sequence = 0;
           @for (issue of asked.issues; track $index) {
             <li class="execute-issue">
               <span class="execute-issue-text">
-                <strong>{{ issue.stepId }}</strong>
-                <span>{{ issue.message }}</span>
+                <strong class="execute-issue-step">{{ issue.stepId }}</strong>
+                <span class="execute-issue-message">{{ issue.message }}</span>
               </span>
               <button
                 type="button"
-                class="sm"
                 [attr.data-execute-primary]="$first ? '' : null"
                 [attr.aria-label]="'Fix ' + issue.stepId + ': ' + issue.message"
                 (click)="fix.emit(issue)"

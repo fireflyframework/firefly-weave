@@ -57,11 +57,11 @@ SPDX-License-Identifier: Apache-2.0
 .run-log-status {
   flex: 1;
   min-width: 0;
-  overflow: hidden;
+  padding: var(--space-1) 0;
   font: var(--type-small);
   color: var(--muted);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  /* A narrow log wraps the status rather than cutting what it waits for. */
+  overflow-wrap: anywhere;
 }
 .run-log-close {
   flex: none;
@@ -195,6 +195,7 @@ SPDX-License-Identifier: Apache-2.0
 @media (max-width: 767px), (pointer: coarse) {
   .run-log-entry,
   .run-log-controls button,
+  .run-log-question button,
   .run-log-decision,
   .run-log-close {
     min-height: 44px;

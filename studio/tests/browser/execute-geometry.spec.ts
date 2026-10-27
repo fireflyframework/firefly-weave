@@ -20,6 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 // the Input pane's empty state, at desktop and narrow sizes and on touch.
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import {
+  EXECUTE_ASKING,
   EXECUTE_CHAIN,
   EXECUTE_ROUTED,
   EXECUTE_ROWS,
@@ -31,6 +32,7 @@ import {
   pinSample,
   shownExecute,
   stopButton,
+  validateWith,
 } from "./execute-po";
 import { hasPython } from "./local-authoring";
 import {
@@ -160,6 +162,69 @@ for (const size of SIZES)
         main.x >= cancel.right - 1 || main.y >= cancel.bottom - 1,
         "the main answer follows Cancel",
       ).toBe(true);
+    });
+
+    test("the Fix dialog separates each step from its message, with Fix on the row's center", async ({
+      page,
+    }) => {
+      const { details } = await openExecuteFixture(page);
+      const { control } = await density(page);
+      await validateWith(page, [
+        {
+          code: "WV-SCHEMA-REQUIRED",
+          severity: "error",
+          stage: "schema",
+          path: "/spec/steps/0/with",
+          message: "Customer ID is required.",
+        },
+      ]);
+      await details.open("score");
+      await (await shownExecute(details)).click();
+      const dialog = gateDialog(page);
+      await expect(dialog).toContainText("Fix 1 issue first");
+      await expectInWindow(page, [await box(dialog)], "dialog");
+      expect(await clippedText(dialog, "")).toEqual([]);
+      const row = dialog.locator(".execute-issue").first();
+      await expect(row).toHaveCSS("list-style-type", "none");
+      const step = await box(row.locator(".execute-issue-step"));
+      const message = await box(row.locator(".execute-issue-message"));
+      expect(intersects(step, message)).toBe(false);
+      expect(
+        message.y >= step.bottom - 0.5 || message.x >= step.right + 4,
+        "the step and its message are apart",
+      ).toBe(true);
+      const fix = await box(row.getByRole("button", { name: /^Fix / }));
+      const line = await box(row);
+      expect(fix.height).toBeCloseTo(control, 0);
+      expect(Math.abs(fix.middle - line.middle)).toBeLessThanOrEqual(1);
+      expect(fix.right).toBeLessThanOrEqual(line.right);
+      expect(intersects(fix, message)).toBe(false);
+      const close = await box(
+        dialog.getByRole("button", { name: "Close", exact: true }),
+      );
+      expect(close.height).toBeCloseTo(control, 0);
+      await expectNoPageScroll(page);
+    });
+
+    test("the run log's question form keeps Send on the density, inside the log", async ({
+      page,
+    }) => {
+      await openExecuteWorkflow(page, EXECUTE_ASKING);
+      const { touch } = await density(page);
+      await executeWorkflowIn(page);
+      const log = page.locator("weave-run-log");
+      await expect(log.locator(".run-log-status")).toHaveText(
+        "Waiting · Send signal order-paid",
+      );
+      const send = log.getByRole("button", { name: "Send", exact: true });
+      await send.scrollIntoViewIfNeeded();
+      const sent = await box(send);
+      expect(sent.height).toBeCloseTo(touch ? 44 : 32, 0);
+      const sheet = await box(log);
+      expect(sent.x).toBeGreaterThanOrEqual(sheet.x);
+      expect(sent.right).toBeLessThanOrEqual(sheet.right + 0.5);
+      expect(await clippedText(log, "")).toEqual([]);
+      await expectNoPageScroll(page);
     });
 
     test("run log rows, icons and controls line up", async ({ page }) => {
