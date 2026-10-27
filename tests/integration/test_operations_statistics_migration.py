@@ -172,6 +172,21 @@ async def test_histograms_sum_bucket_by_bucket_and_skip_null(upgraded):
         assert empty == ZEROS
 
 
+async def test_a_histogram_counts_durations_into_their_buckets(upgraded):
+    engine, ids = upgraded
+    durations = [0, 999, 1_000, 5_000, 5_000, 2**40, -3]
+    async with engine.begin() as connection:
+        await scope_as_app(connection, ids)
+        counted = await connection.scalar(
+            text("SELECT weave_histogram(d) FROM unnest(cast(:durations AS bigint[])) d"),
+            {"durations": [*durations, None]},
+        )
+        # An unknown duration is skipped; a negative one (clock skew) counts as under 1 ms.
+        assert counted == list(statistics_histogram.histogram([max(0, value) for value in durations]))
+        empty = await connection.scalar(text("SELECT weave_histogram(d) FROM (SELECT NULL::bigint d WHERE false) v"))
+        assert empty == ZEROS
+
+
 @pytest.mark.parametrize("table", TABLES)
 async def test_rows_belong_to_their_environment_and_the_app_may_replace_them(upgraded, table):
     engine, ids = upgraded

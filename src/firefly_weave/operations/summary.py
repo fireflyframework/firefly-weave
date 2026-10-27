@@ -68,6 +68,7 @@ from firefly_weave.contracts.operations_summary import (
 )
 from firefly_weave.contracts.telemetry import TelemetryOptions
 from firefly_weave.observability import TelemetryDrops
+from firefly_weave.operations import capacity_reads
 from firefly_weave.operations.compatibility import CompatibilityService
 from firefly_weave.operations.fact_reads import available
 from firefly_weave.operations.loop_health import LoopHealth, LoopSnapshot
@@ -121,21 +122,10 @@ _LIVE_RUNNER = (
     f"SELECT 1 FROM deployment_runners r WHERE {_SAME_SCOPE.format(a='r', b='t')} AND r.target_id=t.id "
     f"AND NOT coalesce((r.payload->>'revoked')::boolean,false) AND (r.payload->>'expires_at')::timestamptz>{NOW}"
 )
-_LIVE_LEASES = (
-    "SELECT owner,count(*) AS leases FROM task_leases WHERE "
-    + _SCOPE.format(alias="")
-    + f" AND status='active' AND expires_at>{NOW} AND deadline>{NOW} GROUP BY owner"
-)
-_RECENT = f"w.last_seen_at>{NOW}-interval '60 seconds'"
-_CURRENT = f"NOT w.revoked AND coalesce(w.last_seen_at,f.registered_at)>{NOW}-interval '1 hour'"
-_WORKER_FACTS = f"LEFT JOIN worker_facts f ON {_SAME_SCOPE.format(a='f', b='w')} AND f.worker_id=w.id"
-# Active test runs, exactly as the run usage counter counts runs: by status, so a finished run without a recorded end
-# is not active. The partial index run_facts_active_test has this predicate.
-_ACTIVE_TEST = "test AND (status IS NULL OR status NOT IN ('succeeded','failed','cancelled','timed_out'))"
-_READY_COUNTS = (
-    "SELECT count(*) AS ready,extract(epoch FROM (cast(:now AS timestamptz)-min(ready_since))) AS oldest "
-    f"FROM task_facts WHERE {_SCOPE.format(alias='')} AND status='ready' AND ready_since<=cast(:now AS timestamptz)"
-)
+_LIVE_LEASES = capacity_reads.LIVE_LEASES
+_RECENT = capacity_reads.RECENT
+_WORKER_FACTS = capacity_reads.WORKER_FACTS
+_READY_COUNTS = capacity_reads.READY_COUNTS
 _RUN_CLASSIFICATION = (
     "r.classification_state,r.classification_policy,r.pinned_ir_version,r.pinned_features,"
     f"EXISTS(SELECT 1 FROM run_policy_blocks b WHERE {_SAME_SCOPE.format(a='b', b='r')} AND b.run_id=r.run_id) "
@@ -515,9 +505,7 @@ class OperationsSummaryService:
                 + " AND metric IN ('runs_active','waits_active','outbox_pending','provider_pending','sources_enabled')"
             )
         }
-        tests = await reader.row(
-            f"SELECT count(*) AS active FROM run_facts WHERE {_SCOPE.format(alias='')} AND {_ACTIVE_TEST}"
-        )
+        tests = await reader.row(capacity_reads.ACTIVE_TESTS)
         ready, oldest_ready = _ready(await reader.row(_READY_COUNTS))
         leased = await reader.row(
             "SELECT count(DISTINCT l.task_id) AS leased FROM task_leases l JOIN task_intents i "
@@ -548,16 +536,7 @@ class OperationsSummaryService:
 
     async def _workers(self, reader: _Reader) -> WorkersSection:
         """One grouped statement over the environment's workers, counted as the Workers page lists current ones."""
-        row = await reader.row(
-            f"WITH live AS ({_LIVE_LEASES}) SELECT "
-            f"count(*) FILTER (WHERE {_CURRENT} AND NOT w.draining AND {_RECENT}) AS online,"
-            f"count(*) FILTER (WHERE {_CURRENT} AND NOT w.draining AND NOT coalesce({_RECENT},false)) AS offline,"
-            f"count(*) FILTER (WHERE {_CURRENT} AND w.draining) AS draining,"
-            f"coalesce(sum((w.payload->>'capacity')::integer) FILTER (WHERE {_CURRENT} AND NOT w.draining "
-            f"AND {_RECENT}),0) AS capacity,coalesce(sum(a.leases),0) AS active_leases "
-            f"FROM worker_instances w {_WORKER_FACTS} LEFT JOIN live a ON a.owner=w.id "
-            f"WHERE {_SCOPE.format(alias='w.')}"
-        )
+        row = await reader.row(capacity_reads.WORKER_COUNTS)
         return WorkersSection(**{key: int(value) for key, value in row.items()})
 
     async def _targets(self, reader: _Reader, targets: tuple[UUID, ...] | None) -> TargetsSection:

@@ -46,3 +46,15 @@ def test_the_migration_is_the_schema_head_and_counts_nothing_toward_usage():
     source = PATH.read_text()
     assert "weave_usage_charge" not in source and "operation_usage" not in source
     assert source.count("FOREIGN KEY") == 3 and source.count("ON DELETE CASCADE") == 3
+
+
+def test_the_app_may_count_add_and_bucket_histograms_and_nothing_else_is_granted():
+    source = PATH.read_text()
+    for signature in (
+        "weave_duration_bucket(bigint)",
+        "weave_histogram_add(int4[],int4[])",
+        "weave_histogram_sum(int4[])",
+        "weave_histogram_count(int4[],bigint)",
+        "weave_histogram(bigint)",
+    ):
+        assert f"GRANT EXECUTE ON FUNCTION {signature} TO weave_app" in source, signature

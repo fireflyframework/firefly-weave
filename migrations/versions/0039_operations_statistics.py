@@ -68,6 +68,19 @@ def upgrade() -> None:
         "CREATE AGGREGATE weave_histogram_sum(int4[]) "
         f"(SFUNC=weave_histogram_add,STYPE=int4[],INITCOND='{EMPTY}',PARALLEL=SAFE)"
     )
+    # Counting durations into a histogram: unknown durations are skipped (STRICT), negative ones (clock skew) count
+    # as under 1 ms.
+    op.execute(
+        "CREATE FUNCTION weave_histogram_count(counts int4[],microseconds bigint) RETURNS int4[] LANGUAGE plpgsql "
+        "IMMUTABLE STRICT PARALLEL SAFE AS $$DECLARE slot integer := weave_duration_bucket(greatest(microseconds,0))+1;"
+        "BEGIN counts[slot] := counts[slot]+1; RETURN counts; END$$"
+    )
+    op.execute(
+        "CREATE AGGREGATE weave_histogram(bigint) "
+        f"(SFUNC=weave_histogram_count,STYPE=int4[],INITCOND='{EMPTY}',PARALLEL=SAFE)"
+    )
+    op.execute("GRANT EXECUTE ON FUNCTION weave_histogram_count(int4[],bigint) TO weave_app")
+    op.execute("GRANT EXECUTE ON FUNCTION weave_histogram(bigint) TO weave_app")
     op.execute("GRANT EXECUTE ON FUNCTION weave_duration_bucket(bigint) TO weave_app")
     op.execute("GRANT EXECUTE ON FUNCTION weave_histogram_add(int4[],int4[]) TO weave_app")
     op.execute("GRANT EXECUTE ON FUNCTION weave_histogram_sum(int4[]) TO weave_app")
