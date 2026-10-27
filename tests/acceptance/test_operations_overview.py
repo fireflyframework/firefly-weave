@@ -578,12 +578,25 @@ async def counted_runs(platform: Platform, release: str) -> dict:
         if not item["labels"]
     }
     return {
+        "activation": activation["id"],
         "row": row,
         "totals": totals,
         "statuses": statuses,
         "steps": steps["steps"],
         "complete_until": table["complete_until"],
     }
+
+
+async def short_run(platform: Platform, activation: str) -> None:
+    async with platform.client() as client:
+        started = await post(client, platform.environment + "/runs", {"activation_id": activation, "input": {"ms": 50}})
+        deadline = time.monotonic() + 120
+        while True:
+            listed = await get(client, platform.environment + "/run-summaries", workflow=METRICS_LITE, limit=100)
+            if any(item["id"] == started["id"] and item.get("status") == "succeeded" for item in listed["items"]):
+                return
+            assert time.monotonic() < deadline, "the short run did not finish"
+            await asyncio.sleep(1)
 
 
 @pytest.mark.journey_step("J5.4")
@@ -596,6 +609,8 @@ def test_j5_04_metrics_count_runs_failures_and_durations_as_the_run_list_does(ru
     while asyncio.run(worker_view(platform, worker))["active_leases"]:
         assert time.monotonic() < deadline, "the fixture worker still holds the timed-out runs' tasks"
         time.sleep(2)
+    # One short run more, after the figures were read: the worker's last contact is fresh for the next step.
+    asyncio.run(short_run(platform, counted["activation"]))
     row, totals, statuses = counted["row"], counted["totals"], counted["statuses"]
     # The run list and the statistics agree: 20 started, 17 succeeded, 3 timed out, which count as failed.
     assert sorted(statuses) == ["succeeded"] * 17 + ["timed_out"] * 3, statuses
