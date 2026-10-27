@@ -63,6 +63,7 @@ type StepKind = Literal[
     "forEach",
     "callWorkflow",
     "agent",
+    "transaction",
 ]
 type StepStatus = Literal["scheduled", "running", "waiting", "succeeded", "failed", "cancelled", "timed_out"]
 type LogSource = Literal["engine", "worker", "connector", "ai"]

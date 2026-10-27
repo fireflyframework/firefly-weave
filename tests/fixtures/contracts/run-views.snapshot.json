@@ -2012,7 +2012,8 @@
             "fail",
             "forEach",
             "callWorkflow",
-            "agent"
+            "agent",
+            "transaction"
           ],
           "type": "string"
         },

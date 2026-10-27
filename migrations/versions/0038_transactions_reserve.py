@@ -28,7 +28,7 @@ catalog, whatever the size of the tables.
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0038_language_transactions_reserve"
+revision = "0038_transactions_reserve"
 down_revision = "0037_language_transactions"
 
 
@@ -71,6 +71,28 @@ def settling_control() -> None:
     active = "public.weave_resource_active(c.kind,public.weave_resource(c.kind,c.resource_id)) THEN"
     patch_function(
         "public.weave_control_finish()", active, "(NOT c.settles AND " + active[:-5] + ") THEN", applied="settles"
+    )
+    # Settlement transitions record their steps and the workers' completion receipts: those rows spend the reserve
+    # of their run.
+    anchor = "IF relation_name='runs' THEN RETURN (item->>'id')::uuid; END IF;"
+    patch_function(
+        "public.weave_control_target(text,jsonb)",
+        anchor,
+        "IF relation_name IN ('step_instances','human_tasks') THEN RETURN (item->>'run_id')::uuid; END IF;\n      "
+        "IF relation_name='completion_receipts' THEN SELECT run_id INTO identifier FROM public.task_intents "
+        "WHERE id=(item->>'task_id')::uuid; RETURN identifier; END IF;\n      " + anchor,
+        applied="'step_instances','human_tasks'",
+    )
+    # A worker's claim and report of settlement work are audited per task: those rows spend the reserve too.
+    audited = "(relation_name='access_audit' AND item->>'target'=c.resource_id::text AND item->>'action' IN"
+    patch_function(
+        "public.weave_allocation_delta(text,jsonb,jsonb,text[])",
+        audited,
+        "(c.kind='run' AND relation_name='access_audit' AND CASE WHEN item->>'action' IN "
+        "('task.claim','task.completed','task.failed') THEN EXISTS(SELECT 1 FROM public.task_intents t "
+        "WHERE t.id=(item->>'target')::uuid AND t.run_id=c.resource_id AND t.settlement) ELSE false END) OR\n"
+        "          " + audited,
+        applied="'task.claim','task.completed','task.failed'",
     )
     # Settlement work refreshes its reserve whatever the quota: the next stop or undo of the run needs it.
     refresh = "PERFORM public.weave_reserve_refresh(c.kind,c.resource_id);"

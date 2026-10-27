@@ -236,7 +236,8 @@ def test_vocabularies_are_frozen():
         "cancelled",
         "timed_out",
     )
-    assert len(get_args(run_views.StepKind.__value__)) == 13
+    kinds = get_args(run_views.StepKind.__value__)
+    assert len(kinds) == 14 and kinds[-1] == "transaction"
     assert get_args(run_views.LogSource.__value__) == ("engine", "worker", "connector", "ai")
     assert get_args(run_views.LogLevel.__value__) == run_views.LOG_LEVELS == ("debug", "info", "warning", "error")
 

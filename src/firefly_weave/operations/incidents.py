@@ -251,7 +251,8 @@ class IncidentService:
                     at=event.timestamp,
                 )
             # Revoke through the worker-owned port before exposing a manual retry or accepted result.
-            if task is not None:
+            # A step whose failure its transaction already handled has no attempt left to revoke.
+            if task is not None and task["status"] != "handled":
                 await revoke_attempts(tx, previous.id, [task], control_failure=False)
                 await self.tasks.retire_attempt(tx, task["id"], incident["generation"])
             from firefly_weave.runtime.capacity import RuntimeCapacityError, capacity_failures
@@ -294,12 +295,13 @@ class IncidentService:
             if ready is not None and result.state.status not in TERMINAL:
                 # The stuck attempt is tried again under the same operation key, with a fresh time limit.
                 again, seconds = ready
+                # Its failure was handled, so the usual task update (which leaves handled tasks alone) can't do it.
                 await repository.execute(
-                    task_fact_update(
-                        "UPDATE task_intents SET status='ready',next_attempt_at=NULL,"
-                        "payload=jsonb_set(payload,'{deadline}',to_jsonb(cast(:deadline AS text))) "
-                        f"WHERE {SCOPE} AND id=:id"
-                    ),
+                    "WITH changed AS (UPDATE task_intents SET status='ready',next_attempt_at=NULL,"
+                    "payload=jsonb_set(payload,'{deadline}',to_jsonb(cast(:deadline AS text))) "
+                    f"WHERE {SCOPE} AND id=:id RETURNING id) UPDATE task_facts f SET status='ready',ready_since=:at "
+                    "FROM changed c WHERE f.task_id=c.id AND f.tenant_id=:tenant AND f.project_id=:project "
+                    "AND f.environment_id=:environment",
                     at=event.timestamp,
                     id=again["id"],
                     deadline=(event.timestamp + timedelta(seconds=seconds)).isoformat(),

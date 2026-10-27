@@ -92,7 +92,8 @@ async def undo_stuck(platform, steps=None):
 
 
 async def pivot_unknown(platform, *after):
-    activation = await platform.publish(workflow("move", [transaction(hold(), add(), submit(), *after)]))
+    name = "move-then-notify" if after else "move"
+    activation = await platform.publish(workflow(name, [transaction(hold(), add(), submit(), *after)]))
     run = await platform.start(activation)
     await platform.complete(await platform.lease("hold"))
     await platform.complete(await platform.lease("add"))
@@ -108,7 +109,8 @@ async def test_retry_the_undo_keeps_the_operation_key_and_extends_its_deadline(p
     [before] = await platform.query("SELECT * FROM task_intents WHERE run_id=:run AND node_id='add#undo'", run=run.id)
     resolved = await resolve(platform, incident, "retry_safe")
     assert (resolved.status, resolved.priority, resolved.transaction.state) == ("resolved", "high", "compensating")
-    assert resolved.transaction.pending == ["add"]
+    # The reservation is still to be released after the undo.
+    assert resolved.transaction.pending == ["hold", "add"]
     [after] = await platform.query("SELECT * FROM task_intents WHERE run_id=:run AND node_id='add#undo'", run=run.id)
     assert (after["id"], after["operation_key"], after["status"]) == (before["id"], before["operation_key"], "ready")
     deadline = datetime.fromisoformat(after["payload"]["deadline"])
@@ -158,7 +160,7 @@ async def test_mark_as_reconciled_needs_the_reconcile_capability_a_reason_and_ev
     # The reservation's release is never sent: the person took over what was left.
     assert "hold#cancel" not in await platform.keys(run.id)
     [audit] = await platform.query(
-        "SELECT details FROM access_audit WHERE action='incident.resolve' AND target=:target",
+        "SELECT event->'details' AS details FROM access_audit WHERE action='incident.resolve' AND target=:target",
         target=str(incident["id"]),
     )
     assert {key: audit["details"][key] for key in ("kind", "evidence_reference", "transaction", "as")} == {
@@ -271,8 +273,13 @@ async def test_retry_a_called_undo_starts_a_new_child_generation(platform):
     await platform.complete(await platform.lease("hold"))
     await platform.fail(await platform.lease("add"), "UNAVAILABLE")
     await platform.scan()
-    # The called undo's own step fails for good, so the child fails and the undo is stuck.
+    # The called undo's own step fails for good and a person ends that child run, so the undo is stuck.
     await platform.fail(await platform.lease("remove"), "REJECTED", outcome="failed")
+    await platform.scan()
+    [call] = await platform.query(
+        "SELECT child_run_id FROM run_calls WHERE caller_run_id=:run AND node_id='add#undo'", run=run.id
+    )
+    await resolve(platform, await active(platform, call["child_run_id"]), "terminate")
     await platform.scan()
     incident = await active(platform, run.id)
     assert incident["code"] == "WV-TXN-UNDO-STUCK"

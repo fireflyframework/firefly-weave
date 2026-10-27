@@ -211,6 +211,9 @@ class _TaskOperation:
                 expires = capped_extension(now, self.ttl, deadline)
                 # An undo, cancel or confirm retries on its transaction's policy instead of its action's own.
                 retry = payload.get("retry_policy") or action["retry"]
+                if settling:
+                    # Settlement work is part of stopping or undoing: it spends the run's reserve, never quota.
+                    await repository.execute("SELECT weave_settle_begin(:id)", id=run["id"])
                 await repository.execute(
                     "INSERT INTO task_leases "
                     "VALUES(:tenant,:project,:environment,:task,:generation,:owner,:token,"
@@ -297,6 +300,9 @@ class _TaskOperation:
         if live:
             await RuntimeRepository(tx).require_work(run["id"], run["state"])
             require_available(run)
+            if task["settlement"]:
+                # Reporting settlement work spends the run's reserve, like the transition it leads to.
+                await repository.execute("SELECT weave_settle_begin(:id)", id=run["id"])
         return VerifiedTask(tx, run, task, attempt, checked_at)
 
     async def heartbeat(self, tx: Transaction, lease: LeaseProof) -> TaskLease:

@@ -40,7 +40,7 @@ SPDX-License-Identifier: Apache-2.0
   `weave.transactions` and `weave.transaction_phases` count them. Histories
   with transactions export and replay. Debug sessions don't simulate
   transactions yet. Weave AI's guide names the `transaction` step. Migration
-  `0038_language_transactions_reserve` changes only the catalog.
+  `0038_transactions_reserve` changes only the catalog.
 - Workers declare per release whether they report failures that applied
   nothing: the first claim that sends `worker: {release, transaction_aware}`
   fixes the answer for that release, and a claim naming another release than

@@ -62,7 +62,7 @@ async def test_each_terminal_or_in_doubt_state_emits_one_event_in_the_same_trans
     await platform.scan()
     [event] = await events(platform, doubtful.id)
     facts = event["payload"]["payload"]["transaction"]
-    [incident] = await platform.query("SELECT id FROM incidents WHERE run_id=:run", run=doubtful.id)
+    [incident] = await platform.query("SELECT id FROM incidents WHERE run_id=:run AND status='active'", run=doubtful.id)
     assert (facts["state"], facts["incident_id"], facts["cause"]["code"]) == (
         "in_doubt",
         str(incident["id"]),
