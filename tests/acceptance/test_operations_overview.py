@@ -74,8 +74,17 @@ class Platform:
         )
 
 
+CAPACITY_SECONDS = 120
+
+
 async def post(client: httpx.AsyncClient, path: str, body: dict, expected: int = 201) -> dict:
-    response = await client.post(path, json=body, headers={"Idempotency-Key": str(uuid4())})
+    """One request; a busy platform's 429 capacity answer is sent again with the same key, as the platform asks."""
+    key, deadline = str(uuid4()), time.monotonic() + CAPACITY_SECONDS
+    while True:
+        response = await client.post(path, json=body, headers={"Idempotency-Key": key})
+        if response.status_code != 429 or time.monotonic() > deadline:
+            break
+        await asyncio.sleep(min(5.0, float(response.headers.get("Retry-After") or 1)))
     assert response.status_code == expected, (path, response.status_code, response.text[:500])
     return dict(response.json())
 

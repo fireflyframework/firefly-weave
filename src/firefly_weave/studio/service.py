@@ -460,7 +460,8 @@ class StudioService:
                     async with self.client.stream(
                         request.method,
                         profile.base_url.rstrip("/") + path,
-                        params=request.query_params,
+                        # Every value of a repeated parameter (run statistics' signals), in order.
+                        params=tuple(request.query_params.multi_items()),
                         headers=headers,
                         content=content,
                         timeout=seconds if long is not None else httpx.USE_CLIENT_DEFAULT,

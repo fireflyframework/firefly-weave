@@ -283,7 +283,8 @@ test("a viewer sees the sections they may not read as needing access", async ({
   const summary = (await response.json()) as Record<string, unknown>;
   expect(summary["targets"]).toEqual({ state: "forbidden" });
   expect(summary["incidents"]).toEqual({ state: "forbidden" });
-  expect(JSON.stringify(summary)).not.toContain("runs_24h");
+  // The last day's runs need only status.read, which a viewer has.
+  expect(summary).toHaveProperty("runs_24h.started");
   const live = page.getByTestId("overview-meaningful");
   await expect(live).toBeVisible();
   await expect(live).toContainText("deployment.read");

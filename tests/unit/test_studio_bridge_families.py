@@ -494,3 +494,19 @@ def test_operator_and_credential_operations_never_reach_the_platform(tmp_path, o
 def test_studio_documents_cross_the_bridge_only_for_their_two_kinds(tmp_path, method, path, status):
     with client(tmp_path) as browser:
         assert browser.app.state.studio.check_scope(path, method) == status
+
+
+def test_repeated_query_parameters_reach_the_platform_in_order(tmp_path):
+    seen = []
+
+    async def upstream(request):
+        seen.append(request.url.query.decode())
+        return httpx.Response(200, json={})
+
+    query = "from=2026-10-27T13%3A00%3A00Z&to=2026-10-27T14%3A00%3A00Z&signals=runs_active&signals=tasks_ready"
+    with client(tmp_path, transport=httpx.MockTransport(upstream)) as browser:
+        headers = pair(browser)
+        response = browser.get(f"/studio/api{ENVIRONMENT}/run-statistics/series?{query}", headers=headers)
+        assert response.status_code == 200
+    # Every value of a repeated parameter crosses the bridge, not only the last one.
+    assert seen == [query]
