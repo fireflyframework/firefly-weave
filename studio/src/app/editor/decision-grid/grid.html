@@ -247,6 +247,17 @@ SPDX-License-Identifier: Apache-2.0
       Studio doesn't have this table's rules on this computer.
     </p>
   }
+  @if (formula(); as open) {
+    @defer (on immediate) {
+      <weave-formula-dialog
+        [heading]="open.heading"
+        [start]="open.text"
+        [inputSchema]="spec()?.inputSchema"
+        (apply)="formulaApplied($event)"
+        (cancel)="formulaClosed()"
+      />
+    }
+  }
   @if (dialog(); as request) {
     <weave-column-dialog
       [request]="request"

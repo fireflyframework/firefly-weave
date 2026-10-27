@@ -39,7 +39,12 @@ import { Icon } from "../../icon";
 import { Select, type SelectOption } from "../../forms/ui/select";
 import { RowMenu, type RowMenuItem } from "../../row-menu";
 import { printFormula } from "../formula/printer";
-import type { Json, NdvContext, ParameterComponent } from "../ndv/registry";
+import type {
+  Expression,
+  Json,
+  NdvContext,
+  ParameterComponent,
+} from "../ndv/registry";
 import {
   COLUMN_TYPE_LABELS,
   parseCell,
@@ -52,6 +57,8 @@ import {
   type ColumnRequest,
 } from "./column-dialog";
 import { gridProblems, type GridProblem } from "./grid-checks";
+import { FormulaDialog } from "./formula-dialog";
+import { splitIntoCells, tableFormula } from "./formula-cells";
 import {
   GridHistory,
   moveCursor,
@@ -65,6 +72,8 @@ import {
   addInputColumn,
   addResultColumn,
   addRule,
+  composeWhen,
+  decomposeWhen,
   duplicateRule,
   gridOf,
   moveRule,
@@ -78,6 +87,7 @@ import {
   setHitPolicy,
   setInputColumnType,
   setResult,
+  setRuleFormula,
   type GridColumn,
   type GridView,
   type HitPolicy,
@@ -125,7 +135,7 @@ const specOf = (document: Json | null): TableSpec | null =>
   selector: "weave-decision-grid",
   standalone: true,
   changeDetection: ChangeDetectionStrategy.Eager,
-  imports: [Icon, Select, RowMenu, ColumnDialog],
+  imports: [Icon, Select, RowMenu, ColumnDialog, FormulaDialog],
   templateUrl: "./grid.html",
   styleUrl: "./grid.css",
 })
@@ -177,6 +187,13 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
   >(new Map());
   readonly notice = signal<string | null>(null);
   readonly dialog = signal<ColumnRequest | null>(null);
+  /** Edit formula, open on a rule's condition or one of its results. */
+  readonly formula = signal<{
+    row: number;
+    col: number;
+    heading: string;
+    text: string;
+  } | null>(null);
   readonly announcement = signal("");
 
   /** The step's `uses` the shown table belongs to. */
@@ -421,18 +438,16 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
     const column = this.cols()[col];
     if (!column || this.readOnly()) return false;
     if (this.isOtherwise(row))
-      return (
-        column.kind === "result" &&
-        !this.mergedResults(row) &&
-        !this.isFormula(row, col)
-      );
+      return column.kind === "result" && !this.mergedResults(row);
     if (column.kind === "name") return true;
     if (column.kind === "input")
-      return !this.merged(row) && column.column.type !== null;
-    return !this.mergedResults(row) && !this.isFormula(row, col);
+      return this.merged(row) || column.column.type !== null;
+    return !this.mergedResults(row);
   }
   startEdit(row: number, col: number, typed?: string) {
     if (!this.editable(row, col)) return;
+    if (this.isFormula(row, col) && typed === undefined)
+      return this.openFormula(row, col);
     const shown = this.text(row, col);
     const original = shown === "-" ? "" : shown;
     this.cursor.set({ row, col });
@@ -483,14 +498,36 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
         name: column.column.name,
         type: column.column.type ?? "text",
       });
-      if (reading.kind === "error" || reading.kind === "formula") {
-        flagged.set(key, {
-          text,
-          message:
-            reading.kind === "error"
-              ? reading.message
-              : "Write a formula in the formula editor.",
-        });
+      if (reading.kind === "formula") {
+        const read = tableFormula(reading.text, spec.inputSchema);
+        if (!read.ok) {
+          flagged.set(key, { text, message: read.message });
+          this.flagged.set(flagged);
+          return false;
+        }
+        flagged.delete(key);
+        this.flagged.set(flagged);
+        // The other cells and the formula together: the rule becomes one formula.
+        const cells =
+          decomposeWhen(spec.rules[row].when, this.testable()) ?? [];
+        cells[column.index] = null;
+        const rest = composeWhen(cells);
+        const parts =
+          isRecord(rest) && "literal" in rest
+            ? []
+            : isRecord(rest) &&
+                isRecord(rest["op"]) &&
+                rest["op"]["name"] === "and"
+              ? (rest["op"]["args"] as Expression[])
+              : [rest];
+        const when: Expression = parts.length
+          ? { op: { name: "and", args: [...parts, read.expression] } }
+          : read.expression;
+        this.apply(setRuleFormula(spec, row, when), key);
+        return true;
+      }
+      if (reading.kind === "error") {
+        flagged.set(key, { text, message: reading.message });
         this.flagged.set(flagged);
         return false;
       }
@@ -508,17 +545,20 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
       return true;
     }
     const reading = parseResult(text, column.column);
-    if (reading.kind === "error" || reading.kind === "formula") {
-      flagged.set(key, {
-        text,
-        message:
-          reading.kind === "error"
-            ? reading.message
-            : "Write a formula in the formula editor.",
-      });
+    let value: Expression | undefined;
+    if (reading.kind === "formula") {
+      const read = tableFormula(reading.text, spec.inputSchema);
+      if (!read.ok) {
+        flagged.set(key, { text, message: read.message });
+        this.flagged.set(flagged);
+        return false;
+      }
+      value = read.expression;
+    } else if (reading.kind === "error") {
+      flagged.set(key, { text, message: reading.message });
       this.flagged.set(flagged);
       return false;
-    }
+    } else value = reading.kind === "empty" ? undefined : reading.expression;
     flagged.delete(key);
     this.flagged.set(flagged);
     this.apply(
@@ -526,11 +566,77 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
         spec,
         this.isOtherwise(row) ? "otherwise" : row,
         column.index,
-        reading.kind === "empty" ? undefined : reading.expression,
+        value,
       ),
       key,
     );
     return true;
+  }
+  /** The input columns as the cell language reads them. */
+  private testable() {
+    return (this.view()?.inputs ?? []).map((column) => ({
+      name: column.name,
+      type: column.type ?? ("text" as const),
+    }));
+  }
+
+  // ------------------------------------------------------------- formulas
+  openFormula(row: number, col: number) {
+    const column = this.cols()[col];
+    const view = this.view();
+    if (!column || !view || column.kind === "name") return;
+    const condition = column.kind === "input";
+    const result = this.isOtherwise(row)
+      ? view.otherwise
+      : view.rows[row]?.result;
+    const rule = view.rows[row]?.condition;
+    const expression: Expression | null | undefined = condition
+      ? rule?.kind === "formula"
+        ? rule.when
+        : null
+      : result?.kind === "cells"
+        ? result.cells[column.index]
+        : null;
+    this.formula.set({
+      row,
+      col,
+      heading: condition
+        ? `Edit formula: ${this.rowLabel(row)} condition`
+        : `Edit formula: ${this.rowLabel(row)} · ${column.column.name}`,
+      text: expression ? (printFormula(expression) ?? "") : "",
+    });
+  }
+  formulaApplied(expression: Expression) {
+    const open = this.formula();
+    const spec = this.spec();
+    const column = open ? this.cols()[open.col] : null;
+    this.formula.set(null);
+    if (!open || !spec || !column || column.kind === "name") return;
+    this.apply(
+      column.kind === "input"
+        ? setRuleFormula(spec, open.row, expression)
+        : setResult(
+            spec,
+            this.isOtherwise(open.row) ? "otherwise" : open.row,
+            column.index,
+            expression,
+          ),
+      this.key(open.row, open.col),
+    );
+    this.focusCell(open.row, open.col);
+  }
+  formulaClosed() {
+    const open = this.formula();
+    this.formula.set(null);
+    if (open) this.focusCell(open.row, open.col);
+  }
+  /** A merged condition shown as cells again, when each part tests one column. */
+  split(row: number) {
+    const spec = this.spec();
+    const rule = spec?.rules[row];
+    if (!spec || !rule) return;
+    const when = splitIntoCells(rule.when, this.testable());
+    if (when) this.apply(setRuleFormula(spec, row, when));
   }
   /** Escape on a flagged cell gives back the last cell that was written. */
   restore(row: number, col: number) {
@@ -721,7 +827,26 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
     return items;
   }
   ruleMenu(row: number): RowMenuItem[] {
+    const spec = this.spec();
+    const merged = this.merged(row);
+    const fits =
+      merged && spec?.rules[row]
+        ? splitIntoCells(spec.rules[row].when, this.testable()) !== null
+        : false;
     return [
+      ...(merged
+        ? [
+            { label: "Edit formula", run: () => this.openFormula(row, 1) },
+            {
+              label: "Split into cells",
+              disabled: !fits,
+              detail: fits
+                ? undefined
+                : "This condition doesn't fit the cells; keep it as a formula.",
+              run: () => this.split(row),
+            },
+          ]
+        : []),
       { label: "Add rule below", run: () => this.addRuleAfter(row) },
       {
         label: "Remove rule",
