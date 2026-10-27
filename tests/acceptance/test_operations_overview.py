@@ -369,9 +369,19 @@ def fixture_worker(run: Any) -> tuple[str, str]:
 
 
 async def lite_activation(
-    platform: Platform, release: str, *, name: str = LITE, action: str = LITE_ACTION, timeout_seconds: int = 300
+    platform: Platform,
+    release: str,
+    *,
+    name: str = LITE,
+    action: str = LITE_ACTION,
+    timeout_seconds: int = 300,
+    stall: int | None = None,
 ) -> dict:
-    """Publish and activate order-review-lite (or a copy named ``name``): one step that sleeps on the fixture worker."""
+    """Publish and activate order-review-lite (or a copy named ``name``): one step that sleeps on the fixture worker.
+
+    With ``stall``, an input of ``{"ms": stall}`` takes a branch that waits on the platform instead of the worker, so
+    a run planted to time out never leaves a worker task in flight.
+    """
     manifest = json.loads(
         (Path(__file__).resolve().parents[2] / "tests/fixtures/operations-worker/manifest.json").read_text(
             encoding="utf-8"
@@ -398,6 +408,23 @@ async def lite_activation(
                 ),
             },
         )
+        sleep = {"id": "sleep", "kind": "action", "uses": action + "@1.0.0", "with": {"ref": "/input"}}
+        steps: list[dict[str, Any]] = [sleep]
+        if stall is not None:
+            steps = [
+                {
+                    "id": "route",
+                    "kind": "switch",
+                    "cases": [
+                        {
+                            "when": {"op": {"name": "eq", "args": [{"ref": "/input/ms"}, {"literal": stall}]}},
+                            "steps": [{"id": "stall", "kind": "wait", "durationSeconds": stall // 1000}],
+                            "output": {"literal": {"slept_ms": 0}},
+                        }
+                    ],
+                    "default": {"steps": [sleep], "output": {"ref": "/steps/sleep/output"}},
+                }
+            ]
         version = await post(
             client,
             platform.project + "/workflows",
@@ -412,15 +439,8 @@ async def lite_activation(
                             "inputSchema": manifest["inputSchema"],
                             "outputSchema": {"type": "object"},
                             "timeoutSeconds": timeout_seconds,
-                            "steps": [
-                                {
-                                    "id": "sleep",
-                                    "kind": "action",
-                                    "uses": action + "@1.0.0",
-                                    "with": {"ref": "/input"},
-                                }
-                            ],
-                            "output": {"ref": "/steps/sleep/output"},
+                            "steps": steps,
+                            "output": {"ref": "/steps/" + steps[0]["id"] + "/output"},
                         },
                     }
                 ),
@@ -502,10 +522,11 @@ def test_j5_02_a_drained_worker_holds_ready_tasks_until_it_resumes(run):
 
 
 # J5.4 counts its own copy of order-review-lite, so the runs of J5.2 never change its figures. A run of it times
-# out after RUN_TIMEOUT seconds: three planted runs sleep longer and end as timed out, which counts as a failure.
+# out after RUN_TIMEOUT seconds: three planted runs wait longer and end as timed out, which counts as a failure.
 METRICS_LITE = "order-review-lite-metrics-" + SUFFIX
 METRICS_ACTION = "order-review-lite-metrics-sleep-" + SUFFIX
 RUN_TIMEOUT = 10
+STALL_MS = RUN_TIMEOUT * 6000
 STATISTICS_SECONDS = 180
 
 
@@ -520,7 +541,7 @@ async def counted_runs(platform: Platform, release: str) -> dict:
     from datetime import UTC, datetime, timedelta
 
     activation = await lite_activation(
-        platform, release, name=METRICS_LITE, action=METRICS_ACTION, timeout_seconds=RUN_TIMEOUT
+        platform, release, name=METRICS_LITE, action=METRICS_ACTION, timeout_seconds=RUN_TIMEOUT, stall=STALL_MS
     )
     began = datetime.now(UTC) - timedelta(minutes=1)
     async with platform.client() as client:
@@ -548,7 +569,7 @@ async def counted_runs(platform: Platform, release: str) -> dict:
         # The short runs first, so none waits for a slot long enough to time out; then the three that time out.
         short = await start([{"ms": 50}] * 17)
         await ended(short, "succeeded")
-        planted = await start([{"ms": RUN_TIMEOUT * 3000}] * 3)
+        planted = await start([{"ms": STALL_MS}] * 3)
         await ended(planted, "timed_out")
         listed = await get(client, platform.environment + "/run-summaries", workflow=METRICS_LITE, limit=100)
         statuses = [item.get("status") for item in listed["items"]]
@@ -618,7 +639,7 @@ def test_j5_04_metrics_count_runs_failures_and_durations_as_the_run_list_does(ru
     assert row["failure_rate"] == pytest.approx(0.15), row
     assert totals == {"runs_started": 20, "runs_succeeded": 17, "runs_failed": 3, "runs_cancelled": 0}, totals
     assert row["duration_p50_ms"] is not None and row["duration_p95_ms"] >= row["duration_p50_ms"], row
-    (step,) = counted["steps"]
+    (step,) = [item for item in counted["steps"] if item["node_id"] == "sleep"]
     assert step["node_id"] == "sleep" and step["kind"] == "action", step
     assert step["duration_p50_ms"] is not None and step["duration_p95_ms"] is not None, step
     (run.evidence / "operations-metrics.json").write_text(json.dumps(counted, indent=2) + "\n", encoding="utf-8")

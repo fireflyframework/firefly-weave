@@ -49,7 +49,8 @@ WORKFLOW = "metrics-o-j5-" + SUFFIX
 ACTION = "metrics-o-j5-sleep-" + SUFFIX
 RUN_TIMEOUT = 10
 SUCCEEDING = [{"ms": 100 + 40 * index} for index in range(20)]
-FAILING = [{"ms": RUN_TIMEOUT * 3000}] * 5
+STALL_MS = RUN_TIMEOUT * 6000
+FAILING = [{"ms": STALL_MS}] * 5
 # complete_until passes a run's end about ten minutes later: the five-minute margin plus the rollup's visits.
 WAIT_SECONDS = 900
 
@@ -92,7 +93,7 @@ async def measured(run: Any) -> dict:
     platform = journeys.Platform(run)
     _, release = journeys.fixture_worker(run)
     activation = await journeys.lite_activation(
-        platform, release, name=WORKFLOW, action=ACTION, timeout_seconds=RUN_TIMEOUT
+        platform, release, name=WORKFLOW, action=ACTION, timeout_seconds=RUN_TIMEOUT, stall=STALL_MS
     )
     began = datetime.now(UTC) - timedelta(minutes=1)
     async with platform.client() as client:
