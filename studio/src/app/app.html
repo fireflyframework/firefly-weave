@@ -399,8 +399,8 @@ SPDX-License-Identifier: Apache-2.0
             }
           </div>
         } @else if (view === "designer") {
-          <!-- The designer loads with its first use, outside the initial bundle. -->
-          @defer (on immediate) {
+          <!-- The designer loads with its first use, outside the initial bundle, once the test data service it reads is made. -->
+          @defer (when testDataReady()) {
             <weave-designer [host]="this" />
           } @placeholder {
             <p class="connecting-status designer-loading" role="status">

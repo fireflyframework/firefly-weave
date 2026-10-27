@@ -28,6 +28,8 @@ import {
   Injector,
   ViewEncapsulation,
   afterNextRender,
+  effect,
+  untracked,
   inject,
   input,
   viewChild,
@@ -187,7 +189,8 @@ interface ToolbarView {
   locked: boolean;
   tabIndex: 0 | -1;
   menu: RowMenuItem[];
-  trigger: { intent: string; label: string } | null;
+  /** A trigger's buttons: Execute workflow, and Remove for a chosen trigger. */
+  trigger: { intent: string | null; label: string; execute: boolean } | null;
 }
 
 /** Ruling 19: the canvas never makes data, so a step without output says how to pin it. */
@@ -303,6 +306,8 @@ export class CanvasView implements OnInit, DoCheck {
   private fitted = -1;
   private fitPending = false;
   private revealed = "";
+  /** The run results the view last kept in sight (undefined before the first look). */
+  private keptRun: unknown = undefined;
   /**
    * The step a pointer press on its card just selected. It is in view where
    * the pointer is, so selecting it pans only when part of it is hidden:
@@ -315,6 +320,19 @@ export class CanvasView implements OnInit, DoCheck {
 
   constructor() {
     this.lifetime.onDestroy(() => clearTimeout(this.panningTimer));
+    // After an execution (the run log takes its share of the canvas), the
+    // steps that ran stay in sight.
+    effect(() => {
+      const run = this.host().runStamp?.() ?? null;
+      untracked(() => {
+        const first = this.keptRun === undefined;
+        this.keptRun = run;
+        if (!first && run)
+          afterNextRender(() => this.keepRunInView(), {
+            injector: this.injector,
+          });
+      });
+    });
     inject(FControlSchemeController).setScheme({
       nodeMove: () => false,
       createConnection: () => false,
@@ -499,6 +517,7 @@ export class CanvasView implements OnInit, DoCheck {
       canvas: CanvasSidecar,
       _gapsVersion: number,
       pins: ReadonlyMap<string, { stale: string | null }>,
+      _runStamp: unknown,
     ): TileView[] => {
       const ctx = this.host().kindContext();
       // A selected group shows every step inside it as selected.
@@ -521,6 +540,7 @@ export class CanvasView implements OnInit, DoCheck {
                 ? stepNoteLine(canvas, triggerNoteKey(tile.id, canvas))
                 : "",
             pin: tile.step ? pins.get(tile.id) : undefined,
+            simulated: run?.mode === "simulated",
           },
         );
       });
@@ -537,6 +557,7 @@ export class CanvasView implements OnInit, DoCheck {
       h.model.canvas,
       this.pasteGapsVersion,
       h.pinStates(),
+      h.runStamp?.() ?? null,
     );
   }
   private position(tile: LtrTile): Point {
@@ -560,6 +581,8 @@ export class CanvasView implements OnInit, DoCheck {
       note: string;
       /** Its pinned output, and why it may be out of date. */
       pin?: { stale: string | null };
+      /** The run drawn is a simulation Studio played back. */
+      simulated?: boolean;
     },
   ): TileView {
     const h = this.host();
@@ -575,6 +598,7 @@ export class CanvasView implements OnInit, DoCheck {
       tabIndex: state.active ? (0 as const) : (-1 as const),
       pulse: state.pulse,
       note: state.note,
+      output: "",
     };
     if (!tile.step) {
       const trigger =
@@ -604,28 +628,32 @@ export class CanvasView implements OnInit, DoCheck {
     const shown = {
       ...facts,
       run: state.run,
-      failure: state.run === "failed" ? {} : null,
+      failure: state.run === "failed" ? (h.runFailure?.(tile.id) ?? {}) : null,
       stale: state.pin?.stale ?? null,
       pinned: !!state.pin,
       selected: state.selected,
+      simulated: !!state.simulated,
     };
     const badge = tileBadge(shown);
+    // Where the simulated run stopped: what it needs ("Step check needs test data.").
+    const note = state.run ? (h.runNote?.(tile.id) ?? "") : "";
     return {
       ...common,
       step: true,
       icon: descriptor?.icon ?? "action",
       title: tile.id,
       subtitle: summary || kindLabel,
+      output: h.summaryOf?.(tile.id) ?? "",
       name: tileName({
         id: tile.id,
         kindLabel,
         summary,
-        status: runText(state.run, tile.kind) || badge?.text || "",
+        status: note || runText(state.run, tile.kind) || badge?.text || "",
         index: tile.index,
         count: tile.count,
         place: tile.place,
       }),
-      tooltip: [`${tile.id}, ${kindLabel}`, badge?.text]
+      tooltip: [`${tile.id}, ${kindLabel}`, note || badge?.text]
         .filter(Boolean)
         .join(". "),
       badge,
@@ -856,7 +884,10 @@ export class CanvasView implements OnInit, DoCheck {
       if (id) void this.openTile(id, event);
     } else if (action === "insert") this.insertAt(control);
     else if (action === "templates") this.host().showTemplates = true;
-    else if (action === "remove-trigger") {
+    else if (action === "execute-workflow") {
+      if (control.getAttribute("aria-disabled") !== "true")
+        this.host().executeWorkflow?.();
+    } else if (action === "remove-trigger") {
       const id = control.dataset["target"];
       if (id && control.getAttribute("aria-disabled") !== "true")
         void this.host().removeTrigger(id);
@@ -976,6 +1007,7 @@ export class CanvasView implements OnInit, DoCheck {
       canvas: CanvasSidecar,
       zoom: number,
       coarse: boolean,
+      execute: boolean,
     ) =>
       [...new Set([focused, hovered])].flatMap((id): ToolbarView[] => {
         const tile =
@@ -988,9 +1020,13 @@ export class CanvasView implements OnInit, DoCheck {
           const intent = canvas.triggers?.find(
             (item) => `$trigger:${item.id}` === tile.id,
           );
-          if (!intent) return [];
-          const label = TRIGGER_LABELS[intent.kind];
-          const spot = toolbarSpot(tile, layout, zoom, { buttons: 1, coarse });
+          // The trigger runs the workflow: Execute workflow on hover and focus.
+          if (!intent && !execute) return [];
+          const label = TRIGGER_LABELS[intent?.kind ?? "manual"];
+          const spot = toolbarSpot(tile, layout, zoom, {
+            buttons: intent && execute ? 2 : 1,
+            coarse,
+          });
           return [
             {
               id: tile.id,
@@ -1003,7 +1039,7 @@ export class CanvasView implements OnInit, DoCheck {
               locked,
               tabIndex,
               menu: [],
-              trigger: { intent: intent.id, label },
+              trigger: { intent: intent?.id ?? null, label, execute },
             },
           ];
         }
@@ -1041,6 +1077,7 @@ export class CanvasView implements OnInit, DoCheck {
       this.host().model.canvas,
       this.view.zoom,
       this.coarse?.matches ?? false,
+      !!this.host().executeWorkflow,
     );
   }
   /**
@@ -1514,6 +1551,172 @@ export class CanvasView implements OnInit, DoCheck {
       this.fitted = opened;
   }
   /** Pans so a tile and its label sit at least `margin` px inside the canvas. */
+  /**
+   * Brings the steps the last execution reached (and the trigger it started
+   * from) into the canvas's visible area, above the floating canvas tools:
+   * at this zoom when they fit, else zoomed out as far as 40%. The view then
+   * settles where no tile is cut at an edge, keeping the last of those steps
+   * and as many of the others as fit in sight. Nothing moves when they all are.
+   */
+  keepRunInView(stage = 0) {
+    const h = this.host();
+    const root = this.root().nativeElement;
+    if (this.lifetime.destroyed || !root.clientWidth || !root.clientHeight)
+      return;
+    const frame = root.getBoundingClientRect();
+    // Tiles as drawn (body, label, summary line), in world units.
+    const { zoom, pan } = this.view;
+    const tiles = [...root.querySelectorAll<HTMLElement>(".tile-node")]
+      .map((node) => {
+        const boxes = [
+          ...node.querySelectorAll<HTMLElement>(
+            ".tile-body, .tile-label, .tile-output",
+          ),
+        ]
+          .map((part) => part.getBoundingClientRect())
+          .filter((box) => box.width > 0 && box.height > 0);
+        if (!boxes.length) return null;
+        const left = Math.min(...boxes.map((box) => box.left)) - frame.left;
+        const top = Math.min(...boxes.map((box) => box.top)) - frame.top;
+        const right = Math.max(...boxes.map((box) => box.right)) - frame.left;
+        const bottom = Math.max(...boxes.map((box) => box.bottom)) - frame.top;
+        return {
+          id: node.dataset["tile"] ?? "",
+          x: (left - pan.x) / zoom,
+          y: (top - pan.y) / zoom,
+          right: (right - pan.x) / zoom,
+          bottom: (bottom - pan.y) / zoom,
+        };
+      })
+      .filter((tile) => tile !== null);
+    const steps = tiles.filter(
+      (tile) => !tile.id.startsWith("$") && h.ranInRun?.(tile.id),
+    );
+    if (!steps.length) return;
+    const ran = [
+      ...tiles.filter((tile) => tile.id.startsWith("$trigger:")),
+      ...steps,
+    ];
+    const last = steps.reduce((a, b) => (b.x > a.x ? b : a));
+    // The area the tiles may use: the canvas above its floating tools.
+    let height = root.clientHeight;
+    for (const tools of root.querySelectorAll<HTMLElement>(
+      ".canvas-tools, .canvas-v2-tools, .canvas-v2-tools-menu",
+    )) {
+      const box = tools.getBoundingClientRect();
+      if (box.width && box.height)
+        height = Math.min(height, box.top - frame.top);
+    }
+    // The run log docks over the canvas's right side (a sheet over its
+    // bottom on narrow windows): the tiles keep clear of it.
+    let width = root.clientWidth;
+    const log = root.closest(".canvas-panel")?.querySelector("weave-run-log");
+    if (log) {
+      const box = log.getBoundingClientRect();
+      if (box.width && box.height) {
+        if (box.top <= frame.top + 1)
+          width = Math.min(width, box.left - frame.left);
+        else height = Math.min(height, box.top - frame.top);
+      }
+    }
+    const margin = 4;
+    const span = {
+      x: Math.min(...ran.map((tile) => tile.x)),
+      y: Math.min(...ran.map((tile) => tile.y)),
+      right: Math.max(...ran.map((tile) => tile.right)),
+      bottom: Math.max(...ran.map((tile) => tile.bottom)),
+    };
+    const inside = (z: number, px: number, py: number, t: typeof span) =>
+      t.x * z + px >= margin - 0.5 &&
+      t.y * z + py >= margin - 0.5 &&
+      t.right * z + px <= width - margin + 0.5 &&
+      t.bottom * z + py <= height - margin + 0.5;
+    if (ran.every((tile) => inside(zoom, pan.x, pan.y, tile))) return;
+    const room = Math.min(
+      (width - 2 * margin) / (span.right - span.x),
+      (height - 2 * margin) / (span.bottom - span.y),
+    );
+    // Down to 40%, where tiles still show their labels. Labels change size
+    // with the zoom on narrow windows, so the place is chosen once the new
+    // zoom has drawn.
+    const z = stage > 0 || room >= zoom ? zoom : Math.max(room, 0.4);
+    if (z !== zoom) {
+      this.setView(
+        zoomAt(this.view, z / zoom, { x: width / 2, y: height / 2 }),
+      );
+      afterNextRender(() => this.keepRunInView(1), {
+        injector: this.injector,
+      });
+      return;
+    }
+    // Offsets that put a tile's edge on the area's edge, and the one that
+    // centers the run: the candidates where nothing is cut.
+    const xs = new Set<number>([
+      (width - (span.x + span.right) * z) / 2,
+      margin - span.x * z,
+      width - margin - span.right * z,
+    ]);
+    const ys = new Set<number>([
+      (height - (span.y + span.bottom) * z) / 2,
+      margin - span.y * z,
+      height - margin - span.bottom * z,
+    ]);
+    for (const tile of tiles) {
+      xs.add(margin - tile.x * z);
+      xs.add(width - margin - tile.right * z);
+      xs.add(-tile.right * z - 1);
+      xs.add(width - tile.x * z + 1);
+      ys.add(margin - tile.y * z);
+      ys.add(height - margin - tile.bottom * z);
+      ys.add(-tile.bottom * z - 1);
+      ys.add(height - tile.y * z + 1);
+    }
+    const out = (px: number, py: number, t: typeof span) =>
+      t.right * z + px <= 0 ||
+      t.x * z + px >= width ||
+      t.bottom * z + py <= 0 ||
+      t.y * z + py >= height;
+    let best: { x: number; y: number; score: number } | null = null;
+    for (const x of xs)
+      for (const y of ys) {
+        if (!tiles.every((t) => inside(z, x, y, t) || out(x, y, t))) continue;
+        const shown = ran.filter((t) => inside(z, x, y, t)).length;
+        const score =
+          shown * 4 +
+          (inside(z, x, y, last) ? 1000 : 0) -
+          (Math.abs(x - pan.x) + Math.abs(y - pan.y)) / 100000;
+        if (!best || score > best.score) best = { x, y, score };
+      }
+    // The last step can't be shown without cutting a tile: the columns
+    // don't divide the width. Zoom so a whole number of them does, once.
+    if ((!best || best.score < 1000) && stage < 2) {
+      const row = ran
+        .filter((t) => Math.abs(t.y - last.y) < 1)
+        .sort((a, b) => a.x - b.x);
+      const steps = row.slice(1).map((t, i) => (t.x - row[i].x) * z);
+      const pitch = steps.length ? Math.min(...steps) : 0;
+      if (pitch > 0) {
+        const columns = Math.max(1, Math.floor((width - margin) / pitch));
+        const snapped = Math.min(1, (z * (width - margin)) / (columns * pitch));
+        this.setView(
+          zoomAt(this.view, snapped / z, { x: width / 2, y: height / 2 }),
+        );
+        afterNextRender(() => this.keepRunInView(2), {
+          injector: this.injector,
+        });
+        return;
+      }
+    }
+    if (best) this.setView({ zoom: z, pan: { x: best.x, y: best.y } });
+    else
+      this.setView(
+        openView(
+          { minX: span.x, minY: span.y, maxX: span.right, maxY: span.bottom },
+          { width, height },
+        ),
+      );
+    this.cdr.markForCheck();
+  }
   revealTile(id: string, margin = 64) {
     const tile = this.layout().tiles.find((item) => item.id === id);
     const root = this.root().nativeElement;
@@ -1852,6 +2055,20 @@ export class CanvasView implements OnInit, DoCheck {
       case "showShortcuts":
         this.sheetOpen = true;
         return true;
+      case "executeWorkflow":
+        if (!h.executeWorkflow) return false;
+        h.executeWorkflow();
+        return true;
+      case "toggleRunLog":
+        if (!h.toggleRunLog) return false;
+        h.toggleRunLog();
+        return true;
+      case "toggleBreakpoint": {
+        const at = step ?? this.selection.ids[0];
+        if (!at || !h.toggleBreakpoint) return false;
+        h.toggleBreakpoint(at);
+        return true;
+      }
       default:
         return false;
     }

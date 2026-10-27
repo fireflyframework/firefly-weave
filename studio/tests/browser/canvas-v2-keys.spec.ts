@@ -434,7 +434,9 @@ test.describe("the canvas keyboard map", () => {
     await expect(sheet).toContainText("Fit view");
     await expect(sheet).toContainText("Extend the selection downstream");
     await expect(sheet).toContainText("Pin output or unpin");
-    await expect(sheet).not.toContainText("Toggle a breakpoint");
+    await expect(sheet).toContainText("Execute workflow");
+    await expect(sheet).toContainText("Show or hide the run log");
+    await expect(sheet).toContainText("Toggle a breakpoint");
     await sheet.getByRole("button", { name: "Done", exact: true }).click();
     await expect(sheet).toHaveCount(0);
     await expect(canvas.tileBody("approval")).toBeFocused();

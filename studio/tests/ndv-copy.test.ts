@@ -146,6 +146,8 @@ const PROPER = new Set([
   "Schema",
   "Table",
   "Map",
+  // A decision's default path is named Otherwise ("Took Otherwise").
+  "Otherwise",
 ]);
 
 describe("Words in step details", () => {

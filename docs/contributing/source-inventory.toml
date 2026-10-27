@@ -558,6 +558,23 @@ author = "Firefly Software Foundation"
 license = "Apache-2.0"
 
 [[exceptions]]
+path = "tests/fixtures/studio/slice-workflow.json"
+kind = "commentless"
+reason = "Strict JSON workflow shared by the host's slice and Studio's mirror of it; both suites must answer the same."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
+path = "studio/tests/fixtures/slice-cases.json"
+kind = "generated"
+source = "scripts/studio_slice_cases.py"
+reason = "The steps the host's slice keeps for each step of the shared slice workflow; Studio's mirror must keep the same. Regenerate with the generator, which also checks freshness."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
 path = "studio/tests/fixtures/language/transactions.json"
 kind = "generated"
 source = "scripts/language_fixtures.py"

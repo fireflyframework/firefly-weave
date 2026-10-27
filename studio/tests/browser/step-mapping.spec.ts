@@ -54,7 +54,9 @@ for (const size of sizes)
       const toggle = prompt.getByRole("radiogroup", {
         name: "Value mode for Prompt",
       });
+      // The header's Execute step (the Output pane offers one too).
       await details.dialog
+        .locator(".sd-execute")
         .getByRole("button", { name: "Execute step", exact: true })
         .focus();
       await details.dialog

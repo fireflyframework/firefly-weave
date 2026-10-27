@@ -27,6 +27,13 @@ import {
 } from "./formula-po";
 import { calibrateFormulaWork } from "./formula-calibration";
 import { timeFingerprintWork } from "./fingerprint-calibration";
+import {
+  EXECUTE_BUDGET_MS,
+  EXECUTE_RUNS,
+  longWorkflow,
+  scaledMs,
+} from "./execute-calibration";
+import { executions, openExecuteWorkflow, pinSample } from "./execute-po";
 
 /** One frame at 60 Hz, in milliseconds. */
 const FRAME_BUDGET_MS = 16.7;
@@ -582,5 +589,61 @@ test(
       scaledP95,
       "fingerprints of 200 steps, p95 scaled to the reference runner",
     ).toBeLessThanOrEqual(FINGERPRINT_BUDGET_MS);
+  },
+);
+
+test(
+  "executes a 200-step workflow within 2 s",
+  { tag: "@performance" },
+  async ({ page }, info) => {
+    test.setTimeout(300_000);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await withLanguageFeatures(page, ["text.concat", "text.join"]);
+    const { details, calls } = await openExecuteWorkflow(page, longWorkflow());
+    await pinSample(details, "check");
+    // The runner's speed, measured as the formula gate measures it.
+    const calibration = await calibrateFormulaWork(page, {
+      text: "Review order of {{ input.amount }}",
+      context: { input: { amount: 1500 }, steps: {} },
+      features: ["text.concat", "text.join"],
+      ...FORMULA_CALIBRATION,
+    });
+    const status = page
+      .getByRole("region", { name: "Run log" })
+      .locator(".run-log-status");
+    const button = page
+      .locator(".editor-bar")
+      .getByRole("button", { name: "Execute workflow" });
+    // From the click to the run log reading the end of the run.
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    const once = async () => {
+      const before = executions(calls).length;
+      const answered = page.waitForResponse("**/studio/local/debug/execute");
+      const started = Date.now();
+      await button.click();
+      await answered;
+      await expect(status).toHaveText("Completed · 200 steps", {
+        timeout: 60_000,
+      });
+      expect(executions(calls).length).toBe(before + 1);
+      return Date.now() - started;
+    };
+    await once();
+    const times: number[] = [];
+    for (let run = 0; run < EXECUTE_RUNS; run++) times.push(await once());
+    const median = [...times].sort((a, b) => a - b)[
+      Math.floor(times.length / 2)
+    ];
+    const measurement = scaledMs(
+      median,
+      calibration.medianMs,
+      FORMULA_CALIBRATION_REFERENCE_MS,
+      FORMULA_MAX_SPEED_ALLOWANCE,
+    );
+    await info.attach("execute-measurement", {
+      body: JSON.stringify({ ...measurement, times }, null, 2),
+      contentType: "application/json",
+    });
+    expect(measurement.scaledMs).toBeLessThanOrEqual(EXECUTE_BUDGET_MS);
   },
 );

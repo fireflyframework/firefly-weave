@@ -21,10 +21,11 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-from collections.abc import AsyncIterator
+import time
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import urlsplit
 from uuid import UUID
 
@@ -55,6 +56,9 @@ from firefly_weave.studio.connection import (
     request_problem,
 )
 from firefly_weave.studio.service import BODY_LIMIT, COOKIE, StudioOptions, StudioService, problem, secret_matches
+
+if TYPE_CHECKING:
+    from firefly_weave.studio.debug_sessions import HostSessions
 
 
 async def read_body[Body: BaseModel](request: Request, model: type[Body], *, optional: bool = False) -> Body | None:
@@ -149,15 +153,16 @@ class _LocalWork:
     """Worker slots for local analysis. A thread cannot be cancelled, so the thread itself frees its
     slot when the work ends, not the request that gave up waiting: abandoned analyses stay bounded."""
 
-    def __init__(self) -> None:
+    def __init__(self, slots: int = LOCAL_WORKERS) -> None:
         import threading
 
         self.lock = threading.Lock()
         self.running = 0
+        self.slots = slots
 
     def claim(self) -> bool:
         with self.lock:
-            if self.running >= LOCAL_WORKERS:
+            if self.running >= self.slots:
                 return False
             self.running += 1
             return True
@@ -168,6 +173,8 @@ class _LocalWork:
 
 
 _LOCAL_WORK = _LocalWork()
+# Simulated runs get their own slot, so a long one never starves validation's two.
+_DEBUG_WORK = _LocalWork(1)
 
 
 def _settled(future: asyncio.Future[Any]) -> None:
@@ -177,19 +184,25 @@ def _settled(future: asyncio.Future[Any]) -> None:
 
 
 async def local_work(
-    work: Any, *, slow: str = "The document took too long to analyze; select fewer operations"
+    work: Any,
+    *,
+    slow: str = "The document took too long to analyze; select fewer operations",
+    pool: _LocalWork = _LOCAL_WORK,
+    busy: str = "Studio is still analyzing an earlier document; try again shortly",
+    respond: Callable[[Any], Response] | None = None,
+    slow_code: str = "WV-STUDIO-BUSY",
 ) -> Response:
     """Run pure, CPU-bound authoring work off the event loop with a bounded wait; never any I/O."""
     from firefly_weave.compiler.canonical import canonical_bytes
 
-    if not _LOCAL_WORK.claim():
-        return problem(503, "WV-STUDIO-BUSY", "Studio is still analyzing an earlier document; try again shortly")
+    if not pool.claim():
+        return problem(503, "WV-STUDIO-BUSY", busy)
 
     def run() -> Any:
         try:
             return work()
         finally:
-            _LOCAL_WORK.release()
+            pool.release()
 
     future = asyncio.get_running_loop().run_in_executor(None, run)
     future.add_done_callback(_settled)
@@ -197,8 +210,21 @@ async def local_work(
         async with asyncio.timeout(LOCAL_WORK_SECONDS):
             value = await asyncio.shield(future)
     except TimeoutError:
-        return problem(503, "WV-STUDIO-BUSY", slow)
+        return problem(503, slow_code, slow)
+    if respond is not None:
+        return respond(value)
     return Response(canonical_bytes(value), media_type="application/json")
+
+
+def _session_id(request: Request) -> UUID | None:
+    try:
+        return UUID(request.path_params["identifier"])
+    except ValueError:
+        return None
+
+
+def _session_gone() -> Response:
+    return problem(404, "WV-STUDIO-DEBUG-NOT-FOUND", "This run log isn't open anymore")
 
 
 @rest_controller
@@ -207,6 +233,7 @@ class StudioController:
     def __init__(self, service: StudioService, connection: StudioConnectionService) -> None:
         self.service = service
         self.connection = connection
+        self._sessions: tuple[int, HostSessions] | None = None
 
     @get_mapping("/studio/session")
     async def session(self, request: Request) -> JSONResponse:
@@ -606,6 +633,146 @@ class StudioController:
             return CheckTestDataResult(entries=entries).model_dump(mode="json", by_alias=True, exclude_none=True)
 
         return await local_work(work, slow="Checking this test data took too long; simplify the workflow")
+
+    @post_mapping("/studio/local/debug/execute")
+    async def debug_execute(self, request: Request) -> Response:
+        from firefly_weave.studio.local_contracts import ExecuteRequest
+        from firefly_weave.studio.simulation import CatalogConflict, SimulationRefused, execute
+
+        try:
+            body = ExecuteRequest.model_validate_json(await request.body())
+        except ValidationError:
+            return problem(422, "WV-STUDIO-REQUEST", "Provide a bounded source, its format, test data and a target")
+        project = None
+        if body.catalog == "project" and self.service.options.profile is not None:
+            project = await self.service.project_catalog(refresh=body.refreshCatalog)
+            if project is None:
+                return problem(502, "WV-STUDIO-CATALOG", "Studio couldn't read the project's catalog")
+
+        def work() -> Any:
+            try:
+                answer = execute(body, project)
+            except SimulationRefused as refused:
+                return refused
+            except CatalogConflict as conflict:
+                return conflict
+            return answer.model_dump(mode="json", by_alias=True, exclude_unset=True)
+
+        def respond(value: Any) -> Response:
+            from firefly_weave.compiler.canonical import canonical_bytes
+
+            if isinstance(value, SimulationRefused):
+                result = {"paths": value.paths} if value.paths else None
+                return problem(value.status, value.code, value.message, result)
+            if isinstance(value, CatalogConflict):
+                return problem(
+                    409,
+                    "WV-STUDIO-CATALOG-CONFLICT",
+                    "A definition on this computer has the same name and version as a different one in the catalog",
+                )
+            return Response(canonical_bytes(value), media_type="application/json")
+
+        return await local_work(
+            work,
+            pool=_DEBUG_WORK,
+            slow="Executing took longer than 30 seconds; execute fewer steps",
+            busy="Studio is still executing; wait for it to finish",
+            respond=respond,
+            # Not busy: trying again would take as long.
+            slow_code="WV-STUDIO-TIMEOUT",
+        )
+
+    # --- step-through sessions for the run log -------------------------------------------------------------------
+
+    def _debug_sessions(self) -> HostSessions:
+        """The host's sessions; a new connection (sign-in, switch, sign-out) starts with none."""
+        from firefly_weave.studio.debug_sessions import HostSessions
+
+        generation = self.service.connection_generation
+        kept = self._sessions
+        if kept is None or kept[0] != generation:
+            kept = self._sessions = (generation, HostSessions())
+        return kept[1]
+
+    async def _session_work(self, work: Callable[[], Any], status: int = 200) -> Response:
+        from firefly_weave.studio.simulation import SimulationRefused
+
+        def guarded() -> Any:
+            try:
+                return work()
+            except SimulationRefused as refused:
+                return refused
+
+        def respond(value: Any) -> Response:
+            if isinstance(value, SimulationRefused):
+                return problem(value.status, value.code, value.message, {"paths": value.paths} if value.paths else None)
+            if value is None:
+                return Response(status_code=204)
+            return Response(value.model_dump_json(by_alias=True), status_code=status, media_type="application/json")
+
+        return await local_work(
+            guarded,
+            pool=_DEBUG_WORK,
+            slow="The run log took longer than 30 seconds; execute fewer steps",
+            busy="Studio is still executing; wait for it to finish",
+            respond=respond,
+            slow_code="WV-STUDIO-TIMEOUT",
+        )
+
+    @post_mapping("/studio/local/debug/sessions")
+    async def debug_session_create(self, request: Request) -> Response:
+        from firefly_weave.studio.local_contracts import SimulationRequest
+
+        try:
+            body = SimulationRequest.model_validate_json(await request.body())
+        except ValidationError:
+            return problem(422, "WV-STUDIO-REQUEST", "Provide a bounded source, its format and test data")
+        project = None
+        if body.catalog == "project" and self.service.options.profile is not None:
+            project = await self.service.project_catalog(refresh=body.refreshCatalog)
+            if project is None:
+                return problem(502, "WV-STUDIO-CATALOG", "Studio couldn't read the project's catalog")
+        sessions = self._debug_sessions()
+        return await self._session_work(lambda: sessions.create(body, project, time.monotonic()), status=201)
+
+    @get_mapping("/studio/local/debug/sessions/{identifier}")
+    async def debug_session_read(self, request: Request) -> Response:
+        identifier = _session_id(request)
+        if identifier is None:
+            return _session_gone()
+        sessions = self._debug_sessions()
+        return await self._session_work(lambda: sessions.read(identifier, time.monotonic()))
+
+    @post_mapping("/studio/local/debug/sessions/{identifier}/commands")
+    async def debug_session_command(self, request: Request) -> Response:
+        from firefly_weave.operations.debug.models import DebugCommand
+
+        identifier = _session_id(request)
+        if identifier is None:
+            return _session_gone()
+        match = request.headers.get("If-Match", "").strip().strip('"')
+        if not match.isdigit():
+            return problem(428, "WV-STUDIO-REQUEST", "Send the run log's revision in If-Match")
+        try:
+            command = DebugCommand.model_validate_json(await request.body())
+        except ValidationError:
+            return problem(422, "WV-STUDIO-REQUEST", "Provide a run log command")
+        sessions = self._debug_sessions()
+        return await self._session_work(lambda: sessions.command(identifier, int(match), command, time.monotonic()))
+
+    @delete_mapping("/studio/local/debug/sessions")
+    async def debug_sessions_clear(self, request: Request) -> Response:
+        """Closes every run log this host keeps: the way out when another window left four open."""
+        sessions = self._debug_sessions()
+        return await self._session_work(sessions.clear)
+
+    @delete_mapping("/studio/local/debug/sessions/{identifier}")
+    async def debug_session_delete(self, request: Request) -> Response:
+        identifier = _session_id(request)
+        if identifier is None:
+            return _session_gone()
+        sessions = self._debug_sessions()
+        return await self._session_work(lambda: sessions.delete(identifier))
 
     @post_mapping("/studio/local/openapi/inventory")
     async def openapi_inventory(self, request: Request) -> Response:

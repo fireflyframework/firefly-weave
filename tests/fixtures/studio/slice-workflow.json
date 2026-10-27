@@ -1,0 +1,174 @@
+{
+  "apiVersion": "weave/v1alpha1",
+  "kind": "Workflow",
+  "metadata": {
+    "name": "orders",
+    "version": "1.0.0"
+  },
+  "spec": {
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "amount": {
+          "type": "number"
+        },
+        "orders": {
+          "type": "array"
+        }
+      }
+    },
+    "outputSchema": {
+      "type": "object"
+    },
+    "steps": [
+      {
+        "id": "first",
+        "kind": "transform",
+        "value": {
+          "literal": "first"
+        }
+      },
+      {
+        "id": "route",
+        "kind": "switch",
+        "cases": [
+          {
+            "when": {
+              "op": {
+                "name": "gt",
+                "args": [
+                  {
+                    "ref": "/input/amount"
+                  },
+                  {
+                    "literal": 1000
+                  }
+                ]
+              }
+            },
+            "steps": [
+              {
+                "id": "big",
+                "kind": "transform",
+                "value": {
+                  "ref": "/steps/first/output"
+                }
+              },
+              {
+                "id": "after-big",
+                "kind": "transform",
+                "value": {
+                  "ref": "/steps/big/output"
+                }
+              }
+            ],
+            "output": {
+              "ref": "/steps/after-big/output"
+            }
+          }
+        ],
+        "default": {
+          "steps": [
+            {
+              "id": "small",
+              "kind": "transform",
+              "value": {
+                "ref": "/steps/first/output"
+              }
+            }
+          ],
+          "output": {
+            "ref": "/steps/small/output"
+          }
+        }
+      },
+      {
+        "id": "both",
+        "kind": "parallel",
+        "concurrency": 2,
+        "branches": {
+          "left": {
+            "steps": [
+              {
+                "id": "l1",
+                "kind": "transform",
+                "value": {
+                  "ref": "/steps/route/output"
+                }
+              }
+            ],
+            "output": {
+              "ref": "/steps/l1/output"
+            }
+          },
+          "right": {
+            "steps": [
+              {
+                "id": "r1",
+                "kind": "transform",
+                "value": {
+                  "ref": "/steps/route/output"
+                }
+              },
+              {
+                "id": "r2",
+                "kind": "transform",
+                "value": {
+                  "ref": "/steps/r1/output"
+                }
+              }
+            ],
+            "output": {
+              "ref": "/steps/r2/output"
+            }
+          }
+        }
+      },
+      {
+        "id": "each",
+        "kind": "forEach",
+        "items": {
+          "ref": "/input/orders"
+        },
+        "body": {
+          "steps": [
+            {
+              "id": "item",
+              "kind": "transform",
+              "value": {
+                "ref": "/item"
+              }
+            },
+            {
+              "id": "item-after",
+              "kind": "transform",
+              "value": {
+                "ref": "/steps/item/output"
+              }
+            }
+          ],
+          "output": {
+            "ref": "/steps/item-after/output"
+          }
+        }
+      },
+      {
+        "id": "last",
+        "kind": "transform",
+        "value": {
+          "ref": "/steps/each/output"
+        }
+      },
+      {
+        "id": "broken",
+        "kind": "transform",
+        "value": {
+          "ref": "/steps/nowhere/output"
+        }
+      }
+    ],
+    "output": {
+      "ref": "/steps/broken/output"
+    }
+  }
+}

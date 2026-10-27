@@ -121,6 +121,19 @@ import {
   stopLocalAuthoring,
 } from "./local-authoring";
 import { crossingOf } from "./woven-crossing";
+import {
+  EXECUTE_ASKING,
+  EXECUTE_CHAIN,
+  EXECUTE_ROUTED,
+  EXECUTE_ROWS,
+  executeWorkflowIn,
+  moreWays,
+  openExecuteFixture,
+  openExecuteWorkflow,
+  pinSample as pinAndClose,
+  shownExecute,
+  validateWith,
+} from "./execute-po";
 
 interface Size {
   tag: string;
@@ -153,7 +166,7 @@ const versionId = "11111111-1111-4111-8111-111111111111";
 
 /** Floating surfaces that cover the page on purpose while they are open. */
 const overlays =
-  '[aria-modal="true"], .modal-backdrop, [role="dialog"], [role="menu"], [role="listbox"], .platform-menu, .inspector, .record-detail, .palette.popover-visible, .sim-panel, .toast, .canvas-v2 f-minimap, .canvas-v2 .selection-toolbar, .canvas-v2 .tile-toolbar, .add-step-panel, .formula-suggestions';
+  '[aria-modal="true"], .modal-backdrop, [role="dialog"], [role="menu"], [role="listbox"], .platform-menu, .inspector, .record-detail, .palette.popover-visible, .sim-panel, .toast, .canvas-v2 f-minimap, .canvas-v2 .selection-toolbar, .canvas-v2 .tile-toolbar, .add-step-panel, .formula-suggestions, .run-log';
 
 test.describe.configure({ mode: "parallel" });
 test.afterAll(() => stopLocalAuthoring());
@@ -1456,32 +1469,6 @@ spec:
     - {id: stop-here, kind: fail, code: demo-ends, message: The demo ends here.}
   output: {literal: {}}
 `;
-/** A decision whose first path a finished simulation didn't take. */
-const routedWorkflow = `apiVersion: weave/v1alpha1
-kind: Workflow
-metadata: {name: routed, version: 1.0.0}
-spec:
-  inputSchema:
-    type: object
-    properties:
-      amount: {type: number, title: Amount}
-  outputSchema: {type: object}
-  steps:
-    - {id: check, kind: transform, value: {ref: /input}}
-    - id: route
-      kind: switch
-      cases:
-        - when: {op: {name: gt, args: [{ref: /input/amount}, {literal: 1000}]}}
-          steps:
-            - {id: review, kind: wait, durationSeconds: 300}
-          output: {literal: {}}
-      default:
-        steps:
-          - {id: auto-approve, kind: transform, value: {literal: {approved: true}}}
-        output: {literal: {}}
-    - {id: record, kind: transform, value: {literal: {}}}
-  output: {literal: {}}
-`;
 
 /**
  * Offline Studio whose host builds Call an API's action with the
@@ -1602,6 +1589,7 @@ async function changeScoreMapping(page: Page) {
     ),
   );
 }
+
 const scenes: Record<string, Scene> = {
   async lumi({ page, shot }) {
     await connected(page, {
@@ -1911,6 +1899,95 @@ const scenes: Record<string, Scene> = {
     ).toBeVisible({ timeout: 15000 });
     await shot("152-test-data-conflict", { tabs: 0 });
   },
+  async "execute-canvas"({ page, shot }) {
+    await openExecuteWorkflow(page, EXECUTE_CHAIN);
+    await executeWorkflowIn(page);
+    await expect(
+      page.locator('[data-step="third"] .tile-badge[data-badge="done"]'),
+    ).toBeVisible();
+    // The canvas keeps the steps that ran in sight by itself.
+    await shot("153-execute-canvas", { tabs: 0 });
+  },
+  async "execute-run-log-paused"({ page, shot }) {
+    const { details } = await openExecuteWorkflow(page, EXECUTE_CHAIN);
+    await details.open("third");
+    await shownExecute(details);
+    await moreWays(details.dialog).click();
+    await page
+      .getByRole("menuitem", { name: /Execute previous steps/ })
+      .click();
+    await expect(page.locator(".run-log-status")).toHaveText(
+      "Paused before third",
+    );
+    await details.close();
+    await shot("154-execute-run-log-paused", { tabs: 0 });
+  },
+  async "execute-run-log-signal"({ page, shot }) {
+    await openExecuteWorkflow(page, EXECUTE_ASKING);
+    await executeWorkflowIn(page);
+    await expect(page.locator(".run-log-status")).toHaveText(
+      "Waiting for order-paid",
+    );
+    await shot("155-execute-run-log-signal", { tabs: 0 });
+  },
+  async "execute-output-table"({ page, shot }) {
+    const { details } = await openExecuteWorkflow(page, EXECUTE_ROWS);
+    await details.open("rows");
+    await (await shownExecute(details)).click();
+    const pane = await outputPane(details);
+    await expect(
+      pane.getByRole("table", { name: "Output data" }),
+    ).toBeVisible();
+    await shot("156-execute-output-table", { tabs: 0 });
+  },
+  async "execute-decision-paths"({ page, shot }) {
+    const { details } = await openExecuteWorkflow(page, EXECUTE_ROUTED);
+    await details.open("route");
+    await (await shownExecute(details)).click();
+    const pane = await outputPane(details);
+    await expect(pane.locator(".pane-count")).toHaveText("Took path 1");
+    await shot("157-execute-decision-paths", { tabs: 0 });
+  },
+  async "execute-fix-first"({ page, shot }) {
+    const { details } = await openExecuteFixture(page);
+    await validateWith(page, [
+      {
+        code: "WV-SCHEMA-REQUIRED",
+        severity: "error",
+        stage: "schema",
+        path: "/spec/steps/0/with",
+        message: "Customer ID is required.",
+      },
+    ]);
+    await details.open("score");
+    await (await shownExecute(details)).click();
+    await expect(
+      page.locator('.execute-dialog[role="alertdialog"]'),
+    ).toContainText("Fix 1 issue first");
+    await shot("158-execute-fix-first", { tabs: 0 });
+  },
+  async "execute-unpin"({ page, shot }) {
+    const { details } = await openExecuteFixture(page);
+    await pinAndClose(details, "lookup");
+    await details.open("lookup");
+    await (await shownExecute(details)).click();
+    await expect(
+      page.locator('.execute-dialog[role="alertdialog"]'),
+    ).toContainText("Unpin and execute?");
+    await shot("159-execute-unpin", { tabs: 0 });
+  },
+  async "execute-input-empty"({ page, shot }) {
+    const { details } = await openExecuteFixture(page);
+    await details.open("score");
+    const tabs = details.dialog
+      .getByRole("tablist", { name: /^(Step details panes|Data)$/ })
+      .getByRole("tab", { name: "Input" });
+    if (await tabs.count()) await tabs.first().click();
+    const input = details.dialog.locator("weave-input-pane");
+    await input.getByLabel("Input source").selectOption({ index: 1 });
+    await expect(input).toContainText("No input data yet");
+    await shot("160-execute-input-empty", { tabs: 0 });
+  },
   async "step-details-decision"({ page, shot }) {
     const details = await openStepFixture(page);
     await details.open("route-by-value");
@@ -1960,13 +2037,17 @@ const scenes: Record<string, Scene> = {
   async "step-details-issues"({ page, shot }) {
     const details = await openStepFixture(page);
     await addCommonStep(page, "Call an API");
-    // Execute step can't run offline (its button says why), but its
-    // shortcut still shows every message once focus leaves Connection.
+    // Execute step's shortcut asks to fix the issues first, and every
+    // message shows once focus leaves Connection.
     await expect(
       details.dialog.getByRole("combobox", { name: "Connection" }),
     ).toBeFocused();
     await page.keyboard.press("Tab");
     await page.keyboard.press("ControlOrMeta+Enter");
+    const gate = page.locator('.execute-dialog[role="alertdialog"]');
+    await expect(gate).toContainText("Fix 2 issues first");
+    await gate.getByRole("button", { name: "Close", exact: true }).click();
+    await expect(gate).toBeHidden();
     await details.dialog.getByRole("button", { name: /^\d+ issues?$/ }).click();
     await expect(page.getByRole("menu", { name: /issues?$/ })).toBeVisible();
     await shot("95-step-details-issues", { tabs: 0 });
@@ -3750,57 +3831,15 @@ spec:
     await shot("103-canvas-selection");
   },
 
-  async "canvas-v2-run"({ page, shot, size }) {
-    const artifact = simulationArtifact();
-    test.skip(!artifact, "Needs the repository's Python environment.");
-    await useNewEditor(page);
-    await connected(page, { capabilities: [...allCapabilities, "compile"] });
-    await page.route(`${project}/compiler/compile`, (r) =>
-      r.fulfill({
-        json: {
-          ok: true,
-          validationOk: true,
-          partial: false,
-          errorCount: 0,
-          diagnostics: [],
-          artifact,
-        },
-      }),
-    );
-    await page.route(`${project}/debug/sessions`, (r: Route) =>
-      r.fulfill({
-        status: 201,
-        json: debugSession(
-          1,
-          "succeeded",
-          [],
-          ["check", "route", "auto-approve", "record"],
-        ),
-      }),
-    );
-    await newWorkflow(page);
-    await new DesignerPage(page).setSource(routedWorkflow);
-    const canvas = new CanvasPage(page);
-    await canvas.ready();
-    await hideStepDetails(page, size.width);
-    await command(page, "Simulate");
-    const setup = page.getByRole("dialog", { name: "Simulate this workflow" });
-    await setup.getByLabel(/customer ?id/i).fill("c-104");
-    await setup.getByRole("button", { name: "Start simulation" }).click();
-    await expect(canvas.edgeLine("route:path:case 1>review")).toHaveClass(
-      /\bskipped\b/,
-    );
-    // Below 768 px the simulation covers the canvas as a sheet: fold it away
-    // to see what the run did to the steps.
-    if (size.width < 768) {
-      await page
-        .getByRole("button", { name: "Collapse simulation", exact: true })
-        .click();
-      await expect(
-        page.getByRole("button", { name: "Expand simulation", exact: true }),
-      ).toBeVisible();
-    }
-    await shot("104-canvas-run");
+  async "canvas-v2-run"({ page, shot }) {
+    // Execute workflow on the Studio host: the decision's path that ran.
+    await openExecuteWorkflow(page, EXECUTE_ROUTED);
+    await executeWorkflowIn(page);
+    await expect(
+      page.locator('[data-step="route"] .tile-badge[data-badge="done"]'),
+    ).toBeVisible();
+    // The canvas keeps the steps that ran in sight by itself.
+    await shot("104-canvas-run", { tabs: 0 });
   },
 
   async "settings-preferences"({ page, shot }) {

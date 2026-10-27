@@ -216,24 +216,40 @@ SPDX-License-Identifier: Apache-2.0
         <span class="sd-spacer"></span>
         <div class="sd-actions">
           @if (canExecute()) {
-            <div class="sd-execute">
-              <button
-                type="button"
-                class="primary"
-                aria-disabled="true"
-                aria-describedby="sd-execute-reason"
-                (click)="explainExecute()"
-              >
-                <weave-icon name="execute" [size]="16" />{{ executeLabel() }}
-              </button>
-              <weave-row-menu
-                label="More ways to execute"
-                icon="chevronDown"
-                [items]="executeItems()"
-              />
-              <span id="sd-execute-reason" class="sr-only">{{
-                executeReason
-              }}</span>
+            @let ways = executeItems();
+            <div class="sd-execute" [class.is-single]="!ways.length">
+              @if (executing()) {
+                <button
+                  type="button"
+                  class="primary"
+                  title="Stop executing"
+                  (click)="stop()"
+                >
+                  <weave-icon name="close" [size]="16" /><span
+                    class="sd-label-stack"
+                    ><span>Stop</span
+                    ><span class="sd-label-sizer" aria-hidden="true">{{
+                      executeLabel()
+                    }}</span></span
+                  >
+                </button>
+              } @else {
+                <button
+                  type="button"
+                  class="primary"
+                  [title]="executeLabel() + ' (Ctrl/Cmd+Enter)'"
+                  (click)="execute('step')"
+                >
+                  <weave-icon name="execute" [size]="16" />{{ executeLabel() }}
+                </button>
+              }
+              @if (ways.length) {
+                <weave-row-menu
+                  label="More ways to execute"
+                  icon="chevronDown"
+                  [items]="ways"
+                />
+              }
             </div>
           }
           @if (moreItems().length) {
@@ -456,4 +472,46 @@ SPDX-License-Identifier: Apache-2.0
 </section>
 @if (guarding()) {
   <weave-close-guard (answer)="answerGuard($event)" />
+}
+@if (sheet(); as sections) {
+  <weave-modal
+    heading="Keyboard shortcuts"
+    closeLabel="Close keyboard shortcuts"
+    describedBy="step-details-shortcuts-note"
+    (dismiss)="closeSheet()"
+  >
+    <p id="step-details-shortcuts-note" class="dialog-message">
+      In step details.
+    </p>
+    @for (section of sections; track section.title) {
+      <h3
+        class="shortcut-section"
+        [attr.tabindex]="$first ? -1 : null"
+        [attr.data-initial-focus]="$first ? '' : null"
+      >
+        {{ section.title }}
+      </h3>
+      <dl class="shortcut-list">
+        @for (entry of section.entries; track $index) {
+          <dt>
+            @for (key of entry.keys; track $index) {
+              <kbd>{{ key }}</kbd>
+            }
+          </dt>
+          <dd>{{ entry.label }}</dd>
+        }
+      </dl>
+    }
+    <div class="dialog-actions">
+      <button type="button" class="primary" (click)="closeSheet()">Done</button>
+    </div>
+  </weave-modal>
+}
+@if (question(); as asked) {
+  <weave-execute-dialog
+    [question]="asked"
+    (fix)="fixIssue($event)"
+    (confirm)="unpinAndExecute()"
+    (cancel)="closeQuestion()"
+  />
 }
