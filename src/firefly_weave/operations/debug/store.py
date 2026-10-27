@@ -167,6 +167,7 @@ class DebugService:
                         input=request.input,
                         now=request.now,
                         workflows=workflows,
+                        errors=request.errors,
                     )
                 )
             except UnsupportedIR as error:

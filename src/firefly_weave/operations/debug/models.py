@@ -26,6 +26,7 @@ from pydantic import AwareDatetime, ConfigDict, Field
 from firefly_weave.contracts.definitions import ContractModel
 from firefly_weave.contracts.diagnostics import Diagnostic
 from firefly_weave.contracts.language_features import MAX_CALL_DEPTH
+from firefly_weave.contracts.step_errors import StepOutcome
 from firefly_weave.contracts.values import JsonData, JsonObjectData
 from firefly_weave.runtime.kernel import KernelCursor
 from firefly_weave.runtime.models import Deadline, RunState, RuntimeEvent
@@ -73,6 +74,17 @@ class SignalReceipt(ContractModel):
     name: str
     payload: JsonData
     accepted_at: AwareDatetime
+
+
+class ScriptedError(ContractModel):
+    """A failure a session makes a step report on purpose, in place of a mock's result.
+
+    ``outcome`` and ``attempts`` are what a platform's recovery would report after the action's own retries.
+    """
+
+    code: str = Field(min_length=1, max_length=128, pattern=r"^[A-Z][A-Z0-9_.-]*$")
+    outcome: StepOutcome = "failed"
+    attempts: int = Field(default=1, ge=0)
 
 
 class CalledWorkflow(ContractModel):
@@ -125,6 +137,8 @@ class DebugState(ContractModel):
     # Omitted for sessions without called workflows, so stored sessions keep their bytes.
     workflows: dict[str, CalledWorkflow] = Field(default_factory=dict, exclude_if=lambda v: not v)
     frames: list[FrameState] = Field(default_factory=list, exclude_if=lambda v: not v)
+    # Failures scripted on purpose, keyed like mocks; omitted when none, so stored sessions keep their bytes.
+    errors: dict[str, ScriptedError] = Field(default_factory=dict, exclude_if=lambda v: not v)
 
 
 class LoopView(ContractModel):
@@ -189,6 +203,8 @@ class DebugView(ContractModel):
 class DebugCreate(ContractModel):
     artifact: JsonObjectData
     mocks: JsonObjectData = Field(default_factory=dict)
+    # Steps that fail on purpose, keyed like mocks (node:<step>, node:<instance key>, action:<reference>).
+    errors: dict[str, ScriptedError] = Field(default_factory=dict, exclude_if=lambda v: not v)
     workflows: dict[str, CalledWorkflow] = Field(default_factory=dict)
     # Load the published version of every called workflow ``workflows`` gives no artifact for.
     resolve_workflows: bool = False

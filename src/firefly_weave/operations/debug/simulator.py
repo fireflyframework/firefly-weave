@@ -30,9 +30,11 @@ from firefly_weave.compiler.canonical import canonical_bytes, canonical_digest
 from firefly_weave.compiler.ir import (
     ActionNode,
     CallWorkflowNode,
+    DecisionTableNode,
     HumanTaskNode,
     IRNode,
     SignalNode,
+    TransformNode,
     UnsupportedIR,
     WorkflowIR,
 )
@@ -51,6 +53,7 @@ from firefly_weave.operations.debug.models import (
     FrameState,
     FrameView,
     LoopView,
+    ScriptedError,
     SelectedScope,
     SignalReceipt,
 )
@@ -65,12 +68,15 @@ from firefly_weave.runtime.kernel import (
     called_workflow,
     deadline_order,
     duration_steps,
+    error_policy,
     prepare,
     transition,
     validate,
     validate_action,
 )
 from firefly_weave.runtime.models import CallIntent, Deadline, RunState, RuntimeEvent, TaskIntent
+from firefly_weave.runtime.step_failures import continuation_steps, failure_data, final_failure, wait_failure
+from firefly_weave.runtime.transactions import in_transaction, shapes
 
 _DEFAULT_LIMITS = DebugLimits()
 
@@ -154,6 +160,7 @@ class Simulator:
         now: datetime,
         limits: DebugLimits = _DEFAULT_LIMITS,
         workflows: Mapping[str, CalledWorkflow] | None = None,
+        errors: Mapping[str, ScriptedError] | None = None,
     ) -> None:
         self.limits = limits
         self.artifact = import_artifact(json.loads(artifact.to_bytes()))
@@ -164,6 +171,7 @@ class Simulator:
             raise DebugError("WV-DEBUG-TIME")
         validate(self.ir, self.ir.schemas[self.ir.input_schema], input)
         self._validate_mocks(self._prepared, mocks)
+        self._validate_errors(self._prepared, mocks, dict(errors or {}))
         called = self._called_workflows(dict(workflows or {}))
         self.data = DebugState(
             artifact=json.loads(self.artifact.to_bytes()),
@@ -174,6 +182,7 @@ class Simulator:
                 reference: CalledWorkflow(artifact=json.loads(item.artifact.to_bytes()), mocks=item.mocks)
                 for reference, item in called.items()
             },
+            errors=dict(errors or {}),
         )
         self._workflows = {"": _Workflow("", self.artifact, self._prepared, mocks), **called}
         self.data.pending.append(self._event("started", {}))
@@ -271,6 +280,72 @@ class Simulator:
         except ValueError:
             raise DebugError("WV-DEBUG-MOCK-OUTPUT") from None
 
+    @staticmethod
+    def _validate_errors(
+        prepared: PreparedWorkflow, mocks: Mapping[str, JsonValue], errors: Mapping[str, ScriptedError]
+    ) -> None:
+        """Scripted failures name steps like mocks do: any action, a waiting call, or a step that handles failures."""
+        ir = prepared.ir
+        references = {
+            "action:" + d.reference
+            for node in ir.graph.nodes
+            if isinstance(node, ActionNode)
+            for d in ir.dependencies
+            if d.digest == node.dependency and d.kind == "Action"
+        }
+        for key in errors:
+            if key in mocks:
+                raise DebugError("WV-DEBUG-MOCK-CONFLICT")
+            if key.startswith("node:"):
+                node = _instance_node(prepared, key.removeprefix("node:"))
+                scripted = isinstance(node, ActionNode) or (isinstance(node, CallWorkflowNode) and node.mode == "wait")
+                handles = (
+                    isinstance(node, (TransformNode, DecisionTableNode, SignalNode, HumanTaskNode))
+                    and node.on_error is not None
+                )
+                if not (scripted or handles):
+                    raise DebugError("WV-DEBUG-MOCK-KEY")
+            elif key not in references:
+                raise DebugError("WV-DEBUG-MOCK-KEY")
+
+    def _scripted(self, key: str, instance: str, reference: str | None = None) -> ScriptedError | None:
+        """The failure scripted for one instance of the simulated workflow, under the mocks' precedence: the
+        instance, then its step, then its action. A mock found first wins."""
+        if key:
+            return None
+        mocks, errors = self._workflows[""].mocks, self.data.errors
+        candidates = ["node:" + instance, "node:" + node_of(instance)]
+        if reference is not None:
+            candidates.append("action:" + reference)
+        for candidate in candidates:
+            if candidate in mocks:
+                return None
+            if candidate in errors:
+                return errors[candidate]
+        return None
+
+    def _failure(self, called: _Workflow, instance: str, failure: ScriptedError) -> RuntimeEvent:
+        """The event a platform would record for this failure: the step's setting takes it, or an incident opens
+        with the code recovery would open."""
+        ir = called.ir
+        node = called.prepared.nodes[node_of(instance)]
+        side_effect = "idempotent"
+        if isinstance(node, ActionNode):
+            dependency = next(d for d in ir.dependencies if d.digest == node.dependency and d.kind == "Action")
+            side_effect = cast(str, cast(JsonObject, dependency.document["spec"])["sideEffect"])
+        policy = error_policy(ir, instance)
+        verdict = final_failure(policy, side_effect, failure.outcome)
+        if verdict == "handled":
+            data = failure_data(instance, failure.attempts, failure.code, failure.outcome, failure.attempts)
+            if in_transaction(shapes(ir), instance):
+                data["effect"] = "unknown" if failure.outcome == "unknown" else "none"
+            return self._event("step_failed", data)
+        if not isinstance(node, ActionNode):
+            code = failure.code
+        else:
+            code = "WV-TASK-AMBIGUOUS" if verdict == "ambiguous" else "WV-TASK-RETRIES-EXHAUSTED"
+        return self._event("incident_opened", {"node_id": instance, "generation": failure.attempts, "code": code})
+
     @classmethod
     def restore(cls, serialized: str, *, limits: DebugLimits = _DEFAULT_LIMITS) -> "Simulator":
         if len(serialized.encode()) > limits.session_bytes:
@@ -283,6 +358,7 @@ class Simulator:
         result.ir = result._prepared.ir
         result._unchecked = result._unchecked_bytes = 0
         result._validate_mocks(result._prepared, data.mocks)
+        result._validate_errors(result._prepared, data.mocks, data.errors)
         called = result._called_workflows(dict(data.workflows))
         if any(frame.state is not None and frame.workflow not in called for frame in data.frames):
             raise DebugError("WV-DEBUG-WORKFLOW")
@@ -598,6 +674,13 @@ class Simulator:
             boundary = Boundary(kind="event", event_type=cursor.event.type, frame=frame)
             run.events.append(cursor.event)
             self._grown(cursor.event.data)
+        if cursor.admitted and not key:
+            ready = cursor.ready[0]
+            pure = called.prepared.nodes[node_of(ready)]
+            failure = self._scripted(key, ready) if isinstance(pure, (TransformNode, DecisionTableNode)) else None
+            if failure is not None and ready not in cursor.failing:
+                # The step fails before it is evaluated, as if its evaluation had failed.
+                cursor = cursor.model_copy(update={"failing": {**cursor.failing, ready: failure.code}})
         changed = len(cursor.result.steps)
         run.cursor = _advance_owned(cursor, called.prepared)
         for change in run.cursor.result.steps[changed:]:
@@ -609,6 +692,12 @@ class Simulator:
             run.cursor = None
             # Measured context parts last one event, as in production, where every transition prepares its own.
             called.prepared.contexts.parts.clear()
+            for change in result.steps:
+                waiting = called.prepared.nodes.get(node_of(change.node_id)) if change.status == "waiting" else None
+                if isinstance(waiting, (SignalNode, HumanTaskNode)):
+                    scripted = self._scripted(key, change.node_id)
+                    if scripted is not None:
+                        run.pending.append(self._failure(called, change.node_id, scripted))
             for command in result.commands:
                 if isinstance(command, Deadline):
                     run.deadlines.append(command)
@@ -616,6 +705,10 @@ class Simulator:
                     if not self._call(key, run, called, command):
                         return True
                 elif isinstance(command, TaskIntent):
+                    scripted = self._scripted(key, command.node_id, command.action_reference)
+                    if scripted is not None:
+                        run.pending.append(self._failure(called, command.node_id, scripted))
+                        continue
                     # A step mock applies to every instance of the step.
                     mock = "node:" + command.node_id
                     if mock not in called.mocks:
@@ -651,6 +744,10 @@ class Simulator:
         d = self.data
         child = _path(key, command.node_id)
         if command.mode == "wait":
+            scripted = self._scripted(key, command.node_id)
+            if scripted is not None:
+                run.pending.append(self._failure(called, command.node_id, scripted))
+                return True
             candidates = list(dict.fromkeys(["node:" + command.node_id, "node:" + node_of(command.node_id)]))
             mock = next((mock for mock in candidates if mock in called.mocks), None)
             if mock is not None:
@@ -766,9 +863,10 @@ class Simulator:
         """
         ir = self._workflow(key).ir
         state = cast(RunState, run.state)
-        durations = duration_steps(ir)
+        # A wait whose step handles its timeout continues the run, so it ranks with duration waits, as on a platform.
+        continuations = continuation_steps(ir)
         deferred = {e.data.get("node_id") for e in state.deferred_results}
-        deadlines = sorted(run.deadlines, key=lambda v: deadline_order(v.node_id, v.deadline, durations))
+        deadlines = sorted(run.deadlines, key=lambda v: deadline_order(v.node_id, v.deadline, continuations))
         for deadline in deadlines:
             if deadline.deadline > self.data.now or deadline.node_id in deferred:
                 continue
@@ -795,9 +893,16 @@ class Simulator:
         due = self._due(key, run)
         if isinstance(due, Deadline):
             run.deadlines.remove(due)
-            durations = duration_steps(self._workflow(key).ir)
+            ir = self._workflow(key).ir
+            step = node_of(due.node_id)
+            if step not in duration_steps(ir) and step in continuation_steps(ir):
+                node = next(n for n in ir.graph.nodes if n.id == step)
+                found = failure_data(
+                    due.node_id, 0, wait_failure(node), "not_started", 1, deadline=due.deadline.isoformat()
+                )
+                return self._event("step_failed", found)
             return self._event(
-                "wait_elapsed" if node_of(due.node_id) in durations else "timed_out",
+                "wait_elapsed" if step in duration_steps(ir) else "timed_out",
                 {"node_id": due.node_id, "deadline": due.deadline.isoformat()},
             )
         if isinstance(due, tuple):

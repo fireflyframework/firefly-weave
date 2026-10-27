@@ -1754,9 +1754,10 @@ def _advance_owned(
             node = nodes[node_of(current)]
             suffix = loop_suffix(current)
             if current in failing:
-                # Its evaluation failed in an earlier pass of this event: nothing it would have done happens. Its
-                # setting handles that, or its transaction does.
-                if failing[current] in HANDLED_KERNEL_CODES and handles(node, current, "none"):
+                # Its evaluation failed in an earlier pass of this event (or a debug session scripted its failure):
+                # nothing it would have done happens. Its setting handles that, or its transaction does.
+                handled_code = failing[current] in HANDLED_KERNEL_CODES or owner_of(current) is None
+                if handled_code and handles(node, current, "none"):
                     attempts = 0 if isinstance(node, (ActionNode, CallWorkflowNode)) else 1
                     fail_step(node, current, step_error(failing[current], "not_started", attempts, current))
                 else:
