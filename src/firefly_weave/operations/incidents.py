@@ -267,6 +267,9 @@ class IncidentService:
                 )
             elif task is not None and request.kind == "accept_reconciled_result":
                 await repository.task_status(task["id"], "completed", at=event.timestamp)
+            elif task is not None and request.kind == "accept_reconciled_failure":
+                # The step's setting took the failure, even when the run ended in this same transition.
+                await repository.task_status(task["id"], "handled", at=event.timestamp)
             await repository.execute(
                 "WITH changed AS (UPDATE incidents SET status='resolved',actor_id=:actor,resolved_at=:now,"
                 "resolution=cast(:resolution AS jsonb) "

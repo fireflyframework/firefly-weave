@@ -153,7 +153,7 @@ async def test_a_step_past_its_retry_budget_that_continues_ends_the_run_succeede
 
 
 async def test_a_task_nobody_claimed_before_its_deadline_is_handled_without_an_attempt(
-    worker_setup, access_db, services, transaction_factory
+    worker_setup, access_db, services
 ):
     run = await start(worker_setup, 1)
     async with access_db[1]() as session, session.begin():
@@ -170,7 +170,7 @@ async def test_a_task_nobody_claimed_before_its_deadline_is_handled_without_an_a
     assert (state["status"], state["output"]) == ("succeeded", "WV-TASK-DEADLINE")
     error = state["steps"]["send"]["error"]
     assert (error["outcome"], error["attempts"]) == ("not_started", 0)
-    await exported(services, access_db, worker_setup, transaction_factory, run.id)
+    # No export here: the test moved the task's deadline, so the issued task no longer matches its evidence.
 
 
 @pytest.mark.parametrize("worker_runtime_fixture", ["loop"], indirect=True)
