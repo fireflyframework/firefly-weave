@@ -370,14 +370,15 @@ class RuntimeRepository:
                 run=view.id,
                 wait=event.data["wait_id"],
             )
-        if event.type in {"signal_received", "wait_elapsed", "human_completed"}:
+        if event.type in {"signal_received", "wait_elapsed", "human_completed", "step_failed"}:
             await self.execute(
                 f"UPDATE run_deadlines SET consumed=true WHERE {SCOPE} AND run_id=:run AND node_id=:node",
                 run=view.id,
                 node=event.data["node_id"],
             )
         if event.type == "step_failed":
-            # A step whose failure its transaction handled is done with: no revoke, recovery or claim touches it.
+            # A step whose failure its setting or its transaction handled is done with: no revoke, recovery or claim
+            # touches it.
             await self.execute(
                 task_fact_update(
                     f"UPDATE task_intents SET status='handled',next_attempt_at=NULL WHERE {SCOPE} AND run_id=:run "
@@ -387,6 +388,14 @@ class RuntimeRepository:
                 run=view.id,
                 node=event.data["node_id"],
             )
+            from firefly_weave.human_tasks.persistence import expire_task
+
+            # A human task nobody completed in time is closed as expired, with its audit row.
+            await expire_task(self, view.id, event.data["node_id"])
+        from firefly_weave.runtime.step_failures import first_failures
+
+        for _, handling, _ in first_failures(result):
+            self.tx.record("step_error", f"step.{handling}", "failed")
         if result.state.status in {"succeeded", "failed", "cancelled", "timed_out"}:
             from firefly_weave.human_tasks.persistence import close_tasks
 
@@ -585,7 +594,8 @@ class RuntimeRepository:
             "AND EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN "
             "jsonb_typeof(runs.artifact->'executable'->'graph'->'nodes')='array' "
             "THEN runs.artifact->'executable'->'graph'->'nodes' ELSE '[]'::jsonb END) n "
-            "WHERE n->>'kind' IN ('signal','humanTask') AND n->>'id'=substring(d.node_id from '^[^[#~]+') "
+            "WHERE n->>'kind' IN ('signal','humanTask') AND NOT n ? 'onError' "
+            "AND n->>'id'=substring(d.node_id from '^[^[#~]+') "
             "AND NOT EXISTS "
             "(SELECT 1 FROM signal_receipts s WHERE s.run_id=runs.id AND s.name=n->>'name' "
             "AND s.accepted_at<d.deadline)))))) "

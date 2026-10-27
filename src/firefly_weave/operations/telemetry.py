@@ -61,6 +61,9 @@ OPERATIONS_ALLOWED = frozenset(OPERATIONS) | frozenset(
         "call.detach",
         "call.dispatch",
         "call.delivery",
+        "step.continue",
+        "step.errorOutput",
+        "step.incident",
         "other",
     }
 )
@@ -98,6 +101,7 @@ COUNTERS = {
     "loop_iteration": "weave.loop_iterations",
     "loop_yield": "weave.loop_yields",
     "call": "weave.calls",
+    "step_error": "weave.step_errors",
     "dropped": "weave.telemetry_dropped",
     "queue_unknown": "weave.queue_unknown",
 }

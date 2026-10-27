@@ -27,6 +27,7 @@ from firefly_weave.runtime.kernel import deadline_order, duration_steps, workflo
 from firefly_weave.runtime.kernel import transition_async as transition
 from firefly_weave.runtime.models import RuntimeEvent
 from firefly_weave.runtime.repository import SCOPE, RuntimeRepository
+from firefly_weave.runtime.step_failures import continuation_steps, failure_data, wait_failure
 from firefly_weave.runtime.transactions import split_deadline
 
 TERMINAL = {"succeeded", "failed", "cancelled", "timed_out"}
@@ -56,7 +57,9 @@ async def settle(repository: RuntimeRepository, row: dict[str, Any], *, terminal
     # Overall timeout wins whenever observed due. Other terminal signal deadlines
     # precede continuations; duration ties use stable node identity.
     duration_nodes = duration_steps(ir)
-    deadlines.sort(key=lambda d: deadline_order(d["node_id"], d["deadline"], duration_nodes))
+    # A wait whose step handles its timeout continues the run, so its deadline ranks with duration waits.
+    continuations = continuation_steps(ir)
+    deadlines.sort(key=lambda d: deadline_order(d["node_id"], d["deadline"], continuations))
     for deadline in deadlines:
         if deadline["deadline"] > now:
             continue
@@ -77,7 +80,8 @@ async def settle(repository: RuntimeRepository, row: dict[str, Any], *, terminal
         if earlier:
             continue
         elapsed = step in duration_nodes
-        if terminal_only and elapsed:
+        handled = step in continuations and not elapsed
+        if terminal_only and (elapsed or handled):
             continue
         data: dict[str, Any] = {
             "node_id": deadline["node_id"],
@@ -97,9 +101,21 @@ async def settle(repository: RuntimeRepository, row: dict[str, Any], *, terminal
                 node=pivot,
             )
             data["started"] = not calls or calls[0]["status"] != "requested"
+        node = next(n for n in ir.graph.nodes if n.id == step) if handled else None
+        if node is not None:
+            # A wait whose step handles its timeout fails that step; the run goes on.
+            data = failure_data(
+                deadline["node_id"],
+                0,
+                wait_failure(node),
+                "not_started",
+                1,
+                deadline=data["deadline"],
+                wait_id=data["wait_id"],
+            )
         event = RuntimeEvent(
             id=uuid4(),
-            type="wait_elapsed" if elapsed else "timed_out",
+            type="wait_elapsed" if elapsed else "step_failed" if handled else "timed_out",
             timestamp=now,
             sequence=view.state.accepted_sequence + 1,
             data=data,
@@ -112,7 +128,7 @@ async def settle(repository: RuntimeRepository, row: dict[str, Any], *, terminal
         try:
             result = await transition(view.state, event, artifact)
         except RuntimeCapacityError:
-            if elapsed:
+            if elapsed or handled:
                 raise
             from firefly_weave.runtime.terminal_capacity import hold_transactions, persist_terminal
 
@@ -143,7 +159,7 @@ async def settle(repository: RuntimeRepository, row: dict[str, Any], *, terminal
             result,
             canonical_digest({"elapsed" if elapsed else "timeout": str(deadline["id"])}),
         )
-        return 2 if elapsed else 1
+        return 2 if elapsed or handled else 1
     if terminal_only:
         return 0
     from firefly_weave.runtime.calls import deliver_calls

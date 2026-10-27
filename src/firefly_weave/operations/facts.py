@@ -21,7 +21,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime
 from functools import partial
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from uuid import UUID
 
 from pydantic import TypeAdapter
@@ -426,7 +426,8 @@ class FactRepository:
                     add(command.node_id, "running", scheduled=first is not None and command.branch == first.name)
             for change in result.steps:
                 identity = author_instance(change.node_id)
-                if identity is None:
+                # A handled failure is written once, below, with how the step handled it.
+                if identity is None or change.status == "failed":
                     continue
                 kind = kind_of(identity.node_id)
                 status = (
@@ -458,7 +459,10 @@ class FactRepository:
                 add(node, "scheduled")
             if failed:
                 add(failed.instance_key or failed.node_id, "failed", error=result.state.incident)
-        if not steps and result.state.status not in TERMINAL:
+        from firefly_weave.runtime.step_failures import first_failures
+
+        handled = [] if isinstance(view, TerminalControl) else first_failures(result)
+        if not steps and not handled and result.state.status not in TERMINAL:
             return
         closed = result.state.status if result.state.status in {"cancelled", "timed_out"} else "cancelled"
         if result.state.status in TERMINAL:
@@ -490,6 +494,13 @@ class FactRepository:
             terminal=result.state.status in TERMINAL,
             closed=closed,
         )
+        for key, handling, code in handled:
+            identity = author_instance(key)
+            kind = kind_of(identity.node_id) if identity is not None else None
+            if kind is not None:
+                await self.handled_failure(
+                    view.id, key, kind, cast(Literal["continue", "errorOutput"], handling), code, event.timestamp
+                )
 
     async def step_claimed(self, task_id: UUID, generation: int, worker_id: UUID, at: datetime) -> None:
         await self.execute(
