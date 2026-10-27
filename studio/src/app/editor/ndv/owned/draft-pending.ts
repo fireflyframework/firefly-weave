@@ -22,9 +22,7 @@ SPDX-License-Identifier: Apache-2.0
 // what to publish. Drafts are never published as a side effect.
 import { getAt, parsePointer } from "../../../forms/core/json";
 import type { CanvasSidecar } from "../../state/canvas-sidecar";
-import { connectedPrefix, type AccountScope } from "../../state/browser-store";
-import { studioBackend } from "../../state/studio-storage";
-import { TableDrafts } from "../../state/table-drafts";
+import { accountTables, type AccountHost } from "../../state/host-definitions";
 import { withOwnedPending, type PendingAware } from "./owned-pending";
 import { ownedActionsOf } from "./owned-store";
 
@@ -59,25 +57,13 @@ export function withDraftPending<T extends PendingAware>(
   return pending ? { ...result, diagnostics, draftsPending: pending } : result;
 }
 
-export interface DraftCheckHost {
-  readonly profile: unknown;
-  readonly runAccount?: AccountScope | null;
-}
+export type DraftCheckHost = AccountHost;
 
 /** The `name@version` of every draft the signed-in account keeps on this computer. */
 export async function draftUses(host: DraftCheckHost): Promise<Set<string>> {
-  const scope = host.runAccount ?? null;
-  const prefix = !host.profile
-    ? "local:"
-    : scope?.subject
-      ? await connectedPrefix(scope).catch(() => null)
-      : null;
-  if (prefix === null) return new Set();
-  const tables = new TableDrafts(studioBackend(), prefix);
-  await tables.ready();
+  const tables = await accountTables(host);
   return new Set(
-    tables
-      .entries()
+    (tables?.entries() ?? [])
       .filter((entry) => entry.kind === "draft")
       .map((entry) => `${entry.name}@${entry.version}`),
   );

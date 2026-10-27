@@ -460,23 +460,6 @@ function stepIdentities(
   );
   return (id) => found.get(id);
 }
-/** The references every step of a workflow uses (actions, called workflows). */
-function allUses(workflow: { spec: { steps?: unknown } }): string[] {
-  const found: string[] = [];
-  const visit = (value: unknown) => {
-    if (Array.isArray(value)) return value.forEach(visit);
-    if (!value || typeof value !== "object") return;
-    const record = value as Record<string, unknown>;
-    if (
-      typeof record["uses"] === "string" &&
-      typeof record["kind"] === "string"
-    )
-      found.push(record["uses"]);
-    for (const item of Object.values(record)) visit(item);
-  };
-  visit(workflow.spec.steps);
-  return found;
-}
 /** No pinned steps (before the test data tools load). */
 const NO_PINS: ReadonlyMap<string, { stale: string | null }> = new Map();
 
@@ -7239,11 +7222,7 @@ export class App implements CanvasHost {
           backend: studioBackend(),
           now: () => new Date(),
           // The schemas a check needs come with the tools.
-          inputs: async () =>
-            (await this.loadTools()).checkInputsOf(
-              this.model.definition,
-              this.catalogContracts,
-            ),
+          inputs: async () => (await this.loadTools()).checkInputsFor(this),
           // A platform draft saves its test data with the draft.
           changed: () => {
             if (this.profile) this.autosave.touch();
@@ -7266,13 +7245,9 @@ export class App implements CanvasHost {
               : null,
           place: () => this.executionPlace,
           connected: () => !!this.profile,
-          // The contracts of the actions this workflow uses, nothing else Studio cached.
-          definitions: () => {
-            const uses = new Set(allUses(this.model.definition));
-            return [...this.catalogContracts]
-              .filter(([reference]) => uses.has(reference))
-              .map(([, document]) => document) as { [key: string]: Json }[];
-          },
+          // The contracts of the actions this workflow uses, and the drafts
+          // and copies kept on this computer for its steps.
+          definitions: () => tools.studioDefinitions(this),
           testData: () =>
             this.testData?.data() ?? {
               schemaVersion: 1,

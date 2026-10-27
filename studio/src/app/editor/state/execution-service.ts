@@ -72,7 +72,7 @@ export interface ExecutionHost {
   place(): { prefix: string } | null;
   connected(): boolean;
   /** Documents of the actions the workflow owns and local definitions it uses. */
-  definitions(): JsonObject[];
+  definitions(): JsonObject[] | Promise<JsonObject[]>;
   testData(): StudioTestData;
   prints(): ReadonlyMap<string, StepFingerprints> | null;
   /** The workflow's input fields, sampled when test data has no input. */
@@ -206,11 +206,22 @@ export class ExecutionService {
     const previous = this.results();
     const testData = this.host.testData();
     const sampled = testData.input?.value === undefined;
+    let definitions: JsonObject[];
+    try {
+      definitions = await this.host.definitions();
+    } catch (error) {
+      return {
+        kind: "failed",
+        message: error instanceof Error ? error.message : String(error),
+      };
+    }
+    if (generation !== this.generation || ticket !== this.ticket)
+      return { kind: "stale" };
     const body: ExecuteRequest = executeRequest({
       source: draft.source,
       format: draft.format,
       workflow: draft.workflow,
-      definitions: this.host.definitions(),
+      definitions,
       connected: this.host.connected(),
       testData,
       results: previous,
@@ -274,7 +285,7 @@ export class ExecutionService {
         source: draft.source,
         format: draft.format,
         workflow: draft.workflow,
-        definitions: this.host.definitions(),
+        definitions: await this.host.definitions(),
         connected: this.host.connected(),
         testData: this.host.testData(),
         results: this.results(),
