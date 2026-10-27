@@ -90,6 +90,7 @@ def test_snapshot_documents_each_operation_exactly():
                 "has_handled_errors",
                 "include_archived",
                 "activation_id",
+                "transaction_state",
                 "order",
                 "limit",
                 "cursor",
@@ -118,7 +119,7 @@ def test_snapshot_documents_each_operation_exactly():
     }
     assert sorted(document["schemas"]) == sorted(SCHEMAS)
     summary = document["schemas"]["run-summary-page"]["$defs"]["RunSummary"]
-    assert set(summary["properties"]) - set(summary["required"]) == {"handled_errors"}
+    assert set(summary["properties"]) - set(summary["required"]) == {"handled_errors", "transaction_state"}
     steps = document["schemas"]["step-fact-page"]["$defs"]
     assert set(steps["StepFact"]["properties"]) - set(steps["StepFact"]["required"]) == {"omissions", "handled"}
     assert set(steps["StepFactWithOutput"]["required"]) - set(steps["StepFact"]["required"]) == {"output"}

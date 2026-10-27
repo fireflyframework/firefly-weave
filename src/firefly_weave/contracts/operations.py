@@ -32,8 +32,9 @@ from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.catalog import Digest
 from firefly_weave.contracts.definitions import ContractModel, ResourceName, SemVer
 from firefly_weave.contracts.diagnostics import SourceRange
-from firefly_weave.contracts.instance_keys import InstanceKeyTextOrEmpty
-from firefly_weave.contracts.run_views import RunStatus, _same_step
+from firefly_weave.contracts.instance_keys import InstanceKeyText, InstanceKeyTextOrEmpty
+from firefly_weave.contracts.run_views import RunStatus, TransactionParticipantView, _same_step
+from firefly_weave.contracts.transactions import MAX_TRANSACTION_PARTICIPANTS, TransactionState
 from firefly_weave.contracts.values import JsonData
 from firefly_weave.operations.redaction import Omission, SafeProjection
 from firefly_weave.runtime.models import RunState, RuntimeEvent
@@ -43,7 +44,8 @@ class RecordedResolution(ContractModel):
     """A resolution as an incident keeps it: `output` is always written, null when it has none."""
 
     receipt_id: UUID
-    kind: Literal["retry_safe", "accept_reconciled_result", "terminate"]
+    # accept_reconciled_failure: a person said the step that can't be undone did not happen ("It didn't happen").
+    kind: Literal["retry_safe", "accept_reconciled_result", "accept_reconciled_failure", "terminate"]
     reason: str = Field(min_length=1, max_length=2000)
     output: JsonData = None
     evidence_reference: str | None = Field(default=None, min_length=1, max_length=2000)
@@ -78,6 +80,16 @@ class IncidentWorkflow(ContractModel):
     version: SemVer
 
 
+class IncidentTransaction(ContractModel):
+    """The transaction an in-doubt incident holds: its state, its steps and the ones still pending, without values."""
+
+    instance_key: InstanceKeyText
+    state: TransactionState
+    business_key: str | None = Field(default=None, max_length=200, exclude_if=lambda value: value is None)
+    participants: list[TransactionParticipantView] = Field(max_length=MAX_TRANSACTION_PARTICIPANTS)
+    pending: list[InstanceKeyText] = Field(max_length=MAX_TRANSACTION_PARTICIPANTS)
+
+
 class IncidentView(ContractModel):
     """An incident. Read from operational facts, `node_id` is the static step ID and `instance_key` the full key.
 
@@ -107,6 +119,9 @@ class IncidentView(ContractModel):
     workflow: IncidentWorkflow | None = Field(default=None, exclude_if=lambda value: value is None)
     run_status: RunStatus | None = Field(default=None, exclude_if=lambda value: value is None)
     test: bool = Field(default=False, exclude_if=lambda value: not value)
+    # An in-doubt incident: high priority, and the transaction it holds.
+    priority: Literal["high"] | None = Field(default=None, exclude_if=lambda value: value is None)
+    transaction: IncidentTransaction | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @model_validator(mode="after")
     def coherent(self) -> Self:
@@ -121,6 +136,8 @@ class IncidentView(ContractModel):
 
 class CancelRunRequest(ContractModel):
     reason: str = Field(min_length=1, max_length=2000)
+    # Stop without undoing the run's open transactions: they end force-ended. Needs `transaction.reconcile`.
+    skip_undo: bool = Field(default=False, exclude_if=lambda value: not value)
 
     @field_validator("reason")
     @classmethod

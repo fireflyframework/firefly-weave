@@ -21,6 +21,7 @@
         "has_handled_errors",
         "include_archived",
         "activation_id",
+        "transaction_state",
         "order",
         "limit",
         "cursor"
@@ -175,6 +176,21 @@
           "maximum": 100,
           "minimum": 1,
           "type": "integer"
+        },
+        "TransactionStateText": {
+          "enum": [
+            "open",
+            "deciding",
+            "committing",
+            "completed",
+            "compensating",
+            "compensated",
+            "cancelled",
+            "in_doubt",
+            "reconciled",
+            "force_ended"
+          ],
+          "type": "string"
         }
       },
       "$id": "run-list-query.schema.json",
@@ -340,6 +356,14 @@
           "default": false,
           "title": "Top Level Only",
           "type": "boolean"
+        },
+        "transaction_state": {
+          "items": {
+            "$ref": "#/$defs/TransactionStateText"
+          },
+          "maxItems": 10,
+          "title": "Transaction State",
+          "type": "array"
         },
         "version": {
           "anyOf": [
@@ -1028,6 +1052,17 @@
               "title": "Test",
               "type": "boolean"
             },
+            "transaction_state": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TransactionStateText"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
             "updated_at": {
               "format": "date-time",
               "title": "Updated At",
@@ -1139,6 +1174,21 @@
               "type": "string"
             }
           ]
+        },
+        "TransactionStateText": {
+          "enum": [
+            "open",
+            "deciding",
+            "committing",
+            "completed",
+            "compensating",
+            "compensated",
+            "cancelled",
+            "in_doubt",
+            "reconciled",
+            "force_ended"
+          ],
+          "type": "string"
         },
         "UnavailableResource": {
           "additionalProperties": false,
@@ -1290,6 +1340,21 @@
           "maximum": 100,
           "minimum": 1,
           "type": "integer"
+        },
+        "TransactionStateText": {
+          "enum": [
+            "open",
+            "deciding",
+            "committing",
+            "completed",
+            "compensating",
+            "compensated",
+            "cancelled",
+            "in_doubt",
+            "reconciled",
+            "force_ended"
+          ],
+          "type": "string"
         }
       },
       "$id": "run-summary-query.schema.json",
@@ -1455,6 +1520,14 @@
           "default": false,
           "title": "Top Level Only",
           "type": "boolean"
+        },
+        "transaction_state": {
+          "items": {
+            "$ref": "#/$defs/TransactionStateText"
+          },
+          "maxItems": 10,
+          "title": "Transaction State",
+          "type": "array"
         },
         "version": {
           "anyOf": [

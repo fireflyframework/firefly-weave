@@ -16,6 +16,7 @@
 
 """Authenticated native run routes. Kernel events are not public endpoints."""
 
+from typing import cast
 from uuid import UUID
 
 from pyfly.container.stereotypes import rest_controller
@@ -29,6 +30,7 @@ from firefly_weave.api.transport import (
     canonical_path,
     decode_cursor,
     decode_cursor_v2,
+    encode_cursor_v2,
     page_request,
     page_response,
     parse_query,
@@ -81,6 +83,26 @@ class RunController:
             request.state.principal, scope, identifier, limit=limit, cursor=cursor, context=request.state.audit_context
         )
         return JSONResponse(page_response(result, scope, collection, request.url.path))
+
+    @operation("runs.transactions")
+    async def transactions(self, request: Request) -> JSONResponse:
+        scope = request_scope(request, environment=True)
+        identifier = UUID(request.path_params["identifier"])
+        collection = f"run_transactions:{identifier}"
+        position = decode_cursor_v2(request.query_params.get("cursor"), scope, collection)
+        if position is not None and not isinstance(position[0], str):
+            raise ValueError("Invalid scope-bound cursor")
+        result = await self.service.transactions(
+            request.state.principal,
+            scope,
+            identifier,
+            limit=int(request.query_params.get("limit", "50")),
+            cursor=None if position is None else (cast(str, position[0]), position[1]),
+            context=request.state.audit_context,
+        )
+        last = result["next_cursor"]
+        cursor = None if last is None else encode_cursor_v2(scope, collection, last[0], last[1])
+        return JSONResponse({**result, "next_cursor": cursor})
 
     @operation("runs.signal")
     async def signal(self, request: Request) -> JSONResponse:

@@ -138,6 +138,7 @@ def test_field_names_and_order_are_frozen():
         "active_incidents",
         "archived",
         "handled_errors",
+        "transaction_state",
     ]
     assert list(StepFact.model_fields) == [
         "node_id",
@@ -194,6 +195,7 @@ def test_field_names_and_order_are_frozen():
         "has_handled_errors",
         "include_archived",
         "activation_id",
+        "transaction_state",
         "order",
         "limit",
         "cursor",
@@ -523,6 +525,8 @@ def test_handled_field_requires_failed_status(handled):
 
 def test_handled_summary_default_is_omitted_and_nonzero_round_trips():
     assert "handled_errors" not in parse(RunSummary, SUMMARY).model_dump(mode="json")
+    assert "transaction_state" not in parse(RunSummary, SUMMARY).model_dump(mode="json")
+    assert parse(RunSummary, {**SUMMARY, "transaction_state": "in_doubt"}).transaction_state == "in_doubt"
     value = {**SUMMARY, "handled_errors": 2}
     assert parse(RunSummary, value).model_dump(mode="json") == value
     with pytest.raises(ValidationError):
@@ -560,6 +564,7 @@ QUERY_CHANGES = {
     "has_handled_errors": True,
     "include_archived": True,
     "activation_id": RUN,
+    "transaction_state": ["in_doubt"],
     "order": "updated_desc",
 }
 

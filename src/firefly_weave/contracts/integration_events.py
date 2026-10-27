@@ -27,6 +27,7 @@ from pydantic import Field, field_validator, model_validator
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.definitions import ContractModel, ResourceName
 from firefly_weave.contracts.deployments import ChangeState
+from firefly_weave.contracts.platform_events import TransactionEventFacts
 
 EventType = Literal[
     "run.transition",
@@ -34,6 +35,12 @@ EventType = Literal[
     "activation.activated",
     "activation.retired",
     "change_request.transition",
+    "transaction.completed",
+    "transaction.compensated",
+    "transaction.cancelled",
+    "transaction.in_doubt",
+    "transaction.reconciled",
+    "transaction.force_ended",
 ]
 
 
@@ -45,6 +52,8 @@ class EventMetadata(ContractModel):
     revision: int | None = Field(default=None, ge=1)
     # A change request's new state; left out when None, so stored run and catalog events keep their bytes.
     change_state: ChangeState | None = Field(default=None, exclude_if=lambda v: v is None)
+    # A transaction event's facts: keys, states, codes and the business key, never business values.
+    transaction: TransactionEventFacts | None = Field(default=None, exclude_if=lambda v: v is None)
 
 
 class IntegrationEvent(ContractModel):
@@ -73,7 +82,7 @@ class SubscriptionRequest(ContractModel):
     connection_revision_id: UUID
     signing_slot: ResourceName
     path: str = Field(max_length=2048)
-    event_types: tuple[EventType, ...] = Field(min_length=1, max_length=5)
+    event_types: tuple[EventType, ...] = Field(min_length=1, max_length=12)
     statuses: tuple[int, ...] = (200, 202, 204)
 
     @field_validator("path")

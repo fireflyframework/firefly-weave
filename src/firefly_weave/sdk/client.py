@@ -103,7 +103,7 @@ from firefly_weave.contracts.public import (
     catalog_lock,
 )
 from firefly_weave.contracts.run_lifecycle import RunLifecycle, RunLifecycleRequest, RunPurgeRequest
-from firefly_weave.contracts.run_views import RunListOrder, RunListQuery
+from firefly_weave.contracts.run_views import RunListOrder, RunListQuery, RunTransactionView
 from firefly_weave.contracts.runtime import (
     CapacityRunAcknowledgment,
     RunCallView,
@@ -516,13 +516,18 @@ class WeaveClient:
     async def export_activation(self, identifier: UUID) -> ActivationExport:
         return cast(ActivationExport, await self.invoke("activations.export", identifier=identifier))
 
-    async def retire_activation(self, identifier: UUID, *, revision: int, idempotency_key: str) -> Activation:
+    async def retire_activation(
+        self, identifier: UUID, *, revision: int, idempotency_key: str, force: bool = False
+    ) -> Activation:
+        """Retire an activation. ``force`` retires one a running transaction may still need to undo a step (needs
+        ``transaction.reconcile``)."""
         return cast(
             Activation,
             await self.invoke(
                 "activations.retire",
                 identifier=identifier,
                 body=RetirementRequest(),
+                query={"force": "true"} if force else None,
                 revision=revision,
                 idempotency_key=idempotency_key,
             ),
@@ -555,11 +560,15 @@ class WeaveClient:
         return cast(SignalReceipt, await self.invoke("runs.signal", identifier=identifier, body=request))
 
     async def cancel(
-        self, identifier: UUID, reason: str
+        self, identifier: UUID, reason: str, *, skip_undo: bool = False
     ) -> RunView | UnavailableRunAcknowledgment | CapacityRunAcknowledgment:
+        """Cancel a run. ``skip_undo`` stops it without undoing its open transactions (needs
+        ``transaction.reconcile``)."""
         return cast(
             RunView | UnavailableRunAcknowledgment | CapacityRunAcknowledgment,
-            await self.invoke("runs.cancel", identifier=identifier, body=CancelRunRequest(reason=reason)),
+            await self.invoke(
+                "runs.cancel", identifier=identifier, body=CancelRunRequest(reason=reason, skip_undo=skip_undo)
+            ),
         )
 
     async def retry(self, identifier: UUID, request: StartRunRequest, *, idempotency_key: str) -> RunView:
@@ -583,6 +592,15 @@ class WeaveClient:
         """The calls a run made, with each child run's ID and status; read a child run for its input and output."""
         return cast(
             Page[RunCallView], await self.invoke("runs.calls", identifier=identifier, query=self._page(limit, cursor))
+        )
+
+    async def run_transactions(
+        self, identifier: UUID, *, limit: int = 50, cursor: str | None = None
+    ) -> Page[RunTransactionView]:
+        """The transactions a run opened: each one's state, steps, cause and resolution, never business values."""
+        return cast(
+            Page[RunTransactionView],
+            await self.invoke("runs.transactions", identifier=identifier, query=self._page(limit, cursor)),
         )
 
     async def run_incidents(

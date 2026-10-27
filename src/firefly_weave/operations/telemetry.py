@@ -44,6 +44,7 @@ from pyfly.container.stereotypes import service
 from pyfly.observability.ports import MetricsRecorder
 
 from firefly_weave.contracts.surface import OPERATIONS
+from firefly_weave.contracts.transactions import TRANSACTION_MESSAGES, TRANSIENT_WORKER_CODES
 
 SCOPE = "firefly.weave"
 LABELS = ("operation", "status", "error_code")
@@ -61,6 +62,14 @@ OPERATIONS_ALLOWED = frozenset(OPERATIONS) | frozenset(
         "call.detach",
         "call.dispatch",
         "call.delivery",
+        "transaction.commit",
+        "transaction.rollback",
+        "transaction.resolve",
+        "transaction.confirm",
+        "transaction.cancel",
+        "transaction.compensate",
+        "transaction.in_doubt",
+        "transaction.compensating",
         "other",
     }
 )
@@ -84,6 +93,9 @@ ERRORS = frozenset(
         "WV-RETENTION",
         "WV-CONFLICT",
         "WV-POLICY-MISMATCH",
+        # Transaction codes, and the shared worker codes a transaction's cause most often carries.
+        *(code for code in TRANSACTION_MESSAGES if code.startswith("WV-TXN-")),
+        *TRANSIENT_WORKER_CODES,
     }
 )
 COUNTERS = {
@@ -98,6 +110,8 @@ COUNTERS = {
     "loop_iteration": "weave.loop_iterations",
     "loop_yield": "weave.loop_yields",
     "call": "weave.calls",
+    "transaction": "weave.transactions",
+    "transaction_phase": "weave.transaction_phases",
     "dropped": "weave.telemetry_dropped",
     "queue_unknown": "weave.queue_unknown",
 }
@@ -311,7 +325,8 @@ class TelemetryService:
     def inventory(self, operation: str, count: int, *, observed_age: float, complete: bool) -> None:
         # An incomplete sweep must leave the last complete value untouched.
         if complete:
-            attrs = attributes(operation, "ok")
+            # Transactions still undoing or in doubt are counted as pending work.
+            attrs = attributes(operation, "pending" if operation.startswith("transaction.") else "ok")
             self.metrics.gauge("weave.inventory", "", list(LABELS)).labels(**attrs).set(count)
             self.metrics.gauge("weave.inventory_freshness", "", list(LABELS)).labels(**attrs).set(observed_age)
 

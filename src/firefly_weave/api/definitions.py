@@ -26,8 +26,14 @@ from starlette.responses import JSONResponse
 
 from firefly_weave.api.access import request_scope
 from firefly_weave.api.surface import operation
-from firefly_weave.api.transport import canonical_path, decode_cursor, encode_cursor, parse_revision
-from firefly_weave.contracts.catalog import ActivationRequest, DraftRequest, PublicationRequest, RetirementRequest
+from firefly_weave.api.transport import canonical_path, decode_cursor, encode_cursor, parse_query, parse_revision
+from firefly_weave.contracts.catalog import (
+    ActivationRequest,
+    ActivationRetirementQuery,
+    DraftRequest,
+    PublicationRequest,
+    RetirementRequest,
+)
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.definitions.service import DefinitionService
 
@@ -215,6 +221,7 @@ class DefinitionController:
     @operation("activations.retire")
     async def retire_activation(self, request: Request) -> JSONResponse:
         RetirementRequest.model_validate_json(await request.body() or b"{}")
+        query = parse_query(request.query_params, ActivationRetirementQuery)
         result = await self.service.retire_activation(
             request.state.principal,
             request_scope(request, environment=True),
@@ -222,6 +229,7 @@ class DefinitionController:
             request.headers.get("Idempotency-Key", ""),
             expected_revision(request),
             context=request.state.audit_context,
+            force=query.force,
         )
         return response(result.model_dump(mode="json"))
 

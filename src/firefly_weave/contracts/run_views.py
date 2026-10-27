@@ -35,7 +35,7 @@ from pydantic import AwareDatetime, Field, field_validator, model_validator
 from pydantic_core import PydanticCustomError
 
 from firefly_weave.contracts.definitions import ContractModel, ResourceName, SemVer
-from firefly_weave.contracts.instance_keys import InstanceKeyTextOrEmpty, node_of, split_instance
+from firefly_weave.contracts.instance_keys import InstanceKeyText, InstanceKeyTextOrEmpty, node_of, split_instance
 from firefly_weave.contracts.public import UnavailableResource
 from firefly_weave.contracts.values import FiniteFloat, JsonData, SafeInteger
 from firefly_weave.operations.redaction import Omission
@@ -78,6 +78,18 @@ type Cursor = Annotated[str, Field(min_length=1, max_length=2048, pattern=r"^[A-
 type SummaryLimit = Annotated[int, Field(ge=1, le=100)]
 type DetailLimit = Annotated[int, Field(ge=1, le=500)]
 type StatusFilter = Annotated[list[RunStatus], Field(max_length=8)]
+type TransactionStateText = Literal[
+    "open",
+    "deciding",
+    "committing",
+    "completed",
+    "compensating",
+    "compensated",
+    "cancelled",
+    "in_doubt",
+    "reconciled",
+    "force_ended",
+]
 type Count = Annotated[int, Field(ge=0)]
 type Milliseconds = Annotated[int, Field(ge=0)]
 type LogCode = Annotated[str, Field(min_length=1, max_length=100, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")]
@@ -117,6 +129,70 @@ def _filter_error(message: str) -> PydanticCustomError:
 
 def _digest(value: object) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+class TransactionParticipantView(ContractModel):
+    """One step of a transaction: its keys, how it is undone, where it stands and how many attempts its phase took.
+
+    It never carries a value: no input, output or undo scope.
+    """
+
+    node_id: ResourceName
+    instance_key: InstanceKeyText
+    mode: Literal["reserve", "compensate", "irreversible"]
+    status: str = Field(min_length=1, max_length=32)
+    effect: Literal["none", "unknown"]
+    attempts: int | None = Field(default=None, ge=0, exclude_if=lambda value: value is None)
+
+
+class RunTransactionCause(ContractModel):
+    """Why a transaction left its normal path: the code, the step instance that caused it, and its effect."""
+
+    code: str = Field(min_length=1, max_length=100)
+    instance_key: InstanceKeyText
+    effect: Literal["none", "unknown"] = "unknown"
+
+
+class RunTransactionResolution(ContractModel):
+    """How a person resolved the transaction's in-doubt incident; never the reconciled values."""
+
+    kind: Literal["retry_safe", "accept_reconciled_result", "accept_reconciled_failure", "terminate"]
+    reason: str = Field(min_length=1, max_length=2000)
+    evidence_reference: str | None = Field(default=None, max_length=2000, exclude_if=lambda value: value is None)
+    actor_id: UUID | None = Field(default=None, exclude_if=lambda value: value is None)
+    resolved_at: AwareDatetime | None = Field(default=None, exclude_if=lambda value: value is None)
+    # How a person said the transaction ended, when they marked it reconciled.
+    reconciled_as: Literal["completed", "compensated"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+
+
+class RunTransactionView(ContractModel):
+    """One transaction of a run, from its record: its state, steps, cause and resolution. It carries no values."""
+
+    instance_key: InstanceKeyText
+    node_id: ResourceName
+    iteration: list[int] = Field(default_factory=list)
+    state: Literal[
+        "open",
+        "deciding",
+        "committing",
+        "completed",
+        "compensating",
+        "compensated",
+        "cancelled",
+        "in_doubt",
+        "reconciled",
+        "force_ended",
+    ]
+    business_key: BusinessKey | None = Field(default=None, exclude_if=lambda value: value is None)
+    cause: RunTransactionCause | None = Field(default=None, exclude_if=lambda value: value is None)
+    opened_at: AwareDatetime
+    decided_at: AwareDatetime | None = Field(default=None, exclude_if=lambda value: value is None)
+    ended_at: AwareDatetime | None = Field(default=None, exclude_if=lambda value: value is None)
+    participants: list[TransactionParticipantView] = Field(max_length=1000)
+    incident_id: UUID | None = Field(default=None, exclude_if=lambda value: value is None)
+    resolution: RunTransactionResolution | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class RunSummaryWorkflow(ContractModel):
@@ -175,6 +251,8 @@ class RunSummary(ContractModel):
     active_incidents: Count
     archived: bool
     handled_errors: HandledErrorCount = Field(default=0, exclude_if=lambda value: value == 0)
+    # The run's transaction state: its worst transaction's, in the design's order (left out without transactions).
+    transaction_state: TransactionStateText | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @model_validator(mode="after")
     def coherent(self) -> RunSummary:
@@ -317,6 +395,10 @@ class RunSummaryQuery(ContractModel):
     has_handled_errors: bool | None = None
     include_archived: bool = False
     activation_id: UUID | None = None
+    # Runs whose transaction state is one of these (up to ten); left out of the cursor binding while empty.
+    transaction_state: list[TransactionStateText] = Field(
+        default_factory=list, max_length=10, exclude_if=lambda value: not value
+    )
     order: RunSummaryOrder = "started_desc"
     limit: SummaryLimit = 50
     cursor: Cursor | None = None
@@ -324,6 +406,11 @@ class RunSummaryQuery(ContractModel):
     @field_validator("status")
     @classmethod
     def canonical_status(cls, value: list[RunStatus]) -> list[RunStatus]:
+        return sorted(set(value))
+
+    @field_validator("transaction_state")
+    @classmethod
+    def canonical_transaction_state(cls, value: list[str]) -> list[str]:
         return sorted(set(value))
 
     @field_validator("started_after", "started_before", mode="before")

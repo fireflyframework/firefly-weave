@@ -17,6 +17,7 @@
 """Terminal-only SQL persistence keeps oversized retained values inside PostgreSQL."""
 
 import json
+from datetime import datetime
 from functools import partial
 from typing import Any, Literal, cast
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
@@ -93,10 +94,10 @@ UNSETTLED_SQL = "('open','deciding','committing','compensating','in_doubt')"
 
 async def hold_transactions(repository: RuntimeRepository, row: dict[str, Any], event: RuntimeEvent) -> bool:
     """A run too large for its own state cannot undo its transactions, and a plain cancel or timeout never abandons
-    them. A cancel is refused. A timeout fires once and holds the run, its transactions left open, behind an in-doubt
-    incident in the run's own state that only a force cancel closes, so later changes keep it and forward work waits.
-    It is written in SQL, as the oversized terminal path is, because the kernel cannot take the run any more. True when
-    the timeout was held this way.
+    them. A cancel is refused. A timeout, or a transaction's own deadline, fires once and holds the run, its
+    transactions left open, behind an in-doubt incident in the run's own state that only a force end or a force cancel
+    closes, so later changes keep it and forward work waits. It is written in SQL, as the oversized terminal path is,
+    because the kernel cannot take the run any more. True when the deadline was held this way (or the run already was).
     """
     unsettled = await repository.rows(
         f"SELECT 1 FROM run_transactions WHERE {SCOPE} AND run_id=:run AND state IN {UNSETTLED_SQL} LIMIT 1",
@@ -111,13 +112,18 @@ async def hold_transactions(repository: RuntimeRepository, row: dict[str, Any], 
         raise CatalogError(409, "WV-TXN-IN-DOUBT", TRANSACTION_MESSAGES[HELD_CODE])
     wait = UUID(str(event.data["wait_id"]))
     await repository.execute(
-        "INSERT INTO wait_wakeups VALUES(:tenant,:project,:environment,:wait,'timeout',:now) ON CONFLICT DO NOTHING",
+        "INSERT INTO wait_wakeups VALUES(:tenant,:project,:environment,:wait,:kind,:now) ON CONFLICT DO NOTHING",
         wait=wait,
+        kind="elapsed" if event.type == "wait_elapsed" else "timeout",
         now=event.timestamp,
     )
     await repository.execute(
         f"UPDATE run_deadlines SET consumed=true WHERE {SCOPE} AND run_id=:run AND id=:wait", run=row["id"], wait=wait
     )
+    if HELD_INCIDENT in ((row.get("state") or {}).get("incidents") or {}):
+        # Already held: a later deadline only fires once, and the hold stays as it is.
+        repository.tx.record("transition", "deadline")
+        return True
     data: dict[str, JsonValue] = {
         "node_id": HELD_NODE,
         "generation": 0,
@@ -156,6 +162,7 @@ async def hold_transactions(repository: RuntimeRepository, row: dict[str, Any], 
     )
     if len(inserted) != 1:
         raise CatalogError(409, "WV-RUNTIME-SEQUENCE", "Run sequence changed")
+    await record_held_evidence(repository, row, held)
     await repository.execute(
         "WITH opened AS (INSERT INTO incidents(id,tenant_id,project_id,environment_id,run_id,incident_key,node_id,"
         "generation,origin_code,code,status,revision) VALUES(md5(cast(cast(:run AS uuid) AS text) || ':' || :key)"
@@ -195,6 +202,60 @@ async def hold_transactions(repository: RuntimeRepository, row: dict[str, Any], 
         )
     repository.tx.record("transition", "deadline")
     return True
+
+
+async def record_held_evidence(repository: RuntimeRepository, row: dict[str, Any], held: RuntimeEvent) -> None:
+    """Evidence for the hold, so a history export names it: the run is too large for the kernel, so the expected
+    transition is omitted for its size and replay stops at the hold, as it stops at an oversized stop."""
+    if not row.get("artifact"):
+        return
+    try:
+        artifact = await execute_pure(partial(import_artifact, row["artifact"]), control=True)
+    except ValueError:
+        return
+    evidence = RecordedEvidence(
+        run_id=row["id"],
+        scope=repository.tx.scope,
+        artifact_digest=artifact.digest,
+        lock_digest=lock_digest(artifact),
+        omissions=[Omission(path="/expected_transition_digest", reason="resource_limit")],
+    )
+    await repository.execute(
+        "INSERT INTO run_event_evidence VALUES(:tenant,:project,:environment,:run,:event,:sequence,"
+        "cast(:evidence AS jsonb))",
+        run=row["id"],
+        event=held.id,
+        sequence=held.sequence,
+        evidence=evidence.model_dump_json(),
+    )
+
+
+async def force_end_transactions(repository: RuntimeRepository, row: dict[str, Any], at: datetime) -> list[str]:
+    """A reconciler ends a run too large for the kernel without undoing anything: its unsettled transactions end
+    force-ended, in the record and in the run's own state, in SQL. Returns their keys."""
+    ended = await repository.rows(
+        f"UPDATE run_transactions SET state='force_ended',ended_at=:at,revision=revision+1 WHERE {SCOPE} "
+        f"AND run_id=:run AND state IN {UNSETTLED_SQL} RETURNING instance_key",
+        run=row["id"],
+        at=at,
+    )
+    keys = [item["instance_key"] for item in ended]
+    if keys:
+        await repository.execute(
+            "UPDATE runs SET state=jsonb_set(state,'{transactions}',(SELECT jsonb_object_agg(key,CASE WHEN "
+            "key=ANY(cast(:keys AS text[])) THEN value || jsonb_build_object('status','force_ended','ended_at',"
+            "cast(:stamp AS text)) ELSE value END) FROM jsonb_each(state->'transactions'))) "
+            f"WHERE {SCOPE} AND id=:run",
+            run=row["id"],
+            keys=keys,
+            stamp=at.isoformat(),
+        )
+        await repository.execute(
+            "UPDATE run_facts SET transaction_state='force_ended' "
+            f"WHERE {SCOPE} AND run_id=:run AND transaction_state IS DISTINCT FROM 'force_ended'",
+            run=row["id"],
+        )
+    return keys
 
 
 async def persist_terminal(

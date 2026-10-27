@@ -22,6 +22,7 @@ Everything here runs in the transaction that accepts a run's event, under that r
 
 import json
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 from uuid import NAMESPACE_URL, UUID, uuid5
@@ -35,12 +36,41 @@ from firefly_weave.runtime.repository import SCOPE, RuntimeRepository
 
 if TYPE_CHECKING:
     from firefly_weave.compiler.api import CompiledArtifact
+    from firefly_weave.contracts.platform_events import TransactionEventFacts
     from firefly_weave.contracts.runtime import RunView
 
 # The code a participant task reports when its transaction went back before any worker claimed it.
 REVOKED_CODE = "WV-TXN-ROLLED-BACK"
 _WORKER_TASK_STATUSES = ("ready", "leased", "retry_pending", "incident", "failed")
 _ORDER = " ".join(f"WHEN '{state}' THEN {index}" for index, state in enumerate(TRANSACTION_STATE_ORDER))
+
+
+def spends_reserve(event: RuntimeEvent, result: Transition) -> bool:
+    """Whether a transition is settlement work, which spends the run's control reserve like a stop does.
+
+    Undoing a transaction is part of stopping its run, so it never waits for quota: a cancel or timeout that undoes
+    transactions first, a transaction's own deadlines, results of confirms, cancels and undos, and results of steps
+    still in flight while their transaction goes back. A transition that ends the run is a stop already.
+    """
+    from firefly_weave.runtime.transactions import split_deadline
+
+    state = result.state
+    if state.status in {"succeeded", "failed", "cancelled", "timed_out"} or state.unavailable:
+        return False
+    if event.type in {"cancelled", "timed_out"}:
+        return state.ending is not None
+    name = event.data.get("node_id")
+    if not isinstance(name, str):
+        return False
+    try:
+        if split_phase(name) is not None or split_deadline(name) is not None:
+            return True
+    except ValueError:
+        return False
+    return any(
+        record.rollback and any(item.key == name for item in record.participants)
+        for record in state.transactions.values()
+    )
 
 
 async def settle_work(repository: RuntimeRepository, run_id: UUID, key: str, at: datetime) -> None:
@@ -190,6 +220,219 @@ def participants_view(record: TransactionRecord) -> list[JsonObject]:
     return views
 
 
+# Statuses that show a transaction is going back.
+_GOING_BACK = frozenset({"undoing", "undo_stuck", "cancelling", "cancel_stuck", "undone", "cancelled"})
+# Phases of the participant statuses whose work is not finished.
+_PHASES = {
+    "confirming": "confirm",
+    "confirm_stuck": "confirm",
+    "cancelling": "cancel",
+    "cancel_stuck": "cancel",
+    "undoing": "undo",
+    "undo_stuck": "undo",
+}
+# The transaction states that emit an event when a transaction reaches them.
+EVENT_STATES = frozenset({"completed", "compensated", "cancelled", "in_doubt", "reconciled", "force_ended"})
+
+
+def pending(state: str, participants: list[JsonObject]) -> list[str]:
+    """Steps of a transaction whose work is not finished: in flight, being confirmed, released or undone, stuck, or
+    still to be undone while the transaction goes back."""
+    waiting = {"dispatched", *_PHASES}
+    if state == "compensating" or any(item.get("status") in _GOING_BACK for item in participants):
+        waiting |= {"done", "unknown"}
+    return [str(item["instance_key"]) for item in participants if item.get("status") in waiting]
+
+
+@dataclass(frozen=True)
+class TransactionMeasure:
+    operation: str
+    status: str
+    error_code: str
+    duration: float | None
+
+
+def transaction_measure(record: TransactionRecord, incidents: Mapping[str, Any]) -> TransactionMeasure | None:
+    """The counter a transaction's terminal or in-doubt state records, with its three bounded labels; ``None`` for
+    a state that records none. Commits and rollbacks also measure how long the transaction ran."""
+    from firefly_weave.operations.telemetry import attributes
+
+    duration = (
+        (record.ended_at - record.opened_at).total_seconds()
+        if record.ended_at is not None and record.opened_at is not None
+        else None
+    )
+    cause = record.cause.code if record.cause is not None else "none"
+    if record.status == "completed":
+        labels = ("transaction.commit", "ok", "none")
+    elif record.status in {"compensated", "cancelled"}:
+        labels = ("transaction.rollback", "ok", cause)
+    elif record.status == "in_doubt":
+        held = incidents.get(record.incident) if record.incident is not None else None
+        going_back = record.rollback or any(item.status in _GOING_BACK for item in record.participants)
+        operation = "transaction.rollback" if going_back else "transaction.commit"
+        labels = (operation, "unknown", held.code if held is not None else cause)
+        duration = None
+    elif record.status == "reconciled":
+        labels = ("transaction.resolve", "ok", "none")
+        duration = None
+    elif record.status == "force_ended":
+        labels = ("transaction.resolve", "cancelled", "none")
+        duration = None
+    else:
+        return None
+    bounded = attributes(*labels)
+    return TransactionMeasure(bounded["operation"], bounded["status"], bounded["error_code"], duration)
+
+
+def phase_measure(key: str, kind: str, data: Mapping[str, Any]) -> tuple[str, str] | None:
+    """The phase counter's operation and status for one result of a confirm, cancel or undo."""
+    phase = split_phase(key)
+    if phase is None or kind not in {"task_completed", "call_completed", "step_failed"}:
+        return None
+    operation = f"transaction.{phase[1]}"
+    if kind == "task_completed" or (kind == "call_completed" and data.get("status") == "succeeded"):
+        return operation, "ok"
+    if kind == "step_failed" and data.get("effect", "unknown") != "none":
+        return operation, "unknown"
+    return operation, "failed"
+
+
+def log_line(
+    key: str, before: TransactionRecord | None, after: TransactionRecord, incidents: Mapping[str, Any]
+) -> str | None:
+    """What the run log says when a transaction starts going back or falls into doubt: keys and codes only."""
+    from firefly_weave.contracts.instance_keys import node_of
+
+    if after.status == "compensating" and (before is None or before.status != "compensating"):
+        count = sum(
+            1
+            for item in after.participants
+            if item.mode in {"reserve", "compensate"} and item.status in {"done", "unknown", "undoing", "cancelling"}
+        )
+        cause = after.cause
+        if cause is None:
+            return f"{key}: undoing {count} steps"
+        return f"{key}: undoing {count} steps after {node_of(cause.instance_key)} failed ({cause.code})"
+    if after.status == "in_doubt" and (before is None or before.status != "in_doubt"):
+        held = incidents.get(after.incident) if after.incident is not None else None
+        forward = split_phase(held.node_id) if held is not None else None
+        if held is not None and forward is not None:
+            item = next((p for p in after.participants if p.key == forward[0]), None)
+            word = {"confirm": "confirm", "cancel": "release", "compensate": "undo"}[forward[1]]
+            tries = item.attempts if item is not None else 0
+            return f"{key}: in doubt: {word} of {node_of(forward[0])} couldn't finish after {tries} tries"
+        if held is not None:
+            return f"{key}: in doubt: {node_of(held.node_id)} ({held.code})"
+        return f"{key}: in doubt"
+    return None
+
+
+def event_facts(
+    run_id: UUID,
+    key: str,
+    record: TransactionRecord,
+    incidents: Mapping[str, Any],
+    *,
+    workflow: tuple[str, str],
+    test: bool,
+    incident_id: UUID | None,
+) -> "TransactionEventFacts":
+    """What a transaction event carries: keys, states, codes and the business key, never a business value."""
+    import re
+
+    from firefly_weave.contracts.instance_keys import node_of
+    from firefly_weave.contracts.platform_events import TransactionEventFacts
+
+    code = re.compile(r"^[A-Z][A-Z0-9_-]{0,63}$")
+    views = participants_view(record)
+    waiting = set(pending(record.status, views)) if record.status not in {"completed", "reconciled"} else set()
+    if record.rollback:
+        waiting |= {item.key for item in record.participants if item.status in {"done", "unknown"}}
+    steps: dict[str, list[JsonObject]] = {"done": [], "undone": [], "pending": []}
+    for item in record.participants:
+        step: JsonObject = {"step": node_of(item.key), "instance_key": item.key, "how": item.mode}
+        if item.key in waiting and record.status not in {"force_ended"}:
+            if item.status in _PHASES:
+                step["phase"] = _PHASES[item.status]
+                if item.attempts:
+                    step["attempts"] = item.attempts
+            steps["pending"].append(step)
+        elif item.status in {"done", "confirmed"}:
+            steps["done"].append(step)
+        elif item.status in {"undone", "cancelled"}:
+            steps["undone"].append(step)
+    cause: JsonObject | None = None
+    held = incidents.get(record.incident) if record.incident is not None else None
+    if record.status == "in_doubt" and held is not None:
+        forward = split_phase(held.node_id)
+        cause = {"code": held.code, "step": node_of(forward[0] if forward else held.node_id)}
+        if held.origin_code is not None and code.match(held.origin_code):
+            cause["origin_code"] = held.origin_code
+    elif record.cause is not None and code.match(record.cause.code):
+        cause = {"code": record.cause.code, "step": node_of(record.cause.instance_key)}
+    return TransactionEventFacts.model_validate_json(
+        json.dumps(
+            {
+                "workflow": {"name": workflow[0], "version": workflow[1]},
+                "run_id": str(run_id),
+                "instance_key": key,
+                "business_key": None if record.business_key_withheld else record.business_key,
+                "state": record.status,
+                **({"cause": cause} if cause is not None else {}),
+                "steps": steps,
+                **({"incident_id": str(incident_id)} if incident_id is not None else {}),
+                "test": test,
+            }
+        )
+    )
+
+
+async def emit(
+    repository: RuntimeRepository,
+    run_id: UUID,
+    key: str,
+    record: TransactionRecord,
+    result: Transition,
+    event: RuntimeEvent,
+    facts: Mapping[str, Any],
+) -> None:
+    """One integration event for a transaction that reached a terminal or in-doubt state, in the same commit."""
+    import hashlib
+
+    from firefly_weave.contracts.integration_events import EventMetadata, IntegrationEvent
+
+    if repository.outbox is None:
+        raise RuntimeError("Outbox required")
+    incident = record.incident if record.status == "in_doubt" else None
+    incident_id = (
+        UUID(hashlib.md5(f"{run_id}:{incident}".encode(), usedforsecurity=False).hexdigest())
+        if incident is not None
+        else None
+    )
+    transaction = event_facts(
+        run_id,
+        key,
+        record,
+        result.state.incidents,
+        workflow=(facts["workflow_name"], facts["workflow_version"]),
+        test=bool(facts["test"]),
+        incident_id=incident_id,
+    )
+    await repository.outbox.append(
+        repository.tx,
+        IntegrationEvent(
+            event_id=uuid5(NAMESPACE_URL, f"firefly-weave/txn/{run_id}/{key}/{record.status}/{record.revision}"),
+            type=f"transaction.{record.status}",  # type: ignore[arg-type]
+            scope=repository.tx.scope,
+            resource_id=run_id,
+            correlation_id=run_id,
+            emitted_at=event.timestamp,
+            payload=EventMetadata(transaction=transaction),
+        ),
+    )
+
+
 async def project_transactions(
     repository: RuntimeRepository, view: "RunView", result: Transition, event: RuntimeEvent
 ) -> None:
@@ -199,33 +442,63 @@ async def project_transactions(
         for command in result.commands
         if isinstance(command, ControlCommand) and command.kind == "transaction"
     ]
+    phase = phase_measure(str(event.data.get("node_id")), event.type, event.data)
+    if phase is not None:
+        repository.tx.record("transaction_phase", *phase)
     if not changed:
         return
+    facts: dict[str, Any] | None = None
     for key in dict.fromkeys(changed):
         record = result.state.transactions.get(key)
         if record is None:
             continue
+        before = await repository.rows(
+            f"SELECT state FROM run_transactions WHERE {SCOPE} AND run_id=:run AND instance_key=:key",
+            run=view.id,
+            key=key,
+        )
         decided = event.timestamp if record.decided_at_sequence == event.sequence else None
         await repository.execute(
             "INSERT INTO run_transactions(tenant_id,project_id,environment_id,run_id,instance_key,node_id,state,"
-            "business_key,cause,participants,revision,opened_at,decided_at,ended_at) VALUES(:tenant,:project,"
-            ":environment,:run,:key,:node,:state,:business_key,cast(:cause AS jsonb),cast(:participants AS jsonb),"
-            ":revision,:opened,:decided,:ended) ON CONFLICT(run_id,instance_key) DO UPDATE SET state=excluded.state,"
+            "business_key,cause,participants,revision,opened_at,decided_at,ended_at,incident_key) VALUES(:tenant,"
+            ":project,:environment,:run,:key,:node,:state,:business_key,cast(:cause AS jsonb),"
+            "cast(:participants AS jsonb),:revision,:opened,:decided,:ended,:incident) "
+            "ON CONFLICT(run_id,instance_key) DO UPDATE SET state=excluded.state,"
             "business_key=excluded.business_key,cause=excluded.cause,participants=excluded.participants,"
             "revision=excluded.revision,decided_at=coalesce(run_transactions.decided_at,excluded.decided_at),"
-            "ended_at=excluded.ended_at WHERE run_transactions.revision<excluded.revision",
+            # The latest in-doubt incident stays named once a person resolved it, so reads find its resolution.
+            "ended_at=excluded.ended_at,incident_key=coalesce(excluded.incident_key,run_transactions.incident_key) "
+            "WHERE run_transactions.revision<excluded.revision",
             run=view.id,
             key=key,
             node=instance_view(key).node_id,
             state=record.status,
-            business_key=record.business_key,
+            business_key=None if record.business_key_withheld else record.business_key,
             cause=None if record.cause is None else record.cause.model_dump_json(),
             participants=json.dumps(participants_view(record)),
             revision=record.revision,
             opened=record.opened_at,
             decided=decided,
             ended=record.ended_at,
+            incident=record.incident,
         )
+        if record.status in EVENT_STATES and (not before or before[0]["state"] != record.status):
+            measure = transaction_measure(record, result.state.incidents)
+            if measure is not None:
+                repository.tx.record(
+                    "transaction",
+                    measure.operation,
+                    measure.status,
+                    measure.error_code,
+                    duration=measure.duration,
+                )
+            if facts is None:
+                rows = await repository.rows(
+                    f"SELECT workflow_name,workflow_version,test FROM run_facts WHERE {SCOPE} AND run_id=:run",
+                    run=view.id,
+                )
+                facts = rows[0] if rows else {"workflow_name": "", "workflow_version": "", "test": False}
+            await emit(repository, view.id, key, record, result, event, facts)
     await repository.execute(
         "UPDATE run_facts SET transaction_state=(SELECT state FROM run_transactions t "
         f"WHERE t.{SCOPE.replace(' AND ', ' AND t.')} AND t.run_id=:run "
@@ -238,3 +511,75 @@ def phase_of(key: str) -> str | None:
     """``confirm``, ``cancel`` or ``compensate`` for a phase key; ``None`` for a forward step."""
     phase = split_phase(key)
     return None if phase is None else phase[1]
+
+
+async def transaction_page(
+    repository: RuntimeRepository, run_id: UUID, limit: int, after: tuple[str, str] | None
+) -> dict[str, Any]:
+    """One page of a run's transactions, oldest first, from their records only, as ``RunTransactionView`` items.
+
+    ``after`` is the opening time and instance key of the last item of the previous page. Each item names its latest
+    in-doubt incident and how a person resolved it, without the values they gave.
+    """
+    from firefly_weave.contracts.run_views import RunTransactionView
+    from firefly_weave.definitions.models import CatalogError
+    from firefly_weave.persistence.paging import PAGE_BYTES
+
+    rows = await repository.rows(
+        "SELECT t.instance_key,t.node_id,t.state,t.business_key,t.cause,t.participants,t.opened_at,t.decided_at,"
+        "t.ended_at,i.id AS incident_id,i.resolution,i.actor_id,i.resolved_at,"
+        "sum(octet_length(t.participants::text)+coalesce(octet_length(i.resolution::text),0)) OVER () AS page_bytes "
+        "FROM run_transactions t LEFT JOIN incidents i ON i.tenant_id=t.tenant_id AND i.project_id=t.project_id "
+        "AND i.environment_id=t.environment_id AND i.run_id=t.run_id AND i.incident_key=t.incident_key "
+        f"WHERE t.{SCOPE.replace(' AND ', ' AND t.')} AND t.run_id=:run AND (cast(:after_at AS timestamptz) IS NULL "
+        "OR (t.opened_at,t.instance_key)>(cast(:after_at AS timestamptz),:after_key)) "
+        "ORDER BY t.opened_at,t.instance_key LIMIT :limit",
+        run=run_id,
+        after_at=None if after is None else datetime.fromisoformat(after[0]),
+        after_key="" if after is None else after[1],
+        limit=limit + 1,
+    )
+    if rows and rows[0]["page_bytes"] > PAGE_BYTES:
+        raise CatalogError(429, "WV-PAGE-LIMIT", "Selected page exceeds the logical byte limit")
+    items = []
+    for row in rows[:limit]:
+        identity = instance_view(row["instance_key"])
+        resolution = row["resolution"]
+        recorded = None
+        if isinstance(resolution, dict):
+            output = resolution.get("output")
+            ending = output.get("as") if isinstance(output, dict) else None
+            recorded = {
+                "kind": resolution["kind"],
+                "reason": resolution["reason"],
+                "evidence_reference": resolution.get("evidence_reference"),
+                "actor_id": None if row["actor_id"] is None else str(row["actor_id"]),
+                "resolved_at": None if row["resolved_at"] is None else row["resolved_at"].isoformat(),
+                "reconciled_as": ending
+                if ending in {"completed", "compensated"} and row["state"] == "reconciled"
+                else None,
+            }
+        view = RunTransactionView.model_validate_json(
+            json.dumps(
+                {
+                    "instance_key": row["instance_key"],
+                    "node_id": row["node_id"],
+                    "iteration": list(identity.iteration),
+                    "state": row["state"],
+                    "business_key": row["business_key"],
+                    "cause": row["cause"],
+                    "opened_at": row["opened_at"].isoformat(),
+                    "decided_at": None if row["decided_at"] is None else row["decided_at"].isoformat(),
+                    "ended_at": None if row["ended_at"] is None else row["ended_at"].isoformat(),
+                    "participants": row["participants"],
+                    "incident_id": None if row["incident_id"] is None else str(row["incident_id"]),
+                    "resolution": recorded,
+                }
+            )
+        )
+        items.append(view.model_dump(mode="json"))
+    last = rows[limit - 1] if len(rows) > limit else None
+    return {
+        "items": items,
+        "next_cursor": None if last is None else (last["opened_at"].isoformat(), last["instance_key"]),
+    }

@@ -58,7 +58,7 @@ _RUN_COLUMNS = (
     "f.activation_revision,f.status,f.paused,f.test,f.origin,f.caller_run_id,f.caller_node_id,"
     "f.caller_instance_key,f.retried_from_run_id,f.business_key,f.correlation_key,f.started_at,f.updated_at,"
     "f.ended_at,f.failed_node_id,f.failed_instance_key,f.failed_error_code,f.active_incidents,f.handled_errors,"
-    "f.classification_state,f.classification_policy,f.pinned_ir_version,f.pinned_features"
+    "f.transaction_state,f.classification_state,f.classification_policy,f.pinned_ir_version,f.pinned_features"
 )
 _RUN_FROM = (
     ",coalesce(a.archived,false) AS archived,EXISTS(SELECT 1 FROM run_policy_blocks b "
@@ -86,9 +86,15 @@ _INCIDENT_KEYS = "SELECT i.id,f.opened_at FROM incidents i" + _INCIDENT_FACTS + 
 # One statement for the selected incidents: their columns, measured together against the page budget before the
 # resolutions are returned, their facts and their run's classification metadata.
 _INCIDENT_DETAILS = (
-    "WITH page AS (SELECT i.*,sum(octet_length(to_jsonb(i)::text)) OVER () AS page_bytes FROM incidents i "
+    # An in-doubt incident brings the transaction it holds, measured with it.
+    "WITH page AS (SELECT i.*,t.instance_key AS txn_key,t.state AS txn_state,t.business_key AS txn_business_key,"
+    "t.participants AS txn_participants,sum(octet_length(to_jsonb(i)::text)"
+    "+coalesce(octet_length(t.participants::text),0)) OVER () AS page_bytes FROM incidents i "
+    "LEFT JOIN run_transactions t ON t.tenant_id=i.tenant_id AND t.project_id=i.project_id "
+    "AND t.environment_id=i.environment_id AND t.run_id=i.run_id AND t.incident_key=i.incident_key "
     "WHERE " + _INCIDENT_SCOPE + " AND i.id=ANY(:ids)) "
     "SELECT i.id,i.run_id,i.incident_key,i.node_id,i.generation,i.origin_code,i.code,i.status,i.revision,"
+    "i.txn_key,i.txn_state,i.txn_business_key,i.txn_participants,"
     "i.actor_id,i.resolved_at,CASE WHEN i.page_bytes<=:budget THEN i.resolution END AS resolution,"
     "i.page_bytes>:budget AS oversized,f.incident_id IS NOT NULL AS projected,f.node_id AS static_node_id,"
     "f.instance_key,f.opened_at,f.updated_at,f.opened_at_estimated,f.workflow_name,f.workflow_version,f.test,"
@@ -207,6 +213,7 @@ def summary_of(row: Mapping[str, Any]) -> RunSummary | UnavailableResource:
                 active_incidents=row["active_incidents"],
                 handled_errors=row["handled_errors"],
                 archived=row["archived"],
+                transaction_state=row.get("transaction_state"),
             )
         )
     except (ValueError, TypeError, KeyError, OverflowError):
@@ -265,6 +272,26 @@ def _step_identity(source: str | None, static: str | None, instance: str | None)
     return (static, instance or "") if source == (instance or static) else None
 
 
+def transaction_facts(row: Mapping[str, Any]) -> dict[str, Any]:
+    """``priority`` and ``transaction`` of an in-doubt incident, from the transaction record it names; nothing else."""
+    from firefly_weave.contracts.transactions import IN_DOUBT_CODES
+    from firefly_weave.runtime.settlement import pending
+
+    if row["code"] not in IN_DOUBT_CODES:
+        return {}
+    facts: dict[str, Any] = {"priority": "high"}
+    if row.get("txn_key") is not None:
+        participants = row["txn_participants"] or []
+        facts["transaction"] = {
+            "instance_key": row["txn_key"],
+            "state": row["txn_state"],
+            "participants": participants,
+            "pending": pending(row["txn_state"], participants),
+            **({"business_key": row["txn_business_key"]} if row.get("txn_business_key") is not None else {}),
+        }
+    return facts
+
+
 def incident_of(row: Mapping[str, Any]) -> IncidentView | UnavailableResource:
     """An incident from its own columns and its facts; withheld unless its run's metadata is available.
 
@@ -300,6 +327,7 @@ def incident_of(row: Mapping[str, Any]) -> IncidentView | UnavailableResource:
         workflow=dict(name=row["workflow_name"], version=row["workflow_version"]),
         run_status=row["run_status"],
         test=row["test"],
+        **transaction_facts(row),
     )
     try:
         return IncidentView.model_validate_json(json.dumps(values, default=_json))
@@ -367,6 +395,9 @@ class FactReadRepository(FactRepository):
         if query.status:
             clauses.append("f.status=ANY(:statuses)")
             params["statuses"] = query.status
+        if query.transaction_state:
+            clauses.append("f.transaction_state=ANY(:transaction_states)")
+            params["transaction_states"] = query.transaction_state
         if not query.include_test:
             clauses.append("NOT f.test")
         if query.top_level_only:

@@ -1879,7 +1879,9 @@ def _advance_owned(
                 if current_state.run_id is None:
                     raise KernelError("WV-RUNTIME-STATE")
                 current_state.transactions[current] = TransactionRecord(
-                    business_key=cast(str | None, business_key), opened_at=event.timestamp
+                    business_key=cast(str | None, business_key),
+                    business_key_withheld=txns is not None and node.id in txns.withheld,
+                    opened_at=event.timestamp,
                 )
                 result.commands.append(ControlCommand(kind="transaction", node_id=current))
                 # The body runs as one block frame, joined at the transaction's join.

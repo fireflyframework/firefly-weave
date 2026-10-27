@@ -245,6 +245,7 @@ def test_every_operation_crosses_the_bridge_exactly_when_its_family_or_id_is_adm
         "operations_telemetry.read",
         "releases.usage",
         "runs.calls",
+        "runs.transactions",
         "studio_documents.read",
         "studio_documents.save",
         "studio_documents.delete",

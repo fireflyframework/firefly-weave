@@ -43,6 +43,7 @@ from firefly_weave.contracts.broker import BrokerIncident, BrokerTrigger, Broker
 from firefly_weave.contracts.catalog import (
     Activation,
     ActivationRequest,
+    ActivationRetirementQuery,
     Draft,
     DraftRequest,
     PublicationRequest,
@@ -183,6 +184,7 @@ from firefly_weave.contracts.run_views import (
     RunStepQuery,
     RunSummaryPage,
     RunSummaryQuery,
+    RunTransactionView,
     StepFactPage,
 )
 from firefly_weave.contracts.runtime import (
@@ -1481,6 +1483,7 @@ OPERATIONS = {
             idempotency=True,
             etag=True,
             request_required=False,
+            query=ActivationRetirementQuery,
         ),
         Operation(
             "connections.create",
@@ -1601,6 +1604,14 @@ OPERATIONS = {
         Operation("runs.replay", ENVIRONMENT + "/runs/{identifier}/replay", "GET", ReplayReport, "run.read"),
         Operation(
             "runs.calls", ENVIRONMENT + "/runs/{identifier}/calls", "GET", Page[RunCallView], "run.read", page=True
+        ),
+        Operation(
+            "runs.transactions",
+            ENVIRONMENT + "/runs/{identifier}/transactions",
+            "GET",
+            Page[RunTransactionView],
+            "run.read",
+            page=True,
         ),
         Operation(
             "run_summaries.list",

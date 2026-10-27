@@ -163,6 +163,8 @@ class TransactionShapes:
     # How many loops enclose each transaction step: its instance key keeps that many loop indexes.
     depths: Mapping[str, int]
     reads: Mapping[str, PhaseReads]
+    # Transaction steps whose business key reads an input classified secret: it never leaves in events or records.
+    withheld: frozenset[str] = frozenset()
 
     def owner_key(self, key: str) -> str | None:
         """The instance key of the transaction whose body holds the instance ``key``, or ``None``."""
@@ -210,7 +212,48 @@ def shapes(ir: WorkflowIR) -> TransactionShapes | None:
                 elif segments[0] in {"item", "index", "loops"}:
                     roots.add(segments[0])
         reads[node.id] = PhaseReads(frozenset(steps), frozenset(roots), own)
-    return TransactionShapes(MappingProxyType(owners), MappingProxyType(depths), MappingProxyType(reads))
+    withheld = frozenset(
+        node.id
+        for node in transactions
+        if node.business_key is not None
+        and any(secret_input(ir, pointer) for pointer in references(node.business_key.model_dump(by_alias=True)))
+    )
+    return TransactionShapes(MappingProxyType(owners), MappingProxyType(depths), MappingProxyType(reads), withheld)
+
+
+def secret_input(ir: WorkflowIR, pointer: str) -> bool:
+    """Whether a pointer may read an input value classified secret (``x-secret`` or ``writeOnly``).
+
+    The input schema is followed property by property; where it can't be followed exactly (references, combinators,
+    pattern or additional properties), any marker under the input schema counts. Pointers that don't read the input
+    read values the run produced and are not classified here.
+    """
+    from firefly_weave.operations.redaction import has_markers
+
+    segments = pointer.split("/")[1:]
+    if not segments or segments[0] != "input":
+        return False
+    schema: object = ir.schemas[ir.input_schema]
+    whole = has_markers(cast(JsonValue, schema)) or any(
+        has_markers(cast(JsonValue, item.document)) for item in ir.dependencies if item.kind == "Schema"
+    )
+    for segment in segments[1:]:
+        if not isinstance(schema, dict):
+            return whole
+        if schema.get("x-secret") is True or schema.get("writeOnly") is True:
+            return True
+        if any(keyword in schema for keyword in ("$ref", "allOf", "anyOf", "oneOf", "if", "patternProperties")):
+            return whole
+        properties = schema.get("properties")
+        if isinstance(properties, dict) and segment in properties:
+            schema = properties[segment]
+        elif isinstance(schema.get("items"), dict) and segment.isdigit():
+            schema = schema["items"]
+        else:
+            return whole
+    return has_markers(cast(JsonValue, schema)) or (
+        isinstance(schema, dict) and any(keyword in schema for keyword in ("$ref", "allOf", "anyOf", "oneOf")) and whole
+    )
 
 
 def is_participant(node: IRNode) -> bool:

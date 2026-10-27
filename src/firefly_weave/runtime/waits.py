@@ -112,7 +112,7 @@ async def settle(repository: RuntimeRepository, row: dict[str, Any], *, terminal
         try:
             result = await transition(view.state, event, artifact)
         except RuntimeCapacityError:
-            if elapsed:
+            if elapsed and bound is None:
                 raise
             from firefly_weave.runtime.terminal_capacity import hold_transactions, persist_terminal
 
@@ -126,11 +126,20 @@ async def settle(repository: RuntimeRepository, row: dict[str, Any], *, terminal
                 return 1
             if failures is not None and restored is not None:
                 failures[:] = restored
+            if elapsed:
+                # A transaction deadline of a run with nothing left unsettled: the run is too large, as before.
+                raise
             await persist_terminal(repository, row, event, canonical_digest({"timeout": str(deadline["id"])}))
             return 1
         if not elapsed and result.state.status in TERMINAL:
             # A timeout that ends the run is terminal control; one whose transactions settle first is ordinary work.
             await repository.execute("SELECT weave_control_begin('run',:id)", id=view.id)
+        else:
+            from firefly_weave.runtime.settlement import spends_reserve
+
+            if spends_reserve(event, result):
+                # Undoing or bounding a transaction spends the run's reserve before anything of it is written.
+                await repository.execute("SELECT weave_settle_begin(:id)", id=view.id)
         await repository.execute(
             "INSERT INTO wait_wakeups VALUES(:tenant,:project,:environment,:wait,:kind,:now)",
             kind="elapsed" if elapsed else "timeout",

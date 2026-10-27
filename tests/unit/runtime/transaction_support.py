@@ -147,7 +147,10 @@ def transaction(steps: list[dict[str, Any]], *, identifier: str = "move", **sett
     }
 
 
-def compiled(steps: list[dict[str, Any]], *, output: Any = None, timeout: int | None = None) -> CompiledArtifact:
+def compiled(
+    steps: list[dict[str, Any]], *, output: Any = None, timeout: int | None = None, secret: bool = False
+) -> CompiledArtifact:
+    """A workflow of ``steps``; ``secret`` classifies the ``moveId`` input as secret."""
     spec: dict[str, Any] = {
         "inputSchema": {
             "type": "object",
@@ -165,6 +168,8 @@ def compiled(steps: list[dict[str, Any]], *, output: Any = None, timeout: int | 
     }
     if timeout is not None:
         spec["timeoutSeconds"] = timeout
+    if secret:
+        spec["inputSchema"]["properties"]["moveId"]["x-secret"] = True
     document = {
         "apiVersion": "weave/v1alpha1",
         "kind": "Workflow",

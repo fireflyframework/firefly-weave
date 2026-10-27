@@ -856,6 +856,37 @@ class DefinitionService:
                         )
             return {"items": items, "next_cursor": str(rows[limit - 1]["id"]) if len(rows) > limit else None}
 
+    async def _refuse_pinned_undo_target(
+        self,
+        repository: DefinitionRepository,
+        actor: Principal,
+        scope: Scope,
+        identifier: UUID,
+        *,
+        force: bool,
+        context: AuditContext,
+    ) -> None:
+        """A caller whose runs still hold a transaction may need this activation to undo or confirm a step: retiring
+        it is refused unless a reconciler forces it."""
+        from firefly_weave.contracts.transactions import TRANSACTION_MESSAGES
+
+        pinned = await repository.rows(
+            "SELECT 1 FROM run_transactions t JOIN runs r ON r.tenant_id=t.tenant_id AND r.project_id=t.project_id "
+            "AND r.environment_id=t.environment_id AND r.id=t.run_id WHERE t.tenant_id=:tenant "
+            "AND t.project_id=:project AND t.environment_id=:environment "
+            "AND t.state IN ('open','deciding','committing','compensating','in_doubt') "
+            "AND r.activation->'workflow_call_pins' @> jsonb_build_array(jsonb_build_object('activation_id',"
+            "cast(:id AS text))) LIMIT 1",
+            environment=scope.environment_id,
+            id=str(identifier),
+        )
+        if not pinned:
+            return
+        if not force:
+            raise CatalogError(409, "WV-TXN-UNDO-PINNED", TRANSACTION_MESSAGES["WV-TXN-UNDO-PINNED"])
+        self.require(actor, scope, "transaction.reconcile", context)
+        self.require(await load_principal(repository.tx.session, actor.id), scope, "transaction.reconcile", context)
+
     async def retire_activation(
         self,
         actor: Principal,
@@ -866,6 +897,7 @@ class DefinitionService:
         *,
         context: AuditContext,
         tx: Transaction | None = None,
+        force: bool = False,
     ) -> Activation:
         if scope.environment_id is None:
             raise CatalogError(422, "WV-SCOPE", "An environment is required")
@@ -876,7 +908,7 @@ class DefinitionService:
                 actor.id,
                 f"retire-activation:{scope.environment_id}",
                 idempotency_key,
-                {"id": str(identifier), "expected_revision": expected_revision},
+                {"id": str(identifier), "expected_revision": expected_revision, **({"force": True} if force else {})},
             )
             prior = await replay.replay()
             if prior is not None:
@@ -902,6 +934,7 @@ class DefinitionService:
             check_revision(latest[0]["revision"], expected_revision)
             if latest[0]["id"] != selected.id:
                 raise CatalogError(412, "WV-ETAG", "Only the current activation may be retired")
+            await self._refuse_pinned_undo_target(repository, actor, scope, selected.id, force=force, context=context)
             activation = Activation(
                 id=uuid4(),
                 revision=selected.revision + 1,

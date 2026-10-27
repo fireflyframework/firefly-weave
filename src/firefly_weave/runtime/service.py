@@ -336,6 +336,28 @@ class RuntimeService:
 
             return await call_page(repository, identifier, limit, cursor)
 
+    async def transactions(
+        self,
+        actor: Principal,
+        scope: Scope,
+        identifier: UUID,
+        *,
+        limit: int = 50,
+        cursor: tuple[str, str] | None = None,
+        context: AuditContext,
+    ) -> dict[str, Any]:
+        """The transactions a run opened, from their records; each carries keys and states, never values."""
+        if not 1 <= limit <= 100:
+            raise CatalogError(422, "WV-PAGE", "A bounded page is required")
+        self.require(actor, scope, "run.read", context)
+        async with self.definitions.transaction(scope, None, mutation=False) as tx:
+            self.require(await load_principal(tx.session, actor.id), scope, "run.read", context)
+            repository = RuntimeRepository(tx, self.definitions.outbox)
+            view_of(await repository.run(identifier))
+            from firefly_weave.runtime.settlement import transaction_page
+
+            return await transaction_page(repository, identifier, limit, cursor)
+
     async def apply(
         self,
         actor: Principal,
@@ -542,9 +564,17 @@ class RuntimeService:
         return await RuntimeRepository(tx, self.definitions.outbox).task_deadline(run_id, deadline)
 
     async def cancel(
-        self, tx: Transaction, run_id: UUID, reason: str, *, actor: Principal, scope: Scope, context: AuditContext
+        self,
+        tx: Transaction,
+        run_id: UUID,
+        reason: str,
+        *,
+        actor: Principal,
+        scope: Scope,
+        context: AuditContext,
+        skip_undo: bool = False,
     ) -> RunView | UnavailableRunAcknowledgment | CapacityRunAcknowledgment:
-        return await self._cancel(tx, run_id, reason, actor=actor, scope=scope, context=context)
+        return await self._cancel(tx, run_id, reason, actor=actor, scope=scope, context=context, skip_undo=skip_undo)
 
     async def cancel_child(self, tx: Transaction, run_id: UUID, caller_run_id: UUID, *, reason: str = "") -> None:
         """Cancel a child run because its caller ended or its caller's transaction is undone: the caller's call is the
@@ -591,22 +621,34 @@ class RuntimeService:
         scope: Scope,
         context: AuditContext,
         caller: UUID | None = None,
+        skip_undo: bool = False,
     ) -> RunView | UnavailableRunAcknowledgment | CapacityRunAcknowledgment:
         from firefly_weave.runtime.waits import TERMINAL
 
-        request = CancelRunRequest(reason=reason)
+        request = CancelRunRequest(reason=reason, skip_undo=skip_undo)
         # A child whose caller ended is cancelled on the caller's authority; everyone else needs run.cancel.
         if caller is None:
             self.require(actor, scope, "run.cancel", context)
+        if skip_undo:
+            # Stopping without undoing leaves other systems as they are: a reconciler's decision.
+            self.require(actor, scope, "transaction.reconcile", context)
         cascade = {} if caller is None else {"caller_run_id": str(caller)}
         async with self.definitions.transaction(scope, tx) as tx:
             repository = RuntimeRepository(tx, self.definitions.outbox)
-            from firefly_weave.runtime.terminal_capacity import hold_transactions, oversized_row, persist_terminal
+            from firefly_weave.runtime.terminal_capacity import (
+                force_end_transactions,
+                hold_transactions,
+                oversized_row,
+                persist_terminal,
+            )
 
             oversized = await oversized_row(repository, run_id)
             row = oversized or await repository.run(run_id, lock=True)
             if caller is None:
                 self.require(await load_principal(tx.session, actor.id), scope, "run.cancel", context)
+            if skip_undo:
+                self.require(await load_principal(tx.session, actor.id), scope, "transaction.reconcile", context)
+            skipped = {"skip_undo": True} if skip_undo else {}
             if oversized is not None:
                 if row["state"]["status"] == "cancelled":
                     return CapacityRunAcknowledgment(
@@ -617,8 +659,10 @@ class RuntimeService:
                     type="cancelled",
                     timestamp=await repository.now(),
                     sequence=row["state"]["accepted_sequence"] + 1,
-                    data={"actor_id": str(actor.id), "reason": request.reason},
+                    data={"actor_id": str(actor.id), "reason": request.reason, **skipped},
                 )
+                if skip_undo:
+                    await force_end_transactions(repository, row, event.timestamp)
                 await hold_transactions(repository, row, event)
                 capacity_ack = await persist_terminal(repository, row, event, event_hash(event))
                 await audit(
@@ -629,7 +673,7 @@ class RuntimeService:
                     scope=scope,
                     capability="run.cancel",
                     context=context.model_copy(update={"run_id": run_id}),
-                    details={"external_effects_may_continue": True, "reason": request.reason, **cascade},
+                    details={"external_effects_may_continue": True, "reason": request.reason, **skipped, **cascade},
                 )
                 return capacity_ack
             from firefly_weave.runtime.admission import unavailable
@@ -653,14 +697,15 @@ class RuntimeService:
                 raise CatalogError(409, "WV-RUNTIME-TERMINAL", "Historical terminal runs cannot be cancelled")
             from firefly_weave.contracts.transactions import IN_DOUBT_CODES
 
-            if any(record.status == "in_doubt" for record in previous.state.transactions.values()) or any(
-                item.code in IN_DOUBT_CODES for item in previous.state.incidents.values()
+            if not skip_undo and (
+                any(record.status == "in_doubt" for record in previous.state.transactions.values())
+                or any(item.code in IN_DOUBT_CODES for item in previous.state.incidents.values())
             ):
                 # A transaction in doubt, or a run holding its transactions because it grew too large to undo them.
                 from firefly_weave.contracts.transactions import TRANSACTION_MESSAGES
 
                 raise CatalogError(409, "WV-TXN-IN-DOUBT", TRANSACTION_MESSAGES["WV-TXN-IN-DOUBT"])
-            if previous.state.ending is not None and isinstance(previous, RunView):
+            if previous.state.ending is not None and isinstance(previous, RunView) and not skip_undo:
                 # Already undoing its transactions before it ends.
                 return previous.model_copy(update={"pending_undo": True})
             event = RuntimeEvent(
@@ -671,6 +716,7 @@ class RuntimeService:
                 data={
                     "actor_id": str(actor.id),
                     **({"code": "WV-LEGACY-UNAVAILABLE"} if quarantined else {"reason": request.reason}),
+                    **({} if quarantined else skipped),
                 },
             )
             from firefly_weave.runtime.capacity import RuntimeCapacityError
@@ -680,6 +726,8 @@ class RuntimeService:
                     previous.state, event, None if quarantined else import_artifact(row["artifact"])
                 )
             except RuntimeCapacityError:
+                if skip_undo:
+                    await force_end_transactions(repository, row, event.timestamp)
                 await hold_transactions(repository, row, event)
                 capacity_ack = await persist_terminal(repository, row, event, event_hash(event))
                 await audit(
@@ -690,7 +738,7 @@ class RuntimeService:
                     scope=scope,
                     capability="run.cancel",
                     context=context.model_copy(update={"run_id": run_id}),
-                    details={"external_effects_may_continue": True, "reason": request.reason, **cascade},
+                    details={"external_effects_may_continue": True, "reason": request.reason, **skipped, **cascade},
                 )
                 return capacity_ack
             draining = result.state.status not in TERMINAL
@@ -719,7 +767,7 @@ class RuntimeService:
                 details={
                     "external_effects_may_continue": not draining,
                     **({"pending_undo": True} if draining else {}),
-                    **({} if quarantined else {"reason": request.reason}),
+                    **({} if quarantined else {"reason": request.reason, **skipped}),
                     **cascade,
                 },
             )

@@ -35,6 +35,13 @@ class RetirementRequest(ContractModel):
     pass
 
 
+class ActivationRetirementQuery(ContractModel):
+    """`activations.retire` query parameters. ``force`` retires an activation a running transaction may still need
+    to undo a step; it needs ``transaction.reconcile``."""
+
+    force: bool = False
+
+
 class PublicationRequest(ContractModel):
     source: str
     format: Literal["yaml", "json"]

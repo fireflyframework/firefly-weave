@@ -123,6 +123,10 @@ capability = "run.read"
 capability = "run.read"
 identifier = "random"
 
+[operations."runs.transactions"]
+capability = "run.read"
+identifier = "random"
+
 [operations."runs.logs"]
 capability = "run.read"
 identifier = "random"

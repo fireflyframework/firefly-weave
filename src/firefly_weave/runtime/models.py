@@ -160,6 +160,8 @@ class TransactionRecord(ContractModel):
     incident: str | None = Field(default=None, exclude_if=lambda v: v is None)
     # Set once the transaction starts going back: the rest of its body never runs.
     rollback: bool = Field(default=False, exclude_if=lambda v: not v)
+    # The business key derives from an input classified secret: events, records and the run log never carry it.
+    business_key_withheld: bool = Field(default=False, exclude_if=lambda v: not v)
     # How a person said a transaction in doubt ended when they marked it reconciled.
     reconciled_as: Literal["completed", "compensated"] | None = Field(default=None, exclude_if=lambda v: v is None)
     participants: list[ParticipantRecord] = Field(default_factory=list)
