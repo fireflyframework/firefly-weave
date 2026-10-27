@@ -1,0 +1,227 @@
+/*
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+*/
+/* The run log: docked 320 px right of the canvas; a bottom sheet below
+   768 px. Rows and controls 32 px, 44 px on touch. */
+:host {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  width: 320px;
+  max-width: 100%;
+  box-sizing: border-box;
+  border-left: 1px solid var(--border);
+  background: var(--raised);
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+/* A short sheet scrolls as a whole; the head stays in view. */
+:host > * {
+  flex: none;
+}
+.run-log-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--raised);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 40px;
+  padding: 0 var(--space-2) 0 var(--space-3);
+  border-bottom: 1px solid var(--line);
+}
+.run-log-title {
+  margin: 0;
+  font: var(--type-label);
+  white-space: nowrap;
+}
+.run-log-status {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font: var(--type-small);
+  color: var(--muted);
+  /* One line, never broken inside a name; the whole status is its tooltip. */
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.run-log-close {
+  flex: none;
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  min-height: 32px;
+}
+.run-log-controls {
+  display: flex;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--line);
+}
+.run-log-controls button {
+  min-height: 32px;
+}
+.run-log-question {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-bottom: 1px solid var(--line);
+}
+.run-log-question-text {
+  margin: 0;
+  font: var(--type-label);
+}
+.run-log-decisions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.run-log-decision {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: 32px;
+  font: var(--type-small);
+}
+.run-log-json-label {
+  font: var(--type-small);
+  color: var(--muted);
+}
+.run-log-json {
+  font: var(--type-mono);
+  resize: vertical;
+}
+.run-log-question button[type="submit"] {
+  justify-self: start;
+}
+.run-log-list {
+  flex: 1 1 0;
+  min-height: 96px;
+  margin: 0;
+  padding: var(--space-1) 0;
+  overflow: auto;
+  list-style: none;
+}
+.run-log-entry {
+  display: grid;
+  grid-template-columns: 16px minmax(0, auto) minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: 32px;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  font: var(--type-small);
+  text-align: start;
+}
+.run-log-entry:hover {
+  background: var(--hover);
+}
+.run-log-entry:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+.run-log-icon {
+  color: var(--muted);
+}
+.run-log-entry[data-status="completed"] .run-log-icon {
+  color: var(--success-ink);
+}
+.run-log-entry[data-status="failed"] .run-log-icon {
+  color: var(--danger-ink);
+}
+.run-log-step,
+.run-log-summary {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.run-log-summary {
+  color: var(--muted);
+}
+.run-log-breakpoint {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--danger-ink);
+}
+.run-log-note {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--line);
+  font: var(--type-small);
+  color: var(--muted);
+}
+.run-log-empty {
+  margin: 0;
+  padding: var(--space-3);
+  font: var(--type-small);
+  color: var(--muted);
+}
+/* On a narrow sheet the status takes its own line under the title, whole;
+   what scrolls into view stays clear of the taller head. */
+@media (max-width: 767px) {
+  :host {
+    scroll-padding-top: 72px;
+  }
+  .run-log-head {
+    flex-wrap: wrap;
+    padding-block: var(--space-1);
+  }
+  .run-log-close {
+    margin-left: auto;
+  }
+  .run-log-status {
+    order: 3;
+    flex-basis: 100%;
+    padding-bottom: var(--space-1);
+  }
+}
+@media (max-width: 767px) {
+  :host {
+    top: auto;
+    left: 0;
+    width: auto;
+    height: var(--run-log-sheet, 40%);
+    border-top: 1px solid var(--border);
+    border-left: 0;
+  }
+}
+@media (max-width: 767px), (pointer: coarse) {
+  .run-log-entry,
+  .run-log-controls button,
+  .run-log-question button,
+  .run-log-decision,
+  .run-log-close {
+    min-height: 44px;
+  }
+  .run-log-close {
+    width: 44px;
+    height: 44px;
+  }
+}

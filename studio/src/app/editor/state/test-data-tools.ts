@@ -16,14 +16,38 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 // What the shell computes from test data — fingerprints, pin states for the
-// canvas, the simulation's starting values and the check's schemas — loaded
-// after the first page, so the shell's first chunk stays small.
+// canvas, the simulation's starting values and the check's schemas — and the
+// test data service itself, loaded after the first page, so the shell's first
+// chunk stays small.
 import type { StructuredCanvasAdapter } from "../../model";
 import type { Json } from "../ndv/registry";
 import { fingerprints, type StepFingerprints } from "./fingerprints";
 import { contractOf, ownedContract, pinsView, staleText } from "./pins-stale";
 import type { StudioTestData } from "./test-data";
+import { TestDataService, type TestDataHost } from "./test-data-service";
+import { ExecutionService, type ExecutionHost } from "./execution-service";
 export { checkInputsOf } from "./test-data-inputs";
+export * as testDataOps from "./test-data-ops";
+export { readTestData } from "./test-data-read";
+export { CHECK_WORDS } from "./test-data-check";
+export {
+  finalAnnouncement,
+  playbackFrames,
+  PLAYBACK_STEP_MS,
+} from "../canvas/trace-playback";
+export { summaryLine } from "./run-summary";
+export { findStep } from "../ndv/step-walk";
+export { branchVariables, staleResults } from "./last-results";
+
+/** Executes on the Studio host and keeps the last results; it loads with the tools too. */
+export function createExecutionService(host: ExecutionHost): ExecutionService {
+  return new ExecutionService(host);
+}
+
+/** The open workflow's test data service, made here so it loads with the tools, after the first page. */
+export function createTestDataService(host: TestDataHost): TestDataService {
+  return new TestDataService(host);
+}
 
 /** Every step's fingerprints for this workflow and test input. */
 export function printsOf(

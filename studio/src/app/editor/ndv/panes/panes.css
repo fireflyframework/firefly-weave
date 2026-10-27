@@ -535,6 +535,35 @@ weave-input-pane.is-compact .pane-source-field::before {
   font: var(--type-small);
   color: var(--danger-ink);
 }
+/* What the last execution said about this step: it needs test data, or a path it didn't take. */
+.pane-notice {
+  margin: 0 0 var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--sunken);
+}
+.pane-notice-text {
+  margin: 0;
+  font: var(--type-small);
+  color: var(--text);
+}
+.pane-notice .pane-empty-actions {
+  justify-content: flex-start;
+}
+/* On a phone the empty state's answers stack, of equal width. */
+@media (max-width: 480px) {
+  .pane-empty-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+/* The panes' own actions (Execute, Set test output, Stop): 44 px targets on touch. */
+@media (max-width: 767px), (pointer: coarse) {
+  .pane-empty-actions > button {
+    min-height: 44px;
+  }
+}
 
 /* Edit output: the JSON editor fills the pane; its note and actions end it. */
 .pane-content.is-editing {
@@ -599,4 +628,151 @@ weave-input-pane.is-compact .pane-source-field::before {
   flex: none;
   height: var(--sd-target);
   min-height: var(--sd-target);
+}
+
+/* The Table view: a sticky header, one line per cell, 32 px rows (44 px on touch). */
+.data-table-scroll {
+  max-width: 100%;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+.data-table-scroll:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font: var(--type-small);
+}
+.data-table :is(th, td) {
+  height: 32px;
+  max-width: 240px;
+  padding: 0 var(--space-2);
+  overflow: hidden;
+  text-align: start;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--line);
+}
+.data-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--sunken);
+  color: var(--muted);
+  font-weight: 600;
+}
+.data-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+.data-table-note {
+  margin: var(--space-2) 0 0;
+  font: var(--type-small);
+  color: var(--muted);
+}
+@media (max-width: 767px), (pointer: coarse) {
+  .data-table :is(th, td) {
+    height: 44px;
+  }
+}
+
+/* A decision's paths (Output, after an execution): 32 px rows, 44 px on touch. */
+.path-list {
+  margin: 0 0 var(--space-3);
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+.path-row {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 32px;
+  padding: 0 var(--space-2);
+  border-bottom: 1px solid var(--line);
+  font: var(--type-small);
+}
+.path-row:last-child {
+  border-bottom: 0;
+}
+.path-row-icon {
+  display: inline-flex;
+  color: var(--success-ink);
+}
+.path-row-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.path-row-outcome {
+  color: var(--muted);
+  white-space: nowrap;
+}
+.path-result-caption {
+  text-transform: uppercase;
+}
+@media (max-width: 767px), (pointer: coarse) {
+  .path-row {
+    min-height: 44px;
+  }
+}
+
+/* A signal's or a person's test answer. */
+.script-editor {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+.script-editor .pane-caption {
+  margin: 0;
+}
+.script-editor-note {
+  margin: 0;
+  font: var(--type-small);
+  color: var(--muted);
+}
+.script-editor-label {
+  font: var(--type-small);
+  color: var(--muted);
+}
+.script-editor-json {
+  font: var(--type-mono);
+  resize: vertical;
+}
+.script-editor-decisions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.script-editor-decisions legend {
+  margin-bottom: var(--space-1);
+  font: var(--type-small);
+  color: var(--muted);
+}
+.script-editor-decision,
+.script-editor-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: 32px;
+  font: var(--type-small);
+}
+.script-editor .script-editor-actions {
+  justify-content: flex-start;
+}
+@media (max-width: 767px), (pointer: coarse) {
+  .script-editor-decision,
+  .script-editor-switch {
+    min-height: 44px;
+  }
 }

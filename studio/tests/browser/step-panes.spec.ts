@@ -179,12 +179,10 @@ for (const size of [
         .click();
       await show(details, "Output");
       await output.getByRole("radio", { name: "Table", exact: true }).click();
-      await expect(output).toContainText(
-        "Table view isn't available for this sample yet.",
-      );
-      await output
-        .getByRole("button", { name: "View JSON", exact: true })
-        .click();
+      await expect(
+        output.getByRole("table", { name: "Output data" }),
+      ).toContainText("name");
+      await output.getByRole("radio", { name: "JSON", exact: true }).click();
       await expect(output.locator("pre")).toContainText('"name": "text"');
       await expect(output.locator("pre")).not.toContainText("token");
       await expect
@@ -350,7 +348,10 @@ test("object-list samples default to Table and keep an explicit JSON choice", as
     output.getByRole("radio", { name: "Table", exact: true }),
   ).toHaveAttribute("aria-checked", "true");
   await expect(output.locator("pre")).toHaveCount(0);
-  await output.getByRole("button", { name: "View JSON", exact: true }).click();
+  await expect(
+    output.getByRole("table", { name: "Output data" }),
+  ).toBeVisible();
+  await output.getByRole("radio", { name: "JSON", exact: true }).click();
   await expect(output.locator("pre")).toContainText('"name": "text"');
   await details.close();
   await trigger(details);

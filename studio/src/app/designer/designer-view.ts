@@ -41,6 +41,7 @@ import { HumanInspector } from "./human-inspector";
 import { PathInspector } from "./path-inspector";
 import { DiagnosticsList } from "./diagnostics-list";
 import { SimulationPanel } from "./simulation/simulation-panel";
+import { RunLogPanel } from "../editor/debugger/run-log-panel";
 import { CanvasView } from "../editor/canvas/canvas-view";
 import { AddStepFailed } from "../editor/add-step/add-step-failed";
 import { AddStepPanel } from "../editor/add-step/add-step-panel";
@@ -67,6 +68,7 @@ import type { App } from "../app";
     ConnectionSlotList,
     DiagnosticsList,
     SimulationPanel,
+    RunLogPanel,
     CanvasView,
     AddStepFailed,
     AddStepPanel,
@@ -226,17 +228,31 @@ import type { App } from "../app";
               h.busy === "validate" ? "Validating…" : "Validate"
             }}</span>
           </button>
-          <button
-            type="button"
-            class="wide-only"
-            [attr.aria-disabled]="!!h.blocker('simulate') || null"
-            [attr.aria-describedby]="
-              h.blocker('simulate') ? 'simulate-blocked' : null
-            "
-            (click)="h.runCommand('simulate')"
-          >
-            {{ h.busy === "simulate" ? "Simulating…" : "Simulate" }}
-          </button>
+          @if (h.editorNext && h.execution) {
+            <button
+              type="button"
+              class="primary execute-workflow"
+              aria-label="Execute workflow"
+              title="Execute workflow (Ctrl/Cmd+Enter)"
+              (click)="h.executeWorkflow()"
+            >
+              <weave-icon name="execute" /><span class="execute-label"
+                >Execute<span class="execute-label-rest"> workflow</span></span
+              >
+            </button>
+          } @else {
+            <button
+              type="button"
+              class="wide-only"
+              [attr.aria-disabled]="!!h.blocker('simulate') || null"
+              [attr.aria-describedby]="
+                h.blocker('simulate') ? 'simulate-blocked' : null
+              "
+              (click)="h.runCommand('simulate')"
+            >
+              {{ h.busy === "simulate" ? "Simulating…" : "Simulate" }}
+            </button>
+          }
         </div>
         @if (!h.profile) {
           <details
@@ -452,6 +468,7 @@ import type { App } from "../app";
       }
       <section
         class="canvas-panel"
+        [class.with-run-log]="h.editorNext && h.runLogOpen() && !!h.execution"
         id="editor-view"
         role="tabpanel"
         [attr.aria-labelledby]="'view-tab-' + h.tab.toLowerCase()"
@@ -553,6 +570,11 @@ import type { App } from "../app";
             <p class="connecting-status designer-loading" role="status">
               <span class="loading-spinner small"></span>Opening the canvas…
             </p>
+          }
+          @if (h.runLogOpen() && h.execution) {
+            @defer (on immediate) {
+              <weave-run-log [host]="h" />
+            }
           }
         } @else {
           <div
@@ -1217,7 +1239,7 @@ import type { App } from "../app";
           </footer>
         }
       </section>
-      @if (h.simulation) {
+      @if (h.simulation && !h.editorNext) {
         @defer (on immediate) {
           <weave-simulation-panel
             [artifact]="h.simulation.artifact"

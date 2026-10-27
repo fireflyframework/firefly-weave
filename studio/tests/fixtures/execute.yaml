@@ -1,0 +1,55 @@
+# Copyright 2026 Firefly Software Foundation.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# Author: Firefly Software Foundation
+# SPDX-License-Identifier: Apache-2.0
+apiVersion: weave/v1alpha1
+kind: Workflow
+metadata: {name: tiered-orders, version: 1.0.0}
+spec:
+  inputSchema:
+    type: object
+    required: [customerId, amount]
+    properties:
+      customerId: {type: string, title: Customer ID}
+      amount: {type: number, title: Amount}
+      password: {type: string, title: Password, x-secret: true}
+  outputSchema: {type: object}
+  connections:
+    ai: {connector: weave-agentic-provider@1.0.0}
+  llmProfiles:
+    default:
+      provider: openai-chat
+      model: "qwen3:4b"
+      options: {max_tokens: 1024}
+      outputSchema: {type: string, maxLength: 20000}
+  steps:
+    - id: lookup
+      kind: action
+      uses: crm.lookup@1.0.0
+      with: {object: {customerId: {ref: /input/customerId}}}
+    - id: score
+      kind: transform
+      value: {object: {tier: {ref: /steps/lookup/output/tier}}}
+    - id: summarize
+      kind: llm
+      uses: weave-agentic-generate@1.0.0
+      profile: default
+      connection: ai
+      prompt: {literal: Summarize the order}
+      context: {literal: {}}
+    - id: notify
+      kind: action
+      uses: crm.lookup@1.0.0
+      with: {object: {customerId: {ref: /steps/score/output/tier}}}
+  output: {literal: {}}

@@ -139,6 +139,10 @@ class DebugState(ContractModel):
     frames: list[FrameState] = Field(default_factory=list, exclude_if=lambda v: not v)
     # Failures scripted on purpose, keyed like mocks; omitted when none, so stored sessions keep their bytes.
     errors: dict[str, ScriptedError] = Field(default_factory=dict, exclude_if=lambda v: not v)
+    # What each step received (an action's input; a human task's title and context) and returned, by instance key,
+    # prefixed with the frame key inside called workflows. Omitted when empty, so stored sessions keep their bytes.
+    inputs: dict[str, JsonData] = Field(default_factory=dict, exclude_if=lambda v: not v)
+    outputs: dict[str, JsonData] = Field(default_factory=dict, exclude_if=lambda v: not v)
 
 
 class LoopView(ContractModel):

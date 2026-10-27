@@ -228,11 +228,11 @@ for (const size of [
       const details = await openStepFixture(page);
       await expect(page.locator(".diagnostics")).toBeVisible();
       await details.openWithKeyboard("summarize");
-      // Execute step explains, in a toast, that it isn't available yet.
+      // P without a pin explains, in a toast, how to pin.
       await details.dialog
         .getByRole("button", { name: /^Execute step/ })
         .focus();
-      await page.keyboard.press("Enter");
+      await page.keyboard.press("p");
       const toast = page.locator(".toast-region .toast");
       await expect(toast).toBeVisible();
       // The tab's last control, scrolled to the bottom of the screen.
@@ -267,3 +267,55 @@ for (const size of [
       expect(covered, "the toast covers the focused control").toBe(false);
     });
   });
+
+test.describe("the shortcuts sheet in step details", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+  test("? in step details lists the step details keys, P among them", async ({
+    page,
+  }) => {
+    const details = await openStepFixture(page);
+    await details.open("lookup");
+    await details.dialog.focus();
+    await page.keyboard.press("?");
+    const sheet = page.getByRole("dialog", { name: "Keyboard shortcuts" });
+    await expect(sheet).toBeVisible();
+    await expect(sheet).toContainText("In step details.");
+    await expect(sheet).toContainText("Pin output or unpin");
+    await sheet.getByRole("button", { name: "Done", exact: true }).click();
+    await expect(sheet).toHaveCount(0);
+    await expect(details.dialog).toBeVisible();
+  });
+  test("the sheet lists Execute step and the run log keys", async ({
+    page,
+  }) => {
+    const details = await openStepFixture(page);
+    await details.open("lookup");
+    await details.dialog.focus();
+    await page.keyboard.press("?");
+    const sheet = page.getByRole("dialog", { name: "Keyboard shortcuts" });
+    await expect(sheet).toContainText("Execute step");
+    await expect(sheet).toContainText("Run log");
+    await expect(sheet).toContainText("Show or hide the run log");
+    await expect(sheet).toContainText("Show the entry's output");
+  });
+  test("? typed in a field stays text", async ({ page }) => {
+    const details = await openStepFixture(page);
+    await details.open("lookup");
+    const pane = details.dialog.locator("weave-output-pane");
+    const tabs = details.dialog
+      .getByRole("tablist", { name: /^(Step details panes|Data)$/ })
+      .getByRole("tab", { name: "Output" });
+    if (await tabs.count()) await tabs.first().click();
+    await pane.getByRole("button", { name: "Search output" }).click();
+    await expect(
+      pane.getByRole("textbox", { name: "Search output" }),
+    ).toBeFocused();
+    await page.keyboard.type("a?");
+    await expect(
+      pane.getByRole("textbox", { name: "Search output" }),
+    ).toHaveValue("a?");
+    await expect(
+      page.getByRole("dialog", { name: "Keyboard shortcuts" }),
+    ).toHaveCount(0);
+  });
+});

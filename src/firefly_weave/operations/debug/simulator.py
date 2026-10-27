@@ -74,7 +74,7 @@ from firefly_weave.runtime.kernel import (
     validate,
     validate_action,
 )
-from firefly_weave.runtime.models import CallIntent, Deadline, RunState, RuntimeEvent, TaskIntent
+from firefly_weave.runtime.models import CallIntent, Deadline, HumanTaskIntent, RunState, RuntimeEvent, TaskIntent
 from firefly_weave.runtime.step_failures import continuation_steps, failure_data, final_failure, wait_failure
 from firefly_weave.runtime.transactions import in_transaction, shapes
 
@@ -685,6 +685,8 @@ class Simulator:
         run.cursor = _advance_owned(cursor, called.prepared)
         for change in run.cursor.result.steps[changed:]:
             self._grown(change.output)
+            if change.status == "completed":
+                d.outputs[_path(key, change.node_id)] = change.output
         d.boundaries.append(boundary)
         if run.cursor.done:
             result = run.cursor.result
@@ -702,9 +704,13 @@ class Simulator:
                 if isinstance(command, Deadline):
                     run.deadlines.append(command)
                 elif isinstance(command, CallIntent):
+                    d.inputs[_path(key, command.node_id)] = command.input
                     if not self._call(key, run, called, command):
                         return True
+                elif isinstance(command, HumanTaskIntent):
+                    d.inputs[_path(key, command.node_id)] = {"title": command.title, "context": command.context}
                 elif isinstance(command, TaskIntent):
+                    d.inputs[_path(key, command.node_id)] = command.input
                     scripted = self._scripted(key, command.node_id, command.action_reference)
                     if scripted is not None:
                         run.pending.append(self._failure(called, command.node_id, scripted))

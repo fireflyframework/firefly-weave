@@ -108,7 +108,8 @@ describe("formula previews", () => {
       ok: false,
       error: {
         code: WAITING,
-        message: "Can't compute yet: steps.check has no data.",
+        message:
+          "Can't compute yet: steps.check has no data. Execute previous steps.",
       },
     });
     expect(

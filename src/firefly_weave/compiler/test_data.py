@@ -84,7 +84,8 @@ def _steps(steps: object) -> Iterator[JsonObject]:
                 yield from _steps(branch.get("steps"))
 
 
-def _step(workflow: JsonObject, key: str) -> JsonObject | None:
+def step_at(workflow: JsonObject, key: str) -> JsonObject | None:
+    """The step an instance key (`check`, `send[2]`) names, anywhere in the workflow, or None."""
     try:
         identifier = node_of(key)
     except InvalidInstanceKey:
@@ -104,7 +105,7 @@ def _spec(document: JsonObject | None) -> JsonObject:
     return spec if isinstance(spec, dict) else {}
 
 
-def _output(workflow: JsonObject, step: JsonObject | None, catalog: CatalogSnapshot) -> Target:
+def output_target(workflow: JsonObject, step: JsonObject | None, catalog: CatalogSnapshot) -> Target:
     """The schema a pinned output or a mock of this step is checked against."""
     if step is None:
         return UNRESOLVED
@@ -131,6 +132,11 @@ def _output(workflow: JsonObject, step: JsonObject | None, catalog: CatalogSnaps
         return UNRESOLVED
     # Other kinds compute their output from their input: nothing to pin.
     return SCHEMA
+
+
+# The module's own callers keep the short names.
+_step = step_at
+_output = output_target
 
 
 def _framed(workflow: JsonObject, frame: object, catalog: CatalogSnapshot) -> JsonObject | None:

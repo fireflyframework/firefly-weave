@@ -25,8 +25,10 @@ import { instanceStep, renameInstance } from "./instance-keys";
 import {
   TEST_DATA_MAX_BYTES,
   type DataSource,
+  type HumanEntry,
   type PinEntry,
   type Provenance,
+  type SignalEntry,
   type StudioTestData,
 } from "./test-data";
 
@@ -91,6 +93,28 @@ export function withPin(
 ): StudioTestData {
   return stamped(
     { ...data, pins: { ...(data.pins ?? {}), [key]: entry } },
+    now,
+  );
+}
+/** Sets (or, with null, removes) the test answer of a signal or a human task. */
+export function withScript(
+  data: StudioTestData,
+  section: "signals" | "humans",
+  key: string,
+  entry: SignalEntry | HumanEntry | null,
+  now: string,
+): StudioTestData {
+  const current = { ...(data[section] ?? {}) } as Record<string, unknown>;
+  if (entry === null) {
+    if (!Object.hasOwn(current, key)) return data;
+    delete current[key];
+  } else current[key] = entry;
+  return stamped(
+    withSection(
+      data,
+      section,
+      current as NonNullable<StudioTestData["signals"]>,
+    ),
     now,
   );
 }
