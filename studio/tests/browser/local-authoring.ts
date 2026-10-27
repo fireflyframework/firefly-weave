@@ -119,6 +119,13 @@ def handle(path, raw, method="POST", match=None):
         return dump(inventory(body.source, source_format=body.format, relaxations=body.relaxations))
     if path == "/studio/local/debug/execute":
         return execute_reply(raw)
+    if path == "/studio/local/decision/evaluate":
+        from firefly_weave.studio.local_contracts import DecisionEvaluateRequest
+        from firefly_weave.studio.table_check import TableRefused, check_table
+        try:
+            return check_table(DecisionEvaluateRequest.model_validate_json(raw)).model_dump(mode="json")
+        except TableRefused as refused:
+            return {"__status": 422, "status": 422, "code": refused.code, "message": refused.message, "result": refused.result}
     body = OpenAPIImportRequest.model_validate_json(raw)
     if body.mixed():
         raise ValueError("mixed")
@@ -259,7 +266,7 @@ export async function platformCompile(body: {
   return reply.body as Record<string, unknown>;
 }
 
-/** Answers /studio/local/{http-action,openapi/*,debug/*} with the real Python code. */
+/** Answers /studio/local/{http-action,openapi/*,debug/*,decision/evaluate} with the real Python code. */
 export async function localAuthoring(page: Page): Promise<LocalCalls[]> {
   const calls: LocalCalls[] = [];
   for (const path of [
@@ -267,6 +274,7 @@ export async function localAuthoring(page: Page): Promise<LocalCalls[]> {
     "/studio/local/openapi/inventory",
     "/studio/local/openapi/import",
     "/studio/local/debug/execute",
+    "/studio/local/decision/evaluate",
   ])
     await page.route(`**${path}`, async (route) => {
       const raw = route.request().postData() ?? "{}";

@@ -634,6 +634,32 @@ class StudioController:
 
         return await local_work(work, slow="Checking this test data took too long; simplify the workflow")
 
+    @post_mapping("/studio/local/decision/evaluate")
+    async def decision_evaluate(self, request: Request) -> Response:
+        from firefly_weave.studio.local_contracts import DecisionEvaluateRequest
+        from firefly_weave.studio.table_check import TableRefused, check_table
+
+        try:
+            body = DecisionEvaluateRequest.model_validate_json(await request.body())
+        except ValidationError:
+            return problem(422, "WV-STUDIO-REQUEST", "Send a decision table and an input to try.")
+
+        def work() -> Any:
+            try:
+                return check_table(body).model_dump(mode="json")
+            except TableRefused as refused:
+                return refused
+
+        def respond(value: Any) -> Response:
+            from firefly_weave.compiler.canonical import canonical_bytes
+
+            if isinstance(value, TableRefused):
+                return problem(422, value.code, value.message, value.result)
+            return Response(canonical_bytes(value), media_type="application/json")
+
+        # Pure and bounded, so it shares validation's slots rather than the one an execution holds.
+        return await local_work(work, slow="Checking this table took too long; try fewer rules", respond=respond)
+
     @post_mapping("/studio/local/debug/execute")
     async def debug_execute(self, request: Request) -> Response:
         from firefly_weave.studio.local_contracts import ExecuteRequest
