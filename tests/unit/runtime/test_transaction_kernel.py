@@ -18,6 +18,8 @@
 
 from datetime import timedelta
 
+import pytest
+
 from transaction_support import (
     RUN,
     Run,
@@ -33,6 +35,7 @@ from transaction_support import (
     submit_by_call,
     tasks,
     transaction,
+    unsafe_catalog,
 )
 
 from firefly_weave.contracts.step_errors import STEP_ERROR_MESSAGES
@@ -610,3 +613,19 @@ def test_a_step_with_a_setting_whose_evaluation_fails_inside_a_transaction_conti
     went_on = run.done("add", {"id": "a-1"})
     assert [task.node_id for task in tasks(went_on)] == ["submit"]
     assert run.state.incidents == {} and run.txn().status == "deciding"
+
+
+@pytest.mark.parametrize("setting", [{}, {"onError": "continue"}])
+def test_a_confirm_that_cannot_finish_puts_the_transaction_in_doubt_whatever_its_steps_setting(setting):
+    # A step's own setting never changes what happens to its confirm, cancel or undo.
+    unsafe = unsafe_catalog("source-system.hold-quantity")
+    run = Run(compiled([transaction([hold(**setting), add(), submit()])], snapshot=unsafe))
+    run.start()
+    run.done("hold", {"holdId": "h-1"})
+    run.done("add", {"id": "a-1"})
+    run.done("submit", {"orderId": "o-1"})
+    assert run.txn().status == "committing"
+    run.failed("hold#confirm", "UNAVAILABLE", effect="unknown", generation=10)
+    assert run.txn().status == "in_doubt"
+    stuck = run.state.incidents["hold#confirm:10"]
+    assert (stuck.code, stuck.origin_code) == ("WV-TXN-CONFIRM-STUCK", "UNAVAILABLE")

@@ -1082,6 +1082,9 @@ def _advance_owned(
         """
         if not isinstance(node, HandlesErrors) or node.on_error is None:
             return False
+        if split_phase(name) is not None or split_deadline(name) is not None:
+            # A confirm, cancel or undo, or a transaction's own deadline: only the transaction decides those.
+            return False
         key = owner_of(name)
         if key is None:
             return True
