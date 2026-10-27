@@ -553,7 +553,7 @@ class CallService:
         from firefly_weave.runtime.kernel import error_policy, workflow
         from firefly_weave.runtime.kernel import transition_async as transition
         from firefly_weave.runtime.service import view_of
-        from firefly_weave.runtime.step_failures import failure_data
+        from firefly_weave.runtime.step_failures import call_outcome, failure_data
 
         await repository.execute(
             f"UPDATE run_calls SET status='rejected',code=:code,ended_at=:at,delivered=true WHERE {SCOPE} AND id=:id",
@@ -575,10 +575,18 @@ class CallService:
         kind = "incident_opened"
         inside = in_transaction(shapes(ir), row["node_id"])
         if inside or error_policy(ir, row["node_id"]) != "stop":
-            # No child started for this generation, so nothing was applied: the step failed, and its setting or its
-            # transaction decides what follows.
+            # No child started for this generation: the step failed, and its setting or its transaction decides what
+            # follows. Children of earlier generations may have applied something, so they set the outcome.
+            earlier = await repository.rows(
+                f"SELECT status FROM run_calls WHERE {SCOPE} AND caller_run_id=:run AND node_id=:node "
+                "AND generation<:generation",
+                run=view.id,
+                node=row["node_id"],
+                generation=row["generation"],
+            )
+            outcome = call_outcome(item["status"] for item in earlier)
             kind = "step_failed"
-            data = failure_data(row["node_id"], row["generation"], code, "not_started", row["generation"])
+            data = failure_data(row["node_id"], row["generation"], code, outcome, row["generation"])
             if inside:
                 data["effect"] = "none"
         event = RuntimeEvent(

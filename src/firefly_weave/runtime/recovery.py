@@ -33,6 +33,7 @@ from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.ai import TRANSIENT_MODEL_CODES
 from firefly_weave.contracts.operations import TaskTiming
 from firefly_weave.contracts.runtime import RecoveryReport
+from firefly_weave.contracts.step_errors import StepOutcome
 from firefly_weave.contracts.transactions import split_phase
 from firefly_weave.contracts.values import JsonObject
 from firefly_weave.definitions.models import CatalogError
@@ -52,6 +53,34 @@ from firefly_weave.workers.leases import TaskService
 
 # Failure codes recovery may retry, only for read_only, idempotent and idempotency_key actions.
 TRANSIENT_FAILURE_CODES = frozenset({"TRANSIENT", "UNAVAILABLE", "RATE_LIMITED", "TIMEOUT"}) | TRANSIENT_MODEL_CODES
+
+
+async def attempt_history(
+    repository: RuntimeRepository, task_id: Any, run_id: Any, node_id: str
+) -> tuple[list[int], StepOutcome]:
+    """A task's started attempts (one lease row each) and its outcome over them: what each failed attempt reported,
+    and ``unknown`` for a lease lost without a report; ``not_started`` when no attempt started."""
+    leases = await repository.rows(f"SELECT generation FROM task_leases WHERE {SCOPE} AND task_id=:task", task=task_id)
+    reports = await repository.rows(
+        f"SELECT coalesce((data->>'generation')::int,0) AS generation,"
+        f"coalesce(data->'output'->>'outcome','unknown') AS outcome FROM run_events WHERE {SCOPE} "
+        "AND run_id=:run AND type='task_failed' AND data->>'node_id'=:node",
+        run=run_id,
+        node=node_id,
+    )
+    generations = sorted(int(lease["generation"]) for lease in leases)
+    return generations, attempt_outcomes(generations, {report["generation"]: report["outcome"] for report in reports})
+
+
+def side_effect(ir: Any, node_id: str) -> str:
+    """The declared side effect of the action a step instance runs."""
+    from firefly_weave.compiler.ir import ActionNode
+    from firefly_weave.contracts.instance_keys import node_of
+
+    node = next(n for n in ir.graph.nodes if n.id == node_of(node_id))
+    assert isinstance(node, ActionNode)
+    dependency = next(d for d in ir.dependencies if d.digest == node.dependency and d.kind == "Action")
+    return str(dependency.document["spec"]["sideEffect"])
 
 
 @service
@@ -155,17 +184,22 @@ class RecoveryService:
             inside = bool(view.state.transactions) and in_transaction(shapes(workflow(artifact)), task["node_id"])
             if inside or error_policy(workflow(artifact), task["node_id"]) != "stop":
                 # The deadline passed before any worker claimed the latest attempt: it failed for good, and only
-                # earlier attempts may have applied. A transaction already knows what they did; a step that handles
-                # its failures takes this one.
-                generations = await repository.rows(
-                    f"SELECT coalesce(max(generation),0) AS value FROM task_leases WHERE {SCOPE} AND task_id=:task",
-                    task=identifier,
-                )
-                attempts = int(generations[0]["value"])
-                kind = "step_failed"
-                expired = failure_data(task["node_id"], attempts, "WV-TASK-DEADLINE", "not_started", attempts)
-                if inside:
-                    expired["effect"] = "none"
+                # earlier attempts may have applied, so the outcome is theirs (a lost lease counts as unknown). A
+                # transaction already knows what they did; a step that handles its failures takes this one unless
+                # that outcome is unknown on a step that changes data and is never retried.
+                leases, outcome = await attempt_history(repository, identifier, row["id"], task["node_id"])
+                ir = workflow(artifact)
+                if (
+                    inside
+                    or final_failure(error_policy(ir, task["node_id"]), side_effect(ir, task["node_id"]), outcome)
+                    == "handled"
+                ):
+                    kind = "step_failed"
+                    expired = failure_data(
+                        task["node_id"], max(leases, default=0), "WV-TASK-DEADLINE", outcome, len(leases)
+                    )
+                    if inside:
+                        expired["effect"] = "none"
             event = RuntimeEvent(
                 id=uuid4(),
                 type=kind,  # type: ignore[arg-type]
@@ -294,22 +328,11 @@ class RecoveryService:
             elif not allowed and (setting := error_policy(workflow(artifact), task["node_id"])) != "stop":
                 # A step that handles its failures takes this one, unless its effect may have happened and it is
                 # never retried: then the run stops as it does today, until someone checks the effect.
-                leases = await repository.rows(
-                    f"SELECT generation FROM task_leases WHERE {SCOPE} AND task_id=:task", task=identifier
-                )
-                reports = await repository.rows(
-                    f"SELECT coalesce((data->>'generation')::int,0) AS generation,"
-                    f"coalesce(data->'output'->>'outcome','unknown') AS outcome FROM run_events WHERE {SCOPE} "
-                    "AND run_id=:run AND type='task_failed' AND data->>'node_id'=:node",
-                    run=row["id"],
-                    node=task["node_id"],
-                )
-                outcome = attempt_outcomes(
-                    [lease["generation"] for lease in leases],
-                    {report["generation"]: report["outcome"] for report in reports},
-                )
+                leases, outcome = await attempt_history(repository, identifier, row["id"], task["node_id"])
                 if final_failure(setting, policy["side_effect"], outcome) == "handled":
-                    last = failure["output"]["code"] if attempt["status"] == "failed" else LEASE_EXPIRED
+                    reported = failure.get("output", {}).get("code") if attempt["status"] == "failed" else None
+                    # A failed attempt whose report is missing keeps the incident's own code.
+                    last = str(reported or (code if attempt["status"] == "failed" else LEASE_EXPIRED))
                     handled = failure_data(task["node_id"], attempt["generation"], last, outcome, len(leases))
                     kind = "step_failed"
                     data = handled

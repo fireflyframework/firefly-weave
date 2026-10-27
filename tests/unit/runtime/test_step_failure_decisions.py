@@ -115,3 +115,19 @@ def test_a_failure_is_counted_once_even_when_its_error_path_ends_in_the_same_tra
         ("pick", "errorOutput", "WV-EXPR-MISSING"),
         ("next", "continue", "WV-EXPR-MISSING"),
     ]
+
+
+@pytest.mark.parametrize(
+    ("earlier", "outcome"),
+    [
+        ([], "not_started"),
+        (["rejected"], "not_started"),
+        (["failed"], "failed"),
+        (["failed", "cancelled"], "unknown"),
+        (["timed_out"], "unknown"),
+    ],
+)
+def test_a_call_that_cannot_start_reports_the_outcome_of_its_earlier_children(earlier, outcome):
+    from firefly_weave.runtime.step_failures import call_outcome
+
+    assert call_outcome(earlier) == outcome

@@ -52,6 +52,16 @@ def attempt_outcomes(generations: Iterable[int], reported: Mapping[int, StepOutc
     return strongest(reported.get(generation, "unknown") for generation in generations)
 
 
+# What an earlier child of a call says about the call's effect: a stopped child may have applied anything.
+CHILD_OUTCOMES: dict[str, StepOutcome] = {"rejected": "not_started", "failed": "failed"}
+
+
+def call_outcome(statuses: Iterable[str]) -> StepOutcome:
+    """A call's outcome over its earlier generations' children: ``failed`` for a child that failed, ``unknown`` for
+    one cancelled, timed out or still unaccounted for, ``not_started`` when none started."""
+    return strongest(CHILD_OUTCOMES.get(status, "unknown") for status in statuses)
+
+
 def continuation_steps(ir: WorkflowIR) -> set[str]:
     """Steps whose due deadline continues the run: duration waits, loop yields, and waits that handle a timeout."""
     return duration_steps(ir) | {

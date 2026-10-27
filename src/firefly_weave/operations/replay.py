@@ -18,6 +18,7 @@
 
 import json
 from datetime import datetime
+from typing import cast
 from uuid import UUID
 
 from pydantic import ValidationError
@@ -36,7 +37,7 @@ from firefly_weave.contracts.operations import (
     ReplayReport,
     TaskFact,
 )
-from firefly_weave.contracts.step_errors import confirmable
+from firefly_weave.contracts.step_errors import OUTCOME_ORDER, StepOutcome, confirmable, strongest
 from firefly_weave.operations.exports import bounded_size, event_node, lock_digest, safe_event, transition_digest
 from firefly_weave.operations.redaction import project
 from firefly_weave.runtime.kernel import (
@@ -95,6 +96,14 @@ def replay(artifact: CompiledArtifact, events: tuple[RuntimeEvent, ...]) -> Repl
     tasks: dict[str, TaskFact] = {}
     deadlines: dict[str, DeadlineFact] = {}
     attempts: dict[str, tuple[int, str]] = {}
+    # Each task's started attempts (generations), and the outcome each failed attempt reported.
+    started: dict[str, set[int]] = {}
+    reported: dict[str, dict[int, StepOutcome]] = {}
+
+    def outcome_of(key: str) -> StepOutcome:
+        """A task's outcome over its started attempts, a lost lease counting as unknown (as recovery decides it)."""
+        return strongest(reported.get(key, {}).get(generation, "unknown") for generation in started.get(key, set()))
+
     eligible_at: dict[str, datetime] = {}
     # The latest call row issued for each call step instance, and every call row seen.
     calls: dict[str, CallFact] = {}
@@ -185,13 +194,14 @@ def replay(artifact: CompiledArtifact, events: tuple[RuntimeEvent, ...]) -> Repl
                 and isinstance(node, ActionNode)
                 and event.data.get("code") == "WV-TASK-DEADLINE"
             ):
-                # A task nobody claimed before its deadline: its latest attempt never ran.
+                # A task nobody claimed before its deadline: its latest attempt never ran, earlier ones may have.
+                ran = started.get(node_id, set())
                 require(
                     node_id in tasks
                     and event.timestamp >= tasks[node_id].deadline
-                    and event.data.get("outcome") == "not_started"
-                    and type(event.data.get("generation")) is int
-                    and event.data.get("attempts") == event.data.get("generation"),
+                    and event.data.get("generation") == max(ran, default=0)
+                    and event.data.get("attempts") == len(ran)
+                    and event.data.get("outcome") == outcome_of(node_id),
                     "WV-REPLAY-EVENT",
                 )
             elif event.type in {"call_completed", "incident_opened", "step_failed"} and isinstance(
@@ -265,6 +275,20 @@ def replay(artifact: CompiledArtifact, events: tuple[RuntimeEvent, ...]) -> Repl
                     "WV-REPLAY-GENERATION",
                 )
                 attempts[node_id] = (receipt.generation, event.type)
+                started.setdefault(node_id, set()).add(receipt.generation)
+                if event.type == "task_failed":
+                    output = event.data.get("output")
+                    said = output.get("outcome") if isinstance(output, dict) else None
+                    reported.setdefault(node_id, {})[receipt.generation] = (
+                        cast(StepOutcome, said) if said in OUTCOME_ORDER else "unknown"
+                    )
+                if event.type == "step_failed" and not in_transaction(transactions, node_id):
+                    # A final failure handed to the step reports the outcome and count of every attempt.
+                    require(
+                        event.data.get("outcome") == outcome_of(node_id)
+                        and event.data.get("attempts") == len(started[node_id]),
+                        "WV-REPLAY-EVENT",
+                    )
                 if event.type == "task_completed":
                     require("output" in event.data, "WV-REPLAY-EVENT")
                     assert isinstance(node, ActionNode)

@@ -173,6 +173,42 @@ async def test_a_task_nobody_claimed_before_its_deadline_is_handled_without_an_a
     # No export here: the test moved the task's deadline, so the issued task no longer matches its evidence.
 
 
+async def test_a_task_nobody_claimed_after_a_lost_attempt_reports_an_unknown_outcome(
+    worker_setup, task_service, transaction_factory, access_db, services
+):
+    run = await start(worker_setup, 1)
+    worker = await wide_worker(worker_setup)
+    leases = await claim(task_service, transaction_factory, worker, 1)
+    async with access_db[1]() as session, session.begin():
+        # A retry-safe action with three attempts whose first worker went silent.
+        await session.execute(
+            text(
+                "UPDATE task_leases SET policy=jsonb_set(jsonb_set(policy,'{retry}',"
+                '\'{"maxAttempts": 3, "initialDelaySeconds": 1, "maxDelaySeconds": 1}\'),'
+                "'{side_effect}','\"idempotent\"'),expires_at=clock_timestamp()-interval '1 second' "
+                "WHERE task_id=:task"
+            ),
+            {"task": leases["send"].proof.task_id},
+        )
+    report = await recover(services, access_db, worker_setup)
+    assert (report.resumed, report.handled_failures) == (1, 0)
+    async with access_db[1]() as session, session.begin():
+        await session.execute(
+            text(
+                "UPDATE task_intents SET payload=jsonb_set(payload,'{deadline}',"
+                "to_jsonb(to_char(clock_timestamp()-interval '1 second','YYYY-MM-DD\"T\"HH24:MI:SS.US\"+00:00\"'))) "
+                "WHERE run_id=:id"
+            ),
+            {"id": run.id},
+        )
+    await recover(services, access_db, worker_setup)
+    state = await state_of(access_db, run.id)
+    assert (state["status"], state["output"]) == ("succeeded", "WV-TASK-DEADLINE")
+    error = state["steps"]["send"]["error"]
+    # The first attempt may have applied, so the step's outcome is unknown, not "nothing ran".
+    assert (error["outcome"], error["attempts"]) == ("unknown", 1)
+
+
 @pytest.mark.parametrize("worker_runtime_fixture", ["loop"], indirect=True)
 async def test_a_loop_of_five_whose_second_item_fails_returns_five_results(
     worker_setup, task_service, transaction_factory, access_db, services

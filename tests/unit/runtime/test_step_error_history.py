@@ -235,3 +235,35 @@ def test_confirming_no_effect_does_not_replay_for_an_interim_failure():
     }
     report = replay(flow, recorded(flow, [START, FAILED, ("incident_resolved", NOW, resolved)]))
     assert (report.status, [d.code for d in report.diagnostics]) == ("inconsistent", ["WV-REPLAY-EVENT"])
+
+
+def test_a_task_nobody_claimed_after_a_lost_attempt_replays_only_with_an_unknown_outcome():
+    flow = compiled(action("lookup", onError="continue"), output={"ref": "/steps/lookup/error/code"})
+    lost = (
+        "recovery_scheduled",
+        NOW,
+        {
+            "node_id": "lookup",
+            "generation": 1,
+            "code": None,
+            "next_attempt_at": (NOW + timedelta(seconds=1)).isoformat(),
+        },
+    )
+    late = NOW + timedelta(seconds=31)
+    unclaimed = {"node_id": "lookup", "generation": 1, "code": "WV-TASK-DEADLINE", "attempts": 1}
+    honest = replay(
+        flow, recorded(flow, [START, lost, ("step_failed", late, {**unclaimed, "outcome": "unknown"})], recovery={2})
+    )
+    assert honest.status == "consistent", honest
+    hidden = replay(
+        flow,
+        recorded(flow, [START, lost, ("step_failed", late, {**unclaimed, "outcome": "not_started"})], recovery={2}),
+    )
+    assert (hidden.status, [d.code for d in hidden.diagnostics]) == ("inconsistent", ["WV-REPLAY-EVENT"])
+
+
+def test_a_handled_failure_after_retries_replays_only_with_the_outcome_of_its_attempts():
+    flow = compiled(action("lookup", onError="continue"), output={"ref": "/steps/lookup/error/code"})
+    hidden = ("step_failed", NOW, {**HANDLED[2], "outcome": "not_started"})
+    report = replay(flow, recorded(flow, [START, FAILED, hidden], recovery={3}))
+    assert (report.status, [d.code for d in report.diagnostics]) == ("inconsistent", ["WV-REPLAY-EVENT"])
