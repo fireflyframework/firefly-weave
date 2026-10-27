@@ -82,6 +82,9 @@ prompt, context, connection), `transform` (value), `decisionTable` (uses, with),
 default), `parallel` (branches), `forEach` (items, body), `callWorkflow` (uses, with), `wait` (durationSeconds),
 `signal` (name, timeoutSeconds, payloadSchema), `humanTask` (assignment, title, context, formSchema) and `fail`
 (code, message). Nested steps sit in a block: {steps, output}.
+`transaction` (businessKey, steps, output) groups steps that change other systems so they are undone together.
+Each step inside it that changes data says how it is undone: confirm and cancel (it reserves), compensate (an
+action or workflow reverses it), or irreversible: true (it can't be undone). That last kind of step comes last.
 Expressions: {literal: 1}, {ref: /input/name}, {ref: /steps/<id>/output/field}, {object: {key: expr}},
 {array: [expr]}, {op: {name, args}}.
 Example of a whole workflow document:

@@ -115,10 +115,9 @@ def executable(result) -> dict:
     return json.loads(result.artifact.to_bytes())["executable"]
 
 
-def test_the_transaction_feature_compiles_and_this_platform_does_not_run_it_yet():
-    assert "flow.transaction" in COMPILED_FEATURES
-    assert "flow.eventTrigger" not in COMPILED_FEATURES
-    assert not {"flow.transaction", "flow.eventTrigger"} & set(ADVERTISED_FEATURES)
+def test_the_transaction_feature_compiles_and_this_platform_runs_it():
+    assert "flow.transaction" in COMPILED_FEATURES and "flow.transaction" in ADVERTISED_FEATURES
+    assert "flow.eventTrigger" not in COMPILED_FEATURES and "flow.eventTrigger" not in ADVERTISED_FEATURES
 
 
 def test_the_example_compiles_to_a_transaction_block_with_its_participants():
@@ -152,8 +151,9 @@ def test_the_example_compiles_to_a_transaction_block_with_its_participants():
 
 def test_a_platform_that_does_not_run_transactions_refuses_the_artifact():
     artifact = compiled(EXAMPLE).artifact
+    assert import_artifact(artifact.to_bytes()).digest == artifact.digest
     with pytest.raises(UnsupportedIR) as refused:
-        import_artifact(artifact.to_bytes())
+        import_artifact(artifact.to_bytes(), features=["flow.callWorkflow", "flow.forEach"])
     assert refused.value.missing == ("flow.transaction",)
     assert import_artifact(artifact.to_bytes(), features=["flow.transaction"]).digest == artifact.digest
 

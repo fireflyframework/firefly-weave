@@ -12,6 +12,7 @@
     "features": [
       "flow.callWorkflow",
       "flow.forEach",
+      "flow.transaction",
       "text.concat",
       "text.join"
     ],

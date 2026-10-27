@@ -103,14 +103,15 @@ def test_the_gateway_text_and_the_guide_leave_two_thirds_of_the_compact_budget()
     from firefly_weave.operations.lumi_context import ENVELOPE_TOKENS, GUIDE_TOKENS
 
     # Measured on llama3.2:3b, qwen3:4b and qwen2.5:1.5b: the gateway's instructions and reply format at most 488
-    # tokens, this guide at most 424. A change to the guide must be measured again before these numbers move.
+    # tokens, this guide at most 498 (raw prompt evaluation on Ollama). A change to the guide must be measured again
+    # before these numbers move.
     assert GATEWAY_RESERVE_TOKENS == 640 and GUIDE_TOKENS == 512
-    assert len(GUIDE) == 1494 and GUIDE.startswith("Weave workflow guide (version 2).")
+    assert len(GUIDE) == 1827 and GUIDE.startswith("Weave workflow guide (version 2).")
     # The gateway recognizes this exact guide by its digest (GUIDE_SHA256 in the gateway) to count it as the reserve.
     import hashlib
 
     assert (
-        hashlib.sha256(GUIDE.encode()).hexdigest() == "3077fe887b0abbc25d36d50cb957460206cf0fff5713b8ce9ee7240a4bd7c816"
+        hashlib.sha256(GUIDE.encode()).hexdigest() == "d780e245a4c859c83402f481535038a4618b51f395ccf8d56dc7b131e06a4b9e"
     )
     assert GATEWAY_RESERVE_TOKENS + GUIDE_TOKENS + ENVELOPE_TOKENS <= COMPACT_INPUT_TOKENS / 3
 
@@ -158,9 +159,9 @@ def test_the_guide_names_every_step_kind_this_platform_runs():
         typing.get_args(member.model_fields["kind"].annotation)[0]
         for member in typing.get_args(typing.get_args(Step.__value__)[0])
     }
-    # A kind whose feature this platform does not run yet (a transaction) would only lead to a draft it can't publish.
+    # A kind whose feature this platform does not run yet would only lead to a draft it can't publish.
     pending = {kind for kind, feature in KIND_FEATURES.items() if feature not in ADVERTISED_FEATURES}
-    assert "transaction" in kinds and "transaction" in pending
+    assert "transaction" in kinds and "transaction" not in pending
     runnable = kinds - pending
     assert runnable and all(f"`{kind}`" in GUIDE for kind in runnable)
     assert not any(f"`{kind}`" in GUIDE for kind in pending)

@@ -582,6 +582,22 @@ class Simulator:
             return False
         key, run, event = scheduled
         called = self._workflow(key)
+        if called.prepared.transactions is not None:
+            # Transactions are not simulated yet: their confirms, cancels and undos would run with the steps' own
+            # mocks. The session stops before the workflow starts.
+            d.diagnostics = [
+                Diagnostic(
+                    code="WV-DEBUG-MISSING_MOCK",
+                    severity="error",
+                    stage="evaluation",
+                    path="",
+                    message="A transaction can't be simulated yet; run it on a test activation.",
+                    hint="Publish the workflow and run it on a test activation"
+                    + (f" ({called.reference})" if called.reference else "")
+                    + ".",
+                )
+            ]
+            return True
         state = cast(RunState, run.state)
         if event is not None:
             event = event.model_copy(update={"sequence": state.accepted_sequence + 1})

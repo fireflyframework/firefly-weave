@@ -261,19 +261,12 @@ async def build(
 
     ``aware_actions`` names actions whose definitions claim ``transactionAware``.
     """
-    from firefly_weave.contracts import language_features
     from firefly_weave.contracts.workers import InstanceRequest, ReleaseRequest
     from firefly_weave.definitions.service import DefinitionService
     from firefly_weave.operations.incidents import IncidentService
     from firefly_weave.runtime.recovery import RecoveryService
     from firefly_weave.runtime.service import RuntimeService
 
-    # The platform runs transactions; this branch lists the feature only once incidents can be resolved.
-    monkeypatch.setattr(
-        language_features,
-        "ADVERTISED_FEATURES",
-        tuple(sorted({*language_features.ADVERTISED_FEATURES, "flow.transaction"})),
-    )
     tasks, _, workers, actor, scope, _, _ = worker_setup
     graph = services(access_db[0])
     definitions = graph.resolve(DefinitionService)

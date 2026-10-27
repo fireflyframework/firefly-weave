@@ -30,6 +30,7 @@ type LanguageFeature = Literal[
     "flow.eventTrigger",
     "flow.forEach",
     "flow.transaction",
+    "flow.transaction",
     "text.concat",
     "text.join",
 ]
@@ -41,6 +42,7 @@ LANGUAGE_FEATURES: Final[tuple[LanguageFeature, ...]] = tuple(sorted(get_args(La
 ADVERTISED_FEATURES: Final[tuple[LanguageFeature, ...]] = (
     "flow.callWorkflow",
     "flow.forEach",
+    "flow.transaction",
     "text.concat",
     "text.join",
 )

@@ -1275,7 +1275,7 @@ def test_the_weave_ai_guide_counts_as_its_measured_reserve_and_any_other_text_by
 
     # Guide version 2 counted at most 424 tokens on llama3.2:3b, qwen3:4b and qwen2.5:1.5b (measured); only that
     # exact text is counted as the reserve.
-    assert GUIDE_TOKENS == 512 and GUIDE_SHA256 == "3077fe887b0abbc25d36d50cb957460206cf0fff5713b8ce9ee7240a4bd7c816"
+    assert GUIDE_TOKENS == 512 and GUIDE_SHA256 == "d780e245a4c859c83402f481535038a4618b51f395ccf8d56dc7b131e06a4b9e"
     with_guide = request_tokens("Why?", [], {"profile": "compact", "guide": GUIDE})
     without = request_tokens("Why?", [], {"profile": "compact"})
     assert with_guide == without + GUIDE_TOKENS

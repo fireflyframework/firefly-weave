@@ -275,5 +275,6 @@ def test_undo_inputs_are_expression_positions_of_the_graph():
 
 
 def test_a_platform_that_does_not_advertise_transactions_does_not_execute_the_node():
-    assert "transaction" not in executable_node_kinds()
+    assert "transaction" in executable_node_kinds()
+    assert "transaction" not in executable_node_kinds(["flow.callWorkflow", "flow.forEach"])
     assert "transaction" in executable_node_kinds(["flow.transaction"])

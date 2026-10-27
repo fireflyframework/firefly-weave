@@ -49,6 +49,7 @@
 "workflow-call-runtime" = true
 "workflow-call-simulation" = true
 "workflow-call-fast-path" = false
+"workflow-transaction-runtime" = true
 "language-docs" = false
 "step-error-handling" = false
 "ai-gateway" = true

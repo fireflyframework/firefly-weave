@@ -141,6 +141,7 @@ def test_the_committed_map_is_valid():
         "workflow-call-compiler",
         "workflow-call-runtime",
         "workflow-call-simulation",
+        "workflow-transaction-runtime",
         "ai-gateway",
         "ai-models-screen",
         "run-views",
