@@ -75,6 +75,28 @@ for (const size of sizes)
       await expect(grid.cell(2, 1)).toBeFocused();
     });
 
+    test("typing into a merged condition opens the formula editor and keeps the rule", async ({
+      page,
+    }) => {
+      const errors: string[] = [];
+      page.on("pageerror", (error) => errors.push(error.message));
+      page.on("console", (message) => {
+        // A thrown edit reaches the console as Angular's error report.
+        if (message.type() === "error" && /Error: /.test(message.text()))
+          errors.push(message.text());
+      });
+      const { grid } = await openPaymentGrid(page);
+      await grid.cell(2, 1).click();
+      await page.keyboard.press("5");
+      const dialog = page.getByRole("dialog", {
+        name: "Edit formula: Rule 3 condition",
+      });
+      await expect(dialog).toBeVisible();
+      await dialog.getByRole("button", { name: "Cancel" }).first().click();
+      await expect(grid.cell(2, 1)).toContainText("input.amount > 5000");
+      expect(errors).toEqual([]);
+    });
+
     test("a text operator in a rule is explained", async ({ page }) => {
       const { grid } = await openPaymentGrid(page);
       await grid.cell(2, 1).click();

@@ -562,8 +562,8 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
   }
   startEdit(row: number, col: number, typed?: string) {
     if (!this.editable(row, col)) return;
-    if (this.isFormula(row, col) && typed === undefined)
-      return this.openFormula(row, col);
+    // A formula cell is edited in the formula editor, typed into or not.
+    if (this.isFormula(row, col)) return this.openFormula(row, col);
     const shown = this.text(row, col);
     const original = shown === "-" ? "" : shown;
     this.cursor.set({ row, col });
@@ -647,17 +647,25 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
         this.flagged.set(flagged);
         return false;
       }
-      flagged.delete(key);
-      this.flagged.set(flagged);
-      this.apply(
-        setCondition(
+      let next: TableSpec;
+      try {
+        next = setCondition(
           spec,
           row,
           column.index,
           reading.kind === "empty" ? null : reading.expression,
-        ),
-        key,
-      );
+        );
+      } catch (error) {
+        flagged.set(key, {
+          text,
+          message: error instanceof Error ? error.message : String(error),
+        });
+        this.flagged.set(flagged);
+        return false;
+      }
+      flagged.delete(key);
+      this.flagged.set(flagged);
+      this.apply(next, key);
       return true;
     }
     const reading = parseResult(text, column.column);
