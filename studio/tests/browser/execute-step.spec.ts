@@ -284,6 +284,17 @@ test("a secret in test input is refused and named, never shown", async ({
   for (const answer of answers) expect(answer).not.toContain("hunter2");
   await expect(details.dialog).not.toContainText("hunter2");
   await expect(page.locator(".toast-region")).not.toContainText("hunter2");
+  // Nor in this computer's storage, the address, or anywhere on the page.
+  const stored = await page.evaluate(() =>
+    [localStorage, sessionStorage]
+      .flatMap((store) =>
+        Object.keys(store).map((key) => `${key}=${store.getItem(key)}`),
+      )
+      .join("\n"),
+  );
+  expect(stored).not.toContain("hunter2");
+  expect(page.url()).not.toContain("hunter2");
+  await expect(page.locator("body")).not.toContainText("hunter2");
 });
 
 test("Execute step on an earlier step uses only the test data of the steps it runs", async ({
