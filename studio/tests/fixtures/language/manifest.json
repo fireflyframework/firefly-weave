@@ -12,6 +12,7 @@
     "features": [
       "flow.callWorkflow",
       "flow.forEach",
+      "flow.onError",
       "text.concat",
       "text.join"
     ],

@@ -34,14 +34,6 @@ PATH = {
 }
 
 
-@pytest.fixture(autouse=True)
-def runs_step_error_handling(monkeypatch):
-    from firefly_weave.contracts import language_features
-
-    listed = tuple(sorted({*language_features.ADVERTISED_FEATURES, "flow.onError"}))
-    monkeypatch.setattr(language_features, "ADVERTISED_FEATURES", listed)
-
-
 @pytest.fixture
 def worker_runtime_fixture(worker_runtime_fixture, request):
     from firefly_weave.compiler.catalog import CatalogSnapshot

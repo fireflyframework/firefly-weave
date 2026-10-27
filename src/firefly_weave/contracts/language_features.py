@@ -42,6 +42,7 @@ LANGUAGE_FEATURES: Final[tuple[LanguageFeature, ...]] = tuple(sorted(get_args(La
 ADVERTISED_FEATURES: Final[tuple[LanguageFeature, ...]] = (
     "flow.callWorkflow",
     "flow.forEach",
+    "flow.onError",
     "text.concat",
     "text.join",
 )

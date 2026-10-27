@@ -53,15 +53,6 @@ DOCUMENTS = {
 }
 
 
-@pytest.fixture(autouse=True)
-def runs_step_error_handling(monkeypatch):
-    """Run workflows that handle step errors before the platform lists the feature."""
-    from firefly_weave.contracts import language_features
-
-    listed = tuple(sorted({*language_features.ADVERTISED_FEATURES, "flow.onError"}))
-    monkeypatch.setattr(language_features, "ADVERTISED_FEATURES", listed)
-
-
 @pytest.fixture
 def worker_runtime_fixture(worker_runtime_fixture, request):
     steps, output, input_schema = DOCUMENTS[getattr(request, "param", "continue")]

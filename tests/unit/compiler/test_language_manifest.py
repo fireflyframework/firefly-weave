@@ -131,8 +131,14 @@ def test_limits_follow_their_sources():
 
 
 def test_features_are_what_the_target_runs():
-    assert ADVERTISED_FEATURES == ("flow.callWorkflow", "flow.forEach", "text.concat", "text.join")
-    assert language_manifest().features == ["flow.callWorkflow", "flow.forEach", "text.concat", "text.join"]
+    assert ADVERTISED_FEATURES == ("flow.callWorkflow", "flow.forEach", "flow.onError", "text.concat", "text.join")
+    assert language_manifest().features == [
+        "flow.callWorkflow",
+        "flow.forEach",
+        "flow.onError",
+        "text.concat",
+        "text.join",
+    ]
     assert language_manifest(["text.join", "text.concat"]).features == ["text.concat", "text.join"]
     assert language_manifest([]).features == []
 
