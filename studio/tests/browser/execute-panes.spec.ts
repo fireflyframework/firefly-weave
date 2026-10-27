@@ -316,3 +316,29 @@ test.describe("the Table view", () => {
     );
   });
 });
+
+test.describe("mapping from the empty Input pane", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+  test("dragging a field from the empty Input pane onto a parameter maps it", async ({
+    page,
+  }) => {
+    const { details } = await openExecuteFixture(page);
+    await details.open("summarize");
+    const pane = await inputPane(details);
+    await chooseSource(pane, /Workflow input/);
+    await expect(pane).toContainText("No input data yet");
+    const target = details.field("prompt");
+    const area = (await target.boundingBox())!;
+    await pane
+      .getByRole("listitem", { name: /^customerId, / })
+      .first()
+      .dragTo(target, {
+        targetPosition: { x: Math.max(4, area.width - 48), y: area.height / 2 },
+      });
+    await page.keyboard.press("Tab");
+    await details.close();
+    const source = await sourceText(page);
+    const summarize = source.slice(source.indexOf("id: summarize"));
+    expect(summarize.slice(0, 600)).toContain("/input/customerId");
+  });
+});
