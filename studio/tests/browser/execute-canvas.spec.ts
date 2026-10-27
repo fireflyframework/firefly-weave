@@ -19,7 +19,12 @@ SPDX-License-Identifier: Apache-2.0
 // button and Ctrl/Cmd+Enter; the run played back on the tiles, 120 ms per
 // step; badges and summary lines; one announcement when it ends.
 import { expect, test, type Page } from "@playwright/test";
-import { executions, openExecuteWorkflow } from "./execute-po";
+import {
+  EXECUTE_CHAIN,
+  executeWorkflowIn,
+  executions,
+  openExecuteWorkflow,
+} from "./execute-po";
 import { hasPython } from "./local-authoring";
 import { sizes, yamlFile } from "./step-details-po";
 import { outputPane } from "./test-data-po";
@@ -252,3 +257,51 @@ test("the live region speaks once", async ({ page }) => {
   await page.waitForTimeout(500);
   expect(said).toEqual(["Executed 2 steps."]);
 });
+
+for (const viewport of [
+  { width: 1440, height: 900 },
+  { width: 360, height: 740 },
+])
+  test.describe(`the run in view at ${viewport.width}x${viewport.height}`, () => {
+    test.use({ viewport });
+    // Every step that ran on a wide window; on a phone, where they don't all
+    // fit at a readable zoom, the step the run ended at.
+    const shown =
+      viewport.width >= 768 ? ["first", "second", "third"] : ["third"];
+    test("after Execute workflow the steps that ran are in sight beside the run log", async ({
+      page,
+    }) => {
+      await openExecuteWorkflow(page, EXECUTE_CHAIN);
+      await executeWorkflowIn(page);
+      await expect(page.locator("weave-run-log")).toBeVisible();
+      for (const id of ["first", "second", "third"])
+        await expect(badge(page, id)).toHaveAttribute("data-badge", "done");
+      const canvas = await page.locator(".canvas-panel .canvas").boundingBox();
+      const log = await page.locator("weave-run-log").boundingBox();
+      await expect
+        .poll(async () => {
+          const missing: string[] = [];
+          for (const id of shown) {
+            const box = await tile(page, id)
+              .locator(".tile-body")
+              .boundingBox();
+            if (
+              !box ||
+              !canvas ||
+              !log ||
+              box.x < canvas.x - 0.5 ||
+              box.y < canvas.y - 0.5 ||
+              box.x + box.width > canvas.x + canvas.width + 0.5 ||
+              box.y + box.height > canvas.y + canvas.height + 0.5 ||
+              (box.x < log.x + log.width &&
+                box.x + box.width > log.x &&
+                box.y < log.y + log.height &&
+                box.y + box.height > log.y)
+            )
+              missing.push(id);
+          }
+          return missing;
+        })
+        .toEqual([]);
+    });
+  });

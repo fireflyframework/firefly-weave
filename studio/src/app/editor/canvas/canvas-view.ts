@@ -304,6 +304,8 @@ export class CanvasView implements OnInit, DoCheck {
   private fitted = -1;
   private fitPending = false;
   private revealed = "";
+  /** The run results the view last kept in sight (undefined before the first look). */
+  private keptRun: unknown = undefined;
   /**
    * The step a pointer press on its card just selected. It is in view where
    * the pointer is, so selecting it pans only when part of it is hidden:
@@ -380,6 +382,17 @@ export class CanvasView implements OnInit, DoCheck {
         },
         { injector: this.injector },
       );
+    }
+    // After an execution (the run log takes its share of the canvas), the
+    // steps that ran stay in sight.
+    const run = h.runStamp?.() ?? null;
+    if (run !== this.keptRun) {
+      const first = this.keptRun === undefined;
+      this.keptRun = run;
+      if (!first && run)
+        afterNextRender(() => this.keepRunInView(), {
+          injector: this.injector,
+        });
     }
     this.syncSelection();
     const selected = h.model.selected;
@@ -1534,6 +1547,64 @@ export class CanvasView implements OnInit, DoCheck {
       this.fitted = opened;
   }
   /** Pans so a tile and its label sit at least `margin` px inside the canvas. */
+  /**
+   * Brings the steps the last execution reached into the canvas's visible
+   * area: panned when they fit at this zoom, else as Fit view shows them.
+   * Nothing moves when they are all in sight.
+   */
+  keepRunInView() {
+    const h = this.host();
+    const root = this.root().nativeElement;
+    if (this.lifetime.destroyed || !root.clientWidth || !root.clientHeight)
+      return;
+    const ran = this.layout().tiles.filter(
+      (tile) => !tile.id.startsWith("$") && h.summaryOf?.(tile.id),
+    );
+    if (!ran.length) return;
+    const rect = {
+      x: Math.min(...ran.map((tile) => tile.x)),
+      y: Math.min(...ran.map((tile) => tile.y)),
+      width: 0,
+      height: 0,
+    };
+    rect.width = Math.max(...ran.map((tile) => tile.x + tile.width)) - rect.x;
+    rect.height =
+      Math.max(...ran.map((tile) => tile.labelY + LTR.labelHeight)) - rect.y;
+    const size = { width: root.clientWidth, height: root.clientHeight };
+    const margin = 16;
+    const zoom = this.view.zoom;
+    const left = rect.x * zoom + this.view.pan.x;
+    const top = rect.y * zoom + this.view.pan.y;
+    const shown =
+      left >= 0 &&
+      top >= 0 &&
+      left + rect.width * zoom <= size.width &&
+      top + rect.height * zoom <= size.height;
+    if (shown) return;
+    const fits =
+      rect.width * zoom + 2 * margin <= size.width &&
+      rect.height * zoom + 2 * margin <= size.height;
+    if (fits)
+      this.setView({ zoom, pan: reveal(this.view, rect, size, margin) });
+    else {
+      // All of them at 50% or more, else from the first; the step the run
+      // ended at stays in sight either way.
+      this.setView(
+        openView(
+          {
+            minX: rect.x,
+            minY: rect.y,
+            maxX: rect.x + rect.width,
+            maxY: rect.y + rect.height,
+          },
+          size,
+        ),
+      );
+      const last = ran.reduce((a, b) => (b.x > a.x ? b : a));
+      this.revealTile(last.id, margin);
+    }
+    this.cdr.markForCheck();
+  }
   revealTile(id: string, margin = 64) {
     const tile = this.layout().tiles.find((item) => item.id === id);
     const root = this.root().nativeElement;
