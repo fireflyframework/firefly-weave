@@ -277,6 +277,17 @@ def test_an_ai_task_replays_its_saved_turn_with_no_usage():
     }
 
 
+def test_a_secret_in_a_saved_ai_turn_is_refused_with_its_pointer():
+    document = json.loads(ai_workflow())
+    document["spec"]["llmProfiles"]["summarize"]["outputSchema"] = {"type": "string", "x-secret": True}
+    turns = {"summarize": {"turns": [{"final": "s3cr3t"}], "source": "manual"}}
+    with pytest.raises(SimulationRefused) as refused:
+        run(json.dumps(document), definitions=[], scripts={"aiTurns": turns})
+    assert refused.value.code == "WV-SCHEMA-SECRET_VALUE"
+    assert refused.value.paths == ["/scripts/aiTurns/summarize/turns/0/final"]
+    assert "s3cr3t" not in repr(refused.value.__dict__)
+
+
 def test_a_secret_in_a_step_mock_is_found_by_that_step_s_output_fields_with_its_pointer():
     secret = json.loads(json.dumps(ACTION))
     secret["metadata"]["name"] = "vault.read"

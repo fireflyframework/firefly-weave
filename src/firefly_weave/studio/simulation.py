@@ -316,7 +316,8 @@ def classify_test_data(
 
     Only typed values are classified, each against its own schema: the input, each step mock by its step's output
     fields, each action mock by its action's, each mock inside a called workflow by that workflow's step, each signal
-    payload and each person's answer. Both lists are refused before anything is simulated.
+    payload, each person's answer and each saved AI turn's final answer by its profile's output fields. Both lists
+    are refused before anything is simulated.
     """
     from firefly_weave.compiler.schemas import _Failure
     from firefly_weave.compiler.test_data import output_target, step_at
@@ -359,6 +360,14 @@ def classify_test_data(
         step = step_at(document, key)
         data = answer.model_dump(mode="json", by_alias=True).get("data")
         check(_pointer("scripts", "humans", key, "data"), (step or {}).get("formSchema"), data)
+    profiles = cast(JsonObject, spec).get("llmProfiles")
+    for key, entry in request.scripts.aiTurns.items():
+        step = step_at(document, key) or {}
+        profile = profiles.get(cast(str, step.get("profile"))) if isinstance(profiles, dict) else None
+        schema = profile.get("outputSchema") if isinstance(profile, dict) else None
+        for index, turn in enumerate(entry.turns):
+            if "final" in turn:
+                check(_pointer("scripts", "aiTurns", key, "turns", str(index), "final"), schema, turn["final"])
     return secret, unclassified
 
 
