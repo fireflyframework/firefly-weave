@@ -26,6 +26,7 @@ import type { Expression } from "../ndv/registry";
 import {
   columnTypeOf,
   printCell,
+  schemaOfColumnType,
   type Column,
   type ColumnType,
 } from "./cell-grammar";
@@ -378,4 +379,194 @@ export function moveRule(
   const rules = [...spec.rules];
   [rules[index], rules[target]] = [rules[target], rules[index]];
   return { ...spec, rules };
+}
+
+/** The schema whose properties are the result columns: the output, or each item for collect. */
+function withRowSchema(spec: TableSpec, row: Record<string, Json>): TableSpec {
+  return spec.hitPolicy === "collect" && isRecord(spec.outputSchema["items"])
+    ? { ...spec, outputSchema: { ...spec.outputSchema, items: row } }
+    : { ...spec, outputSchema: row };
+}
+function checkNewName(properties: Record<string, Json>, name: string): void {
+  if (!FIELD_NAME.test(name))
+    throw Error("Use a field name with letters, numbers or underscores.");
+  if (Object.hasOwn(properties, name))
+    throw Error(`A column named ${name} already exists.`);
+}
+const withProperties = (
+  schema: Record<string, Json>,
+  properties: Record<string, Json>,
+): Record<string, Json> => ({ ...schema, properties });
+
+/** The table with a new input column of this type; no rule tests it yet. */
+export function addInputColumn(
+  spec: TableSpec,
+  name: string,
+  type: ColumnType,
+): TableSpec {
+  const properties = propertiesOf(spec.inputSchema);
+  checkNewName(properties, name);
+  return {
+    ...spec,
+    inputSchema: withProperties(spec.inputSchema, {
+      ...properties,
+      [name]: schemaOfColumnType(type),
+    }),
+  };
+}
+
+/** The table with a new result column of this type; no rule fills it yet. */
+export function addResultColumn(
+  spec: TableSpec,
+  name: string,
+  type: ColumnType,
+): TableSpec {
+  const row = rowSchema(spec);
+  const properties = propertiesOf(row);
+  checkNewName(properties, name);
+  return withRowSchema(
+    spec,
+    withProperties(
+      { ...row, type: "object" },
+      { ...properties, [name]: schemaOfColumnType(type) },
+    ),
+  );
+}
+
+/** The table with another type for an input column; cells that no longer read are the grid's to flag. */
+export function setInputColumnType(
+  spec: TableSpec,
+  name: string,
+  type: ColumnType,
+): TableSpec {
+  const properties = propertiesOf(spec.inputSchema);
+  if (!Object.hasOwn(properties, name))
+    throw Error(`There is no column named ${name}.`);
+  return {
+    ...spec,
+    inputSchema: withProperties(
+      spec.inputSchema,
+      Object.fromEntries(
+        Object.entries(properties).map(([key, value]) => [
+          key,
+          key === name ? schemaOfColumnType(type) : value,
+        ]),
+      ),
+    ),
+  };
+}
+
+/** The table without an input column: its cells leave every rule shown as cells; formulas stay as written. */
+export function removeInputColumn(spec: TableSpec, name: string): TableSpec {
+  const properties = propertiesOf(spec.inputSchema);
+  if (!Object.hasOwn(properties, name))
+    throw Error(`There is no column named ${name}.`);
+  const columns = testable(columnsOf(spec.inputSchema));
+  const at = columns.findIndex((column) => column.name === name);
+  const inputSchema = withProperties(
+    spec.inputSchema,
+    Object.fromEntries(
+      Object.entries(properties).filter(([key]) => key !== name),
+    ),
+  );
+  if (Array.isArray(spec.inputSchema["required"]))
+    inputSchema["required"] = requiredOf(spec.inputSchema).filter(
+      (key) => key !== name,
+    );
+  return {
+    ...spec,
+    inputSchema,
+    rules: spec.rules.map((rule) => {
+      const cells = decomposeWhen(rule.when, columns);
+      if (!cells || cells[at] === null) return rule;
+      cells.splice(at, 1);
+      return { ...rule, when: composeWhen(cells) };
+    }),
+  };
+}
+
+/** A result written field by field, with one field renamed or removed (`to` null); the same object when untouched. */
+function editFields(
+  output: Expression,
+  from: string,
+  to: string | null,
+): Expression {
+  if (!isRecord(output) || Object.keys(output).length !== 1) return output;
+  const key = isRecord(output["literal"])
+    ? "literal"
+    : isRecord(output["object"])
+      ? "object"
+      : null;
+  if (!key) return output;
+  const fields = output[key] as Record<string, Json>;
+  if (!Object.hasOwn(fields, from)) return output;
+  return {
+    [key]: Object.fromEntries(
+      Object.entries(fields).flatMap(([name, value]) =>
+        name !== from ? [[name, value]] : to === null ? [] : [[to, value]],
+      ),
+    ),
+  } as Expression;
+}
+function editResults(
+  spec: TableSpec,
+  from: string,
+  to: string | null,
+): TableSpec {
+  const row = rowSchema(spec);
+  const properties = propertiesOf(row);
+  if (!Object.hasOwn(properties, from))
+    throw Error(`There is no column named ${from}.`);
+  if (to !== null && to !== from) checkNewName(properties, to);
+  const nextRow = withProperties(
+    row,
+    Object.fromEntries(
+      Object.entries(properties).flatMap(([name, value]) =>
+        name !== from ? [[name, value]] : to === null ? [] : [[to, value]],
+      ),
+    ),
+  );
+  if (Array.isArray(row["required"]))
+    nextRow["required"] = requiredOf(row).flatMap((name) =>
+      name !== from ? [name] : to === null ? [] : [to],
+    );
+  const next: TableSpec = {
+    ...withRowSchema(spec, nextRow),
+    rules: spec.rules.map((rule) => {
+      const output = editFields(rule.output, from, to);
+      return output === rule.output ? rule : { ...rule, output };
+    }),
+  };
+  if (spec.defaultOutput !== undefined)
+    next.defaultOutput = editFields(spec.defaultOutput, from, to);
+  return next;
+}
+
+/** The table with a result column renamed in its schema, every rule and Otherwise. */
+export const renameResultColumn = (
+  spec: TableSpec,
+  from: string,
+  to: string,
+): TableSpec => (from === to ? spec : editResults(spec, from, to));
+
+/** The table without a result column. */
+export const removeResultColumn = (spec: TableSpec, name: string): TableSpec =>
+  editResults(spec, name, null);
+
+/** The table with a rule renamed; the problems line says when a name can't be used. */
+export function renameRule(
+  spec: TableSpec,
+  index: number,
+  id: string,
+): TableSpec {
+  const rule = spec.rules[index];
+  return !rule || rule.id === id
+    ? spec
+    : withRule(spec, index, { ...rule, id });
+}
+
+/** The table without a rule; a table keeps at least one. */
+export function removeRule(spec: TableSpec, index: number): TableSpec {
+  if (spec.rules.length <= 1) throw Error("A table keeps at least one rule.");
+  return { ...spec, rules: spec.rules.filter((_, i) => i !== index) };
 }

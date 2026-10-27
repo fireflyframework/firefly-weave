@@ -126,6 +126,8 @@ import type { PreviewData } from "../formula/preview";
 import { LoopScopes } from "../formula/loops";
 import { SIGN_IN_TO_LIST, type TableCatalog } from "./table-catalog";
 import type { StepTables } from "./registry";
+import type { TableDocument } from "../state/table-drafts";
+import type { TableSpec } from "../decision-grid/rules-model";
 
 export type ControllerHost = Pick<
   StepDetailsHost,
@@ -849,6 +851,58 @@ export class StepDetailsController {
         );
         return uses;
       },
+      startDraft: async (uses) => {
+        const document = this.tableContract(uses);
+        const name = uses.slice(0, uses.lastIndexOf("@"));
+        if (!document || !current())
+          return { problem: `Read ${uses} first: connect to the platform.` };
+        const drafts = await tables.drafts();
+        const kept = drafts.draft(name);
+        if (kept)
+          return {
+            problem: `${name} ${kept.version} is already a draft on this computer. Choose it in Table to keep editing it.`,
+          };
+        const listed = (await tables.list().catch(() => []))
+          .filter(
+            (choice) =>
+              choice.where === "published" &&
+              choice.uses.startsWith(`${name}@`),
+          )
+          .map((choice) => choice.uses.slice(name.length + 1));
+        if (!current()) return { problem: "The workflow changed; try again." };
+        let entry;
+        try {
+          entry = await drafts.startDraft(
+            document as unknown as TableDocument,
+            listed,
+          );
+        } catch (error) {
+          return {
+            problem: error instanceof Error ? error.message : String(error),
+          };
+        }
+        if (!current()) return { problem: "The workflow changed; try again." };
+        const next = `${entry.name}@${entry.version}`;
+        this.commit(
+          target,
+          [{ scope: "step", path: ["uses"], value: next }],
+          `ndv:Start ${entry.name} ${entry.version}`,
+        );
+        return { uses: next };
+      },
+      save: async (uses, spec) => {
+        const drafts = await tables.drafts();
+        const name = uses.slice(0, uses.lastIndexOf("@"));
+        const entry = drafts.draft(name);
+        if (!entry || `${entry.name}@${entry.version}` !== uses)
+          return `${uses} isn't a draft on this computer.`;
+        try {
+          await drafts.save(entry, spec as unknown as TableSpec);
+          return null;
+        } catch (error) {
+          return error instanceof Error ? error.message : String(error);
+        }
+      },
     };
   }
   /** The decision tables step details read themselves; null in a shell without one. */
@@ -1434,6 +1488,7 @@ export class StepDetailsController {
         if (this.parameterComponent()?.target === target)
           this.parameterComponent.set(null);
       },
+      notify: (text, action) => host.notify(text, action),
       tables: this.stepTables(target, model, opened),
     };
     return ctx;

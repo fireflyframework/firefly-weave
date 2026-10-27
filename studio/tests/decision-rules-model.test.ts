@@ -22,13 +22,21 @@ import {
   type ColumnType,
 } from "../src/app/editor/decision-grid/cell-grammar";
 import {
+  addInputColumn,
+  addResultColumn,
   addRule,
   composeWhen,
   decomposeWhen,
   duplicateRule,
   gridOf,
   moveRule,
+  removeInputColumn,
+  removeResultColumn,
+  removeRule,
   renameInputColumn,
+  renameResultColumn,
+  renameRule,
+  setInputColumnType,
   setCondition,
   setHitPolicy,
   type TableSpec,
@@ -333,5 +341,94 @@ describe("editing the table", () => {
       "eu-small",
     ]);
     expect(moveRule(table(), 0, -1)).toEqual(table());
+  });
+});
+
+describe("columns and rules the grid adds, renames and removes", () => {
+  it("adds an input column with its type, and refuses a bad or taken name", () => {
+    const before = table();
+    const after = addInputColumn(before, "since", "dateTime");
+    expect(after.inputSchema["properties"]).toMatchObject({
+      since: { type: "string", format: "date-time" },
+    });
+    expect(after.rules[0]).toBe(before.rules[0]);
+    expect(gridOf(after).inputs.at(-1)).toEqual({
+      name: "since",
+      type: "dateTime",
+      required: false,
+    });
+    expect(() => addInputColumn(before, "two words", "text")).toThrow(
+      "Use a field name with letters, numbers or underscores.",
+    );
+    expect(() => addInputColumn(before, "tier", "text")).toThrow(
+      "A column named tier already exists.",
+    );
+  });
+
+  it("adds a result column to the result fields, or to each item of Collect all", () => {
+    const after = addResultColumn(table(), "reason", "text");
+    expect(after.outputSchema["properties"]).toMatchObject({
+      reason: { type: "string" },
+    });
+    const collect = setHitPolicy(table(), "collect").spec;
+    const added = addResultColumn(collect, "reason", "text");
+    expect(
+      (added.outputSchema["items"] as Record<string, unknown>)["properties"],
+    ).toMatchObject({ reason: { type: "string" } });
+    expect(() => addResultColumn(table(), "limit", "number")).toThrow(
+      "A column named limit already exists.",
+    );
+  });
+
+  it("removes an input column from its schema and from every rule's cells", () => {
+    const before = table();
+    const after = removeInputColumn(before, "tier");
+    expect(Object.keys(after.inputSchema["properties"] as object)).toEqual([
+      "amount",
+      "country",
+    ]);
+    expect(after.rules[0].when).toEqual(op("gt", ref("amount"), lit(1000)));
+    expect(after.rules[1]).toBe(before.rules[1]);
+    // A merged formula keeps what it says; the problems line explains it.
+    expect(after.rules[2]).toBe(before.rules[2]);
+    const required = removeInputColumn(before, "amount");
+    expect(required.inputSchema["required"]).toEqual([]);
+  });
+
+  it("renames and removes result columns in every rule and in Otherwise", () => {
+    const before = table();
+    const renamed = renameResultColumn(before, "limit", "cap");
+    expect(renamed.rules[0].output).toEqual(lit({ approve: true, cap: 5000 }));
+    expect(renamed.rules[2].output).toEqual({
+      object: { approve: lit(false), cap: ref("amount") },
+    });
+    expect(renamed.defaultOutput).toEqual(lit({ approve: false, cap: 0 }));
+    expect(Object.keys(renamed.outputSchema["properties"] as object)).toEqual([
+      "approve",
+      "cap",
+    ]);
+    const removed = removeResultColumn(before, "limit");
+    expect(removed.rules[0].output).toEqual(lit({ approve: true }));
+    expect(removed.defaultOutput).toEqual(lit({ approve: false }));
+  });
+
+  it("changes a column's type in its schema", () => {
+    const after = setInputColumnType(table(), "country", "textList");
+    expect(
+      (after.inputSchema["properties"] as Record<string, unknown>)["country"],
+    ).toEqual({ type: "array", items: { type: "string" } });
+  });
+
+  it("renames a rule and keeps at least one", () => {
+    const before = table();
+    expect(renameRule(before, 1, "eu").rules[1].id).toBe("eu");
+    expect(removeRule(before, 0).rules.map((rule) => rule.id)).toEqual([
+      "eu-small",
+      "custom-rule",
+    ]);
+    const one = { ...before, rules: [before.rules[0]] };
+    expect(() => removeRule(one, 0)).toThrow(
+      "A table keeps at least one rule.",
+    );
   });
 });

@@ -393,6 +393,8 @@ export interface NdvContext {
   openParameterComponent?(kind: string, subNode?: string): void;
   /** Back to the form from a parameter component. */
   closeParameterComponent?(): void;
+  /** A toast, with an action such as Undo. */
+  notify?(text: string, action?: { label: string; run(): void }): void;
   /** The decision tables this step can read and change on this computer. */
   readonly tables?: StepTables;
 }
@@ -405,6 +407,14 @@ export interface StepTables {
   where(uses: string): "draft" | "copy" | "published" | null;
   /** Starts a new table named after the workflow and the step, moves the step to it, and answers its `uses`. */
   newTable(): Promise<string | null>;
+  /**
+   * Starts the next version of a published table on this computer and moves
+   * the step to it in one undo step; answers the draft's `uses`, or a
+   * sentence when it can't.
+   */
+  startDraft(uses: string): Promise<{ uses: string } | { problem: string }>;
+  /** Keeps the grid's table in the step's draft; a sentence when it can't, null when kept. */
+  save(uses: string, spec: Json): Promise<string | null>;
 }
 
 /** A chip under an AI agent: data only; Studio draws it. */

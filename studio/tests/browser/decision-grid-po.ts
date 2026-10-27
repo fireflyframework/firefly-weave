@@ -17,7 +17,7 @@ SPDX-License-Identifier: Apache-2.0
 */
 // Published decision tables on the mocked platform, and the grid that edits
 // them in step details.
-import type { Page } from "@playwright/test";
+import { expect, type Locator, type Page } from "@playwright/test";
 
 export interface TableDocumentFixture {
   apiVersion: "weave/v1alpha1";
@@ -67,11 +67,12 @@ export function paymentPolicy(version = "1.0.0"): TableDocumentFixture {
           output: lit({ approve: true, limit: 1000 }),
         },
         {
-          id: "known",
+          // Not one test per column: the grid shows it as one formula.
+          id: "large-or-platinum",
           when: op(
-            "and",
-            op("gt", ref("amount"), lit(0)),
-            op("exists", ref("tier")),
+            "or",
+            op("gt", ref("amount"), lit(5000)),
+            op("eq", ref("tier"), lit("platinum")),
           ),
           output: lit({ approve: false, limit: 0 }),
         },
@@ -137,4 +138,73 @@ export async function routeTables(
       },
     );
   return routes;
+}
+
+/** The grid in step details: cells by row (from 0; Otherwise last) and column (0 is the rule's name). */
+export class DecisionGridPage {
+  constructor(readonly page: Page) {}
+  get root(): Locator {
+    return this.page.locator("weave-decision-grid");
+  }
+  get grid(): Locator {
+    return this.root.getByRole("grid");
+  }
+  cell(row: number, col: number): Locator {
+    return this.root.locator(`[data-cell="${row}:${col}"]`);
+  }
+  async open() {
+    const edit = this.page
+      .getByRole("dialog", { name: /^Step details: / })
+      .locator('[data-param="table"]')
+      .getByRole("button", { name: "Edit table" });
+    await expect(edit).not.toHaveAttribute("aria-disabled");
+    await edit.click();
+    await expect(this.grid).toBeVisible();
+  }
+  /** Types into a cell the way a person does: select it, Enter, type, Enter. */
+  async edit(row: number, col: number, text: string) {
+    const cell = this.cell(row, col);
+    await cell.scrollIntoViewIfNeeded();
+    await cell.click();
+    await this.page.keyboard.press("Enter");
+    const field = this.root.locator(".dg-cell-input");
+    await expect(field).toBeFocused();
+    await field.fill(text);
+    await this.page.keyboard.press("Enter");
+  }
+  problems(): Locator {
+    return this.root
+      .getByRole("region", { name: "Problems" })
+      .or(this.root.locator(".dg-problems"));
+  }
+  async policy(label: "First match" | "Exactly one" | "Collect all") {
+    await this.root
+      .getByRole("combobox", { name: "When several rules match" })
+      .click();
+    await this.page.getByRole("option", { name: label, exact: true }).click();
+  }
+  async addRule() {
+    await this.root
+      .getByRole("toolbar", { name: "Table commands" })
+      .getByRole("button", { name: "Add rule" })
+      .click();
+  }
+  async addColumn(side: "input" | "result", name: string, type: string) {
+    await this.root
+      .getByRole("button", {
+        name: side === "input" ? "Add input column" : "Add result column",
+      })
+      .click();
+    const dialog = this.page.getByRole("dialog", {
+      name: side === "input" ? "Add input column" : "Add result column",
+    });
+    await dialog.getByLabel("Name").fill(name);
+    await dialog.getByRole("radio", { name: type, exact: true }).check();
+    await dialog.getByRole("button", { name: "Add column" }).click();
+    await expect(dialog).toHaveCount(0);
+  }
+  async back() {
+    await this.root.getByRole("button", { name: "Back to the step" }).click();
+    await expect(this.root).toHaveCount(0);
+  }
 }

@@ -1,0 +1,358 @@
+/*
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+*/
+/* The decision table grid: n8n density with a fine pointer (cells and rows
+   32 px, toolbar controls 36 px), 44 px on touch and below 768 px. The grid
+   scrolls in its own box; its header row and its first two columns stay put. */
+:host {
+  display: block;
+  min-width: 0;
+}
+.dg {
+  --dg-row: var(--control-sm);
+  --dg-tool: var(--control-md);
+  --dg-mark: 40px;
+  --dg-name: 160px;
+  --dg-name-max: 240px;
+  --dg-min: 120px;
+  --dg-max: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+@media (max-width: 767px), (pointer: coarse) {
+  .dg {
+    --dg-row: var(--control-touch);
+    --dg-tool: var(--control-touch);
+  }
+}
+.dg-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  min-height: var(--dg-tool);
+}
+.dg-back {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: var(--dg-tool);
+  white-space: nowrap;
+}
+.dg-title {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: var(--type-label);
+  color: var(--text);
+}
+.dg-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+.dg-policy {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.dg-policy-label {
+  font: var(--type-caption);
+  color: var(--text);
+  white-space: nowrap;
+}
+.dg-policy weave-select {
+  min-width: 10rem;
+}
+.dg-spacer {
+  flex: 1;
+}
+button.dg-tool {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  min-height: var(--dg-tool);
+  white-space: nowrap;
+}
+.dg-hint {
+  margin: calc(-1 * var(--space-2)) 0 0;
+  font: var(--type-caption);
+  color: var(--muted);
+}
+.dg-banner,
+.dg-notice {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  font: var(--type-caption);
+}
+.dg-banner {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+.dg-notice {
+  background: var(--danger-bg);
+  border: 1px solid var(--danger-bd);
+  color: var(--danger-ink);
+}
+.dg-scroll {
+  width: fit-content;
+  max-width: 100%;
+  overflow: auto;
+  overscroll-behavior: contain;
+  max-height: min(60vh, 560px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+.dg-grid {
+  display: grid;
+  width: max-content;
+}
+/* Input and result columns: their content's width, from 120 px to 320 px. */
+.dg-th:not(.dg-mark-cell, .dg-name-cell),
+.dg-td:not(.dg-mark-cell, .dg-name-cell) {
+  min-width: var(--dg-min);
+}
+.dg-row,
+.dg-groups {
+  display: contents;
+}
+.dg-group {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  height: 24px;
+  padding: 0 var(--space-2);
+  display: flex;
+  align-items: center;
+  background: var(--raised);
+  font: var(--type-caption);
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+}
+.dg-group-start {
+  grid-column: span 2;
+  left: 0;
+  z-index: 4;
+}
+.dg-group-results {
+  border-left: 2px solid var(--border);
+}
+.dg-th,
+.dg-td {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  height: var(--dg-row);
+  padding: 0 var(--space-2);
+  border-bottom: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+  font: var(--type-body);
+  color: var(--text);
+  white-space: nowrap;
+}
+.dg-th {
+  position: sticky;
+  top: 24px;
+  z-index: 3;
+  background: var(--raised);
+  font: var(--type-caption);
+  font-weight: 600;
+}
+.dg-th-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dg-th-type {
+  font-weight: 400;
+  color: var(--muted);
+}
+.dg-th-menu {
+  flex: none;
+}
+.dg-th weave-row-menu .row-menu-toggle,
+.dg-td weave-row-menu .row-menu-toggle {
+  width: var(--dg-row);
+  min-width: var(--dg-row);
+  height: calc(var(--dg-row) - 2px);
+  min-height: calc(var(--dg-row) - 2px);
+}
+.dg-mark-cell {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  justify-content: space-between;
+  padding: 0 0 0 var(--space-2);
+  color: var(--muted);
+}
+.dg-name-cell {
+  min-width: var(--dg-name);
+  position: sticky;
+  left: var(--dg-mark);
+  z-index: 2;
+}
+.dg-th.dg-mark-cell,
+.dg-th.dg-name-cell {
+  z-index: 4;
+}
+.dg-first-result {
+  border-left: 2px solid var(--border);
+}
+.dg-td {
+  cursor: cell;
+}
+.dg-td:focus-visible,
+.dg-td.is-cursor:focus {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+.dg-td.is-cursor {
+  background: var(--selected);
+}
+.dg-cell-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dg-td.is-empty .dg-cell-text {
+  color: var(--muted);
+}
+.dg-td.is-formula {
+  font: var(--type-mono);
+}
+.dg-f {
+  flex: none;
+  color: var(--muted);
+  font-style: italic;
+}
+.dg-td.is-flagged {
+  box-shadow: inset 0 -2px 0 var(--danger);
+}
+.dg-cell-input {
+  box-sizing: border-box;
+  width: 100%;
+  height: calc(var(--dg-row) - 6px);
+  padding: 0 var(--space-1);
+  border: 1px solid var(--focus);
+  border-radius: var(--radius-sm);
+  background: var(--raised);
+  color: var(--text);
+  font: inherit;
+}
+.dg-otherwise .dg-td {
+  background: var(--raised);
+  color: var(--muted);
+}
+.dg-otherwise .dg-td:not(.dg-name-cell) {
+  color: var(--text);
+}
+.dg-number {
+  min-width: 1.5em;
+  text-align: right;
+  font: var(--type-caption);
+}
+.dg-add-rule {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: var(--dg-row);
+}
+.dg-problems {
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-2);
+}
+.dg-problems-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin: 0 0 var(--space-1);
+  font: var(--type-label);
+  color: var(--danger-ink);
+}
+.dg-problems ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: var(--space-1);
+}
+.dg-problems li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  font: var(--type-caption);
+  color: var(--text);
+}
+.dg-problems li[data-severity="warning"] {
+  color: var(--warning-ink);
+}
+.dg-problems li button {
+  min-height: var(--dg-row);
+}
+.dg-empty {
+  margin: 0;
+  color: var(--muted);
+}
+:host ::ng-deep .dg-column-form {
+  display: grid;
+  gap: var(--space-3);
+}
+:host ::ng-deep .dg-column-types {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+:host ::ng-deep .dg-column-type {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--dg-row);
+}
+:host ::ng-deep .dg-column-type.is-disabled {
+  color: var(--muted);
+}
+:host ::ng-deep .dg-column-why {
+  font: var(--type-caption);
+}
+/* The scroll box draws the outer edge: no second line on the last column or row. */
+.dg-row > :last-child {
+  border-right: 0;
+}
+.dg-row:last-child > * {
+  border-bottom: 0;
+}
