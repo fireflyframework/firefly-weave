@@ -1926,7 +1926,7 @@ const scenes: Record<string, Scene> = {
     await openExecuteWorkflow(page, EXECUTE_ASKING);
     await executeWorkflowIn(page);
     await expect(page.locator(".run-log-status")).toHaveText(
-      "Waiting · Send signal order-paid",
+      "Waiting for order-paid",
     );
     await shot("155-execute-run-log-signal", { tabs: 0 });
   },

@@ -214,7 +214,7 @@ for (const size of SIZES)
       await executeWorkflowIn(page);
       const log = page.locator("weave-run-log");
       await expect(log.locator(".run-log-status")).toHaveText(
-        "Waiting · Send signal order-paid",
+        "Waiting for order-paid",
       );
       const send = log.getByRole("button", { name: "Send", exact: true });
       await send.scrollIntoViewIfNeeded();

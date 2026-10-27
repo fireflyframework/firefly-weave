@@ -145,7 +145,7 @@ test.describe("every way to execute on one workflow", () => {
     // 3. Execute workflow: the wait advances, the signal asks in the run log.
     await executeInBar(page).click();
     await expect(log.locator(".run-log-status")).toHaveText(
-      "Waiting · Send signal order-paid",
+      "Waiting for order-paid",
     );
     await expect(log.locator('[data-entry="pause"]')).toContainText(
       "Waited 5 min",

@@ -91,8 +91,12 @@ export function runStatus(
       .map((entry) => entry.nodeId),
   ).size;
   const steps = `${ran} step${ran === 1 ? "" : "s"}`;
-  if (response.status === "blocked" && response.blocked)
-    return `Waiting · ${response.blocked.message}`;
+  // Short enough for one line; the question below says what to do.
+  const blocked = response.status === "blocked" ? response.blocked : null;
+  if (blocked?.reason === "signal")
+    return `Waiting for ${blocked.message.replace(/^Send signal /, "")}`;
+  if (blocked?.reason === "human") return `Waiting for ${blocked.nodeId}`;
+  if (blocked) return `Stopped at ${blocked.nodeId}`;
   if (response.status === "failed") {
     const failed = response.trace.find((entry) => entry.status === "failed");
     return failed ? `Failed at ${failed.nodeId}` : "Failed";
@@ -113,7 +117,9 @@ export function runStatus(
     <header class="run-log-head">
       <weave-icon name="runHistory" [size]="16" aria-hidden="true" />
       <h2 class="run-log-title">Run log</h2>
-      <span class="run-log-status" role="status">{{ status() }}</span>
+      <span class="run-log-status" role="status" [title]="status()">{{
+        status()
+      }}</span>
       <button
         type="button"
         class="icon-button run-log-close"

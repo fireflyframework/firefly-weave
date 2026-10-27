@@ -126,12 +126,12 @@ test("a signal and a person the test data doesn't answer are asked in the run lo
   await executeInBar(page).click();
   const log = runLog(page);
   await expect(log.locator(".run-log-status")).toHaveText(
-    "Waiting · Send signal order-paid",
+    "Waiting for order-paid",
   );
   await log.getByLabel("Payload (JSON)").fill('{"paid": true}');
   await log.getByRole("button", { name: "Send" }).click();
   await expect(log.locator(".run-log-status")).toHaveText(
-    "Waiting · Decide for approval",
+    "Waiting for approval",
   );
   await log.getByRole("radio", { name: "approve" }).check();
   await log.getByRole("button", { name: "Decide" }).click();
@@ -303,7 +303,7 @@ test("a signal's test answer edited in step details is used by the next executio
   await details.close();
   await executeInBar(page).click();
   await expect(runLog(page).locator(".run-log-status")).toHaveText(
-    "Waiting · Decide for approval",
+    "Waiting for approval",
   );
   const scripts = executions(calls).at(-1)!.body["scripts"] as {
     signals: Record<string, { payload: unknown }>;
@@ -377,7 +377,7 @@ spec:
   await executeInBar(page).click();
   const log = runLog(page);
   await expect(log.locator(".run-log-status")).toHaveText(
-    "Waiting · Send signal order-paid",
+    "Waiting for order-paid",
   );
   await log.getByLabel("Payload (JSON)").fill('{"code": "7731"}');
   await log.getByRole("button", { name: "Send" }).click();

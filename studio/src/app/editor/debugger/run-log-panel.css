@@ -57,11 +57,12 @@ SPDX-License-Identifier: Apache-2.0
 .run-log-status {
   flex: 1;
   min-width: 0;
-  padding: var(--space-1) 0;
+  overflow: hidden;
   font: var(--type-small);
   color: var(--muted);
-  /* A narrow log wraps the status rather than cutting what it waits for. */
-  overflow-wrap: anywhere;
+  /* One line, never broken inside a name; the whole status is its tooltip. */
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .run-log-close {
   flex: none;
