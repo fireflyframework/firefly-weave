@@ -81,6 +81,33 @@ STOPPED_ITERATIONS = (
 )
 
 
+def candidates_query() -> str:
+    """The claim's candidate tasks of one release: settlement work first, then forward work of runs that take it.
+
+    Settlement work (confirms, cancels, undos and steps a transaction settles) is read through its own partial index
+    and runs while its run is paused or held by another incident. Forward work is read only for runs that can take it,
+    so paused or held runs never fill a claim's page. Binds the scope, ``runnable_parameters()``, ``release``,
+    ``references`` and ``limit``.
+    """
+    from firefly_weave.runtime.admission import runnable
+
+    common = (
+        "worker_release_id=:release AND run_id NOT IN (SELECT run_id FROM run_policy_blocks UNION SELECT run_id "
+        "FROM runtime_capacity_blocks WHERE active) "
+        "AND (next_attempt_at IS NULL OR next_attempt_at<=clock_timestamp()) "
+        "AND ((payload->>'task_type') || '@' || (payload->>'task_version'))=ANY(cast(:references AS text[]))"
+    )
+    return (
+        f"(SELECT id,0 AS rank FROM task_intents WHERE {SCOPE} AND settlement AND status='ready' AND {common} "
+        f"AND (SELECT {runnable('r')} AND r.state->>'status' IN ('waiting','suspended') FROM runs r "
+        "WHERE r.id=task_intents.run_id) ORDER BY id LIMIT :limit) UNION ALL "
+        f"(SELECT id,1 AS rank FROM task_intents WHERE {SCOPE} AND status='ready' AND NOT settlement "
+        f"AND {common} AND (SELECT {runnable('r')} AND r.state->>'status'='waiting' "
+        "AND NOT coalesce((r.state->>'manual_paused')::boolean,false) FROM runs r "
+        "WHERE r.id=task_intents.run_id) ORDER BY id LIMIT :limit) ORDER BY rank,id LIMIT :limit"
+    )
+
+
 class RuntimeRepository:
     def __init__(self, tx: Transaction, outbox: OutboxService | None = None) -> None:
         self.tx = tx
@@ -456,19 +483,10 @@ class RuntimeRepository:
         return [dict(row) for row in rows.mappings()]
 
     async def candidates(self, release: UUID, task_references: list[str], *, limit: int = 100) -> list[UUID]:
-        from firefly_weave.runtime.admission import runnable, runnable_parameters
+        from firefly_weave.runtime.admission import runnable_parameters
 
         rows = await self.tx.session.execute(
-            text(
-                f"SELECT id FROM task_intents WHERE {SCOPE} AND worker_release_id=:release "
-                "AND status='ready' AND run_id NOT IN (SELECT run_id FROM run_policy_blocks UNION SELECT run_id "
-                "FROM runtime_capacity_blocks WHERE active) "
-                "AND (next_attempt_at IS NULL OR "
-                "next_attempt_at<=clock_timestamp()) AND ((payload->>'task_type') || '@' || "
-                "(payload->>'task_version')) "
-                "=ANY(cast(:references AS text[])) "
-                f"AND (SELECT {runnable('r')} FROM runs r WHERE r.id=task_intents.run_id) ORDER BY id LIMIT :limit"
-            ),
+            text(candidates_query()),
             {
                 **self.params,
                 **runnable_parameters(),

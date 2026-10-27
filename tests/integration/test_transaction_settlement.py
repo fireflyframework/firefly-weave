@@ -180,3 +180,22 @@ async def test_a_step_in_flight_when_its_transaction_goes_back_is_settled_and_ne
     )
     assert attempts == [{"n": 1}]
     assert (await platform.record(run.id))["state"] == "cancelled"
+
+
+async def test_a_release_whose_oldest_ready_tasks_belong_to_paused_runs_still_claims_an_undo(platform):
+    other = await platform.start(await platform.publish(workflow("look", [lookup("first")])), move="M-0")
+    await pause(platform, other.id)
+    # More forward tasks of the paused run than one claim reads, all ordered before any other task.
+    await platform.execute(
+        "INSERT INTO task_intents(id,tenant_id,project_id,environment_id,run_id,node_id,payload,worker_release_id,"
+        "operation_key,status) SELECT ('00000000-0000-4000-8000-' || lpad(to_hex(n),12,'0'))::uuid,tenant_id,"
+        "project_id,environment_id,run_id,'first-' || n,payload,worker_release_id,operation_key || '-' || n,'ready' "
+        "FROM task_intents CROSS JOIN generate_series(1,150) n WHERE run_id=:run",
+        run=other.id,
+    )
+    run = await platform.start(await platform.publish(workflow("move", [transaction(hold(), add(), submit())])))
+    await platform.complete(await platform.lease("hold"))
+    await platform.fail(await platform.lease("add"), "REFUSED", outcome="failed", effect="none")
+    await platform.scan()
+    await platform.complete(await platform.lease("hold#cancel"))
+    assert (await platform.state(run.id))["status"] == "failed"

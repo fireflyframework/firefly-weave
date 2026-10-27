@@ -28,6 +28,7 @@ import os
 import sys
 import time
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import text
@@ -150,18 +151,28 @@ async def test_the_transaction_migration_takes_constant_time_keeps_usage_exact_a
                 ).all()
                 assert {(environment, metric): value for environment, metric, value in actual} == expected
                 plans = {}
+                from firefly_weave.runtime.admission import runnable_parameters
+                from firefly_weave.runtime.repository import candidates_query
+
+                [sample] = (await connection.execute(text("SELECT id FROM runs ORDER BY id LIMIT 1"))).scalars()
+                values = {
+                    **ids,
+                    **runnable_parameters(),
+                    "release": uuid4(),
+                    "references": ["hold-quantity@1.0.0"],
+                    "limit": 100,
+                    "run": sample,
+                    "key": "M-77",
+                }
+                # The statements the product runs: the claim's candidates, the delivery of revoked participants,
+                # and the lookups by state and by business key that reads of transactions use.
                 for name, index, query in (
-                    (
-                        "claim",
-                        "task_intents_settlement",
-                        "SELECT id FROM task_intents WHERE tenant_id=:tenant AND project_id=:project "
-                        "AND environment_id=:environment AND settlement AND status='ready' ORDER BY id LIMIT 100",
-                    ),
+                    ("claim", "task_intents_settlement", candidates_query()),
                     (
                         "revoked",
                         "task_intents_revoked",
-                        "SELECT count(*) FROM runs WHERE EXISTS (SELECT 1 FROM task_intents t "
-                        "WHERE t.run_id=runs.id AND t.status='revoked')",
+                        "SELECT * FROM task_intents WHERE tenant_id=:tenant AND project_id=:project "
+                        "AND environment_id=:environment AND run_id=:run AND status='revoked' ORDER BY id FOR UPDATE",
                     ),
                     (
                         "in_doubt",
@@ -169,8 +180,14 @@ async def test_the_transaction_migration_takes_constant_time_keeps_usage_exact_a
                         "SELECT run_id FROM run_transactions WHERE tenant_id=:tenant AND project_id=:project "
                         "AND environment_id=:environment AND state='in_doubt' ORDER BY opened_at LIMIT 50",
                     ),
+                    (
+                        "business_key",
+                        "run_transactions_business_key",
+                        "SELECT run_id FROM run_transactions WHERE tenant_id=:tenant AND project_id=:project "
+                        "AND environment_id=:environment AND business_key=:key",
+                    ),
                 ):
-                    plan = await connection.scalar(text("EXPLAIN (FORMAT JSON) " + query), ids)
+                    plan = await connection.scalar(text("EXPLAIN (FORMAT JSON) " + query), values)
                     plans[name] = json.dumps(plan)
                     # The partial index meant for this lookup, not merely some index of the table.
                     assert f'"Index Name": "{index}"' in plans[name], (name, plans[name])
