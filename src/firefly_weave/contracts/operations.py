@@ -43,7 +43,8 @@ class RecordedResolution(ContractModel):
     """A resolution as an incident keeps it: `output` is always written, null when it has none."""
 
     receipt_id: UUID
-    kind: Literal["retry_safe", "accept_reconciled_result", "terminate"]
+    # accept_reconciled_failure: a person confirmed the step had no effect; the step's onError setting applies.
+    kind: Literal["retry_safe", "accept_reconciled_result", "accept_reconciled_failure", "terminate"]
     reason: str = Field(min_length=1, max_length=2000)
     output: JsonData = None
     evidence_reference: str | None = Field(default=None, min_length=1, max_length=2000)
