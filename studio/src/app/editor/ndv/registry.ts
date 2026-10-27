@@ -415,6 +415,17 @@ export interface StepTables {
   startDraft(uses: string): Promise<{ uses: string } | { problem: string }>;
   /** Keeps the grid's table in the step's draft; a sentence when it can't, null when kept. */
   save(uses: string, spec: Json): Promise<string | null>;
+  /**
+   * Publish table: the draft goes to the platform; answers what happened in
+   * words, and the step's new `uses` when the version was taken meanwhile.
+   */
+  publish(
+    uses: string,
+  ): Promise<
+    | { published: true }
+    | { moved: string; message: string }
+    | { problem: string }
+  >;
   /** Weave's own answer for a table and an input, from the Studio host (Try an input). */
   evaluate(body: { table: Json; input: Json }): Promise<unknown>;
 }

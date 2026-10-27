@@ -126,7 +126,14 @@ import type { PreviewData } from "../formula/preview";
 import { LoopScopes } from "../formula/loops";
 import { SIGN_IN_TO_LIST, type TableCatalog } from "./table-catalog";
 import type { StepTables } from "./registry";
-import type { TableDocument } from "../state/table-drafts";
+import { nextDraftVersion, type TableDocument } from "../state/table-drafts";
+import {
+  CONNECT_TO_PUBLISH,
+  ROLE_CANT_PUBLISH,
+  UNKNOWN_OUTCOME,
+  publishFailure,
+  publishTable,
+} from "../decision-grid/publish-table";
 import type { TableSpec } from "../decision-grid/rules-model";
 
 export type ControllerHost = Pick<
@@ -807,6 +814,8 @@ export class StepDetailsController {
     kind: string;
     subNode?: string;
   } | null>(null);
+  /** Idempotency keys of table publishes whose answer never came, by `uses`. */
+  private readonly publishKeys = new Map<string, string>();
   /** The step's decision table as step details read and keep it. */
   private stepTables(
     target: string,
@@ -889,6 +898,62 @@ export class StepDetailsController {
           `ndv:Start ${entry.name} ${entry.version}`,
         );
         return { uses: next };
+      },
+      publish: async (uses) => {
+        const host = this.host;
+        const at = uses.lastIndexOf("@");
+        const name = uses.slice(0, at);
+        const version = uses.slice(at + 1);
+        if (!host.profile) return { problem: CONNECT_TO_PUBLISH };
+        if (!host.can("definition.publish"))
+          return { problem: ROLE_CANT_PUBLISH };
+        const drafts = await tables.drafts();
+        const entry = drafts.draft(name);
+        if (!entry || entry.version !== version)
+          return { problem: `${uses} isn't a draft on this computer.` };
+        const api = host.api;
+        const key = this.publishKeys.get(uses) ?? crypto.randomUUID();
+        this.publishKeys.set(uses, key);
+        try {
+          await publishTable(api, entry.document, key);
+        } catch (error) {
+          const failure = publishFailure(error);
+          if (failure.kind === "unknown") return { problem: UNKNOWN_OUTCOME };
+          this.publishKeys.delete(uses);
+          if (failure.kind === "role") return { problem: ROLE_CANT_PUBLISH };
+          if (failure.kind === "refused") return { problem: failure.message };
+          // Published by someone else meanwhile: the changes start the next version.
+          const listed = (await tables.list().catch(() => []))
+            .filter(
+              (choice) =>
+                choice.where === "published" &&
+                choice.uses.startsWith(`${name}@`),
+            )
+            .map((choice) => choice.uses.slice(name.length + 1));
+          const next = nextDraftVersion(version, [...listed, version]);
+          await drafts.moveDraft(entry, next);
+          const moved = `${name}@${next}`;
+          if (current())
+            this.commit(
+              target,
+              [{ scope: "step", path: ["uses"], value: moved }],
+              `ndv:Start ${name} ${next}`,
+            );
+          return {
+            moved,
+            message: `${name} ${version} was published by someone else. Your changes start ${next}.`,
+          };
+        }
+        this.publishKeys.delete(uses);
+        await drafts.remove(name);
+        await drafts.copy(entry.document);
+        host.cacheDecisionContract(
+          uses,
+          entry.document as unknown as Record<string, unknown>,
+        );
+        tables.retry();
+        host.notify(`Published ${name} ${version}.`);
+        return { published: true };
       },
       evaluate: (body) =>
         this.host.api.request("/studio/local/decision/evaluate", "POST", body),

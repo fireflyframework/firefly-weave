@@ -350,6 +350,12 @@ export class TableDrafts {
     return this.keep({ ...entry, document, savedAt: "" });
   }
 
+  /** Moves a draft to another version (its version was published meanwhile). */
+  async moveDraft(entry: DraftEntry, version: string): Promise<DraftEntry> {
+    const document = clone(entry.document);
+    document.metadata = { name: entry.name, version };
+    return this.keep({ ...entry, version, document, savedAt: "" });
+  }
   /** Forgets a table's draft. */
   async remove(name: string): Promise<void> {
     this.drafts.delete(name);

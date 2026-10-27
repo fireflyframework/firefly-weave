@@ -451,6 +451,38 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
     return this.flagged().get(this.key(row, col))?.message ?? null;
   }
 
+  // ------------------------------------------------------------ publish
+  readonly publishing = signal(false);
+  /** Publish table: the grid's errors first, then the platform. */
+  async publish() {
+    if (this.publishing()) return;
+    const errors = this.problems().filter(
+      (problem) => problem.severity === "error",
+    ).length;
+    if (errors) {
+      this.notice.set(
+        `Fix ${errors} problem${errors === 1 ? "" : "s"} before publishing.`,
+      );
+      return;
+    }
+    const tables = this.context().tables;
+    if (!tables) return;
+    this.publishing.set(true);
+    try {
+      await this.flush();
+      const uses = this.shownFor || this.uses();
+      const answer = await tables.publish(uses);
+      if (this.lifetime.destroyed) return;
+      if ("problem" in answer) this.notice.set(answer.problem);
+      else if ("moved" in answer) {
+        this.shownFor = answer.moved;
+        this.notice.set(answer.message);
+      } else this.notice.set(null);
+    } finally {
+      this.publishing.set(false);
+    }
+  }
+
   // ------------------------------------------------------------ problems
   problems(): (GridProblem & { at: GridCellAt | null })[] {
     const spec = this.spec();

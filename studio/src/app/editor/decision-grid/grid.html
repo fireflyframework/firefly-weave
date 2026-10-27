@@ -32,6 +32,17 @@ SPDX-License-Identifier: Apache-2.0
       >
         <weave-icon name="execute" [size]="16" />Try an input
       </button>
+      @if (where() === "draft") {
+        <button
+          type="button"
+          class="dg-tool dg-publish"
+          [class.primary]="!hasErrors()"
+          [attr.aria-disabled]="publishing() ? 'true' : null"
+          (click)="publish()"
+        >
+          <weave-icon name="upload" [size]="16" />Publish table
+        </button>
+      }
     }
   </header>
   <p class="sr-only" aria-live="polite">{{ announcement() }}</p>

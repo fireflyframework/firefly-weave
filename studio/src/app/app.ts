@@ -19,7 +19,6 @@ import {
   canvasFile,
   canvasFromStored,
   emptyCanvas,
-  ownedRecipes,
   readCanvas,
   removeTrigger,
   type CanvasSidecar,
@@ -3506,16 +3505,14 @@ export class App implements CanvasHost {
             )
             .then(conditions(source, format))
             .then(async (result) =>
-              // Its code loads only for a workflow that owns actions.
-              Object.keys(ownedRecipes(canvas)).length
-                ? (
-                    await import("./editor/ndv/owned/owned-pending")
-                  ).withOwnedPending(
-                    result,
-                    this.parseSource(source, format),
-                    canvas,
-                  )
-                : result,
+              // Owned actions publish first; drafts kept on this computer
+              // must be published before the workflow.
+              (await import("./editor/ndv/owned/draft-pending")).withPending(
+                result,
+                this.parseSource(source, format),
+                canvas,
+                this,
+              ),
             );
         },
       },

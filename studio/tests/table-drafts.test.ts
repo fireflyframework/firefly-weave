@@ -254,6 +254,23 @@ describe("table drafts on this computer", () => {
     expect(stored.document.spec.hitPolicy).toBe("unique");
   });
 
+  it("moves a draft to the next version when its version was taken", async () => {
+    const backend = memoryBackend();
+    const drafts = new TableDrafts(backend, "local:");
+    await drafts.ready();
+    const entry = await drafts.startDraft(published(), ["1.2.0"]);
+    const moved = await drafts.moveDraft(entry, "1.2.2");
+    expect(moved.document.metadata).toEqual({
+      name: "payment-policy",
+      version: "1.2.2",
+    });
+    expect(drafts.draft("payment-policy")?.version).toBe("1.2.2");
+    expect(
+      readEntry(backend.data.get("local:weave.tableDraft.payment-policy")!)
+        ?.version,
+    ).toBe("1.2.2");
+  });
+
   it("keeps the 200 most recently read copies", async () => {
     const backend = memoryBackend();
     const drafts = new TableDrafts(backend, "local:");

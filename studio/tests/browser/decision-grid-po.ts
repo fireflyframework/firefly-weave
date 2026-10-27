@@ -226,6 +226,7 @@ metadata: { name: orders, version: 1.0.0 }
 spec:
   inputSchema:
     type: object
+    required: [amount]
     properties:
       amount: { type: number }
       tier: { type: string }
@@ -234,7 +235,7 @@ spec:
     - id: score
       kind: decisionTable
       uses: payment-policy@1.2.0
-      with: { literal: {} }
+      with: { ref: /input }
   output: { literal: {} }
 `,
 );
