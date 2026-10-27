@@ -231,11 +231,16 @@ class RecoveryService:
                 transient = bool(events and events[0]["data"]["output"]["code"] in TRANSIENT_FAILURE_CODES)
             artifact = import_artifact(row["artifact"])
             # Only a run that entered a transaction has steps whose failures belong to one.
-            transactional = bool(view.state.transactions) and in_transaction(
-                shapes(workflow(artifact)), task["node_id"]
+            facts = shapes(workflow(artifact)) if view.state.transactions else None
+            transactional = in_transaction(facts, task["node_id"])
+            # A step still in flight when its transaction went back is never tried again: it settles now. Any other
+            # step, the one that can't be undone included, keeps its action's retries.
+            owner = facts.owner_key(task["node_id"]) if facts is not None else None
+            going_back = owner is not None and (
+                (record := view.state.transactions.get(owner)) is not None
+                and (record.rollback or record.status in {"compensating", "in_doubt"})
             )
-            # A step still in flight when its transaction went back is never tried again: it settles now.
-            settles = transactional and task["settlement"] and split_phase(task["node_id"]) is None
+            settles = going_back and split_phase(task["node_id"]) is None
             allowed = (
                 safe
                 and transient

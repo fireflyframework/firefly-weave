@@ -170,6 +170,44 @@ async def test_a_step_whose_worker_went_silent_is_undone_and_no_ambiguity_incide
     assert "WV-TASK-AMBIGUOUS" not in {row["code"] for row in codes}
 
 
+async def retry_safe(platform, lease) -> None:
+    """Give an attempt the policy of a retry-safe action with three attempts, then let its worker go silent."""
+    await platform.execute(
+        "UPDATE task_leases SET policy=jsonb_set(jsonb_set(policy,'{retry}',"
+        '\'{"maxAttempts": 3, "initialDelaySeconds": 1, "maxDelaySeconds": 1}\'),'
+        "'{side_effect}','\"idempotency_key\"') WHERE task_id=:task",
+        task=lease.proof.task_id,
+    )
+    await platform.expire(lease)
+
+
+@pytest.mark.parametrize("abort", [False, True])
+async def test_a_retry_safe_step_that_cant_be_undone_is_tried_again_and_its_result_decides(platform, abort):
+    import asyncio
+
+    activation = await platform.publish(workflow("move", [transaction(hold(), add(), submit())]))
+    run = await platform.start(activation)
+    await platform.complete(await platform.lease("hold"))
+    await platform.complete(await platform.lease("add"))
+    first = await platform.lease("submit")
+    if abort:
+        # A cancel while it decides waits for its result.
+        async with platform.runtime.definitions.transaction(platform.scope, None) as tx:
+            await platform.runtime.cancel(
+                tx, run.id, "stop", actor=platform.actor, scope=platform.scope, context=AuditContext()
+            )
+    await retry_safe(platform, first)
+    await platform.scan()
+    assert (await platform.record(run.id))["state"] == "deciding"
+    await asyncio.sleep(1.2)
+    second = await platform.lease("submit")
+    assert (second.operation_key, second.proof.generation) == (first.operation_key, first.proof.generation + 1)
+    await platform.complete(second)
+    await platform.complete(await platform.lease("hold#confirm"))
+    assert (await platform.record(run.id))["state"] == "completed"
+    assert (await platform.state(run.id))["status"] == ("cancelled" if abort else "succeeded")
+
+
 async def test_an_undo_that_cannot_finish_holds_the_run_in_doubt_and_refuses_cancel(platform):
     from firefly_weave.access.audit import AuditContext
     from firefly_weave.definitions.models import CatalogError
