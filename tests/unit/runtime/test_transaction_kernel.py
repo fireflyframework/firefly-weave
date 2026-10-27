@@ -642,3 +642,27 @@ def test_confirm_it_had_no_effect_is_refused_for_an_undo_of_a_step_with_a_settin
     run.send("incident_resolved", node_id="add#undo", incident_key="add#undo:1", kind="accept_reconciled_failure")
     # The undo is the transaction's: it stays undoing, for recovery or the transaction's own resolutions.
     assert (run.txn().status, run.statuses()["add"]) == ("compensating", "undoing")
+
+
+def test_a_cancel_waiting_for_the_step_that_cant_be_undone_wins_over_its_setting():
+    run = Run(flow(hold(), add(), {**submit(), "onError": "continue"}))
+    run.start()
+    run.done("hold", {"holdId": "h-1"})
+    run.done("add", {"id": "a-1"})
+    run.send("cancelled", reason="stop")
+    assert (run.txn().status, run.txn().pending_abort is not None) == ("deciding", True)
+    [undo] = tasks(run.failed("submit", "VALIDATION", effect="none"))
+    assert (undo.node_id, run.txn().status) == ("add#undo", "compensating")
+
+
+def test_a_definite_failure_while_the_transaction_goes_back_stays_the_transactions():
+    run = Run(flow(hold(), add(onError="continue"), submit()))
+    run.start()
+    run.done("hold", {"holdId": "h-1"})
+    run.send("cancelled", reason="stop")
+    assert (run.txn().status, run.statuses()["add"]) == ("compensating", "dispatched")
+    went_back = run.failed("add", "VALIDATION", effect="none")
+    # The step is settled as failed and the undo of the others starts; its setting never runs.
+    assert [task.node_id for task in tasks(went_back)] == ["hold#cancel"]
+    assert run.statuses()["add"] == "failed"
+    assert not [change for change in went_back.steps if change.status == "failed"]

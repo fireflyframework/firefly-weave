@@ -359,3 +359,13 @@ def test_a_signal_timeout_on_a_step_that_handles_it_runs_its_error_path():
     run.later(60)
     run.fail("confirmed", "WV-SIGNAL-TIMEOUT", outcome="not_started", deadline=due)
     assert (run.state.status, run.state.output, run.state.waits) == ("succeeded", "late", {})
+
+
+def test_a_result_that_breaks_the_actions_contract_is_never_handled():
+    # The action ran, so its effect happened: a result it should not have returned stops the run as before.
+    run = Run(compiled(action("lookup", onError="continue")), {})
+    run.start()
+    run.send("task_completed", node_id="lookup", generation=1, output={"unexpected": True})
+    assert run.state.status == "suspended"
+    assert run.state.incident is not None and run.state.incident.startswith("WV-SCHEMA-")
+    assert "lookup" not in run.state.steps
