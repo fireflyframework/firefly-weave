@@ -27,6 +27,7 @@ import {
   pinSample,
   shownExecute,
   EXECUTE_ROUTED,
+  EXECUTE_ROWS,
   executeWorkflowIn,
 } from "./execute-po";
 import { fieldLine } from "./formula-po";
@@ -361,4 +362,23 @@ test("after a test run with a sample input, the steps that read it show that sam
   await expect(input.locator(".pane-source-tag")).toHaveText("Sample");
   await expect(input).not.toContainText("No input data yet");
   await expect(input).toContainText("amount");
+});
+
+test("a workflow with no input fields keeps the Input pane's empty state after a test run", async ({
+  page,
+}) => {
+  const { details } = await openExecuteWorkflow(page, EXECUTE_ROWS);
+  await details.open("rows");
+  const answered = page.waitForResponse("**/studio/local/debug/execute");
+  await (await shownExecute(details)).click();
+  await answered;
+  const tabs = details.dialog
+    .getByRole("tablist", { name: /^(Step details panes|Data)$/ })
+    .getByRole("tab", { name: "Input" });
+  if (await tabs.count()) await tabs.first().click();
+  const input = details.dialog.locator("weave-input-pane");
+  await expect(input.locator(".pane-source-tag")).toHaveCount(0);
+  await expect(
+    input.getByRole("button", { name: "Add test input" }),
+  ).toBeVisible();
 });

@@ -250,8 +250,15 @@ export class ExecutionService {
     this.results.set(results);
     this.last.set(answer);
     this.sampledInput.set(sampled);
+    // Only a sample with fields is worth showing: none keeps "Add test input".
+    const sample = body.input as Json | undefined;
     this.sampleUsed.set(
-      sampled ? ((body.input as Json | undefined) ?? null) : null,
+      sampled &&
+        !!sample &&
+        typeof sample === "object" &&
+        Object.keys(sample).length > 0
+        ? sample
+        : null,
     );
     await this.keep(place, draft.id, results);
     return { kind: "done", response: answer };
