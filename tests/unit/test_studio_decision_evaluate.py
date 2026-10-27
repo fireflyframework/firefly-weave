@@ -218,3 +218,16 @@ def test_it_shares_validation_s_slots_and_not_the_one_an_execution_holds(tmp_pat
         monkeypatch.setattr(host._LOCAL_WORK, "claim", lambda: False)
         busy = browser.post(ROUTE, json=body, headers=headers)
         assert busy.status_code == 503 and busy.json()["code"] == "WV-STUDIO-BUSY"
+
+
+def test_an_input_a_rule_cant_evaluate_is_refused_in_words(tmp_path: Path) -> None:
+    loose = table()
+    loose["spec"]["inputSchema"] = {"type": "object", "properties": {"amount": {}, "tier": {}}}
+    with client(tmp_path) as browser:
+        answer = browser.post(ROUTE, json={"table": loose, "input": {"amount": "lots"}}, headers=pair(browser))
+    assert answer.status_code == 422, answer.text
+    body = answer.json()
+    assert body["code"].startswith("WV-EXPR-")
+    assert body["message"] == "A rule couldn't be evaluated with this input."
+    assert body["result"]["path"].startswith("/")
+    assert "lots" not in answer.text
