@@ -211,6 +211,19 @@ const lessThan = (a: Json, b: Json): boolean =>
 
 /** Reads a cell's text for its column. */
 export function parseCell(input: string, column: Column): CellReading {
+  const reading = readCell(input, column);
+  // Only what the cell can print back is a cell; anything else is refused in words.
+  if (reading.kind === "test" && printCell(reading.expression, column) === null)
+    return column.type === "boolean"
+      ? error("type", "Use true or false in a Yes/No column.")
+      : error(
+          "type",
+          `A ${COLUMN_TYPE_LABELS[column.type]} column can't show this test; write it as a formula after =.`,
+        );
+  return reading;
+}
+
+function readCell(input: string, column: Column): CellReading {
   const text = input.trim();
   if (text === "" || text === "-") return { kind: "empty" };
   const ref = refOf(column);

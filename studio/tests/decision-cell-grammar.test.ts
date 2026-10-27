@@ -246,3 +246,72 @@ describe("column types", () => {
     );
   });
 });
+
+describe("cells the grid can show", () => {
+  const types: ColumnType[] = [
+    "text",
+    "number",
+    "integer",
+    "boolean",
+    "dateTime",
+    "textList",
+  ];
+  const texts = [
+    "true",
+    "false",
+    "not(true)",
+    "not(false)",
+    "true, false",
+    "!= true",
+    "> 5",
+    "[1..2]",
+    "1, 2",
+    "not(1)",
+    "gold",
+    '"gold"',
+    '"a", "b"',
+    'not("a")',
+    'contains "x"',
+    'starts with "x"',
+    "present",
+    "missing",
+    '= "gold"',
+    "= 5",
+    '> "2026-01-01T00:00:00Z"',
+  ];
+
+  it("prints every test it reads, and reads it back the same, in every column type", () => {
+    for (const type of types)
+      for (const text of texts) {
+        const column = { name: "c", type };
+        const reading = parseCell(text, column);
+        if (reading.kind !== "test") continue;
+        const printed = printCell(reading.expression, column);
+        expect(printed, `${type} ${text}`).not.toBeNull();
+        expect(parseCell(printed!, column), `${type} ${text}`).toEqual(reading);
+      }
+  });
+
+  it("refuses lists and not() in a Yes/No column", () => {
+    for (const text of ["not(true)", "not(false)", "true, false"])
+      expect(parseCell(text, { name: "vip", type: "boolean" })).toEqual({
+        kind: "error",
+        problem: "type",
+        message: "Use true or false in a Yes/No column.",
+      });
+  });
+
+  it("reads a bare word after = as a formula, and quoted text as a test", () => {
+    const column = { name: "tier", type: "text" as const };
+    expect(parseCell("= gold", column)).toEqual({
+      kind: "formula",
+      text: "gold",
+    });
+    expect(parseCell('= "gold"', column)).toEqual({
+      kind: "test",
+      expression: {
+        op: { name: "eq", args: [{ ref: "/input/tier" }, { literal: "gold" }] },
+      },
+    });
+  });
+});
