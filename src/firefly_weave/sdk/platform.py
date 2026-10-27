@@ -106,6 +106,7 @@ PERSON_ROLES = (
     "email_sender",
     "email_manager",
     "execution_manager",
+    "transaction_reconciler",
 )
 # The account `up --username` creates gets every role a local owner needs to set up the demo
 # workspace from Studio: AI connections, Weave AI, executions, workers and deployments. Other
@@ -124,6 +125,7 @@ LOCAL_OWNER_ROLES = (
     "deployment_planner",
     "deployment_approver",
     "deployment_operator",
+    "transaction_reconciler",
 )
 _PEOPLE = "people.json"
 _PEOPLE_FORMAT = "weave/local-people-v1"

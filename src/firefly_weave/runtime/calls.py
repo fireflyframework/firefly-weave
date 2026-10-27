@@ -75,6 +75,7 @@ OUTCOMES = {
     "abandoned": "cancelled",
 }
 CALLER_ENDED = "Caller run ended"
+TRANSACTION_UNDONE = "Transaction undone"
 
 
 @dataclass(frozen=True)
@@ -87,6 +88,17 @@ class ChildStart:
     generation: int
     mode: str
     depth: int
+    # The step that can't be undone of a transaction: its child ends by the deadline its caller's hold check counted on.
+    not_after: datetime | None = None
+
+
+def pivot_deadline(caller: dict[str, Any], key: str) -> datetime | None:
+    """The deadline of the caller's step that can't be undone at ``key``, when the call is that step."""
+    for record in (caller["state"].get("transactions") or {}).values():
+        for item in record.get("participants", []):
+            if item.get("key") == key and item.get("mode") == "irreversible" and item.get("deadline"):
+                return datetime.fromisoformat(item["deadline"])
+    return None
 
 
 def child_key(caller_run_id: UUID, node_id: str, generation: int) -> str:
@@ -135,9 +147,9 @@ async def record_calls(repository: RuntimeRepository, view: "RunView", result: T
             raise CatalogError(422, "WV-READINESS-CALL", "The activation pins no activation for this call")
         await repository.execute(
             "INSERT INTO run_calls(tenant_id,project_id,environment_id,id,caller_run_id,node_id,generation,mode,"
-            "on_failure,workflow_reference,activation_id,input,business_key,depth,trace_context,status,requested_at) "
-            "VALUES(:tenant,:project,:environment,:id,:run,:node,0,:mode,:on_failure,:reference,:activation,"
-            "cast(:input AS jsonb),:business_key,:depth,cast(:trace AS jsonb),'requested',:at)",
+            "on_failure,workflow_reference,activation_id,input,business_key,depth,trace_context,status,requested_at,"
+            "settlement) VALUES(:tenant,:project,:environment,:id,:run,:node,0,:mode,:on_failure,:reference,"
+            ":activation,cast(:input AS jsonb),:business_key,:depth,cast(:trace AS jsonb),'requested',:at,:settlement)",
             id=uuid4(),
             run=view.id,
             node=intent.node_id,
@@ -150,6 +162,7 @@ async def record_calls(repository: RuntimeRepository, view: "RunView", result: T
             depth=depth,
             trace=_json(trace) if trace is not None else None,
             at=at,
+            settlement=intent.settlement,
         )
 
 
@@ -162,9 +175,10 @@ async def caller_ended(repository: RuntimeRepository, run_id: UUID, at: datetime
         at=at,
     )
     count(repository, "wait", "cancelled", len(cancelled))
+    # An ended caller no longer waits for any result, including one its transaction asked to settle.
     await repository.execute(
-        f"UPDATE run_calls SET cancel_requested=true WHERE {SCOPE} AND caller_run_id=:run AND mode='wait' "
-        "AND status='started' AND NOT cancel_requested",
+        f"UPDATE run_calls SET cancel_requested=true,settlement=false WHERE {SCOPE} AND caller_run_id=:run "
+        "AND mode='wait' AND status='started' AND (NOT cancel_requested OR settlement)",
         run=run_id,
     )
     await repository.execute(
@@ -183,9 +197,14 @@ async def child_ended(
         return
     link = links[0]
     value, error = call_result(status, output, code)
+    from firefly_weave.runtime.settlement import child_effect
+
+    child = await repository.rows(f"SELECT artifact FROM runs WHERE {SCOPE} AND id=:run", run=run_id)
+    effect = await child_effect(repository, run_id, child[0]["artifact"]) if child else "unknown"
+    # A child its caller stopped waiting for is abandoned; one a transaction asked to stop still reports to it.
     rows = await repository.rows(
-        "UPDATE run_calls SET status=CASE WHEN cancel_requested THEN 'abandoned' ELSE :status END,"
-        "result=cast(:result AS jsonb),code=:code,ended_at=:at "
+        "UPDATE run_calls SET status=CASE WHEN cancel_requested AND NOT settlement THEN 'abandoned' ELSE :status END,"
+        "result=cast(:result AS jsonb),code=:code,ended_at=:at,effect=:effect "
         f"WHERE {SCOPE} AND caller_run_id=:caller AND node_id=:node AND generation=:generation "
         "AND status IN ('requested','started') RETURNING mode,status,started_at",
         caller=link["caller_run_id"],
@@ -195,6 +214,7 @@ async def child_ended(
         result=_json(value),
         code=error,
         at=at,
+        effect=effect,
     )
     for row in rows:
         count(repository, row["mode"], row["status"])
@@ -208,11 +228,13 @@ async def deliver_calls(
     Each outcome becomes one accepted event with a stable identity, in the order the children ended. A cancelled or
     timed-out child of a call that stops on failure opens ``WV-CALL-INTERRUPTED`` instead.
     """
-    from firefly_weave.compiler.ir import CallWorkflowNode
+    from firefly_weave.compiler.ir import ActionNode, CallWorkflowNode
     from firefly_weave.compiler.schemas import _Failure
+    from firefly_weave.contracts.transactions import split_phase
     from firefly_weave.files.authority import admit_run_files
     from firefly_weave.runtime.kernel import called_workflow, workflow
     from firefly_weave.runtime.kernel import transition_async as transition
+    from firefly_weave.runtime.transactions import in_transaction, shapes
 
     rows = await repository.rows(
         f"SELECT * FROM run_calls WHERE {SCOPE} AND caller_run_id=:run AND mode='wait' AND NOT delivered "
@@ -221,6 +243,7 @@ async def deliver_calls(
     )
     delivered = 0
     ir = workflow(artifact) if rows else None
+    transactions = shapes(ir) if ir is not None else None
     for row in rows:
         assert ir is not None
         latest = await repository.rows(
@@ -237,24 +260,51 @@ async def deliver_calls(
             await _mark(repository, row["id"], "superseded")
             continue
         node = next(n for n in ir.graph.nodes if n.id == node_of(row["node_id"]))
-        assert isinstance(node, CallWorkflowNode)
+        phase = split_phase(row["node_id"])
+        if phase is None:
+            assert isinstance(node, CallWorkflowNode)
+            callee = called_workflow(ir, node)[1]
+        else:
+            # A called confirm, cancel or undo: its own called workflow's output schema screens its result.
+            assert isinstance(node, (ActionNode, CallWorkflowNode)) and node.txn is not None
+            digest = node.txn.phases[phase[1]].dependency
+            callee = cast(
+                JsonObject,
+                next(d for d in ir.dependencies if d.kind == "Workflow" and d.digest == digest).document["spec"],
+            )
         status, result = row["status"], row["result"]
         data: JsonObject = {"node_id": row["node_id"], "generation": row["generation"]}
         kind = "call_completed"
-        if row["on_failure"] == "stop" and status in STOPPED:
+        # A transaction decides what a called participant's outcome means: it always receives the outcome, and
+        # whether the child may have applied anything.
+        settling = in_transaction(transactions, row["node_id"])
+        if settling:
+            data["effect"] = row["effect"] or "unknown"
+        if row["on_failure"] == "stop" and status in STOPPED and not settling:
             kind = "incident_opened"
             data["code"] = "WV-CALL-INTERRUPTED"
         else:
             data.update(child_run_id=str(row["child_run_id"]), status=status, output=result)
             if status == "succeeded":
                 bundle = {d.reference: d.document for d in ir.dependencies if d.kind == "Schema"}
-                refused = screened(cast(JsonObject, called_workflow(ir, node)[1]["outputSchema"]), result, bundle)
+                refused = screened(cast(JsonObject, callee["outputSchema"]), result, bundle)
                 if refused is None:
                     try:
                         await admit_run_files(repository.tx, row["child_run_id"], view.id, result)
                     except _Failure as error:
                         refused = refusal(error)
-                if refused is not None:
+                if refused is not None and settling:
+                    # The child ran and its output was refused: the step failed and may have applied.
+                    kind = "step_failed"
+                    data = {
+                        "node_id": row["node_id"],
+                        "generation": row["generation"],
+                        "code": refused,
+                        "outcome": "unknown",
+                        "attempts": row["generation"] + 1,
+                        "effect": "unknown",
+                    }
+                elif refused is not None:
                     kind = "incident_opened"
                     data = {"node_id": row["node_id"], "generation": row["generation"], "code": refused}
         event = RuntimeEvent(
@@ -369,8 +419,13 @@ class CallService:
 
         if row["depth"] > MAX_CALL_DEPTH:
             return await rejected("WV-CALL-DEPTH")
+        not_after = pivot_deadline(caller, row["node_id"])
+        if not_after is not None and now >= not_after:
+            # Too late for the step that can't be undone: its reservations no longer outlast it. Nothing started,
+            # so nothing was applied, and its transaction goes back.
+            return await rejected("WV-CALL-START")
         child = ChildStart(
-            row["id"], row["caller_run_id"], row["node_id"], row["generation"], row["mode"], row["depth"]
+            row["id"], row["caller_run_id"], row["node_id"], row["generation"], row["mode"], row["depth"], not_after
         )
         from firefly_weave.runtime.capacity import RuntimeCapacityError, capacity_failures
 
@@ -502,14 +557,24 @@ class CallService:
         view = view_of(caller)
         if view.state.status in TERMINAL or row["node_id"] not in view.state.active:
             return 1
+        from firefly_weave.runtime.kernel import workflow
+        from firefly_weave.runtime.transactions import in_transaction, shapes
+
+        artifact = import_artifact(caller["artifact"])
+        data: JsonObject = {"node_id": row["node_id"], "generation": row["generation"], "code": code}
+        kind = "incident_opened"
+        if in_transaction(shapes(workflow(artifact)), row["node_id"]):
+            # No child started, so nothing was applied: the step failed and its transaction decides what follows.
+            kind = "step_failed"
+            data.update(outcome="not_started", attempts=row["generation"], effect="none")
         event = RuntimeEvent(
             id=uuid5(NAMESPACE_URL, f"firefly-weave/call/{row['id']}"),
-            type="incident_opened",
-            data={"node_id": row["node_id"], "generation": row["generation"], "code": code},
+            type=kind,  # type: ignore[arg-type]
+            data=data,
             timestamp=at,
             sequence=view.state.accepted_sequence + 1,
         )
-        result = await transition(view.state, event, import_artifact(caller["artifact"]))
+        result = await transition(view.state, event, artifact)
         await repository.persist(
             view.model_copy(update={"state": result.state}), event, result, canonical_digest({"call": str(row["id"])})
         )
@@ -518,9 +583,14 @@ class CallService:
     async def cancel_children(self, tx: Transaction, limit: int) -> int:
         """Cancel at most one started child run whose caller ended; the rule cascades to grandchildren."""
         repository = RuntimeRepository(tx, self.runtime.definitions.outbox)
+        # A child already undoing its own transactions before it ends, or one in doubt, accepted its stop or waits
+        # for a person: it is left out here, so it never holds back the cancels behind it.
         candidates = await repository.rows(
-            f"SELECT id,child_run_id,caller_run_id FROM run_calls WHERE {SCOPE} AND cancel_requested "
-            "AND status='started' ORDER BY requested_at,id LIMIT :limit",
+            f"SELECT id,child_run_id,caller_run_id,settlement FROM run_calls WHERE {SCOPE} AND cancel_requested "
+            "AND status='started' AND EXISTS (SELECT 1 FROM runs r WHERE r.id=run_calls.child_run_id "
+            "AND r.state->'ending' IS NULL AND NOT EXISTS (SELECT 1 FROM jsonb_each(CASE WHEN "
+            "jsonb_typeof(r.state->'transactions')='object' THEN r.state->'transactions' ELSE '{}'::jsonb END) t "
+            "WHERE t.value->>'status'='in_doubt')) ORDER BY requested_at,id LIMIT :limit",
             limit=limit,
         )
         for candidate in candidates:
@@ -528,11 +598,20 @@ class CallService:
             child = await repository.locked_run(candidate["child_run_id"])
             if child is None:
                 continue
-            if child["state"]["status"] in TERMINAL:
+            state = child["state"]
+            if state["status"] in TERMINAL or state.get("ending"):
+                # Ended, or already undoing its own transactions before it ends.
                 continue
+            if any(record.get("status") == "in_doubt" for record in (state.get("transactions") or {}).values()):
+                # A child in doubt ends only once a person resolves it; its caller's settle deadline bounds the wait.
+                continue
+            reason = TRANSACTION_UNDONE if candidate["settlement"] else CALLER_ENDED
             # A child whose stop is refused for now is left for a later scan; the next one is tried.
             if await isolated(
-                tx, partial(self.runtime.cancel_child, tx, candidate["child_run_id"], candidate["caller_run_id"])
+                tx,
+                partial(
+                    self.runtime.cancel_child, tx, candidate["child_run_id"], candidate["caller_run_id"], reason=reason
+                ),
             ):
                 return 1
         return 0
