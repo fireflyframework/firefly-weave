@@ -79,24 +79,32 @@ async function bridge(
  * credentials (the platform has no API for its audit log).
  */
 function startedOrPublished(): string[] {
-  const env = Object.fromEntries(
-    readFileSync(join(platformDir, "runtime.env"), "utf8")
-      .split("\n")
-      .map((line: string) => line.replace(/^export\s+/, "").trim())
-      .filter((line: string) => line.includes("="))
-      .map((line: string) => {
-        const at = line.indexOf("=");
-        return [
-          line.slice(0, at),
-          line.slice(at + 1).replace(/^['"]|['"]$/g, ""),
-        ];
-      }),
-  );
+  const read = (file: string) =>
+    Object.fromEntries(
+      readFileSync(join(platformDir, file), "utf8")
+        .split("\n")
+        .map((line: string) => line.replace(/^export\s+/, "").trim())
+        .filter((line: string) => line.includes("="))
+        .map((line: string) => {
+          const at = line.indexOf("=");
+          return [
+            line.slice(0, at),
+            line.slice(at + 1).replace(/^['"]|['"]$/g, ""),
+          ];
+        }),
+    );
+  // The migration role owns the runtime's tables; the runtime role may only
+  // write the audit log.
+  const env = {
+    WEAVE_DATABASE_URL: read("runtime.env")[
+      "WEAVE_MIGRATION_DATABASE_URL"
+    ].replace("+asyncpg", ""),
+  };
   const script = `
 import asyncio, json, os, sys
 import asyncpg
 async def main():
-    url = os.environ["DATABASE_URL"].replace("postgresql+asyncpg://", "postgresql://")
+    url = os.environ["DATABASE_URL"]
     connection = await asyncpg.connect(url)
     try:
         rows = await connection.fetch(
