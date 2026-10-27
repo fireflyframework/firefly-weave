@@ -115,7 +115,7 @@ succeeds, the path never runs.
 |---|---|
 | `code` | The failure's code, such as `RATE_LIMITED`, `WV-TASK-DEADLINE` or `WV-SIGNAL-TIMEOUT`. |
 | `message` | Product copy for the code (a called workflow's Fail step keeps its own message). Never worker, provider or input text. |
-| `outcome` | `not_started` (nothing ran), `failed` (it ran and applied nothing), or `unknown` (it may have applied). |
+| `outcome` | Over every attempt: `not_started` (no attempt started), `failed` (it ran and reported a failure; for a called workflow, the child run shows what it did), or `unknown` (it may have applied, for example a worker that stopped responding on an earlier attempt). |
 | `attempts` | How many attempts started. |
 | `instanceKey` | The step instance that failed, such as `verify[2]` inside a loop. |
 | `childRunId` | For a call, the child run, when one started. |
@@ -148,8 +148,11 @@ the other system, then either:
   reason and an evidence reference. The step's setting then applies: the error
   reads `WV-TASK-RECONCILED-FAILURE` with outcome `failed`.
 
-Confirm it had no effect is refused (`409 WV-RUNTIME-RECONCILIATION_REQUIRED`)
-for a step without the setting, without evidence, and for incidents of calls.
+Confirm it had no effect resolves only `WV-TASK-AMBIGUOUS` on the step itself.
+It is refused (`409 WV-RUNTIME-RECONCILIATION_REQUIRED`) for a step without the
+setting, without evidence, for incidents of calls, for the confirm, cancel or
+undo of a step inside a transaction, for a transaction in doubt, and for an
+interim `WV-TASK-FAILED` that recovery has not decided yet.
 See [Incident operations](../reference/incident-operations.md).
 
 ## Waits and calls
@@ -160,7 +163,8 @@ an open human task is closed as expired, and a signal received before the
 deadline still wins. A waiting call with the setting receives a child that
 failed (`outcome: failed`, with the child's code and message), was cancelled or
 timed out (`outcome: unknown`), and a call that could not start
-(`WV-CALL-START`, `outcome: not_started`).
+(`WV-CALL-START`; `outcome: not_started`, or the outcome of earlier children when
+the call was retried).
 
 ## Loops, parallel steps and transactions
 
@@ -168,7 +172,11 @@ Inside a loop, each iteration handles its own failure; the loop still returns
 one entry per item, in item order. A handled failure inside a parallel branch
 stays in that branch. Inside a transaction, a step with the setting takes a
 failure only when nothing was applied; a failure that may have applied still
-undoes the transaction. A transaction step with the setting handles its own
+undoes the transaction, and a failure while the transaction goes back, or of a
+confirm, cancel or undo, is always the transaction's. When the step that can't
+be undone fails with nothing applied and has the setting, the transaction stays
+open and the body goes on, so its reservations are confirmed at the end instead
+of released. A transaction step with the setting handles its own
 clean rollback (`WV-TXN-ROLLED-BACK`, outcome `failed`); a transaction in
 doubt is never handled.
 

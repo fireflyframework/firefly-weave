@@ -333,12 +333,15 @@ class Simulator:
         if isinstance(node, ActionNode):
             dependency = next(d for d in ir.dependencies if d.digest == node.dependency and d.kind == "Action")
             side_effect = cast(str, cast(JsonObject, dependency.document["spec"])["sideEffect"])
+        data = failure_data(instance, failure.attempts, failure.code, failure.outcome, failure.attempts)
+        if in_transaction(shapes(ir), instance):
+            # As recovery does: the transaction decides, and only a step that never started is known to have
+            # applied nothing (a session cannot tell whether a release would vouch for a definite failure).
+            data["effect"] = "none" if failure.outcome == "not_started" else "unknown"
+            return self._event("step_failed", data)
         policy = error_policy(ir, instance)
         verdict = final_failure(policy, side_effect, failure.outcome)
         if verdict == "handled":
-            data = failure_data(instance, failure.attempts, failure.code, failure.outcome, failure.attempts)
-            if in_transaction(shapes(ir), instance):
-                data["effect"] = "unknown" if failure.outcome == "unknown" else "none"
             return self._event("step_failed", data)
         if not isinstance(node, ActionNode):
             code = failure.code

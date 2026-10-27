@@ -501,8 +501,9 @@ instance key, the step, the action. The first key found in either `mocks` or
 - Signals and human tasks with a setting fail when they start waiting; moving
   time past their timeout fails them too, as on a platform.
 
-Scripted failures apply to the simulated workflow itself, not inside called
-workflows. With the local simulation, repeat `--error KEY=CODE`:
+Inside a transaction, a scripted failure goes to the transaction as on a
+platform; only `outcome: not_started` counts as having applied nothing. Scripted
+failures apply to the simulated workflow itself, not inside called workflows. With the local simulation, repeat `--error KEY=CODE`:
 
 ```bash
 weave workflow simulate request.json --error 'node:send[2]=RATE_LIMITED' --output json

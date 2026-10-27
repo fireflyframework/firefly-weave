@@ -113,7 +113,7 @@ commands use [explicit mode](../guides/connect-to-api.md#scripts-and-ci-explicit
     | --- | --- | --- |
     | `retry_safe` | The action is safe to repeat | Only for actions declared `read_only`, `idempotent`, or `idempotency_key` |
     | `accept_reconciled_result` | Independent evidence shows the result | An `output` valid for the action's pinned output schema, and an `evidence_reference` |
-    | `accept_reconciled_failure` | Independent evidence shows the action had no effect, and its step has an On error setting (Confirm it had no effect) | An `evidence_reference`; the step's setting then applies with error code `WV-TASK-RECONCILED-FAILURE` and outcome `failed`, and the task ends `handled` |
+    | `accept_reconciled_failure` | Independent evidence shows the action had no effect, and its step has an On error setting (Confirm it had no effect); only for `WV-TASK-AMBIGUOUS` on the step itself, never for a confirm, cancel or undo | An `evidence_reference`; the step's setting then applies with error code `WV-TASK-RECONCILED-FAILURE` and outcome `failed`, and the task ends `handled` |
     | `terminate` | The run should stop | Nothing else |
 
 5. **Write the decision.** Generate a new UUID for `receipt_id`; reusing one
