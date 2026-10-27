@@ -215,3 +215,35 @@ test("Ctrl/Cmd+Enter never starts a run", async ({ page }) => {
   await expect.poll(() => executions(calls).length).toBe(2);
   expect(runs).toEqual([]);
 });
+
+test("after sign-out no last results remain for that account", async ({
+  page,
+}) => {
+  const { details } = await openExecuteFixture(page);
+  const kept = () =>
+    page.evaluate(() =>
+      Object.keys(localStorage).filter((key) =>
+        key.includes("weave.lastExecution."),
+      ),
+    );
+  await details.open("score");
+  const answer = page.waitForResponse("**/studio/local/debug/execute");
+  await (await shownExecute(details)).click();
+  await answer;
+  // The account's last results are kept on this computer, under its prefix.
+  await expect.poll(async () => (await kept()).length).toBe(1);
+  await details.close();
+  await page.route("**/studio/connection/logout", (route) =>
+    route.fulfill({ json: { remote_revocation: "confirmed" } }),
+  );
+  await page.locator(".platform-indicator").click();
+  await page
+    .locator("#platform-menu")
+    .getByRole("button", { name: "Sign out" })
+    .click();
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "Sign out", exact: true })
+    .click();
+  await expect.poll(kept).toEqual([]);
+});

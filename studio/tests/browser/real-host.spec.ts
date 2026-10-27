@@ -21,6 +21,7 @@ SPDX-License-Identifier: Apache-2.0
 import { test, expect, Page } from "@playwright/test";
 import { ChildProcess, spawn } from "node:child_process";
 import { existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { createServer as createHttpServer } from "node:http";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -61,7 +62,11 @@ function hostEnvironment(configHome: string): NodeJS.ProcessEnv {
   };
 }
 
-function startHost(configHome: string, port: number): Host {
+function startHost(
+  configHome: string,
+  port: number,
+  extra: NodeJS.ProcessEnv = {},
+): Host {
   let output = "";
   const child = spawn(
     python,
@@ -77,7 +82,7 @@ function startHost(configHome: string, port: number): Host {
     ],
     {
       cwd: repository,
-      env: hostEnvironment(configHome),
+      env: { ...hostEnvironment(configHome), ...extra },
       stdio: ["ignore", "pipe", "pipe"],
     },
   );
@@ -91,6 +96,40 @@ async function stopHost(host: Host) {
   const exited = new Promise((done) => host.child.once("exit", done));
   host.child.kill("SIGTERM");
   await exited;
+}
+
+/**
+ * A proxy that answers nothing and records every request sent through it:
+ * the host's outbound HTTP and HTTPS traffic, with loopback left direct.
+ */
+async function outboundListener() {
+  const seen: string[] = [];
+  const server = createHttpServer((request, response) => {
+    seen.push(`${request.method} ${request.url}`);
+    response.writeHead(502).end();
+  });
+  server.on("connect", (request, socket) => {
+    seen.push(`CONNECT ${request.url}`);
+    socket.end("HTTP/1.1 502 Bad Gateway\r\n\r\n");
+  });
+  await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
+  const address = server.address();
+  const port = typeof address === "object" && address ? address.port : 0;
+  const proxy = `http://127.0.0.1:${port}`;
+  return {
+    seen,
+    env: {
+      HTTP_PROXY: proxy,
+      HTTPS_PROXY: proxy,
+      ALL_PROXY: proxy,
+      http_proxy: proxy,
+      https_proxy: proxy,
+      all_proxy: proxy,
+      NO_PROXY: "127.0.0.1,localhost",
+      no_proxy: "127.0.0.1,localhost",
+    },
+    close: () => new Promise((done) => server.close(done)),
+  };
 }
 
 /** Waits for the host and pairs `page` with the code it printed. */
@@ -208,7 +247,8 @@ test("executes a workflow offline on the real host, with no platform", async ({
     localStorage.setItem("ui:weave.editorNext", "true"),
   );
   const elsewhere: string[] = [];
-  const host = startHost(configHome, await freePort());
+  const outbound = await outboundListener();
+  const host = startHost(configHome, await freePort(), outbound.env);
   page.on("request", (request) => {
     if (!request.url().startsWith(host.origin)) elsewhere.push(request.url());
   });
@@ -233,13 +273,16 @@ test("executes a workflow offline on the real host, with no platform", async ({
     await expect(
       page.getByRole("region", { name: "Run log" }).locator(".run-log-status"),
     ).toHaveText("Completed · 1 step");
-    // Nothing went anywhere but the Studio host on this computer.
+    // Nothing went anywhere but the Studio host on this computer: not from
+    // the browser, and not from the host (its proxy saw no request at all).
     expect(elsewhere.filter((url) => !url.startsWith("data:"))).toEqual([]);
+    expect(outbound.seen).toEqual([]);
   } catch (error) {
     console.error(host.output());
     throw error;
   } finally {
     await stopHost(host);
+    await outbound.close();
     rmSync(configHome, { recursive: true, force: true });
   }
 });
