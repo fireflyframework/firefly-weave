@@ -90,6 +90,19 @@ def test_a_secret_value_is_refused_with_its_pointer_and_never_echoed(tmp_path):
         assert "9911" not in answer.text
 
 
+def test_a_null_call_mock_is_a_422_with_its_pointer_not_a_500(tmp_path):
+    calling = json.loads(json.dumps(WORKFLOW))
+    calling["spec"]["steps"] = [
+        {"id": "enrich", "kind": "callWorkflow", "uses": "enrich@1.0.0", "mode": "wait", "with": {"literal": {}}}
+    ]
+    body = BODY | {"source": json.dumps(calling), "stubUnresolved": True, "mocks": {"node:enrich": None}}
+    with client(tmp_path) as browser:
+        answer = browser.post("/studio/local/debug/execute", json=body, headers=pair(browser))
+        assert answer.status_code == 422, answer.text
+        assert answer.json()["code"] == "WV-STUDIO-REQUEST"
+        assert answer.json()["result"] == {"paths": ["/mocks/node:enrich"]}
+
+
 def test_a_body_that_isnt_an_execute_request_is_refused(tmp_path):
     with client(tmp_path) as browser:
         answer = browser.post("/studio/local/debug/execute", json=BODY | {"extra": 1}, headers=pair(browser))

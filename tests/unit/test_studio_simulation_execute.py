@@ -395,6 +395,14 @@ def test_an_unpinned_call_that_waits_needs_test_data():
     assert pinned["status"] == "completed"
 
 
+def test_a_null_call_mock_is_refused_with_its_pointer():
+    with pytest.raises(SimulationRefused) as refused:
+        run(workflow(CALL), stubUnresolved=True, mocks={"node:enrich": None})
+    assert refused.value.code == "WV-STUDIO-REQUEST"
+    assert refused.value.paths == ["/mocks/node:enrich"]
+    assert "enrich" in refused.value.message
+
+
 def callee_definition() -> dict[str, Any]:
     return {
         "apiVersion": "weave/v1alpha1",
@@ -418,6 +426,20 @@ def test_mocks_for_steps_inside_a_called_workflow_are_used():
     )
     assert answer["status"] == "completed", answer
     assert answer["trace"][0]["output"] == {"eligible": True}
+
+
+def test_a_null_mock_for_a_call_inside_a_called_workflow_is_refused_with_its_pointer():
+    inner = callee_definition()
+    inner["spec"]["steps"] = [CALL | {"uses": "deeper@1.0.0"}]
+    inner["spec"]["output"] = {"literal": None}
+    with pytest.raises(SimulationRefused) as refused:
+        run(
+            workflow(CALL),
+            stubUnresolved=True,
+            definitions=[inner],
+            workflows={"enrich@1.0.0": {"mocks": {"node:enrich": None}}},
+        )
+    assert refused.value.paths == ["/workflows/enrich@1.0.0/mocks/node:enrich"]
 
 
 def test_a_secret_in_a_called_workflow_s_mock_is_refused_with_its_pointer():

@@ -389,6 +389,49 @@ def refuse_test_data(
         )
 
 
+def _refuse_null_calls(
+    document: JsonObject, request: SimulationRequest, callees: Mapping[str, JsonObject] | None = None
+) -> None:
+    """Refuses a null test output for a step that calls a workflow, by pointer: the run would read it as a failure."""
+    from firefly_weave.contracts.instance_keys import InvalidInstanceKey, node_of
+
+    def calls(workflow: JsonObject) -> set[str]:
+        spec = workflow.get("spec")
+        return {
+            cast(str, step.get("id"))
+            for step in steps_of(spec.get("steps") if isinstance(spec, dict) else None)
+            if step.get("kind") == "callWorkflow"
+        }
+
+    def nulls(workflow: JsonObject, mocks: Mapping[str, JsonValue], *prefix: str) -> list[tuple[str, str]]:
+        found: list[tuple[str, str]] = []
+        called = calls(workflow)
+        for key, value in mocks.items():
+            if value is not None or not key.startswith("node:"):
+                continue
+            try:
+                step = node_of(key.removeprefix("node:"))
+            except InvalidInstanceKey:
+                step = key.removeprefix("node:")
+            if step in called:
+                found.append((step, _pointer(*prefix, key)))
+        return found
+
+    found = nulls(document, request.mocks, "mocks")
+    for reference, callee in (callees or {}).items():
+        if reference in request.workflows:
+            found += nulls(callee, request.workflows[reference].mocks, "workflows", reference, "mocks")
+    if found:
+        steps = ", ".join(sorted({step for step, _ in found}))
+        raise SimulationRefused(
+            422,
+            "WV-STUDIO-REQUEST",
+            f"Test output for a step that calls a workflow can't be empty (null): {steps}. Give it an object, "
+            "or remove it",
+            [pointer for _, pointer in found],
+        )
+
+
 def _label(switch: JsonObject, branch: str) -> str:
     """A decision's path in plain words: "path 2" for its second case, "Otherwise" for its default."""
     if branch.startswith("case:") and branch[5:].isdigit():
@@ -536,6 +579,7 @@ def simulator_for(
     catalog, stubs = simulation_catalog(document, request.definitions, project, stub_unresolved=request.stubUnresolved)
     callees = _callees(request, catalog, stubs)
     refuse_test_data(whole, request, catalog, callees)
+    _refuse_null_calls(whole, request, callees)
     result = compile_source(document, format="object", catalog=catalog)
     summary = CompileSummary(
         ok=result.ok,
