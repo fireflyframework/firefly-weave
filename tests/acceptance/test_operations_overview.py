@@ -315,7 +315,11 @@ def test_j5_01_overview_and_operational_facts(run):
         assert state != "unavailable", section
         # A section is forbidden exactly when the host lacks the capability that reads it.
         assert (state == "forbidden") == (section in needs and needs[section] not in granted), (section, state)
-    assert "runs_24h" not in summary and "runs_24h" not in json.dumps(summary)
+    # The last day's runs come from run statistics: counts, and a rate that is a fraction or null.
+    day = summary["runs_24h"]
+    assert set(day) == {"started", "succeeded", "failed", "failure_rate"}, day
+    assert all(isinstance(day[key], int) and day[key] >= 0 for key in ("started", "succeeded", "failed")), day
+    assert day["failure_rate"] is None or 0 <= day["failure_rate"] <= 1, day
     assert summary["api"]["compatibility"]["mode"] == "ready", summary["api"]
 
     journey = asyncio.run(worker_journey(platform))
