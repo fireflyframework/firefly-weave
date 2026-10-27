@@ -21,6 +21,7 @@ SPDX-License-Identifier: Apache-2.0
 import { expect, test, type Page } from "@playwright/test";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { gzipSync } from "node:zlib";
 import { repository } from "../python-path";
 import {
   fitCanvas,
@@ -79,6 +80,31 @@ test("the first page of the production build holds no test data code", () => {
       readFileSync(join(BUILD, file), "utf8").includes(MARKERS[0]),
   );
   expect(later.length).toBe(1);
+});
+
+/** The first page's gzip bytes on the base this branch started from: it must not grow. */
+const FIRST_PAGE_BUDGET = 242_190;
+/** The decision grid's chunk, at most (gzip). */
+const GRID_BUDGET = 61_440;
+const gzipped = (file: string) =>
+  gzipSync(readFileSync(join(BUILD, file)), { level: 9 }).length;
+
+test("the decision grid stays out of the first page and under its chunk budget", () => {
+  const index = readFileSync(join(BUILD, "index.html"), "utf8");
+  const first = [...index.matchAll(/(?:src|href)="([^"]+\.(?:js|css))"/g)].map(
+    (match) => match[1],
+  );
+  const total = first.reduce((sum, file) => sum + gzipped(file), 0);
+  expect(total).toBeLessThanOrEqual(FIRST_PAGE_BUDGET);
+  // The grid's own class names live only in its chunk.
+  const grid = readdirSync(BUILD).filter(
+    (file) =>
+      file.endsWith(".js") &&
+      readFileSync(join(BUILD, file), "utf8").includes("dg-scroll"),
+  );
+  expect(grid).toHaveLength(1);
+  expect(first).not.toContain(grid[0]);
+  expect(gzipped(grid[0])).toBeLessThanOrEqual(GRID_BUDGET);
 });
 
 test("the designer opens once the test data service loads, and step details read it", async ({
