@@ -50,6 +50,7 @@ def test_feature_vocabulary_is_frozen():
         "flow.callWorkflow",
         "flow.eventTrigger",
         "flow.forEach",
+        "flow.onError",
         "flow.transaction",
         "text.concat",
         "text.join",
@@ -130,8 +131,14 @@ def test_limits_follow_their_sources():
 
 
 def test_features_are_what_the_target_runs():
-    assert ADVERTISED_FEATURES == ("flow.callWorkflow", "flow.forEach", "text.concat", "text.join")
-    assert language_manifest().features == ["flow.callWorkflow", "flow.forEach", "text.concat", "text.join"]
+    assert ADVERTISED_FEATURES == ("flow.callWorkflow", "flow.forEach", "flow.onError", "text.concat", "text.join")
+    assert language_manifest().features == [
+        "flow.callWorkflow",
+        "flow.forEach",
+        "flow.onError",
+        "text.concat",
+        "text.join",
+    ]
     assert language_manifest(["text.join", "text.concat"]).features == ["text.concat", "text.join"]
     assert language_manifest([]).features == []
 
@@ -231,7 +238,7 @@ def test_new_constructs_stay_pending_until_studio_ships_them():
         "callable",
         "eventTrigger",
     }
-    assert {entry.name for entry in manifest.step_fields if entry.studio == "pending"} == {"undo"}
+    assert {entry.name for entry in manifest.step_fields if entry.studio == "pending"} == {"undo", "onError"}
 
 
 def test_loop_and_join_entries_match_the_spec_example():

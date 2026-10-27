@@ -46,6 +46,8 @@ logger = logging.getLogger(__name__)
 def _branches(step: JsonObject) -> list[JsonObject]:
     """The step lists a container holds, each with its own ``steps`` and ``output``."""
     kind = step.get("kind")
+    # A step's error path is a block too; it comes after the step's own blocks.
+    path = [cast(JsonObject, step["errorPath"])] if isinstance(step.get("errorPath"), dict) else []
     if kind == "switch":
         return [*cast(list[JsonObject], step.get("cases") or []), cast(JsonObject, step.get("default") or {})]
     if kind == "parallel":
@@ -53,8 +55,8 @@ def _branches(step: JsonObject) -> list[JsonObject]:
     if kind == "forEach":
         return [cast(JsonObject, step.get("body") or {})]
     if kind == "transaction":
-        return [step]
-    return []
+        return [step, *path]
+    return path
 
 
 def steps_of(steps: object) -> Iterator[JsonObject]:
@@ -86,7 +88,11 @@ def _cut_inside(step: JsonObject, step_id: str) -> JsonObject | None:
         if cut is None:
             continue
         kept = copy.deepcopy(step)
-        for other, sibling in enumerate(_branches(kept)):
+        holders = _branches(kept)
+        for other, sibling in enumerate(holders):
+            if other != position and holders[position] is kept.get("errorPath") and sibling is kept:
+                # The target is in a transaction's error path, which runs only after its body: the body stays.
+                continue
             # The branch holding the target ends after it; its siblings run nothing. Conditions stay, so the
             # test data still decides which path a decision takes.
             sibling["steps"] = cast(JsonValue, cut if other == position else [])

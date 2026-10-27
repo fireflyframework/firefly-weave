@@ -29,6 +29,7 @@ type LanguageFeature = Literal[
     "flow.callWorkflow",
     "flow.eventTrigger",
     "flow.forEach",
+    "flow.onError",
     "flow.transaction",
     "text.concat",
     "text.join",
@@ -41,6 +42,7 @@ LANGUAGE_FEATURES: Final[tuple[LanguageFeature, ...]] = tuple(sorted(get_args(La
 ADVERTISED_FEATURES: Final[tuple[LanguageFeature, ...]] = (
     "flow.callWorkflow",
     "flow.forEach",
+    "flow.onError",
     "text.concat",
     "text.join",
 )
@@ -58,8 +60,23 @@ WORKFLOW_FIELD_FEATURES: Final[Mapping[str, LanguageFeature]] = MappingProxyType
 # Step fields that need a feature, by the kinds that accept them: how a step inside a transaction is undone.
 UNDO_FIELDS: Final[tuple[str, ...]] = ("confirm", "cancel", "compensate", "irreversible", "holdSeconds")
 UNDO_KINDS: Final[tuple[str, ...]] = ("action", "callWorkflow")
+# What a step's final failure does, by the kinds that accept it. An AI agent step joins them when it is added.
+ERROR_FIELDS: Final[tuple[str, ...]] = ("onError", "errorPath")
+ERROR_KINDS: Final[tuple[str, ...]] = (
+    "action",
+    "llm",
+    "transform",
+    "decisionTable",
+    "callWorkflow",
+    "humanTask",
+    "signal",
+    "transaction",
+)
+# Every step field that needs a feature.
+_UNDO_FEATURE: Final[LanguageFeature] = "flow.transaction"
+_ERROR_FEATURE: Final[LanguageFeature] = "flow.onError"
 STEP_FIELD_FEATURES: Final[Mapping[str, LanguageFeature]] = MappingProxyType(
-    {name: "flow.transaction" for name in UNDO_FIELDS}
+    {name: _UNDO_FEATURE for name in UNDO_FIELDS} | {name: _ERROR_FEATURE for name in ERROR_FIELDS}
 )
 
 # Language limits the manifest publishes. Limits uses them as defaults; the compiler enforces the loop limits and the

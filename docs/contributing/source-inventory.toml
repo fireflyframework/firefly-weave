@@ -326,6 +326,15 @@ author = "Firefly Software Foundation"
 license = "Apache-2.0"
 
 [[exceptions]]
+path = "tests/fixtures/golden/step_errors.json"
+kind = "generated"
+source = "scripts/golden_step_errors.py"
+reason = "Strict JSON golden corpus of workflows whose steps handle failures and their kernel transition streams, recorded once by the release that started handling step failures; never regenerate it to make a change pass."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
 path = "tests/fixtures/public/c6-wire.json"
 kind = "commentless"
 reason = "Strict JSON or canonical fixture; preserve parser contract and exact data bytes."

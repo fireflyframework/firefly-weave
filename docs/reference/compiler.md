@@ -469,6 +469,17 @@ size limit and what undo steps may read are checked when the workflow compiles. 
 `flow.transaction`, and a runtime that does not run it opens
 `WV-RUNTIME-ARTIFACT` at the transaction instead of running its steps.
 
+### Error paths in the graph
+
+A step with `onError` carries it on its node; an explicit `stop` is omitted and
+lowers to the same graph as no setting. With `errorOutput`, the node also has
+`errorTarget` (the first node of its error path) and `errorJoin`: an `error`
+edge leads from the step into the path, the path ends in a branch output
+`@branch:<id>:<n>`, and both the path and the step's success meet at the join
+`@join:<id>` with `mode: error` (`@join:<id>:errorPath` for a transaction,
+whose own join is `@join:<id>`). On success the join forwards without changing
+anything. A workflow with `onError` needs `flow.onError`.
+
 ## Import an artifact
 
 `import_artifact(bytes_or_text_or_object, *, limits=ArtifactLimits(), features=None)`
@@ -644,6 +655,11 @@ is not classified. Safe ordinary artifacts keep their canonical digests.
 | `WV-COMP-CALL_RECURSION` at `…/uses` | Following the calls of the called version leads back to this exact version | Call a workflow that does not lead back to this one |
 | `WV-COMP-CALL_DEPTH` at `…/uses` | The chain of calls this call starts is deeper than 8 (`max_call_depth`), or never ends | Call a workflow that starts fewer calls of its own |
 | `WV-COMP-CALL_MODE` at `…/onFailure` | `onFailure` is set on a call with `mode: detach` | Remove `onFailure`, or set `mode: wait` |
+| `WV-COMP-CALL_MODE` at `…/onError` | "onError applies only when the call waits for its result." | Remove `onError`, or set `mode: wait` |
+| `WV-COMP-ERROR_PATH` at `…/errorPath` | "errorPath goes with onError: errorOutput." | Set `onError: errorOutput`, or remove `errorPath` |
+| `WV-COMP-ERROR_PATH_OUTPUT` at a reference inside an error path | "STEP has no output on its error path; read /steps/STEP/error instead." | Read `/steps/<id>/error` inside the path |
+| `WV-COMP-ERROR_REFERENCE` at a reference to `/steps/<id>/error` | "STEP records an error only when its On error setting is Continue or Continue with error output." | Set `onError` on that step, or read its output |
+| `WV-COMP-ON_ERROR_AMBIGUOUS` (info) at `…/onError` | The action changes data and is never retried; if its outcome is unknown, the run still stops with an incident until someone checks it | Nothing to fix; see [Handle step errors](../guides/handle-step-errors.md#when-the-outcome-is-unknown) |
 | `WV-COMP-REFERENCE_PRESENCE` reading `/steps/<call>/output/output` | A call with `onFailure: continue` has a child output only when the child succeeded | Read it with `coalesce`, or branch on `/steps/<call>/output/status` first |
 | `WV-COMP-TXN_UNDECLARED` at a step | A step inside a transaction changes data and does not say how it is undone | Add `confirm` and `cancel`, `compensate`, or `irreversible: true` (the suggested edit); a `read_only` action needs none |
 | `WV-COMP-TXN_ORDER` at `…/compensate` or `…/confirm` | A step that can be undone runs after one that can't, on some path | Apply the suggested edit, which moves the step that can't be undone to the end of the transaction |

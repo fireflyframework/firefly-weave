@@ -233,7 +233,26 @@ def test_the_manifest_lists_the_transaction_block_the_undo_setting_and_the_trigg
             },
             "only_inside": "transaction",
             "studio": "pending",
-        }
+        },
+        {
+            "name": "onError",
+            "feature": "flow.onError",
+            "kinds": [
+                "action",
+                "llm",
+                "transform",
+                "decisionTable",
+                "callWorkflow",
+                "humanTask",
+                "signal",
+                "transaction",
+            ],
+            "values": ["stop", "continue", "errorOutput"],
+            "path": "/onError",
+            "default": "stop",
+            "block": {"name": "errorPath", "path": "/errorPath", "label": "On error"},
+            "studio": "pending",
+        },
     ]
     trigger = next(entry for entry in manifest.workflow_fields if entry.name == "eventTrigger")
     assert (trigger.feature, trigger.studio) == ("flow.eventTrigger", "pending")

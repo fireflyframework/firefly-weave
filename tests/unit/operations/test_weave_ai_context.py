@@ -35,6 +35,7 @@ from firefly_weave.operations.lumi_context import (
     outline,
     output_tokens,
     shape,
+    untitled,
 )
 
 
@@ -147,8 +148,22 @@ def test_a_standard_request_counts_the_workflow_schema_against_its_budget():
         selected_step=None,
         schemas={"workflow": workflow},
     )
-    assert shaped.context["authoringSchemas"] == {"workflow": workflow}
+    assert shaped.context["authoringSchemas"] == {"workflow": untitled(workflow)}
     assert sent_tokens(shaped, message) <= budget
+
+
+def test_a_standard_request_sends_schemas_without_titles_but_keeps_properties_named_title():
+    schema = {
+        "title": "Step",
+        "type": "object",
+        "properties": {"title": {"title": "Title", "type": "string"}, "kind": {"const": {"title": "data"}}},
+        "$defs": {"title": {"title": "Kept name", "type": "string"}},
+    }
+    assert untitled(schema) == {
+        "type": "object",
+        "properties": {"title": {"type": "string"}, "kind": {"const": {"title": "data"}}},
+        "$defs": {"title": {"type": "string"}},
+    }
 
 
 def test_the_guide_names_every_step_kind_this_platform_runs():

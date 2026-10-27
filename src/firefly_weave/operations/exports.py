@@ -88,12 +88,25 @@ def safe_event(event: RuntimeEvent, artifact: CompiledArtifact | None, *, unavai
             "actor_id",
             "reason",
             "evidence_reference",
+            "attempts",
         },
         "cancelled": {"actor_id", "reason", "code"},
         "timed_out": {"node_id", "deadline", "wait_id", "code"},
         "wait_elapsed": {"node_id", "deadline", "wait_id"},
         "signal_received": {"node_id", "output", "accepted_at", "deadline"},
         "call_completed": {"node_id", "generation", "child_run_id", "status", "output"},
+        # Codes, outcomes and counts only; a step failure never carries worker, provider or input text.
+        "step_failed": {
+            "node_id",
+            "generation",
+            "code",
+            "outcome",
+            "attempts",
+            "child_run_id",
+            "deadline",
+            "wait_id",
+            "effect",
+        },
     }[event.type]
     if (
         event.type == "started"

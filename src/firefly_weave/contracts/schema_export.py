@@ -218,6 +218,7 @@ def contract_models() -> dict[str, SchemaModel]:
         UnavailableRunAcknowledgment,
     )
     from firefly_weave.contracts.schedules import ScheduleOccurrence, ScheduleRequest, ScheduleView
+    from firefly_weave.contracts.step_errors import StepError
     from firefly_weave.contracts.teams import TeamsReactivateRequest, TeamsReference, TeamsRevokeRequest
     from firefly_weave.contracts.whatsapp import WhatsAppDeliveryState, WhatsAppStatusFact
     from firefly_weave.contracts.worker_queries import (
@@ -448,6 +449,7 @@ def contract_models() -> dict[str, SchemaModel]:
         "worker-implementation": WorkerImplementation,
         "worker-routing": WorkerRouting,
         "platform-event-v1": PlatformEvent,
+        "step-error": StepError,
     }
 
 

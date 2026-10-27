@@ -220,6 +220,12 @@ Otherwise the run is **suspended** with an **incident**, and an operator decides
 what happens: retry safely, accept a result confirmed with the other system, or
 terminate the run. See [incident operations](reference/incident-operations.md).
 
+A step can also handle its own final failure with its **On error** setting:
+continue with no output, or run an error path. Such a **handled failure** opens
+no incident; the run goes on and later steps read the step's error. An unknown
+outcome of an Action that changes data and is never retried still stops the run
+until someone checks it. See [Handle step errors](guides/handle-step-errors.md).
+
 Leases protect Weave's own state, but they cannot undo a request already sent to
 another system. Consider this sequence:
 

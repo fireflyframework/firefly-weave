@@ -32,6 +32,7 @@ EXPECTED = {
     "notify-overdue.workflow.yaml": [],
     "order-intake.workflow.yaml": [],
     "move-between-systems.workflow.yaml": [],
+    "step-errors.workflow.yaml": [],
 }
 
 

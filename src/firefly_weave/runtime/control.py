@@ -67,12 +67,29 @@ def frame_suffix(key: str, branch: BranchState) -> str:
 
 
 def bindings(state: RunState, node: Node, key: str) -> JsonObject:
-    branch = frame(state, node, key)
-    if branch is None:
-        return state.steps
+    name = frame_key(node, key)
+    return state.steps if name is None else frame_bindings(state, name)
+
+
+def error_frame(state: RunState, name: str, branch: BranchState) -> bool:
+    """Whether a frame is a step's error path: its owner's join is an error join."""
+    if branch.name != "errorPath" or branch.index is not None:
+        return False
+    join = state.joins.get(branch.owner + frame_suffix(name, branch))
+    return join is not None and join.mode == "error"
+
+
+def frame_bindings(state: RunState, name: str) -> JsonObject:
+    """The bindings steps inside the frame ``name`` read: what was visible where the frame started, and its steps."""
+    branch = state.branches[name]
     if branch.index is not None:
         # An iteration frame shares the bindings visible at its loop, stored once on the loop instance.
-        return {**state.loops[branch.owner + enclosing_suffix(key)].visible, **branch.steps}
+        suffix = frame_suffix(name, branch)
+        return {**state.loops[branch.owner + suffix[: suffix.rindex("[")]].visible, **branch.steps}
+    if error_frame(state, name, branch):
+        # An error path copies nothing: what it sees cannot change while its step is unfinished.
+        outer = state.steps if branch.parent is None else frame_bindings(state, branch.parent)
+        return {**outer, **branch.steps}
     return {**branch.visible, **branch.steps}
 
 

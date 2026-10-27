@@ -120,6 +120,28 @@ class Node(ContractModel):
     path: JsonPointer
 
 
+class HandlesErrors(ContractModel):
+    """What a step's final failure does, when it does not stop the run.
+
+    With ``errorOutput`` the failure runs the error path that starts at ``errorTarget`` (the error path's branch
+    output when the path is empty), and the run continues after ``errorJoin``, which the step reaches on success too.
+    """
+
+    on_error: Literal["continue", "errorOutput"] | None = Field(
+        default=None, alias="onError", exclude_if=lambda value: value is None
+    )
+    error_target: NodeId | None = Field(default=None, alias="errorTarget", exclude_if=lambda value: value is None)
+    error_join: NodeId | None = Field(default=None, alias="errorJoin", exclude_if=lambda value: value is None)
+
+    @model_validator(mode="after")
+    def error_path_fields(self) -> HandlesErrors:
+        if (self.on_error == "errorOutput") != (self.error_target is not None) or (self.error_target is None) != (
+            self.error_join is None
+        ):
+            raise ValueError("Only a step with an error path has an error target and an error join")
+        return self
+
+
 class StartNode(Node):
     kind: Literal["start"]
 
@@ -165,7 +187,7 @@ class Participation(ContractModel):
         return self
 
 
-class ActionNode(Node):
+class ActionNode(HandlesErrors, Node):
     kind: Literal["action"]
     dependency: Digest
     input: Expression = Field(alias="with")
@@ -174,12 +196,12 @@ class ActionNode(Node):
     txn: Participation | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
-class TransformNode(Node):
+class TransformNode(HandlesErrors, Node):
     kind: Literal["transform"]
     value: Expression
 
 
-class DecisionTableNode(Node):
+class DecisionTableNode(HandlesErrors, Node):
     kind: Literal["decisionTable"]
     dependency: Digest
     input: Expression = Field(alias="with")
@@ -190,14 +212,14 @@ class WaitNode(Node):
     duration_seconds: PositiveInt = Field(alias="durationSeconds")
 
 
-class SignalNode(Node):
+class SignalNode(HandlesErrors, Node):
     kind: Literal["signal"]
     name: ResourceName
     timeout_seconds: PositiveInt = Field(alias="timeoutSeconds")
     schema_ref: Digest = Field(alias="schemaRef")
 
 
-class HumanTaskNode(Node):
+class HumanTaskNode(HandlesErrors, Node):
     kind: Literal["humanTask"]
     assignment: ResourceName
     title: Expression
@@ -214,7 +236,7 @@ class FailNode(Node):
     message: Annotated[UnicodeString, Field(min_length=1)]
 
 
-class CallWorkflowNode(Node):
+class CallWorkflowNode(HandlesErrors, Node):
     """Starts the exact workflow version ``dependency`` names as a child run with the input ``with``."""
 
     kind: Literal["callWorkflow"]
@@ -283,7 +305,7 @@ class TransactionPolicyNode(ContractModel):
     )
 
 
-class TransactionNode(Node):
+class TransactionNode(HandlesErrors, Node):
     """Runs the body that starts at ``target`` so that all of it succeeds or what it did is undone."""
 
     kind: Literal["transaction"]
@@ -306,7 +328,7 @@ class BranchOutputNode(Node):
 class JoinNode(Node):
     kind: Literal["join"]
     owner: NodeId
-    mode: Literal["all", "selected", "each", "transaction"]
+    mode: Literal["all", "selected", "each", "transaction", "error"]
     branches: list[NodeId] = Field(min_length=1)
     completes: bool
 
@@ -339,7 +361,7 @@ CONTROL_NODES = (SwitchNode, ParallelNode, ForEachNode, TransactionNode)
 class IREdge(ContractModel):
     source: NodeId
     target: NodeId
-    kind: Literal["next", "case", "default", "fork", "each", "transaction", "join"]
+    kind: Literal["next", "case", "default", "fork", "each", "transaction", "join", "error"]
     branch: UnicodeString | None
 
 
@@ -364,6 +386,14 @@ class IRGraph(ContractModel):
         outgoing: dict[str, list[IREdge]] = {n: [] for n in nodes}
         incoming = {n: 0 for n in nodes}
         join_members = {n.id: set(n.branches) for n in self.nodes if isinstance(n, JoinNode)}
+        # Steps whose failure runs an error path; their success leaves through the error join too.
+        error_owners = {n.id: n for n in self.nodes if isinstance(n, HandlesErrors) and n.on_error == "errorOutput"}
+
+        def success_exit(owner: str) -> str:
+            """Where a step's success leaves it: the step, or for a block the block's own join."""
+            node = nodes[owner]
+            return node.join if isinstance(node, CONTROL_NODES) else node.id
+
         control_names = {
             n.id: (
                 {c.branch for c in n.cases} | {"default"}
@@ -375,6 +405,8 @@ class IRGraph(ContractModel):
             for n in self.nodes
             if isinstance(n, CONTROL_NODES)
         }
+        for name in error_owners:
+            control_names.setdefault(name, set()).add("errorPath")
         seen = set()
         for edge in self.edges:
             key = (edge.source, edge.target, edge.kind, edge.branch)
@@ -384,13 +416,24 @@ class IRGraph(ContractModel):
             outgoing[edge.source].append(edge)
             incoming[edge.target] += 1
             source, target = nodes[edge.source], nodes[edge.target]
-            if isinstance(target, JoinNode) and (
-                edge.kind != "join"
-                or not isinstance(source, BranchOutputNode)
-                or source.owner != target.owner
-                or source.id not in join_members[target.id]
-                or edge.branch != source.branch
-                or not source.completes
+            reaches_error_join = (
+                isinstance(target, JoinNode)
+                and target.mode == "error"
+                and target.owner in error_owners
+                and edge.kind == "next"
+                and edge.source == success_exit(target.owner)
+            )
+            if (
+                isinstance(target, JoinNode)
+                and not reaches_error_join
+                and (
+                    edge.kind != "join"
+                    or not isinstance(source, BranchOutputNode)
+                    or source.owner != target.owner
+                    or source.id not in join_members[target.id]
+                    or edge.branch != source.branch
+                    or not source.completes
+                )
             ):
                 raise ValueError("Join predecessor is not its branch completion")
         for node in self.nodes:
@@ -398,6 +441,20 @@ class IRGraph(ContractModel):
             if not isinstance(node, JoinNode) and incoming[node.id] > 1:
                 raise ValueError("Only joins may merge predecessors")
             actual = {(e.target, e.kind, e.branch) for e in outgoing[node.id]}
+            failure_edges = {item for item in actual if item[1] == "error"}
+            actual -= failure_edges
+            owner_of_path = error_owners.get(node.id)
+            if failure_edges != (
+                set() if owner_of_path is None else {(owner_of_path.error_target, "error", "errorPath")}
+            ):
+                raise ValueError("Invalid error edges")
+            if (
+                owner_of_path is not None
+                and outgoing[success_exit(node.id)]
+                and {(e.target, e.kind) for e in outgoing[success_exit(node.id)] if e.kind == "next"}
+                != {(owner_of_path.error_join, "next")}
+            ):
+                raise ValueError("A step with an error path continues through its error join")
             if isinstance(node, (FailNode, EndNode)) and actual:
                 raise ValueError("Terminal node has outgoing edges")
             if isinstance(node, CONTROL_NODES):
@@ -438,16 +495,37 @@ class IRGraph(ContractModel):
                     raise ValueError("A loop body must complete")
             elif isinstance(node, BranchOutputNode):
                 owner = nodes.get(node.owner)
-                if not isinstance(owner, CONTROL_NODES):
+                errored = node.branch == "errorPath" and node.owner in error_owners
+                if owner is None or not (errored or isinstance(owner, CONTROL_NODES)):
                     raise ValueError("Orphan branch output")
-                owner_join = nodes.get(owner.join)
+                if errored:
+                    owner_join = nodes.get(cast(str, error_owners[node.owner].error_join))
+                else:
+                    assert isinstance(owner, CONTROL_NODES)
+                    owner_join = nodes.get(owner.join)
                 if not isinstance(owner_join, JoinNode) or node.id not in join_members[owner_join.id]:
                     raise ValueError("Orphan branch output")
                 if node.scope != owner.scope + [owner.id, node.branch]:
                     raise ValueError("Invalid branch output scope")
-                expected_output = {(owner.join, "join", node.branch)} if node.completes else set()
+                expected_output = {(owner_join.id, "join", node.branch)} if node.completes else set()
                 if actual != expected_output:
                     raise ValueError("Invalid branch completion edges")
+            elif isinstance(node, JoinNode) and node.mode == "error":
+                owner = error_owners.get(node.owner)
+                if owner is None or owner.error_join != node.id or owner.scope != node.scope:
+                    raise ValueError("Orphan join")
+                members = [nodes.get(identifier) for identifier in node.branches]
+                if len(members) != 1 or any(
+                    not isinstance(n, BranchOutputNode) or n.owner != owner.id or n.branch != "errorPath"
+                    for n in members
+                ):
+                    raise ValueError("Invalid join members")
+                success = any(e.target == node.id and e.kind == "next" for e in outgoing[success_exit(owner.id)])
+                path_completes = any(isinstance(n, BranchOutputNode) and n.completes for n in members)
+                if node.completes != (success or path_completes):
+                    raise ValueError("Invalid join completion")
+                if not node.completes and actual:
+                    raise ValueError("Noncompleting join has successor")
             elif isinstance(node, JoinNode):
                 owner = nodes.get(node.owner)
                 if not isinstance(owner, CONTROL_NODES) or owner.join != node.id or owner.scope != node.scope:
@@ -478,7 +556,7 @@ class IRGraph(ContractModel):
             source, target = nodes[edge.source], nodes[edge.target]
             if edge.kind == "next" and source.scope != target.scope:
                 raise ValueError("Sequential edge crosses lexical scopes")
-            control = edge.kind in {"case", "default", "fork", "each", "transaction"}
+            control = edge.kind in {"case", "default", "fork", "each", "transaction", "error"}
             if control and target.scope != source.scope + [source.id, edge.branch]:
                 raise ValueError("Control edge crosses lexical scopes")
         for node in self.nodes:
@@ -486,7 +564,11 @@ class IRGraph(ContractModel):
                 raise ValueError("Invalid lexical scope")
             for index in range(0, len(node.scope), 2):
                 owner = nodes.get(node.scope[index])
-                if not isinstance(owner, CONTROL_NODES) or owner.scope != node.scope[:index]:
+                if (
+                    owner is None
+                    or not (isinstance(owner, CONTROL_NODES) or owner.id in error_owners)
+                    or owner.scope != node.scope[:index]
+                ):
                     raise ValueError("Unknown lexical owner")
                 if node.scope[index + 1] not in control_names[owner.id]:
                     raise ValueError("Unknown lexical branch")
@@ -504,11 +586,17 @@ class IRGraph(ContractModel):
             raise ValueError("Cyclic executable graph")
         # A completing branch must have a path to its output within that lexical block.
         # Nested scopes cap repeated traversal to the declared lexical nesting ceiling.
+        blocks: list[tuple[str, dict[str, str]]] = []
         for node in self.nodes:
+            if node.id in error_owners:
+                blocks.append(
+                    (
+                        cast(str, error_owners[node.id].error_join),
+                        {"errorPath": cast(str, error_owners[node.id].error_target)},
+                    )
+                )
             if not isinstance(node, CONTROL_NODES):
                 continue
-            join = nodes[node.join]
-            assert isinstance(join, JoinNode)
             entries = (
                 {c.branch: c.target for c in node.cases} | {"default": node.default}
                 if isinstance(node, SwitchNode)
@@ -516,6 +604,10 @@ class IRGraph(ContractModel):
                 if isinstance(node, (ForEachNode, TransactionNode))
                 else {b.name: b.target for b in node.branches}
             )
+            blocks.append((node.join, entries))
+        for join_id, entries in blocks:
+            join = nodes[join_id]
+            assert isinstance(join, JoinNode)
             for output_id in join.branches:
                 output = nodes[output_id]
                 assert isinstance(output, BranchOutputNode)
@@ -546,6 +638,8 @@ def workflow_requirements(graph: IRGraph) -> tuple[str, list[LanguageFeature]]:
     features: set[LanguageFeature] = set()
     expressions: list[Expression] = []
     for node in graph.nodes:
+        if isinstance(node, HandlesErrors) and node.on_error is not None:
+            features.add("flow.onError")
         if isinstance(node, DecisionTableNode):
             level = max(level, 2)
             expressions.append(node.input)
@@ -923,7 +1017,12 @@ def _validate_transactions(workflow: WorkflowIR) -> None:
     documents = {d.digest: d.document for d in workflow.dependencies if d.kind in {"Action", "Workflow"}}
 
     def enclosing(node: Node) -> str | None:
-        found = [node.scope[index] for index in range(0, len(node.scope), 2) if node.scope[index] in owners]
+        # A transaction's own error path runs after it ended: only its body is inside it.
+        found = [
+            node.scope[index]
+            for index in range(0, len(node.scope), 2)
+            if node.scope[index] in owners and node.scope[index + 1] == "body"
+        ]
         if len(found) > 1 or (isinstance(node, TransactionNode) and found):
             raise ValueError("A transaction cannot contain another transaction")
         return found[0] if found else None
@@ -1003,6 +1102,11 @@ def _validate_transactions(workflow: WorkflowIR) -> None:
                 pass
             else:
                 elements.append(element(node))
+                if isinstance(node, HandlesErrors) and node.error_target is not None:
+                    # After a failure the step's error path runs instead of nothing: a choice between the two.
+                    steps = node.path + "/errorPath/steps"
+                    path = sequence(node.error_target)
+                    elements.append(rules.Choice(node.id, node.path + "/errorPath", (rules.Sequence(steps, ()), path)))
             following = [edge.target for edge in outgoing.get(current, []) if edge.kind == "next"]
             current = following[0] if following else None
         paths = [item.path for item in elements]

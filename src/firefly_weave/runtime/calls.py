@@ -226,13 +226,14 @@ async def deliver_calls(
     """Deliver the ended, undelivered waiting calls of a caller whose run lock this transaction holds.
 
     Each outcome becomes one accepted event with a stable identity, in the order the children ended. A cancelled or
-    timed-out child of a call that stops on failure opens ``WV-CALL-INTERRUPTED`` instead.
+    timed-out child of a call that stops on failure opens ``WV-CALL-INTERRUPTED`` instead, unless the call step
+    handles its failures.
     """
     from firefly_weave.compiler.ir import ActionNode, CallWorkflowNode
     from firefly_weave.compiler.schemas import _Failure
     from firefly_weave.contracts.transactions import split_phase
     from firefly_weave.files.authority import admit_run_files
-    from firefly_weave.runtime.kernel import called_workflow, workflow
+    from firefly_weave.runtime.kernel import called_workflow, error_policy, workflow
     from firefly_weave.runtime.kernel import transition_async as transition
     from firefly_weave.runtime.transactions import in_transaction, shapes
 
@@ -280,7 +281,13 @@ async def deliver_calls(
         settling = in_transaction(transactions, row["node_id"])
         if settling:
             data["effect"] = row["effect"] or "unknown"
-        if row["on_failure"] == "stop" and status in STOPPED and not settling:
+        # A step that handles its failures receives a stopped child as its failure.
+        if (
+            row["on_failure"] == "stop"
+            and status in STOPPED
+            and not settling
+            and error_policy(ir, row["node_id"]) == "stop"
+        ):
             kind = "incident_opened"
             data["code"] = "WV-CALL-INTERRUPTED"
         else:
@@ -540,10 +547,13 @@ class CallService:
     async def _reject(
         self, repository: RuntimeRepository, row: dict[str, Any], caller: dict[str, Any], code: str, at: datetime
     ) -> int:
-        """A call that cannot start: a waiting call opens an incident on its caller; a detached call is recorded."""
+        """A call that cannot start: a waiting call opens an incident on its caller, or fails its step when the step
+        handles its failures; a detached call is recorded."""
         from firefly_weave.compiler.api import import_artifact
+        from firefly_weave.runtime.kernel import error_policy, workflow
         from firefly_weave.runtime.kernel import transition_async as transition
         from firefly_weave.runtime.service import view_of
+        from firefly_weave.runtime.step_failures import call_outcome, failure_data
 
         await repository.execute(
             f"UPDATE run_calls SET status='rejected',code=:code,ended_at=:at,delivered=true WHERE {SCOPE} AND id=:id",
@@ -557,16 +567,28 @@ class CallService:
         view = view_of(caller)
         if view.state.status in TERMINAL or row["node_id"] not in view.state.active:
             return 1
-        from firefly_weave.runtime.kernel import workflow
         from firefly_weave.runtime.transactions import in_transaction, shapes
 
         artifact = import_artifact(caller["artifact"])
+        ir = workflow(artifact)
         data: JsonObject = {"node_id": row["node_id"], "generation": row["generation"], "code": code}
         kind = "incident_opened"
-        if in_transaction(shapes(workflow(artifact)), row["node_id"]):
-            # No child started, so nothing was applied: the step failed and its transaction decides what follows.
+        inside = in_transaction(shapes(ir), row["node_id"])
+        if inside or error_policy(ir, row["node_id"]) != "stop":
+            # No child started for this generation: the step failed, and its setting or its transaction decides what
+            # follows. Children of earlier generations may have applied something, so they set the outcome.
+            earlier = await repository.rows(
+                f"SELECT status FROM run_calls WHERE {SCOPE} AND caller_run_id=:run AND node_id=:node "
+                "AND generation<:generation",
+                run=view.id,
+                node=row["node_id"],
+                generation=row["generation"],
+            )
+            outcome = call_outcome(item["status"] for item in earlier)
             kind = "step_failed"
-            data.update(outcome="not_started", attempts=row["generation"], effect="none")
+            data = failure_data(row["node_id"], row["generation"], code, outcome, row["generation"])
+            if inside:
+                data["effect"] = "none"
         event = RuntimeEvent(
             id=uuid5(NAMESPACE_URL, f"firefly-weave/call/{row['id']}"),
             type=kind,  # type: ignore[arg-type]

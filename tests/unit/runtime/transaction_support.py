@@ -147,7 +147,28 @@ def transaction(steps: list[dict[str, Any]], *, identifier: str = "move", **sett
     }
 
 
-def compiled(steps: list[dict[str, Any]], *, output: Any = None, timeout: int | None = None) -> CompiledArtifact:
+def unsafe_catalog(*names: str) -> CatalogSnapshot:
+    """The fixture catalog with the named actions changed to steps that change data and are never retried."""
+    fixture = yaml.safe_load(Path("tests/fixtures/transactions/catalog.yaml").read_text())
+    for definition in fixture["definitions"]:
+        if definition["metadata"]["name"] in names:
+            definition["spec"]["sideEffect"] = "non_idempotent"
+            task_type = definition["spec"]["implementation"]["taskType"]
+            for task in fixture["tasks"]:
+                if task["taskType"] == task_type:
+                    task["sideEffect"] = "non_idempotent"
+    return CatalogSnapshot.from_definitions(
+        [load_definition(item) for item in fixture["definitions"]], tasks=fixture["tasks"]
+    )
+
+
+def compiled(
+    steps: list[dict[str, Any]],
+    *,
+    output: Any = None,
+    timeout: int | None = None,
+    snapshot: CatalogSnapshot | None = None,
+) -> CompiledArtifact:
     spec: dict[str, Any] = {
         "inputSchema": {
             "type": "object",
@@ -171,7 +192,7 @@ def compiled(steps: list[dict[str, Any]], *, output: Any = None, timeout: int | 
         "metadata": {"name": "move-between-systems", "version": "1.0.0"},
         "spec": spec,
     }
-    result = compile_source(json.dumps(document), format="json", catalog=catalog())
+    result = compile_source(json.dumps(document), format="json", catalog=snapshot or catalog())
     assert result.ok, result.to_bytes()
     return result.artifact
 

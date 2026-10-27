@@ -69,7 +69,8 @@ class BranchState(ContractModel):
 class JoinState(ContractModel):
     owner: str
     node_id: str
-    mode: Literal["all", "selected"]
+    # "error" joins a step's error path back into the sequence; it exists only while that path runs.
+    mode: Literal["all", "selected", "error"]
     branches: list[str]
     concurrency: int = Field(ge=1)
     required_count: int = Field(ge=1)
@@ -276,9 +277,12 @@ class Deadline(ContractModel):
 
 class StepChange(ContractModel):
     node_id: str
-    status: Literal["completed", "waiting"]
+    # "failed" records a failure the step's onError setting handled; the run goes on.
+    status: Literal["completed", "waiting", "failed"]
     output: JsonData = None
     decision: JsonObjectData | None = Field(default=None, exclude_if=lambda value: value is None)
+    # The error object of a handled failure; only with status "failed".
+    error: JsonObjectData | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class ControlCommand(ContractModel):

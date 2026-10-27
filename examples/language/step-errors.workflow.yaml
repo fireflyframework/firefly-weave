@@ -1,0 +1,99 @@
+# Copyright 2026 Firefly Software Foundation.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# Author: Firefly Software Foundation
+# SPDX-License-Identifier: Apache-2.0
+apiVersion: weave/v1alpha1
+kind: Workflow
+metadata:
+  name: step-errors
+  version: 1.0.0
+spec:
+  inputSchema:
+    type: object
+    properties:
+      requestId: {type: string, maxLength: 200}
+      items:
+        type: array
+        items: {type: string, maxLength: 200}
+    required: [requestId, items]
+    additionalProperties: false
+  outputSchema:
+    type: object
+  steps:
+    # Continue: a failure after the action's own retries gives `null` as the output and records the error.
+    - id: lookup
+      kind: action
+      uses: records.lookup-record@1.0.0
+      with:
+        object:
+          id: {ref: /input/requestId}
+      onError: continue
+    # Continue with error output: the error path runs instead, and its output becomes the step's output.
+    - id: submit
+      kind: action
+      uses: requests.submit-request@1.0.0
+      with:
+        object:
+          id: {ref: /input/requestId}
+      onError: errorOutput
+      errorPath:
+        steps:
+          - id: notify-team
+            kind: action
+            uses: team.notify-team@1.0.0
+            with:
+              object:
+                text:
+                  op:
+                    name: concat
+                    args:
+                      - {literal: "Request "}
+                      - {ref: /input/requestId}
+                      - {literal: " was not submitted: "}
+                      - {ref: /steps/submit/error/code}
+        output:
+          object:
+            submitted: {literal: false}
+            reason: {ref: /steps/submit/error/code}
+    # Each item handles its own failure; the loop still returns one entry per item.
+    - id: each
+      kind: forEach
+      items: {ref: /input/items}
+      concurrency: 4
+      maxItems: 100
+      body:
+        steps:
+          - id: verify
+            kind: action
+            uses: records.lookup-record@1.0.0
+            with:
+              object:
+                id: {ref: /item}
+            onError: continue
+        output: {ref: /steps/verify/output}
+  output:
+    object:
+      found:
+        op:
+          name: not
+          args:
+            - op:
+                name: exists
+                args: [{ref: /steps/lookup/error}]
+      lookupError:
+        op:
+          name: coalesce
+          args: [{ref: /steps/lookup/error/code}, {literal: ""}]
+      submit: {ref: /steps/submit/output}
+      verified: {ref: /steps/each/output}
