@@ -186,3 +186,43 @@ def _as(require, token_name):
         return require(actor if actor == "stored" else token_name, scope, capability, context=context)
 
     return checked
+
+
+def _bucketed(at, entries):
+    """Samples of one bucket from (metric, label, value, samples) rows, as the read gathers them."""
+    found = statistics_reads._Samples()
+    for metric, label, value, samples in entries:
+        slot = found.by_bucket[at].setdefault((metric, label), statistics_reads._Sample())
+        slot.weighted += value * samples
+        slot.samples += samples
+        slot.largest = max(slot.largest, value)
+    return found
+
+
+def test_ready_tasks_average_over_every_sampled_minute_not_only_those_with_tasks():
+    # Five minutes sampled; type a had 10 ready tasks in one minute, type b 10 in another, none otherwise.
+    found = _bucketed(
+        AT,
+        [("workers_online", "", 1, 5), ("tasks_ready", "a", 10, 1), ("tasks_ready", "b", 10, 1)],
+    )
+    query = StatisticsSeriesQuery.model_validate(
+        {"from": "2026-10-26T12:00:00Z", "to": "2026-10-26T12:05:00Z", "signals": ["tasks_ready"]}
+    )
+    (ungrouped,) = statistics_reads._sample_series(query, ["tasks_ready"], [AT], found)
+    assert ungrouped.points == [(AT, 4.0)]
+    grouped = statistics_reads._sample_series(
+        query.model_copy(update={"group_by": "task_type", "top": 4}), ["tasks_ready"], [AT], found
+    )
+    assert {item.labels["task_type"]: item.points[0][1] for item in grouped} == {"a": 2.0, "b": 2.0}
+
+
+def test_the_oldest_ready_age_is_the_largest_over_task_types_not_their_sum():
+    found = _bucketed(
+        AT,
+        [("workers_online", "", 1, 5), ("oldest_ready_seconds", "a", 30, 1), ("oldest_ready_seconds", "b", 90, 2)],
+    )
+    query = StatisticsSeriesQuery.model_validate(
+        {"from": "2026-10-26T12:00:00Z", "to": "2026-10-26T12:05:00Z", "signals": ["oldest_ready_seconds"]}
+    )
+    (series,) = statistics_reads._sample_series(query, ["oldest_ready_seconds"], [AT], found)
+    assert series.points == [(AT, 90.0)]

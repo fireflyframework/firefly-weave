@@ -454,12 +454,19 @@ def _sample_series(
     def label_values(at: datetime, metric: str) -> dict[str, _Sample]:
         return {label: sample for (name, label), sample in by_bucket.get(at, {}).items() if name == metric}
 
+    def minutes(at: datetime) -> int:
+        """Sampled minutes in the bucket: a task type without ready tasks writes no row, so its minutes count zero."""
+        always = by_bucket.get(at, {}).get(("workers_online", ""))
+        if always is not None:
+            return always.samples
+        return max((sample.samples for sample in by_bucket.get(at, {}).values()), default=0)
+
     names: list[str] | None = None
     if query.group_by == "task_type":
         totals: dict[str, float] = defaultdict(float)
         for at in buckets:
             for label, sample in label_values(at, "tasks_ready").items():
-                totals[label] += sample.average
+                totals[label] += sample.weighted / max(1, minutes(at))
         names = top(totals, query.top)
     for signal in signals:
         if signal in {"tasks_ready", "oldest_ready_seconds"}:
@@ -476,7 +483,7 @@ def _sample_series(
                         else:
                             chosen = {group: present[group]} if group in present else {}
                         seen = seen or bool(chosen)
-                        values.append((at, _combine(metric, chosen, bool(by_bucket.get(at)))))
+                        values.append((at, _combine(metric, chosen, minutes(at))))
                     if group != OTHER or seen:
                         result.append(_series(signal, {"task_type": group}, values))
             else:
@@ -484,7 +491,7 @@ def _sample_series(
                     _series(
                         signal,
                         {},
-                        [(at, _combine(metric, label_values(at, metric), bool(by_bucket.get(at)))) for at in buckets],
+                        [(at, _combine(metric, label_values(at, metric), minutes(at))) for at in buckets],
                     )
                 )
         elif signal == "worker_utilization":
@@ -511,12 +518,12 @@ def _sample_series(
     return result
 
 
-def _combine(metric: str, samples: Mapping[str, _Sample], sampled: bool) -> float | None:
-    """Ready tasks add up over task types; the oldest ready age is the largest of them."""
-    if not sampled:
+def _combine(metric: str, samples: Mapping[str, _Sample], minutes: int) -> float | None:
+    """Ready tasks add up over task types, averaged over every sampled minute; the oldest age is the largest."""
+    if not minutes:
         return None
     if metric == "tasks_ready":
-        return sum(sample.average for sample in samples.values())
+        return sum(sample.weighted for sample in samples.values()) / minutes
     ages = [sample.largest for sample in samples.values()]
     return max(ages) if ages else None
 

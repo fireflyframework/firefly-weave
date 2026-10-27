@@ -560,3 +560,31 @@ async def test_catch_up_in_single_buckets_advances_the_cursor_every_chunk(operat
     assert seen == [start + timedelta(minutes=5 * (index + 1)) for index in range(3)]
     (row,) = await rows(operations_case, node_id="")
     assert (row["started"], row["succeeded"]) == (1, 1)
+
+
+async def test_an_hour_of_samples_averages_ready_tasks_over_every_sampled_minute(operations_case):
+    hour = datetime(2031, 3, 4, 9, 0, tzinfo=UTC)
+    for minute in range(4):
+        await owner(
+            operations_case,
+            "INSERT INTO operations_samples(tenant_id,project_id,environment_id,granularity,at,metric,label,value_avg,"
+            "value_max,samples) VALUES(:tenant,:project,:environment,'1m',:at,'workers_online','',1,1,1)",
+            at=hour + timedelta(minutes=minute),
+        )
+    await owner(
+        operations_case,
+        "INSERT INTO operations_samples(tenant_id,project_id,environment_id,granularity,at,metric,label,value_avg,"
+        "value_max,samples) VALUES(:tenant,:project,:environment,'1m',:at,'tasks_ready','email',8,8,1)",
+        at=hour,
+    )
+    async with operations_case.tx() as tx:
+        await statistics.StatisticsRepository(tx)._execute(
+            statistics._SAMPLE_HOURS, {"lo": hour, "hi": hour + timedelta(hours=1)}
+        )
+    (row,) = await owner(
+        operations_case,
+        "SELECT value_avg,value_max,samples FROM operations_samples WHERE environment_id=:environment "
+        "AND granularity='1h' AND metric='tasks_ready'",
+    )
+    # Eight ready tasks in one of four sampled minutes: two on average, eight at most.
+    assert (row["value_avg"], row["value_max"], row["samples"]) == (2, 8, 4)

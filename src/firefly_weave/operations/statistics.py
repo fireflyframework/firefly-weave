@@ -273,10 +273,15 @@ _SAMPLE = (
     "value_max,samples) VALUES(:tenant,:project,:environment,'1m',:at,:metric,:label,:value,:value,1) "
     "ON CONFLICT DO NOTHING"
 )
+# An hour of minute samples: averages over every sampled minute of the hour (workers_online is written each time),
+# so a task type without ready tasks in some minutes counts zero there instead of being left out.
 _SAMPLE_HOURS = (
+    "WITH sampled AS (SELECT greatest(1,coalesce(sum(samples),0)) AS minutes FROM operations_samples WHERE "
+    f"{_SCOPE.format(alias='')} AND granularity='1m' AND metric='workers_online' AND label='' AND at>=:lo AND at<:hi) "
     "INSERT INTO operations_samples(tenant_id,project_id,environment_id,granularity,at,metric,label,value_avg,"
     f"value_max,samples) SELECT tenant_id,project_id,environment_id,'1h',{_bin('at', '1 hour')},metric,label,"
-    "sum(value_avg*samples)/sum(samples),max(value_max),sum(samples)::integer FROM operations_samples WHERE "
+    "sum(value_avg*samples)/greatest(max(minutes),sum(samples)),max(value_max),"
+    "greatest(max(minutes),sum(samples))::integer FROM operations_samples,sampled WHERE "
     f"{_SCOPE.format(alias='')} AND granularity='1m' AND at>=:lo AND at<:hi "
     "GROUP BY 1,2,3,5,6,7 ON CONFLICT (tenant_id,project_id,environment_id,"
     "granularity,at,metric,label) DO UPDATE SET value_avg=excluded.value_avg,value_max=excluded.value_max,"
