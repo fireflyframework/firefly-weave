@@ -23,6 +23,8 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
+import pytest
+
 from firefly_weave.access.scheduler import _CATALOG_AUTHORITY, _SchedulerScope
 from firefly_weave.contracts.access import Scope
 from firefly_weave.operations import loop as operations
@@ -87,11 +89,11 @@ def units(monkeypatch, loop: OperationsLoop, opened: list) -> None:
 
 def steps(monkeypatch, done: list, *, fail: str | None = None, until: datetime | None = AT) -> None:
     def make(name):
-        async def step(tx, now):
+        async def step(tx, now, **chunk):
             done.append(name)
             if name == fail:
                 raise RuntimeError("relation run_stat_buckets is busy: secret-token")
-            return SimpleNamespace(complete_until=until)
+            return SimpleNamespace(complete_until=until, rolled_until=AT + timedelta(minutes=5))
 
         return step
 
@@ -183,3 +185,69 @@ async def test_an_environment_without_statistics_yet_reports_no_complete_until(m
     steps(monkeypatch, [], until=None)
     assert await loop.cycle() is True
     assert loop.complete_until is None
+
+
+async def test_a_slow_statistics_step_cannot_starve_revalidation(monkeypatch):
+    import asyncio
+    import time
+
+    loop = operations_loop(monkeypatch)
+    loop.monotonic = time.monotonic
+    calls: list = []
+    quiet(monkeypatch, loop, calls)
+
+    @asynccontextmanager
+    async def unit(scope, deadline, *, mutation):
+        yield object()
+
+    monkeypatch.setattr(loop, "_unit", unit)
+
+    async def stuck(tx, now, **chunk):
+        await asyncio.sleep(5)
+
+    monkeypatch.setattr(statistics, "STEPS", (("recompute", stuck),))
+    started = time.monotonic()
+    with pytest.raises(operations.QuantumIncomplete):
+        await loop._environment(authority())
+    # The slice ended the step on time: revalidation started well within the environment's second.
+    (name, deadline), *_ = calls
+    assert name == "revalidate"
+    reached = time.monotonic() - started
+    assert STATISTICS_SECONDS - 0.05 <= reached < STATISTICS_SECONDS + 0.2, reached
+    assert deadline - (started + reached) >= 0.5
+
+
+async def test_catch_up_repeats_chunks_while_behind_and_halves_them_after_a_failure(monkeypatch, caplog):
+    loop = operations_loop(monkeypatch)
+    quiet(monkeypatch, loop, [])
+    units(monkeypatch, loop, [])
+    behind = {"rolled": AT - timedelta(hours=1)}
+    asked: list[int] = []
+
+    async def recompute(tx, now, *, buckets):
+        asked.append(buckets)
+        if len(asked) == 2 and not behind.get("failed"):
+            behind["failed"] = True
+            raise RuntimeError("canceling statement due to statement timeout")
+        behind["rolled"] = min(AT + timedelta(minutes=5), behind["rolled"] + timedelta(minutes=5 * buckets))
+        return SimpleNamespace(complete_until=behind["rolled"] - timedelta(minutes=5), rolled_until=behind["rolled"])
+
+    async def other(tx, now):
+        return SimpleNamespace(complete_until=behind["rolled"] - timedelta(minutes=5), rolled_until=behind["rolled"])
+
+    monkeypatch.setattr(
+        statistics,
+        "STEPS",
+        (("recompute", recompute), *((name, other) for name in ("hours", "days", "sample", "prune"))),
+    )
+    environment = authority()
+    with caplog.at_level(logging.ERROR):
+        assert await loop.roll_statistics(environment, 100.4) is False
+    # Three buckets, then a timeout: the chunk halves to one bucket for the next attempt.
+    assert asked == [3, 3]
+    assert "Operations statistics step failed (RuntimeError)" in caplog.text
+    asked.clear()
+    await loop.roll_statistics(environment, 100.4)
+    # One bucket at a time while behind, growing back to three once a chunk succeeds.
+    assert asked[0] == 1 and asked[1:3] == [2, 3]
+    assert behind["rolled"] >= AT - timedelta(minutes=5)

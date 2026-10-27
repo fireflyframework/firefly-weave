@@ -539,3 +539,24 @@ async def test_each_bucket_keeps_a_total_of_every_workflow(operations_case):
     for column in ("started", "succeeded", "failed", "timed_out", "cancelled", "duration_sum_ms"):
         assert total[column] == sum(item[column] for item in series), column
     assert total["duration_hist"] == list(merge(*(item["duration_hist"] for item in series)))
+
+
+async def test_catch_up_in_single_buckets_advances_the_cursor_every_chunk(operations_case):
+    (run,) = await started_runs(operations_case, 1)
+    behind = NOW - timedelta(hours=3)
+    await place(operations_case, run, started=behind + ms(10), ended=behind + ms(500), status="succeeded")
+    await owner(
+        operations_case,
+        "INSERT INTO operations_statistics_cursors(tenant_id,project_id,environment_id,rolled_until) "
+        "VALUES(:tenant,:project,:environment,:at)",
+        at=behind,
+    )
+    seen = []
+    # A chunk that keeps timing out shrinks to one bucket: each committed chunk still moves the cursor on.
+    for _ in range(3):
+        async with operations_case.tx() as tx:
+            seen.append((await statistics.recompute(tx, NOW, buckets=1)).rolled_until)
+    start = behind.replace(second=0, microsecond=0) - timedelta(minutes=behind.minute % 5)
+    assert seen == [start + timedelta(minutes=5 * (index + 1)) for index in range(3)]
+    (row,) = await rows(operations_case, node_id="")
+    assert (row["started"], row["succeeded"]) == (1, 1)

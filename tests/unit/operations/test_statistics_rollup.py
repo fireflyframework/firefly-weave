@@ -140,3 +140,13 @@ def test_task_types_past_fifty_fold_into_other():
     assert len(kept) == 51
     assert kept[-1] == ("(other)", sum(100 - index for index in range(50, 53)), 52.0)
     assert fold_task_types([("a", 1, None)], cap=50) == [("a", 1, None)]
+
+
+def test_a_chunk_is_whole_buckets_and_never_runs_past_now():
+    behind = datetime(2026, 10, 26, 11, 7, tzinfo=UTC)
+    assert window(NOW, behind, timedelta(minutes=5)) == (
+        datetime(2026, 10, 26, 11, 5, tzinfo=UTC),
+        datetime(2026, 10, 26, 11, 10, tzinfo=UTC),
+    )
+    # Caught up, three buckets cover the whole window up to the bucket after now.
+    assert window(NOW, None, timedelta(minutes=15)) == window(NOW, None)

@@ -44,6 +44,10 @@ from firefly_weave.runtime import admission
 
 WINDOW = timedelta(minutes=10)
 CATCH_UP = timedelta(hours=1)
+# One recompute chunk at most: three buckets cover the whole window once caught up. The loop halves it after a
+# failed chunk and repeats chunks while behind, up to CHUNKS_PER_CYCLE (an hour of catch-up) per cycle.
+CHUNK_BUCKETS = 3
+CHUNKS_PER_CYCLE = 4
 SERIES_CAP = 2000
 TASK_TYPE_CAP = 50
 PRUNE_BATCH = 5000
@@ -74,11 +78,11 @@ def _ceil(moment: datetime, size: timedelta) -> datetime:
     return floor if floor == moment else floor + size
 
 
-def window(now: datetime, rolled_until: datetime | None) -> tuple[datetime, datetime]:
-    """The five-minute buckets this cycle recomputes: the last ten minutes, or the next hour behind them."""
+def window(now: datetime, rolled_until: datetime | None, span: timedelta = CATCH_UP) -> tuple[datetime, datetime]:
+    """The five-minute buckets to recompute next: the last ten minutes, or at most ``span`` behind them."""
     back = now - WINDOW if rolled_until is None else min(rolled_until, now - WINDOW)
     lo = max(_floor(back, FIVE_MINUTES), _ceil(now - RETENTION["5m"], FIVE_MINUTES))
-    return lo, _ceil(min(now, lo + CATCH_UP), FIVE_MINUTES)
+    return lo, _ceil(min(now, lo + span), FIVE_MINUTES)
 
 
 def complete_until(now: datetime, rolled_until: datetime | None) -> datetime | None:
@@ -516,11 +520,11 @@ def _seconds(value: Any) -> float | None:
     return None if value is None else max(0.0, float(value))
 
 
-async def recompute(tx: Transaction, now: datetime) -> Cursor:
-    """Recompute this cycle's window and advance the cursor; the first step of every cycle."""
+async def recompute(tx: Transaction, now: datetime, *, buckets: int = CHUNK_BUCKETS) -> Cursor:
+    """Recompute the next chunk of at most ``buckets`` five-minute buckets and advance the cursor past it."""
     statistics = StatisticsRepository(tx)
     cursor = await statistics.cursor()
-    lo, hi = window(now, cursor.rolled_until)
+    lo, hi = window(now, cursor.rolled_until, FIVE_MINUTES * buckets)
     await statistics.recompute(lo, hi)
     if cursor.covered_from is None:
         cursor.covered_from = lo
@@ -565,14 +569,23 @@ async def prune(tx: Transaction, now: datetime) -> Cursor:
     return cursor
 
 
+async def recompute_chunk(step: Any, tx: Transaction, now: datetime, buckets: int) -> Cursor:
+    """Run the recompute step (``STEPS[0]``) on a chunk of ``buckets`` buckets."""
+    cursor: Cursor = await step(tx, now, buckets=buckets)
+    return cursor
+
+
 # The steps of one cycle, in order; the operations loop runs each in its own transaction.
 STEPS = (("recompute", recompute), ("hours", close_hours), ("days", close_days), ("sample", sample), ("prune", prune))
 
 
 async def rollup(tx: Transaction, now: datetime) -> datetime | None:
     """Every step of one cycle in one transaction; returns the environment's ``complete_until``."""
-    cursor: Cursor | None = None
-    for _, step in STEPS:
+    cursor = await recompute(tx, now)
+    for _ in range(CHUNKS_PER_CYCLE - 1):
+        if cursor.rolled_until is None or cursor.rolled_until >= now - WINDOW:
+            break
+        cursor = await recompute(tx, now)
+    for _, step in STEPS[1:]:
         cursor = await step(tx, now)
-    assert cursor is not None
     return cursor.complete_until

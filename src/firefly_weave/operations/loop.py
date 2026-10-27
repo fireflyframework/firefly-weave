@@ -77,6 +77,8 @@ class OperationsLoop:
         self.task: asyncio.Task[None] | None = None
         # The oldest complete_until of the environments the last cycle rolled up; None before any has statistics.
         self.complete_until: datetime | None = None
+        # Recompute chunk sizes per environment, in five-minute buckets: halved after a failure, grown after success.
+        self.chunks: dict[str, int] = {}
 
     async def open(self) -> None:
         if self.task is not None or not self.settings.scheduler_enabled:
@@ -171,25 +173,49 @@ class OperationsLoop:
     async def roll_statistics(
         self, authority: _SchedulerScope, deadline_monotonic: float
     ) -> datetime | None | Literal[False]:
-        """Recompute, close hours and days, sample and prune, each in its own unit.
+        """Recompute, close hours and days, sample and prune, each in its own unit, all within the slice.
 
-        Returns the environment's complete_until, or False when a step failed (it is logged and the others still
-        run) or the budget ran out (the remaining steps wait for the next cycle).
+        Every unit is bounded by the time left in the slice, so a slow statement can never eat revalidation's share.
+        The recompute runs in chunks of whole five-minute buckets, each committed with its cursor, and repeats while
+        the cursor is behind and time is left, so catch-up after downtime always advances; a failed chunk halves the
+        next one (down to one bucket) and a successful one grows it back. Returns the environment's complete_until,
+        or False when a step failed (it is logged and the others still run) or the slice ran out.
         """
         if not isinstance(authority, _SchedulerScope):
             raise AccessDenied()
         now = self.clock()
+        key = authority.scope.model_dump_json()
         completed, until = True, None
-        for _, step in statistics.STEPS:
-            try:
-                async with self._unit(authority, deadline_monotonic, mutation=True) as tx:
-                    cursor = await step(tx, now)
+        for name, step in statistics.STEPS:
+            chunks = 0
+            while True:
+                buckets = self.chunks.get(key, statistics.CHUNK_BUCKETS)
+                try:
+                    async with asyncio.timeout(max(0.0, deadline_monotonic - self.monotonic())):
+                        async with self._unit(authority, deadline_monotonic, mutation=True) as tx:
+                            cursor = await (
+                                statistics.recompute_chunk(step, tx, now, buckets)
+                                if name == "recompute"
+                                else step(tx, now)
+                            )
+                except (QuantumIncomplete, TimeoutError):
+                    if name == "recompute":
+                        self.chunks[key] = max(1, buckets // 2)
+                    return False
+                except Exception as error:
+                    logging.getLogger(__name__).error("Operations statistics step failed (%s)", failure_cause(error))
+                    if name == "recompute":
+                        self.chunks[key] = max(1, buckets // 2)
+                    completed = False
+                    break
                 until = cursor.complete_until
-            except QuantumIncomplete:
-                return False
-            except Exception as error:
-                logging.getLogger(__name__).error("Operations statistics step failed (%s)", failure_cause(error))
-                completed = False
+                if name != "recompute":
+                    break
+                self.chunks[key] = min(statistics.CHUNK_BUCKETS, buckets * 2)
+                chunks += 1
+                behind = cursor.rolled_until is not None and cursor.rolled_until < now - statistics.WINDOW
+                if not behind or chunks >= statistics.CHUNKS_PER_CYCLE:
+                    break
         return until if completed else False
 
     @asynccontextmanager
