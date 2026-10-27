@@ -37,6 +37,8 @@ import {
   renameResultColumn,
   renameRule,
   setInputColumnType,
+  setResult,
+  setRuleFormula,
   setCondition,
   setHitPolicy,
   type TableSpec,
@@ -430,5 +432,47 @@ describe("columns and rules the grid adds, renames and removes", () => {
     expect(() => removeRule(one, 0)).toThrow(
       "A table keeps at least one rule.",
     );
+  });
+});
+
+describe("results the grid writes", () => {
+  it("writes literal results while every cell is fixed, and object results once one is mapped", () => {
+    const before = table();
+    const fixed = setResult(before, 0, 1, lit(9000));
+    expect(fixed.rules[0].output).toEqual(lit({ approve: true, limit: 9000 }));
+    expect(fixed.rules[1]).toBe(before.rules[1]);
+    const mapped = setResult(before, 0, 1, ref("amount"));
+    expect(mapped.rules[0].output).toEqual({
+      object: { approve: lit(true), limit: ref("amount") },
+    });
+    const cleared = setResult(before, 0, 1, undefined);
+    expect(cleared.rules[0].output).toEqual(lit({ approve: true }));
+    const otherwise = setResult(before, "otherwise", 0, lit(true));
+    expect(otherwise.defaultOutput).toEqual(lit({ approve: true, limit: 0 }));
+  });
+
+  it("writes a scalar result as the expression itself", () => {
+    const scalar: TableSpec = {
+      ...table(),
+      outputSchema: { type: "string" },
+      rules: [{ id: "a", when: lit(true), output: lit("x") }],
+      defaultOutput: lit("y"),
+    };
+    expect(setResult(scalar, 0, 0, lit("z")).rules[0].output).toEqual(lit("z"));
+    expect(
+      setResult(scalar, "otherwise", 0, ref("tier")).defaultOutput,
+    ).toEqual(ref("tier"));
+  });
+
+  it("writes a merged condition as the formula given", () => {
+    const before = table();
+    const when = op(
+      "or",
+      op("gt", ref("amount"), lit(1)),
+      op("exists", ref("tier")),
+    );
+    const after = setRuleFormula(before, 2, when);
+    expect(after.rules[2].when).toEqual(when);
+    expect(after.rules[0]).toBe(before.rules[0]);
   });
 });

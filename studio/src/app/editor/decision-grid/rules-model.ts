@@ -570,3 +570,65 @@ export function removeRule(spec: TableSpec, index: number): TableSpec {
   if (spec.rules.length <= 1) throw Error("A table keeps at least one rule.");
   return { ...spec, rules: spec.rules.filter((_, i) => i !== index) };
 }
+
+/**
+ * The table with one result cell set (undefined clears it) in a rule or in
+ * Otherwise: `{literal: {...}}` while every cell is fixed, `{object: {...}}`
+ * once one is a formula, the expression itself for a scalar result.
+ */
+export function setResult(
+  spec: TableSpec,
+  row: number | "otherwise",
+  columnIndex: number,
+  value: Expression | undefined,
+): TableSpec {
+  const view = gridOf(spec);
+  const current =
+    row === "otherwise" ? view.otherwise : (view.rows[row]?.result ?? null);
+  let output: Expression;
+  if (view.scalar) output = value ?? { literal: null };
+  else {
+    const cells =
+      current?.kind === "cells"
+        ? [...current.cells]
+        : current === null
+          ? view.results.map(() => undefined)
+          : null;
+    if (!cells)
+      throw Error(
+        `${row === "otherwise" ? "Otherwise" : `Rule ${row + 1}`}'s result is a formula; edit it as a formula.`,
+      );
+    cells[columnIndex] = value;
+    const names = view.results.map((column) => column.name);
+    const set = names
+      .map((name, i) => [name, cells[i]] as const)
+      .filter((entry): entry is readonly [string, Expression] => !!entry[1]);
+    const fixed = set.every(
+      ([, cell]) =>
+        isRecord(cell) && Object.keys(cell).length === 1 && "literal" in cell,
+    );
+    output = fixed
+      ? {
+          literal: Object.fromEntries(
+            set.map(([name, cell]) => [
+              name,
+              (cell as { literal: Json }).literal,
+            ]),
+          ),
+        }
+      : ({ object: Object.fromEntries(set) } as Expression);
+  }
+  if (row === "otherwise") return { ...spec, defaultOutput: output };
+  const rule = spec.rules[row];
+  return rule ? withRule(spec, row, { ...rule, output }) : spec;
+}
+
+/** The table with a rule's whole condition replaced by a formula. */
+export function setRuleFormula(
+  spec: TableSpec,
+  index: number,
+  when: Expression,
+): TableSpec {
+  const rule = spec.rules[index];
+  return rule ? withRule(spec, index, { ...rule, when }) : spec;
+}
