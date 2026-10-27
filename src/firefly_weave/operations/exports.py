@@ -18,15 +18,16 @@
 
 import json
 from collections.abc import Mapping
-from typing import Final, cast, get_args
+from typing import Any, Final, cast, get_args
 
 from firefly_weave.compiler.api import CompiledArtifact
 from firefly_weave.compiler.calls import CALL_ERROR_SCHEMA, call_output_schema
 from firefly_weave.compiler.canonical import canonical_digest
 from firefly_weave.compiler.ir import ActionNode, CallWorkflowNode, HumanTaskNode, IRNode, SignalNode
 from firefly_weave.contracts.definitions import ActionDefinition, load_definition
-from firefly_weave.contracts.instance_keys import InvalidInstanceKey, split_instance
+from firefly_weave.contracts.instance_keys import InvalidInstanceKey, node_of, split_instance
 from firefly_weave.contracts.run_views import RunOrigin
+from firefly_weave.contracts.transactions import IN_DOUBT_CODES, split_phase
 from firefly_weave.contracts.values import JsonObject, JsonValue
 from firefly_weave.contracts.workers import TaskError
 from firefly_weave.operations.redaction import Omission, project
@@ -44,6 +45,54 @@ def event_node(nodes: Mapping[str, IRNode], key: object) -> IRNode | None:
         return nodes.get(split_instance(key).node_id)
     except InvalidInstanceKey:
         return None
+
+
+def phase_step(node: IRNode | None, key: object) -> Any:
+    """The confirm, cancel or undo a phase key runs, or ``None`` for any other key."""
+    if not isinstance(key, str) or not isinstance(node, (ActionNode, CallWorkflowNode)) or node.txn is None:
+        return None
+    try:
+        phase = split_phase(key)
+    except InvalidInstanceKey:
+        return None
+    return None if phase is None else node.txn.phases[phase[1]]
+
+
+def reconciliation_schema(ir: Any, key: object) -> JsonObject:
+    """The shape of a reconciliation record; its block output is classified by the block's own output schema."""
+    from firefly_weave.compiler.ir import TransactionNode
+    from firefly_weave.runtime.transactions import shapes
+
+    nodes = {n.id: n for n in ir.graph.nodes}
+    block: JsonValue = True
+    facts = shapes(ir)
+    owner = None
+    if isinstance(key, str):
+        try:
+            forward = split_phase(key)
+            name = forward[0] if forward is not None else key
+            owner = (
+                name
+                if isinstance(nodes.get(node_of(name)), TransactionNode)
+                else facts.owner_key(name)
+                if facts
+                else None
+            )
+        except InvalidInstanceKey:
+            owner = None
+    transaction = nodes.get(node_of(owner)) if owner is not None else None
+    if isinstance(transaction, TransactionNode):
+        guards = [g for g in ir.guards if g.path == f"{transaction.path}/output" and g.purpose == "branch_output"]
+        if guards:
+            block = cast(JsonValue, ir.schemas[guards[0].schema_ref])
+    return {
+        "type": "object",
+        "properties": {
+            "as": {"type": "string"},
+            "participants": {"type": "array"},
+            "blockOutput": block,
+        },
+    }
 
 
 def lock_digest(artifact: CompiledArtifact) -> str:
@@ -70,14 +119,14 @@ def safe_event(event: RuntimeEvent, artifact: CompiledArtifact | None, *, unavai
     data = dict(event.data)
     omissions: list[Omission] = []
     fields = {
-        "started": {"admission_policy", "origin"},
+        "started": {"admission_policy", "origin", "run_id", "not_after"},
         "human_completed": {"node_id", "task_id", "actor_id", "output"},
         "paused": {"actor_id", "reason", "control_revision"},
         "resumed": {"actor_id", "reason", "control_revision"},
         "task_completed": {"node_id", "generation", "output"},
-        "task_failed": {"node_id", "generation", "output"},
-        "incident_opened": {"node_id", "generation", "code", "next_attempt_at"},
-        "recovery_scheduled": {"node_id", "generation", "code", "next_attempt_at"},
+        "task_failed": {"node_id", "generation", "output", "effect"},
+        "incident_opened": {"node_id", "generation", "code", "next_attempt_at", "origin_code"},
+        "recovery_scheduled": {"node_id", "generation", "code", "next_attempt_at", "effect"},
         "incident_resolved": {
             "receipt_id",
             "node_id",
@@ -88,12 +137,25 @@ def safe_event(event: RuntimeEvent, artifact: CompiledArtifact | None, *, unavai
             "actor_id",
             "reason",
             "evidence_reference",
+            "code",
         },
-        "cancelled": {"actor_id", "reason", "code"},
+        "cancelled": {"actor_id", "reason", "code", "skip_undo"},
         "timed_out": {"node_id", "deadline", "wait_id", "code"},
-        "wait_elapsed": {"node_id", "deadline", "wait_id"},
+        "wait_elapsed": {"node_id", "deadline", "wait_id", "started"},
         "signal_received": {"node_id", "output", "accepted_at", "deadline"},
-        "call_completed": {"node_id", "generation", "child_run_id", "status", "output"},
+        "call_completed": {"node_id", "generation", "child_run_id", "status", "output", "effect"},
+        # A step's final failure: codes, outcomes and counts only.
+        "step_failed": {
+            "node_id",
+            "generation",
+            "code",
+            "outcome",
+            "attempts",
+            "effect",
+            "child_run_id",
+            "deadline",
+            "wait_id",
+        },
     }[event.type]
     if (
         event.type == "started"
@@ -127,7 +189,24 @@ def safe_event(event: RuntimeEvent, artifact: CompiledArtifact | None, *, unavai
         ir = workflow(artifact)
         node = event_node({n.id: n for n in ir.graph.nodes}, data.get("node_id"))
         schemas: list[JsonObject] = []
-        if isinstance(node, ActionNode) and event.type in {"task_completed", "incident_resolved"}:
+        phase = phase_step(node, data.get("node_id"))
+        if (
+            event.type == "incident_resolved"
+            and data.get("code") in IN_DOUBT_CODES
+            and (data.get("code") != "WV-TXN-PIVOT-UNKNOWN" or data.get("kind") != "accept_reconciled_result")
+        ):
+            # A reconciliation record: how the transaction ended, keys and outcomes, and the block's output.
+            schemas = [reconciliation_schema(ir, data.get("node_id"))]
+        elif phase is not None and event.type in {"task_completed", "call_completed"}:
+            dependency = next(d for d in ir.dependencies if d.digest == phase.dependency)
+            if phase.kind == "action" and event.type == "task_completed":
+                schemas = action_schemas(ir, cast(ActionDefinition, load_definition(dependency.document)), "output")
+            elif phase.kind == "callWorkflow" and event.type == "call_completed":
+                spec = cast(JsonObject, dependency.document["spec"])
+                schemas = [
+                    cast(JsonObject, spec["outputSchema"]) if data.get("status") == "succeeded" else CALL_ERROR_SCHEMA
+                ]
+        elif isinstance(node, ActionNode) and event.type in {"task_completed", "incident_resolved"}:
             definition = load_definition(next(d.document for d in ir.dependencies if d.digest == node.dependency))
             schemas = action_schemas(ir, cast(ActionDefinition, definition), "output", node=node)
         elif isinstance(node, HumanTaskNode) and event.type == "human_completed":
