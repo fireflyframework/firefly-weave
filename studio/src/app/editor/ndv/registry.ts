@@ -415,6 +415,8 @@ export interface StepTables {
   startDraft(uses: string): Promise<{ uses: string } | { problem: string }>;
   /** Keeps the grid's table in the step's draft; a sentence when it can't, null when kept. */
   save(uses: string, spec: Json): Promise<string | null>;
+  /** Weave's own answer for a table and an input, from the Studio host (Try an input). */
+  evaluate(body: { table: Json; input: Json }): Promise<unknown>;
 }
 
 /** A chip under an AI agent: data only; Studio draws it. */

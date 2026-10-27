@@ -25,7 +25,7 @@ SPDX-License-Identifier: Apache-2.0
 .dg {
   --dg-row: var(--control-sm);
   --dg-tool: var(--control-md);
-  --dg-mark: 40px;
+  --dg-mark: 56px;
   --dg-name: 160px;
   --dg-name-max: 240px;
   --dg-min: 120px;
@@ -355,4 +355,65 @@ button.dg-tool {
 }
 .dg-row:last-child > * {
   border-bottom: 0;
+}
+
+/* The grid and, while it is open, Try an input beside it (under it on a phone). */
+.dg-work {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  min-width: 0;
+}
+weave-try-input {
+  flex: none;
+  width: 320px;
+  /* Its right edge lines up with the toolbar's. */
+  margin-left: auto;
+}
+@media (max-width: 767px) {
+  .dg-work {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  weave-try-input {
+    width: auto;
+    margin-left: 0;
+  }
+}
+button.dg-try-toggle[aria-pressed="true"] {
+  background: var(--selected);
+  border-color: var(--focus);
+}
+.dg-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  margin-right: var(--space-2);
+}
+.dg-mark[data-mark="match"] {
+  color: var(--success);
+}
+.dg-mark[data-mark="no-match"] {
+  color: var(--muted);
+}
+.dg-mark[data-mark="error"] {
+  color: var(--danger-ink);
+}
+.dg-rule-menu {
+  flex: none;
+  margin-left: auto;
+}
+.dg-name-cell .dg-cell-text {
+  flex: 1;
+}
+.dg-main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.dg-main > .dg-scroll {
+  max-width: 100%;
 }

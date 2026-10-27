@@ -31,7 +31,10 @@ import {
   Injector,
   afterNextRender,
   computed,
+  effect,
   inject,
+  isDevMode,
+  untracked,
   input,
   signal,
 } from "@angular/core";
@@ -58,6 +61,9 @@ import {
 } from "./column-dialog";
 import { gridProblems, type GridProblem } from "./grid-checks";
 import { FormulaDialog } from "./formula-dialog";
+import { TryInput } from "./try-input";
+import { TryInputService, type TryRequest } from "./try-input-service";
+import type { RowMark } from "./table-evaluate";
 import { splitIntoCells, tableFormula } from "./formula-cells";
 import {
   GridHistory,
@@ -135,7 +141,7 @@ const specOf = (document: Json | null): TableSpec | null =>
   selector: "weave-decision-grid",
   standalone: true,
   changeDetection: ChangeDetectionStrategy.Eager,
-  imports: [Icon, Select, RowMenu, ColumnDialog, FormulaDialog],
+  imports: [Icon, Select, RowMenu, ColumnDialog, FormulaDialog, TryInput],
   templateUrl: "./grid.html",
   styleUrl: "./grid.css",
 })
@@ -201,11 +207,88 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
   /** The draft a first change is starting, until the step moves to it. */
   private starting: Promise<string | null> | null = null;
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Counts the table's changes: Try an input's answers apply to the one they were asked for. */
+  readonly revision = signal(0);
+  readonly tryOpen = signal(false);
+  readonly tryValue = signal<Record<string, unknown>>({});
+  readonly tryInitial = signal<Record<string, unknown>>({});
+  readonly tryFromTestData = signal(false);
+  private readonly tries = new TryInputService(
+    (body: TryRequest) =>
+      this.context().tables?.evaluate(
+        body as unknown as {
+          table: Json;
+          input: Json;
+        },
+      ) ?? Promise.reject(new TypeError("No Studio host")),
+    {
+      // Development builds say when Studio and Weave disagree, with codes only.
+      warn: isDevMode()
+        ? (message, data) => console.warn(message, data)
+        : undefined,
+    },
+  );
+  readonly tryState = this.tries.state;
   /** The grid's own undo history, apart from the workflow's. */
   private readonly history = new GridHistory();
 
   constructor() {
-    this.lifetime.onDestroy(() => void this.flush());
+    this.lifetime.onDestroy(() => {
+      void this.flush();
+      // What was tried is forgotten with the grid.
+      this.tries.clear();
+    });
+    effect(() => {
+      if (!this.tryOpen()) return;
+      const spec = this.spec();
+      const input = this.tryValue();
+      const revision = this.revision();
+      if (!spec) return;
+      untracked(() =>
+        this.tries.set(this.documentOf(spec), input as Json, revision),
+      );
+    });
+  }
+  /** The table as a document, named as the step uses it. */
+  private documentOf(spec: TableSpec) {
+    const uses = this.shownFor || this.uses();
+    return {
+      apiVersion: "weave/v1alpha1" as const,
+      kind: "DecisionTable" as const,
+      metadata: { name: nameOf(uses), version: versionOf(uses) },
+      spec,
+    };
+  }
+  toggleTry() {
+    if (this.tryOpen()) {
+      this.tryOpen.set(false);
+      this.tries.clear();
+      this.tryValue.set({});
+      return;
+    }
+    const sample = this.context().sample.resolvedInput();
+    const initial =
+      sample.state === "available" && isRecord(sample.value)
+        ? (sample.value as Record<string, unknown>)
+        : {};
+    this.tryInitial.set(initial);
+    this.tryFromTestData.set(Object.keys(initial).length > 0);
+    this.tryValue.set(initial);
+    this.tryOpen.set(true);
+  }
+  /** A rule's mark while Try an input is open, for the table revision it was computed on. */
+  mark(row: number): RowMark | null {
+    if (!this.tryOpen()) return null;
+    const state = this.tryState();
+    if (state.revision !== this.revision()) return null;
+    return state.marks[row] ?? null;
+  }
+  markText(mark: RowMark): string {
+    return mark === "match"
+      ? "Matches"
+      : mark === "error"
+        ? "Error"
+        : "Doesn't match";
   }
   ngDoCheck() {
     this.sync();
@@ -226,6 +309,7 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
       this.shownFor = uses;
       const spec = specOf(this.context().tables?.document(uses) ?? null);
       this.spec.set(spec ? structuredClone(spec) : null);
+      this.revision.update((revision) => revision + 1);
       this.history.clear();
       this.flagged.set(new Map());
       this.editing.set(null);
@@ -655,6 +739,7 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
     if (!before || next === before || this.readOnly()) return;
     if (record) this.history.record(before, key, Date.now());
     this.spec.set(next);
+    this.revision.update((revision) => revision + 1);
     const where = this.where();
     if (where === "draft" || this.starting) return this.scheduleSave();
     const tables = this.context().tables;
@@ -665,6 +750,7 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
         if (this.starting === started) {
           this.starting = null;
           this.spec.set(before);
+          this.revision.update((revision) => revision + 1);
           this.notice.set(answer.problem);
         }
         return null;

@@ -890,6 +890,8 @@ export class StepDetailsController {
         );
         return { uses: next };
       },
+      evaluate: (body) =>
+        this.host.api.request("/studio/local/decision/evaluate", "POST", body),
       save: async (uses, spec) => {
         const drafts = await tables.drafts();
         const name = uses.slice(0, uses.lastIndexOf("@"));
