@@ -80,11 +80,11 @@ def settlement() -> None:
     op.execute("ALTER TABLE run_calls ADD COLUMN settlement boolean NOT NULL DEFAULT false")
     # A called participant's outcome: whether the child dispatched anything that may have applied.
     op.execute("ALTER TABLE run_calls ADD COLUMN effect text")
-    # Added unchecked, then validated: validation reads the table once and blocks no writes of its own.
+    # The column is new, so every existing value is NULL and passes: NOT VALID skips reading the table, and the check
+    # still holds for every row written from now on.
     op.execute(
         "ALTER TABLE run_calls ADD CONSTRAINT run_calls_effect_check CHECK(effect IN ('none','unknown')) NOT VALID"
     )
-    op.execute("ALTER TABLE run_calls VALIDATE CONSTRAINT run_calls_effect_check")
     op.execute("ALTER TABLE task_leases ADD COLUMN transaction_aware boolean NOT NULL DEFAULT false")
     op.execute("GRANT UPDATE(settlement) ON task_intents TO weave_app")
     # A transaction's hold or settle deadline is armed again on its one row when an earlier time is needed.
@@ -149,7 +149,6 @@ def projection() -> None:
         "ALTER TABLE run_facts ADD CONSTRAINT run_facts_transaction_state_check "
         f"CHECK(transaction_state IN ({STATES})) NOT VALID"
     )
-    op.execute("ALTER TABLE run_facts VALIDATE CONSTRAINT run_facts_transaction_state_check")
 
 
 def patch_function(signature: str, anchor: str, replacement: str, *, applied: str | None = None) -> None:
