@@ -2057,8 +2057,8 @@ def _advance_owned(
                     block = cast(TransactionNode, nodes[node.owner])
                     if not asked_to and block.on_error is not None and current_state.ending is None:
                         # The block's setting handles a clean rollback: nothing it did remains applied.
-                        rolled = step_error(failure["code"], "failed", 1, owner, message=failure["message"])
-                        fail_step(block, owner, rolled)
+                        # Its error object reads the step error copy, like every other handled failure.
+                        fail_step(block, owner, step_error(failure["code"], "failed", 1, owner))
                     else:
                         current = owner
                         end_run("failed", failure["code"], cast(JsonObject, failure))

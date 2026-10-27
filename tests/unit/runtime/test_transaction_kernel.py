@@ -35,6 +35,7 @@ from transaction_support import (
     transaction,
 )
 
+from firefly_weave.contracts.step_errors import STEP_ERROR_MESSAGES
 from firefly_weave.contracts.transactions import TRANSACTION_MESSAGES
 
 
@@ -502,7 +503,7 @@ def test_a_rolled_back_transaction_with_a_setting_continues_with_its_error():
         "output": None,
         "error": {
             "code": "WV-TXN-ROLLED-BACK",
-            "message": TRANSACTION_MESSAGES["WV-TXN-ROLLED-BACK"],
+            "message": STEP_ERROR_MESSAGES["WV-TXN-ROLLED-BACK"],
             "outcome": "failed",
             "attempts": 1,
             "instanceKey": "move",
