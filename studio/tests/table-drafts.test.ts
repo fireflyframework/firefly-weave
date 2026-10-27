@@ -271,6 +271,45 @@ describe("table drafts on this computer", () => {
     ).toBe("1.2.2");
   });
 
+  it("keeps drafts and copies of prerelease and build versions across a reload", async () => {
+    const backend = memoryBackend();
+    const drafts = new TableDrafts(backend, "local:");
+    await drafts.ready();
+    const entry = await drafts.startDraft(published("1.2.0-rc.1"), [
+      "1.2.0-rc.1",
+    ]);
+    expect(entry.version).toBe("1.2.1");
+    expect(entry.base).toBe("1.2.0-rc.1");
+    await drafts.copy(published("1.2.0-rc.1"));
+    await drafts.copy(published("1.3.0+build.7"));
+    expect(copyKey("local:", "payment-policy", "1.3.0+build.7")).toBe(
+      "local:weave.tableCopy.payment-policy_v1.3.0_b_build.7",
+    );
+    const again = new TableDrafts(backend, "local:");
+    await again.ready();
+    expect(again.draft("payment-policy")?.version).toBe("1.2.1");
+    expect(again.copyOf("payment-policy@1.2.0-rc.1")).not.toBeNull();
+    expect(again.copyOf("payment-policy@1.3.0+build.7")).not.toBeNull();
+    expect(backend.data.size).toBe(3);
+  });
+
+  it("names copies with _v before the version, and deletes entries kept under another key", async () => {
+    expect(copyKey("local:", "payment-policy", "1.2.0")).toBe(
+      "local:weave.tableCopy.payment-policy_v1.2.0",
+    );
+    const backend = memoryBackend();
+    const drafts = new TableDrafts(backend, "local:");
+    await drafts.ready();
+    const entry = await drafts.startDraft(published(), ["1.2.0"]);
+    // The same entry under another table's key isn't that table's draft.
+    backend.data.set("local:weave.tableDraft.other", JSON.stringify(entry));
+    const again = new TableDrafts(backend, "local:");
+    await again.ready();
+    expect(again.draft("other")).toBeNull();
+    expect(backend.data.has("local:weave.tableDraft.other")).toBe(false);
+    expect(again.draft("payment-policy")).not.toBeNull();
+  });
+
   it("keeps the 200 most recently read copies", async () => {
     const backend = memoryBackend();
     const drafts = new TableDrafts(backend, "local:");

@@ -62,24 +62,41 @@ const TOO_MANY =
 const DRAFT = "weave.tableDraft.";
 const COPY = "weave.tableCopy.";
 const NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
-const VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
+// Semantic versions as the platform takes them: prerelease and build parts too.
+const VERSION =
+  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z.-]+))?(?:\+([0-9A-Za-z.-]+))?$/;
 const POLICIES: ReadonlySet<unknown> = new Set(["first", "unique", "collect"]);
 
 /** Where a table's draft is kept. */
 export const draftKey = (prefix: string, name: string): string =>
   storeKey(prefix, DRAFT + name);
-/** Where a copy of a published version is kept ("@" isn't a key character, so "_v" stands for it). */
+/**
+ * Where a copy of a published version is kept. "@" and "+" aren't key
+ * characters, so "_v" stands for "@" and "_b" for a build's "+".
+ */
 export const copyKey = (
   prefix: string,
   name: string,
   version: string,
-): string => storeKey(prefix, `${COPY}${name}_v${version}`);
+): string => storeKey(prefix, `${COPY}${name}_v${version.replace("+", "_b_")}`);
 
-const parts = (version: string): number[] =>
-  (VERSION.exec(version) ?? [, "0", "0", "0"]).slice(1).map(Number);
+const parts = (version: string) => {
+  const found = VERSION.exec(version);
+  return {
+    core: found ? [1, 2, 3].map((i) => Number(found[i])) : [0, 0, 0],
+    pre: found?.[4] ?? null,
+  };
+};
+/** Semantic version order: the core, then a prerelease before its release. */
 function compareVersions(a: string, b: string): number {
   const [x, y] = [parts(a), parts(b)];
-  return x[0] - y[0] || x[1] - y[1] || x[2] - y[2];
+  const core =
+    x.core[0] - y.core[0] || x.core[1] - y.core[1] || x.core[2] - y.core[2];
+  if (core) return core;
+  if (x.pre === y.pre) return 0;
+  if (x.pre === null) return 1;
+  if (y.pre === null) return -1;
+  return x.pre.localeCompare(y.pre, "en", { numeric: true });
 }
 
 /**
@@ -374,7 +391,11 @@ export class TableDrafts {
       readAt: this.now(),
     };
     const text = JSON.stringify(entry);
-    if (text.length > TABLE_DRAFT_MAX_BYTES || !readEntry(text)) return;
+    if (
+      new TextEncoder().encode(text).length > TABLE_DRAFT_MAX_BYTES ||
+      !readEntry(text)
+    )
+      return;
     this.copies.delete(usesOf(entry));
     this.copies.set(usesOf(entry), entry);
     if (this.prefix !== null)
@@ -410,6 +431,8 @@ export class TableDrafts {
   private async keep(entry: DraftEntry): Promise<DraftEntry> {
     const saved: DraftEntry = { ...entry, savedAt: this.now() };
     const text = JSON.stringify(saved);
+    if (!readEntry(text))
+      throw new Error("Studio can't keep this table on this computer.");
     if (new TextEncoder().encode(text).length > TABLE_DRAFT_MAX_BYTES)
       throw new Error(TOO_LARGE);
     if (!this.drafts.has(saved.name) && this.drafts.size >= MAX_TABLE_DRAFTS)
