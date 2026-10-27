@@ -107,7 +107,9 @@ but a person's decision moves it. Check the other systems first, then choose:
 | **It didn't happen** | `accept_reconciled_failure` | The order never went through. Weave undoes the steps before it |
 | **Force end** | `terminate` | Stop here: nothing more is done or undone. The run ends canceled and what was applied stays applied |
 
-Retry needs `incident.resolve`. The others also need `transaction.reconcile`,
+A late result of work a person already ended changes nothing; it is counted
+(`weave.transaction_phases`, operation `transaction.late_result`), because it may
+mean the record was wrong. Retry needs `incident.resolve`. The others also need `transaction.reconcile`,
 an audited reason, and (except Force end) an evidence reference. See
 [Incident operations](../reference/incident-operations.md#transactions-in-doubt)
 for the request bodies.

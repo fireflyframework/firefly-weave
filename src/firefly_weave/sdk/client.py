@@ -517,7 +517,7 @@ class WeaveClient:
         return cast(ActivationExport, await self.invoke("activations.export", identifier=identifier))
 
     async def retire_activation(
-        self, identifier: UUID, *, revision: int, idempotency_key: str, force: bool = False
+        self, identifier: UUID, *, revision: int, idempotency_key: str, force: bool = False, reason: str | None = None
     ) -> Activation:
         """Retire an activation. ``force`` retires one a running transaction may still need to undo a step (needs
         ``transaction.reconcile``)."""
@@ -526,7 +526,7 @@ class WeaveClient:
             await self.invoke(
                 "activations.retire",
                 identifier=identifier,
-                body=RetirementRequest(),
+                body=RetirementRequest(reason=reason),
                 query={"force": "true"} if force else None,
                 revision=revision,
                 idempotency_key=idempotency_key,

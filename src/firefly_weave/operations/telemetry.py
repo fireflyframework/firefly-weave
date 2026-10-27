@@ -70,6 +70,7 @@ OPERATIONS_ALLOWED = frozenset(OPERATIONS) | frozenset(
         "transaction.compensate",
         "transaction.in_doubt",
         "transaction.compensating",
+        "transaction.late_result",
         "other",
     }
 )

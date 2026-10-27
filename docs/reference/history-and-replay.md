@@ -174,8 +174,9 @@ compares transitions byte for byte: a tampered `effect` replays `inconsistent`.
 
 A run that grew too large to undo its transactions records its hold
 (`incident_opened` at `@transactions`) with evidence that omits the expected
-transition for its size, so replay stops there as `incomplete`, as it stops at
-an oversized stop.
+transition for its size (and the run's source reference, as every evidence row
+does), so replay verifies everything before it and stops there as `incomplete`
+(`WV-REPLAY-EXPECTATION`), as it stops at an oversized stop.
 
 ## Routes, pagination, and limits
 

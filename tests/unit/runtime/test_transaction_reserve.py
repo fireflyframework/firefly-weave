@@ -57,3 +57,30 @@ def test_a_transaction_deadline_spends_the_reserve_and_a_stop_is_already_termina
     run = flow()
     run.send("cancelled", reason="stop", skip_undo=True)
     assert run.state.status == "cancelled" and not spends_reserve(*last(run))
+
+
+def test_a_confirm_whose_result_runs_the_next_steps_waits_for_quota_like_forward_work():
+    after = {
+        "id": "after",
+        "kind": "action",
+        "uses": "reports.lookup@1.0.0",
+        "with": {"object": {"reference": {"ref": "/input/moveId"}}},
+    }
+    shown = {"id": "shown", "kind": "transform", "value": {"ref": "/steps/move/output"}}
+    for successor in (after, shown):
+        run = Run(compiled([transaction([hold(), add(), submit()]), successor, {**after, "id": "later"}]))
+        run.start()
+        run.done("hold", {"holdId": "h-1"})
+        run.done("add", {"id": "a-1"})
+        run.done("submit", {"orderId": "o-1"})
+        run.done("hold#confirm", {})
+        assert run.txn().status == "completed" and run.state.status == "waiting"
+        assert not spends_reserve(*last(run)), successor["id"]
+
+
+def test_an_undo_that_only_moves_the_rollback_on_spends_the_reserve():
+    run = flow()
+    run.failed("add", "UNAVAILABLE", effect="unknown")
+    assert spends_reserve(*last(run))
+    run.done("add#undo", {})
+    assert spends_reserve(*last(run))

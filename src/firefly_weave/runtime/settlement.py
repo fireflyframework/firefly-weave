@@ -63,14 +63,59 @@ def spends_reserve(event: RuntimeEvent, result: Transition) -> bool:
     if not isinstance(name, str):
         return False
     try:
-        if split_phase(name) is not None or split_deadline(name) is not None:
-            return True
+        settling = split_phase(name) is not None or split_deadline(name) is not None
     except ValueError:
         return False
-    return any(
+    settling = settling or any(
         record.rollback and any(item.key == name for item in record.participants)
         for record in state.transactions.values()
     )
+    return settling and only_settlement(result)
+
+
+def ignored_after_person(event: RuntimeEvent, result: Transition) -> bool:
+    """Whether an event was the late result of work a person already settled by hand (a transaction they marked
+    reconciled or force ended): the kernel changes nothing for it, and Operations counts it, because such a result
+    may show the person's record was wrong."""
+    name = event.data.get("node_id")
+    if not isinstance(name, str) or result.steps or result.commands:
+        return False
+    try:
+        phase = split_phase(name)
+    except ValueError:
+        return False
+    key = phase[0] if phase is not None else name
+    return any(
+        record.status in {"reconciled", "force_ended"} and any(item.key == key for item in record.participants)
+        for record in result.state.transactions.values()
+    )
+
+
+def only_settlement(result: Transition) -> bool:
+    """Whether a transition writes settlement work only: confirms, cancels and undos, a transaction's own deadlines,
+    and the steps and joins of its transactions. One that also runs forward work (a step after a block a confirm
+    completed, say) is charged like any forward work, so the reserve never pays for it."""
+    from firefly_weave.runtime.models import CallIntent, Deadline, HumanTaskIntent, TaskIntent
+    from firefly_weave.runtime.transactions import split_deadline
+
+    state = result.state
+    owned = {item.key for record in state.transactions.values() for item in record.participants}
+    owned |= {f"@join:{key}" for key in state.transactions}
+    for command in result.commands:
+        if isinstance(command, (TaskIntent, CallIntent)) and split_phase(command.node_id) is None:
+            return False
+        if isinstance(command, HumanTaskIntent):
+            return False
+        if isinstance(command, Deadline) and split_deadline(command.node_id) is None:
+            return False
+    for change in result.steps:
+        if (
+            change.node_id not in owned
+            and split_phase(change.node_id) is None
+            and change.node_id not in state.transactions
+        ):
+            return False
+    return True
 
 
 async def settle_work(repository: RuntimeRepository, run_id: UUID, key: str, at: datetime) -> None:
@@ -393,8 +438,8 @@ async def emit(
     run_id: UUID,
     key: str,
     record: TransactionRecord,
-    result: Transition,
-    event: RuntimeEvent,
+    incidents: Mapping[str, Any],
+    at: datetime,
     facts: Mapping[str, Any],
 ) -> None:
     """One integration event for a transaction that reached a terminal or in-doubt state, in the same commit."""
@@ -414,7 +459,7 @@ async def emit(
         run_id,
         key,
         record,
-        result.state.incidents,
+        incidents,
         workflow=(facts["workflow_name"], facts["workflow_version"]),
         test=bool(facts["test"]),
         incident_id=incident_id,
@@ -427,7 +472,7 @@ async def emit(
             scope=repository.tx.scope,
             resource_id=run_id,
             correlation_id=run_id,
-            emitted_at=event.timestamp,
+            emitted_at=at,
             payload=EventMetadata(transaction=transaction),
         ),
     )
@@ -498,7 +543,7 @@ async def project_transactions(
                     run=view.id,
                 )
                 facts = rows[0] if rows else {"workflow_name": "", "workflow_version": "", "test": False}
-            await emit(repository, view.id, key, record, result, event, facts)
+            await emit(repository, view.id, key, record, result.state.incidents, event.timestamp, facts)
     await repository.execute(
         "UPDATE run_facts SET transaction_state=(SELECT state FROM run_transactions t "
         f"WHERE t.{SCOPE.replace(' AND ', ' AND t.')} AND t.run_id=:run "
@@ -525,34 +570,41 @@ async def transaction_page(
     from firefly_weave.definitions.models import CatalogError
     from firefly_weave.persistence.paging import PAGE_BYTES
 
+    # The page is chosen first; only the fields it returns count against the byte budget, never the values a
+    # reconciliation record carries.
     rows = await repository.rows(
-        "SELECT t.instance_key,t.node_id,t.state,t.business_key,t.cause,t.participants,t.opened_at,t.decided_at,"
-        "t.ended_at,i.id AS incident_id,i.resolution,i.actor_id,i.resolved_at,"
-        "sum(octet_length(t.participants::text)+coalesce(octet_length(i.resolution::text),0)) OVER () AS page_bytes "
-        "FROM run_transactions t LEFT JOIN incidents i ON i.tenant_id=t.tenant_id AND i.project_id=t.project_id "
-        "AND i.environment_id=t.environment_id AND i.run_id=t.run_id AND i.incident_key=t.incident_key "
+        "WITH page AS (SELECT t.* FROM run_transactions t "
         f"WHERE t.{SCOPE.replace(' AND ', ' AND t.')} AND t.run_id=:run AND (cast(:after_at AS timestamptz) IS NULL "
         "OR (t.opened_at,t.instance_key)>(cast(:after_at AS timestamptz),:after_key)) "
-        "ORDER BY t.opened_at,t.instance_key LIMIT :limit",
+        "ORDER BY t.opened_at,t.instance_key LIMIT :limit) "
+        "SELECT p.instance_key,p.node_id,p.state,p.business_key,p.cause,p.participants,p.opened_at,p.decided_at,"
+        "p.ended_at,i.id AS incident_id,i.actor_id,i.resolved_at,i.resolution->>'kind' AS kind,"
+        "i.resolution->>'reason' AS reason,i.resolution->>'evidence_reference' AS evidence_reference,"
+        "i.resolution->'output'->>'as' AS reconciled_as,"
+        "octet_length(p.participants::text)+coalesce(octet_length(p.cause::text),0)"
+        "+coalesce(octet_length(i.resolution->>'reason'),0)"
+        "+coalesce(octet_length(i.resolution->>'evidence_reference'),0) AS bytes "
+        "FROM page p LEFT JOIN incidents i ON i.tenant_id=p.tenant_id AND i.project_id=p.project_id "
+        "AND i.environment_id=p.environment_id AND i.run_id=p.run_id AND i.incident_key=p.incident_key "
+        "ORDER BY p.opened_at,p.instance_key",
         run=run_id,
         after_at=None if after is None else datetime.fromisoformat(after[0]),
         after_key="" if after is None else after[1],
         limit=limit + 1,
     )
-    if rows and rows[0]["page_bytes"] > PAGE_BYTES:
+    # The row read ahead to know whether another page follows is not returned, so it does not count.
+    if sum(row["bytes"] for row in rows[:limit]) > PAGE_BYTES:
         raise CatalogError(429, "WV-PAGE-LIMIT", "Selected page exceeds the logical byte limit")
     items = []
     for row in rows[:limit]:
         identity = instance_view(row["instance_key"])
-        resolution = row["resolution"]
         recorded = None
-        if isinstance(resolution, dict):
-            output = resolution.get("output")
-            ending = output.get("as") if isinstance(output, dict) else None
+        if row["kind"] is not None:
+            ending = row["reconciled_as"]
             recorded = {
-                "kind": resolution["kind"],
-                "reason": resolution["reason"],
-                "evidence_reference": resolution.get("evidence_reference"),
+                "kind": row["kind"],
+                "reason": row["reason"],
+                "evidence_reference": row["evidence_reference"],
                 "actor_id": None if row["actor_id"] is None else str(row["actor_id"]),
                 "resolved_at": None if row["resolved_at"] is None else row["resolved_at"].isoformat(),
                 "reconciled_as": ending

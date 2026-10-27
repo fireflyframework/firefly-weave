@@ -30,7 +30,6 @@ type LanguageFeature = Literal[
     "flow.eventTrigger",
     "flow.forEach",
     "flow.transaction",
-    "flow.transaction",
     "text.concat",
     "text.join",
 ]

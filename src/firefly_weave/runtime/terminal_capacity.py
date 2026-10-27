@@ -26,7 +26,7 @@ from firefly_weave.compiler.api import import_artifact
 from firefly_weave.compiler.canonical import canonical_digest
 from firefly_weave.contracts.instance_keys import node_of
 from firefly_weave.contracts.integration_events import EventMetadata, IntegrationEvent
-from firefly_weave.contracts.operations import RecordedEvidence, SignalFact, WaitReceipt
+from firefly_weave.contracts.operations import RecordedEvidence, SignalFact, SourceReference, WaitReceipt
 from firefly_weave.contracts.runtime import CapacityRunAcknowledgment
 from firefly_weave.contracts.values import JsonValue
 from firefly_weave.definitions.models import CatalogError
@@ -204,6 +204,25 @@ async def hold_transactions(repository: RuntimeRepository, row: dict[str, Any], 
     return True
 
 
+async def recorded_source(repository: RuntimeRepository, run_id: UUID, source_hash: str) -> SourceReference | None:
+    """The source reference every evidence row of a run carries, found as ``persist`` finds it, so replay sees one
+    identity across the run's history."""
+    rows = await repository.rows(
+        "SELECT s.format,(r.activation->'request'->>'version_id')::uuid AS version FROM runs r "
+        "JOIN definition_sources s ON s.tenant_id=r.tenant_id AND s.project_id=r.project_id "
+        "AND s.version_id=(r.activation->'request'->>'version_id')::uuid AND s.source_hash=:hash "
+        "WHERE r.tenant_id=:tenant AND r.project_id=:project AND r.environment_id=:environment AND r.id=:run "
+        "ORDER BY s.format LIMIT 2",
+        run=run_id,
+        hash=source_hash,
+    )
+    if len(rows) != 1:
+        return None
+    return SourceReference(
+        scope=repository.tx.scope, version_id=rows[0]["version"], source_hash=source_hash, format=rows[0]["format"]
+    )
+
+
 async def record_held_evidence(repository: RuntimeRepository, row: dict[str, Any], held: RuntimeEvent) -> None:
     """Evidence for the hold, so a history export names it: the run is too large for the kernel, so the expected
     transition is omitted for its size and replay stops at the hold, as it stops at an oversized stop."""
@@ -218,6 +237,7 @@ async def record_held_evidence(repository: RuntimeRepository, row: dict[str, Any
         scope=repository.tx.scope,
         artifact_digest=artifact.digest,
         lock_digest=lock_digest(artifact),
+        source=await recorded_source(repository, row["id"], artifact.source_hash),
         omissions=[Omission(path="/expected_transition_digest", reason="resource_limit")],
     )
     await repository.execute(
@@ -232,29 +252,57 @@ async def record_held_evidence(repository: RuntimeRepository, row: dict[str, Any
 
 async def force_end_transactions(repository: RuntimeRepository, row: dict[str, Any], at: datetime) -> list[str]:
     """A reconciler ends a run too large for the kernel without undoing anything: its unsettled transactions end
-    force-ended, in the record and in the run's own state, in SQL. Returns their keys."""
+    force-ended, in the record and in the run's own state, in SQL, and each one emits ``transaction.force_ended`` and
+    counts as a forced resolution, as the kernel's force end does. Returns their keys."""
+    from firefly_weave.runtime.models import TransactionRecord
+    from firefly_weave.runtime.settlement import emit
+
     ended = await repository.rows(
         f"UPDATE run_transactions SET state='force_ended',ended_at=:at,revision=revision+1 WHERE {SCOPE} "
-        f"AND run_id=:run AND state IN {UNSETTLED_SQL} RETURNING instance_key",
+        f"AND run_id=:run AND state IN {UNSETTLED_SQL} RETURNING instance_key,revision",
         run=row["id"],
         at=at,
     )
     keys = [item["instance_key"] for item in ended]
-    if keys:
-        await repository.execute(
-            "UPDATE runs SET state=jsonb_set(state,'{transactions}',(SELECT jsonb_object_agg(key,CASE WHEN "
-            "key=ANY(cast(:keys AS text[])) THEN value || jsonb_build_object('status','force_ended','ended_at',"
-            "cast(:stamp AS text)) ELSE value END) FROM jsonb_each(state->'transactions'))) "
-            f"WHERE {SCOPE} AND id=:run",
-            run=row["id"],
-            keys=keys,
-            stamp=at.isoformat(),
+    if not keys:
+        return keys
+    await repository.execute(
+        "UPDATE runs SET state=jsonb_set(state,'{transactions}',(SELECT jsonb_object_agg(key,CASE WHEN "
+        "key=ANY(cast(:keys AS text[])) THEN value || jsonb_build_object('status','force_ended','ended_at',"
+        "cast(:stamp AS text)) ELSE value END) FROM jsonb_each(state->'transactions'))) "
+        f"WHERE {SCOPE} AND id=:run",
+        run=row["id"],
+        keys=keys,
+        stamp=at.isoformat(),
+    )
+    await repository.execute(
+        "UPDATE run_facts SET transaction_state='force_ended' "
+        f"WHERE {SCOPE} AND run_id=:run AND transaction_state IS DISTINCT FROM 'force_ended'",
+        run=row["id"],
+    )
+    facts = await repository.rows(
+        f"SELECT workflow_name,workflow_version,test FROM run_facts WHERE {SCOPE} AND run_id=:run", run=row["id"]
+    )
+    records = await repository.rows(
+        "SELECT key,value FROM runs,jsonb_each(state->'transactions') "
+        f"WHERE {SCOPE} AND id=:run AND key=ANY(cast(:keys AS text[]))",
+        run=row["id"],
+        keys=keys,
+    )
+    revisions = {item["instance_key"]: item["revision"] for item in ended}
+    for item in records:
+        record = TransactionRecord.model_validate_json(json.dumps(item["value"]))
+        record = record.model_copy(update={"revision": revisions[item["key"]], "incident": None})
+        await emit(
+            repository,
+            row["id"],
+            item["key"],
+            record,
+            {},
+            at,
+            facts[0] if facts else {"workflow_name": "", "workflow_version": "", "test": False},
         )
-        await repository.execute(
-            "UPDATE run_facts SET transaction_state='force_ended' "
-            f"WHERE {SCOPE} AND run_id=:run AND transaction_state IS DISTINCT FROM 'force_ended'",
-            run=row["id"],
-        )
+        repository.tx.record("transaction", "transaction.resolve", "cancelled")
     return keys
 
 
@@ -375,6 +423,7 @@ async def persist_terminal(
                 scope=repository.tx.scope,
                 artifact_digest=artifact.digest,
                 lock_digest=lock_digest(artifact),
+                source=await recorded_source(repository, row["id"], artifact.source_hash),
                 omissions=[Omission(path="/expected_transition_digest", reason="resource_limit")],
             )
             if event.type == "timed_out":

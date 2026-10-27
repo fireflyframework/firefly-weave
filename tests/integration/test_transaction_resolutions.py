@@ -125,14 +125,20 @@ async def test_retry_the_undo_keeps_the_operation_key_and_extends_its_deadline(p
     assert (await platform.record(run.id))["state"] == "compensated"
 
 
-async def test_a_resolution_while_the_latest_attempt_runs_is_refused(platform):
+async def test_a_resolution_while_the_latest_attempt_runs_is_refused(platform, reconciler):
     run, incident = await undo_stuck(platform)
     await platform.execute(
         "UPDATE task_intents SET status='leased' WHERE run_id=:run AND node_id='add#undo'", run=run.id
     )
-    with pytest.raises(CatalogError) as refused:
-        await resolve(platform, incident, "retry_safe")
-    assert (refused.value.status, refused.value.code) == (409, "WV-RUNTIME-STATE")
+    record = {"as": "compensated", "participants": [{"instance_key": "add", "outcome": "undone"}]}
+    for kind, fields in (
+        ("retry_safe", {}),
+        ("accept_reconciled_result", {"output": record, "evidence_reference": "T-17"}),
+        ("terminate", {}),
+    ):
+        with pytest.raises(CatalogError) as refused:
+            await resolve(platform, incident, kind, actor=reconciler, **fields)
+        assert (refused.value.status, refused.value.code) == (409, "WV-RUNTIME-STATE"), kind
 
 
 async def test_mark_as_reconciled_needs_the_reconcile_capability_a_reason_and_evidence(platform, reconciler):

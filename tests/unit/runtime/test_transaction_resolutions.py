@@ -140,6 +140,15 @@ def test_mark_as_reconciled_as_completed_needs_the_block_output_and_later_steps_
         {"as": "completed", "participants": [{"instance_key": "add", "outcome": "confirmed"}], "blockOutput": {}},
         {"as": "done", "participants": [{"instance_key": "hold", "outcome": "confirmed"}]},
         {"as": "completed", "participants": [{"instance_key": "nowhere", "outcome": "done"}], "blockOutput": {}},
+        # Only a reservation can be confirmed; everything else about this record fits.
+        {
+            "as": "completed",
+            "participants": [
+                {"instance_key": "hold", "outcome": "confirmed"},
+                {"instance_key": "add", "outcome": "confirmed"},
+            ],
+            "blockOutput": {"holdId": "h"},
+        },
         "completed",
     ],
 )
@@ -273,3 +282,15 @@ def test_a_late_result_of_work_a_person_ended_changes_nothing():
     assert controls(ended, "settle") == ["hold2#confirm"] and run.state.active == ["pause"]
     late = run.done("hold2#confirm", {})
     assert late.steps == [] and run.state.incidents == {} and run.state.active == ["pause"]
+
+
+def test_a_reservation_marked_undone_is_recorded_as_released():
+    run = Run(compiled([transaction([hold(), add(), submit()])]))
+    run.start()
+    run.done("hold", {"holdId": "h-1"})
+    run.failed("add", "REFUSED", effect="none")
+    run.failed("hold#cancel", "UNAVAILABLE", generation=10)
+    assert run.state.incidents["hold#cancel:10"].code == "WV-TXN-CANCEL-STUCK"
+    record = {"as": "compensated", "participants": [{"instance_key": "hold", "outcome": "undone"}]}
+    resolve(run, "hold#cancel:10", "accept_reconciled_result", record)
+    assert (run.txn().status, run.statuses()["hold"]) == ("reconciled", "cancelled")

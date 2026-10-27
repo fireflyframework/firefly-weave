@@ -254,10 +254,13 @@ class RuntimeRepository:
         ):
             raise ValueError("Unavailable terminal control required")
         from firefly_weave.files.authority import require_run_files
-        from firefly_weave.runtime.settlement import spends_reserve
+        from firefly_weave.runtime.settlement import ignored_after_person, spends_reserve
 
         if isinstance(view, RunView) and spends_reserve(event, result):
             await self.execute("SELECT weave_settle_begin(:id)", id=view.id)
+        if isinstance(view, RunView) and ignored_after_person(event, result):
+            # A result arrived for work a person already settled by hand: nothing changes, but it is counted.
+            self.tx.record("transaction_phase", "transaction.late_result", "rejected")
         await require_run_files(self.tx, view.id, result.model_dump(mode="json"))
         # Terminal control of an unavailable run never reads its stored state, so its iterations are counted here.
         stopped = await self.stopped_iterations(view.id) if isinstance(view, TerminalControl) else 0

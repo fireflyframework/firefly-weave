@@ -32,7 +32,8 @@ type Digest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 
 
 class RetirementRequest(ContractModel):
-    pass
+    # Why an activation is retired by force (needed then, and audited); left out otherwise.
+    reason: str | None = Field(default=None, min_length=1, max_length=2000, exclude_if=lambda value: value is None)
 
 
 class ActivationRetirementQuery(ContractModel):

@@ -107,3 +107,41 @@ def test_the_run_log_says_what_is_undone_and_why_it_is_in_doubt():
     assert log_line("move", record.model_copy(update={"status": "compensating"}), record, stuck.state.incidents) == (
         "move: in doubt: undo of add couldn't finish after 10 tries"
     )
+
+
+def test_a_late_result_of_work_a_person_ended_is_counted():
+    from transaction_support import submit as order
+
+    from firefly_weave.runtime.settlement import ignored_after_person
+
+    run = Run(
+        compiled(
+            [
+                transaction([hold(), hold("hold2"), add(), order()]),
+                {"id": "pause", "kind": "wait", "durationSeconds": 60},
+            ]
+        )
+    )
+    run.start()
+    run.done("hold", {"holdId": "h-1"})
+    run.done("hold2", {"holdId": "h-2"})
+    run.done("add", {"id": "a-1"})
+    run.done("submit", {"orderId": "o-1"})
+    run.failed("hold#confirm", "HOLD_EXPIRED", effect="none", generation=2)
+    assert not ignored_after_person(run.events[-1], run.transitions[-1])
+    record = {
+        "as": "completed",
+        "participants": [{"instance_key": "hold", "outcome": "confirmed"}],
+        "blockOutput": "moved",
+    }
+    run.send(
+        "incident_resolved",
+        incident_key="hold#confirm:2",
+        node_id="hold#confirm",
+        generation=2,
+        kind="accept_reconciled_result",
+        output=record,
+    )
+    run.done("hold2#confirm", {})
+    assert ignored_after_person(run.events[-1], run.transitions[-1])
+    assert "transaction.late_result" in OPERATIONS_ALLOWED

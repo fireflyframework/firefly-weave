@@ -267,8 +267,11 @@ one of these decisions closes it; a plain cancel is refused with HTTP 409
 | It didn't happen (`WV-TXN-PIVOT-UNKNOWN` only) | `accept_reconciled_failure` | `incident.resolve`, `transaction.reconcile`, `evidence_reference` | The transaction undoes the steps before it |
 | Force end | `terminate` | `incident.resolve`, `transaction.reconcile` | The transaction ends `force_ended` and the run `cancelled`, `external_effects_may_continue: true`. On a run held behind `WV-TXN-RUN-OVERSIZED`, every open transaction ends this way |
 
-A decision while the stuck step's latest attempt or child run is still running
-is refused (HTTP 409 `WV-RUNTIME-STATE`). A record that doesn't fit the
+Any decision while the stuck step's latest attempt or child run is still running
+is refused (HTTP 409 `WV-RUNTIME-STATE`). After a settle timeout the steps still
+in flight are what you decide about: Mark as reconciled and Force end settle
+them (their leases are revoked and their child runs asked to stop), they don't
+wait for them. A record that doesn't fit the
 transaction answers HTTP 422 `WV-RUNTIME-OUTPUT`. The audit record adds the
 transaction's key and, for a reconciliation, how it ended.
 
@@ -276,8 +279,17 @@ A reconciler can also cancel a run without undoing its open transactions:
 `{"reason": "...", "skip_undo": true}` needs `transaction.reconcile`, ends them
 `force_ended`, and answers `external_effects_may_continue: true`. Retiring an
 activation that a running transaction may still need to undo a step is refused
-(HTTP 409 `WV-TXN-UNDO-PINNED`) unless the request has `?force=true` and the
-caller holds `transaction.reconcile`.
+(HTTP 409 `WV-TXN-UNDO-PINNED`) unless the request has `?force=true`, a
+`reason` in its body (HTTP 422 `WV-RETIRE-REASON` without one), and the caller
+holds `transaction.reconcile`; the audit records both. If that undo is needed
+later, its call can't start and the transaction is in doubt for a person.
+
+A run too large to undo its transactions is held behind one run-level incident,
+`WV-TXN-RUN-OVERSIZED`; its transactions stay `open` and emit no
+`transaction.in_doubt` (a subscriber sees the run's `run.transition` to
+`suspended`). Force end on that incident, or a cancel with `skip_undo`, ends each
+of them `force_ended` and emits `transaction.force_ended`, as for any other
+transaction.
 
 **Several incidents.** Each resolution stores the actor, reason, kind, evidence,
 time, and receipt. Independent incidents on different nodes or generations share a

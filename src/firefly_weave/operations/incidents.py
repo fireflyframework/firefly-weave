@@ -280,6 +280,9 @@ class IncidentService:
                         "external_effects_may_continue": result.state.status == "cancelled",
                     }
                 )
+                if result.state.status in TERMINAL:
+                    # A resolution that ends the run is a stop: it spends the run's reserve, so it works at full quota.
+                    await repository.execute("SELECT weave_control_begin('run',:id)", id=previous.id)
                 await repository.persist(view, event, result, event_hash(event))
             if task is not None and result.state.status not in TERMINAL:
                 await repository.execute(
@@ -442,9 +445,23 @@ class IncidentService:
             raise CatalogError(
                 409, "WV-RUNTIME-RECONCILIATION_REQUIRED", "Say whether the step happened, or force end the run"
             )
+        name = incident["node_id"]
+        if not held and incident["code"] != "WV-TXN-SETTLE-TIMEOUT":
+            # No decision while the stuck step's latest attempt or child run is still running. After a settle
+            # timeout the steps in flight are what the person decides about: they are settled, not awaited.
+            running = await repository.rows(
+                f"SELECT 1 FROM task_intents t WHERE t.{SCOPE.replace(' AND ', ' AND t.')} AND t.run_id=:run "
+                "AND t.node_id=:node AND (t.status IN ('ready','leased','retry_pending') OR EXISTS(SELECT 1 FROM "
+                "task_leases l WHERE l.task_id=t.id AND l.status='active')) "
+                f"UNION ALL SELECT 1 FROM (SELECT status FROM run_calls WHERE {SCOPE} AND caller_run_id=:run "
+                "AND node_id=:node ORDER BY generation DESC LIMIT 1) c WHERE c.status IN ('requested','started')",
+                run=previous.id,
+                node=name,
+            )
+            if running:
+                raise CatalogError(409, "WV-RUNTIME-STATE", "The latest attempt is still running")
         if request.kind == "terminate" or held:
             return owner, None, None, None
-        name = incident["node_id"]
         nodes = {node.id: node for node in ir.graph.nodes}
         node = nodes[node_of(name)]
         phase = split_phase(name) if incident["code"] != "WV-TXN-SETTLE-TIMEOUT" else None

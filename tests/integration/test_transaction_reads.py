@@ -92,3 +92,26 @@ async def test_run_summaries_filter_by_transaction_state(platform, services, acc
     assert await listed("open") == {plain.id: "open"}
     assert await listed("in_doubt", "open") == {doubtful.id: "in_doubt", plain.id: "open"}
     assert await listed("completed") == {}
+
+
+async def test_pages_of_a_run_transactions_count_only_the_page_against_the_byte_budget(platform, monkeypatch):
+    import json
+
+    from firefly_weave.persistence import paging
+
+    second = transaction(hold("hold2"), add("add2"), {**submit(), "id": "submit2"})
+    second["id"] = "move2"
+    activation = await platform.publish(workflow("move-twice", [transaction(hold(), add(), submit()), second]))
+    run = await platform.start(activation)
+    for key in ("hold", "add", "submit", "hold#confirm", "hold2", "add2", "submit2", "hold2#confirm"):
+        await platform.complete(await platform.lease(key))
+    rows = await platform.query("SELECT participants FROM run_transactions WHERE run_id=:run", run=run.id)
+    one = max(len(json.dumps(row["participants"], separators=(",", ":"))) for row in rows)
+    # Room for one page of one transaction, not for every transaction of the run.
+    monkeypatch.setattr(paging, "PAGE_BYTES", one + 200)
+    first = await platform.runtime.transactions(platform.actor, platform.scope, run.id, limit=1, context=AuditContext())
+    assert [item["instance_key"] for item in first["items"]] == ["move"] and first["next_cursor"] is not None
+    rest = await platform.runtime.transactions(
+        platform.actor, platform.scope, run.id, limit=1, cursor=first["next_cursor"], context=AuditContext()
+    )
+    assert [item["instance_key"] for item in rest["items"]] == ["move2"] and rest["next_cursor"] is None

@@ -55,7 +55,12 @@ def settling_control() -> None:
       IF item IS NULL OR (item->>'tenant_id')::uuid IS DISTINCT FROM tenant OR
         (item->>'project_id')::uuid IS DISTINCT FROM project OR NOT public.weave_operation_fenced(tenant,project)
         OR NOT public.weave_resource_active('run',item) OR NOT EXISTS(
-          SELECT 1 FROM public.operation_reservations WHERE kind='run' AND resource_id=identifier AND amount>0) THEN
+          SELECT 1 FROM public.operation_reservations WHERE kind='run' AND resource_id=identifier AND amount>0)
+        -- Only a run that is finishing or undoing a transaction has settlement work to spend its reserve on.
+        OR NOT (EXISTS(SELECT 1 FROM public.run_transactions WHERE run_id=identifier
+            AND state IN ('open','deciding','committing','compensating','in_doubt'))
+          OR EXISTS(SELECT 1 FROM public.task_intents WHERE run_id=identifier AND settlement
+            AND status IN ('ready','leased','revoked'))) THEN
         RAISE EXCEPTION USING ERRCODE='WQ002',MESSAGE='Reserved control unavailable'; END IF;
       IF (SELECT count(*) FROM public.operation_control_context WHERE transaction_id=txid_current())>=100 THEN
         RAISE EXCEPTION USING ERRCODE='WQ001',MESSAGE='Control transaction limit'; END IF;
@@ -72,25 +77,30 @@ def settling_control() -> None:
     patch_function(
         "public.weave_control_finish()", active, "(NOT c.settles AND " + active[:-5] + ") THEN", applied="settles"
     )
-    # Settlement transitions record their steps and the workers' completion receipts: those rows spend the reserve
-    # of their run.
+    # Settlement transitions record their steps, the workers' completion receipts and resolution receipts: those rows
+    # spend the reserve of their run.
     anchor = "IF relation_name='runs' THEN RETURN (item->>'id')::uuid; END IF;"
     patch_function(
         "public.weave_control_target(text,jsonb)",
         anchor,
         "IF relation_name IN ('step_instances','human_tasks') THEN RETURN (item->>'run_id')::uuid; END IF;\n      "
         "IF relation_name='completion_receipts' THEN SELECT run_id INTO identifier FROM public.task_intents "
-        "WHERE id=(item->>'task_id')::uuid; RETURN identifier; END IF;\n      " + anchor,
+        "WHERE id=(item->>'task_id')::uuid; RETURN identifier; END IF;\n      "
+        "IF relation_name='incident_resolution_receipts' THEN SELECT run_id INTO identifier FROM public.incidents "
+        "WHERE id=(item->>'incident_id')::uuid; RETURN identifier; END IF;\n      " + anchor,
         applied="'step_instances','human_tasks'",
     )
-    # A worker's claim and report of settlement work are audited per task: those rows spend the reserve too.
+    # A worker's claim and report of settlement work, and a person's resolution that stops the run, are audited per
+    # task or incident: those rows spend the reserve of the run too.
     audited = "(relation_name='access_audit' AND item->>'target'=c.resource_id::text AND item->>'action' IN"
     patch_function(
         "public.weave_allocation_delta(text,jsonb,jsonb,text[])",
         audited,
         "(c.kind='run' AND relation_name='access_audit' AND CASE WHEN item->>'action' IN "
         "('task.claim','task.completed','task.failed') THEN EXISTS(SELECT 1 FROM public.task_intents t "
-        "WHERE t.id=(item->>'target')::uuid AND t.run_id=c.resource_id AND t.settlement) ELSE false END) OR\n"
+        "WHERE t.id=(item->>'target')::uuid AND t.run_id=c.resource_id AND t.settlement) "
+        "WHEN item->>'action'='incident.resolve' THEN EXISTS(SELECT 1 FROM public.incidents i "
+        "WHERE i.id=(item->>'target')::uuid AND i.run_id=c.resource_id) ELSE false END) OR\n"
         "          " + audited,
         applied="'task.claim','task.completed','task.failed'",
     )
@@ -121,9 +131,7 @@ def records() -> None:
 
 def inventory() -> None:
     """The compatibility inventory counts transactions in doubt and transactions undoing, across tenants."""
-    op.execute(
-        "CREATE POLICY operations_owner ON run_transactions TO weave_retention_owner USING(true) WITH CHECK(true)"
-    )
+    op.execute("CREATE POLICY operations_inventory ON run_transactions FOR SELECT TO weave_retention_owner USING(true)")
     anchor = "FROM public.operation_usage"
     patch_function(
         "public.weave_compatibility_counts()",

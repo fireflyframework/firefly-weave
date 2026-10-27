@@ -82,7 +82,10 @@ def record(flow, steps: list[tuple[str, dict[str, Any]]]) -> tuple[RuntimeEvent,
                 )
                 issued_waits.append(waits[command.node_id])
         receipt = None
-        if kind in {"task_completed", "task_failed", "incident_opened", "recovery_scheduled"}:
+        if (
+            kind in {"task_completed", "task_failed", "incident_opened", "recovery_scheduled"}
+            and data["node_id"] in tasks
+        ):
             task = tasks[data["node_id"]]
             receipt = TaskReceipt(
                 task=task,
@@ -256,4 +259,26 @@ def test_a_history_whose_start_lost_its_run_id_replays_inconsistently():
     flow = compiled(FLOW)
     events = list(record(flow, HISTORIES["completed"][1]))
     events[0] = events[0].model_copy(update={"data": {k: v for k, v in events[0].data.items() if k != "run_id"}})
+    assert replay(flow, tuple(events)).status == "inconsistent"
+
+
+def test_a_held_run_replays_up_to_its_hold_and_stops_there_incomplete():
+    flow = compiled(FLOW)
+    held = {
+        "node_id": "@transactions",
+        "generation": 0,
+        "code": "WV-TXN-RUN-OVERSIZED",
+        "origin_code": "WV-RUNTIME-CAPACITY",
+    }
+    events = list(record(flow, [STARTED, done("hold", {"holdId": "h-1"}), ("incident_opened", held)]))
+    evidence = dict(events[2].evidence or {})
+    # The hold is written in SQL for a run too large for the kernel: its expected transition is left out for size.
+    evidence.pop("expected_transition_digest")
+    evidence["omissions"] = [{"path": "/expected_transition_digest", "reason": "resource_limit"}]
+    events[2] = events[2].model_copy(update={"evidence": evidence})
+    report = replay(flow, tuple(events))
+    assert (report.status, [d.code for d in report.diagnostics]) == ("incomplete", ["WV-REPLAY-EXPECTATION"])
+    assert report.last_verified_sequence == 2
+    # Without the run's source reference, the hold would look like another run's history.
+    events[2] = events[2].model_copy(update={"evidence": {k: v for k, v in evidence.items() if k != "source"}})
     assert replay(flow, tuple(events)).status == "inconsistent"

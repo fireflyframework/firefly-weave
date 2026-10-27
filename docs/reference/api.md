@@ -922,7 +922,9 @@ transaction stays as it is until a reconciler ends it: a cancel with
 end `force_ended` instead of being undone. Without it, a run with an open
 transaction answers HTTP 202 with `pending_undo: true` and ends once its
 transactions settle; undoing them spends the run's control reserve, so it
-finishes at a full byte quota. `GET …/runs/{identifier}/transactions`
+finishes at a full byte quota. Only settlement spends it: a confirm whose result
+also starts the steps after its block, say, waits for quota like any forward
+work, and a resolution that ends the run is a stop. `GET …/runs/{identifier}/transactions`
 (`run.read`) pages a run's transactions oldest first as `RunTransactionView`
 (`instance_key`, `node_id`, `iteration`, `state`, `business_key`, `cause`,
 `opened_at`, `decided_at`, `ended_at`, `participants`, `incident_id`,
@@ -931,8 +933,11 @@ finishes at a full byte quota. `GET …/runs/{identifier}/transactions`
 ten `transaction_state` values. Incident views of `WV-TXN-*` codes carry
 `priority: "high"` and `transaction`. `POST …/activations/{identifier}/retire`
 refuses an activation a running transaction may still need to undo a step
-(HTTP 409 `WV-TXN-UNDO-PINNED`) unless it has `?force=true` and the caller holds
-`transaction.reconcile`.
+(HTTP 409 `WV-TXN-UNDO-PINNED`) unless it has `?force=true`, a `reason` in its
+body, and the caller holds `transaction.reconcile`. A transaction's
+`resolution` shows the resolver's reason, evidence reference and ID to anyone
+with `run.read`, as run history does; write justifications with that audience in
+mind.
 
 ## Operation inventory
 
