@@ -516,6 +516,13 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
     });
     return [...flagged, ...rest];
   }
+  /** A message with its `quoted` parts shown as code. */
+  words(message: string): { text: string; code: boolean }[] {
+    return message
+      .split("`")
+      .map((text, index) => ({ text, code: index % 2 === 1 }))
+      .filter((part) => part.text);
+  }
   problemCount(): string {
     const count = this.problems().length;
     return `${count} problem${count === 1 ? "" : "s"}`;

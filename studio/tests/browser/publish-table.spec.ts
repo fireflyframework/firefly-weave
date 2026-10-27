@@ -19,128 +19,18 @@ SPDX-License-Identifier: Apache-2.0
 // workflow that uses a table draft can't be published until the table is.
 import { expect, test, type Page } from "@playwright/test";
 import { parse } from "yaml";
-import { allCapabilities, command, connected, sourceText } from "./support";
-import {
-  openStepFixture,
-  sizes,
-  withLanguageFeatures,
-} from "./step-details-po";
+import { command, sourceText } from "./support";
+import { openStepFixture, sizes } from "./step-details-po";
 import {
   DecisionGridPage,
   ordersWorkflow,
   paymentPolicy,
-  type TableDocumentFixture,
+  tablePlatform,
+  type TablePlatformOptions as Options,
 } from "./decision-grid-po";
-import { hasPython, localAuthoring, platformCompile } from "./local-authoring";
+import { hasPython } from "./local-authoring";
 
 test.skip(!hasPython, "The platform's check runs the repository's compiler.");
-
-const TENANT = "00000000-0000-4000-8000-000000000011";
-const PROJECT = "00000000-0000-4000-8000-000000000012";
-
-interface Options {
-  capabilities?: string[];
-  /** The first table publish answers with this status. */
-  publishStatus?: number;
-  /** Versions someone else published after Studio listed the tables. */
-  takenLater?: string[];
-}
-
-/** A connected platform whose catalog holds payment-policy 1.2.0; compiles use the repository's compiler. */
-async function tablePlatform(page: Page, options: Options = {}) {
-  const tables = new Map<string, TableDocumentFixture>([
-    ["payment-policy@1.2.0", paymentPolicy("1.2.0")],
-  ]);
-  const posts: { path: string; version: string; key: string }[] = [];
-  let first = true;
-  await localAuthoring(page);
-  await connected(page, {
-    capabilities: options.capabilities ?? [...allCapabilities, "compile"],
-    tenantId: TENANT,
-    projectId: PROJECT,
-  });
-  await withLanguageFeatures(page);
-  const project = `**/projects/${PROJECT}`;
-  await page.route(`${project}/compiler/compile`, async (route) => {
-    const body = route.request().postDataJSON() as {
-      source: unknown;
-      format: string;
-    };
-    await route.fulfill({
-      json: await platformCompile({
-        ...body,
-        definitions: [...tables.values()],
-      }),
-    });
-  });
-  await page.route(`${project}/decision-tables?*`, (route) =>
-    route.fulfill({
-      json: {
-        items: [...tables.values()]
-          .filter((t) => !options.takenLater?.includes(t.metadata.version))
-          .map((t, i) => ({
-            id: `t${i + 1}`,
-            name: t.metadata.name,
-            version: t.metadata.version,
-          })),
-        next_cursor: null,
-      },
-    }),
-  );
-  await page.route(`${project}/decision-tables/t1/export`, (route) =>
-    route.fulfill({ json: { document: tables.get("payment-policy@1.2.0") } }),
-  );
-  await page.route(`${project}/decision-tables`, async (route) => {
-    if (route.request().method() !== "POST") return route.fallback();
-    const document = parse(
-      (route.request().postDataJSON() as { source: string }).source,
-    ) as TableDocumentFixture;
-    const { name, version } = document.metadata;
-    posts.push({
-      path: "decision-tables",
-      version,
-      key: route.request().headers()["idempotency-key"] ?? "",
-    });
-    if (first && options.publishStatus) {
-      first = false;
-      return route.fulfill({
-        status: options.publishStatus,
-        json: { code: "WV-DENIED", message: "Not allowed" },
-      });
-    }
-    if (
-      options.takenLater?.includes(version) ||
-      tables.has(`${name}@${version}`)
-    )
-      return route.fulfill({
-        status: 409,
-        json: { code: "WV-VERSION-CONFLICT", message: "Taken" },
-      });
-    tables.set(`${name}@${version}`, document);
-    await route.fulfill({
-      status: 201,
-      json: { id: `t${tables.size}`, kind: "DecisionTable", name, version },
-    });
-  });
-  await page.route(`${project}/workflows`, async (route) => {
-    if (route.request().method() !== "POST") return route.fallback();
-    posts.push({ path: "workflows", version: "", key: "" });
-    await route.fulfill({
-      status: 201,
-      json: {
-        id: "11111111-1111-4111-8111-111111111111",
-        kind: "Workflow",
-        name: "orders",
-        version: "1.0.0",
-        digest: "0".repeat(64),
-      },
-    });
-  });
-  if (options.takenLater)
-    for (const version of options.takenLater)
-      tables.set(`payment-policy@${version}`, paymentPolicy(version));
-  return { posts };
-}
 
 /** Opens orders' score step on the grid and starts payment-policy 1.2.1 with one change. */
 async function startDraft(page: Page, options: Options = {}) {

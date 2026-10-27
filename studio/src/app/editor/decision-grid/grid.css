@@ -419,3 +419,33 @@ button.dg-try-toggle[aria-pressed="true"] {
 .dg-main > .dg-scroll {
   max-width: 100%;
 }
+/* On a phone only the rule numbers stay put while the grid scrolls sideways,
+   so the cells being edited keep the room; the header wraps. */
+@media (max-width: 767px) {
+  .dg {
+    --dg-name-max: 160px;
+  }
+  .dg-name-cell,
+  .dg-th.dg-name-cell {
+    position: static;
+  }
+  .dg-group-start {
+    position: static;
+  }
+  .dg-head {
+    flex-wrap: wrap;
+  }
+}
+.dg-problems code {
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-sm);
+  background: var(--raised);
+  font: var(--type-mono);
+}
+/* While Try an input is open, the rules that match stand out. */
+.dg-row.is-match > .dg-td:not(.is-cursor) {
+  background: var(--success-bg);
+}
+.dg-row.is-match > .dg-mark-cell {
+  box-shadow: inset 2px 0 0 var(--success);
+}

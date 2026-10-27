@@ -208,7 +208,7 @@ for (const size of sizes)
       await expect(cell.locator(".dg-cell-text")).toHaveText(">> 1000");
       await expect(cell).toHaveAttribute("aria-invalid", "true");
       await expect(grid.root.locator(".dg-problems")).toContainText(
-        "`>>` isn't a test; try `> 1000`.",
+        />>\s+isn't a test; try\s+> 1000\s*\./,
       );
       // Nothing was written: the step still uses the published version.
       await expect(grid.root).toContainText("payment-policy 1.2.0 · published");

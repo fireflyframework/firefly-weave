@@ -19,7 +19,8 @@ SPDX-License-Identifier: Apache-2.0
 // them in step details.
 import { expect, type Locator, type Page } from "@playwright/test";
 import { parse } from "yaml";
-import { connected } from "./support";
+import { allCapabilities, connected } from "./support";
+import { localAuthoring, platformCompile } from "./local-authoring";
 import {
   openStepFixture,
   withLanguageFeatures,
@@ -268,4 +269,114 @@ export async function viewedTable(page: Page, details: StepDetailsPage) {
       rules: { id: string; when: unknown; output: unknown }[];
     };
   };
+}
+
+const TENANT = "00000000-0000-4000-8000-000000000011";
+const PROJECT = "00000000-0000-4000-8000-000000000012";
+
+export interface TablePlatformOptions {
+  capabilities?: string[];
+  /** The first table publish answers with this status. */
+  publishStatus?: number;
+  /** Versions someone else published after Studio listed the tables. */
+  takenLater?: string[];
+}
+
+/** A connected platform whose catalog holds payment-policy 1.2.0; compiles use the repository's compiler. */
+export async function tablePlatform(
+  page: Page,
+  options: TablePlatformOptions = {},
+) {
+  const tables = new Map<string, TableDocumentFixture>([
+    ["payment-policy@1.2.0", paymentPolicy("1.2.0")],
+  ]);
+  const posts: { path: string; version: string; key: string }[] = [];
+  let first = true;
+  await localAuthoring(page);
+  await connected(page, {
+    capabilities: options.capabilities ?? [...allCapabilities, "compile"],
+    tenantId: TENANT,
+    projectId: PROJECT,
+  });
+  await withLanguageFeatures(page);
+  const project = `**/projects/${PROJECT}`;
+  await page.route(`${project}/compiler/compile`, async (route) => {
+    const body = route.request().postDataJSON() as {
+      source: unknown;
+      format: string;
+    };
+    await route.fulfill({
+      json: await platformCompile({
+        ...body,
+        definitions: [...tables.values()],
+      }),
+    });
+  });
+  await page.route(`${project}/decision-tables?*`, (route) =>
+    route.fulfill({
+      json: {
+        items: [...tables.values()]
+          .filter((t) => !options.takenLater?.includes(t.metadata.version))
+          .map((t, i) => ({
+            id: `t${i + 1}`,
+            name: t.metadata.name,
+            version: t.metadata.version,
+          })),
+        next_cursor: null,
+      },
+    }),
+  );
+  await page.route(`${project}/decision-tables/t1/export`, (route) =>
+    route.fulfill({ json: { document: tables.get("payment-policy@1.2.0") } }),
+  );
+  await page.route(`${project}/decision-tables`, async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    const document = parse(
+      (route.request().postDataJSON() as { source: string }).source,
+    ) as TableDocumentFixture;
+    const { name, version } = document.metadata;
+    posts.push({
+      path: "decision-tables",
+      version,
+      key: route.request().headers()["idempotency-key"] ?? "",
+    });
+    if (first && options.publishStatus) {
+      first = false;
+      return route.fulfill({
+        status: options.publishStatus,
+        json: { code: "WV-DENIED", message: "Not allowed" },
+      });
+    }
+    if (
+      options.takenLater?.includes(version) ||
+      tables.has(`${name}@${version}`)
+    )
+      return route.fulfill({
+        status: 409,
+        json: { code: "WV-VERSION-CONFLICT", message: "Taken" },
+      });
+    tables.set(`${name}@${version}`, document);
+    await route.fulfill({
+      status: 201,
+      json: { id: `t${tables.size}`, kind: "DecisionTable", name, version },
+    });
+  });
+  await page.route(`${project}/workflows`, async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    posts.push({ path: "workflows", version: "", key: "" });
+    await route.fulfill({
+      status: 201,
+      json: {
+        id: "11111111-1111-4111-8111-111111111111",
+        kind: "Workflow",
+        name: "orders",
+        version: "1.0.0",
+        digest: "0".repeat(64),
+      },
+    });
+  });
+  if (options.takenLater)
+    for (const version of options.takenLater)
+      tables.set(`payment-policy@${version}`, paymentPolicy(version));
+  return { posts };
 }

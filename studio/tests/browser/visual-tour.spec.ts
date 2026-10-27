@@ -120,6 +120,14 @@ import {
   python,
   stopLocalAuthoring,
 } from "./local-authoring";
+import {
+  DecisionGridPage,
+  openPaymentGrid,
+  ordersWorkflow,
+  paymentPolicy,
+  routeTables,
+  tablePlatform,
+} from "./decision-grid-po";
 import { crossingOf } from "./woven-crossing";
 import {
   EXECUTE_ASKING,
@@ -167,6 +175,50 @@ const versionId = "11111111-1111-4111-8111-111111111111";
 /** Floating surfaces that cover the page on purpose while they are open. */
 const overlays =
   '[aria-modal="true"], .modal-backdrop, [role="dialog"], [role="menu"], [role="listbox"], .platform-menu, .inspector, .record-detail, .palette.popover-visible, .sim-panel, .toast, .canvas-v2 f-minimap, .canvas-v2 .selection-toolbar, .canvas-v2 .tile-toolbar, .add-step-panel, .formula-suggestions, .run-log';
+
+/** A workflow whose decision table step fills the table's inputs field by field. */
+const decisionFormWorkflow = yamlFile(
+  "orders.yaml",
+  `apiVersion: weave/v1alpha1
+kind: Workflow
+metadata: { name: orders, version: 1.0.0 }
+spec:
+  inputSchema:
+    type: object
+    required: [amount]
+    properties:
+      amount: { type: number }
+      tier: { type: string }
+  outputSchema: { type: object }
+  steps:
+    - id: score
+      kind: decisionTable
+      uses: payment-policy@1.2.0
+      with:
+        object:
+          amount: { ref: /input/amount }
+  output: { literal: {} }
+`,
+);
+const draftWorkflow = yamlFile(
+  "orders.yaml",
+  ordersWorkflow.buffer.toString().replace("@1.2.0", "@1.2.1"),
+);
+/** payment-policy 1.2.1, kept as a draft on this computer before Studio opens. */
+async function keepPaymentDraft(page: Page) {
+  await page.addInitScript(
+    (value) =>
+      localStorage.setItem("local:weave.tableDraft.payment-policy", value),
+    JSON.stringify({
+      kind: "draft",
+      name: "payment-policy",
+      version: "1.2.1",
+      base: "1.2.0",
+      document: paymentPolicy("1.2.1"),
+      savedAt: "2026-10-27T08:00:00.000Z",
+    }),
+  );
+}
 
 test.describe.configure({ mode: "parallel" });
 test.afterAll(() => stopLocalAuthoring());
@@ -285,7 +337,7 @@ function auditPage(overlays: string): Audit {
     .map((e) => [e, e.scrollTop, e.scrollLeft] as const);
   // Containers that scroll sideways by design.
   const sideways =
-    ".table-scroll, pre, code, textarea, .canvas, f-flow, f-canvas, .run-graph, .source-editor, .hb-yaml, .hb-preview";
+    ".table-scroll, pre, code, textarea, .canvas, f-flow, f-canvas, .run-graph, .source-editor, .hb-yaml, .hb-preview, .dg-scroll";
   const scrollers = [...document.querySelectorAll<HTMLElement>("body *")]
     .filter((e) => {
       const s = style(e);
@@ -1987,6 +2039,90 @@ const scenes: Record<string, Scene> = {
     await input.getByLabel("Input source").selectOption({ index: 1 });
     await expect(input).toContainText("No input data yet");
     await shot("160-execute-input-empty", { tabs: 0 });
+  },
+  async "decision-table-form"({ page, shot }) {
+    const details = await openStepFixture(
+      page,
+      decisionFormWorkflow,
+      async (p) => {
+        const result = await connected(p);
+        await withLanguageFeatures(p);
+        return result;
+      },
+    );
+    await routeTables(page, [paymentPolicy("1.2.0")]);
+    await details.open("score");
+    await expect(
+      details.field("table").getByRole("button", { name: "Edit table" }),
+    ).not.toHaveAttribute("aria-disabled");
+    await expect(details.field("input.amount")).toBeVisible();
+    await shot("161-decision-table-form", { tabs: 0, end: ".sd-panes" });
+  },
+  async "decision-grid"({ page, shot }) {
+    const { grid } = await openPaymentGrid(page);
+    await expect(grid.cell(3, 0)).toBeVisible();
+    await shot("162-decision-grid", { tabs: 0, end: ".sd-panes" });
+  },
+  async "decision-grid-cell-edit"({ page, shot }) {
+    const { grid } = await openPaymentGrid(page);
+    await grid.cell(1, 1).click();
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("ControlOrMeta+a");
+    await page.keyboard.type("<= 900");
+    await expect(grid.root.locator(".dg-cell-input")).toBeFocused();
+    await shot("163-decision-grid-cell-edit", { tabs: 0, end: ".sd-panes" });
+  },
+  async "decision-grid-try-input"({ page, shot }) {
+    await keepPaymentDraft(page);
+    const details = await openStepFixture(page, draftWorkflow);
+    await localAuthoring(page);
+    await details.open("score");
+    const grid = new DecisionGridPage(page);
+    await grid.open();
+    await grid.root.getByRole("button", { name: "Try an input" }).click();
+    const panel = grid.root.getByRole("region", { name: "Try an input" });
+    await panel.getByLabel("amount").fill("2000");
+    await panel.getByLabel("tier").fill("gold");
+    await expect(
+      panel.locator(".pill", { hasText: "Checked by Weave" }),
+    ).toBeVisible();
+    await page.evaluate(() => (document.activeElement as HTMLElement).blur());
+    await shot("164-decision-grid-try-input", { tabs: 0, end: ".sd-panes" });
+  },
+  async "decision-grid-publish"({ page, shot }) {
+    await tablePlatform(page);
+    const details = await openStepFixture(page, ordersWorkflow, async () => {
+      // Connected by the platform above.
+    });
+    await details.open("score");
+    const grid = new DecisionGridPage(page);
+    await grid.open();
+    await grid.edit(1, 1, "<= 900");
+    const publish = grid.root.getByRole("button", { name: "Publish table" });
+    await expect(publish).toBeVisible();
+    // On a phone the sheet has scrolled to the cell: show the command.
+    await publish.scrollIntoViewIfNeeded();
+    await shot("165-decision-grid-publish", { tabs: 0, end: ".sd-panes" });
+    await grid.back();
+    await details.close();
+    await command(page, "Publish…");
+    await expect(
+      page
+        .getByText(
+          "Publish payment-policy@1.2.1 before publishing this workflow.",
+        )
+        .first(),
+    ).toBeVisible();
+    await shot("166-decision-publish-blocked", { tabs: 0 });
+  },
+  async "decision-grid-problems"({ page, shot }) {
+    const { grid } = await openPaymentGrid(page);
+    await grid.edit(0, 1, ">> 1000");
+    await grid.edit(1, 0, "big-gold");
+    await expect(grid.root.locator(".dg-problems")).toContainText(
+      ">> isn't a test",
+    );
+    await shot("167-decision-grid-problems", { tabs: 0, end: ".sd-panes" });
   },
   async "step-details-decision"({ page, shot }) {
     const details = await openStepFixture(page);

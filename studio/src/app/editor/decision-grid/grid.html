@@ -173,6 +173,7 @@ SPDX-License-Identifier: Apache-2.0
                 role="row"
                 [attr.aria-rowindex]="r + 2"
                 [class.dg-otherwise]="isOtherwise(r)"
+                [class.is-match]="mark(r) === 'match'"
               >
                 <div
                   class="dg-td dg-mark-cell"
@@ -294,7 +295,15 @@ SPDX-License-Identifier: Apache-2.0
         <ul>
           @for (problem of found; track $index) {
             <li [attr.data-severity]="problem.severity">
-              <span>{{ problem.message }}</span>
+              <span>
+                @for (part of words(problem.message); track $index) {
+                  @if (part.code) {
+                    <code>{{ part.text }}</code>
+                  } @else {
+                    {{ part.text }}
+                  }
+                }
+              </span>
               @if (problem.at; as at) {
                 <button type="button" class="text-link" (click)="goTo(at)">
                   Go to cell
