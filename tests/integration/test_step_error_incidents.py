@@ -151,3 +151,25 @@ async def test_confirming_no_effect_is_refused_for_a_step_that_stops_the_run(
     )
     assert response.status_code == 409 and response.json()["code"] == "WV-RUNTIME-RECONCILIATION_REQUIRED"
     assert (await state_of(access_db, run.id))["incident"] == "WV-TASK-AMBIGUOUS"
+
+
+async def test_confirming_no_effect_is_refused_while_recovery_still_decides_an_interim_failure(
+    client,
+    operation_headers,
+    env_url,
+    queued_task,
+    task_service,
+    transaction_factory,
+    worker_ids,
+):
+    from firefly_weave.contracts.workers import TaskError
+
+    async with transaction_factory() as tx:
+        lease = (await task_service.claim(tx, worker_ids[0], 1))[0]
+        await task_service.fail(tx, lease.proof, TaskError(completion_id=uuid4(), code="TIMEOUT", outcome="failed"))
+    incident = await incident_for(client, operation_headers, env_url, queued_task)
+    assert incident["code"] == "WV-TASK-FAILED"
+    response = await resolve(
+        client, operation_headers, env_url, incident, kind="accept_reconciled_failure", evidence_reference="ticket 42"
+    )
+    assert response.status_code == 409 and response.json()["code"] == "WV-RUNTIME-RECONCILIATION_REQUIRED"

@@ -192,6 +192,16 @@ def test_confirm_it_had_no_effect_is_refused_for_a_step_that_stops_the_run():
     assert (run.state.status, run.state.incident, run.state.active) == ("suspended", "WV-RUNTIME-EVENT", ["place"])
 
 
+def test_confirm_it_had_no_effect_is_refused_for_an_interim_failure_that_recovery_still_decides():
+    run = Run(compiled(action("lookup", onError="continue")), {})
+    run.start()
+    run.send("task_failed", node_id="lookup", generation=1, output={"code": "TIMEOUT", "outcome": "failed"})
+    assert run.state.incidents["lookup:1"].code == "WV-TASK-FAILED"
+    run.send("incident_resolved", node_id="lookup", incident_key="lookup:1", kind="accept_reconciled_failure")
+    assert (run.state.status, run.state.active) == ("suspended", ["lookup"])
+    assert "lookup" not in run.state.steps
+
+
 def test_each_loop_iteration_handles_its_own_failure_and_the_results_keep_one_entry_per_element():
     flow = compiled(
         loop(

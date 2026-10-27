@@ -36,6 +36,7 @@ from firefly_weave.contracts.operations import (
     ReplayReport,
     TaskFact,
 )
+from firefly_weave.contracts.step_errors import confirmable
 from firefly_weave.operations.exports import bounded_size, event_node, lock_digest, safe_event, transition_digest
 from firefly_weave.operations.redaction import project
 from firefly_weave.runtime.kernel import (
@@ -297,6 +298,8 @@ def replay(artifact: CompiledArtifact, events: tuple[RuntimeEvent, ...]) -> Repl
                     attempted = event.data.get("attempts")
                     require(
                         handles
+                        and prior is not None
+                        and confirmable(node_id, prior.code)
                         and isinstance(node, ActionNode)
                         and type(attempted) is int
                         and attempted >= 0

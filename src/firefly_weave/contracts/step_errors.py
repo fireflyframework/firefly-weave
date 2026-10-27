@@ -42,11 +42,13 @@ __all__ = [
     "ERROR_KINDS",
     "HANDLED_KERNEL_CODES",
     "OUTCOME_ORDER",
+    "RECONCILED_FAILURE_CODES",
     "STEP_ERROR_MESSAGES",
     "STEP_ERROR_SCHEMA",
     "HandledPolicy",
     "StepError",
     "StepOutcome",
+    "confirmable",
     "step_error",
     "step_error_message",
     "strongest",
@@ -109,6 +111,19 @@ HANDLED_KERNEL_CODES: Final[frozenset[str]] = frozenset(
         "WV-SCHEMA-RESOURCE_LIMIT",
     }
 )
+
+# Incidents that Confirm it had no effect (accept_reconciled_failure) resolves: the unknown outcome of a step that
+# changes data and is never retried. An interim WV-TASK-FAILED is still recovery's to decide.
+RECONCILED_FAILURE_CODES: Final[frozenset[str]] = frozenset({"WV-TASK-AMBIGUOUS"})
+
+
+def confirmable(key: str, code: str) -> bool:
+    """Whether Confirm it had no effect may resolve an incident: a forward step's unknown outcome, never the
+    confirm, cancel or undo of a transaction's step."""
+    from firefly_weave.contracts.transactions import split_phase
+
+    return code in RECONCILED_FAILURE_CODES and split_phase(key) is None
+
 
 # Product copy for each code a handled failure may carry. Append only: transitions embed these words.
 STEP_ERROR_MESSAGES: Final[Mapping[str, str]] = MappingProxyType(

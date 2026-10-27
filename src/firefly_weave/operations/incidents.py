@@ -37,6 +37,8 @@ from firefly_weave.contracts.incident_queries import IncidentQuery
 from firefly_weave.contracts.instance_keys import node_of
 from firefly_weave.contracts.operations import IncidentResolution, IncidentView
 from firefly_weave.contracts.public import UnavailableResource
+from firefly_weave.contracts.step_errors import confirmable
+from firefly_weave.contracts.transactions import IN_DOUBT_CODES
 from firefly_weave.contracts.values import JsonObject
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.operations.fact_positions import RunPosition
@@ -147,11 +149,22 @@ class IncidentService:
             node = next((n for n in ir.graph.nodes if n.id == step), None)
             task = None
             call = None
-            if request.kind == "accept_reconciled_failure" and isinstance(node, CallWorkflowNode):
-                # A called workflow's own history says what it did; its caller handles failures it reports.
-                raise CatalogError(
-                    409, "WV-RUNTIME-RECONCILIATION_REQUIRED", "Only a task's effect can be confirmed as not happened"
-                )
+            if request.kind == "accept_reconciled_failure":
+                # Dispatched on the incident's code: a transaction in doubt first, then a step's unknown outcome.
+                if incident["code"] in IN_DOUBT_CODES:
+                    raise CatalogError(
+                        409,
+                        "WV-RUNTIME-RECONCILIATION_REQUIRED",
+                        "A transaction in doubt is resolved through its own resolutions",
+                    )
+                if isinstance(node, CallWorkflowNode) or not confirmable(incident["node_id"] or "", incident["code"]):
+                    # A called workflow's own history says what it did; an undo, a confirm or a cancel belongs to its
+                    # transaction; an interim failure is still recovery's to decide.
+                    raise CatalogError(
+                        409,
+                        "WV-RUNTIME-RECONCILIATION_REQUIRED",
+                        "Only the unknown outcome of a step that changes data can be confirmed as not happened",
+                    )
             if request.kind != "terminate" and isinstance(node, CallWorkflowNode):
                 call = await self._call_resolution(repository, ir, node, previous.id, incident, request, previous)
             elif request.kind != "terminate":

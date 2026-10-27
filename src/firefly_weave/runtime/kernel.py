@@ -56,7 +56,7 @@ from firefly_weave.compiler.schemas import validate_payload
 from firefly_weave.contracts.definitions import ActionDefinition, ContractModel, WorkerImplementation, load_definition
 from firefly_weave.contracts.instance_keys import node_of
 from firefly_weave.contracts.limits import Limits
-from firefly_weave.contracts.step_errors import HANDLED_KERNEL_CODES, StepOutcome, step_error
+from firefly_weave.contracts.step_errors import HANDLED_KERNEL_CODES, StepOutcome, confirmable, step_error
 from firefly_weave.contracts.transactions import (
     HOLD_MARGIN_SECONDS,
     IN_DOUBT_CODES,
@@ -1566,7 +1566,9 @@ def _advance_owned(
                     return checkpoint(result.model_copy(update={"state": current_state}), done=not queue)
                 if prior is None or kind not in {"retry_safe", "accept_reconciled_result", "accept_reconciled_failure"}:
                     raise KernelError("WV-RUNTIME-EVENT")
-                if kind == "accept_reconciled_failure" and error_policy(ir, prior.node_id) == "stop":
+                if kind == "accept_reconciled_failure" and (
+                    error_policy(ir, prior.node_id) == "stop" or not confirmable(prior.node_id, prior.code)
+                ):
                     # Only a step with an On error setting can go on after its effect was confirmed not to happen.
                     raise KernelError("WV-RUNTIME-EVENT")
                 current_state.incidents.pop(str(key))

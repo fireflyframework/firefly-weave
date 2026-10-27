@@ -19,7 +19,6 @@
 from datetime import timedelta
 
 import pytest
-
 from transaction_support import (
     RUN,
     Run,
@@ -629,3 +628,17 @@ def test_a_confirm_that_cannot_finish_puts_the_transaction_in_doubt_whatever_its
     assert run.txn().status == "in_doubt"
     stuck = run.state.incidents["hold#confirm:10"]
     assert (stuck.code, stuck.origin_code) == ("WV-TXN-CONFIRM-STUCK", "UNAVAILABLE")
+
+
+def test_confirm_it_had_no_effect_is_refused_for_an_undo_of_a_step_with_a_setting():
+    run = Run(flow(hold(), add(onError="continue"), submit()))
+    run.start()
+    run.done("hold", {"holdId": "h-1"})
+    run.done("add", {"id": "a-1"})
+    [undo] = tasks(run.failed("submit", "VALIDATION", effect="none"))
+    assert undo.node_id == "add#undo"
+    run.send("task_failed", node_id="add#undo", generation=1, output={"code": "TIMEOUT", "outcome": "failed"})
+    assert run.state.incidents["add#undo:1"].code == "WV-TASK-FAILED"
+    run.send("incident_resolved", node_id="add#undo", incident_key="add#undo:1", kind="accept_reconciled_failure")
+    # The undo is the transaction's: it stays undoing, for recovery or the transaction's own resolutions.
+    assert (run.txn().status, run.statuses()["add"]) == ("compensating", "undoing")

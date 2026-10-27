@@ -219,3 +219,19 @@ def test_confirming_that_a_step_had_no_effect_replays_and_is_refused_for_a_step_
     flow, events = history()
     report = replay(flow, events)
     assert (report.status, [d.code for d in report.diagnostics]) == ("inconsistent", ["WV-REPLAY-EVENT"])
+
+
+def test_confirming_no_effect_does_not_replay_for_an_interim_failure():
+    flow = compiled(action("lookup", onError="continue"), output={"literal": "done"})
+    resolved = {
+        "incident_key": "lookup:1",
+        "receipt_id": str(uuid4()),
+        "node_id": "lookup",
+        "generation": 1,
+        "kind": "accept_reconciled_failure",
+        "output": None,
+        "attempts": 1,
+        "actor_id": str(uuid4()),
+    }
+    report = replay(flow, recorded(flow, [START, FAILED, ("incident_resolved", NOW, resolved)]))
+    assert (report.status, [d.code for d in report.diagnostics]) == ("inconsistent", ["WV-REPLAY-EVENT"])
