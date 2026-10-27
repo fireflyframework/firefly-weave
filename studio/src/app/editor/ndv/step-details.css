@@ -816,10 +816,13 @@ weave-issues-indicator {
   border: 1px solid var(--border-hover);
 }
 .step-details[data-wide][data-layout="three"] .sd-input {
+  /* The person's Input width when they set one. */
+  width: var(--sd-input, max(240px, 28%));
   left: var(--sd-rail);
   border-radius: 0 var(--radius-md) var(--radius-md) 0;
 }
 .step-details[data-wide][data-layout="three"] .sd-output {
+  width: var(--sd-output, max(240px, 28%));
   right: var(--sd-rail);
   border-radius: var(--radius-md) 0 0 var(--radius-md);
 }

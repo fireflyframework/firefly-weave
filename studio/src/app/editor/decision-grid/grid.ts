@@ -207,6 +207,8 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
   /** The draft a first change is starting, until the step moves to it. */
   private starting: Promise<string | null> | null = null;
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The account of the edits waiting to be kept. */
+  private editedIn: string | null = null;
   /** Counts the table's changes: Try an input's answers apply to the one they were asked for. */
   readonly revision = signal(0);
   readonly tryOpen = signal(false);
@@ -777,6 +779,8 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
   apply(next: TableSpec, key = "command", record = true) {
     const before = this.spec();
     if (!before || next === before || this.readOnly()) return;
+    // The account the edit was made in: its save goes there or nowhere.
+    this.editedIn ??= this.context().tables?.account() ?? null;
     if (record) this.history.record(before, key, Date.now());
     this.spec.set(next);
     this.revision.update((revision) => revision + 1);
@@ -820,7 +824,9 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
     const uses = this.shownFor;
     const tables = this.context().tables;
     if (!spec || !tables || tables.where(uses) !== "draft") return;
-    const problem = await tables.save(uses, spec as unknown as Json);
+    const account = this.editedIn ?? tables.account();
+    this.editedIn = null;
+    const problem = await tables.save(uses, spec as unknown as Json, account);
     if (problem && !this.lifetime.destroyed && this.shownFor === uses)
       this.notice.set(problem);
   }
@@ -1161,6 +1167,7 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
       if (!this.lifetime.destroyed) this.announcement.set(text);
     });
   }
+  private pastes = 0;
   /** Pasting tab-separated cells fills a block from the focused cell, as one undo step. */
   paste(event: ClipboardEvent) {
     if (this.editing() || this.readOnly()) return;
@@ -1170,7 +1177,11 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
     if (!text || !spec || !view) return;
     event.preventDefault();
     const cursor = this.cursor();
-    const { spec: next, flagged } = pasteInto(
+    const {
+      spec: next,
+      flagged,
+      notes,
+    } = pasteInto(
       spec,
       { row: cursor.row, column: cursor.col },
       parsePaste(text),
@@ -1183,6 +1194,8 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
         message: problem.message,
       });
     this.flagged.set(marks);
-    this.apply(next, "paste");
+    // Every paste is its own undo step.
+    this.apply(next, `paste:${++this.pastes}`);
+    this.notice.set(notes.length ? notes.join(" ") : null);
   }
 }

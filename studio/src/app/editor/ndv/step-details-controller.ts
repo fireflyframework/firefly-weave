@@ -814,6 +814,8 @@ export class StepDetailsController {
     kind: string;
     subNode?: string;
   } | null>(null);
+  /** Tables whose next version is being started now. */
+  private readonly startingTables = new Set<string>();
   /** Idempotency keys of table publishes whose answer never came, by `uses`. */
   private readonly publishKeys = new Map<string, string>();
   /** The step's decision table as step details read and keep it. */
@@ -825,6 +827,46 @@ export class StepDetailsController {
     const tables = this.tables;
     if (!tables) return undefined;
     const current = () => this.host.model === model && model.opened === opened;
+    const startOne = async (
+      uses: string,
+      name: string,
+    ): Promise<{ uses: string } | { problem: string }> => {
+      const document = this.tableContract(uses);
+      if (!document || !current())
+        return { problem: `Read ${uses} first: connect to the platform.` };
+      const drafts = await tables.drafts();
+      const kept = drafts.draft(name);
+      if (kept)
+        return {
+          problem: `${name} ${kept.version} is already a draft on this computer. Choose it in Table to keep editing it.`,
+        };
+      const listed = (await tables.list().catch(() => []))
+        .filter(
+          (choice) =>
+            choice.where === "published" && choice.uses.startsWith(`${name}@`),
+        )
+        .map((choice) => choice.uses.slice(name.length + 1));
+      if (!current()) return { problem: "The workflow changed; try again." };
+      let entry;
+      try {
+        entry = await drafts.startDraft(
+          document as unknown as TableDocument,
+          listed,
+        );
+      } catch (error) {
+        return {
+          problem: error instanceof Error ? error.message : String(error),
+        };
+      }
+      if (!current()) return { problem: "The workflow changed; try again." };
+      const next = `${entry.name}@${entry.version}`;
+      this.commit(
+        target,
+        [{ scope: "step", path: ["uses"], value: next }],
+        `ndv:Start ${entry.name} ${entry.version}`,
+      );
+      return { uses: next };
+    };
     return {
       document: (uses) => this.tableContract(uses),
       where: (uses) => tables.where(uses),
@@ -861,43 +903,16 @@ export class StepDetailsController {
         return uses;
       },
       startDraft: async (uses) => {
-        const document = this.tableContract(uses);
         const name = uses.slice(0, uses.lastIndexOf("@"));
-        if (!document || !current())
-          return { problem: `Read ${uses} first: connect to the platform.` };
-        const drafts = await tables.drafts();
-        const kept = drafts.draft(name);
-        if (kept)
-          return {
-            problem: `${name} ${kept.version} is already a draft on this computer. Choose it in Table to keep editing it.`,
-          };
-        const listed = (await tables.list().catch(() => []))
-          .filter(
-            (choice) =>
-              choice.where === "published" &&
-              choice.uses.startsWith(`${name}@`),
-          )
-          .map((choice) => choice.uses.slice(name.length + 1));
-        if (!current()) return { problem: "The workflow changed; try again." };
-        let entry;
+        // One start at a time per table: two would both pass the check below.
+        if (this.startingTables.has(name))
+          return { problem: `${name}'s next version is being started.` };
+        this.startingTables.add(name);
         try {
-          entry = await drafts.startDraft(
-            document as unknown as TableDocument,
-            listed,
-          );
-        } catch (error) {
-          return {
-            problem: error instanceof Error ? error.message : String(error),
-          };
+          return await startOne(uses, name);
+        } finally {
+          this.startingTables.delete(name);
         }
-        if (!current()) return { problem: "The workflow changed; try again." };
-        const next = `${entry.name}@${entry.version}`;
-        this.commit(
-          target,
-          [{ scope: "step", path: ["uses"], value: next }],
-          `ndv:Start ${entry.name} ${entry.version}`,
-        );
-        return { uses: next };
       },
       publish: async (uses) => {
         const host = this.host;
@@ -957,8 +972,13 @@ export class StepDetailsController {
       },
       evaluate: (body) =>
         this.host.api.request("/studio/local/decision/evaluate", "POST", body),
-      save: async (uses, spec) => {
+      account: () => tables.account(),
+      save: async (uses, spec, account) => {
+        if (tables.account() !== account)
+          return "The account changed, so this change wasn't kept.";
         const drafts = await tables.drafts();
+        if (tables.account() !== account)
+          return "The account changed, so this change wasn't kept.";
         const name = uses.slice(0, uses.lastIndexOf("@"));
         const entry = drafts.draft(name);
         if (!entry || `${entry.name}@${entry.version}` !== uses)

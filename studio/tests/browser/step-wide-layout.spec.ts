@@ -46,6 +46,9 @@ async function openGrid(page: Page): Promise<StepDetailsPage> {
   return details;
 }
 const box = async (locator: Locator) => (await locator.boundingBox())!;
+/** A width while it may still be drawn: -1 until it is. */
+const widthOf = async (locator: Locator) =>
+  Math.round((await locator.boundingBox())?.width ?? -1);
 
 test.describe("at 1440x900", () => {
   test.use({ viewport: { width: 1440, height: 900 } });
@@ -125,17 +128,22 @@ test.describe("at 1440x900", () => {
     );
     const chosen = await separator.getAttribute("aria-valuenow");
     await expect
-      .poll(async () =>
-        Math.round((await box(details.dialog.locator(".sd-input"))).width),
-      )
+      .poll(async () => widthOf(details.dialog.locator(".sd-input")))
       .toBe(Number(chosen));
     await details
       .field("table")
       .getByRole("button", { name: "Edit table" })
       .click();
-    await expect(
-      details.dialog.getByRole("button", { name: "Show input data" }),
-    ).toBeVisible();
+    const rail = details.dialog.getByRole("button", {
+      name: "Show input data",
+    });
+    await expect(rail).toBeVisible();
+    // A rail opens its pane at the width the person chose.
+    await rail.click();
+    await expect
+      .poll(async () => widthOf(details.dialog.locator(".sd-input")))
+      .toBe(Number(chosen));
+    await rail.click();
     await details.dialog
       .getByRole("button", { name: "Back to the step" })
       .click();
@@ -143,9 +151,7 @@ test.describe("at 1440x900", () => {
     await expect(details.dialog.locator(".sd-separator")).toHaveCount(2);
     await expect(separator).toHaveAttribute("aria-valuenow", chosen!);
     await expect
-      .poll(async () =>
-        Math.round((await box(details.dialog.locator(".sd-input"))).width),
-      )
+      .poll(async () => widthOf(details.dialog.locator(".sd-input")))
       .toBe(Number(chosen));
   });
 });

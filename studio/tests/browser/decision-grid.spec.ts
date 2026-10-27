@@ -149,6 +149,28 @@ for (const size of sizes)
       await page.keyboard.press("Escape");
     });
 
+    test("a published version whose next version is already a draft says so", async ({
+      page,
+    }) => {
+      const { details, grid } = await openGrid(page);
+      await grid.edit(1, 1, "<= 900");
+      await expect(grid.root).toContainText("1.2.1 · on this computer");
+      await grid.back();
+      const table = details.field("table");
+      await table.getByRole("radio", { name: "From list" }).click();
+      await table.getByRole("combobox", { name: "Table" }).click();
+      await page
+        .getByRole("option", { name: "payment-policy@1.2.0", exact: true })
+        .click();
+      await grid.open();
+      await grid.edit(1, 1, "<= 800");
+      await expect(grid.root).toContainText(
+        "payment-policy 1.2.1 is already a draft on this computer. Choose it in Table to keep editing it.",
+      );
+      await expect(grid.root).toContainText("payment-policy 1.2.0 · published");
+      await expect(grid.cell(1, 1)).toHaveText("<= 1000");
+    });
+
     test("typing a cell writes the rule's condition", async ({ page }) => {
       const { details, grid } = await openGrid(page);
       await grid.edit(0, 1, "> 5000");

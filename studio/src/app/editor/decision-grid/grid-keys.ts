@@ -146,11 +146,45 @@ export function pasteInto(
   cursor: GridCursor,
   block: string[][],
   view: GridView,
-): { spec: TableSpec; flagged: PastedProblem[] } {
+): { spec: TableSpec; flagged: PastedProblem[]; notes: string[] } {
   const inputs = view.inputs.length;
   const columns = 1 + inputs + view.results.length;
   const flagged: PastedProblem[] = [];
+  const notes: string[] = [];
   let next = spec;
+  // On Otherwise, the first pasted row fills its results; it is the last row.
+  if (view.otherwise && cursor.row >= spec.rules.length) {
+    block[0]?.forEach((text, at) => {
+      const column = cursor.column + at;
+      if (column <= inputs || column >= columns) return;
+      const index = column - 1 - inputs;
+      const reading = parseResult(text, view.results[index]);
+      if (reading.kind === "error" || reading.kind === "formula") {
+        flagged.push({
+          row: spec.rules.length,
+          column,
+          text,
+          message:
+            reading.kind === "error"
+              ? reading.message
+              : "Write a formula in the formula editor.",
+        });
+        return;
+      }
+      next = setResult(
+        next,
+        "otherwise",
+        index,
+        reading.kind === "empty" ? undefined : reading.expression,
+      );
+    });
+    const left = block.length - 1;
+    if (left > 0)
+      notes.push(
+        `Otherwise is the last row: ${left} pasted row${left === 1 ? " was" : "s were"} left out.`,
+      );
+    return { spec: next, flagged, notes };
+  }
   block.forEach((cells, offset) => {
     const row = cursor.row + offset;
     while (row >= next.rules.length && next.rules.length < MAX_RULES)
@@ -180,9 +214,12 @@ export function pasteInto(
           return;
         }
         // A rule shown as one formula is replaced by the cells pasted over it.
-        conditions ??=
-          decomposeWhen(next.rules[row].when, testable) ??
-          testable.map(() => null);
+        if (!conditions) {
+          const cells = decomposeWhen(next.rules[row].when, testable);
+          if (!cells)
+            notes.push(`Pasted cells replaced the formula of rule ${row + 1}.`);
+          conditions = cells ?? testable.map(() => null);
+        }
         const reading = parseCell(text, testable[index]);
         if (reading.kind === "error" || reading.kind === "formula") {
           flagged.push({
@@ -242,7 +279,7 @@ export function pasteInto(
         };
     }
   });
-  return { spec: next, flagged };
+  return { spec: next, flagged, notes };
 }
 
 const MERGE_WINDOW = 600;

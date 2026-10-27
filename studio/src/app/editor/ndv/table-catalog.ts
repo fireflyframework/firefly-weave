@@ -101,11 +101,19 @@ export class TableCatalog {
     return !!this.host.profile && !this.host.can("catalog.read");
   }
 
+  /** Who owns what is kept now: the platform and the signed-in account. */
+  account(): string {
+    return JSON.stringify([
+      this.host.profile?.name ?? null,
+      this.host.runAccount ?? null,
+    ]);
+  }
+
   /** The drafts and copies of the account shown now (memory only when no account can own them). */
   async drafts(): Promise<TableDrafts> {
     const host = this.host;
     const scope = host.runAccount ?? null;
-    const key = JSON.stringify([host.profile?.name ?? null, scope]);
+    const key = this.account();
     if (!this.store || this.storeKey !== key) {
       const prefix = !host.profile
         ? "local:"

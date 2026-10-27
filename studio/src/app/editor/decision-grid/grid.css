@@ -83,6 +83,8 @@ SPDX-License-Identifier: Apache-2.0
 }
 .dg-policy weave-select {
   min-width: 10rem;
+  /* One height with the toolbar's buttons, border included. */
+  --select-height: var(--dg-tool);
 }
 .dg-spacer {
   flex: 1;

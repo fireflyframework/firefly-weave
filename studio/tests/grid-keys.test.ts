@@ -192,6 +192,52 @@ describe("pasting cells from a spreadsheet", () => {
   });
 });
 
+describe("pasting at the edges", () => {
+  it("keeps at most 1,000 rows of 64 cells", () => {
+    const text = Array.from({ length: 1005 }, () =>
+      Array.from({ length: 70 }, (_, i) => String(i)).join("\t"),
+    ).join("\n");
+    const block = parsePaste(text);
+    expect(block).toHaveLength(1000);
+    expect(block[0]).toHaveLength(64);
+  });
+
+  it("writes Otherwise's results when pasted on it, and nothing below it", () => {
+    const spec = table();
+    const view = gridOf(spec);
+    const {
+      spec: next,
+      flagged,
+      notes,
+    } = pasteInto(
+      spec,
+      { row: 3, column: 3 },
+      [
+        ["true", "77"],
+        ["false", "1"],
+      ],
+      view,
+    );
+    expect(next.rules).toHaveLength(3);
+    expect(next.defaultOutput).toEqual(lit({ approve: true, limit: 77 }));
+    expect(flagged).toEqual([]);
+    expect(notes).toEqual([
+      "Otherwise is the last row: 1 pasted row was left out.",
+    ]);
+  });
+
+  it("says when pasted cells replace a rule's formula", () => {
+    const spec = table();
+    const { notes } = pasteInto(
+      spec,
+      { row: 2, column: 1 },
+      [["> 5"]],
+      gridOf(spec),
+    );
+    expect(notes).toEqual(["Pasted cells replaced the formula of rule 3."]);
+  });
+});
+
 describe("the grid's history", () => {
   it("undoes and redoes table edits, merging quick edits of one cell", () => {
     const history = new GridHistory();
