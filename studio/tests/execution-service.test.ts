@@ -294,6 +294,10 @@ describe("the execution service", () => {
     sent[0].answer(RESPONSE);
     await running;
     expect(service.sampledInput()).toBe(true);
+    // The sample it ran with, for the Input pane of the steps that read it.
+    expect(service.sampleUsed()).toEqual(sampleFromSchema(INPUT_SCHEMA));
+    service.forget();
+    expect(service.sampleUsed()).toBeNull();
   });
 
   it("Stop drops the running answer", async () => {

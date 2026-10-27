@@ -363,7 +363,12 @@ export class InputPane implements OnInit {
   /** The chosen source's data: the test input, an earlier step's pinned output, or what the step received. */
   dataOf(source: string): Json | undefined {
     const controller = this.session().controller;
-    if (source === "input") return controller.testEvent() ?? this.value();
+    if (source === "input")
+      return (
+        controller.testEvent() ??
+        this.session().host.execution?.sampleUsed() ??
+        this.value()
+      );
     if (source.startsWith("step:"))
       return controller.stepData(source.slice(5))?.value ?? this.value();
     return this.value();
@@ -392,7 +397,11 @@ export class InputPane implements OnInit {
   }
   /** Where the chosen source's data comes from: test input, a pin, or the last execution. */
   sourceTag(source: string): string {
-    if (source === "input") return "Test input";
+    if (source === "input")
+      return this.session().controller.testEvent() === undefined &&
+        this.session().host.execution?.sampleUsed() != null
+        ? "Sample"
+        : "Test input";
     const data = source.startsWith("step:")
       ? this.session().controller.stepData(source.slice(5))
       : undefined;

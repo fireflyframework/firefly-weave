@@ -121,6 +121,8 @@ export class ExecutionService {
   readonly last = signal<ExecuteResponse | null>(null);
   /** The last execution ran with a sample of the input fields (no test input). */
   readonly sampledInput = signal(false);
+  /** That sample of the input fields, shown as the workflow input it ran with. */
+  readonly sampleUsed = signal<Json | null>(null);
   /** Bumped by open and forget: an answer asked for before never lands. */
   private generation = 0;
   /** Bumped by every execution and by Stop: only the newest answer lands. */
@@ -140,6 +142,7 @@ export class ExecutionService {
     this.running.set(null);
     this.results.set(null);
     this.last.set(null);
+    this.sampleUsed.set(null);
     this.resultsDraft = draftId;
     const place = this.host.place();
     const backend = this.host.backend;
@@ -158,6 +161,7 @@ export class ExecutionService {
     this.running.set(null);
     this.results.set(null);
     this.last.set(null);
+    this.sampleUsed.set(null);
     this.dropSession();
   }
 
@@ -246,6 +250,9 @@ export class ExecutionService {
     this.results.set(results);
     this.last.set(answer);
     this.sampledInput.set(sampled);
+    this.sampleUsed.set(
+      sampled ? ((body.input as Json | undefined) ?? null) : null,
+    );
     await this.keep(place, draft.id, results);
     return { kind: "done", response: answer };
   }

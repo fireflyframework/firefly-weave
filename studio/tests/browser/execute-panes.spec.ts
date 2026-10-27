@@ -26,6 +26,8 @@ import {
   openExecuteWorkflow,
   pinSample,
   shownExecute,
+  EXECUTE_ROUTED,
+  executeWorkflowIn,
 } from "./execute-po";
 import { fieldLine } from "./formula-po";
 import { hasPython } from "./local-authoring";
@@ -341,4 +343,22 @@ test.describe("mapping from the empty Input pane", () => {
     const summarize = source.slice(source.indexOf("id: summarize"));
     expect(summarize.slice(0, 600)).toContain("/input/customerId");
   });
+});
+
+test("after a test run with a sample input, the steps that read it show that sample", async ({
+  page,
+}) => {
+  const { details } = await openExecuteWorkflow(page, EXECUTE_ROUTED);
+  const answered = page.waitForResponse("**/studio/local/debug/execute");
+  await executeWorkflowIn(page);
+  await answered;
+  await details.open("route");
+  const tabs = details.dialog
+    .getByRole("tablist", { name: /^(Step details panes|Data)$/ })
+    .getByRole("tab", { name: "Input" });
+  if (await tabs.count()) await tabs.first().click();
+  const input = details.dialog.locator("weave-input-pane");
+  await expect(input.locator(".pane-source-tag")).toHaveText("Sample");
+  await expect(input).not.toContainText("No input data yet");
+  await expect(input).toContainText("amount");
 });
