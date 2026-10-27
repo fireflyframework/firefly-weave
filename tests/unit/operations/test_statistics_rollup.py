@@ -150,3 +150,30 @@ def test_a_chunk_is_whole_buckets_and_never_runs_past_now():
     )
     # Caught up, three buckets cover the whole window up to the bucket after now.
     assert window(NOW, None, timedelta(minutes=15)) == window(NOW, None)
+
+
+def test_closing_edges_and_one_day_per_cycle():
+    from firefly_weave.operations.statistics import DAYS_PER_CYCLE
+
+    # An hour closes the moment its end reaches the edge (14:35 − 15 min = 14:20 ≥ 14:00), not a bucket later.
+    assert hours_to_close(datetime(2026, 10, 26, 13, 0, tzinfo=UTC), datetime(2026, 10, 26, 14, 15, tzinfo=UTC)) == [
+        datetime(2026, 10, 26, 13, 0, tzinfo=UTC)
+    ]
+    # A day closes once its last hour has, one day per cycle however far behind.
+    day = datetime(2026, 10, 20, tzinfo=UTC)
+    assert days_to_close(day, day + timedelta(days=1)) == [day]
+    assert DAYS_PER_CYCLE == 1 and days_to_close(day, day + timedelta(days=5)) == [day]
+
+
+def test_the_cap_ranks_by_starts_as_well_as_ends():
+    busy_start = BucketRow(BUCKET, "starting", "1.0.0", started=9)
+    quiet = row("ending", 0, 2)
+    kept, folded = cap_series([quiet, busy_start], cap=1)
+    assert [item.workflow_name for item in kept] == ["starting", "(other)"]
+    assert folded == {(BUCKET, "ending", "1.0.0")}
+
+
+def test_fifty_task_types_fold_nothing():
+    rows = [(f"type-{index:02d}", 1, None) for index in range(50)]
+    assert len(fold_task_types(rows, cap=50)) == 50
+    assert all(name != "(other)" for name, _, _ in fold_task_types(rows, cap=50))

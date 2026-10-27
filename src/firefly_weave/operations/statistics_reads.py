@@ -35,6 +35,7 @@ from typing import Any, get_args
 
 from pyfly.container import service
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 
 from firefly_weave.access.audit import AuditContext
 from firefly_weave.access.authorization import AuthorizationService
@@ -705,13 +706,21 @@ class RunStatisticsService:
         if scope.environment_id is None:
             raise CatalogError(422, "WV-SCOPE", "Run statistics require an environment")
         self.authorization.require(actor, scope, "status.read", context=context)
-        async with self.uow.open(scope, mutation=False) as tx:
-            current = await load_principal(tx.session, actor.id)
-            self.authorization.require(current, scope, "status.read", context=context)
-            await tx.session.execute(
-                text("SELECT set_config('statement_timeout',:value,true)"), {"value": READ_TIMEOUT}
-            )
-            return await read(tx)
+        try:
+            async with self.uow.open(scope, mutation=False) as tx:
+                current = await load_principal(tx.session, actor.id)
+                self.authorization.require(current, scope, "status.read", context=context)
+                await tx.session.execute(
+                    text("SELECT set_config('statement_timeout',:value,true)"), {"value": READ_TIMEOUT}
+                )
+                return await read(tx)
+        except DBAPIError as error:
+            # A read that runs out of its two seconds is unavailable for now, never an internal error.
+            if getattr(error.orig, "sqlstate", None) != "57014" or error.connection_invalidated:
+                raise
+            raise CatalogError(
+                503, "WV-UNAVAILABLE", "Run statistics took too long to read. Try a shorter range, or try again."
+            ) from None
 
     async def series(
         self, actor: Principal, scope: Scope, query: StatisticsSeriesQuery, *, context: AuditContext

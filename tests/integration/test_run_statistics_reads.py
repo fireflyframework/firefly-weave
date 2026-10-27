@@ -23,7 +23,6 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy import text
-from sqlalchemy.exc import DBAPIError
 from test_operations_statistics import B0, NOW, ms, owner, place, rollup, started_runs, step
 
 from firefly_weave.access.audit import AuditContext
@@ -33,6 +32,7 @@ from firefly_weave.contracts.run_statistics import (
     StatisticsStepsQuery,
     StatisticsWorkflowsQuery,
 )
+from firefly_weave.definitions.models import CatalogError
 from firefly_weave.operations import statistics_reads
 from firefly_weave.operations.statistics_histogram import histogram
 from firefly_weave.persistence.uow import UnitOfWork
@@ -238,14 +238,14 @@ async def test_a_slow_read_answers_the_timeout_not_partial_data(operations_case,
     monkeypatch.setattr(statistics_reads.RunStatisticsReader, "cursor", slow)
     service = statistics_reads.RunStatisticsService(UnitOfWork(operations_case.sessions), _Allow())  # type: ignore[arg-type]
     monkeypatch.setattr(statistics_reads, "load_principal", _stored)
-    with pytest.raises(DBAPIError) as caught:
+    with pytest.raises(CatalogError) as caught:
         await service.workflows(
             operations_case.actor,
             operations_case.scope,
             StatisticsWorkflowsQuery.model_validate(RANGE),
             context=AuditContext(),
         )
-    assert caught.value.orig.sqlstate == "57014"
+    assert (caught.value.status, caught.value.code) == (503, "WV-UNAVAILABLE")
 
 
 class _Allow:

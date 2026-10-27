@@ -226,3 +226,46 @@ def test_the_oldest_ready_age_is_the_largest_over_task_types_not_their_sum():
     )
     (series,) = statistics_reads._sample_series(query, ["oldest_ready_seconds"], [AT], found)
     assert series.points == [(AT, 90.0)]
+
+
+async def test_a_read_that_runs_out_of_time_answers_unavailable_not_an_internal_error(monkeypatch):
+    from sqlalchemy.exc import DBAPIError
+
+    class Cancelled(Exception):
+        sqlstate = "57014"
+
+    scope = Scope(tenant_id=uuid4(), project_id=uuid4(), environment_id=UUID(int=4))
+
+    async def stored(session, actor_id):
+        return "stored"
+
+    async def slow(tx):
+        raise DBAPIError("SELECT 1", None, Cancelled("canceling statement due to statement timeout"))
+
+    class Session:
+        async def execute(self, statement, values=None):
+            return None
+
+    class Unit:
+        @asynccontextmanager
+        async def open(self, scope, *, mutation=True):
+            yield SimpleNamespace(session=Session())
+
+    monkeypatch.setattr(statistics_reads, "load_principal", stored)
+    service = RunStatisticsService(Unit(), Authorization(token=True, stored=True))  # type: ignore[arg-type]
+    monkeypatch.setattr(service.authorization, "require", _as(service.authorization.require, "token"))
+    actor = type("Actor", (), {"id": uuid4()})()
+    with pytest.raises(CatalogError) as caught:
+        await service._read(actor, scope, AuditContext(), slow)
+    assert (caught.value.status, caught.value.code) == (503, "WV-UNAVAILABLE")
+    # Two seconds of database time per read.
+    assert statistics_reads.READ_TIMEOUT == "2000ms"
+
+
+def test_buckets_past_the_rollups_edge_are_unknown_not_zero():
+    cursor = _Cursor(covered_from=AT - timedelta(hours=1), rolled_until=AT + timedelta(minutes=10))
+    assert statistics_reads._covered(cursor, AT, "5m") is True
+    assert statistics_reads._covered(cursor, AT + timedelta(minutes=10), "5m") is False
+    assert statistics_reads._covered(cursor, AT - timedelta(hours=2), "5m") is False
+    # An hour that only partly overlaps coverage is covered.
+    assert statistics_reads._covered(cursor, AT - timedelta(minutes=90), "1h") is True
