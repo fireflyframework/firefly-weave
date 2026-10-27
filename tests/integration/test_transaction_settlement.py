@@ -237,3 +237,48 @@ async def test_children_still_undoing_never_hold_back_the_cancel_of_another_chil
             )
     await platform.scan()
     assert (await platform.state(children[runs[11].id]))["status"] == "cancelled"
+
+
+async def test_children_in_doubt_never_hold_back_the_cancel_of_another_child(platform):
+    doubtful = await platform.publish(
+        workflow("child-move", [transaction(hold(), add(), submit())], callable_=True, timeout=300)
+    )
+    plain = await platform.publish(workflow("child-look", [lookup("first")], callable_=True, timeout=300))
+
+    def caller(name: str, uses: str) -> dict:
+        step = {
+            "id": "elsewhere",
+            "kind": "callWorkflow",
+            "uses": uses,
+            "with": {"object": {"moveId": {"ref": "/input/moveId"}, "quantity": {"ref": "/input/quantity"}}},
+        }
+        return workflow(name, [step])
+
+    stuck = await platform.publish(caller("parent-move", "child-move@1.0.0"), **{"child-move": doubtful.id})
+    healthy = await platform.publish(caller("parent-look", "child-look@1.0.0"), **{"child-look": plain.id})
+    runs = []
+    for index in range(11):
+        run = await platform.start(stuck, move=f"M-{index}")
+        await platform.scan()
+        # Each child's step that can't be undone may or may not have happened: the child is in doubt for good.
+        await platform.complete(await platform.lease("hold"))
+        await platform.complete(await platform.lease("add"))
+        await platform.fail(await platform.lease("submit"), "UNAVAILABLE")
+        await platform.scan()
+        runs.append(run)
+    last = await platform.start(healthy, move="M-11")
+    await platform.scan()
+    runs.append(last)
+    children = {}
+    for run in runs:
+        [call] = await platform.query("SELECT child_run_id FROM run_calls WHERE caller_run_id=:run", run=run.id)
+        children[run.id] = call["child_run_id"]
+    for run in runs[:11]:
+        assert (await platform.record(children[run.id]))["state"] == "in_doubt"
+    for run in runs:
+        async with platform.runtime.definitions.transaction(platform.scope, None) as tx:
+            await platform.runtime.cancel(
+                tx, run.id, "stop", actor=platform.actor, scope=platform.scope, context=AuditContext()
+            )
+    await platform.scan()
+    assert (await platform.state(children[last.id]))["status"] == "cancelled"
