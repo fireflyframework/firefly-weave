@@ -282,3 +282,21 @@ async def test_children_in_doubt_never_hold_back_the_cancel_of_another_child(pla
             )
     await platform.scan()
     assert (await platform.state(children[last.id]))["status"] == "cancelled"
+
+
+async def test_a_claim_takes_settlement_work_before_older_forward_work(platform):
+    run = await platform.start(await platform.publish(workflow("move", [transaction(hold(), add(), submit())])))
+    await platform.complete(await platform.lease("hold"))
+    await platform.fail(await platform.lease("add"), "REFUSED", outcome="failed", effect="none")
+    await platform.scan()
+    other = await platform.start(await platform.publish(workflow("look", [lookup("first")])), move="M-0")
+    # More ready forward tasks of a running run than one claim reads, all ordered before the undo.
+    await platform.execute(
+        "INSERT INTO task_intents(id,tenant_id,project_id,environment_id,run_id,node_id,payload,worker_release_id,"
+        "operation_key,status) SELECT ('00000000-0000-4000-8000-' || lpad(to_hex(n),12,'0'))::uuid,tenant_id,"
+        "project_id,environment_id,run_id,'first-' || n,payload,worker_release_id,operation_key || '-' || n,'ready' "
+        "FROM task_intents CROSS JOIN generate_series(1,150) n WHERE run_id=:run",
+        run=other.id,
+    )
+    claimed = await platform.claim()
+    assert claimed[0].operation_key == f"{run.id}:hold#cancel"
