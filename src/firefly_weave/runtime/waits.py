@@ -27,6 +27,7 @@ from firefly_weave.runtime.kernel import deadline_order, duration_steps, workflo
 from firefly_weave.runtime.kernel import transition_async as transition
 from firefly_weave.runtime.models import RuntimeEvent
 from firefly_weave.runtime.repository import SCOPE, RuntimeRepository
+from firefly_weave.runtime.transactions import split_deadline
 
 TERMINAL = {"succeeded", "failed", "cancelled", "timed_out"}
 
@@ -78,7 +79,57 @@ async def settle(repository: RuntimeRepository, row: dict[str, Any], *, terminal
         elapsed = step in duration_nodes
         if terminal_only and elapsed:
             continue
-        if not elapsed:
+        data: dict[str, Any] = {
+            "node_id": deadline["node_id"],
+            "deadline": deadline["deadline"].isoformat(),
+            "wait_id": str(deadline["id"]),
+        }
+        bound = split_deadline(deadline["node_id"])
+        if bound is not None and bound[1] == "decide":
+            # Whether the called step that can't be undone ever started, read under the caller's lock that every
+            # call start also takes; the event records it, so replay decides the same way.
+            record = view.state.transactions.get(bound[0])
+            pivot = next((i.key for i in (record.participants if record else []) if i.mode == "irreversible"), None)
+            calls = await repository.rows(
+                f"SELECT status FROM run_calls WHERE {SCOPE} AND caller_run_id=:run AND node_id=:node "
+                "ORDER BY generation DESC LIMIT 1",
+                run=view.id,
+                node=pivot,
+            )
+            data["started"] = not calls or calls[0]["status"] != "requested"
+        event = RuntimeEvent(
+            id=uuid4(),
+            type="wait_elapsed" if elapsed else "timed_out",
+            timestamp=now,
+            sequence=view.state.accepted_sequence + 1,
+            data=data,
+        )
+        from firefly_weave.runtime.capacity import RuntimeCapacityError, capacity_failures
+
+        failures = capacity_failures.get()
+        marked = list(failures) if failures is not None else None
+        candidate = repository.tx.session.info.get("weave_runtime_candidate")
+        try:
+            result = await transition(view.state, event, artifact)
+        except RuntimeCapacityError:
+            if elapsed:
+                raise
+            from firefly_weave.runtime.terminal_capacity import hold_transactions, persist_terminal
+
+            # A timeout of a run whose transactions are not settled is held instead: the capacity mark this
+            # transition left would roll the hold back with the unit of work, so it is cleared first.
+            restored = list(failures) if failures is not None else None
+            if failures is not None and marked is not None:
+                failures[:] = marked
+            if await hold_transactions(repository, row, event):
+                repository.tx.session.info["weave_runtime_candidate"] = candidate
+                return 1
+            if failures is not None and restored is not None:
+                failures[:] = restored
+            await persist_terminal(repository, row, event, canonical_digest({"timeout": str(deadline["id"])}))
+            return 1
+        if not elapsed and result.state.status in TERMINAL:
+            # A timeout that ends the run is terminal control; one whose transactions settle first is ordinary work.
             await repository.execute("SELECT weave_control_begin('run',:id)", id=view.id)
         await repository.execute(
             "INSERT INTO wait_wakeups VALUES(:tenant,:project,:environment,:wait,:kind,:now)",
@@ -86,28 +137,6 @@ async def settle(repository: RuntimeRepository, row: dict[str, Any], *, terminal
             wait=deadline["id"],
             now=now,
         )
-        event = RuntimeEvent(
-            id=uuid4(),
-            type="wait_elapsed" if elapsed else "timed_out",
-            timestamp=now,
-            sequence=view.state.accepted_sequence + 1,
-            data={
-                "node_id": deadline["node_id"],
-                "deadline": deadline["deadline"].isoformat(),
-                "wait_id": str(deadline["id"]),
-            },
-        )
-        from firefly_weave.runtime.capacity import RuntimeCapacityError
-
-        try:
-            result = await transition(view.state, event, artifact)
-        except RuntimeCapacityError:
-            if elapsed:
-                raise
-            from firefly_weave.runtime.terminal_capacity import persist_terminal
-
-            await persist_terminal(repository, row, event, canonical_digest({"timeout": str(deadline["id"])}))
-            return 1
         await repository.persist(
             view.model_copy(update={"state": result.state}),
             event,
@@ -120,6 +149,9 @@ async def settle(repository: RuntimeRepository, row: dict[str, Any], *, terminal
     from firefly_weave.runtime.calls import deliver_calls
 
     view, _ = await deliver_calls(repository, view, artifact)
+    from firefly_weave.runtime.settlement import deliver_revoked
+
+    view, _ = await deliver_revoked(repository, view, artifact)
     # Consume the durable winner even behind the barrier: the kernel defers its
     # continuation, while its settled deadline no longer occupies scanner pages.
     while view.state.status in {"waiting", "suspended"}:

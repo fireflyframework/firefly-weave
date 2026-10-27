@@ -105,7 +105,7 @@ def test_runtime_codes_follow_the_diagnostic_pattern_and_carry_product_copy():
         for word in ("saga", "compensat", "pivot", "TCC"):
             assert word not in message, code
     assert set(TRANSACTION_MESSAGES) >= IN_DOUBT_CODES
-    assert len(IN_DOUBT_CODES) == 6
+    assert len(IN_DOUBT_CODES) == 7
 
 
 def test_the_platform_event_payload_is_published_and_carries_no_business_values():

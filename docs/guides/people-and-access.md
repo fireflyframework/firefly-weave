@@ -82,6 +82,7 @@ business data.
 | Run operator | `operator` | Start, signal, cancel, pause, resume, retry, and archive runs; handle incidents |
 | Deployer | `deployer` | Activate and retire releases, bind connections, and manage triggers and subscriptions |
 | Execution manager | `execution_manager` | Read, archive, and permanently purge run content |
+| Transaction reconciler | `transaction_reconciler` | Decide by hand how a workflow transaction in doubt ended; it grants no other access |
 | Task participant | `task_participant` | Read eligible tasks; claim, release, and complete assigned work |
 | Task manager | `task_manager` | Manage assignment bindings, groups, and human tasks |
 | Email reader, Email sender, Email manager | `email_reader`, `email_sender`, `email_manager` | Read conversations, send messages, or manage email sources |
@@ -406,7 +407,7 @@ different set instead. An existing username is never reset. Never use this
 command with a shared or production identity provider.
 
 `weave platform up --username NAME` creates its first account with the local
-owner roles instead: `developer`, `deployer`, `operator`, `viewer`, `task_participant`, `tenant_admin`, `lumi_manager`, `execution_manager`, `worker_operator`, `deployment_reader`, `deployment_planner`, `deployment_approver` and `deployment_operator`. To add roles later to an account this platform
+owner roles instead: `developer`, `deployer`, `operator`, `viewer`, `task_participant`, `tenant_admin`, `lumi_manager`, `execution_manager`, `worker_operator`, `deployment_reader`, `deployment_planner`, `deployment_approver`, `deployment_operator` and `transaction_reconciler`. To add roles later to an account this platform
 created, use `user grant`; it adds grants, never removes them, and first checks
 that the sign-in still belongs to the recorded person:
 
