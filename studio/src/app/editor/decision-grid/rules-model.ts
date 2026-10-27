@@ -210,7 +210,13 @@ export function gridOf(spec: TableSpec): GridView {
     results,
     scalar,
     rows: spec.rules.map((rule) => {
-      const cells = decomposeWhen(rule.when, cellsOf);
+      const split = decomposeWhen(rule.when, cellsOf);
+      // A test of an Other column can't be a cell: the rule stays one formula.
+      const cells =
+        split &&
+        split.every((cell, i) => cell === null || inputs[i].type !== null)
+          ? split
+          : null;
       return {
         id: rule.id,
         condition: cells

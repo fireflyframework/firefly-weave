@@ -476,3 +476,33 @@ describe("results the grid writes", () => {
     expect(after.rules[0]).toBe(before.rules[0]);
   });
 });
+
+describe("columns the grid can't test", () => {
+  it("keeps a rule that tests an Other column as one formula", () => {
+    const spec: TableSpec = {
+      ...table(),
+      inputSchema: {
+        type: "object",
+        properties: {
+          amount: { type: "number" },
+          address: { type: "object" },
+        },
+      },
+      rules: [
+        {
+          id: "a",
+          when: op("eq", ref("address"), lit("x")),
+          output: lit({ approve: true }),
+        },
+        {
+          id: "b",
+          when: op("gt", ref("amount"), lit(1)),
+          output: lit({ approve: true }),
+        },
+      ],
+    };
+    const view = gridOf(spec);
+    expect(view.rows[0].condition.kind).toBe("formula");
+    expect(view.rows[1].condition.kind).toBe("cells");
+  });
+});
