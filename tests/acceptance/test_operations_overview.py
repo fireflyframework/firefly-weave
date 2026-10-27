@@ -525,6 +525,8 @@ def test_j5_02_a_drained_worker_holds_ready_tasks_until_it_resumes(run):
 # out after RUN_TIMEOUT seconds: three planted runs wait longer and end as timed out, which counts as a failure.
 METRICS_LITE = "order-review-lite-metrics-" + SUFFIX
 METRICS_ACTION = "order-review-lite-metrics-sleep-" + SUFFIX
+CONTACT_LITE = "order-review-lite-contact-" + SUFFIX
+CONTACT_ACTION = "order-review-lite-contact-sleep-" + SUFFIX
 RUN_TIMEOUT = 10
 STALL_MS = RUN_TIMEOUT * 6000
 STATISTICS_SECONDS = 180
@@ -608,12 +610,16 @@ async def counted_runs(platform: Platform, release: str) -> dict:
     }
 
 
-async def short_run(platform: Platform, activation: str) -> None:
+async def short_run(platform: Platform, release: str) -> None:
+    """One short run of a workflow of its own, so the figures J5.4 counted, and Studio later shows, never change."""
+    activation = await lite_activation(platform, release, name=CONTACT_LITE, action=CONTACT_ACTION)
     async with platform.client() as client:
-        started = await post(client, platform.environment + "/runs", {"activation_id": activation, "input": {"ms": 50}})
+        started = await post(
+            client, platform.environment + "/runs", {"activation_id": activation["id"], "input": {"ms": 50}}
+        )
         deadline = time.monotonic() + 120
         while True:
-            listed = await get(client, platform.environment + "/run-summaries", workflow=METRICS_LITE, limit=100)
+            listed = await get(client, platform.environment + "/run-summaries", workflow=CONTACT_LITE, limit=100)
             if any(item["id"] == started["id"] and item.get("status") == "succeeded" for item in listed["items"]):
                 return
             assert time.monotonic() < deadline, "the short run did not finish"
@@ -625,13 +631,13 @@ def test_j5_04_metrics_count_runs_failures_and_durations_as_the_run_list_does(ru
     platform = Platform(run)
     worker, release = fixture_worker(run)
     counted = asyncio.run(counted_runs(platform, release))
-    # The timed-out runs' tasks still sleep on the fixture worker: let it finish them, so the next step finds it idle.
+    # The planted runs wait on the platform, never on the worker: it holds no task by now.
     deadline = time.monotonic() + RUN_TIMEOUT * 3 + 60
     while asyncio.run(worker_view(platform, worker))["active_leases"]:
-        assert time.monotonic() < deadline, "the fixture worker still holds the timed-out runs' tasks"
+        assert time.monotonic() < deadline, "the fixture worker still holds the counted runs' tasks"
         time.sleep(2)
     # One short run more, after the figures were read: the worker's last contact is fresh for the next step.
-    asyncio.run(short_run(platform, counted["activation"]))
+    asyncio.run(short_run(platform, release))
     row, totals, statuses = counted["row"], counted["totals"], counted["statuses"]
     # The run list and the statistics agree: 20 started, 17 succeeded, 3 timed out, which count as failed.
     assert sorted(statuses) == ["succeeded"] * 17 + ["timed_out"] * 3, statuses
