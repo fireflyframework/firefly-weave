@@ -40,6 +40,7 @@ import {
   seriesName,
   stackColumns,
   axisTicks,
+  spansDays,
   timeLabel,
   xLabelIndices,
   type Granularity,
@@ -201,6 +202,9 @@ let nextId = 0;
           }
         </g>
       </svg>
+      @if (granularity() === "1d") {
+        <p class="chart-note">Days in UTC</p>
+      }
       @if (g.legend.length) {
         <ul class="chart-legend" role="list">
           @for (item of g.legend; track item.key) {
@@ -270,17 +274,26 @@ export class TimeChart {
   readonly tableRows = computed(() => {
     const [header, ...rows] = chartRows(this.series());
     const granularity = this.granularity();
+    const withDate = this.withDate();
     return [
       header,
       ...rows.map(([time, ...cells]) => [
-        timeLabel(time, granularity),
+        timeLabel(time, granularity, withDate),
         ...cells,
       ]),
     ];
   });
 
+  /** Hourly and finer buckets over more than a day carry their date. */
+  readonly withDate = computed(
+    () =>
+      this.granularity() !== "1d" &&
+      this.series().some((item) => spansDays(item.points)),
+  );
+
   readonly geometry = computed(() => {
     const series = this.series();
+    const withDate = this.withDate();
     const stackedSignals = this.stacked();
     const lineSignals = this.lines();
     const unit = this.unit();
@@ -350,7 +363,9 @@ export class TimeChart {
     });
     const longest = Math.max(
       1,
-      ...(times ?? []).map(([time]) => timeLabel(time, granularity).length),
+      ...(times ?? []).map(
+        ([time]) => timeLabel(time, granularity, withDate).length,
+      ),
     );
     const known = series.some((item) =>
       item.points.some(([, value]) => value !== null),
@@ -378,13 +393,13 @@ export class TimeChart {
       xLabels: times
         ? xLabelIndices(count, frame.plotWidth, longest).map((index) => ({
             x: layout.center(index),
-            text: timeLabel(times[index][0], granularity),
+            text: timeLabel(times[index][0], granularity, withDate),
           }))
         : [],
       hovers: (times ?? []).map(([time], index) => ({
         x: index * layout.band,
         title: [
-          timeLabel(time, granularity),
+          timeLabel(time, granularity, withDate),
           ...series.map(
             (item) =>
               `${seriesName(item)}: ${metricText(item.unit, item.points[index]?.[1] ?? null)}`,

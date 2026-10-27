@@ -90,6 +90,12 @@ SPDX-License-Identifier: Apache-2.0
   fill-opacity: 0.35;
 }
 
+.chart-note {
+  margin: var(--space-1) 0 0;
+  color: var(--subtle);
+  font: var(--type-small);
+}
+
 .chart-empty {
   fill: var(--muted);
   font-size: 13px;

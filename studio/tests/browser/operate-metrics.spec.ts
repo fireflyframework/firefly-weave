@@ -604,3 +604,81 @@ test.describe("states", () => {
     await expect(page.locator("svg.chart-frame")).toHaveCount(5);
   });
 });
+
+test.describe("time west of UTC", () => {
+  test.use({
+    viewport: { width: 1440, height: 900 },
+    timezoneId: "America/Los_Angeles",
+  });
+
+  test("daily buckets keep their UTC day and hourly ones over days carry the date", async ({
+    page,
+  }) => {
+    await metrics(page, every, {
+      series: (url) => {
+        const daily = url.searchParams.get("from")?.startsWith("2026-09");
+        const answer = seriesAnswer(url);
+        if (url.searchParams.get("from")?.startsWith("2026-10-19"))
+          // Seven days hourly: 48 points are enough to span more than a day.
+          return {
+            json: {
+              ...answer,
+              series: answer.series.map((item) => ({
+                ...item,
+                points: [...item.points, ...item.points].map(
+                  ([, value], index) =>
+                    [
+                      new Date(Date.UTC(2026, 9, 25, 15) + index * 3_600_000)
+                        .toISOString()
+                        .replace(".000", ""),
+                      value,
+                    ] as [string, number | null],
+                ),
+              })),
+            },
+          };
+        if (!daily) return { json: answer };
+        return {
+          json: {
+            ...answer,
+            granularity: "1d",
+            series: answer.series.map((item) => ({
+              ...item,
+              points: [0, 1, 2].map(
+                (index) =>
+                  [
+                    new Date(Date.UTC(2026, 9, 24 + index))
+                      .toISOString()
+                      .replace(".000", ""),
+                    item.points[index][1],
+                  ] as [string, number | null],
+              ),
+            })),
+          },
+        };
+      },
+    });
+    await page.clock.setFixedTime(new Date("2026-10-26T14:32:10Z"));
+    await page.goto("/operate/metrics?range=30d");
+    const throughput = page
+      .locator(".chart-card")
+      .filter({ hasText: "Throughput" });
+    await expect(throughput.locator(".chart-note")).toHaveText("Days in UTC");
+    await throughput.getByRole("button", { name: "Show as table" }).click();
+    await expect(throughput.locator("table.chart-table tbody th")).toHaveText([
+      "Oct 24",
+      "Oct 25",
+      "Oct 26",
+    ]);
+    // A 7-day hourly range: every row names its day as well as its hour.
+    await page.goto("/operate/metrics?range=7d");
+    const hourly = page
+      .locator(".chart-card")
+      .filter({ hasText: "Throughput" });
+    await hourly.getByRole("button", { name: "Show as table" }).click();
+    await expect(
+      hourly.locator("table.chart-table tbody th").first(),
+    ).toHaveText("Oct 25, 08:00");
+    await expect(hourly.locator(".chart-note")).toHaveCount(0);
+  });
+});

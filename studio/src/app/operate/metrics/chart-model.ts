@@ -235,14 +235,39 @@ const clock = new Intl.DateTimeFormat("en-US", {
   minute: "2-digit",
   hourCycle: "h23",
 });
+const dated = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  day: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+});
+// Daily buckets are UTC days: named in UTC, so they never shift a day west of UTC.
 const day = new Intl.DateTimeFormat("en-US", {
   month: "short",
   day: "numeric",
+  timeZone: "UTC",
 });
-/** A bucket's label on the time axis, in local time: "14:30", or "Oct 26" for daily buckets. */
-export function timeLabel(iso: string, granularity: Granularity): string {
+/**
+ * A bucket's label: "14:30" in local time, "Oct 25, 14:30" when the range
+ * spans days (`withDate`), or the UTC day "Oct 25" for daily buckets.
+ */
+export function timeLabel(
+  iso: string,
+  granularity: Granularity,
+  withDate = false,
+): string {
   const at = new Date(iso);
-  return granularity === "1d" ? day.format(at) : clock.format(at);
+  if (granularity === "1d") return day.format(at);
+  return (withDate ? dated : clock).format(at);
+}
+
+/** Whether points reach across more than one day, so time labels need dates. */
+export function spansDays(points: Point[]): boolean {
+  if (points.length < 2) return false;
+  const first = Date.parse(points[0][0]);
+  const last = Date.parse(points[points.length - 1][0]);
+  return last - first >= 24 * 3_600_000;
 }
 
 /** Estimated width of one character of tabular figures at the axis size. */
