@@ -266,8 +266,9 @@ for (const size of SIZES)
         log.getByRole("button", { name: "Close the run log" }),
       );
       expect(close.height).toBeCloseTo(touch ? 44 : 32, 0);
-      const head = await box(log.locator(".run-log-head"));
-      expect(Math.abs(close.middle - head.middle)).toBeLessThanOrEqual(1);
+      // On the title's line (a narrow sheet puts the status on its own line).
+      const title = await box(log.locator(".run-log-title"));
+      expect(Math.abs(close.middle - title.middle)).toBeLessThanOrEqual(1);
       await expectInWindow(page, [close, ...controls], "run log controls");
       await expectNoPageScroll(page);
     });
