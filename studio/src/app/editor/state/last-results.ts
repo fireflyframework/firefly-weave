@@ -33,6 +33,8 @@ export interface LastResult {
   output?: Json;
   /** The step's execution fingerprint when it ran. */
   execution: Fingerprint;
+  /** A decision's path in that run ("case:0", "default") and its result. */
+  branch?: { name: string; output?: Json };
 }
 export interface LastResults {
   schemaVersion: 1;
@@ -70,14 +72,72 @@ export function withExecution(
     const print = prints.get(entry.nodeId);
     if (!print) continue;
     const key = entry.instanceKey || entry.nodeId;
+    const branch = takenBranch(response, entry.nodeId, key);
     steps[key] = {
       status: entry.status,
       execution: print.execution,
       ...(entry.input !== undefined ? { input: entry.input } : {}),
       ...(entry.output !== undefined ? { output: entry.output } : {}),
+      ...(branch ? { branch } : {}),
     };
   }
   return { schemaVersion: 1, at, status: response.status, steps };
+}
+
+/**
+ * The path a decision's instance took in an answer: the host keys a branch
+ * "<owner>/<name><iteration>", the iteration as in the instance key.
+ */
+function takenBranch(
+  response: ExecuteResponse,
+  stepId: string,
+  key: string,
+): LastResult["branch"] | undefined {
+  const branches = response.variables?.["branches"];
+  if (!isObject(branches)) return undefined;
+  const iteration = key.slice(stepId.length);
+  for (const [name, value] of Object.entries(branches)) {
+    if (!isObject(value) || value["owner"] !== stepId) continue;
+    if (name !== `${stepId}/${String(value["name"])}${iteration}`) continue;
+    return {
+      name: String(value["name"]),
+      ...(value["output"] !== undefined
+        ? { output: value["output"] as Json }
+        : {}),
+    };
+  }
+  return undefined;
+}
+
+/**
+ * A decision instance's kept path, in the shape the path list and the tile
+ * line read (`{branches: {<key>: {owner, name, output}}}`): the instance's
+ * own, else the step's first instance that has one.
+ */
+export function branchVariables(
+  results: LastResults | null,
+  key: string,
+): { branches: Record<string, Json> } | undefined {
+  const steps = results?.steps ?? {};
+  const stepId = instanceStep(key);
+  const found =
+    steps[key]?.branch !== undefined
+      ? key
+      : Object.keys(steps).find(
+          (other) =>
+            instanceStep(other) === stepId && steps[other].branch !== undefined,
+        );
+  const branch = found ? steps[found].branch : undefined;
+  if (!found || !branch) return undefined;
+  return {
+    branches: {
+      [found]: {
+        owner: stepId,
+        name: branch.name,
+        output: branch.output ?? null,
+      },
+    },
+  };
 }
 
 /** Results whose step changed, or something it reads changed, since it ran. */
@@ -137,7 +197,10 @@ export function readResults(text: string | null): LastResults | null {
     if (
       !isObject(result) ||
       !STATUSES.has(result["status"] as string) ||
-      typeof result["execution"] !== "string"
+      typeof result["execution"] !== "string" ||
+      (result["branch"] !== undefined &&
+        (!isObject(result["branch"]) ||
+          typeof result["branch"]["name"] !== "string"))
     )
       return null;
   return raw as unknown as LastResults;

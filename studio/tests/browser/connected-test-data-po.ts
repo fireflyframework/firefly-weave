@@ -71,6 +71,8 @@ export interface Platform {
   refuse: { status: number; json: unknown }[];
   /** The same for canvas saves. */
   refuseCanvas?: { status: number; json: unknown }[];
+  /** The draft's workflow, when not `definition`. */
+  document?: unknown;
 }
 
 export async function platform(page: Page, state: Platform) {
@@ -122,7 +124,7 @@ export async function platform(page: Page, state: Platform) {
     const request = route.request();
     if (request.method() !== "PUT")
       return route.fulfill({
-        json: { id: draftId, revision, document: definition },
+        json: { id: draftId, revision, document: state.document ?? definition },
       });
     state.saves.push({ kind: "draft", body: request.postDataJSON() });
     revision += 1;

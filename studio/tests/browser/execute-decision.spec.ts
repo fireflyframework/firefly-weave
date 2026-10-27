@@ -105,3 +105,56 @@ for (const size of sizes)
       );
     });
   });
+
+test("a decision keeps its paths after executing another step", async ({
+  page,
+}) => {
+  const { details } = await openExecuteWorkflow(
+    page,
+    yamlFile(
+      "kept-paths.yaml",
+      `apiVersion: weave/v1alpha1
+kind: Workflow
+metadata: {name: kept-paths, version: 1.0.0}
+spec:
+  inputSchema:
+    type: object
+    properties:
+      amount: {type: number, title: Amount}
+  outputSchema: {}
+  steps:
+    - id: first
+      kind: transform
+      value: {object: {amount: {ref: /input/amount}}}
+    - id: route
+      kind: switch
+      cases:
+        - when: {op: {name: gte, args: [{ref: /input/amount}, {literal: 0}]}}
+          steps: []
+          output: {literal: {tier: big}}
+      default: {steps: [], output: {literal: null}}
+  output: {literal: null}
+`,
+    ),
+  );
+  await details.open("route");
+  await (await shownExecute(details)).click();
+  let pane = await outputPane(details);
+  await expect(pane.locator(".pane-count")).toHaveText("Took path 1");
+  await details.close();
+  // Executing an earlier step doesn't reach the decision.
+  await details.open("first");
+  const answered = page.waitForResponse("**/studio/local/debug/execute");
+  await (await shownExecute(details)).click();
+  await answered;
+  await details.close();
+  await details.open("route");
+  pane = await outputPane(details);
+  await expect(pane.locator(".pane-count")).toHaveText("Took path 1");
+  await expect(
+    pane.getByRole("list", { name: "Paths" }).getByRole("listitem").first(),
+  ).toContainText("Taken");
+  await details.close();
+  const line = page.locator('[data-step="route"] .tile-output');
+  await expect(line).toHaveText("Path: Amount ≥ 0");
+});

@@ -17,8 +17,10 @@ SPDX-License-Identifier: Apache-2.0
 */
 // The last execution's results: merged, stale, pruned, bounded and read back strictly.
 import { describe, expect, it } from "vitest";
+import type { ExecuteResponse } from "../src/app/editor/state/execution";
 import {
   LAST_RESULTS_MAX_BYTES,
+  branchVariables,
   keptText,
   lastResultsKey,
   pruneResults,
@@ -135,5 +137,77 @@ describe("last results of a loop", () => {
     const three = withExecution(null, ran(3), prints, "a");
     const two = withExecution(three, ran(2), prints, "b");
     expect(Object.keys(two.steps)).toEqual(["send[0]", "send[1]"]);
+  });
+});
+
+describe("last results of a decision", () => {
+  const prints = new Map([
+    ["route", print(1)],
+    ["check", print(2)],
+  ]);
+  const routed: ExecuteResponse = {
+    ...RESPONSE,
+    trace: [
+      {
+        index: 0,
+        nodeId: "route",
+        instanceKey: "",
+        kind: "switch",
+        status: "completed",
+        output: { tier: "big" },
+      },
+      {
+        index: 1,
+        nodeId: "route",
+        instanceKey: "route[1]",
+        kind: "switch",
+        status: "completed",
+      },
+    ],
+    variables: {
+      branches: {
+        "route/case:0": {
+          owner: "route",
+          name: "case:0",
+          output: { tier: "big" },
+        },
+        "route/default[1]": { owner: "route", name: "default", output: null },
+      },
+    },
+  };
+  it("keep the path each decision took, per iteration", () => {
+    const results = withExecution(null, routed, prints, "a");
+    expect(results.steps["route"].branch).toEqual({
+      name: "case:0",
+      output: { tier: "big" },
+    });
+    expect(results.steps["route[1]"].branch).toEqual({
+      name: "default",
+      output: null,
+    });
+    expect(branchVariables(results, "route[1]")).toEqual({
+      branches: {
+        "route[1]": { owner: "route", name: "default", output: null },
+      },
+    });
+  });
+  it("keep a decision's path after executing another step, and after a reload", () => {
+    const first = withExecution(null, routed, prints, "a");
+    const later = withExecution(
+      first,
+      { ...RESPONSE, trace: [RESPONSE.trace[0]], variables: {} },
+      prints,
+      "b",
+    );
+    expect(branchVariables(later, "route")).toEqual({
+      branches: {
+        route: { owner: "route", name: "case:0", output: { tier: "big" } },
+      },
+    });
+    const reloaded = readResults(keptText(later));
+    expect(reloaded?.steps["route"].branch?.name).toBe("case:0");
+    expect(branchVariables(reloaded, "route")).toEqual(
+      branchVariables(later, "route"),
+    );
   });
 });

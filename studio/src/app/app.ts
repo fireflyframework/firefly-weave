@@ -7537,7 +7537,8 @@ export class App implements CanvasHost {
     return tools.summaryLine(
       step,
       output,
-      this.execution?.last()?.variables as Record<string, Json> | undefined,
+      // The path it took, as kept with its result (also after a reload).
+      tools.branchVariables(this.execution?.results() ?? null, stepId),
       this.model.definition,
     );
   }

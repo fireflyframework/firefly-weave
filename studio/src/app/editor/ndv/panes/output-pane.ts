@@ -39,6 +39,7 @@ import { DataTable } from "./data-table";
 import { PathList } from "./path-list";
 import { ScriptEditor } from "./script-editor";
 import { pathRows, type PathRow } from "../../state/run-summary";
+import { branchVariables } from "../../state/last-results";
 import { tableCount } from "./table-view";
 import { PinnedBanner } from "./pinned-banner";
 import { OutputEditor } from "./output-editor";
@@ -352,15 +353,17 @@ export class OutputPane {
     const { controller, target, host } = this.session();
     const step = controller.step(target);
     if (step?.kind !== "switch" || this.pinned()) return null;
-    const variables = host.execution?.last()?.variables;
+    // The path it took, as kept with its last result (also after a reload).
+    const variables = branchVariables(
+      host.execution?.results() ?? null,
+      target,
+    );
     const rows = pathRows(step, variables, host.model.definition);
     const taken = rows?.find((row) => row.outcome === "taken");
     if (!rows || !taken) return null;
-    const branches = (variables?.["branches"] ?? {}) as Record<
-      string,
-      { owner?: unknown; output?: Json }
-    >;
-    const branch = Object.values(branches).find((b) => b?.owner === step.id);
+    const branch = Object.values(variables?.branches ?? {})[0] as
+      | { output?: Json }
+      | undefined;
     return {
       rows,
       took:
