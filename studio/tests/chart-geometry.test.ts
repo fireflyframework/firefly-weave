@@ -18,7 +18,9 @@ SPDX-License-Identifier: Apache-2.0
 import { describe, expect, it } from "vitest";
 import {
   CHAR_PX,
+  axisLabels,
   axisTicks,
+  chartAxis,
   chartFrame,
   columnLayout,
   metricText,
@@ -127,5 +129,57 @@ describe("Metrics chart geometry", () => {
     expect(timeLabel(at, "5m")).toMatch(/^\d{2}:\d{2}$/);
     expect(timeLabel(at, "1h")).toMatch(/^\d{2}:\d{2}$/);
     expect(timeLabel(at, "1d")).toMatch(/^[A-Z][a-z]{2} \d{1,2}$/);
+  });
+});
+
+describe("Metrics chart axes", () => {
+  it("steps whole counts by whole numbers, also past six", () => {
+    expect(axisTicks(10, "count")).toEqual([0, 2, 4, 6, 8, 10]);
+    expect(axisTicks(8, "count")).toEqual([0, 2, 4, 6, 8]);
+    expect(axisTicks(100, "count")).toEqual([0, 25, 50, 75, 100]);
+  });
+
+  it("writes zero in the unit of the rest of the axis", () => {
+    expect(axisLabels([0, 5_000, 10_000, 15_000], "ms")).toEqual([
+      "0 s",
+      "5 s",
+      "10 s",
+      "15 s",
+    ]);
+    expect(axisLabels([0, 250, 500], "ms")).toEqual([
+      "0 ms",
+      "250 ms",
+      "500 ms",
+    ]);
+  });
+
+  it("gives every chart of a page one gutter, wide enough for the widest axis", () => {
+    const series = (signal: string, values: number[]) => ({
+      signal,
+      labels: {},
+      unit: "count" as const,
+      points: values.map(
+        (value, index) =>
+          [`2026-10-26T1${index}:00:00Z`, value] as [string, number | null],
+      ),
+    });
+    const small = chartAxis(
+      [series("outbox_pending", [1, 2])],
+      [],
+      [],
+      "count",
+    );
+    const large = chartAxis(
+      [series("runs_started", [900, 1_200])],
+      [],
+      [],
+      "count",
+    );
+    expect(small.labels.at(-1)).toBe("2");
+    expect(large.labels.at(-1)).toBe("1,200");
+    const gutter = yAxisWidth([...small.labels, ...large.labels]);
+    expect(chartFrame(600, small.labels, gutter).left).toBe(
+      chartFrame(600, large.labels, gutter).left,
+    );
   });
 });

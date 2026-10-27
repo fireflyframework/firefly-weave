@@ -48,7 +48,12 @@ import { OperateState } from "../operate-state";
 import { Poller } from "../operate-store";
 import { timeAbsolute, timeIso } from "../operate-time";
 import { RefreshStatus } from "../refresh-status";
-import { statisticsMissing, type Unit } from "./chart-model";
+import {
+  chartAxis,
+  statisticsMissing,
+  yAxisWidth,
+  type Unit,
+} from "./chart-model";
 import { LineChart, Sparkline, TimeChart } from "./charts";
 import {
   chartRequests,
@@ -287,6 +292,7 @@ function listed<T extends object>(value: T, key: keyof T): T {
                       [label]="chart.label"
                       [granularity]="answer.granularity"
                       [empty]="chart.empty"
+                      [gutter]="gutter()"
                     />
                   } @else {
                     <weave-line-chart
@@ -295,6 +301,7 @@ function listed<T extends object>(value: T, key: keyof T): T {
                       [label]="chart.label"
                       [granularity]="answer.granularity"
                       [empty]="chart.empty"
+                      [gutter]="gutter()"
                     />
                   }
                 } @else if (chartErrors[chart.id]; as failure) {
@@ -697,6 +704,21 @@ export class MetricsPage implements DoCheck, OnInit, OnDestroy {
     } finally {
       this.cdr.markForCheck();
     }
+  }
+  /** One y-axis gutter for every chart: the widest axis on the page, so plots in a column line up. */
+  gutter(): number {
+    const labels = this.charts.flatMap((chart) => {
+      const answer = this.answers[chart.id];
+      if (!answer) return [];
+      const lines = chart.stacked.length ? chart.lines : [];
+      return chartAxis(
+        this.chartSeries(chart.id, answer),
+        chart.stacked,
+        lines,
+        chart.unit,
+      ).labels;
+    });
+    return labels.length ? yAxisWidth(labels) : 0;
   }
   chartAnswer(id: ChartId): SeriesAnswer | null {
     return this.answers[id] ?? null;

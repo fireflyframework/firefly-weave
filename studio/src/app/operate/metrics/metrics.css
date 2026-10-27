@@ -249,6 +249,9 @@ SPDX-License-Identifier: Apache-2.0
   color: var(--muted);
 }
 .workflow-field select {
+  /* The global label > select spacing would push it 8 px below the row's center. */
+  margin-top: 0;
+  width: auto;
   min-height: var(--target);
   max-width: 24ch;
 }

@@ -347,6 +347,30 @@ for (const viewport of [
           nodes.map((node) => node.getBoundingClientRect().height),
         ))
         expect(Math.round(height)).toBeGreaterThanOrEqual(target);
+      // The workflow select sits on the controls row's center line, with the range buttons.
+      const centers = await page
+        .locator(".range-group, .workflow-field select, .workflow-field > span")
+        .evaluateAll((nodes) =>
+          nodes.map((node) => {
+            const box = node.getBoundingClientRect();
+            return box.top + box.height / 2;
+          }),
+        );
+      expect(Math.max(...centers) - Math.min(...centers)).toBeLessThanOrEqual(
+        1,
+      );
+      // Plots of the charts in one column start at one left edge.
+      const edges = await page.locator(".chart-card").evaluateAll((cards) =>
+        cards.map((card) => ({
+          column: Math.round(card.getBoundingClientRect().left),
+          plot: card
+            .querySelector("line.chart-gridline")!
+            .getBoundingClientRect().left,
+        })),
+      );
+      for (const edge of edges)
+        for (const other of edges.filter((item) => item.column === edge.column))
+          expect(Math.abs(other.plot - edge.plot)).toBeLessThanOrEqual(1);
       // The range buttons share one row and one height.
       const ranges = await page
         .locator(".range-option")

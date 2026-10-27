@@ -62,10 +62,55 @@ export function tickCount(max: number): number {
   return 4;
 }
 
-/** The y-axis ticks of a chart: small whole counts step by one (no 0.25 of a run), others by readable steps. */
+/** The y-axis ticks of a chart: whole counts step by whole numbers (no 2.5 runs), others by readable steps. */
 export function axisTicks(max: number, unit: Unit): number[] {
-  const whole = unit === "count" && Number.isInteger(max) && max <= 6;
-  return ticks(max, whole ? max : tickCount(max));
+  if (unit === "count" && Number.isInteger(max)) {
+    if (max <= 6) return ticks(max, max);
+    for (const count of [4, 5, 3, 2, 6]) {
+      const step = max / count;
+      const mantissa = exact(step / 10 ** Math.floor(Math.log10(step)));
+      if (Number.isInteger(step) && READABLE_STEPS.includes(mantissa))
+        return ticks(max, count);
+    }
+  }
+  return ticks(max, tickCount(max));
+}
+
+/** Tick labels; zero is written in the unit of the rest of the axis ("0 s", not "0 ms", beside "5 s"). */
+export function axisLabels(values: number[], unit: Unit): string[] {
+  const labels = values.map((value) => metricText(unit, value));
+  const top = labels[labels.length - 1] ?? "";
+  if ((unit === "ms" || unit === "seconds") && !top.endsWith(" ms"))
+    return labels.map((label, index) => (values[index] === 0 ? "0 s" : label));
+  return labels;
+}
+
+/** The scale of a chart: its maximum, its ticks and their labels, as the chart draws them. */
+export function chartAxis(
+  series: StatisticsSeries[],
+  stackedSignals: string[],
+  lineSignals: string[],
+  unit: Unit,
+): { max: number; values: number[]; labels: string[] } {
+  const stacked = stackedSignals.flatMap((signal) =>
+    series.filter((item) => item.signal === signal),
+  );
+  const lines = series.filter((item) =>
+    lineSignals.length
+      ? lineSignals.includes(item.signal)
+      : !stackedSignals.includes(item.signal),
+  );
+  const count = Math.max(0, ...series.map((item) => item.points.length));
+  const sums = Array.from({ length: count }, (_, index) =>
+    stacked.reduce((sum, item) => sum + (item.points[index]?.[1] ?? 0), 0),
+  );
+  const lineMax = Math.max(
+    0,
+    ...lines.flatMap((item) => item.points.map(([, value]) => value ?? 0)),
+  );
+  const max = niceMax(Math.max(lineMax, ...sums));
+  const values = axisTicks(max, unit);
+  return { max, values, labels: axisLabels(values, unit) };
 }
 
 /** Evenly spaced tick values from 0 to max. */
@@ -290,8 +335,13 @@ export interface ChartFrame {
 }
 
 /** Margins and plot width of a chart this wide whose y axis shows these labels. */
-export function chartFrame(width: number, yLabels: string[]): ChartFrame {
-  const left = Math.max(EDGE, yAxisWidth(yLabels));
+export function chartFrame(
+  width: number,
+  yLabels: string[],
+  gutter = 0,
+): ChartFrame {
+  // A page passes one gutter to every chart, so plots in a column share their left edge.
+  const left = Math.max(EDGE, yAxisWidth(yLabels), gutter);
   return { left, right: EDGE, plotWidth: Math.max(0, width - left - EDGE) };
 }
 

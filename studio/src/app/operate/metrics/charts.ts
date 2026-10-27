@@ -35,11 +35,10 @@ import {
   columnLayout,
   linePath,
   metricText,
-  niceMax,
   seriesStyle,
   seriesName,
   stackColumns,
-  axisTicks,
+  chartAxis,
   spansDays,
   timeLabel,
   xLabelIndices,
@@ -248,6 +247,8 @@ export class TimeChart {
   granularity = input<Granularity>("5m");
   /** What the frame says when no series has a known point. */
   empty = input("No runs in this range");
+  /** The page's shared y-axis gutter, so plots in a column start at one left edge. */
+  gutter = input(0);
   readonly asTable = signal(false);
   readonly titleId = `chart-title-${nextId++}`;
   readonly top = TOP;
@@ -308,17 +309,11 @@ export class TimeChart {
     );
     const count = Math.max(0, ...series.map((item) => item.points.length));
     const times = series.find((item) => item.points.length === count)?.points;
-    const sums = Array.from({ length: count }, (_, index) =>
-      stacked.reduce((sum, item) => sum + (item.points[index]?.[1] ?? 0), 0),
-    );
-    const lineMax = Math.max(
-      0,
-      ...lines.flatMap((item) => item.points.map(([, value]) => value ?? 0)),
-    );
-    const max = niceMax(Math.max(lineMax, ...sums));
-    const yValues = axisTicks(max, unit);
-    const yLabels = yValues.map((value) => metricText(unit, value));
-    const frame = chartFrame(this.width(), yLabels);
+    const axis = chartAxis(series, stackedSignals, lineSignals, unit);
+    const max = axis.max;
+    const yValues = axis.values;
+    const yLabels = axis.labels;
+    const frame = chartFrame(this.width(), yLabels, this.gutter());
     const layout = columnLayout(count, frame.plotWidth);
     const keyOf = (item: StatisticsSeries) =>
       item.signal + "|" + Object.values(item.labels).join("|");
@@ -433,6 +428,7 @@ export class TimeChart {
     [label]="label()"
     [granularity]="granularity()"
     [empty]="empty()"
+    [gutter]="gutter()"
   />`,
   imports: [TimeChart],
 })
@@ -442,6 +438,7 @@ export class LineChart {
   label = input.required<string>();
   granularity = input<Granularity>("5m");
   empty = input("No runs in this range");
+  gutter = input(0);
 }
 
 /** The last hour's twelve five-minute points under a figure: no axes, no legend. */
