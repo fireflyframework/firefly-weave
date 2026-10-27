@@ -1905,7 +1905,7 @@ const scenes: Record<string, Scene> = {
     await expect(
       page.locator('[data-step="third"] .tile-badge[data-badge="done"]'),
     ).toBeVisible();
-    await fitCanvas(page);
+    // The canvas keeps the steps that ran in sight by itself.
     await shot("153-execute-canvas", { tabs: 0 });
   },
   async "execute-run-log-paused"({ page, shot }) {
@@ -3838,7 +3838,7 @@ spec:
     await expect(
       page.locator('[data-step="route"] .tile-badge[data-badge="done"]'),
     ).toBeVisible();
-    await fitCanvas(page);
+    // The canvas keeps the steps that ran in sight by itself.
     await shot("104-canvas-run", { tabs: 0 });
   },
 
