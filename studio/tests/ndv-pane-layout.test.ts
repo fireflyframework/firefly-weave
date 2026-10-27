@@ -20,11 +20,13 @@ import {
   LAYOUT_KEY,
   MIN_MAIN,
   MIN_SIDE,
+  RAIL,
   clampWidths,
   defaultWidths,
   readWidths,
   resized,
   toEdge,
+  wideWidths,
   writeWidths,
 } from "../src/app/editor/ndv/panes/layout";
 
@@ -114,5 +116,13 @@ describe("step details panes", () => {
     );
     expect(writeWidths({ input: 300, output: 300 }, NaN, store())).toBe(false);
     expect(writeWidths({ input: 300, output: 300 }, 0, store())).toBe(false);
+  });
+});
+
+describe("the wide layout", () => {
+  it("folds the side panes to 48 px rails", () => {
+    expect(RAIL).toBe(48);
+    expect(wideWidths(1392)).toEqual({ input: 48, output: 48, main: 1296 });
+    expect(wideWidths(900)).toEqual({ input: 48, output: 48, main: 804 });
   });
 });

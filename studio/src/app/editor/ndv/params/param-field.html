@@ -139,6 +139,37 @@ SPDX-License-Identifier: Apache-2.0
             [readOnly]="reason"
             [choices]="loadChoices()"
           />
+          @if (spec.actions?.length) {
+            <div
+              class="param-actions"
+              role="group"
+              [attr.aria-label]="spec.label + ' commands'"
+            >
+              @for (action of spec.actions; track action.id) {
+                @let why = actionReason(action, reason);
+                <button
+                  type="button"
+                  class="param-action"
+                  [attr.data-action]="action.id"
+                  [attr.aria-disabled]="why ? 'true' : null"
+                  [attr.aria-describedby]="why ? ids.control + '-' + action.id : null"
+                  [attr.title]="why"
+                  (click)="runAction(action, reason)"
+                >
+                  <weave-icon [name]="action.icon" [size]="16" />{{
+                    action.label
+                  }}
+                </button>
+                @if (why) {
+                  <span
+                    class="param-action-why"
+                    [id]="ids.control + '-' + action.id"
+                    >{{ why }}</span
+                  >
+                }
+              }
+            </div>
+          }
         }
         @case ("connection") {
           <weave-connection-field

@@ -2390,3 +2390,33 @@ weave-formula-field > button.formula-expand {
   font: var(--type-caption);
   overflow-wrap: anywhere;
 }
+/* A field's commands (Edit table, New table) sit under its control on the
+   right, never in its label row. */
+.param-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+:is(.step-details, .sd-form-scope) button.param-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  min-height: var(--sd-target);
+  min-width: var(--sd-target);
+  padding-inline: var(--space-3);
+  white-space: nowrap;
+}
+:is(.step-details, .sd-form-scope) button.param-action[aria-disabled="true"] {
+  color: var(--muted);
+  cursor: not-allowed;
+}
+.param-action-why {
+  flex-basis: 100%;
+  text-align: right;
+  font: var(--type-caption);
+  color: var(--muted);
+}

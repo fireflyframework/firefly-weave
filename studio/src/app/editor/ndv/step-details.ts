@@ -28,7 +28,10 @@ import {
   DestroyRef,
   ElementRef,
   Injector,
+  ViewContainerRef,
   ViewEncapsulation,
+  type ComponentRef,
+  type Type,
   afterEveryRender,
   afterNextRender,
   effect,
@@ -95,7 +98,12 @@ import { getAt } from "../../forms/core/json";
 import { ParameterForm } from "./params/param-form";
 import { DragMap, activeDrag, canMapFields } from "./params/drag-map";
 import { mappedRefs, type DragRef } from "./params/drop";
-import { ndvRegistry, type ParamSpec } from "./registry";
+import {
+  ndvRegistry,
+  type NdvContext,
+  type ParamSpec,
+  type ParameterComponent,
+} from "./registry";
 import { renameHint, renameWithExtras, type RenameResult } from "./rename";
 import { reservedActionNames } from "./owned/insert-owned";
 import { SettingsTab } from "./settings/settings-tab";
@@ -347,6 +355,42 @@ export class StepDetails {
 
   readonly pane = signal<"input" | "parameters" | "output">("parameters");
   readonly dataPane = signal<"input" | "output">("input");
+  /** A folded pane opened over the wide layout's edge; null while every pane is folded. */
+  readonly rail = signal<"input" | "output" | "data" | null>(null);
+  /** The registered parameter component last loaded, by its kind and slot. */
+  private readonly loadedComponent = signal<{
+    key: string;
+    type: Type<ParameterComponent>;
+    wide: boolean;
+  } | null>(null);
+  /** The parameter component open in place of this step's form, once its chunk has loaded. */
+  component(): { type: Type<ParameterComponent>; wide: boolean } | null {
+    const open = this.controller().parameterComponent();
+    const loaded = this.loadedComponent();
+    if (!open || open.target !== this.target() || this.tab() !== "parameters")
+      return null;
+    return loaded?.key === `${open.kind}/${open.subNode ?? ""}` ? loaded : null;
+  }
+  /** True while a wide component (the decision table grid) is open: the data panes fold to rails. */
+  wide(): boolean {
+    return !!this.component()?.wide && this.layout() !== "sheet";
+  }
+  /** Where the open component is drawn, in place of the form. */
+  private readonly componentHost = viewChild("componentHost", {
+    read: ViewContainerRef,
+  });
+  private componentRef: ComponentRef<ParameterComponent> | null = null;
+  /** What the open component reads and edits. */
+  componentContext(): NdvContext {
+    return this.controller().ndvContext(this.target());
+  }
+  toggleRail(which: "input" | "output" | "data") {
+    this.rail.set(this.rail() === which ? null : which);
+  }
+  /** A click into the grid closes a pane opened over its edge. */
+  mainPointer() {
+    if (this.rail()) this.rail.set(null);
+  }
   readonly widths = signal<PaneWidths>({ input: 0, output: 0 });
   private readonly inputPane = viewChild(InputPane);
   private readonly outputPane = viewChild(OutputPane);
@@ -385,6 +429,8 @@ export class StepDetails {
       untracked(() => {
         this.tab.set(request.tab);
         this.renaming.set(null);
+        // Opening a step shows its form; the grid opens from Edit table.
+        this.controller().parameterComponent.set(null);
         afterNextRender(() => this.applyFocus(request.focus), {
           injector: this.injector,
         });
@@ -393,6 +439,57 @@ export class StepDetails {
     effect(() => {
       this.host().tick();
       untracked(() => this.keepTarget());
+    });
+    // The open component is drawn where the form was, and reads the step
+    // again whenever the workflow changes.
+    effect(() => {
+      const open = this.component();
+      const place = this.componentHost();
+      this.host().tick();
+      this.target();
+      untracked(() => {
+        if (!open || !place) {
+          this.componentRef = null;
+          return;
+        }
+        if (
+          this.componentRef?.componentType !== open.type ||
+          place.indexOf(this.componentRef.hostView) < 0
+        ) {
+          place.clear();
+          this.componentRef = place.createComponent(open.type);
+        }
+        this.componentRef.setInput("context", this.componentContext());
+      });
+    });
+    // A registered component asked for: load its chunk once.
+    effect(() => {
+      const open = this.controller().parameterComponent();
+      if (!open) {
+        untracked(() => this.rail.set(null));
+        return;
+      }
+      const key = `${open.kind}/${open.subNode ?? ""}`;
+      if (untracked(() => this.loadedComponent())?.key === key) return;
+      const registration = ndvRegistry.parameters(open.kind, open.subNode);
+      if (!registration) return;
+      void registration.load().then(
+        (type) => {
+          if (this.lifetime.destroyed) return;
+          this.loadedComponent.set({
+            key,
+            type,
+            wide: !!registration.wide,
+          });
+          this.host().refreshView();
+        },
+        () =>
+          this.host().notify(
+            "Studio couldn't load the table editor. Reload Studio to try again.",
+            undefined,
+            "danger",
+          ),
+      );
     });
     // The sheet's sticky pane tabs and step header change height as the
     // name wraps or the pane changes: keep their height measured.
@@ -729,6 +826,12 @@ export class StepDetails {
   }
   showPane(which: "input" | "parameters" | "output"): boolean {
     const layout = this.layout();
+    if (this.wide() && which !== "parameters") {
+      const rail = this.rail();
+      return layout === "three"
+        ? rail === which
+        : rail === "data" && which === this.dataPane();
+    }
     if (layout === "three") return true;
     if (layout === "two")
       return which === "parameters" || which === this.dataPane();
@@ -1713,6 +1816,18 @@ export class StepDetails {
   }
   private escape(event: KeyboardEvent) {
     event.preventDefault();
+    const rail = this.rail();
+    if (rail) {
+      this.rail.set(null);
+      afterNextRender(
+        () =>
+          this.dialog()
+            .nativeElement.querySelector<HTMLElement>(`.sd-rail-${rail}`)
+            ?.focus(),
+        { injector: this.injector },
+      );
+      return;
+    }
     if (this.mapMenu()) return this.closeMapMenu();
     if (activeDrag()) return this.clearMapping();
     if (this.renaming() !== null) {

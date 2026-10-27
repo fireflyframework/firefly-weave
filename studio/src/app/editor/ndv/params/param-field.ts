@@ -41,7 +41,7 @@ import { localDateTime, storedDateTime } from "../../../forms/core/form-model";
 import { Select, type SelectOption } from "../../../forms/ui/select";
 import { Icon } from "../../../icon";
 import { RowMenu, type RowMenuItem } from "../../../row-menu";
-import type { Choice, Json, ParamSpec } from "../registry";
+import type { Choice, FieldAction, Json, ParamSpec } from "../registry";
 import type { FieldEntry } from "./form-model";
 import { ListField } from "./list-field";
 import { KeyValueField } from "./key-value-field";
@@ -880,6 +880,20 @@ export class ParamField {
           ? { mode: "fixed", value: false }
           : ABSENT,
     );
+  }
+  // --------------------------------------------------------- actions
+  /** Why a field's command can't be used now: the field's own reason first. */
+  actionReason(action: FieldAction, reason: string | null): string | null {
+    if (reason) return reason;
+    const session = this.session();
+    const step = session.controller.step(session.target);
+    if (!step || !action.disabled) return null;
+    return action.disabled(step, session.controller.ndvContext(session.target));
+  }
+  runAction(action: FieldAction, reason: string | null): void {
+    if (this.actionReason(action, reason)) return;
+    const session = this.session();
+    action.run(session.controller.ndvContext(session.target));
   }
   // --------------------------------------------------------- choices
   loadChoices(): Choice[] {

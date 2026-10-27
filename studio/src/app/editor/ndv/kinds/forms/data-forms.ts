@@ -21,6 +21,7 @@ import type { Step } from "../../../../model";
 import { escapeSegment } from "../../../../forms/core/json";
 import { paramsFromSchema } from "../../params/schema-params";
 import type {
+  FieldAction,
   FormSpec,
   KindContext,
   NdvContext,
@@ -81,6 +82,33 @@ export const transformForm = (step: Step): FormSpec => ({
   ],
 });
 
+/** Edit table opens the grid on the step's table; New table starts one named after the step. */
+const tableActions: FieldAction[] = [
+  {
+    id: "edit-table",
+    label: "Edit table",
+    icon: "edit",
+    run: (ndv) => ndv.openParameterComponent?.("decisionTable", "grid"),
+    disabled: (step, ndv) => {
+      const uses = typeof step["uses"] === "string" ? step["uses"] : "";
+      if (!uses) return "Choose a table first.";
+      return ndv.tables?.document(uses)
+        ? null
+        : `Read ${uses} first: connect to the platform.`;
+    },
+  },
+  {
+    id: "new-table",
+    label: "New table",
+    icon: "plus",
+    run: (ndv) => {
+      void ndv.tables?.newTable().then((uses) => {
+        if (uses) ndv.openParameterComponent?.("decisionTable", "grid");
+      });
+    },
+  },
+];
+
 const tableChoices = (ndv: NdvContext) =>
   ndv.catalog
     .tables()
@@ -101,6 +129,7 @@ export function decisionTableForm(step: Step, ctx: KindContext): FormSpec {
     hint: "The workflow uses this exact published version.",
     choices: tableChoices,
     emptyChoices: (ndv: NdvContext) => ndv.catalog.tablesNote?.() ?? null,
+    actions: tableActions,
   };
   if (!input) return { fields: [table] };
   const rows = paramsFromSchema(input, ["with"], { idPrefix: "input." });

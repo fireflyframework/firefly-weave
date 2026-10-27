@@ -29,6 +29,17 @@ export const LAYOUT_KEY = uiKey("weave.ndv.layout.v1");
 export const MIN_SIDE = 240;
 export const MIN_MAIN = 368;
 export const KEY_STEP = 16;
+/** The width of a folded side pane in the wide layout. */
+export const RAIL = 48;
+
+/** The wide layout (the decision table grid): both side panes fold to rails; the person's widths stay kept. */
+export const wideWidths = (
+  total: number,
+): { input: number; output: number; main: number } => ({
+  input: RAIL,
+  output: RAIL,
+  main: Math.max(0, total - 2 * RAIL),
+});
 
 const defaultStorage = (): BrowserStorage | null => {
   try {

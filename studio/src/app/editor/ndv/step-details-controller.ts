@@ -125,6 +125,7 @@ import {
 import type { PreviewData } from "../formula/preview";
 import { LoopScopes } from "../formula/loops";
 import { SIGN_IN_TO_LIST, type TableCatalog } from "./table-catalog";
+import type { StepTables } from "./registry";
 
 export type ControllerHost = Pick<
   StepDetailsHost,
@@ -798,6 +799,58 @@ export class StepDetailsController {
   }
   /** Problems the host's builder found in the actions this workflow owns (set by the mount). */
   ownedProblems: () => ReadonlyMap<string, HostDiagnostic[]> = () => new Map();
+  /** The registered parameter component open in place of a step's form (the decision table grid). */
+  readonly parameterComponent = signal<{
+    target: string;
+    kind: string;
+    subNode?: string;
+  } | null>(null);
+  /** The step's decision table as step details read and keep it. */
+  private stepTables(
+    target: string,
+    model: ControllerHost["model"],
+    opened: number,
+  ): StepTables | undefined {
+    const tables = this.tables;
+    if (!tables) return undefined;
+    const current = () => this.host.model === model && model.opened === opened;
+    return {
+      document: (uses) => this.tableContract(uses),
+      where: (uses) => tables.where(uses),
+      newTable: async () => {
+        const step = this.step(target);
+        if (!step || !current() || this.readOnlyReason()) return null;
+        const published = await tables.list().catch(() => []);
+        const drafts = await tables.drafts();
+        if (!current()) return null;
+        const workflow = String(model.definition.metadata?.name ?? "workflow");
+        const taken = new Set(
+          published.map((choice) =>
+            choice.uses.slice(0, choice.uses.lastIndexOf("@")),
+          ),
+        );
+        let entry;
+        try {
+          entry = await drafts.newDraft(workflow, target, taken);
+        } catch (error) {
+          this.host.notify(
+            error instanceof Error ? error.message : String(error),
+            undefined,
+            "danger",
+          );
+          return null;
+        }
+        if (!current()) return null;
+        const uses = `${entry.name}@${entry.version}`;
+        await this.commit(
+          target,
+          [{ scope: "step", path: ["uses"], value: uses }],
+          "ndv:New table",
+        );
+        return uses;
+      },
+    };
+  }
   /** The decision tables step details read themselves; null in a shell without one. */
   tables: TableCatalog | null = null;
   /** A table's document: a draft or copy on this computer, or what was read; reading starts when unknown. */
@@ -1373,6 +1426,15 @@ export class StepDetailsController {
       },
       openAddStep: () => undefined,
       openSubNode: () => undefined,
+      openParameterComponent: (kind, subNode) => {
+        if (host.model !== model || model.opened !== opened) return;
+        this.parameterComponent.set({ target, kind, subNode });
+      },
+      closeParameterComponent: () => {
+        if (this.parameterComponent()?.target === target)
+          this.parameterComponent.set(null);
+      },
+      tables: this.stepTables(target, model, opened),
     };
     return ctx;
   }

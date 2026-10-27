@@ -28,6 +28,7 @@ import {
   ndvRegistry,
   type FormSpec,
   type KindContext,
+  type NdvContext,
   type ParamSpec,
   type StepKindDescriptor,
   type Json,
@@ -372,6 +373,68 @@ const variants = (): Step[] => [
   ...Object.keys(recipes).map((uses) => newStep("action", { uses })),
   newStep("action", { uses: "sql.lookup@1.0.0", with: { literal: {} } }),
 ];
+
+describe("the decision table step's form", () => {
+  const tiers = {
+    kind: "DecisionTable",
+    spec: {
+      inputSchema: {
+        type: "object",
+        required: ["amount"],
+        properties: { amount: { type: "number" }, tier: { type: "string" } },
+      },
+    },
+  };
+  const ctx = (): KindContext => ({
+    ...realCtx(),
+    tableContract: (uses) =>
+      uses === "payment-policy@1.0.0" ? (tiers as Json) : null,
+  });
+  const form = (step: Step) =>
+    ndvRegistry.kind("decisionTable")!.form!(step, ctx());
+
+  it("shows Table and its required inputs, with optional inputs behind Add option", () => {
+    const spec = form(
+      newStep("decisionTable", {
+        uses: "payment-policy@1.0.0",
+        with: { literal: {} },
+      }),
+    );
+    expect(spec.fields.map((field) => field.id)).toEqual([
+      "table",
+      "input.amount",
+    ]);
+    expect(spec.options?.map((field) => field.id)).toEqual(["input.tier"]);
+  });
+
+  it("offers Edit table and New table as actions of the Table field, not fields", () => {
+    const step = newStep("decisionTable");
+    const table = form(step).fields[0];
+    expect(table.id).toBe("table");
+    expect(
+      table.actions?.map(({ id, label, icon }) => [id, label, icon]),
+    ).toEqual([
+      ["edit-table", "Edit table", "edit"],
+      ["new-table", "New table", "plus"],
+    ]);
+    const ndv = (document: Json | null) =>
+      ({
+        tables: {
+          document: () => document,
+          where: () => (document ? "copy" : null),
+          newTable: async () => null,
+        },
+      }) as unknown as NdvContext;
+    const edit = table.actions![0];
+    expect(edit.disabled!(step, ndv(null))).toBe("Choose a table first.");
+    const chosen = { ...step, uses: "payment-policy@1.2.0" } as Step;
+    expect(edit.disabled!(chosen, ndv(null))).toBe(
+      "Read payment-policy@1.2.0 first: connect to the platform.",
+    );
+    expect(edit.disabled!(chosen, ndv(tiers as Json))).toBeNull();
+    expect(table.actions![1].disabled?.(step, ndv(null)) ?? null).toBeNull();
+  });
+});
 
 describe("forms of every kind", () => {
   it("renders every ready kind through form()", () => {

@@ -130,6 +130,15 @@ export interface Choice {
   disabled?: string;
   group?: string;
 }
+/** A button under a field (Edit table, New table). */
+export interface FieldAction {
+  id: string;
+  label: string;
+  icon: string;
+  run(ctx: NdvContext): void;
+  /** Why the button can't be used now; null when it can. */
+  disabled?(step: Step, ctx: NdvContext): string | null;
+}
 /** One field of a form, drawn by the shared renderer. */
 export interface ParamSpec {
   /** Stable within the kind: the `data-param` test hook and the diagnostics key. */
@@ -174,6 +183,8 @@ export interface ParamSpec {
   choices?: Choice[] | ((ctx: NdvContext) => Promise<Choice[]>);
   /** resource only: what an empty list says instead of "Nothing to choose from yet". */
   emptyChoices?(ctx: NdvContext): string | null;
+  /** Buttons in the field's action row, under its control: commands, not fields. */
+  actions?: FieldAction[];
   min?: number;
   max?: number;
   /**
@@ -378,6 +389,22 @@ export interface NdvContext {
   openAddStep(request: { slot?: string; after?: string }): void;
   /** index selects one entry of a many-valued slot (Tools). */
   openSubNode(slot: string, index?: number): void;
+  /** Opens this kind's registered parameter component (the decision table grid) in place of the form. */
+  openParameterComponent?(kind: string, subNode?: string): void;
+  /** Back to the form from a parameter component. */
+  closeParameterComponent?(): void;
+  /** The decision tables this step can read and change on this computer. */
+  readonly tables?: StepTables;
+}
+
+/** The step's decision table, as step details read and keep it. */
+export interface StepTables {
+  /** The table's document when Studio has it (a draft, a copy, or what it read). */
+  document(uses: string): Json | null;
+  /** Where that document comes from; null when Studio doesn't have it. */
+  where(uses: string): "draft" | "copy" | "published" | null;
+  /** Starts a new table named after the workflow and the step, moves the step to it, and answers its `uses`. */
+  newTable(): Promise<string | null>;
 }
 
 /** A chip under an AI agent: data only; Studio draws it. */

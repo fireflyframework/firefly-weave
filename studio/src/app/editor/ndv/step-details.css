@@ -734,3 +734,109 @@ weave-issues-indicator {
   color: var(--muted);
   overflow-wrap: anywhere;
 }
+
+/* The wide layout (the decision table grid): Input and Output fold to 48 px
+   rails beside Parameters. A rail opens its pane over the grid's edge at the
+   pane's usual width; the grid keeps its width. The person's pane widths stay
+   kept for when the form comes back. */
+.step-details[data-wide][data-layout="three"] .sd-panes,
+.step-details[data-wide][data-layout="three"] .sd-panes[style] {
+  grid-template-columns: var(--sd-rail) minmax(0, 1fr) var(--sd-rail);
+}
+.step-details[data-wide][data-layout="two"] .sd-panes {
+  grid-template-columns: minmax(0, 1fr) var(--sd-rail);
+  grid-template-rows: minmax(0, 1fr);
+}
+.step-details[data-wide] {
+  --sd-rail: 48px;
+}
+.step-details[data-wide][data-layout="three"] .sd-main {
+  grid-column: 2;
+  grid-row: 1;
+}
+.step-details[data-wide][data-layout="two"] .sd-main {
+  grid-column: 1;
+  grid-row: 1;
+}
+.sd-rail {
+  grid-row: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  align-items: center;
+  gap: var(--space-2);
+  width: var(--sd-rail);
+  min-width: var(--sd-rail);
+  margin: 14px 0;
+  padding: var(--space-3) 0;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--muted);
+  font: var(--type-caption);
+  cursor: pointer;
+}
+.sd-rail:hover,
+.sd-rail[aria-expanded="true"] {
+  background: var(--hover);
+  color: var(--text);
+}
+.sd-rail:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+.sd-rail-input {
+  grid-column: 1;
+  border-right: 0;
+  border-radius: var(--radius-md) 0 0 var(--radius-md);
+}
+.sd-rail-output,
+.sd-rail-data {
+  grid-column: -2;
+  border-left: 0;
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+}
+.sd-rail-caption {
+  writing-mode: vertical-rl;
+  white-space: nowrap;
+}
+/* An open rail's pane lies over the grid's edge. */
+.step-details[data-wide] :is(.sd-input, .sd-output, .sd-data-tabs) {
+  /* Out of the grid: placed against the panes' box, not a grid area. */
+  grid-area: auto;
+  position: absolute;
+  z-index: 5;
+  width: max(240px, 28%);
+  background: var(--raised);
+  box-shadow: var(--shadow-3);
+}
+.step-details[data-wide] :is(.sd-input, .sd-output) {
+  top: 14px;
+  bottom: 14px;
+  margin: 0;
+  border: 1px solid var(--border-hover);
+}
+.step-details[data-wide][data-layout="three"] .sd-input {
+  left: var(--sd-rail);
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+}
+.step-details[data-wide][data-layout="three"] .sd-output {
+  right: var(--sd-rail);
+  border-radius: var(--radius-md) 0 0 var(--radius-md);
+}
+.step-details[data-wide][data-layout="two"]
+  :is(.sd-input, .sd-output, .sd-data-tabs) {
+  right: var(--sd-rail);
+  width: max(280px, 40%);
+}
+.step-details[data-wide][data-layout="two"] .sd-data-tabs {
+  top: 14px;
+  margin: 0;
+  box-sizing: border-box;
+  height: var(--sd-data-tabs, 44px);
+  border-radius: var(--radius-md) 0 0 0;
+}
+.step-details[data-wide][data-layout="two"] :is(.sd-input, .sd-output) {
+  top: calc(14px + var(--sd-data-tabs, 44px));
+  border-top: 0;
+  border-radius: 0 0 0 var(--radius-md);
+}
