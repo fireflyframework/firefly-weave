@@ -19,7 +19,12 @@ SPDX-License-Identifier: Apache-2.0
 // workflow's own actions first, never needs an account, and never asks the
 // platform to run, publish or test anything.
 import { expect, test } from "@playwright/test";
-import { executions } from "./execute-po";
+import {
+  executions,
+  openExecuteFixture,
+  pinSample,
+  shownExecute,
+} from "./execute-po";
 import { hasPython, localAuthoring } from "./local-authoring";
 import { withOwnedSteps } from "./owned-actions";
 import { openStepFixture, yamlFile } from "./step-details-po";
@@ -153,4 +158,60 @@ spec:
     .click();
   await expect.poll(() => executions(calls).length).toBe(1);
   expect(String(executions(calls)[0].body["source"])).toContain('"literal":2');
+});
+
+test("executing never asks the platform to run, publish or test anything", async ({
+  page,
+}) => {
+  const changes: string[] = [];
+  page.on("request", (request) => {
+    if (
+      ["POST", "PUT", "PATCH", "DELETE"].includes(request.method()) &&
+      /\/(runs|activations|step-tests|test-activations|publish|debug)\b/.test(
+        new URL(request.url()).pathname,
+      )
+    )
+      changes.push(`${request.method()} ${new URL(request.url()).pathname}`);
+  });
+  const { details, calls } = await openExecuteFixture(page);
+  await pinSample(details, "lookup");
+  const answered = () => page.waitForResponse("**/studio/local/debug/execute");
+  await details.open("score");
+  let answer = answered();
+  await (await shownExecute(details)).click();
+  await answer;
+  await details.close();
+  answer = answered();
+  await command(page, "Execute workflow");
+  await answer;
+  await details.open("lookup");
+  await (await shownExecute(details)).click();
+  // A pinned step asks first; answering executes it.
+  answer = answered();
+  await page.getByRole("button", { name: "Unpin and execute" }).click();
+  await answer;
+  expect(executions(calls)).toHaveLength(3);
+  expect(changes.filter((call) => !call.includes("/studio/local/"))).toEqual(
+    [],
+  );
+});
+
+test("Ctrl/Cmd+Enter never starts a run", async ({ page }) => {
+  const runs: string[] = [];
+  page.on("request", (request) => {
+    if (request.method() === "POST" && /\/runs\b/.test(request.url()))
+      runs.push(request.url());
+  });
+  const { details, calls } = await openExecuteFixture(page);
+  await page.locator('[data-step="score"] .tile-body').first().click();
+  await page.keyboard.press("ControlOrMeta+Enter");
+  await expect.poll(() => executions(calls).length).toBe(1);
+  // The run ends (here: lookup needs test data) before step details open.
+  await expect(
+    page.getByRole("region", { name: "Run log" }).locator(".run-log-status"),
+  ).toContainText("needs test data");
+  await details.open("score");
+  await page.keyboard.press("ControlOrMeta+Enter");
+  await expect.poll(() => executions(calls).length).toBe(2);
+  expect(runs).toEqual([]);
 });

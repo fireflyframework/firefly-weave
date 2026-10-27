@@ -25,6 +25,7 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { python, pythonAvailable, repository } from "../python-path";
+import { CanvasPage } from "./canvas-po";
 
 /**
  * A loopback port nothing listens on. A fixed port can stay blocked for a
@@ -191,3 +192,54 @@ test(
     }
   },
 );
+
+test("executes a workflow offline on the real host, with no platform", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  test.skip(
+    !pythonAvailable(),
+    "Create the Python development environment for the local-host integration test.",
+  );
+  const configHome = realpathSync(
+    mkdtempSync(join(tmpdir(), "weave-studio-real-host-")),
+  );
+  await page.addInitScript(() =>
+    localStorage.setItem("ui:weave.editorNext", "true"),
+  );
+  const elsewhere: string[] = [];
+  const host = startHost(configHome, await freePort());
+  page.on("request", (request) => {
+    if (!request.url().startsWith(host.origin)) elsewhere.push(request.url());
+  });
+  try {
+    await pair(page, host);
+    await page.getByRole("button", { name: "Work locally" }).click();
+    await page
+      .getByRole("button", { name: "New workflow", exact: true })
+      .click();
+    const canvas = new CanvasPage(page);
+    await canvas.ready();
+    await canvas.addFirstStep("Transform");
+    await canvas.closeInspector();
+    const executed = page.waitForResponse(
+      (r) => r.url() === `${host.origin}/studio/local/debug/execute`,
+    );
+    await page
+      .locator(".editor-bar")
+      .getByRole("button", { name: "Execute workflow" })
+      .click();
+    expect((await executed).status()).toBe(200);
+    await expect(
+      page.getByRole("region", { name: "Run log" }).locator(".run-log-status"),
+    ).toHaveText("Completed · 1 step");
+    // Nothing went anywhere but the Studio host on this computer.
+    expect(elsewhere.filter((url) => !url.startsWith("data:"))).toEqual([]);
+  } catch (error) {
+    console.error(host.output());
+    throw error;
+  } finally {
+    await stopHost(host);
+    rmSync(configHome, { recursive: true, force: true });
+  }
+});
