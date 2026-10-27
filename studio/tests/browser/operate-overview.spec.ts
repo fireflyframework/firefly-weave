@@ -1334,4 +1334,44 @@ test.describe("run statistics", () => {
     );
     expect(requests).toHaveLength(2);
   });
+
+  test("Last 24 h shows loading while the hours load, and says when it could not be read", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    let hold: (() => void) | null = null;
+    const held = new Promise<void>((resolve) => (hold = resolve));
+    let fail = false;
+    await overview(page, every, [
+      () => ({ json: summary({ runs_24h: day }) }),
+      () => ({ json: summary({ runs_24h: { state: "unavailable" } }) }),
+    ]);
+    await statistics(page);
+    await page.route(
+      `${environment}/run-statistics/series?*granularity=1h*`,
+      async (route) => {
+        await held;
+        if (fail)
+          return route.fulfill({
+            status: 503,
+            json: { code: "WV-UNAVAILABLE", message: "Try again later" },
+          });
+        return route.fallback();
+      },
+    );
+    await open(page);
+    const band = page.locator("section.band").filter({
+      has: page.getByRole("heading", { name: "Last 24 h", exact: true }),
+    });
+    // The hours are on their way: the band holds its place with a skeleton.
+    await expect(band.locator('[role="status"]')).toBeVisible();
+    hold!();
+    await expect(
+      band.getByRole("img", { name: "Runs per hour", exact: true }),
+    ).toBeVisible();
+    // The next summary could not compute the day: the band says so instead of disappearing.
+    fail = true;
+    await page.getByRole("button", { name: "Refresh", exact: true }).click();
+    await expect(band).toContainText("This section could not be loaded.");
+  });
 });

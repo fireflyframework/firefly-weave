@@ -3663,6 +3663,62 @@ spec:
       page.getByText("This section could not be loaded.", { exact: true }),
     ).toBeVisible();
     await shot("79-overview-sections", { end: ".page-content" });
+    // A platform that keeps run statistics: the hour's lines and the Last 24 h band.
+    const hours = (count: number, step: number, start: number) =>
+      Array.from({ length: count }, (_, index) =>
+        new Date(start + index * step).toISOString().replace(".000", ""),
+      );
+    await page.route(`${environment}/run-statistics/series?*`, (r) => {
+      const query = new URL(r.request().url()).searchParams;
+      const hourly = query.get("granularity") === "1h";
+      const times = hourly
+        ? hours(24, 3_600_000, now - 24 * 3_600_000)
+        : hours(12, 300_000, now - 3_600_000);
+      return r.fulfill({
+        json: {
+          from: query.get("from"),
+          to: query.get("to"),
+          granularity: hourly ? "1h" : "5m",
+          complete_until: ago(300),
+          series: query.getAll("signals").map((signal, offset) => ({
+            signal,
+            labels: {},
+            unit: signal === "failure_rate" ? "ratio" : "count",
+            points: times.map((at, index) => [
+              at,
+              signal === "failure_rate"
+                ? index % 6 === 0
+                  ? 0.12
+                  : 0
+                : signal === "runs_failed"
+                  ? index % 6 === 0
+                    ? 1
+                    : 0
+                  : signal === "runs_cancelled"
+                    ? 0
+                    : 4 + ((index * 7 + offset) % 5),
+            ]),
+          })),
+        },
+      });
+    });
+    await page.unroute(`${environment}/operations/summary`);
+    await page.route(`${environment}/operations/summary`, (r) =>
+      r.fulfill({
+        json: {
+          ...summary,
+          runs_24h: {
+            started: 151,
+            succeeded: 145,
+            failed: 4,
+            failure_rate: 0.0268,
+          },
+        },
+      }),
+    );
+    await page.getByRole("button", { name: "Refresh", exact: true }).click();
+    await expect(page.locator("svg.chart-frame")).toHaveCount(2);
+    await shot("155-overview-statistics", { end: ".page-content" });
   },
 
   async metrics({ page, shot }) {

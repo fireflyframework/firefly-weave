@@ -315,36 +315,58 @@ import {
           }
         </section>
 
-        @if (dayOf(s); as runs) {
+        @let dayBand = dayState(s);
+        @if (dayBand !== "none") {
           <section class="band" aria-labelledby="overview-day">
             <div class="band-head">
               <h2 id="overview-day" class="band-title">Last 24 h</h2>
-              <span class="band-headline numeric">{{ headline(runs) }}</span>
+              @if (dayOf(s); as runs) {
+                <span class="band-headline numeric">{{ headline(runs) }}</span>
+              }
             </div>
-            <div class="day-charts">
-              <div class="chart-card">
-                <weave-time-chart
-                  label="Runs per hour"
-                  [series]="dayRuns"
-                  [stacked]="[
-                    'runs_succeeded',
-                    'runs_failed',
-                    'runs_cancelled',
-                  ]"
-                  [lines]="['runs_started']"
-                  granularity="1h"
-                />
+            @if (dayBand === "unavailable") {
+              <weave-operate-state
+                kind="partial"
+                (retry)="statisticsPoller.refresh()"
+              />
+            } @else if (dayBand === "loading") {
+              <div class="day-charts" role="status">
+                <span class="sr-only">Loading the last 24 hours…</span>
+                <span
+                  class="chart-card skeleton-block day-skeleton"
+                  aria-hidden="true"
+                ></span>
+                <span
+                  class="chart-card skeleton-block day-skeleton"
+                  aria-hidden="true"
+                ></span>
               </div>
-              <div class="chart-card">
-                <weave-line-chart
-                  label="Failure rate"
-                  unit="ratio"
-                  [series]="dayRate"
-                  granularity="1h"
-                  empty="No runs ended in the last 24 hours"
-                />
+            } @else {
+              <div class="day-charts">
+                <div class="chart-card">
+                  <weave-time-chart
+                    label="Runs per hour"
+                    [series]="dayRuns"
+                    [stacked]="[
+                      'runs_succeeded',
+                      'runs_failed',
+                      'runs_cancelled',
+                    ]"
+                    [lines]="['runs_started']"
+                    granularity="1h"
+                  />
+                </div>
+                <div class="chart-card">
+                  <weave-line-chart
+                    label="Failure rate"
+                    unit="ratio"
+                    [series]="dayRate"
+                    granularity="1h"
+                    empty="No runs ended in the last 24 hours"
+                  />
+                </div>
               </div>
-            </div>
+            }
           </section>
         }
 
@@ -569,6 +591,10 @@ export class OverviewPage implements DoCheck, OnInit, OnDestroy {
   dayRuns: StatisticsSeries[] = [];
   dayRate: StatisticsSeries[] = [];
   private statisticsStarted = false;
+  /** False once the server answered that it keeps no run statistics. */
+  private statisticsServed = true;
+  /** The last read of the day's hours failed for another reason than missing statistics. */
+  private dayFailed = false;
   readonly sectionOf = sectionOf;
   readonly count = countText;
   readonly iso = timeIso;
@@ -610,6 +636,8 @@ export class OverviewPage implements DoCheck, OnInit, OnDestroy {
     this.offset = 0;
     this.statisticsPoller.stop();
     this.statisticsStarted = false;
+    this.statisticsServed = true;
+    this.dayFailed = false;
     this.loadLines = new Map();
     this.day = null;
     this.dayRuns = [];
@@ -680,6 +708,7 @@ export class OverviewPage implements DoCheck, OnInit, OnDestroy {
           statisticsMissing(describeError(result.reason))
         ) {
           this.statisticsPoller.stop();
+          this.statisticsServed = false;
           this.loadLines = new Map();
           this.day = null;
           this.dayRuns = [];
@@ -690,6 +719,7 @@ export class OverviewPage implements DoCheck, OnInit, OnDestroy {
         this.loadLines = loadSparklines(
           Array.isArray(load.value?.series) ? load.value : null,
         );
+      this.dayFailed = day.status === "rejected";
       if (day.status === "fulfilled") {
         this.day = Array.isArray(day.value?.series) ? day.value.series : null;
         this.dayRuns = (this.day ?? []).filter(
@@ -703,6 +733,18 @@ export class OverviewPage implements DoCheck, OnInit, OnDestroy {
     } finally {
       this.cdr.markForCheck();
     }
+  }
+  /**
+   * The Last 24 h band on a server that keeps statistics: loading until the
+   * hours answer, unavailable when the summary or the hours could not be read.
+   */
+  dayState(
+    summary: OperationsSummary,
+  ): "none" | "loading" | "unavailable" | "ready" {
+    const runs = summary.runs_24h;
+    if (!runs || !this.statisticsServed) return "none";
+    if ("state" in runs || this.dayFailed) return "unavailable";
+    return this.day ? "ready" : "loading";
   }
   /** The Last 24 h band shows when the summary has the day's runs and the hours answered. */
   dayOf(summary: OperationsSummary): RunsDaySection | null {
