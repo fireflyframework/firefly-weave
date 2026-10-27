@@ -466,6 +466,24 @@ def test_a_called_workflow_that_returns_null_fails_the_run_with_a_diagnostic():
     assert "enrich" in answer["diagnostics"][0]["message"]
 
 
+def test_after_a_signal_a_null_returning_callee_is_named_and_what_ran_is_kept(caplog):
+    callee = callee_definition()
+    callee["spec"]["output"] = {"literal": None}
+    with caplog.at_level("DEBUG", logger="firefly_weave.studio.simulation"):
+        answer = run(
+            workflow(PAID, CALL),
+            definitions=[ACTION, callee],
+            workflows={"enrich@1.0.0": {"mocks": {"node:check": {"eligible": True}}}},
+            scripts={"signals": {"paid": {"payload": {"secret-ish": "v-123"}, "source": "manual"}}},
+        )
+    assert answer["status"] == "failed", answer
+    assert "step enrich" in answer["diagnostics"][0]["message"]
+    assert [(e["nodeId"], e["status"]) for e in answer["trace"]][0] == ("paid", "completed")
+    logged = " ".join(record.getMessage() for record in caplog.records)
+    assert "TypeError" in logged and "enrich" in logged
+    assert "v-123" not in logged
+
+
 def test_a_secret_in_a_called_workflow_s_mock_is_refused_with_its_pointer():
     secret = json.loads(json.dumps(ACTION))
     secret["spec"]["outputSchema"]["properties"]["eligible"]["x-secret"] = True

@@ -25,6 +25,7 @@ from __future__ import annotations
 import copy
 import functools
 import json
+import logging
 import math
 from collections.abc import Iterable, Iterator, Mapping
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -38,6 +39,8 @@ if TYPE_CHECKING:
     from firefly_weave.studio.local_contracts import CompileSummary, ExecuteRequest, ExecuteResponse, SimulationRequest
 
 NULL: JsonObject = {"literal": None}
+
+logger = logging.getLogger(__name__)
 
 
 def _branches(step: JsonObject) -> list[JsonObject]:
@@ -613,28 +616,50 @@ def simulator_for(
     return summary, simulator, misfits
 
 
-def stuck_at(simulator: Any) -> str:
-    """Where a run stops on something the simulator can't carry on with: replays it one boundary at a time.
+class _Stepper:
+    """A simulator that moves one boundary at a time under ``_drive``, noting where it is before each move."""
 
-    ``simulator`` is a fresh one (the failed one's state is unknown). Each step's current nodes are noted before
-    it moves; the step that raises names the place.
+    def __init__(self, simulator: Any) -> None:
+        self.simulator = simulator
+        self.here: list[str] = []
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.simulator, name)
+
+    def continue_until_breakpoint(self) -> Any:
+        from firefly_weave.operations.debug.models import DebugCommand
+        from firefly_weave.operations.debug.simulator import TERMINAL
+
+        view = self.simulator.inspect()
+        for _ in range(ROUNDS):
+            before = (view.status, list(view.current_nodes), len(self.simulator.data.boundaries))
+            self.here = list(view.current_nodes)
+            view = self.simulator.command(DebugCommand(kind="next"))
+            if view.status in TERMINAL or view.diagnostics or self.simulator.data.paused is not None:
+                return view
+            if (view.status, list(view.current_nodes), len(self.simulator.data.boundaries)) == before:
+                return view
+        return view
+
+
+def stuck_at(simulator: Any, scripts: Any = None) -> tuple[str, Any]:
+    """Where a run stops on something the simulator can't carry on with, and the run up to there.
+
+    ``simulator`` is a fresh one (the failed one's state is unknown). It replays as Execute does (scripted signals
+    and people answered, waits advanced) one boundary at a time; the step that raises names the place.
     """
+    from types import SimpleNamespace
+
+    from firefly_weave.compiler.ir import HumanTaskNode, SignalNode
     from firefly_weave.contracts.instance_keys import node_of
-    from firefly_weave.operations.debug.models import DebugCommand
     from firefly_weave.operations.debug.simulator import TERMINAL
 
-    for _ in range(ROUNDS):
-        try:
-            here = list(simulator.inspect().current_nodes)
-        except Exception:  # noqa: BLE001 - nothing to name
-            break
-        try:
-            view = simulator.command(DebugCommand(kind="next"))
-        except Exception:  # noqa: BLE001 - this boundary is where it stops
-            return f"step {node_of(here[0])}" if here else "the current step"
-        if view.status in TERMINAL:
-            break
-    return "the current step"
+    stepper = _Stepper(simulator)
+    try:
+        _drive(stepper, scripts or SimpleNamespace(signals={}, humans={}), SignalNode, HumanTaskNode, TERMINAL)
+    except Exception:  # noqa: BLE001 - this boundary is where it stops
+        return (f"step {node_of(stepper.here[0])}" if stepper.here else "the current step"), simulator
+    return "the current step", simulator
 
 
 def unsimulated(place: str) -> str:
@@ -681,6 +706,7 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
         document, sliced = part, True
     scripts = request.scripts
     summary: CompileSummary | None = None
+    unsimulated_at: str | None = None
     try:
         summary, simulator, misfits = simulator_for(request, project, document, whole=whole, sliced=sliced)
         if simulator is None:
@@ -697,16 +723,15 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
             return ExecuteResponse(status="failed", compile=summary, trace=[], diagnostics=[stopped])
         except (DebugError, SimulationRefused):
             raise
-        except Exception:  # noqa: BLE001 - never a 500: the run fails where the simulator stopped
+        except Exception as error:  # noqa: BLE001 - never a 500: the run fails where the simulator stopped
             _, fresh, _ = simulator_for(request, project, document, whole=whole, sliced=sliced)
-            stopped = Diagnostic(
-                code="WV-STUDIO-SIMULATION",
-                severity="error",
-                stage="evaluation",
-                path="",
-                message=unsimulated(stuck_at(fresh) if fresh is not None else "the current step"),
-            )
-            return ExecuteResponse(status="failed", compile=summary, trace=[], diagnostics=[stopped])
+            if fresh is None:
+                raise
+            place, simulator = stuck_at(fresh, scripts)
+            # The kind of failure and where, never its message (it can hold values).
+            logger.debug("Studio couldn't simulate %s: %s", place, type(error).__name__)
+            unsimulated_at = place
+            blocked = None
     except DebugError as error:
         if error.code == "WV-DEBUG-LIMIT" and summary is not None:
             return ExecuteResponse(status="limit", compile=summary, trace=[])
@@ -739,6 +764,8 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
         if key in data.outputs:
             entry["output"] = data.outputs[key]
         trace.append(TraceEntry.model_validate(entry))
+    if unsimulated_at is not None:
+        failed = True
     if failed and trace and trace[-1].status != "completed":
         trace[-1] = trace[-1].model_copy(update={"status": "failed"})
     extra: list[Diagnostic] = []
@@ -760,6 +787,16 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
                 stage="evaluation",
                 path="",
                 message=words,
+            )
+        )
+    if unsimulated_at is not None:
+        extra.append(
+            Diagnostic(
+                code="WV-STUDIO-SIMULATION",
+                severity="error",
+                stage="evaluation",
+                path="",
+                message=unsimulated(unsimulated_at),
             )
         )
     missing = next((d for d in view.diagnostics if d.code == "WV-DEBUG-MISSING_MOCK"), None)
@@ -802,7 +839,7 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
                     break
     if blocked is not None:
         status: Literal["completed", "blocked", "failed", "limit"] = "blocked"
-    elif view.diagnostics or view.status == "failed" or timed_out:
+    elif view.diagnostics or view.status == "failed" or timed_out or unsimulated_at is not None:
         status = "failed"
     else:
         status = "completed"

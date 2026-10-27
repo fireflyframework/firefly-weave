@@ -24,6 +24,7 @@ passes the time (``time.monotonic()``), so tests choose it.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
@@ -36,6 +37,8 @@ if TYPE_CHECKING:
     from firefly_weave.operations.debug.models import DebugCommand, DebugSession
     from firefly_weave.operations.debug.simulator import Simulator
     from firefly_weave.studio.local_contracts import ExecuteScripts, SimulationRequest
+
+logger = logging.getLogger(__name__)
 
 SESSIONS = 4
 IDLE_SECONDS = 1800
@@ -124,8 +127,10 @@ class HostSessions:
             raise SimulationRefused(422, str(error), "The simulated run refused that") from None
         except SimulationRefused:
             raise
-        except Exception:  # noqa: BLE001 - never a 500: the session stops where the simulator did
-            place = stuck_at(self._restored(kept))
+        except Exception as error:  # noqa: BLE001 - never a 500: the session stops where the simulator did
+            place, _ = stuck_at(self._restored(kept), kept.scripts)
+            # The kind of failure and where, never its message (it can hold values).
+            logger.debug("Studio couldn't simulate %s: %s", place, type(error).__name__)
             raise SimulationRefused(422, "WV-STUDIO-SIMULATION", unsimulated(place)) from None
         moved = _Kept(
             state="", revision=kept.revision + 1, created_at=kept.created_at, touched=now, scripts=kept.scripts
