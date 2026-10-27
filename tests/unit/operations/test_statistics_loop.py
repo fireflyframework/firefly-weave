@@ -159,8 +159,11 @@ async def test_running_out_of_budget_stops_statistics_and_marks_the_quantum_inco
         yield
 
     monkeypatch.setattr(loop, "_unit", spent)
-    assert await loop.roll_statistics(authority(), 100.4) is False
+    environment = authority()
+    assert await loop.roll_statistics(environment, 100.4) is False
     assert done == []
+    # The slice was gone before any work: the next visit keeps its full chunk.
+    assert environment.scope.model_dump_json() not in loop.chunks
     assert await loop.cycle() is False
     assert [name for name, _ in calls] == ["revalidate", "upkeep"]
 
@@ -307,3 +310,36 @@ async def test_a_chunk_that_times_out_halves_the_next_and_fails_the_visit(monkey
     assert await loop.roll_statistics(environment, 100.4) is False
     assert loop.chunks[environment.scope.model_dump_json()] == 1
     del asyncio
+
+
+async def test_a_visit_spent_on_recompute_skips_the_other_steps_without_blame(monkeypatch):
+    loop = operations_loop(monkeypatch)
+    clock = {"now": 100.0}
+    loop.monotonic = lambda: clock["now"]
+    quiet(monkeypatch, loop, [])
+
+    @asynccontextmanager
+    async def unit(scope, deadline, *, mutation):
+        if clock["now"] >= deadline:
+            raise operations.QuantumIncomplete()
+        yield object()
+
+    monkeypatch.setattr(loop, "_unit", unit)
+
+    async def recompute(tx, now, *, buckets):
+        # Caught up, but this chunk used the whole slice.
+        clock["now"] += 0.45
+        return SimpleNamespace(complete_until=AT - timedelta(minutes=5), rolled_until=AT + timedelta(minutes=5))
+
+    async def other(tx, now):
+        raise AssertionError("no time is left for the other steps")
+
+    monkeypatch.setattr(
+        statistics,
+        "STEPS",
+        (("recompute", recompute), *((name, other) for name in ("hours", "days", "sample", "prune"))),
+    )
+    environment = authority()
+    # Closing, sampling and pruning wait for the next visit; nothing failed and the chunk keeps its size.
+    assert await loop.roll_statistics(environment, 100.4) == AT - timedelta(minutes=5)
+    assert loop.chunks[environment.scope.model_dump_json()] == 3
