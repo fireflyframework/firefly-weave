@@ -473,3 +473,55 @@ async def test_a_run_whose_transaction_is_in_doubt_cannot_be_archived_or_purged(
             context=AuditContext(),
         )
     assert refused.value.code == "WV-RUN-NOT-TERMINAL"
+
+
+async def test_a_run_too_large_for_its_state_is_never_cancelled_past_its_open_transaction(platform, monkeypatch):
+    from firefly_weave.definitions.models import CatalogError
+    from firefly_weave.runtime import repository
+
+    activation = await platform.publish(workflow("move", [transaction(hold(), add(), submit())]))
+    run = await platform.start(activation)
+    await platform.complete(await platform.lease("hold"))
+    monkeypatch.setattr(repository, "RUN_FETCH_BYTES", 1)
+    with pytest.raises(CatalogError) as refused:
+        async with platform.runtime.definitions.transaction(platform.scope, None) as tx:
+            await platform.runtime.cancel(
+                tx, run.id, "stop", actor=platform.actor, scope=platform.scope, context=AuditContext()
+            )
+    assert (refused.value.status, refused.value.code) == (409, "WV-TXN-IN-DOUBT")
+    assert (await platform.state(run.id))["status"] == "waiting"
+    assert (await platform.record(run.id))["state"] == "open"
+
+
+async def test_a_run_too_large_for_its_state_that_times_out_holds_its_transaction_behind_an_incident(
+    platform, monkeypatch
+):
+    import asyncio
+
+    from firefly_weave.runtime import repository
+
+    activation = await platform.publish(workflow("move", [transaction(hold(), add(), submit())], timeout=5))
+    run = await platform.start(activation)
+    await platform.complete(await platform.lease("hold"))
+    monkeypatch.setattr(repository, "RUN_FETCH_BYTES", 1)
+    await asyncio.sleep(5.2)
+    await platform.scan()
+    # Nothing is abandoned: the transaction stays open and a person decides, through a force cancel.
+    assert (await platform.state(run.id))["status"] == "waiting"
+    assert (await platform.record(run.id))["state"] == "open"
+    [incident] = await platform.query(
+        "SELECT incident_key,code,origin_code,status FROM incidents WHERE run_id=:run", run=run.id
+    )
+    assert incident == {
+        "incident_key": "@transactions",
+        "code": "WV-TXN-RUN-OVERSIZED",
+        "origin_code": "WV-RUNTIME-CAPACITY",
+        "status": "active",
+    }
+    [timeout] = await platform.query(
+        "SELECT consumed FROM run_deadlines WHERE run_id=:run AND node_id='@run'", run=run.id
+    )
+    assert timeout == {"consumed": True}
+    # The timeout fired once: a later scan changes nothing.
+    await platform.scan()
+    assert len(await platform.query("SELECT 1 FROM incidents WHERE run_id=:run", run=run.id)) == 1

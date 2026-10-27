@@ -111,8 +111,10 @@ async def settle(repository: RuntimeRepository, row: dict[str, Any], *, terminal
         except RuntimeCapacityError:
             if elapsed:
                 raise
-            from firefly_weave.runtime.terminal_capacity import persist_terminal
+            from firefly_weave.runtime.terminal_capacity import hold_transactions, persist_terminal
 
+            if await hold_transactions(repository, row, event):
+                return 1
             await persist_terminal(repository, row, event, canonical_digest({"timeout": str(deadline["id"])}))
             return 1
         if not elapsed and result.state.status in TERMINAL:

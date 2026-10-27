@@ -599,7 +599,7 @@ class RuntimeService:
         cascade = {} if caller is None else {"caller_run_id": str(caller)}
         async with self.definitions.transaction(scope, tx) as tx:
             repository = RuntimeRepository(tx, self.definitions.outbox)
-            from firefly_weave.runtime.terminal_capacity import oversized_row, persist_terminal
+            from firefly_weave.runtime.terminal_capacity import hold_transactions, oversized_row, persist_terminal
 
             oversized = await oversized_row(repository, run_id)
             row = oversized or await repository.run(run_id, lock=True)
@@ -617,6 +617,7 @@ class RuntimeService:
                     sequence=row["state"]["accepted_sequence"] + 1,
                     data={"actor_id": str(actor.id), "reason": request.reason},
                 )
+                await hold_transactions(repository, row, event)
                 capacity_ack = await persist_terminal(repository, row, event, event_hash(event))
                 await audit(
                     tx.session,
@@ -672,6 +673,7 @@ class RuntimeService:
                     previous.state, event, None if quarantined else import_artifact(row["artifact"])
                 )
             except RuntimeCapacityError:
+                await hold_transactions(repository, row, event)
                 capacity_ack = await persist_terminal(repository, row, event, event_hash(event))
                 await audit(
                     tx.session,

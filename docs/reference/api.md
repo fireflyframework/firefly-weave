@@ -906,6 +906,13 @@ complete history are committed; only the large state is left out of the
 answer. Handle both shapes. Cancellation stops further orchestration, but it
 cannot undo an external call that is already in progress.
 
+A large run with a workflow transaction that is not settled yet is never ended
+this way, because its transaction could not be undone. Its cancellation is
+refused (HTTP 409, `WV-TXN-IN-DOUBT`). Its run timeout fires once and opens the
+incident `WV-TXN-RUN-OVERSIZED` at key `@transactions`, with origin
+`WV-RUNTIME-CAPACITY`. The transaction stays as it is until a person force
+cancels the run, which needs a stronger permission than `run.cancel`.
+
 ## Operation inventory
 
 The table lists every operation with its canonical path and the capability it

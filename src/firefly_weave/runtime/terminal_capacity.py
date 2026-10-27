@@ -86,6 +86,50 @@ async def due_terminal(repository: RuntimeRepository, row: dict[str, Any]) -> Ru
     return None
 
 
+UNSETTLED_SQL = "('open','deciding','committing','compensating','in_doubt')"
+
+
+async def hold_transactions(repository: RuntimeRepository, row: dict[str, Any], event: RuntimeEvent) -> bool:
+    """A run too large for its own state cannot undo its transactions, and a plain cancel or timeout never abandons
+    them: a cancel is refused, and a timeout fires once and holds the run behind an in-doubt incident that only a
+    force cancel closes. True when the timeout was held this way.
+    """
+    unsettled = await repository.rows(
+        f"SELECT 1 FROM run_transactions WHERE {SCOPE} AND run_id=:run AND state IN {UNSETTLED_SQL} LIMIT 1",
+        run=row["id"],
+    )
+    if not unsettled:
+        return False
+    from firefly_weave.contracts.transactions import TRANSACTION_MESSAGES
+
+    if event.type == "cancelled":
+        raise CatalogError(409, "WV-TXN-IN-DOUBT", TRANSACTION_MESSAGES["WV-TXN-RUN-OVERSIZED"])
+    await repository.execute(
+        "INSERT INTO wait_wakeups VALUES(:tenant,:project,:environment,:wait,'timeout',:now) ON CONFLICT DO NOTHING",
+        wait=UUID(str(event.data["wait_id"])),
+        now=event.timestamp,
+    )
+    await repository.execute(
+        f"UPDATE run_deadlines SET consumed=true WHERE {SCOPE} AND run_id=:run AND id=:wait",
+        run=row["id"],
+        wait=UUID(str(event.data["wait_id"])),
+    )
+    await repository.execute(
+        "WITH opened AS (INSERT INTO incidents(id,tenant_id,project_id,environment_id,run_id,incident_key,node_id,"
+        "generation,origin_code,code,status,revision) VALUES(md5(cast(cast(:run AS uuid) AS text) || ':@transactions')"
+        "::uuid,:tenant,:project,:environment,:run,'@transactions',NULL,NULL,'WV-RUNTIME-CAPACITY',"
+        "'WV-TXN-RUN-OVERSIZED','active',1) ON CONFLICT(run_id,incident_key) DO NOTHING RETURNING id) "
+        "INSERT INTO incident_facts(tenant_id,project_id,environment_id,incident_id,node_id,instance_key,opened_at,"
+        "updated_at,workflow_name,workflow_version,test) SELECT :tenant,:project,:environment,o.id,NULL,'',:at,:at,"
+        "f.workflow_name,f.workflow_version,f.test FROM opened o "
+        f"JOIN run_facts f ON f.run_id=:run AND f.{SCOPE.replace(' AND ', ' AND f.')} "
+        "ON CONFLICT(incident_id) DO NOTHING",
+        run=row["id"],
+        at=event.timestamp,
+    )
+    return True
+
+
 async def persist_terminal(
     repository: RuntimeRepository, row: dict[str, Any], event: RuntimeEvent, request_hash: str
 ) -> CapacityRunAcknowledgment:
@@ -97,6 +141,12 @@ async def persist_terminal(
         raise CatalogError(409, "WV-RUNTIME-TERMINAL", "Historical terminal run")
     if repository.outbox is None:
         raise RuntimeError("Outbox required")
+    if await repository.rows(
+        f"SELECT 1 FROM run_transactions WHERE {SCOPE} AND run_id=:run AND state IN {UNSETTLED_SQL} LIMIT 1",
+        run=row["id"],
+    ):
+        # Ending here would abandon a transaction without undoing it: callers hold the run first.
+        raise RuntimeError("Unsettled transactions require hold_transactions first")
     await repository.execute("SELECT weave_control_begin('run',:id)", id=row["id"])
     if event.type == "timed_out":
         accepted = await due_terminal(repository, row)
@@ -179,13 +229,6 @@ async def persist_terminal(
         f"WITH closed AS (UPDATE incidents SET status='closed',revision=revision+1 WHERE {SCOPE} AND run_id=:run "
         "AND status='active' RETURNING id) UPDATE incident_facts SET updated_at=:at "
         f"WHERE {SCOPE} AND incident_id IN (SELECT id FROM closed)",
-        at=event.timestamp,
-        run=row["id"],
-    )
-    # A run too large for its own state cannot undo its transactions: they end recorded as force ended.
-    await repository.execute(
-        "UPDATE run_transactions SET state='force_ended',revision=revision+1,ended_at=:at "
-        f"WHERE {SCOPE} AND run_id=:run AND state IN ('open','deciding','committing','compensating','in_doubt')",
         at=event.timestamp,
         run=row["id"],
     )
