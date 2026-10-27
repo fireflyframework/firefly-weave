@@ -101,6 +101,28 @@ async def activated(worker_setup, steps: list, output: dict):
     )
 
 
+# What an export keeps of a handled failure: codes, outcomes and counts.
+EXPORTED_FIELDS = {"node_id", "generation", "code", "outcome", "attempts", "child_run_id", "deadline", "wait_id"}
+
+
+async def exported(services, access_db, worker_setup, transaction_factory, run_id):
+    """Export the run's history and check that it replays consistently and keeps only the handled failure's codes."""
+    from firefly_weave.access.audit import AuditContext
+    from firefly_weave.operations.history import HistoryService
+
+    actor, scope = worker_setup[3:5]
+    async with transaction_factory() as tx:
+        export = (
+            await services(access_db[0])
+            .resolve(HistoryService)
+            .export(tx, run_id, actor=actor, scope=scope, context=AuditContext())
+        )
+    assert export.replay.status == "consistent", export.replay
+    failures = [event for event in export.events if event.type == "step_failed"]
+    assert failures and all(set(event.data) <= EXPORTED_FIELDS for event in failures)
+    return export
+
+
 async def rows(access_db, sql: str, **values) -> list[dict]:
     async with access_db[1]() as session:
         return [dict(row) for row in (await session.execute(text(sql), values)).mappings()]
@@ -127,10 +149,11 @@ async def test_a_step_past_its_retry_budget_that_continues_ends_the_run_succeede
     assert tasks == [{"status": "handled"}]
     events = await rows(access_db, "SELECT data FROM run_events WHERE run_id=:id AND type='step_failed'", id=run.id)
     assert [event["data"]["code"] for event in events] == ["RATE_LIMITED"]
+    await exported(services, access_db, worker_setup, transaction_factory, run.id)
 
 
 async def test_a_task_nobody_claimed_before_its_deadline_is_handled_without_an_attempt(
-    worker_setup, access_db, services
+    worker_setup, access_db, services, transaction_factory
 ):
     run = await start(worker_setup, 1)
     async with access_db[1]() as session, session.begin():
@@ -147,6 +170,7 @@ async def test_a_task_nobody_claimed_before_its_deadline_is_handled_without_an_a
     assert (state["status"], state["output"]) == ("succeeded", "WV-TASK-DEADLINE")
     error = state["steps"]["send"]["error"]
     assert (error["outcome"], error["attempts"]) == ("not_started", 0)
+    await exported(services, access_db, worker_setup, transaction_factory, run.id)
 
 
 @pytest.mark.parametrize("worker_runtime_fixture", ["loop"], indirect=True)
@@ -169,7 +193,7 @@ async def test_a_loop_of_five_whose_second_item_fails_returns_five_results(
 
 
 async def test_a_signal_timeout_on_a_step_with_an_error_path_runs_the_path_and_consumes_its_deadline(
-    worker_setup, access_db, services
+    worker_setup, access_db, services, transaction_factory
 ):
     run = await start(worker_setup, {}, await activated(worker_setup, [CONFIRMED], {"ref": "/steps/confirmed/output"}))
     await asyncio.sleep(1.05)
@@ -181,3 +205,4 @@ async def test_a_signal_timeout_on_a_step_with_an_error_path_runs_the_path_and_c
     events = await rows(access_db, "SELECT type,data FROM run_events WHERE run_id=:id ORDER BY sequence", id=run.id)
     assert [event["type"] for event in events] == ["started", "step_failed"]
     assert events[1]["data"]["code"] == "WV-SIGNAL-TIMEOUT"
+    await exported(services, access_db, worker_setup, transaction_factory, run.id)

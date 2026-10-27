@@ -822,7 +822,7 @@ class RuntimeRepository:
         ):
             evidence.issued_calls.append(retried[0])
         generation = event.data.get("generation")
-        if event.type in {"call_completed", "incident_opened"} and isinstance(generation, int):
+        if event.type in {"call_completed", "incident_opened", "step_failed"} and isinstance(generation, int):
             received = await call_fact(event.data.get("node_id"), generation)
             ended = {"succeeded", "failed", "cancelled", "timed_out", "rejected"}
             if received is not None and received[1]["status"] in ended:
@@ -855,7 +855,7 @@ class RuntimeRepository:
                     )
                 }
             )
-        if event.type in {"task_completed", "task_failed", "incident_opened", "recovery_scheduled"}:
+        if event.type in {"task_completed", "task_failed", "incident_opened", "recovery_scheduled", "step_failed"}:
             tasks = await self.rows(
                 f"SELECT * FROM task_intents WHERE {SCOPE} AND run_id=:run AND node_id=:node",
                 run=view.id,
@@ -878,7 +878,9 @@ class RuntimeRepository:
                             )
                         }
                     )
-        if event.type in {"wait_elapsed", "timed_out", "signal_received"}:
+        if event.type in {"wait_elapsed", "timed_out", "signal_received"} or (
+            event.type == "step_failed" and "wait_id" in event.data
+        ):
             due = await self.rows(
                 f"SELECT id FROM run_deadlines WHERE {SCOPE} AND run_id=:run AND node_id=:node",
                 run=view.id,

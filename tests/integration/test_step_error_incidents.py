@@ -114,6 +114,19 @@ async def test_an_unknown_outcome_opens_the_ambiguity_incident_and_confirming_no
         task = await session.scalar(text("SELECT status FROM task_intents WHERE run_id=:id"), {"id": run.id})
         handled = await session.scalar(text("SELECT handled_errors FROM run_facts WHERE run_id=:id"), {"id": run.id})
     assert (task, handled) == ("handled", 1)
+    from firefly_weave.access.audit import AuditContext
+    from firefly_weave.operations.history import HistoryService
+
+    actor, scope = worker_setup[3:5]
+    async with transaction_factory() as tx:
+        export = (
+            await services(access_db[0])
+            .resolve(HistoryService)
+            .export(tx, run.id, actor=actor, scope=scope, context=AuditContext())
+        )
+    assert export.replay.status == "consistent", export.replay
+    [resolved] = [event for event in export.events if event.type == "incident_resolved"]
+    assert (resolved.data["kind"], resolved.data["attempts"]) == ("accept_reconciled_failure", 1)
 
 
 @pytest.mark.parametrize("worker_runtime_fixture", ["stops"], indirect=True)
