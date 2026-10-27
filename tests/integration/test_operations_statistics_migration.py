@@ -29,8 +29,8 @@ from test_incident_migration import upgrade
 from firefly_weave.operations import statistics_histogram
 
 pytestmark = pytest.mark.integration
-PRIOR_HEAD = "0036_editor_studio_documents"
-HEAD = "0039_operations_statistics"
+PRIOR_HEAD = "0037_language_transactions"
+HEAD = "0038_operations_statistics"
 TABLES = ("run_stat_buckets", "operations_samples", "operations_statistics_cursors")
 RUNS = text("SELECT to_jsonb(r)::text FROM runs r ORDER BY id")
 USAGE = text("SELECT to_jsonb(u)::text FROM operation_usage u ORDER BY 1")

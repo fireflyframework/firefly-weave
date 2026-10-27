@@ -28,6 +28,8 @@ from firefly_weave.contracts.file_workers import WorkerFileAccess
 from firefly_weave.contracts.files import FileChunk, FileCreate, FileUpload
 from firefly_weave.contracts.values import JsonValue
 from firefly_weave.contracts.workers import (
+    ClaimRequest,
+    ClaimWorker,
     CompletionAcknowledgment,
     CredentialLease,
     CredentialRequest,
@@ -40,15 +42,20 @@ from firefly_weave.sdk._settlement import check_settlement, settlement_deadline
 
 
 class WorkerTransport:
-    def __init__(self, client: AsyncClient, environment_url: str, worker_id: UUID) -> None:
+    """``worker`` names the release this worker runs and whether it reports failures that applied nothing
+    (``ConnectorFailure(..., effect="none")``); the platform fixes that declaration per release on its first claim."""
+
+    def __init__(
+        self, client: AsyncClient, environment_url: str, worker_id: UUID, *, worker: ClaimWorker | None = None
+    ) -> None:
         self.client = client
         self.prefix = environment_url.rstrip("/")
         self.worker_id = worker_id
+        self.worker = worker
 
     async def claim(self, limit: int) -> list[TaskLease]:
-        response = await self.client.post(
-            self.prefix + "/tasks/claim", json={"worker_id": str(self.worker_id), "limit": limit}
-        )
+        request = ClaimRequest(worker_id=self.worker_id, limit=limit, worker=self.worker)
+        response = await self.client.post(self.prefix + "/tasks/claim", json=request.model_dump(mode="json"))
         if self._capacity_rejected(response):
             return []
         response.raise_for_status()

@@ -142,11 +142,24 @@ when recovery creates a new generation.
   `outcome: unknown` is refused (HTTP 422, `WV-COMPLETION-EFFECT`). A worker
   release declares that it reports this on purpose with
   `worker: {release, transaction_aware: true}` on its claims, and a connector
-  action with `transactionAware: true`. The claim's `release` is the same
+  action with `transactionAware: true`. On an action a worker implements,
+  `transactionAware` is ignored: only the claiming release's own declaration
+  counts. The claim's `release` is the same
   release ID that registration sends as `release_id`; the two fields name it
-  differently. The platform accepts these fields now and uses them once it runs
-  transactions; a report from any other release counts as unknown, so the step
-  is undone to be safe.
+  differently. A claim whose `release` is not the release the worker registered
+  with is refused (HTTP 409, `WV-WORKER-RELEASE`). The first claim that sends
+  `worker` fixes the declaration for its release: a later claim of the same
+  release that declares otherwise is refused the same way, so earlier reports
+  never change meaning. A report from any other release counts as unknown, so
+  the step is undone to be safe.
+- **Tasks of a transaction.** A lease of a task that belongs to a workflow
+  transaction carries `transaction: {id, branch_key, phase, mode}` and, for a
+  cancel or an undo, `forward_outcome` (`done`, or `unknown` when the step may or
+  may not have applied). `branch_key` is the operation key of the step the task
+  belongs to, the same for its confirm, cancel or undo, so a participant can
+  fence late requests by it. A confirm, cancel or undo is claimed even while its
+  run is paused or held by another incident, and it retries on its
+  transaction's undo policy instead of its action's own.
 
 **Example.** The target records a customer, and the worker crashes before Weave
 accepts the completion. Recovery issues generation 2 of the same task. Its

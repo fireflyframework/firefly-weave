@@ -23,7 +23,7 @@ from pathlib import Path
 from firefly_weave.operations.statistics_histogram import BUCKETS, THRESHOLDS_US
 from firefly_weave.persistence.migrations import SCHEMA_VERSION
 
-PATH = Path(__file__).resolve().parents[2] / "migrations/versions/0039_operations_statistics.py"
+PATH = Path(__file__).resolve().parents[2] / "migrations/versions/0038_operations_statistics.py"
 
 
 def migration():

@@ -32,7 +32,17 @@ SPDX-License-Identifier: Apache-2.0
   runs never count. New reads `run_statistics.series`, `.workflows` and
   `.steps` (`status.read`; `weave operations statistics`), errors
   `WV-STATS-RANGE` and `WV-STATS-SERIES`, and the summary's optional
-  `runs_24h`. Migration `0039_operations_statistics`.
+  `runs_24h`. Migration `0038_operations_statistics`.
+- Workers declare per release whether they report failures that applied
+  nothing: the first claim that sends `worker: {release, transaction_aware}`
+  fixes the answer for that release, and a claim naming another release than
+  the one the worker registered with, or changing the answer, is refused
+  (`409 WV-WORKER-RELEASE`). Leases of tasks that belong to a workflow
+  transaction carry `transaction` (its ID, the operation key of the step, the
+  phase and how the step is undone). Workflows with a `transaction` step still
+  cannot be published. Migration `0037_language_transactions` adds the
+  storage transactions use and the `transaction_reconciler` role, granted to
+  the local owner and to no existing account.
 - Studio keeps test data for each workflow: the trigger's test input and
   pinned output on steps. Step details offer **Pin output**, **Edit output**
   (a JSON editor), **Unpin** with Undo and **Generate sample**; the Input pane

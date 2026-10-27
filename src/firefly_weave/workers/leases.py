@@ -39,12 +39,14 @@ from firefly_weave.contracts.connectors import ConnectorInvocation
 from firefly_weave.contracts.transactions import TRANSACTION_MESSAGES
 from firefly_weave.contracts.values import JsonValue
 from firefly_weave.contracts.workers import (
+    ClaimWorker,
     CompletionAcknowledgment,
     CompletionReceipt,
     ConnectorExecutionPin,
     CredentialLease,
     CredentialRequest,
     LeaseProof,
+    LeaseTransaction,
     TaskConnectionContext,
     TaskError,
     TaskExecutionContext,
@@ -60,6 +62,48 @@ from firefly_weave.runtime.service import RuntimeService
 from firefly_weave.workers.models import VerifiedTask, capped_extension, new_lease_token, token_hash, unavailable
 from firefly_weave.workers.repository import SCOPE, WorkerRepository
 from firefly_weave.workers.service import WorkerService
+
+
+async def release_awareness(repository: WorkerRepository, release: UUID, worker: ClaimWorker | None) -> bool:
+    """Whether the worker's release reports failures that applied nothing, fixed by its first declaration.
+
+    A claim may only speak for the release its worker registered with, and a release cannot change its answer later:
+    otherwise one claim could make earlier, unaware reports count.
+    """
+    if worker is not None and worker.release != release:
+        raise CatalogError(409, "WV-WORKER-RELEASE", "The claim names a release this worker did not register with")
+    query = f"SELECT transaction_aware FROM worker_release_awareness WHERE {SCOPE} AND release_id=:release"
+    rows = await repository.rows(query, release=release)
+    if not rows and worker is not None:
+        # Written once, by the first claim that declares; every later claim poll only reads it.
+        await repository.execute(
+            "INSERT INTO worker_release_awareness(tenant_id,project_id,environment_id,release_id,transaction_aware,"
+            "declared_at) VALUES(:tenant,:project,:environment,:release,:aware,clock_timestamp()) "
+            "ON CONFLICT(release_id) DO NOTHING",
+            release=release,
+            aware=worker.transaction_aware,
+        )
+        rows = await repository.rows(query, release=release)
+    declared = bool(rows and rows[0]["transaction_aware"])
+    if worker is not None and declared != worker.transaction_aware:
+        raise CatalogError(
+            409, "WV-WORKER-RELEASE", "This release already declared whether it reports failures that applied nothing"
+        )
+    return declared
+
+
+def lease_transaction(run_id: UUID, payload: dict[str, Any]) -> LeaseTransaction | None:
+    """The transaction context of a task's lease, with operation keys in place of instance keys."""
+    context = payload.get("transaction")
+    if context is None:
+        return None
+    return LeaseTransaction(
+        id=f"{run_id}:{context['id']}",
+        branch_key=f"{run_id}:{context['branch']}",
+        phase=context["phase"],
+        mode=context["mode"],
+        forward_outcome=context.get("outcome"),
+    )
 
 
 class _TaskOperation:
@@ -95,13 +139,16 @@ class _TaskOperation:
             await self.workers.require(self.actor, self.scope, operation, self.context, tx, capability)
         return instance
 
-    async def claim(self, tx: Transaction, worker_id: UUID, limit: int) -> list[TaskLease]:
+    async def claim(
+        self, tx: Transaction, worker_id: UUID, limit: int, worker: ClaimWorker | None = None
+    ) -> list[TaskLease]:
         self.connections.registry.require_operational()
         if not 1 <= limit <= 100:
             raise ValueError("Claim limit must be 1..100")
         async with self.workers.definitions.transaction(self.scope, tx) as enlisted:
             instance = await self.authority(enlisted, worker_id, "task.claim")
             repository = WorkerRepository(enlisted)
+            aware = await release_awareness(repository, instance.release_id, worker)
             claimed: list[TaskLease] = []
             if await repository.draining(worker_id):
                 await repository.observe(worker_id)
@@ -113,10 +160,10 @@ class _TaskOperation:
                 if locked is None:
                     continue
                 run, task = locked
-                if (
-                    task["status"] != "ready"
-                    or run["state"]["status"] != "waiting"
-                    or run["state"].get("manual_paused")
+                # Settlement work runs while its run is paused or held by another incident; nothing else does.
+                settling = task["settlement"] and run["state"]["status"] in {"waiting", "suspended"}
+                if task["status"] != "ready" or (
+                    not settling and (run["state"]["status"] != "waiting" or run["state"].get("manual_paused"))
                 ):
                     continue
                 payload = task["payload"]
@@ -162,10 +209,12 @@ class _TaskOperation:
                 measure_value(payload["input"])
                 token = new_lease_token()
                 expires = capped_extension(now, self.ttl, deadline)
+                # An undo, cancel or confirm retries on its transaction's policy instead of its action's own.
+                retry = payload.get("retry_policy") or action["retry"]
                 await repository.execute(
                     "INSERT INTO task_leases "
                     "VALUES(:tenant,:project,:environment,:task,:generation,:owner,:token,"
-                    ":now,:expires,:deadline,:capability,cast(:policy AS jsonb),'active')",
+                    ":now,:expires,:deadline,:capability,cast(:policy AS jsonb),'active',:aware)",
                     task=identifier,
                     generation=generation,
                     owner=worker_id,
@@ -174,7 +223,8 @@ class _TaskOperation:
                     expires=expires,
                     deadline=deadline,
                     capability=capability,
-                    policy=json.dumps({"side_effect": action["sideEffect"], "retry": action["retry"]}),
+                    policy=json.dumps({"side_effect": action["sideEffect"], "retry": retry}),
+                    aware=aware,
                 )
                 await self.runtime.set_task_status(enlisted, identifier, "leased", at=now)
                 await FactRepository(enlisted).step_claimed(identifier, generation, worker_id, now)
@@ -186,6 +236,7 @@ class _TaskOperation:
                     expires_at=expires,
                     capability=capability,
                     worker_release_id=instance.release_id,
+                    transaction=lease_transaction(run["id"], payload),
                 )
                 claimed.append(lease)
                 if enlisted.telemetry is not None:
@@ -234,8 +285,9 @@ class _TaskOperation:
             proof.generation != latest
             or attempt["status"] != "active"
             or task["status"] != "leased"
-            or run["state"]["status"] not in ({"waiting", "suspended"} if operation == "task.complete" else {"waiting"})
-            or (operation != "task.complete" and run["state"].get("manual_paused"))
+            or run["state"]["status"]
+            not in ({"waiting", "suspended"} if operation == "task.complete" or task["settlement"] else {"waiting"})
+            or (operation != "task.complete" and not task["settlement"] and run["state"].get("manual_paused"))
             or attempt["expires_at"] <= checked_at
             or attempt["deadline"] <= checked_at
         ):
@@ -269,6 +321,7 @@ class _TaskOperation:
                 expires_at=expires,
                 capability=verified.attempt["capability"],
                 worker_release_id=verified.task["worker_release_id"],
+                transaction=lease_transaction(verified.run["id"], verified.task["payload"]),
             )
 
     async def complete(
@@ -512,9 +565,17 @@ class TaskService:
         return _TaskOperation(actor, scope, context, self.workers, self.runtime, self.connections, self.secrets)
 
     async def claim(
-        self, tx: Transaction, worker_id: UUID, limit: int, *, actor: Principal, scope: Scope, context: AuditContext
+        self,
+        tx: Transaction,
+        worker_id: UUID,
+        limit: int,
+        *,
+        actor: Principal,
+        scope: Scope,
+        context: AuditContext,
+        worker: ClaimWorker | None = None,
     ) -> list[TaskLease]:
-        return await self._operation(actor, scope, context).claim(tx, worker_id, limit)
+        return await self._operation(actor, scope, context).claim(tx, worker_id, limit, worker)
 
     async def heartbeat(
         self, tx: Transaction, lease: LeaseProof, *, actor: Principal, scope: Scope, context: AuditContext

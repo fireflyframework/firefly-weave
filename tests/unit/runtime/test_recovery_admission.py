@@ -117,7 +117,8 @@ class _Harness:
             yield Transaction(session=_Session(scope.tenant_id), scope=scope)
 
         async def lock_task(tx, identifier, *, skip_locked):
-            row = {"id": uuid4(), "artifact": {}, "state": SimpleNamespace(status="waiting", accepted_sequence=3)}
+            state = SimpleNamespace(status="waiting", accepted_sequence=3, transactions={})
+            row = {"id": uuid4(), "artifact": {}, "state": state}
             return row, {"status": "ready", "node_id": "approval"}
 
         async def observe_unavailable(tx, row):
@@ -130,7 +131,7 @@ class _Harness:
                 return RecoveryReport()
             # Like `waits.settle`: a timed-out deadline reduces on the control pool.
             self.deadlines -= 1
-            state = SimpleNamespace(status="waiting", accepted_sequence=3)
+            state = SimpleNamespace(status="waiting", accepted_sequence=3, transactions={})
             event = RuntimeEvent(id=uuid4(), type="timed_out", timestamp=datetime.now(UTC), sequence=4)
             await transition_async(state, event, None)  # type: ignore[arg-type]
             return RecoveryReport(timed_out=1)

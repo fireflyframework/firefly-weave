@@ -22,8 +22,8 @@ none of these tables counts toward usage.
 
 from alembic import op
 
-revision = "0039_operations_statistics"
-down_revision = "0036_editor_studio_documents"
+revision = "0038_operations_statistics"
+down_revision = "0037_language_transactions"
 
 KEY = "tenant_id,project_id,environment_id"
 SCOPE_COLUMNS = "tenant_id uuid NOT NULL,project_id uuid NOT NULL,environment_id uuid NOT NULL"

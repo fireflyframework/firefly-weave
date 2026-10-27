@@ -419,7 +419,7 @@ An **action** is a published, versioned definition of one external call. Its
 | `connection` | No | The connection requirement, same shape as a workflow slot |
 | `routing` | No | `{queue}` selects a named worker queue |
 | `definiteFailures` | No | Up to 32 unique failure codes that mean nothing was applied, such as `VALIDATION`; a temporary code (`TRANSIENT`, `UNAVAILABLE`, `RATE_LIMITED`, `TIMEOUT`, or `LLM_*`) is refused (`WV-COMP-ACTION_DEFINITE_TRANSIENT`). Inside a transaction, a step that failed with one of these codes is not undone |
-| `transactionAware` | No | `true` when the implementation reports explicitly that a failure applied nothing (`effect: none` in the worker protocol) |
+| `transactionAware` | No | `true` when a connector implementation reports explicitly that a failure applied nothing (`effect: none`). Ignored on worker implementations, whose release declares it on its claims |
 
 **The declared side effect governs retries.** It decides whether automatic and
 operator retries are allowed. It does not prove that the external system really

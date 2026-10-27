@@ -1619,6 +1619,8 @@ OPERATIONS = {
             RunView | UnavailableRunAcknowledgment | CapacityRunAcknowledgment,
             "run.cancel",
             CancelRunRequest,
+            # 202: the run's transactions are being undone and the run ends once they settle.
+            (200, 202),
         ),
         Operation(
             "runs.retry",
