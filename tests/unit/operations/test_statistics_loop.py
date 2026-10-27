@@ -80,8 +80,8 @@ def quiet(monkeypatch, loop: OperationsLoop, calls: list) -> None:
 
 def units(monkeypatch, loop: OperationsLoop, opened: list) -> None:
     @asynccontextmanager
-    async def unit(scope, deadline, *, mutation):
-        opened.append((deadline, mutation))
+    async def unit(scope, deadline, *, mutation, admission=True):
+        opened.append((deadline, mutation, admission))
         yield object()
 
     monkeypatch.setattr(loop, "_unit", unit)
@@ -127,7 +127,8 @@ async def test_statistics_steps_run_in_their_own_units_in_order(monkeypatch):
     steps(monkeypatch, done)
     assert await loop.roll_statistics(authority(), 100.4) == AT
     assert done == ["recompute", "hours", "days", "sample", "prune"]
-    assert opened == [(100.4, True)] * 5
+    # Statistics write only their own tables: no unit waits for, or holds, the project's operation lock.
+    assert opened == [(100.4, True, False)] * 5
 
 
 async def test_a_statistics_failure_never_stops_revalidation_or_upkeep(monkeypatch, caplog):
@@ -154,7 +155,7 @@ async def test_running_out_of_budget_stops_statistics_and_marks_the_quantum_inco
     steps(monkeypatch, done)
 
     @asynccontextmanager
-    async def spent(scope, deadline, *, mutation):
+    async def spent(scope, deadline, *, mutation, admission=True):
         raise operations.QuantumIncomplete()
         yield
 
@@ -200,7 +201,7 @@ async def test_a_slow_statistics_step_cannot_starve_revalidation(monkeypatch):
     quiet(monkeypatch, loop, calls)
 
     @asynccontextmanager
-    async def unit(scope, deadline, *, mutation):
+    async def unit(scope, deadline, *, mutation, admission=True):
         yield object()
 
     monkeypatch.setattr(loop, "_unit", unit)
@@ -264,7 +265,7 @@ async def test_running_out_of_the_slice_after_progress_neither_halves_nor_fails(
     opened: list = []
 
     @asynccontextmanager
-    async def unit(scope, deadline, *, mutation):
+    async def unit(scope, deadline, *, mutation, admission=True):
         if clock["now"] >= deadline:
             raise operations.QuantumIncomplete()
         opened.append(deadline)
@@ -319,7 +320,7 @@ async def test_a_visit_spent_on_recompute_skips_the_other_steps_without_blame(mo
     quiet(monkeypatch, loop, [])
 
     @asynccontextmanager
-    async def unit(scope, deadline, *, mutation):
+    async def unit(scope, deadline, *, mutation, admission=True):
         if clock["now"] >= deadline:
             raise operations.QuantumIncomplete()
         yield object()

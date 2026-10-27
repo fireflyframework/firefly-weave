@@ -653,3 +653,31 @@ async def test_a_smaller_chunk_never_moves_the_cursor_back(operations_case):
         after = await statistics.recompute(tx, NOW + timedelta(seconds=20), buckets=1)
     assert after.rolled_until == before["rolled_until"]
     assert after.complete_until == before["complete_until"]
+
+
+async def test_statistics_steps_never_wait_for_the_project_operation_lock(operations_case):
+    from firefly_weave.definitions.models import CatalogError
+    from firefly_weave.persistence.uow import UnitOfWork
+
+    (run,) = await started_runs(operations_case, 1)
+    await place(operations_case, run, started=B0, ended=B0 + ms(100), status="succeeded")
+    uow = UnitOfWork(operations_case.sessions)
+    lock = (
+        "SELECT pg_advisory_xact_lock(hashtextextended('weave.operations:' || cast(:tenant AS text) || ':' "
+        "|| cast(:project AS text),0))"
+    )
+    # A user mutation of the same project holds its operation lock for the whole of this test.
+    async with operations_case.owner.begin() as holder:
+        await holder.execute(
+            text(lock),
+            {"tenant": str(operations_case.scope.tenant_id), "project": str(operations_case.scope.project_id)},
+        )
+        # An ordinary project mutation is refused while the lock is held, as a person's change would be.
+        with pytest.raises(CatalogError) as refused:
+            async with uow.open(operations_case.scope):
+                pass
+        assert (refused.value.status, refused.value.code) == (429, "WV-OPERATION-CAPACITY")
+        for _, run_step in statistics.STEPS:
+            async with uow.open(operations_case.scope, admission=False) as tx:
+                await run_step(tx, NOW)
+    assert [item["workflow_name"] for item in await rows(operations_case, totals=False)] == ["orders"]

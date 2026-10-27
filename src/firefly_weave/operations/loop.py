@@ -196,7 +196,8 @@ class OperationsLoop:
                 started = self.monotonic()
                 try:
                     async with asyncio.timeout(max(0.0, deadline_monotonic - started)):
-                        async with self._unit(authority, deadline_monotonic, mutation=True) as tx:
+                        # Statistics tables are serialized by their cursor row, not the project's operation lock.
+                        async with self._unit(authority, deadline_monotonic, mutation=True, admission=False) as tx:
                             cursor = await (
                                 statistics.recompute_chunk(step, tx, now, buckets)
                                 if name == "recompute"
@@ -228,12 +229,12 @@ class OperationsLoop:
 
     @asynccontextmanager
     async def _unit(
-        self, authority: _SchedulerScope, deadline_monotonic: float, *, mutation: bool
+        self, authority: _SchedulerScope, deadline_monotonic: float, *, mutation: bool, admission: bool = True
     ) -> AsyncIterator[Transaction]:
         """An ordinary scoped transaction, verified as scheduler work and limited to the remaining budget."""
         if self.monotonic() >= deadline_monotonic:
             raise QuantumIncomplete()
-        async with self.uow.open(authority.scope, mutation=mutation) as tx:
+        async with self.uow.open(authority.scope, mutation=mutation, admission=admission) as tx:
             await authority.verify(tx)
             remaining = deadline_monotonic - self.monotonic()
             if remaining <= 0:
