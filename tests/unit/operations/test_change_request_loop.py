@@ -221,6 +221,8 @@ async def test_upkeep_gets_its_own_budget_after_a_revalidation_that_spent_the_qu
         monotonic=lambda: clock["now"],
     )
     monkeypatch.setattr(loop, "revalidate", revalidate)
+    # Statistics have their own tests; here they have nothing to roll up.
+    monkeypatch.setattr(loop, "roll_statistics", no_statistics)
     monkeypatch.setattr(loop, "maintain_changes", maintain)
     await loop._environment(authority())
     assert [name for name, _ in order] == ["revalidate", "upkeep"]
@@ -241,3 +243,7 @@ def test_a_never_seen_worker_counts_as_drained_only_while_it_drains_with_no_leas
     assert drained(member(draining=True))
     assert not drained(member(draining=True, active_leases=1))
     assert drained(member(presence="stale")) and drained(member(revoked=True))
+
+
+async def no_statistics(scope, deadline):
+    return None

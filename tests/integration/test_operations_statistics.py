@@ -455,3 +455,61 @@ def scans(plan) -> set[str]:
         for value in plan:
             found |= scans(value)
     return found
+
+
+async def test_the_rollup_catches_up_from_its_cursor_after_downtime(operations_case):
+    (run,) = await started_runs(operations_case, 1)
+    behind = NOW - timedelta(hours=3)
+    await place(operations_case, run, started=behind + ms(10), ended=behind + ms(500), status="succeeded")
+    await owner(
+        operations_case,
+        "INSERT INTO operations_statistics_cursors(tenant_id,project_id,environment_id,rolled_until,hours_until,"
+        "days_until) VALUES(:tenant,:project,:environment,:at,:hour,:day)",
+        at=behind,
+        hour=behind.replace(minute=0, second=0, microsecond=0),
+        day=behind.replace(hour=0, minute=0, second=0, microsecond=0),
+    )
+    seen = [await rollup(operations_case, NOW + timedelta(seconds=index)) for index in range(4)]
+    # One hour per cycle (09:05 to 10:05, then 11:05, then 12:05), then the window has reached now.
+    assert seen[:3] == [datetime(2031, 3, 4, hour, 0, tzinfo=UTC) for hour in (10, 11, 12)]
+    assert seen[3] == seen[2] == statistics.complete_until(NOW, statistics.window(NOW, None)[1])
+    (row,) = await rows(operations_case, node_id="")
+    assert (row["started"], row["succeeded"]) == (1, 1)
+
+
+async def test_one_cycle_rolls_samples_and_prunes_one_environment_and_leaves_another_alone(operations_case):
+    (run,) = await started_runs(operations_case, 1)
+    await place(operations_case, run, started=B0, ended=B0 + ms(100), status="succeeded")
+    other = uuid4()
+    await owner(
+        operations_case, "INSERT INTO environments VALUES(:other,:tenant,:project,'statistics-idle')", other=other
+    )
+    await owner(
+        operations_case,
+        "INSERT INTO run_stat_buckets(tenant_id,project_id,environment_id,granularity,bucket_start,workflow_name,"
+        "workflow_version,duration_hist) VALUES(:tenant,:project,:environment,'5m',:old,'expired','1.0.0',"
+        "array_fill(0,ARRAY[64])),(:tenant,:project,:other,'5m',:old,'elsewhere','1.0.0',array_fill(0,ARRAY[64]))",
+        old=NOW - timedelta(days=3),
+        other=other,
+    )
+    # The loop runs each step in its own transaction, in this order.
+    for _, run_step in statistics.STEPS:
+        async with operations_case.tx() as tx:
+            await run_step(tx, NOW)
+    mine = await owner(
+        operations_case,
+        "SELECT workflow_name FROM run_stat_buckets WHERE environment_id=:environment ORDER BY workflow_name",
+    )
+    assert [item["workflow_name"] for item in mine] == ["orders"]
+    theirs = await owner(
+        operations_case,
+        "SELECT (SELECT count(*) FROM run_stat_buckets WHERE environment_id=:other) AS buckets,"
+        "(SELECT count(*) FROM operations_samples WHERE environment_id=:other) AS samples,"
+        "(SELECT count(*) FROM operations_statistics_cursors WHERE environment_id=:other) AS cursors",
+        other=other,
+    )
+    assert theirs == [{"buckets": 1, "samples": 0, "cursors": 0}]
+    (samples,) = await owner(
+        operations_case, "SELECT count(*) AS n FROM operations_samples WHERE environment_id=:environment"
+    )
+    assert samples["n"] > 0

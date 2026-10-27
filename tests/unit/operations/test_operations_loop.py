@@ -207,6 +207,8 @@ async def test_cycle_traverses_its_own_cursors_one_environment_per_tenant(monkey
     loop = OperationsLoop(settings(), None, LoopHealth())  # type: ignore[arg-type]
     loop.engine = object()  # type: ignore[assignment]
     monkeypatch.setattr(loop, "revalidate", revalidate)
+    # Statistics have their own tests; here they have nothing to roll up.
+    monkeypatch.setattr(loop, "roll_statistics", no_statistics)
     monkeypatch.setattr(loop, "maintain_changes", maintained)
     assert await loop.cycle() is True
     # The operations traversal never moves the recovery cursors.
@@ -243,6 +245,8 @@ async def test_an_environment_overrun_fails_the_cycle_but_later_tenants_still_pr
     loop = OperationsLoop(settings(), None, LoopHealth(), monotonic=lambda: clock["now"])  # type: ignore[arg-type]
     loop.engine = object()  # type: ignore[assignment]
     monkeypatch.setattr(loop, "revalidate", revalidate)
+    # Statistics have their own tests; here they have nothing to roll up.
+    monkeypatch.setattr(loop, "roll_statistics", no_statistics)
     monkeypatch.setattr(loop, "maintain_changes", maintained)
     assert await loop.cycle() is False
     assert [tenant for tenant, _ in progressed] == tenants
@@ -292,6 +296,7 @@ async def test_cycle_runs_pure_work_from_its_reservation_while_requests_hold_eve
     loop.engine = object()  # type: ignore[assignment]
     monkeypatch.setattr(loop, "revalidate", revalidate)
     monkeypatch.setattr(loop, "maintain_changes", maintained)
+    monkeypatch.setattr(loop, "roll_statistics", no_statistics)
     async with saturated_requests():
         assert await loop.cycle() is True
     assert ran == ["classified"]
@@ -337,3 +342,7 @@ def test_the_revalidation_scan_matches_an_index_built_for_the_current_policy():
     for unsafe in ("x' OR true --", "", "Classified"):
         with pytest.raises(ValueError):
             revalidation_due(unsafe)
+
+
+async def no_statistics(scope, deadline):
+    return None

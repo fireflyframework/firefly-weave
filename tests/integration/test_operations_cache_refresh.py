@@ -835,6 +835,12 @@ async def test_each_quantum_lowers_its_database_timeouts_to_the_remaining_budget
 
     monkeypatch.setattr(_SchedulerScope, "verify", slow_verify)
     refresh.monotonic = lambda: clock["now"]
+
+    async def no_statistics(authority, deadline):
+        # The statistics slice comes first and has its own tests; this one times revalidation alone.
+        return None
+
+    monkeypatch.setattr(refresh, "roll_statistics", no_statistics)
     observed = []
     for name in ("revalidation_candidates", "advance_revalidation_cursor", "refresh_listing_metadata"):
         original = getattr(FactRepository, name)
