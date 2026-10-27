@@ -124,6 +124,7 @@ import {
 } from "./pending-entries";
 import type { PreviewData } from "../formula/preview";
 import { LoopScopes } from "../formula/loops";
+import { SIGN_IN_TO_LIST, type TableCatalog } from "./table-catalog";
 
 export type ControllerHost = Pick<
   StepDetailsHost,
@@ -682,8 +683,7 @@ export class StepDetailsController {
       features: this.features(),
       actionContract: (uses) =>
         (this.host.catalogContracts.get(uses) as Json | undefined) ?? null,
-      tableContract: (uses) =>
-        (this.host.decisionContracts.get(uses) as Json | undefined) ?? null,
+      tableContract: (uses) => this.tableContract(uses),
       workflowContract: () => null,
       ownedAction: (uses) =>
         (owned[uses] as unknown as Json | undefined) ?? null,
@@ -798,6 +798,19 @@ export class StepDetailsController {
   }
   /** Problems the host's builder found in the actions this workflow owns (set by the mount). */
   ownedProblems: () => ReadonlyMap<string, HostDiagnostic[]> = () => new Map();
+  /** The decision tables step details read themselves; null in a shell without one. */
+  tables: TableCatalog | null = null;
+  /** A table's document: a draft or copy on this computer, or what was read; reading starts when unknown. */
+  tableContract(uses: string): Json | null {
+    const tables = this.tables;
+    if (!tables)
+      return (
+        (this.host.decisionContracts.get(uses) as Json | undefined) ?? null
+      );
+    const known = tables.contract(uses);
+    if (!known && uses) void tables.load(uses);
+    return known;
+  }
   /** Changes when what decides an issue's timing changes: a field left, a step revealed, an entry held or dropped. */
   issueMarks(): number {
     return this.marks + this.pendingStore().version;
@@ -1152,12 +1165,16 @@ export class StepDetailsController {
             | Record<string, unknown>
             | undefined
         )?.["outputSchema"],
-      decisionOutput: (uses) =>
-        (
-          this.host.decisionContracts.get(uses)?.["spec"] as
-            | Record<string, unknown>
-            | undefined
-        )?.["outputSchema"],
+      decisionOutput: (uses) => {
+        const contract = this.tableContract(uses);
+        return contract &&
+          typeof contract === "object" &&
+          !Array.isArray(contract)
+          ? (contract["spec"] as Record<string, unknown> | undefined)?.[
+              "outputSchema"
+            ]
+          : undefined;
+      },
     };
   }
 
@@ -1303,7 +1320,14 @@ export class StepDetailsController {
         contract: async (uses) =>
           (host.catalogContracts.get(uses) as Json | undefined) ?? null,
         workflows: async () => [],
+        tablesNote: () => (this.tables?.needsSignIn() ? SIGN_IN_TO_LIST : null),
         tables: async () => {
+          if (this.tables) {
+            const tables = this.tables;
+            const rows = await tables.list();
+            if (host.model !== model || model.opened !== opened) return [];
+            return rows.map(({ uses, title }) => ({ uses, title }));
+          }
           if (!host.profile || !host.can("catalog.read")) return [];
           const { profile, api } = host;
           const page = await api.page("decision-tables");

@@ -172,6 +172,8 @@ export interface ParamSpec {
   /** Text fields that become templates with text.concat. */
   templateCapable?: boolean;
   choices?: Choice[] | ((ctx: NdvContext) => Promise<Choice[]>);
+  /** resource only: what an empty list says instead of "Nothing to choose from yet". */
+  emptyChoices?(ctx: NdvContext): string | null;
   min?: number;
   max?: number;
   /**
@@ -356,8 +358,10 @@ export interface NdvContext {
     workflows(filter?: {
       callableBy?: string;
     }): Promise<{ uses: string; title: string; disabled?: string }[]>;
-    /** Published decision tables, newest version first. */
+    /** Published decision tables, newest version first, then those on this computer. */
     tables(): Promise<{ uses: string; title: string }[]>;
+    /** Why the table list is empty for now (no signed-in account yet); null otherwise. */
+    tablesNote?(): string | null;
   };
   connections: {
     slot(name: string): { connector: string; required: boolean } | null;

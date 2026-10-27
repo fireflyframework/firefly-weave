@@ -47,6 +47,7 @@ import {
 import { loadKindRegistrations } from "./kinds";
 import { WorkflowSettingsDialog } from "./workflow-settings-dialog";
 import { formulaPreviews } from "../formula/preview";
+import { TableCatalog } from "./table-catalog";
 
 const NONE_HELD: ReadonlyMap<string, readonly HeldFact[]> = new Map();
 
@@ -176,10 +177,19 @@ export class StepDetailsMount {
         formulaPreviews(() => controller.previewData()),
       );
       controller.ownedProblems = () => this.documentsFor(host).problems();
+      controller.tables = this.tablesFor(host);
       this.made = { host, opened, controller };
     }
     return this.made.controller;
   }
+  /** The decision tables step details list and read, kept for this host. */
+  tablesFor(host: StepDetailsHost): TableCatalog {
+    if (this.tableCatalog?.host !== host)
+      this.tableCatalog = { host, tables: new TableCatalog(host) };
+    return this.tableCatalog.tables;
+  }
+  private tableCatalog: { host: StepDetailsHost; tables: TableCatalog } | null =
+    null;
   /** The documents of the workflow's own actions, kept for this host. */
   documentsFor(host: StepDetailsHost): OwnedDocuments {
     if (this.documents?.host !== host) {

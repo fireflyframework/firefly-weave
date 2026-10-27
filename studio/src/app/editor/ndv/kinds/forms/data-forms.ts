@@ -100,6 +100,7 @@ export function decisionTableForm(step: Step, ctx: KindContext): FormSpec {
     placeholder: "payment-policy@1.0.0",
     hint: "The workflow uses this exact published version.",
     choices: tableChoices,
+    emptyChoices: (ndv: NdvContext) => ndv.catalog.tablesNote?.() ?? null,
   };
   if (!input) return { fields: [table] };
   const rows = paramsFromSchema(input, ["with"], { idPrefix: "input." });

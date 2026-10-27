@@ -59,12 +59,10 @@ async function usable(control: Locator) {
 }
 
 /**
- * Selects `score` with the keyboard, from the step before it, and waits for
- * the decision tables the classic inspector loads for it. The canvas brings
- * the step into view itself; a click on a card outside the window would
- * scroll the canvas, which Studio turns into a pan in the middle of the click.
- * The inspector loads tables once, when it opens, and only once Studio knows
- * what the account may read: selecting waits for the sign-in.
+ * Selects `score` with the keyboard, from the step before it, once signed in.
+ * The canvas brings the step into view itself; a click on a card outside the
+ * window would scroll the canvas, which Studio turns into a pan in the middle
+ * of the click. Opening step details loads the tables they need.
  */
 async function selectScoreByKeyboard(details: StepDetailsPage) {
   const { page } = details;
@@ -72,12 +70,7 @@ async function selectScoreByKeyboard(details: StepDetailsPage) {
     page.getByRole("button", { name: /^Platform: .* · Signed in\b/ }),
   ).toBeVisible();
   await details.node("summarize").focus();
-  await Promise.all([
-    page.waitForResponse((response) =>
-      response.url().includes("/decision-tables?"),
-    ),
-    page.keyboard.press("ArrowRight"),
-  ]);
+  await page.keyboard.press("ArrowRight");
   await expect(details.node("score")).toBeFocused();
   await expect(details.node("score")).toBeInViewport({ ratio: 1 });
 }
@@ -419,7 +412,6 @@ for (const size of sizes)
         exact: true,
       });
       if (await canvas.isVisible()) await canvas.click();
-      // Selecting the card loads the classic inspector before step details opens.
       await selectScoreByKeyboard(details);
       let requests = 0;
       let release!: () => void;

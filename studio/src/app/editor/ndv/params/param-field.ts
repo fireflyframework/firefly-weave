@@ -173,6 +173,7 @@ export class ParamField {
     provider: ParamSpec["choices"];
     profile: FormSession["host"]["profile"];
     api: FormSession["host"]["api"];
+    scope: FormSession["host"]["stepDataScope"];
     catalog: FormSession["host"]["actionVersions"] | null;
   } | null = null;
   private choicesLoading = false;
@@ -393,7 +394,10 @@ export class ParamField {
     )
       return {
         kind: "hint" as const,
-        text: "Nothing to choose from yet. Use By name.",
+        text:
+          this.spec().emptyChoices?.(
+            this.session().controller.ndvContext(this.session().target),
+          ) ?? "Nothing to choose from yet. Use By name.",
       };
     // While the Result panel is open under the field, the "=" line would repeat it.
     if (line.kind === "preview" && this.formula()?.focusedIn())
@@ -909,6 +913,7 @@ export class ParamField {
       cached.descriptor !== descriptor ||
       cached.profile !== session.host.profile ||
       cached.api !== session.host.api ||
+      cached.scope !== session.host.stepDataScope ||
       cached.catalog !== catalog
     ) {
       this.choices = [];
@@ -920,6 +925,7 @@ export class ParamField {
         provider: choices,
         profile: session.host.profile,
         api: session.host.api,
+        scope: session.host.stepDataScope,
         catalog,
       };
       this.loadedChoices = load;
