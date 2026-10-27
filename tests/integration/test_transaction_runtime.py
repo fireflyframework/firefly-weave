@@ -109,6 +109,26 @@ async def test_a_release_that_never_declared_itself_aware_is_undone_to_be_safe(
     assert (await platform.record(run.id))["state"] == "compensated"
 
 
+@pytest.mark.parametrize("report", [{"outcome": "failed", "effect": "none"}, {"outcome": "not_started"}])
+async def test_a_release_that_declared_itself_unaware_is_undone_even_when_the_action_claims_awareness(
+    worker_setup, services, access_db, monkeypatch, report
+):
+    # The action definition says its implementation reports failures that applied nothing, but it runs on a worker
+    # release that declared itself unaware: only the claiming release's own declaration counts.
+    platform = await build(
+        worker_setup, services, access_db, monkeypatch, aware_actions=frozenset({"target-system.add-quantity"})
+    )
+    activation = await platform.publish(workflow("move", [transaction(hold(), add(), submit())]))
+    run = await platform.start(activation)
+    await platform.complete(await platform.lease("hold", aware=False))
+    await platform.fail(await platform.lease("add", aware=False), "REFUSED", **report)
+    await platform.scan()
+    await platform.complete(await platform.lease("add#undo", aware=False))
+    await platform.complete(await platform.lease("hold#cancel", aware=False))
+    assert await platform.keys(run.id) == ["hold", "add", "add#undo", "hold#cancel"]
+    assert (await platform.record(run.id))["state"] == "compensated"
+
+
 async def test_a_code_the_action_declares_definite_counts_from_any_release(platform):
     activation = await platform.publish(workflow("move", [transaction(hold(), add(), submit())]))
     run = await platform.start(activation)

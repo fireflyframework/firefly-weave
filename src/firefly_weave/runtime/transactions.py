@@ -73,12 +73,16 @@ def fold(current: Effect, observed: object) -> Effect:
 def failure_effect(action: Mapping[str, Any], error: Mapping[str, Any], *, transaction_aware: bool) -> str:
     """Whether a worker's failure report means nothing was applied, judged by the release that claimed the attempt.
 
-    Only a release that declared itself transaction-aware (on its claims, or the action's connector in its action
-    specs) may say so; codes the action declares as definite failures count from any release.
+    Only a release that declared itself transaction-aware may say so: a worker release on its claims, and a connector
+    through the action's ``transactionAware``. On a worker action, ``transactionAware`` is ignored, so a release that
+    declared itself unaware is never overridden by the definition. Codes the action declares as definite failures
+    count from any release.
     """
     if error.get("code") in action.get("definiteFailures", []):
         return "none"
-    aware = transaction_aware or action.get("transactionAware") is True
+    implementation = action.get("implementation")
+    connector = isinstance(implementation, Mapping) and implementation.get("kind") == "connector"
+    aware = transaction_aware or (connector and action.get("transactionAware") is True)
     if aware and (error.get("effect") == "none" or error.get("outcome") == "not_started"):
         return "none"
     return "unknown"

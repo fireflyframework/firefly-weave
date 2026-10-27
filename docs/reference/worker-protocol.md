@@ -142,7 +142,9 @@ when recovery creates a new generation.
   `outcome: unknown` is refused (HTTP 422, `WV-COMPLETION-EFFECT`). A worker
   release declares that it reports this on purpose with
   `worker: {release, transaction_aware: true}` on its claims, and a connector
-  action with `transactionAware: true`. The claim's `release` is the same
+  action with `transactionAware: true`. On an action a worker implements,
+  `transactionAware` is ignored: only the claiming release's own declaration
+  counts. The claim's `release` is the same
   release ID that registration sends as `release_id`; the two fields name it
   differently. A claim whose `release` is not the release the worker registered
   with is refused (HTTP 409, `WV-WORKER-RELEASE`). The first claim that sends

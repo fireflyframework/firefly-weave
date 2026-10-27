@@ -21,7 +21,17 @@ import pytest
 from firefly_weave.runtime.transactions import failure_effect, fold
 
 ADD = {"sideEffect": "non_idempotent", "definiteFailures": ["VALIDATION"]}
-CONNECTOR = {"sideEffect": "idempotency_key", "transactionAware": True}
+CONNECTOR = {
+    "implementation": {"kind": "connector", "uses": "target-system@1.0.0", "action": "add"},
+    "sideEffect": "idempotency_key",
+    "transactionAware": True,
+}
+# A worker action whose definition claims awareness: only the claiming release's own declaration counts.
+WORKER = {
+    "implementation": {"kind": "worker", "taskType": "add-quantity", "taskVersion": "1.0.0"},
+    "sideEffect": "non_idempotent",
+    "transactionAware": True,
+}
 
 
 def attempt(action, error, aware=False):
@@ -48,6 +58,11 @@ def attempt(action, error, aware=False):
         (["none"], "none"),
         # A connector release that declares itself aware in its action specs.
         ([attempt(CONNECTOR, {"code": "REFUSED", "effect": "none"})], "none"),
+        # A worker action marked aware, from a release that declared itself unaware (or never declared).
+        ([attempt(WORKER, {"code": "REFUSED", "effect": "none"})], "unknown"),
+        ([attempt(WORKER, {"code": "REFUSED", "outcome": "not_started"})], "unknown"),
+        # The same action from a release that declared itself aware.
+        ([attempt(WORKER, {"code": "REFUSED", "effect": "none"}, aware=True)], "none"),
     ],
 )
 def test_a_participant_applied_nothing_only_when_every_attempt_says_so_from_a_release_that_may(attempts, expected):

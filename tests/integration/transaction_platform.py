@@ -254,8 +254,13 @@ class Platform(SimpleNamespace):
         )
 
 
-async def build(worker_setup, services, access_db, monkeypatch, *, releases: int = 1) -> Platform:
-    """Register the test catalog's actions and capabilities under ``releases`` worker releases."""
+async def build(
+    worker_setup, services, access_db, monkeypatch, *, releases: int = 1, aware_actions: frozenset[str] = frozenset()
+) -> Platform:
+    """Register the test catalog's actions and capabilities under ``releases`` worker releases.
+
+    ``aware_actions`` names actions whose definitions claim ``transactionAware``.
+    """
     from firefly_weave.contracts import language_features
     from firefly_weave.contracts.workers import InstanceRequest, ReleaseRequest
     from firefly_weave.definitions.service import DefinitionService
@@ -288,6 +293,8 @@ async def build(worker_setup, services, access_db, monkeypatch, *, releases: int
         registered.append(release.id)
     for definition in fixture["definitions"]:
         if definition["kind"] == "Action":
+            if definition["metadata"]["name"] in aware_actions:
+                definition["spec"]["transactionAware"] = True
             await definitions.publish(
                 actor, scope, "Action", json.dumps(definition), "json", str(uuid4()), context=AuditContext()
             )
