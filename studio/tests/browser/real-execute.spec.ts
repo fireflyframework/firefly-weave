@@ -165,6 +165,9 @@ test("executing a draft with a published worker action reads the catalog and sta
     }),
   });
   expect(published.status, published.text).toBe(201);
+  // Studio reads the project's catalog when it opens: open it again so the
+  // new action's output fields are known.
+  await page.reload();
 
   // The draft: the action, pinned, and a transform that reads it.
   await page.getByRole("button", { name: "Home", exact: true }).click();
