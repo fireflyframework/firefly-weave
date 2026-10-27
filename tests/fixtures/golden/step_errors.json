@@ -1,0 +1,6759 @@
+{
+ "generator": "scripts/golden_step_errors.py",
+ "sources": [
+  {
+   "artifact": {
+    "diagnostics": [
+     {
+      "code": "WV-COMP-REFERENCE_PRESENCE",
+      "hint": null,
+      "message": "Reference presence is unproved; runtime validation is required.",
+      "path": "/spec/steps/0/value",
+      "related": [],
+      "severity": "warning",
+      "source": {
+       "column": 219,
+       "endColumn": 242,
+       "endLine": 1,
+       "file": "scripts/golden_step_errors.py#golden-continue",
+       "line": 1
+      },
+      "stage": "semantic",
+      "suggestedEdit": null
+     }
+    ],
+    "digest": "d7215eb10d2cb9b607488f40beedb790c5b9b117ed760bedcd69aff7df628f8e",
+    "executable": {
+     "apiVersion": "weave/v1alpha1",
+     "connections": {},
+     "dependencies": [
+      {
+       "digest": "dfea596111703683b7ab431da39e8a00290b57dec4d0aa0a85aa7f25d6e2ecbe",
+       "document": {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Action",
+        "metadata": {
+         "name": "lookup-record",
+         "version": "1.0.0"
+        },
+        "spec": {
+         "implementation": {
+          "kind": "worker",
+          "taskType": "lookup-record",
+          "taskVersion": "1.0.0"
+         },
+         "inputSchema": {},
+         "outputSchema": {
+          "additionalProperties": false,
+          "properties": {
+           "status": {
+            "type": "string"
+           }
+          },
+          "required": [
+           "status"
+          ],
+          "type": "object"
+         },
+         "retry": {
+          "initialDelaySeconds": 1,
+          "maxAttempts": 1,
+          "maxDelaySeconds": 30
+         },
+         "sideEffect": "idempotent",
+         "timeoutSeconds": 30
+        }
+       },
+       "kind": "Action",
+       "reference": "lookup-record@1.0.0"
+      },
+      {
+       "digest": "61790863294e13d0878650765caad0c82e6203ab2cb731ae115ee03f22869a22",
+       "document": {
+        "inputSchema": {},
+        "outputSchema": {
+         "additionalProperties": false,
+         "properties": {
+          "status": {
+           "type": "string"
+          }
+         },
+         "required": [
+          "status"
+         ],
+         "type": "object"
+        },
+        "sideEffect": "idempotent",
+        "taskType": "lookup-record",
+        "taskVersion": "1.0.0",
+        "timeoutSeconds": 30
+       },
+       "kind": "TaskCapability",
+       "reference": "lookup-record@1.0.0"
+      }
+     ],
+     "features": [
+      "flow.onError"
+     ],
+     "graph": {
+      "edges": [
+       {
+        "branch": null,
+        "kind": "next",
+        "source": "shape",
+        "target": "lookup"
+       },
+       {
+        "branch": null,
+        "kind": "next",
+        "source": "lookup",
+        "target": "@end"
+       },
+       {
+        "branch": null,
+        "kind": "next",
+        "source": "@start",
+        "target": "shape"
+       }
+      ],
+      "entry": "@start",
+      "exit": "@end",
+      "nodes": [
+       {
+        "id": "@start",
+        "kind": "start",
+        "path": "/spec",
+        "scope": []
+       },
+       {
+        "id": "@end",
+        "kind": "end",
+        "output": {
+         "literal": "done"
+        },
+        "path": "/spec/output",
+        "scope": []
+       },
+       {
+        "id": "shape",
+        "kind": "transform",
+        "onError": "continue",
+        "path": "/spec/steps/0",
+        "scope": [],
+        "value": {
+         "ref": "/input/count"
+        }
+       },
+       {
+        "connection": null,
+        "dependency": "dfea596111703683b7ab431da39e8a00290b57dec4d0aa0a85aa7f25d6e2ecbe",
+        "id": "lookup",
+        "kind": "action",
+        "onError": "continue",
+        "path": "/spec/steps/1",
+        "scope": [],
+        "with": {
+         "literal": {}
+        }
+       }
+      ]
+     },
+     "guards": [
+      {
+       "path": "/spec/inputSchema",
+       "purpose": "workflow_input",
+       "schemaRef": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      },
+      {
+       "path": "/spec/steps/0/value",
+       "purpose": "reference_presence",
+       "schemaRef": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      },
+      {
+       "path": "/spec/steps/0/value",
+       "purpose": "transform_output",
+       "schemaRef": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      },
+      {
+       "path": "/spec/steps/1/with",
+       "purpose": "action_input",
+       "schemaRef": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      },
+      {
+       "path": "/spec/steps/1",
+       "purpose": "action_output",
+       "schemaRef": "7c4bb65cda2f8731afa3a99a88289088d4fc8f822ae9a2b4e2a881cc1af9c765"
+      },
+      {
+       "path": "/spec/output",
+       "purpose": "workflow_output",
+       "schemaRef": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      }
+     ],
+     "inputSchema": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+     "irVersion": "weave/ir-v1alpha4",
+     "kind": "Workflow",
+     "metadata": {
+      "name": "golden-continue",
+      "version": "1.0.0"
+     },
+     "outputSchema": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+     "schemas": {
+      "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a": {},
+      "7c4bb65cda2f8731afa3a99a88289088d4fc8f822ae9a2b4e2a881cc1af9c765": {
+       "additionalProperties": false,
+       "properties": {
+        "status": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "status"
+       ],
+       "type": "object"
+      }
+     },
+     "timeoutSeconds": null
+    },
+    "omittedCount": 0,
+    "schemaTruncated": false,
+    "sourceHash": "400b4f81672a718bb9f1526bcbd19b111d2fa8327f22aeaea7e50eb2ffea0697",
+    "sourceMap": {
+     "": {
+      "column": 1,
+      "endColumn": 415,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-continue",
+      "line": 1
+     },
+     "/apiVersion": {
+      "column": 16,
+      "endColumn": 32,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-continue",
+      "line": 1
+     },
+     "/kind": {
+      "column": 42,
+      "endColumn": 52,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-continue",
+      "line": 1
+     },
+     "/metadata": {
+      "column": 66,
+      "endColumn": 113,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-continue",
+      "line": 1
+     },
+     "/metadata/name": {
+      "column": 75,
+      "endColumn": 92,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-continue",
+      "line": 1
+     },
+     "/metadata/version": {
+      "column": 105,
+      "endColumn": 112,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-continue",
+      "line": 1
+     },
+     "/spec": {
+      "column": 123,
+      "endColumn": 414,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-continue",
+      "line": 1
+     },
+     "/spec/inputSchema": {
+      "column": 139,
+      "endColumn": 141,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-continue",
+      "line": 1
+     },
+     "/spec/output": {
+      "column": 394,
+      "endColumn": 413,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-continue",
+      "line": 1
+     },
+     "/spec/output/literal": {
+      "column": 406,
+      "endColumn": 412,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-continue",
+      "line": 1
+     },
+     "/spec/outputSchema": {
+      "column": 159,
+      "endColumn": 161,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-continue",
+      "line": 1
+     },
+     "/spec/steps": {
+      "column": 172,
+      "endColumn": 382,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-continue",
+      "line": 1
+     },
+     "/spec/steps/0": {
+      "column": 173,
+      "endColumn": 266,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-continue",
+      "line": 1
+     },
+     "/spec/steps/0/id": {
+      "column": 180,
+      "endColumn": 187,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-continue",
+      "line": 1
+     },
+     "/spec/steps/0/kind": {
+      "column": 197,
+      "endColumn": 208,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-continue",
+      "line": 1
+     },
+     "/spec/steps/0/onError": {
+      "column": 255,
+      "endColumn": 265,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-continue",
+      "line": 1
+     },
+     "/spec/steps/0/value": {
+      "column": 219,
+      "endColumn": 242,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-continue",
+      "line": 1
+     },
+     "/spec/steps/0/value/ref": {
+      "column": 227,
+      "endColumn": 241,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-continue",
+      "line": 1
+     },
+     "/spec/steps/1": {
+      "column": 268,
+      "endColumn": 381,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-continue",
+      "line": 1
+     },
+     "/spec/steps/1/id": {
+      "column": 275,
+      "endColumn": 283,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-continue",
+      "line": 1
+     },
+     "/spec/steps/1/kind": {
+      "column": 293,
+      "endColumn": 301,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-continue",
+      "line": 1
+     },
+     "/spec/steps/1/onError": {
+      "column": 370,
+      "endColumn": 380,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-continue",
+      "line": 1
+     },
+     "/spec/steps/1/uses": {
+      "column": 311,
+      "endColumn": 332,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-continue",
+      "line": 1
+     },
+     "/spec/steps/1/with": {
+      "column": 342,
+      "endColumn": 357,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-continue",
+      "line": 1
+     },
+     "/spec/steps/1/with/literal": {
+      "column": 354,
+      "endColumn": 356,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-continue",
+      "line": 1
+     }
+    }
+   },
+   "name": "golden-continue",
+   "scenarios": [
+    {
+     "input": {},
+     "name": "pure-step-and-task-continue",
+     "stream": [
+      {
+       "digest": "dfee5c95954943d4eb655dcbc194815cf0bd510798bac1b23ac4c9800114a9a5",
+       "event": {
+        "data": {},
+        "id": "db392435-235e-502e-8c72-dc4507677c94",
+        "sequence": 1,
+        "timestamp": "2026-10-08T00:00:00Z",
+        "type": "started"
+       },
+       "transition": {
+        "commands": [
+         {
+          "action_digest": "dfea596111703683b7ab431da39e8a00290b57dec4d0aa0a85aa7f25d6e2ecbe",
+          "action_reference": "lookup-record@1.0.0",
+          "connection_slot": null,
+          "deadline": "2026-10-08T00:00:30Z",
+          "input": {},
+          "kind": "task",
+          "node_id": "lookup",
+          "task_type": "lookup-record",
+          "task_version": "1.0.0"
+         }
+        ],
+        "state": {
+         "accepted_sequence": 1,
+         "active": [
+          "lookup"
+         ],
+         "branches": {},
+         "deferred_results": [],
+         "incident": null,
+         "incidents": {},
+         "input": {},
+         "joins": {},
+         "output": null,
+         "status": "waiting",
+         "steps": {
+          "shape": {
+           "error": {
+            "attempts": 1,
+            "code": "WV-EXPR-MISSING",
+            "instanceKey": "shape",
+            "message": "A value the step reads is missing.",
+            "outcome": "not_started"
+           },
+           "output": null
+          }
+         },
+         "waits": {}
+        },
+        "steps": [
+         {
+          "error": {
+           "attempts": 1,
+           "code": "WV-EXPR-MISSING",
+           "instanceKey": "shape",
+           "message": "A value the step reads is missing.",
+           "outcome": "not_started"
+          },
+          "node_id": "shape",
+          "output": null,
+          "status": "failed"
+         },
+         {
+          "node_id": "lookup",
+          "output": null,
+          "status": "waiting"
+         }
+        ]
+       }
+      },
+      {
+       "digest": "a9f4ec26e0bc6d4f5efed0063d86856f4047cae889a7ab99d54f4861bd038d83",
+       "event": {
+        "data": {
+         "attempts": 3,
+         "code": "RATE_LIMITED",
+         "generation": 3,
+         "node_id": "lookup",
+         "outcome": "failed"
+        },
+        "id": "f3e81282-4b51-5cac-8ace-64a622137007",
+        "sequence": 2,
+        "timestamp": "2026-10-08T00:00:01Z",
+        "type": "step_failed"
+       },
+       "transition": {
+        "commands": [],
+        "state": {
+         "accepted_sequence": 2,
+         "active": [],
+         "branches": {},
+         "deferred_results": [],
+         "incident": null,
+         "incidents": {},
+         "input": {},
+         "joins": {},
+         "output": "done",
+         "status": "succeeded",
+         "steps": {
+          "lookup": {
+           "error": {
+            "attempts": 3,
+            "code": "RATE_LIMITED",
+            "instanceKey": "lookup",
+            "message": "The endpoint refused the request because of its rate limit.",
+            "outcome": "failed"
+           },
+           "output": null
+          },
+          "shape": {
+           "error": {
+            "attempts": 1,
+            "code": "WV-EXPR-MISSING",
+            "instanceKey": "shape",
+            "message": "A value the step reads is missing.",
+            "outcome": "not_started"
+           },
+           "output": null
+          }
+         },
+         "waits": {}
+        },
+        "steps": [
+         {
+          "error": {
+           "attempts": 3,
+           "code": "RATE_LIMITED",
+           "instanceKey": "lookup",
+           "message": "The endpoint refused the request because of its rate limit.",
+           "outcome": "failed"
+          },
+          "node_id": "lookup",
+          "output": null,
+          "status": "failed"
+         }
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "input": {
+      "count": 2
+     },
+     "name": "both-succeed",
+     "stream": [
+      {
+       "digest": "86f84c3e04a63bd874984ced58de9c0b27ee1931765e047835e75197634af763",
+       "event": {
+        "data": {},
+        "id": "30d608c8-d159-5c4b-a469-237b143212e8",
+        "sequence": 1,
+        "timestamp": "2026-10-08T00:00:00Z",
+        "type": "started"
+       },
+       "transition": {
+        "commands": [
+         {
+          "action_digest": "dfea596111703683b7ab431da39e8a00290b57dec4d0aa0a85aa7f25d6e2ecbe",
+          "action_reference": "lookup-record@1.0.0",
+          "connection_slot": null,
+          "deadline": "2026-10-08T00:00:30Z",
+          "input": {},
+          "kind": "task",
+          "node_id": "lookup",
+          "task_type": "lookup-record",
+          "task_version": "1.0.0"
+         }
+        ],
+        "state": {
+         "accepted_sequence": 1,
+         "active": [
+          "lookup"
+         ],
+         "branches": {},
+         "deferred_results": [],
+         "incident": null,
+         "incidents": {},
+         "input": {
+          "count": 2
+         },
+         "joins": {},
+         "output": null,
+         "status": "waiting",
+         "steps": {
+          "shape": {
+           "output": 2
+          }
+         },
+         "waits": {}
+        },
+        "steps": [
+         {
+          "node_id": "shape",
+          "output": 2,
+          "status": "completed"
+         },
+         {
+          "node_id": "lookup",
+          "output": null,
+          "status": "waiting"
+         }
+        ]
+       }
+      },
+      {
+       "digest": "1fd2a9eb823b852245c700f7b8f1ec7ad1303f529724f12c6b79e06daedfce0c",
+       "event": {
+        "data": {
+         "generation": 1,
+         "node_id": "lookup",
+         "output": {
+          "status": "confirmed"
+         }
+        },
+        "id": "6e4a653b-954d-5901-8c07-190cb5380504",
+        "sequence": 2,
+        "timestamp": "2026-10-08T00:00:01Z",
+        "type": "task_completed"
+       },
+       "transition": {
+        "commands": [],
+        "state": {
+         "accepted_sequence": 2,
+         "active": [],
+         "branches": {},
+         "deferred_results": [],
+         "incident": null,
+         "incidents": {},
+         "input": {
+          "count": 2
+         },
+         "joins": {},
+         "output": "done",
+         "status": "succeeded",
+         "steps": {
+          "lookup": {
+           "output": {
+            "status": "confirmed"
+           }
+          },
+          "shape": {
+           "output": 2
+          }
+         },
+         "waits": {}
+        },
+        "steps": [
+         {
+          "node_id": "lookup",
+          "output": {
+           "status": "confirmed"
+          },
+          "status": "completed"
+         }
+        ]
+       }
+      }
+     ]
+    }
+   ],
+   "source": "scripts/golden_step_errors.py#golden-continue"
+  },
+  {
+   "artifact": {
+    "diagnostics": [],
+    "digest": "51c77fc2f8c7d6d3c0c4f50441800a8527832746cbe4b5d6b8c3f3f686d675e8",
+    "executable": {
+     "apiVersion": "weave/v1alpha1",
+     "connections": {},
+     "dependencies": [
+      {
+       "digest": "dfea596111703683b7ab431da39e8a00290b57dec4d0aa0a85aa7f25d6e2ecbe",
+       "document": {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Action",
+        "metadata": {
+         "name": "lookup-record",
+         "version": "1.0.0"
+        },
+        "spec": {
+         "implementation": {
+          "kind": "worker",
+          "taskType": "lookup-record",
+          "taskVersion": "1.0.0"
+         },
+         "inputSchema": {},
+         "outputSchema": {
+          "additionalProperties": false,
+          "properties": {
+           "status": {
+            "type": "string"
+           }
+          },
+          "required": [
+           "status"
+          ],
+          "type": "object"
+         },
+         "retry": {
+          "initialDelaySeconds": 1,
+          "maxAttempts": 1,
+          "maxDelaySeconds": 30
+         },
+         "sideEffect": "idempotent",
+         "timeoutSeconds": 30
+        }
+       },
+       "kind": "Action",
+       "reference": "lookup-record@1.0.0"
+      },
+      {
+       "digest": "61790863294e13d0878650765caad0c82e6203ab2cb731ae115ee03f22869a22",
+       "document": {
+        "inputSchema": {},
+        "outputSchema": {
+         "additionalProperties": false,
+         "properties": {
+          "status": {
+           "type": "string"
+          }
+         },
+         "required": [
+          "status"
+         ],
+         "type": "object"
+        },
+        "sideEffect": "idempotent",
+        "taskType": "lookup-record",
+        "taskVersion": "1.0.0",
+        "timeoutSeconds": 30
+       },
+       "kind": "TaskCapability",
+       "reference": "lookup-record@1.0.0"
+      }
+     ],
+     "features": [
+      "flow.onError"
+     ],
+     "graph": {
+      "edges": [
+       {
+        "branch": null,
+        "kind": "next",
+        "source": "notify-team",
+        "target": "@branch:lookup:0"
+       },
+       {
+        "branch": "errorPath",
+        "kind": "join",
+        "source": "@branch:lookup:0",
+        "target": "@join:lookup"
+       },
+       {
+        "branch": "errorPath",
+        "kind": "error",
+        "source": "lookup",
+        "target": "notify-team"
+       },
+       {
+        "branch": null,
+        "kind": "next",
+        "source": "@join:lookup",
+        "target": "@end"
+       },
+       {
+        "branch": null,
+        "kind": "next",
+        "source": "lookup",
+        "target": "@join:lookup"
+       },
+       {
+        "branch": null,
+        "kind": "next",
+        "source": "@start",
+        "target": "lookup"
+       }
+      ],
+      "entry": "@start",
+      "exit": "@end",
+      "nodes": [
+       {
+        "id": "@start",
+        "kind": "start",
+        "path": "/spec",
+        "scope": []
+       },
+       {
+        "id": "@end",
+        "kind": "end",
+        "output": {
+         "ref": "/steps/lookup/output"
+        },
+        "path": "/spec/output",
+        "scope": []
+       },
+       {
+        "connection": null,
+        "dependency": "dfea596111703683b7ab431da39e8a00290b57dec4d0aa0a85aa7f25d6e2ecbe",
+        "id": "notify-team",
+        "kind": "action",
+        "path": "/spec/steps/0/errorPath/steps/0",
+        "scope": [
+         "lookup",
+         "errorPath"
+        ],
+        "with": {
+         "literal": {}
+        }
+       },
+       {
+        "branch": "errorPath",
+        "completes": true,
+        "id": "@branch:lookup:0",
+        "kind": "branch-output",
+        "output": {
+         "literal": "recovered"
+        },
+        "owner": "lookup",
+        "path": "/spec/steps/0/errorPath/output",
+        "scope": [
+         "lookup",
+         "errorPath"
+        ]
+       },
+       {
+        "branches": [
+         "@branch:lookup:0"
+        ],
+        "completes": true,
+        "id": "@join:lookup",
+        "kind": "join",
+        "mode": "error",
+        "owner": "lookup",
+        "path": "/spec/steps/0",
+        "scope": []
+       },
+       {
+        "connection": null,
+        "dependency": "dfea596111703683b7ab431da39e8a00290b57dec4d0aa0a85aa7f25d6e2ecbe",
+        "errorJoin": "@join:lookup",
+        "errorTarget": "notify-team",
+        "id": "lookup",
+        "kind": "action",
+        "onError": "errorOutput",
+        "path": "/spec/steps/0",
+        "scope": [],
+        "with": {
+         "literal": {}
+        }
+       }
+      ]
+     },
+     "guards": [
+      {
+       "path": "/spec/inputSchema",
+       "purpose": "workflow_input",
+       "schemaRef": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      },
+      {
+       "path": "/spec/steps/0/with",
+       "purpose": "action_input",
+       "schemaRef": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      },
+      {
+       "path": "/spec/steps/0",
+       "purpose": "action_output",
+       "schemaRef": "7c4bb65cda2f8731afa3a99a88289088d4fc8f822ae9a2b4e2a881cc1af9c765"
+      },
+      {
+       "path": "/spec/steps/0/errorPath/steps/0/with",
+       "purpose": "action_input",
+       "schemaRef": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      },
+      {
+       "path": "/spec/steps/0/errorPath/steps/0",
+       "purpose": "action_output",
+       "schemaRef": "7c4bb65cda2f8731afa3a99a88289088d4fc8f822ae9a2b4e2a881cc1af9c765"
+      },
+      {
+       "path": "/spec/steps/0/errorPath/output",
+       "purpose": "branch_output",
+       "schemaRef": "5db7d4dc42f13597b80fd668b28f02d4abbd27df854eeb4985c9abf97cbff85c"
+      },
+      {
+       "path": "/spec/output",
+       "purpose": "workflow_output",
+       "schemaRef": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      }
+     ],
+     "inputSchema": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+     "irVersion": "weave/ir-v1alpha4",
+     "kind": "Workflow",
+     "metadata": {
+      "name": "golden-error-path",
+      "version": "1.0.0"
+     },
+     "outputSchema": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+     "schemas": {
+      "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a": {},
+      "5db7d4dc42f13597b80fd668b28f02d4abbd27df854eeb4985c9abf97cbff85c": {
+       "const": "recovered",
+       "type": "string"
+      },
+      "7c4bb65cda2f8731afa3a99a88289088d4fc8f822ae9a2b4e2a881cc1af9c765": {
+       "additionalProperties": false,
+       "properties": {
+        "status": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "status"
+       ],
+       "type": "object"
+      }
+     },
+     "timeoutSeconds": null
+    },
+    "omittedCount": 0,
+    "schemaTruncated": false,
+    "sourceHash": "51c6ccf0ec99e2d02208ec657ad5bcdf9af2e0fbcd5d3617b3904430d33db803",
+    "sourceMap": {
+     "": {
+      "column": 1,
+      "endColumn": 496,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-error-path",
+      "line": 1
+     },
+     "/apiVersion": {
+      "column": 16,
+      "endColumn": 32,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-error-path",
+      "line": 1
+     },
+     "/kind": {
+      "column": 42,
+      "endColumn": 52,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-error-path",
+      "line": 1
+     },
+     "/metadata": {
+      "column": 66,
+      "endColumn": 115,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-error-path",
+      "line": 1
+     },
+     "/metadata/name": {
+      "column": 75,
+      "endColumn": 94,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-error-path",
+      "line": 1
+     },
+     "/metadata/version": {
+      "column": 107,
+      "endColumn": 114,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-error-path",
+      "line": 1
+     },
+     "/spec": {
+      "column": 125,
+      "endColumn": 495,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-error-path",
+      "line": 1
+     },
+     "/spec/inputSchema": {
+      "column": 141,
+      "endColumn": 143,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-error-path",
+      "line": 1
+     },
+     "/spec/output": {
+      "column": 463,
+      "endColumn": 494,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-error-path",
+      "line": 1
+     },
+     "/spec/output/ref": {
+      "column": 471,
+      "endColumn": 493,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-error-path",
+      "line": 1
+     },
+     "/spec/outputSchema": {
+      "column": 161,
+      "endColumn": 163,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-error-path",
+      "line": 1
+     },
+     "/spec/steps": {
+      "column": 174,
+      "endColumn": 451,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-error-path",
+      "line": 1
+     },
+     "/spec/steps/0": {
+      "column": 175,
+      "endColumn": 450,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-error-path",
+      "line": 1
+     },
+     "/spec/steps/0/errorPath": {
+      "column": 305,
+      "endColumn": 449,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-error-path",
+      "line": 1
+     },
+     "/spec/steps/0/errorPath/output": {
+      "column": 424,
+      "endColumn": 448,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-error-path",
+      "line": 1
+     },
+     "/spec/steps/0/errorPath/output/literal": {
+      "column": 436,
+      "endColumn": 447,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-error-path",
+      "line": 1
+     },
+     "/spec/steps/0/errorPath/steps": {
+      "column": 315,
+      "endColumn": 412,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-error-path",
+      "line": 1
+     },
+     "/spec/steps/0/errorPath/steps/0": {
+      "column": 316,
+      "endColumn": 411,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-error-path",
+      "line": 1
+     },
+     "/spec/steps/0/errorPath/steps/0/id": {
+      "column": 323,
+      "endColumn": 336,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-error-path",
+      "line": 1
+     },
+     "/spec/steps/0/errorPath/steps/0/kind": {
+      "column": 346,
+      "endColumn": 354,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-error-path",
+      "line": 1
+     },
+     "/spec/steps/0/errorPath/steps/0/uses": {
+      "column": 364,
+      "endColumn": 385,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-error-path",
+      "line": 1
+     },
+     "/spec/steps/0/errorPath/steps/0/with": {
+      "column": 395,
+      "endColumn": 410,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-error-path",
+      "line": 1
+     },
+     "/spec/steps/0/errorPath/steps/0/with/literal": {
+      "column": 407,
+      "endColumn": 409,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-error-path",
+      "line": 1
+     },
+     "/spec/steps/0/id": {
+      "column": 182,
+      "endColumn": 190,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-error-path",
+      "line": 1
+     },
+     "/spec/steps/0/kind": {
+      "column": 200,
+      "endColumn": 208,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-error-path",
+      "line": 1
+     },
+     "/spec/steps/0/onError": {
+      "column": 277,
+      "endColumn": 290,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-error-path",
+      "line": 1
+     },
+     "/spec/steps/0/uses": {
+      "column": 218,
+      "endColumn": 239,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-error-path",
+      "line": 1
+     },
+     "/spec/steps/0/with": {
+      "column": 249,
+      "endColumn": 264,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-error-path",
+      "line": 1
+     },
+     "/spec/steps/0/with/literal": {
+      "column": 261,
+      "endColumn": 263,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-error-path",
+      "line": 1
+     }
+    }
+   },
+   "name": "golden-error-path",
+   "scenarios": [
+    {
+     "input": {},
+     "name": "path-completes",
+     "stream": [
+      {
+       "digest": "4a990ab691a34f1f604b599f07fe3140192edd5e87e7e4f8aaa7d0691e40096c",
+       "event": {
+        "data": {},
+        "id": "d5341cba-9831-578c-ba12-fd911f9932b6",
+        "sequence": 1,
+        "timestamp": "2026-10-08T00:00:00Z",
+        "type": "started"
+       },
+       "transition": {
+        "commands": [
+         {
+          "action_digest": "dfea596111703683b7ab431da39e8a00290b57dec4d0aa0a85aa7f25d6e2ecbe",
+          "action_reference": "lookup-record@1.0.0",
+          "connection_slot": null,
+          "deadline": "2026-10-08T00:00:30Z",
+          "input": {},
+          "kind": "task",
+          "node_id": "lookup",
+          "task_type": "lookup-record",
+          "task_version": "1.0.0"
+         }
+        ],
+        "state": {
+         "accepted_sequence": 1,
+         "active": [
+          "lookup"
+         ],
+         "branches": {},
+         "deferred_results": [],
+         "incident": null,
+         "incidents": {},
+         "input": {},
+         "joins": {},
+         "output": null,
+         "status": "waiting",
+         "steps": {},
+         "waits": {}
+        },
+        "steps": [
+         {
+          "node_id": "lookup",
+          "output": null,
+          "status": "waiting"
+         }
+        ]
+       }
+      },
+      {
+       "digest": "7a9ed8071ef7b861df615fac9d26568bcc16ddcba3f358805196cba4d4812d4c",
+       "event": {
+        "data": {
+         "attempts": 3,
+         "code": "RATE_LIMITED",
+         "generation": 3,
+         "node_id": "lookup",
+         "outcome": "failed"
+        },
+        "id": "d9d823c4-25d9-5ea9-8d23-530c77dc3bb8",
+        "sequence": 2,
+        "timestamp": "2026-10-08T00:00:01Z",
+        "type": "step_failed"
+       },
+       "transition": {
+        "commands": [
+         {
+          "branch": "errorPath",
+          "kind": "spawn_branch",
+          "node_id": "lookup"
+         },
+         {
+          "action_digest": "dfea596111703683b7ab431da39e8a00290b57dec4d0aa0a85aa7f25d6e2ecbe",
+          "action_reference": "lookup-record@1.0.0",
+          "connection_slot": null,
+          "deadline": "2026-10-08T00:00:31Z",
+          "input": {},
+          "kind": "task",
+          "node_id": "notify-team",
+          "task_type": "lookup-record",
+          "task_version": "1.0.0"
+         }
+        ],
+        "state": {
+         "accepted_sequence": 2,
+         "active": [
+          "notify-team"
+         ],
+         "branches": {
+          "lookup/errorPath": {
+           "name": "errorPath",
+           "output": null,
+           "owner": "lookup",
+           "parent": null,
+           "status": "running",
+           "steps": {},
+           "target": "notify-team",
+           "visible": {}
+          }
+         },
+         "deferred_results": [],
+         "incident": null,
+         "incidents": {},
+         "input": {},
+         "joins": {
+          "lookup": {
+           "branches": [
+            "lookup/errorPath"
+           ],
+           "completed": [],
+           "completed_count": 0,
+           "concurrency": 1,
+           "mode": "error",
+           "node_id": "@join:lookup",
+           "owner": "lookup",
+           "required_count": 1,
+           "status": "waiting"
+          }
+         },
+         "output": null,
+         "status": "waiting",
+         "steps": {
+          "lookup": {
+           "error": {
+            "attempts": 3,
+            "code": "RATE_LIMITED",
+            "instanceKey": "lookup",
+            "message": "The endpoint refused the request because of its rate limit.",
+            "outcome": "failed"
+           }
+          }
+         },
+         "waits": {}
+        },
+        "steps": [
+         {
+          "error": {
+           "attempts": 3,
+           "code": "RATE_LIMITED",
+           "instanceKey": "lookup",
+           "message": "The endpoint refused the request because of its rate limit.",
+           "outcome": "failed"
+          },
+          "node_id": "lookup",
+          "output": null,
+          "status": "failed"
+         },
+         {
+          "node_id": "notify-team",
+          "output": null,
+          "status": "waiting"
+         }
+        ]
+       }
+      },
+      {
+       "digest": "14482166d7a7622d669b524c5ad7ce7e2b4024b34842a99d4b7b07f91597523c",
+       "event": {
+        "data": {
+         "generation": 1,
+         "node_id": "notify-team",
+         "output": {
+          "status": "confirmed"
+         }
+        },
+        "id": "95788bf0-fd3a-5de1-b47e-88de619f2da7",
+        "sequence": 3,
+        "timestamp": "2026-10-08T00:00:02Z",
+        "type": "task_completed"
+       },
+       "transition": {
+        "commands": [
+         {
+          "branch": "errorPath",
+          "kind": "accept_output",
+          "node_id": "@branch:lookup:0"
+         },
+         {
+          "branch": null,
+          "kind": "join",
+          "node_id": "@join:lookup"
+         }
+        ],
+        "state": {
+         "accepted_sequence": 3,
+         "active": [],
+         "branches": {},
+         "deferred_results": [],
+         "incident": null,
+         "incidents": {},
+         "input": {},
+         "joins": {},
+         "output": "recovered",
+         "status": "succeeded",
+         "steps": {
+          "lookup": {
+           "error": {
+            "attempts": 3,
+            "code": "RATE_LIMITED",
+            "instanceKey": "lookup",
+            "message": "The endpoint refused the request because of its rate limit.",
+            "outcome": "failed"
+           },
+           "output": "recovered"
+          }
+         },
+         "waits": {}
+        },
+        "steps": [
+         {
+          "node_id": "notify-team",
+          "output": {
+           "status": "confirmed"
+          },
+          "status": "completed"
+         },
+         {
+          "node_id": "@branch:lookup:0",
+          "output": "recovered",
+          "status": "completed"
+         },
+         {
+          "error": {
+           "attempts": 3,
+           "code": "RATE_LIMITED",
+           "instanceKey": "lookup",
+           "message": "The endpoint refused the request because of its rate limit.",
+           "outcome": "failed"
+          },
+          "node_id": "lookup",
+          "output": "recovered",
+          "status": "failed"
+         },
+         {
+          "node_id": "@join:lookup",
+          "output": "recovered",
+          "status": "completed"
+         }
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "input": {},
+     "name": "success-never-runs-the-path",
+     "stream": [
+      {
+       "digest": "4a990ab691a34f1f604b599f07fe3140192edd5e87e7e4f8aaa7d0691e40096c",
+       "event": {
+        "data": {},
+        "id": "a5717d52-40d3-5ec9-81b0-122ef4407790",
+        "sequence": 1,
+        "timestamp": "2026-10-08T00:00:00Z",
+        "type": "started"
+       },
+       "transition": {
+        "commands": [
+         {
+          "action_digest": "dfea596111703683b7ab431da39e8a00290b57dec4d0aa0a85aa7f25d6e2ecbe",
+          "action_reference": "lookup-record@1.0.0",
+          "connection_slot": null,
+          "deadline": "2026-10-08T00:00:30Z",
+          "input": {},
+          "kind": "task",
+          "node_id": "lookup",
+          "task_type": "lookup-record",
+          "task_version": "1.0.0"
+         }
+        ],
+        "state": {
+         "accepted_sequence": 1,
+         "active": [
+          "lookup"
+         ],
+         "branches": {},
+         "deferred_results": [],
+         "incident": null,
+         "incidents": {},
+         "input": {},
+         "joins": {},
+         "output": null,
+         "status": "waiting",
+         "steps": {},
+         "waits": {}
+        },
+        "steps": [
+         {
+          "node_id": "lookup",
+          "output": null,
+          "status": "waiting"
+         }
+        ]
+       }
+      },
+      {
+       "digest": "4caf3dd5d6d4c6fad982fc0ec428a7d77794b771e610911b11ffc38cfbf58f45",
+       "event": {
+        "data": {
+         "generation": 1,
+         "node_id": "lookup",
+         "output": {
+          "status": "confirmed"
+         }
+        },
+        "id": "4357ae45-b50c-5bcf-8c67-111a66758271",
+        "sequence": 2,
+        "timestamp": "2026-10-08T00:00:01Z",
+        "type": "task_completed"
+       },
+       "transition": {
+        "commands": [],
+        "state": {
+         "accepted_sequence": 2,
+         "active": [],
+         "branches": {},
+         "deferred_results": [],
+         "incident": null,
+         "incidents": {},
+         "input": {},
+         "joins": {},
+         "output": {
+          "status": "confirmed"
+         },
+         "status": "succeeded",
+         "steps": {
+          "lookup": {
+           "output": {
+            "status": "confirmed"
+           }
+          }
+         },
+         "waits": {}
+        },
+        "steps": [
+         {
+          "node_id": "lookup",
+          "output": {
+           "status": "confirmed"
+          },
+          "status": "completed"
+         }
+        ]
+       }
+      }
+     ]
+    }
+   ],
+   "source": "scripts/golden_step_errors.py#golden-error-path"
+  },
+  {
+   "artifact": {
+    "diagnostics": [],
+    "digest": "7545b4b18bf8e9e6cf6fdebb367871ebba6f3f80fff5ef91ffa05f32eb26b2ed",
+    "executable": {
+     "apiVersion": "weave/v1alpha1",
+     "connections": {},
+     "dependencies": [
+      {
+       "digest": "dfea596111703683b7ab431da39e8a00290b57dec4d0aa0a85aa7f25d6e2ecbe",
+       "document": {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Action",
+        "metadata": {
+         "name": "lookup-record",
+         "version": "1.0.0"
+        },
+        "spec": {
+         "implementation": {
+          "kind": "worker",
+          "taskType": "lookup-record",
+          "taskVersion": "1.0.0"
+         },
+         "inputSchema": {},
+         "outputSchema": {
+          "additionalProperties": false,
+          "properties": {
+           "status": {
+            "type": "string"
+           }
+          },
+          "required": [
+           "status"
+          ],
+          "type": "object"
+         },
+         "retry": {
+          "initialDelaySeconds": 1,
+          "maxAttempts": 1,
+          "maxDelaySeconds": 30
+         },
+         "sideEffect": "idempotent",
+         "timeoutSeconds": 30
+        }
+       },
+       "kind": "Action",
+       "reference": "lookup-record@1.0.0"
+      },
+      {
+       "digest": "61790863294e13d0878650765caad0c82e6203ab2cb731ae115ee03f22869a22",
+       "document": {
+        "inputSchema": {},
+        "outputSchema": {
+         "additionalProperties": false,
+         "properties": {
+          "status": {
+           "type": "string"
+          }
+         },
+         "required": [
+          "status"
+         ],
+         "type": "object"
+        },
+        "sideEffect": "idempotent",
+        "taskType": "lookup-record",
+        "taskVersion": "1.0.0",
+        "timeoutSeconds": 30
+       },
+       "kind": "TaskCapability",
+       "reference": "lookup-record@1.0.0"
+      }
+     ],
+     "features": [
+      "flow.onError"
+     ],
+     "graph": {
+      "edges": [
+       {
+        "branch": "errorPath",
+        "kind": "error",
+        "source": "lookup",
+        "target": "stop"
+       },
+       {
+        "branch": null,
+        "kind": "next",
+        "source": "@join:lookup",
+        "target": "@end"
+       },
+       {
+        "branch": null,
+        "kind": "next",
+        "source": "lookup",
+        "target": "@join:lookup"
+       },
+       {
+        "branch": null,
+        "kind": "next",
+        "source": "@start",
+        "target": "lookup"
+       }
+      ],
+      "entry": "@start",
+      "exit": "@end",
+      "nodes": [
+       {
+        "id": "@start",
+        "kind": "start",
+        "path": "/spec",
+        "scope": []
+       },
+       {
+        "id": "@end",
+        "kind": "end",
+        "output": {
+         "ref": "/steps/lookup/output"
+        },
+        "path": "/spec/output",
+        "scope": []
+       },
+       {
+        "code": "NOT_FOUND",
+        "id": "stop",
+        "kind": "fail",
+        "message": "Nothing to review.",
+        "path": "/spec/steps/0/errorPath/steps/0",
+        "scope": [
+         "lookup",
+         "errorPath"
+        ]
+       },
+       {
+        "branch": "errorPath",
+        "completes": false,
+        "id": "@branch:lookup:0",
+        "kind": "branch-output",
+        "output": {
+         "literal": "recovered"
+        },
+        "owner": "lookup",
+        "path": "/spec/steps/0/errorPath/output",
+        "scope": [
+         "lookup",
+         "errorPath"
+        ]
+       },
+       {
+        "branches": [
+         "@branch:lookup:0"
+        ],
+        "completes": true,
+        "id": "@join:lookup",
+        "kind": "join",
+        "mode": "error",
+        "owner": "lookup",
+        "path": "/spec/steps/0",
+        "scope": []
+       },
+       {
+        "connection": null,
+        "dependency": "dfea596111703683b7ab431da39e8a00290b57dec4d0aa0a85aa7f25d6e2ecbe",
+        "errorJoin": "@join:lookup",
+        "errorTarget": "stop",
+        "id": "lookup",
+        "kind": "action",
+        "onError": "errorOutput",
+        "path": "/spec/steps/0",
+        "scope": [],
+        "with": {
+         "literal": {}
+        }
+       }
+      ]
+     },
+     "guards": [
+      {
+       "path": "/spec/inputSchema",
+       "purpose": "workflow_input",
+       "schemaRef": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      },
+      {
+       "path": "/spec/steps/0/with",
+       "purpose": "action_input",
+       "schemaRef": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      },
+      {
+       "path": "/spec/steps/0",
+       "purpose": "action_output",
+       "schemaRef": "7c4bb65cda2f8731afa3a99a88289088d4fc8f822ae9a2b4e2a881cc1af9c765"
+      },
+      {
+       "path": "/spec/steps/0/errorPath/output",
+       "purpose": "branch_output",
+       "schemaRef": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      },
+      {
+       "path": "/spec/output",
+       "purpose": "workflow_output",
+       "schemaRef": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      }
+     ],
+     "inputSchema": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+     "irVersion": "weave/ir-v1alpha4",
+     "kind": "Workflow",
+     "metadata": {
+      "name": "golden-error-path-fails",
+      "version": "1.0.0"
+     },
+     "outputSchema": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+     "schemas": {
+      "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a": {},
+      "7c4bb65cda2f8731afa3a99a88289088d4fc8f822ae9a2b4e2a881cc1af9c765": {
+       "additionalProperties": false,
+       "properties": {
+        "status": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "status"
+       ],
+       "type": "object"
+      }
+     },
+     "timeoutSeconds": null
+    },
+    "omittedCount": 0,
+    "schemaTruncated": false,
+    "sourceHash": "28b0c2c1b8262213a69f5b751647f643cf8b48aecda6e22a4394189d8fbef80d",
+    "sourceMap": {
+     "": {
+      "column": 1,
+      "endColumn": 491,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-error-path-fails",
+      "line": 1
+     },
+     "/apiVersion": {
+      "column": 16,
+      "endColumn": 32,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-error-path-fails",
+      "line": 1
+     },
+     "/kind": {
+      "column": 42,
+      "endColumn": 52,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-error-path-fails",
+      "line": 1
+     },
+     "/metadata": {
+      "column": 66,
+      "endColumn": 121,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-error-path-fails",
+      "line": 1
+     },
+     "/metadata/name": {
+      "column": 75,
+      "endColumn": 100,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-error-path-fails",
+      "line": 1
+     },
+     "/metadata/version": {
+      "column": 113,
+      "endColumn": 120,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-error-path-fails",
+      "line": 1
+     },
+     "/spec": {
+      "column": 131,
+      "endColumn": 490,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-error-path-fails",
+      "line": 1
+     },
+     "/spec/inputSchema": {
+      "column": 147,
+      "endColumn": 149,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-error-path-fails",
+      "line": 1
+     },
+     "/spec/output": {
+      "column": 458,
+      "endColumn": 489,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-error-path-fails",
+      "line": 1
+     },
+     "/spec/output/ref": {
+      "column": 466,
+      "endColumn": 488,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-error-path-fails",
+      "line": 1
+     },
+     "/spec/outputSchema": {
+      "column": 167,
+      "endColumn": 169,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-error-path-fails",
+      "line": 1
+     },
+     "/spec/steps": {
+      "column": 180,
+      "endColumn": 446,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-error-path-fails",
+      "line": 1
+     },
+     "/spec/steps/0": {
+      "column": 181,
+      "endColumn": 445,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-error-path-fails",
+      "line": 1
+     },
+     "/spec/steps/0/errorPath": {
+      "column": 311,
+      "endColumn": 444,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-error-path-fails",
+      "line": 1
+     },
+     "/spec/steps/0/errorPath/output": {
+      "column": 419,
+      "endColumn": 443,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-error-path-fails",
+      "line": 1
+     },
+     "/spec/steps/0/errorPath/output/literal": {
+      "column": 431,
+      "endColumn": 442,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-error-path-fails",
+      "line": 1
+     },
+     "/spec/steps/0/errorPath/steps": {
+      "column": 321,
+      "endColumn": 407,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-error-path-fails",
+      "line": 1
+     },
+     "/spec/steps/0/errorPath/steps/0": {
+      "column": 322,
+      "endColumn": 406,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-error-path-fails",
+      "line": 1
+     },
+     "/spec/steps/0/errorPath/steps/0/code": {
+      "column": 361,
+      "endColumn": 372,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-error-path-fails",
+      "line": 1
+     },
+     "/spec/steps/0/errorPath/steps/0/id": {
+      "column": 329,
+      "endColumn": 335,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-error-path-fails",
+      "line": 1
+     },
+     "/spec/steps/0/errorPath/steps/0/kind": {
+      "column": 345,
+      "endColumn": 351,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-error-path-fails",
+      "line": 1
+     },
+     "/spec/steps/0/errorPath/steps/0/message": {
+      "column": 385,
+      "endColumn": 405,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-error-path-fails",
+      "line": 1
+     },
+     "/spec/steps/0/id": {
+      "column": 188,
+      "endColumn": 196,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-error-path-fails",
+      "line": 1
+     },
+     "/spec/steps/0/kind": {
+      "column": 206,
+      "endColumn": 214,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-error-path-fails",
+      "line": 1
+     },
+     "/spec/steps/0/onError": {
+      "column": 283,
+      "endColumn": 296,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-error-path-fails",
+      "line": 1
+     },
+     "/spec/steps/0/uses": {
+      "column": 224,
+      "endColumn": 245,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-error-path-fails",
+      "line": 1
+     },
+     "/spec/steps/0/with": {
+      "column": 255,
+      "endColumn": 270,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-error-path-fails",
+      "line": 1
+     },
+     "/spec/steps/0/with/literal": {
+      "column": 267,
+      "endColumn": 269,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-error-path-fails",
+      "line": 1
+     }
+    }
+   },
+   "name": "golden-error-path-fails",
+   "scenarios": [
+    {
+     "input": {},
+     "name": "path-fails",
+     "stream": [
+      {
+       "digest": "4a990ab691a34f1f604b599f07fe3140192edd5e87e7e4f8aaa7d0691e40096c",
+       "event": {
+        "data": {},
+        "id": "e9a62390-1fd8-539c-9f16-462526da0f92",
+        "sequence": 1,
+        "timestamp": "2026-10-08T00:00:00Z",
+        "type": "started"
+       },
+       "transition": {
+        "commands": [
+         {
+          "action_digest": "dfea596111703683b7ab431da39e8a00290b57dec4d0aa0a85aa7f25d6e2ecbe",
+          "action_reference": "lookup-record@1.0.0",
+          "connection_slot": null,
+          "deadline": "2026-10-08T00:00:30Z",
+          "input": {},
+          "kind": "task",
+          "node_id": "lookup",
+          "task_type": "lookup-record",
+          "task_version": "1.0.0"
+         }
+        ],
+        "state": {
+         "accepted_sequence": 1,
+         "active": [
+          "lookup"
+         ],
+         "branches": {},
+         "deferred_results": [],
+         "incident": null,
+         "incidents": {},
+         "input": {},
+         "joins": {},
+         "output": null,
+         "status": "waiting",
+         "steps": {},
+         "waits": {}
+        },
+        "steps": [
+         {
+          "node_id": "lookup",
+          "output": null,
+          "status": "waiting"
+         }
+        ]
+       }
+      },
+      {
+       "digest": "725c50e61355cdbadf5345b61bfbd1dfd75033eefcfaf17d74b931bb440e5d8d",
+       "event": {
+        "data": {
+         "attempts": 3,
+         "code": "RATE_LIMITED",
+         "generation": 3,
+         "node_id": "lookup",
+         "outcome": "failed"
+        },
+        "id": "8c6b6d81-3d29-5c3a-b372-829fdcd0ccc8",
+        "sequence": 2,
+        "timestamp": "2026-10-08T00:00:01Z",
+        "type": "step_failed"
+       },
+       "transition": {
+        "commands": [
+         {
+          "branch": "errorPath",
+          "kind": "spawn_branch",
+          "node_id": "lookup"
+         },
+         {
+          "branch": null,
+          "kind": "revoke_leases",
+          "node_id": "stop"
+         },
+         {
+          "branch": null,
+          "kind": "terminate",
+          "node_id": "stop"
+         }
+        ],
+        "state": {
+         "accepted_sequence": 2,
+         "active": [],
+         "branches": {
+          "lookup/errorPath": {
+           "name": "errorPath",
+           "output": null,
+           "owner": "lookup",
+           "parent": null,
+           "status": "cancelled",
+           "steps": {},
+           "target": "stop",
+           "visible": {}
+          }
+         },
+         "deferred_results": [],
+         "incident": "NOT_FOUND",
+         "incidents": {},
+         "input": {},
+         "joins": {
+          "lookup": {
+           "branches": [
+            "lookup/errorPath"
+           ],
+           "completed": [],
+           "completed_count": 0,
+           "concurrency": 1,
+           "mode": "error",
+           "node_id": "@join:lookup",
+           "owner": "lookup",
+           "required_count": 1,
+           "status": "terminated"
+          }
+         },
+         "output": {
+          "code": "NOT_FOUND",
+          "message": "Nothing to review."
+         },
+         "status": "failed",
+         "steps": {
+          "lookup": {
+           "error": {
+            "attempts": 3,
+            "code": "RATE_LIMITED",
+            "instanceKey": "lookup",
+            "message": "The endpoint refused the request because of its rate limit.",
+            "outcome": "failed"
+           }
+          }
+         },
+         "waits": {}
+        },
+        "steps": [
+         {
+          "error": {
+           "attempts": 3,
+           "code": "RATE_LIMITED",
+           "instanceKey": "lookup",
+           "message": "The endpoint refused the request because of its rate limit.",
+           "outcome": "failed"
+          },
+          "node_id": "lookup",
+          "output": null,
+          "status": "failed"
+         }
+        ]
+       }
+      }
+     ]
+    }
+   ],
+   "source": "scripts/golden_step_errors.py#golden-error-path-fails"
+  },
+  {
+   "artifact": {
+    "diagnostics": [
+     {
+      "code": "WV-COMP-REFERENCE_PRESENCE",
+      "hint": null,
+      "message": "Reference presence is unproved; runtime validation is required.",
+      "path": "/spec/steps/0/items",
+      "related": [],
+      "severity": "warning",
+      "source": {
+       "column": 212,
+       "endColumn": 235,
+       "endLine": 1,
+       "file": "scripts/golden_step_errors.py#golden-loop",
+       "line": 1
+      },
+      "stage": "semantic",
+      "suggestedEdit": null
+     },
+     {
+      "code": "WV-COMP-UNKNOWN_COMPATIBILITY",
+      "hint": null,
+      "message": "Schema containment is unproved; runtime validation is required.",
+      "path": "/spec/steps/0/items",
+      "related": [],
+      "severity": "warning",
+      "source": {
+       "column": 212,
+       "endColumn": 235,
+       "endLine": 1,
+       "file": "scripts/golden_step_errors.py#golden-loop",
+       "line": 1
+      },
+      "stage": "semantic",
+      "suggestedEdit": null
+     }
+    ],
+    "digest": "2621ff71da4503a42f0307a2eedd785be649e180566274ed0c4588283591c2b3",
+    "executable": {
+     "apiVersion": "weave/v1alpha1",
+     "connections": {},
+     "dependencies": [
+      {
+       "digest": "dfea596111703683b7ab431da39e8a00290b57dec4d0aa0a85aa7f25d6e2ecbe",
+       "document": {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Action",
+        "metadata": {
+         "name": "lookup-record",
+         "version": "1.0.0"
+        },
+        "spec": {
+         "implementation": {
+          "kind": "worker",
+          "taskType": "lookup-record",
+          "taskVersion": "1.0.0"
+         },
+         "inputSchema": {},
+         "outputSchema": {
+          "additionalProperties": false,
+          "properties": {
+           "status": {
+            "type": "string"
+           }
+          },
+          "required": [
+           "status"
+          ],
+          "type": "object"
+         },
+         "retry": {
+          "initialDelaySeconds": 1,
+          "maxAttempts": 1,
+          "maxDelaySeconds": 30
+         },
+         "sideEffect": "idempotent",
+         "timeoutSeconds": 30
+        }
+       },
+       "kind": "Action",
+       "reference": "lookup-record@1.0.0"
+      },
+      {
+       "digest": "61790863294e13d0878650765caad0c82e6203ab2cb731ae115ee03f22869a22",
+       "document": {
+        "inputSchema": {},
+        "outputSchema": {
+         "additionalProperties": false,
+         "properties": {
+          "status": {
+           "type": "string"
+          }
+         },
+         "required": [
+          "status"
+         ],
+         "type": "object"
+        },
+        "sideEffect": "idempotent",
+        "taskType": "lookup-record",
+        "taskVersion": "1.0.0",
+        "timeoutSeconds": 30
+       },
+       "kind": "TaskCapability",
+       "reference": "lookup-record@1.0.0"
+      }
+     ],
+     "features": [
+      "flow.forEach",
+      "flow.onError"
+     ],
+     "graph": {
+      "edges": [
+       {
+        "branch": null,
+        "kind": "next",
+        "source": "send",
+        "target": "@branch:each:0"
+       },
+       {
+        "branch": "body",
+        "kind": "join",
+        "source": "@branch:each:0",
+        "target": "@join:each"
+       },
+       {
+        "branch": "body",
+        "kind": "each",
+        "source": "each",
+        "target": "send"
+       },
+       {
+        "branch": null,
+        "kind": "next",
+        "source": "@join:each",
+        "target": "@end"
+       },
+       {
+        "branch": null,
+        "kind": "next",
+        "source": "@start",
+        "target": "each"
+       }
+      ],
+      "entry": "@start",
+      "exit": "@end",
+      "nodes": [
+       {
+        "id": "@start",
+        "kind": "start",
+        "path": "/spec",
+        "scope": []
+       },
+       {
+        "id": "@end",
+        "kind": "end",
+        "output": {
+         "ref": "/steps/each/output"
+        },
+        "path": "/spec/output",
+        "scope": []
+       },
+       {
+        "connection": null,
+        "dependency": "dfea596111703683b7ab431da39e8a00290b57dec4d0aa0a85aa7f25d6e2ecbe",
+        "id": "send",
+        "kind": "action",
+        "onError": "continue",
+        "path": "/spec/steps/0/body/steps/0",
+        "scope": [
+         "each",
+         "body"
+        ],
+        "with": {
+         "literal": {}
+        }
+       },
+       {
+        "branch": "body",
+        "completes": true,
+        "id": "@branch:each:0",
+        "kind": "branch-output",
+        "output": {
+         "ref": "/steps/send/output"
+        },
+        "owner": "each",
+        "path": "/spec/steps/0/body/output",
+        "scope": [
+         "each",
+         "body"
+        ]
+       },
+       {
+        "branches": [
+         "@branch:each:0"
+        ],
+        "completes": true,
+        "id": "@join:each",
+        "kind": "join",
+        "mode": "each",
+        "owner": "each",
+        "path": "/spec/steps/0",
+        "scope": []
+       },
+       {
+        "collect": "all",
+        "concurrency": 2,
+        "id": "each",
+        "items": {
+         "ref": "/input/items"
+        },
+        "join": "@join:each",
+        "kind": "forEach",
+        "maxItems": 1000,
+        "path": "/spec/steps/0",
+        "scope": [],
+        "target": "send"
+       }
+      ]
+     },
+     "guards": [
+      {
+       "path": "/spec/inputSchema",
+       "purpose": "workflow_input",
+       "schemaRef": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      },
+      {
+       "path": "/spec/steps/0/items",
+       "purpose": "reference_presence",
+       "schemaRef": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      },
+      {
+       "path": "/spec/steps/0/items",
+       "purpose": "loop_items",
+       "schemaRef": "6a7f71a05a1d45ad05b136c292bc4c9f309f51a5d36ff2013ac9cac6a074ff22"
+      },
+      {
+       "path": "/spec/steps/0/body/steps/0/with",
+       "purpose": "action_input",
+       "schemaRef": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      },
+      {
+       "path": "/spec/steps/0/body/steps/0",
+       "purpose": "action_output",
+       "schemaRef": "7c4bb65cda2f8731afa3a99a88289088d4fc8f822ae9a2b4e2a881cc1af9c765"
+      },
+      {
+       "path": "/spec/steps/0/body/output",
+       "purpose": "branch_output",
+       "schemaRef": "9406fc0229f02cabdaa43c84930ff2256d1d2afc348a7ea7ec8c78603b38320e"
+      },
+      {
+       "path": "/spec/output",
+       "purpose": "workflow_output",
+       "schemaRef": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      }
+     ],
+     "inputSchema": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+     "irVersion": "weave/ir-v1alpha4",
+     "kind": "Workflow",
+     "metadata": {
+      "name": "golden-loop",
+      "version": "1.0.0"
+     },
+     "outputSchema": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+     "schemas": {
+      "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a": {},
+      "6a7f71a05a1d45ad05b136c292bc4c9f309f51a5d36ff2013ac9cac6a074ff22": {
+       "type": "array"
+      },
+      "7c4bb65cda2f8731afa3a99a88289088d4fc8f822ae9a2b4e2a881cc1af9c765": {
+       "additionalProperties": false,
+       "properties": {
+        "status": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "status"
+       ],
+       "type": "object"
+      },
+      "9406fc0229f02cabdaa43c84930ff2256d1d2afc348a7ea7ec8c78603b38320e": {
+       "anyOf": [
+        {
+         "additionalProperties": false,
+         "properties": {
+          "status": {
+           "type": "string"
+          }
+         },
+         "required": [
+          "status"
+         ],
+         "type": "object"
+        },
+        {
+         "type": "null"
+        }
+       ]
+      }
+     },
+     "timeoutSeconds": null
+    },
+    "omittedCount": 0,
+    "schemaTruncated": false,
+    "sourceHash": "5910e4d78c9443df35f6e801a469f453dc3832be63ff67fab1aa12d0ae70a33f",
+    "sourceMap": {
+     "": {
+      "column": 1,
+      "endColumn": 473,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop",
+      "line": 1
+     },
+     "/apiVersion": {
+      "column": 16,
+      "endColumn": 32,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop",
+      "line": 1
+     },
+     "/kind": {
+      "column": 42,
+      "endColumn": 52,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop",
+      "line": 1
+     },
+     "/metadata": {
+      "column": 66,
+      "endColumn": 109,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop",
+      "line": 1
+     },
+     "/metadata/name": {
+      "column": 75,
+      "endColumn": 88,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop",
+      "line": 1
+     },
+     "/metadata/version": {
+      "column": 101,
+      "endColumn": 108,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop",
+      "line": 1
+     },
+     "/spec": {
+      "column": 119,
+      "endColumn": 472,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop",
+      "line": 1
+     },
+     "/spec/inputSchema": {
+      "column": 135,
+      "endColumn": 137,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop",
+      "line": 1
+     },
+     "/spec/output": {
+      "column": 442,
+      "endColumn": 471,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop",
+      "line": 1
+     },
+     "/spec/output/ref": {
+      "column": 450,
+      "endColumn": 470,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop",
+      "line": 1
+     },
+     "/spec/outputSchema": {
+      "column": 155,
+      "endColumn": 157,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop",
+      "line": 1
+     },
+     "/spec/steps": {
+      "column": 168,
+      "endColumn": 430,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop",
+      "line": 1
+     },
+     "/spec/steps/0": {
+      "column": 169,
+      "endColumn": 429,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop",
+      "line": 1
+     },
+     "/spec/steps/0/body": {
+      "column": 263,
+      "endColumn": 428,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop",
+      "line": 1
+     },
+     "/spec/steps/0/body/output": {
+      "column": 398,
+      "endColumn": 427,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop",
+      "line": 1
+     },
+     "/spec/steps/0/body/output/ref": {
+      "column": 406,
+      "endColumn": 426,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop",
+      "line": 1
+     },
+     "/spec/steps/0/body/steps": {
+      "column": 273,
+      "endColumn": 386,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop",
+      "line": 1
+     },
+     "/spec/steps/0/body/steps/0": {
+      "column": 274,
+      "endColumn": 385,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop",
+      "line": 1
+     },
+     "/spec/steps/0/body/steps/0/id": {
+      "column": 281,
+      "endColumn": 287,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop",
+      "line": 1
+     },
+     "/spec/steps/0/body/steps/0/kind": {
+      "column": 297,
+      "endColumn": 305,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop",
+      "line": 1
+     },
+     "/spec/steps/0/body/steps/0/onError": {
+      "column": 374,
+      "endColumn": 384,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop",
+      "line": 1
+     },
+     "/spec/steps/0/body/steps/0/uses": {
+      "column": 315,
+      "endColumn": 336,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop",
+      "line": 1
+     },
+     "/spec/steps/0/body/steps/0/with": {
+      "column": 346,
+      "endColumn": 361,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop",
+      "line": 1
+     },
+     "/spec/steps/0/body/steps/0/with/literal": {
+      "column": 358,
+      "endColumn": 360,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop",
+      "line": 1
+     },
+     "/spec/steps/0/concurrency": {
+      "column": 252,
+      "endColumn": 253,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop",
+      "line": 1
+     },
+     "/spec/steps/0/id": {
+      "column": 176,
+      "endColumn": 182,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop",
+      "line": 1
+     },
+     "/spec/steps/0/items": {
+      "column": 212,
+      "endColumn": 235,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop",
+      "line": 1
+     },
+     "/spec/steps/0/items/ref": {
+      "column": 220,
+      "endColumn": 234,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop",
+      "line": 1
+     },
+     "/spec/steps/0/kind": {
+      "column": 192,
+      "endColumn": 201,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop",
+      "line": 1
+     }
+    }
+   },
+   "name": "golden-loop",
+   "scenarios": [
+    {
+     "input": {
+      "items": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ]
+     },
+     "name": "item-two-fails-reverse-completions",
+     "stream": [
+      {
+       "digest": "e81eb0885a6405536d54535407c52e58b3f334864a51ff3598bd0166f42faabd",
+       "event": {
+        "data": {},
+        "id": "69ed56d0-8f10-5886-b312-ab0d7bd6935c",
+        "sequence": 1,
+        "timestamp": "2026-10-08T00:00:00Z",
+        "type": "started"
+       },
+       "transition": {
+        "commands": [
+         {
+          "branch": "body",
+          "index": 0,
+          "kind": "spawn_branch",
+          "node_id": "each"
+         },
+         {
+          "branch": "body",
+          "index": 1,
+          "kind": "spawn_branch",
+          "node_id": "each"
+         },
+         {
+          "action_digest": "dfea596111703683b7ab431da39e8a00290b57dec4d0aa0a85aa7f25d6e2ecbe",
+          "action_reference": "lookup-record@1.0.0",
+          "connection_slot": null,
+          "deadline": "2026-10-08T00:00:30Z",
+          "input": {},
+          "kind": "task",
+          "node_id": "send[0]",
+          "task_type": "lookup-record",
+          "task_version": "1.0.0"
+         },
+         {
+          "action_digest": "dfea596111703683b7ab431da39e8a00290b57dec4d0aa0a85aa7f25d6e2ecbe",
+          "action_reference": "lookup-record@1.0.0",
+          "connection_slot": null,
+          "deadline": "2026-10-08T00:00:30Z",
+          "input": {},
+          "kind": "task",
+          "node_id": "send[1]",
+          "task_type": "lookup-record",
+          "task_version": "1.0.0"
+         }
+        ],
+        "state": {
+         "accepted_sequence": 1,
+         "active": [
+          "send[0]",
+          "send[1]"
+         ],
+         "branches": {
+          "each/body[0]": {
+           "index": 0,
+           "name": "body",
+           "output": null,
+           "owner": "each",
+           "parent": null,
+           "status": "running",
+           "steps": {},
+           "target": "send",
+           "visible": {}
+          },
+          "each/body[1]": {
+           "index": 1,
+           "name": "body",
+           "output": null,
+           "owner": "each",
+           "parent": null,
+           "status": "running",
+           "steps": {},
+           "target": "send",
+           "visible": {}
+          }
+         },
+         "deferred_results": [],
+         "incident": null,
+         "incidents": {},
+         "input": {
+          "items": [
+           1,
+           2,
+           3,
+           4,
+           5
+          ]
+         },
+         "joins": {},
+         "loops": {
+          "each": {
+           "completed": 0,
+           "concurrency": 2,
+           "count": 5,
+           "items": [
+            1,
+            2,
+            3,
+            4,
+            5
+           ],
+           "join": "@join:each",
+           "next_index": 2,
+           "output_bytes": 0,
+           "outputs": {},
+           "owner": "each",
+           "running": [
+            0,
+            1
+           ],
+           "status": "running",
+           "visible": {},
+           "yields": 0
+          }
+         },
+         "output": null,
+         "status": "waiting",
+         "steps": {},
+         "waits": {}
+        },
+        "steps": [
+         {
+          "node_id": "send[0]",
+          "output": null,
+          "status": "waiting"
+         },
+         {
+          "node_id": "send[1]",
+          "output": null,
+          "status": "waiting"
+         }
+        ]
+       }
+      },
+      {
+       "digest": "e474c52c29a0a7fecad9ecbdc9b252c89a7a19a5cca4182bade019825527a4f8",
+       "event": {
+        "data": {
+         "generation": 1,
+         "node_id": "send[1]",
+         "output": {
+          "status": "confirmed"
+         }
+        },
+        "id": "9099fe71-c4a6-509b-8179-6d3c580fd562",
+        "sequence": 2,
+        "timestamp": "2026-10-08T00:00:01Z",
+        "type": "task_completed"
+       },
+       "transition": {
+        "commands": [
+         {
+          "branch": "body",
+          "index": 1,
+          "kind": "accept_output",
+          "node_id": "@branch:each:0[1]"
+         },
+         {
+          "branch": "body",
+          "index": 2,
+          "kind": "spawn_branch",
+          "node_id": "each"
+         },
+         {
+          "action_digest": "dfea596111703683b7ab431da39e8a00290b57dec4d0aa0a85aa7f25d6e2ecbe",
+          "action_reference": "lookup-record@1.0.0",
+          "connection_slot": null,
+          "deadline": "2026-10-08T00:00:31Z",
+          "input": {},
+          "kind": "task",
+          "node_id": "send[2]",
+          "task_type": "lookup-record",
+          "task_version": "1.0.0"
+         }
+        ],
+        "state": {
+         "accepted_sequence": 2,
+         "active": [
+          "send[0]",
+          "send[2]"
+         ],
+         "branches": {
+          "each/body[0]": {
+           "index": 0,
+           "name": "body",
+           "output": null,
+           "owner": "each",
+           "parent": null,
+           "status": "running",
+           "steps": {},
+           "target": "send",
+           "visible": {}
+          },
+          "each/body[2]": {
+           "index": 2,
+           "name": "body",
+           "output": null,
+           "owner": "each",
+           "parent": null,
+           "status": "running",
+           "steps": {},
+           "target": "send",
+           "visible": {}
+          }
+         },
+         "deferred_results": [],
+         "incident": null,
+         "incidents": {},
+         "input": {
+          "items": [
+           1,
+           2,
+           3,
+           4,
+           5
+          ]
+         },
+         "joins": {},
+         "loops": {
+          "each": {
+           "completed": 1,
+           "concurrency": 2,
+           "count": 5,
+           "items": [
+            1,
+            2,
+            3,
+            4,
+            5
+           ],
+           "join": "@join:each",
+           "next_index": 3,
+           "output_bytes": 22,
+           "outputs": {
+            "1": {
+             "status": "confirmed"
+            }
+           },
+           "owner": "each",
+           "running": [
+            0,
+            2
+           ],
+           "status": "running",
+           "visible": {},
+           "yields": 0
+          }
+         },
+         "output": null,
+         "status": "waiting",
+         "steps": {},
+         "waits": {}
+        },
+        "steps": [
+         {
+          "node_id": "send[1]",
+          "output": {
+           "status": "confirmed"
+          },
+          "status": "completed"
+         },
+         {
+          "node_id": "@branch:each:0[1]",
+          "output": {
+           "status": "confirmed"
+          },
+          "status": "completed"
+         },
+         {
+          "node_id": "send[2]",
+          "output": null,
+          "status": "waiting"
+         }
+        ]
+       }
+      },
+      {
+       "digest": "1c7b23aae5640aaa433fb99af2fe1b3d6a8a84aaa62fa05af6a46564a63e7e52",
+       "event": {
+        "data": {
+         "attempts": 3,
+         "code": "RATE_LIMITED",
+         "generation": 3,
+         "node_id": "send[2]",
+         "outcome": "failed"
+        },
+        "id": "55546c4d-3f21-5737-ac13-b89fef29a545",
+        "sequence": 3,
+        "timestamp": "2026-10-08T00:00:02Z",
+        "type": "step_failed"
+       },
+       "transition": {
+        "commands": [
+         {
+          "branch": "body",
+          "index": 2,
+          "kind": "accept_output",
+          "node_id": "@branch:each:0[2]"
+         },
+         {
+          "branch": "body",
+          "index": 3,
+          "kind": "spawn_branch",
+          "node_id": "each"
+         },
+         {
+          "action_digest": "dfea596111703683b7ab431da39e8a00290b57dec4d0aa0a85aa7f25d6e2ecbe",
+          "action_reference": "lookup-record@1.0.0",
+          "connection_slot": null,
+          "deadline": "2026-10-08T00:00:32Z",
+          "input": {},
+          "kind": "task",
+          "node_id": "send[3]",
+          "task_type": "lookup-record",
+          "task_version": "1.0.0"
+         }
+        ],
+        "state": {
+         "accepted_sequence": 3,
+         "active": [
+          "send[0]",
+          "send[3]"
+         ],
+         "branches": {
+          "each/body[0]": {
+           "index": 0,
+           "name": "body",
+           "output": null,
+           "owner": "each",
+           "parent": null,
+           "status": "running",
+           "steps": {},
+           "target": "send",
+           "visible": {}
+          },
+          "each/body[3]": {
+           "index": 3,
+           "name": "body",
+           "output": null,
+           "owner": "each",
+           "parent": null,
+           "status": "running",
+           "steps": {},
+           "target": "send",
+           "visible": {}
+          }
+         },
+         "deferred_results": [],
+         "incident": null,
+         "incidents": {},
+         "input": {
+          "items": [
+           1,
+           2,
+           3,
+           4,
+           5
+          ]
+         },
+         "joins": {},
+         "loops": {
+          "each": {
+           "completed": 2,
+           "concurrency": 2,
+           "count": 5,
+           "items": [
+            1,
+            2,
+            3,
+            4,
+            5
+           ],
+           "join": "@join:each",
+           "next_index": 4,
+           "output_bytes": 27,
+           "outputs": {
+            "1": {
+             "status": "confirmed"
+            },
+            "2": null
+           },
+           "owner": "each",
+           "running": [
+            0,
+            3
+           ],
+           "status": "running",
+           "visible": {},
+           "yields": 0
+          }
+         },
+         "output": null,
+         "status": "waiting",
+         "steps": {},
+         "waits": {}
+        },
+        "steps": [
+         {
+          "error": {
+           "attempts": 3,
+           "code": "RATE_LIMITED",
+           "instanceKey": "send[2]",
+           "message": "The endpoint refused the request because of its rate limit.",
+           "outcome": "failed"
+          },
+          "node_id": "send[2]",
+          "output": null,
+          "status": "failed"
+         },
+         {
+          "node_id": "@branch:each:0[2]",
+          "output": null,
+          "status": "completed"
+         },
+         {
+          "node_id": "send[3]",
+          "output": null,
+          "status": "waiting"
+         }
+        ]
+       }
+      },
+      {
+       "digest": "469c7c824f7600536a8a121cb4c49388e941bc85f5f5f0cf6599977c26d6451e",
+       "event": {
+        "data": {
+         "generation": 1,
+         "node_id": "send[0]",
+         "output": {
+          "status": "confirmed"
+         }
+        },
+        "id": "36753c8c-2162-53dd-810d-d39c1219bec0",
+        "sequence": 4,
+        "timestamp": "2026-10-08T00:00:03Z",
+        "type": "task_completed"
+       },
+       "transition": {
+        "commands": [
+         {
+          "branch": "body",
+          "index": 0,
+          "kind": "accept_output",
+          "node_id": "@branch:each:0[0]"
+         },
+         {
+          "branch": "body",
+          "index": 4,
+          "kind": "spawn_branch",
+          "node_id": "each"
+         },
+         {
+          "action_digest": "dfea596111703683b7ab431da39e8a00290b57dec4d0aa0a85aa7f25d6e2ecbe",
+          "action_reference": "lookup-record@1.0.0",
+          "connection_slot": null,
+          "deadline": "2026-10-08T00:00:33Z",
+          "input": {},
+          "kind": "task",
+          "node_id": "send[4]",
+          "task_type": "lookup-record",
+          "task_version": "1.0.0"
+         }
+        ],
+        "state": {
+         "accepted_sequence": 4,
+         "active": [
+          "send[3]",
+          "send[4]"
+         ],
+         "branches": {
+          "each/body[3]": {
+           "index": 3,
+           "name": "body",
+           "output": null,
+           "owner": "each",
+           "parent": null,
+           "status": "running",
+           "steps": {},
+           "target": "send",
+           "visible": {}
+          },
+          "each/body[4]": {
+           "index": 4,
+           "name": "body",
+           "output": null,
+           "owner": "each",
+           "parent": null,
+           "status": "running",
+           "steps": {},
+           "target": "send",
+           "visible": {}
+          }
+         },
+         "deferred_results": [],
+         "incident": null,
+         "incidents": {},
+         "input": {
+          "items": [
+           1,
+           2,
+           3,
+           4,
+           5
+          ]
+         },
+         "joins": {},
+         "loops": {
+          "each": {
+           "completed": 3,
+           "concurrency": 2,
+           "count": 5,
+           "items": [
+            1,
+            2,
+            3,
+            4,
+            5
+           ],
+           "join": "@join:each",
+           "next_index": 5,
+           "output_bytes": 50,
+           "outputs": {
+            "0": {
+             "status": "confirmed"
+            },
+            "1": {
+             "status": "confirmed"
+            },
+            "2": null
+           },
+           "owner": "each",
+           "running": [
+            3,
+            4
+           ],
+           "status": "running",
+           "visible": {},
+           "yields": 0
+          }
+         },
+         "output": null,
+         "status": "waiting",
+         "steps": {},
+         "waits": {}
+        },
+        "steps": [
+         {
+          "node_id": "send[0]",
+          "output": {
+           "status": "confirmed"
+          },
+          "status": "completed"
+         },
+         {
+          "node_id": "@branch:each:0[0]",
+          "output": {
+           "status": "confirmed"
+          },
+          "status": "completed"
+         },
+         {
+          "node_id": "send[4]",
+          "output": null,
+          "status": "waiting"
+         }
+        ]
+       }
+      },
+      {
+       "digest": "0d6e5234363f7819b50538ed18d3f06862c08d8094358ff4a759105ca8621440",
+       "event": {
+        "data": {
+         "generation": 1,
+         "node_id": "send[4]",
+         "output": {
+          "status": "confirmed"
+         }
+        },
+        "id": "b927d324-8f47-55f4-9c7f-ff755dad3265",
+        "sequence": 5,
+        "timestamp": "2026-10-08T00:00:04Z",
+        "type": "task_completed"
+       },
+       "transition": {
+        "commands": [
+         {
+          "branch": "body",
+          "index": 4,
+          "kind": "accept_output",
+          "node_id": "@branch:each:0[4]"
+         }
+        ],
+        "state": {
+         "accepted_sequence": 5,
+         "active": [
+          "send[3]"
+         ],
+         "branches": {
+          "each/body[3]": {
+           "index": 3,
+           "name": "body",
+           "output": null,
+           "owner": "each",
+           "parent": null,
+           "status": "running",
+           "steps": {},
+           "target": "send",
+           "visible": {}
+          }
+         },
+         "deferred_results": [],
+         "incident": null,
+         "incidents": {},
+         "input": {
+          "items": [
+           1,
+           2,
+           3,
+           4,
+           5
+          ]
+         },
+         "joins": {},
+         "loops": {
+          "each": {
+           "completed": 4,
+           "concurrency": 2,
+           "count": 5,
+           "items": [
+            1,
+            2,
+            3,
+            4,
+            5
+           ],
+           "join": "@join:each",
+           "next_index": 5,
+           "output_bytes": 73,
+           "outputs": {
+            "0": {
+             "status": "confirmed"
+            },
+            "1": {
+             "status": "confirmed"
+            },
+            "2": null,
+            "4": {
+             "status": "confirmed"
+            }
+           },
+           "owner": "each",
+           "running": [
+            3
+           ],
+           "status": "running",
+           "visible": {},
+           "yields": 0
+          }
+         },
+         "output": null,
+         "status": "waiting",
+         "steps": {},
+         "waits": {}
+        },
+        "steps": [
+         {
+          "node_id": "send[4]",
+          "output": {
+           "status": "confirmed"
+          },
+          "status": "completed"
+         },
+         {
+          "node_id": "@branch:each:0[4]",
+          "output": {
+           "status": "confirmed"
+          },
+          "status": "completed"
+         }
+        ]
+       }
+      },
+      {
+       "digest": "956badfb4572558350d5f306e9d469b0247d388e6f870ab1daca202d5a109332",
+       "event": {
+        "data": {
+         "generation": 1,
+         "node_id": "send[3]",
+         "output": {
+          "status": "confirmed"
+         }
+        },
+        "id": "f03e4f48-08d4-5b59-a2af-459810ec659c",
+        "sequence": 6,
+        "timestamp": "2026-10-08T00:00:05Z",
+        "type": "task_completed"
+       },
+       "transition": {
+        "commands": [
+         {
+          "branch": "body",
+          "index": 3,
+          "kind": "accept_output",
+          "node_id": "@branch:each:0[3]"
+         },
+         {
+          "branch": null,
+          "kind": "join",
+          "node_id": "@join:each"
+         }
+        ],
+        "state": {
+         "accepted_sequence": 6,
+         "active": [],
+         "branches": {},
+         "deferred_results": [],
+         "incident": null,
+         "incidents": {},
+         "input": {
+          "items": [
+           1,
+           2,
+           3,
+           4,
+           5
+          ]
+         },
+         "joins": {},
+         "loops": {
+          "each": {
+           "completed": 5,
+           "concurrency": 2,
+           "count": 5,
+           "items": [],
+           "join": "@join:each",
+           "next_index": 5,
+           "output_bytes": 96,
+           "outputs": {},
+           "owner": "each",
+           "running": [],
+           "status": "joined",
+           "visible": {},
+           "yields": 0
+          }
+         },
+         "output": [
+          {
+           "status": "confirmed"
+          },
+          {
+           "status": "confirmed"
+          },
+          null,
+          {
+           "status": "confirmed"
+          },
+          {
+           "status": "confirmed"
+          }
+         ],
+         "status": "succeeded",
+         "steps": {
+          "each": {
+           "output": [
+            {
+             "status": "confirmed"
+            },
+            {
+             "status": "confirmed"
+            },
+            null,
+            {
+             "status": "confirmed"
+            },
+            {
+             "status": "confirmed"
+            }
+           ]
+          }
+         },
+         "waits": {}
+        },
+        "steps": [
+         {
+          "node_id": "send[3]",
+          "output": {
+           "status": "confirmed"
+          },
+          "status": "completed"
+         },
+         {
+          "node_id": "@branch:each:0[3]",
+          "output": {
+           "status": "confirmed"
+          },
+          "status": "completed"
+         },
+         {
+          "node_id": "each",
+          "output": [
+           {
+            "status": "confirmed"
+           },
+           {
+            "status": "confirmed"
+           },
+           null,
+           {
+            "status": "confirmed"
+           },
+           {
+            "status": "confirmed"
+           }
+          ],
+          "status": "completed"
+         },
+         {
+          "node_id": "@join:each",
+          "output": [
+           {
+            "status": "confirmed"
+           },
+           {
+            "status": "confirmed"
+           },
+           null,
+           {
+            "status": "confirmed"
+           },
+           {
+            "status": "confirmed"
+           }
+          ],
+          "status": "completed"
+         }
+        ]
+       }
+      }
+     ]
+    }
+   ],
+   "source": "scripts/golden_step_errors.py#golden-loop"
+  },
+  {
+   "artifact": {
+    "diagnostics": [
+     {
+      "code": "WV-COMP-REFERENCE_PRESENCE",
+      "hint": null,
+      "message": "Reference presence is unproved; runtime validation is required.",
+      "path": "/spec/steps/0/items",
+      "related": [],
+      "severity": "warning",
+      "source": {
+       "column": 223,
+       "endColumn": 246,
+       "endLine": 1,
+       "file": "scripts/golden_step_errors.py#golden-loop-error-path",
+       "line": 1
+      },
+      "stage": "semantic",
+      "suggestedEdit": null
+     },
+     {
+      "code": "WV-COMP-UNKNOWN_COMPATIBILITY",
+      "hint": null,
+      "message": "Schema containment is unproved; runtime validation is required.",
+      "path": "/spec/steps/0/items",
+      "related": [],
+      "severity": "warning",
+      "source": {
+       "column": 223,
+       "endColumn": 246,
+       "endLine": 1,
+       "file": "scripts/golden_step_errors.py#golden-loop-error-path",
+       "line": 1
+      },
+      "stage": "semantic",
+      "suggestedEdit": null
+     }
+    ],
+    "digest": "bf8165b57d94d714380b46361c21abe6b858d3efca0f9a657dba3114d48fa18c",
+    "executable": {
+     "apiVersion": "weave/v1alpha1",
+     "connections": {},
+     "dependencies": [
+      {
+       "digest": "dfea596111703683b7ab431da39e8a00290b57dec4d0aa0a85aa7f25d6e2ecbe",
+       "document": {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Action",
+        "metadata": {
+         "name": "lookup-record",
+         "version": "1.0.0"
+        },
+        "spec": {
+         "implementation": {
+          "kind": "worker",
+          "taskType": "lookup-record",
+          "taskVersion": "1.0.0"
+         },
+         "inputSchema": {},
+         "outputSchema": {
+          "additionalProperties": false,
+          "properties": {
+           "status": {
+            "type": "string"
+           }
+          },
+          "required": [
+           "status"
+          ],
+          "type": "object"
+         },
+         "retry": {
+          "initialDelaySeconds": 1,
+          "maxAttempts": 1,
+          "maxDelaySeconds": 30
+         },
+         "sideEffect": "idempotent",
+         "timeoutSeconds": 30
+        }
+       },
+       "kind": "Action",
+       "reference": "lookup-record@1.0.0"
+      },
+      {
+       "digest": "61790863294e13d0878650765caad0c82e6203ab2cb731ae115ee03f22869a22",
+       "document": {
+        "inputSchema": {},
+        "outputSchema": {
+         "additionalProperties": false,
+         "properties": {
+          "status": {
+           "type": "string"
+          }
+         },
+         "required": [
+          "status"
+         ],
+         "type": "object"
+        },
+        "sideEffect": "idempotent",
+        "taskType": "lookup-record",
+        "taskVersion": "1.0.0",
+        "timeoutSeconds": 30
+       },
+       "kind": "TaskCapability",
+       "reference": "lookup-record@1.0.0"
+      }
+     ],
+     "features": [
+      "flow.forEach",
+      "flow.onError"
+     ],
+     "graph": {
+      "edges": [
+       {
+        "branch": "errorPath",
+        "kind": "join",
+        "source": "@branch:send:0",
+        "target": "@join:send"
+       },
+       {
+        "branch": "errorPath",
+        "kind": "error",
+        "source": "send",
+        "target": "@branch:send:0"
+       },
+       {
+        "branch": null,
+        "kind": "next",
+        "source": "@join:send",
+        "target": "@branch:each:0"
+       },
+       {
+        "branch": null,
+        "kind": "next",
+        "source": "send",
+        "target": "@join:send"
+       },
+       {
+        "branch": "body",
+        "kind": "join",
+        "source": "@branch:each:0",
+        "target": "@join:each"
+       },
+       {
+        "branch": "body",
+        "kind": "each",
+        "source": "each",
+        "target": "send"
+       },
+       {
+        "branch": null,
+        "kind": "next",
+        "source": "@join:each",
+        "target": "@end"
+       },
+       {
+        "branch": null,
+        "kind": "next",
+        "source": "@start",
+        "target": "each"
+       }
+      ],
+      "entry": "@start",
+      "exit": "@end",
+      "nodes": [
+       {
+        "id": "@start",
+        "kind": "start",
+        "path": "/spec",
+        "scope": []
+       },
+       {
+        "id": "@end",
+        "kind": "end",
+        "output": {
+         "ref": "/steps/each/output"
+        },
+        "path": "/spec/output",
+        "scope": []
+       },
+       {
+        "branch": "errorPath",
+        "completes": true,
+        "id": "@branch:send:0",
+        "kind": "branch-output",
+        "output": {
+         "literal": {
+          "status": "skipped"
+         }
+        },
+        "owner": "send",
+        "path": "/spec/steps/0/body/steps/0/errorPath/output",
+        "scope": [
+         "each",
+         "body",
+         "send",
+         "errorPath"
+        ]
+       },
+       {
+        "branches": [
+         "@branch:send:0"
+        ],
+        "completes": true,
+        "id": "@join:send",
+        "kind": "join",
+        "mode": "error",
+        "owner": "send",
+        "path": "/spec/steps/0/body/steps/0",
+        "scope": [
+         "each",
+         "body"
+        ]
+       },
+       {
+        "connection": null,
+        "dependency": "dfea596111703683b7ab431da39e8a00290b57dec4d0aa0a85aa7f25d6e2ecbe",
+        "errorJoin": "@join:send",
+        "errorTarget": "@branch:send:0",
+        "id": "send",
+        "kind": "action",
+        "onError": "errorOutput",
+        "path": "/spec/steps/0/body/steps/0",
+        "scope": [
+         "each",
+         "body"
+        ],
+        "with": {
+         "literal": {}
+        }
+       },
+       {
+        "branch": "body",
+        "completes": true,
+        "id": "@branch:each:0",
+        "kind": "branch-output",
+        "output": {
+         "ref": "/steps/send/output"
+        },
+        "owner": "each",
+        "path": "/spec/steps/0/body/output",
+        "scope": [
+         "each",
+         "body"
+        ]
+       },
+       {
+        "branches": [
+         "@branch:each:0"
+        ],
+        "completes": true,
+        "id": "@join:each",
+        "kind": "join",
+        "mode": "each",
+        "owner": "each",
+        "path": "/spec/steps/0",
+        "scope": []
+       },
+       {
+        "collect": "all",
+        "concurrency": 2,
+        "id": "each",
+        "items": {
+         "ref": "/input/items"
+        },
+        "join": "@join:each",
+        "kind": "forEach",
+        "maxItems": 1000,
+        "path": "/spec/steps/0",
+        "scope": [],
+        "target": "send"
+       }
+      ]
+     },
+     "guards": [
+      {
+       "path": "/spec/inputSchema",
+       "purpose": "workflow_input",
+       "schemaRef": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      },
+      {
+       "path": "/spec/steps/0/items",
+       "purpose": "reference_presence",
+       "schemaRef": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      },
+      {
+       "path": "/spec/steps/0/items",
+       "purpose": "loop_items",
+       "schemaRef": "6a7f71a05a1d45ad05b136c292bc4c9f309f51a5d36ff2013ac9cac6a074ff22"
+      },
+      {
+       "path": "/spec/steps/0/body/steps/0/with",
+       "purpose": "action_input",
+       "schemaRef": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      },
+      {
+       "path": "/spec/steps/0/body/steps/0",
+       "purpose": "action_output",
+       "schemaRef": "7c4bb65cda2f8731afa3a99a88289088d4fc8f822ae9a2b4e2a881cc1af9c765"
+      },
+      {
+       "path": "/spec/steps/0/body/steps/0/errorPath/output",
+       "purpose": "branch_output",
+       "schemaRef": "f3f508f0d1fe1ccbe360983a9c8b7b9a04e0285b0411eb83e5d6f17c2b812f96"
+      },
+      {
+       "path": "/spec/steps/0/body/output",
+       "purpose": "branch_output",
+       "schemaRef": "7c4bb65cda2f8731afa3a99a88289088d4fc8f822ae9a2b4e2a881cc1af9c765"
+      },
+      {
+       "path": "/spec/output",
+       "purpose": "workflow_output",
+       "schemaRef": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      }
+     ],
+     "inputSchema": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+     "irVersion": "weave/ir-v1alpha4",
+     "kind": "Workflow",
+     "metadata": {
+      "name": "golden-loop-error-path",
+      "version": "1.0.0"
+     },
+     "outputSchema": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+     "schemas": {
+      "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a": {},
+      "6a7f71a05a1d45ad05b136c292bc4c9f309f51a5d36ff2013ac9cac6a074ff22": {
+       "type": "array"
+      },
+      "7c4bb65cda2f8731afa3a99a88289088d4fc8f822ae9a2b4e2a881cc1af9c765": {
+       "additionalProperties": false,
+       "properties": {
+        "status": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "status"
+       ],
+       "type": "object"
+      },
+      "f3f508f0d1fe1ccbe360983a9c8b7b9a04e0285b0411eb83e5d6f17c2b812f96": {
+       "const": {
+        "status": "skipped"
+       },
+       "type": "object"
+      }
+     },
+     "timeoutSeconds": null
+    },
+    "omittedCount": 0,
+    "schemaTruncated": false,
+    "sourceHash": "53624da2621e7e2e3f796e45ca8657fee57d602913bcfd6bb40d67cbba12df04",
+    "sourceMap": {
+     "": {
+      "column": 1,
+      "endColumn": 561,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop-error-path",
+      "line": 1
+     },
+     "/apiVersion": {
+      "column": 16,
+      "endColumn": 32,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop-error-path",
+      "line": 1
+     },
+     "/kind": {
+      "column": 42,
+      "endColumn": 52,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop-error-path",
+      "line": 1
+     },
+     "/metadata": {
+      "column": 66,
+      "endColumn": 120,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop-error-path",
+      "line": 1
+     },
+     "/metadata/name": {
+      "column": 75,
+      "endColumn": 99,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop-error-path",
+      "line": 1
+     },
+     "/metadata/version": {
+      "column": 112,
+      "endColumn": 119,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop-error-path",
+      "line": 1
+     },
+     "/spec": {
+      "column": 130,
+      "endColumn": 560,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop-error-path",
+      "line": 1
+     },
+     "/spec/inputSchema": {
+      "column": 146,
+      "endColumn": 148,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop-error-path",
+      "line": 1
+     },
+     "/spec/output": {
+      "column": 530,
+      "endColumn": 559,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop-error-path",
+      "line": 1
+     },
+     "/spec/output/ref": {
+      "column": 538,
+      "endColumn": 558,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop-error-path",
+      "line": 1
+     },
+     "/spec/outputSchema": {
+      "column": 166,
+      "endColumn": 168,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop-error-path",
+      "line": 1
+     },
+     "/spec/steps": {
+      "column": 179,
+      "endColumn": 518,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop-error-path",
+      "line": 1
+     },
+     "/spec/steps/0": {
+      "column": 180,
+      "endColumn": 517,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop-error-path",
+      "line": 1
+     },
+     "/spec/steps/0/body": {
+      "column": 274,
+      "endColumn": 516,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop-error-path",
+      "line": 1
+     },
+     "/spec/steps/0/body/output": {
+      "column": 486,
+      "endColumn": 515,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop-error-path",
+      "line": 1
+     },
+     "/spec/steps/0/body/output/ref": {
+      "column": 494,
+      "endColumn": 514,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop-error-path",
+      "line": 1
+     },
+     "/spec/steps/0/body/steps": {
+      "column": 284,
+      "endColumn": 474,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop-error-path",
+      "line": 1
+     },
+     "/spec/steps/0/body/steps/0": {
+      "column": 285,
+      "endColumn": 473,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop-error-path",
+      "line": 1
+     },
+     "/spec/steps/0/body/steps/0/errorPath": {
+      "column": 413,
+      "endColumn": 472,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop-error-path",
+      "line": 1
+     },
+     "/spec/steps/0/body/steps/0/errorPath/output": {
+      "column": 437,
+      "endColumn": 471,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop-error-path",
+      "line": 1
+     },
+     "/spec/steps/0/body/steps/0/errorPath/output/literal": {
+      "column": 449,
+      "endColumn": 470,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop-error-path",
+      "line": 1
+     },
+     "/spec/steps/0/body/steps/0/errorPath/output/literal/status": {
+      "column": 460,
+      "endColumn": 469,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop-error-path",
+      "line": 1
+     },
+     "/spec/steps/0/body/steps/0/errorPath/steps": {
+      "column": 423,
+      "endColumn": 425,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop-error-path",
+      "line": 1
+     },
+     "/spec/steps/0/body/steps/0/id": {
+      "column": 292,
+      "endColumn": 298,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop-error-path",
+      "line": 1
+     },
+     "/spec/steps/0/body/steps/0/kind": {
+      "column": 308,
+      "endColumn": 316,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop-error-path",
+      "line": 1
+     },
+     "/spec/steps/0/body/steps/0/onError": {
+      "column": 385,
+      "endColumn": 398,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop-error-path",
+      "line": 1
+     },
+     "/spec/steps/0/body/steps/0/uses": {
+      "column": 326,
+      "endColumn": 347,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop-error-path",
+      "line": 1
+     },
+     "/spec/steps/0/body/steps/0/with": {
+      "column": 357,
+      "endColumn": 372,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop-error-path",
+      "line": 1
+     },
+     "/spec/steps/0/body/steps/0/with/literal": {
+      "column": 369,
+      "endColumn": 371,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop-error-path",
+      "line": 1
+     },
+     "/spec/steps/0/concurrency": {
+      "column": 263,
+      "endColumn": 264,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop-error-path",
+      "line": 1
+     },
+     "/spec/steps/0/id": {
+      "column": 187,
+      "endColumn": 193,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop-error-path",
+      "line": 1
+     },
+     "/spec/steps/0/items": {
+      "column": 223,
+      "endColumn": 246,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop-error-path",
+      "line": 1
+     },
+     "/spec/steps/0/items/ref": {
+      "column": 231,
+      "endColumn": 245,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop-error-path",
+      "line": 1
+     },
+     "/spec/steps/0/kind": {
+      "column": 203,
+      "endColumn": 212,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-loop-error-path",
+      "line": 1
+     }
+    }
+   },
+   "name": "golden-loop-error-path",
+   "scenarios": [
+    {
+     "input": {
+      "items": [
+       1,
+       2,
+       3,
+       4,
+       5
+      ]
+     },
+     "name": "item-two-runs-its-path",
+     "stream": [
+      {
+       "digest": "e81eb0885a6405536d54535407c52e58b3f334864a51ff3598bd0166f42faabd",
+       "event": {
+        "data": {},
+        "id": "72278bf1-70fd-5ccb-92c6-396d2e5f1ad7",
+        "sequence": 1,
+        "timestamp": "2026-10-08T00:00:00Z",
+        "type": "started"
+       },
+       "transition": {
+        "commands": [
+         {
+          "branch": "body",
+          "index": 0,
+          "kind": "spawn_branch",
+          "node_id": "each"
+         },
+         {
+          "branch": "body",
+          "index": 1,
+          "kind": "spawn_branch",
+          "node_id": "each"
+         },
+         {
+          "action_digest": "dfea596111703683b7ab431da39e8a00290b57dec4d0aa0a85aa7f25d6e2ecbe",
+          "action_reference": "lookup-record@1.0.0",
+          "connection_slot": null,
+          "deadline": "2026-10-08T00:00:30Z",
+          "input": {},
+          "kind": "task",
+          "node_id": "send[0]",
+          "task_type": "lookup-record",
+          "task_version": "1.0.0"
+         },
+         {
+          "action_digest": "dfea596111703683b7ab431da39e8a00290b57dec4d0aa0a85aa7f25d6e2ecbe",
+          "action_reference": "lookup-record@1.0.0",
+          "connection_slot": null,
+          "deadline": "2026-10-08T00:00:30Z",
+          "input": {},
+          "kind": "task",
+          "node_id": "send[1]",
+          "task_type": "lookup-record",
+          "task_version": "1.0.0"
+         }
+        ],
+        "state": {
+         "accepted_sequence": 1,
+         "active": [
+          "send[0]",
+          "send[1]"
+         ],
+         "branches": {
+          "each/body[0]": {
+           "index": 0,
+           "name": "body",
+           "output": null,
+           "owner": "each",
+           "parent": null,
+           "status": "running",
+           "steps": {},
+           "target": "send",
+           "visible": {}
+          },
+          "each/body[1]": {
+           "index": 1,
+           "name": "body",
+           "output": null,
+           "owner": "each",
+           "parent": null,
+           "status": "running",
+           "steps": {},
+           "target": "send",
+           "visible": {}
+          }
+         },
+         "deferred_results": [],
+         "incident": null,
+         "incidents": {},
+         "input": {
+          "items": [
+           1,
+           2,
+           3,
+           4,
+           5
+          ]
+         },
+         "joins": {},
+         "loops": {
+          "each": {
+           "completed": 0,
+           "concurrency": 2,
+           "count": 5,
+           "items": [
+            1,
+            2,
+            3,
+            4,
+            5
+           ],
+           "join": "@join:each",
+           "next_index": 2,
+           "output_bytes": 0,
+           "outputs": {},
+           "owner": "each",
+           "running": [
+            0,
+            1
+           ],
+           "status": "running",
+           "visible": {},
+           "yields": 0
+          }
+         },
+         "output": null,
+         "status": "waiting",
+         "steps": {},
+         "waits": {}
+        },
+        "steps": [
+         {
+          "node_id": "send[0]",
+          "output": null,
+          "status": "waiting"
+         },
+         {
+          "node_id": "send[1]",
+          "output": null,
+          "status": "waiting"
+         }
+        ]
+       }
+      },
+      {
+       "digest": "e474c52c29a0a7fecad9ecbdc9b252c89a7a19a5cca4182bade019825527a4f8",
+       "event": {
+        "data": {
+         "generation": 1,
+         "node_id": "send[1]",
+         "output": {
+          "status": "confirmed"
+         }
+        },
+        "id": "e3424a9b-8160-5b6d-b76f-c11bb7087556",
+        "sequence": 2,
+        "timestamp": "2026-10-08T00:00:01Z",
+        "type": "task_completed"
+       },
+       "transition": {
+        "commands": [
+         {
+          "branch": "body",
+          "index": 1,
+          "kind": "accept_output",
+          "node_id": "@branch:each:0[1]"
+         },
+         {
+          "branch": "body",
+          "index": 2,
+          "kind": "spawn_branch",
+          "node_id": "each"
+         },
+         {
+          "action_digest": "dfea596111703683b7ab431da39e8a00290b57dec4d0aa0a85aa7f25d6e2ecbe",
+          "action_reference": "lookup-record@1.0.0",
+          "connection_slot": null,
+          "deadline": "2026-10-08T00:00:31Z",
+          "input": {},
+          "kind": "task",
+          "node_id": "send[2]",
+          "task_type": "lookup-record",
+          "task_version": "1.0.0"
+         }
+        ],
+        "state": {
+         "accepted_sequence": 2,
+         "active": [
+          "send[0]",
+          "send[2]"
+         ],
+         "branches": {
+          "each/body[0]": {
+           "index": 0,
+           "name": "body",
+           "output": null,
+           "owner": "each",
+           "parent": null,
+           "status": "running",
+           "steps": {},
+           "target": "send",
+           "visible": {}
+          },
+          "each/body[2]": {
+           "index": 2,
+           "name": "body",
+           "output": null,
+           "owner": "each",
+           "parent": null,
+           "status": "running",
+           "steps": {},
+           "target": "send",
+           "visible": {}
+          }
+         },
+         "deferred_results": [],
+         "incident": null,
+         "incidents": {},
+         "input": {
+          "items": [
+           1,
+           2,
+           3,
+           4,
+           5
+          ]
+         },
+         "joins": {},
+         "loops": {
+          "each": {
+           "completed": 1,
+           "concurrency": 2,
+           "count": 5,
+           "items": [
+            1,
+            2,
+            3,
+            4,
+            5
+           ],
+           "join": "@join:each",
+           "next_index": 3,
+           "output_bytes": 22,
+           "outputs": {
+            "1": {
+             "status": "confirmed"
+            }
+           },
+           "owner": "each",
+           "running": [
+            0,
+            2
+           ],
+           "status": "running",
+           "visible": {},
+           "yields": 0
+          }
+         },
+         "output": null,
+         "status": "waiting",
+         "steps": {},
+         "waits": {}
+        },
+        "steps": [
+         {
+          "node_id": "send[1]",
+          "output": {
+           "status": "confirmed"
+          },
+          "status": "completed"
+         },
+         {
+          "node_id": "@branch:each:0[1]",
+          "output": {
+           "status": "confirmed"
+          },
+          "status": "completed"
+         },
+         {
+          "node_id": "send[2]",
+          "output": null,
+          "status": "waiting"
+         }
+        ]
+       }
+      },
+      {
+       "digest": "3f3bc4a861f45fe1378e926b9a7d83e8b540935abb129cdb9457c974a2e16084",
+       "event": {
+        "data": {
+         "attempts": 3,
+         "code": "RATE_LIMITED",
+         "generation": 3,
+         "node_id": "send[2]",
+         "outcome": "failed"
+        },
+        "id": "fe031e26-1a9a-5818-8c19-0f86b833cf7f",
+        "sequence": 3,
+        "timestamp": "2026-10-08T00:00:02Z",
+        "type": "step_failed"
+       },
+       "transition": {
+        "commands": [
+         {
+          "branch": "errorPath",
+          "kind": "spawn_branch",
+          "node_id": "send[2]"
+         },
+         {
+          "branch": "errorPath",
+          "kind": "accept_output",
+          "node_id": "@branch:send:0[2]"
+         },
+         {
+          "branch": null,
+          "kind": "join",
+          "node_id": "@join:send[2]"
+         },
+         {
+          "branch": "body",
+          "index": 2,
+          "kind": "accept_output",
+          "node_id": "@branch:each:0[2]"
+         },
+         {
+          "branch": "body",
+          "index": 3,
+          "kind": "spawn_branch",
+          "node_id": "each"
+         },
+         {
+          "action_digest": "dfea596111703683b7ab431da39e8a00290b57dec4d0aa0a85aa7f25d6e2ecbe",
+          "action_reference": "lookup-record@1.0.0",
+          "connection_slot": null,
+          "deadline": "2026-10-08T00:00:32Z",
+          "input": {},
+          "kind": "task",
+          "node_id": "send[3]",
+          "task_type": "lookup-record",
+          "task_version": "1.0.0"
+         }
+        ],
+        "state": {
+         "accepted_sequence": 3,
+         "active": [
+          "send[0]",
+          "send[3]"
+         ],
+         "branches": {
+          "each/body[0]": {
+           "index": 0,
+           "name": "body",
+           "output": null,
+           "owner": "each",
+           "parent": null,
+           "status": "running",
+           "steps": {},
+           "target": "send",
+           "visible": {}
+          },
+          "each/body[3]": {
+           "index": 3,
+           "name": "body",
+           "output": null,
+           "owner": "each",
+           "parent": null,
+           "status": "running",
+           "steps": {},
+           "target": "send",
+           "visible": {}
+          }
+         },
+         "deferred_results": [],
+         "incident": null,
+         "incidents": {},
+         "input": {
+          "items": [
+           1,
+           2,
+           3,
+           4,
+           5
+          ]
+         },
+         "joins": {},
+         "loops": {
+          "each": {
+           "completed": 2,
+           "concurrency": 2,
+           "count": 5,
+           "items": [
+            1,
+            2,
+            3,
+            4,
+            5
+           ],
+           "join": "@join:each",
+           "next_index": 4,
+           "output_bytes": 43,
+           "outputs": {
+            "1": {
+             "status": "confirmed"
+            },
+            "2": {
+             "status": "skipped"
+            }
+           },
+           "owner": "each",
+           "running": [
+            0,
+            3
+           ],
+           "status": "running",
+           "visible": {},
+           "yields": 0
+          }
+         },
+         "output": null,
+         "status": "waiting",
+         "steps": {},
+         "waits": {}
+        },
+        "steps": [
+         {
+          "error": {
+           "attempts": 3,
+           "code": "RATE_LIMITED",
+           "instanceKey": "send[2]",
+           "message": "The endpoint refused the request because of its rate limit.",
+           "outcome": "failed"
+          },
+          "node_id": "send[2]",
+          "output": null,
+          "status": "failed"
+         },
+         {
+          "node_id": "@branch:send:0[2]",
+          "output": {
+           "status": "skipped"
+          },
+          "status": "completed"
+         },
+         {
+          "error": {
+           "attempts": 3,
+           "code": "RATE_LIMITED",
+           "instanceKey": "send[2]",
+           "message": "The endpoint refused the request because of its rate limit.",
+           "outcome": "failed"
+          },
+          "node_id": "send[2]",
+          "output": {
+           "status": "skipped"
+          },
+          "status": "failed"
+         },
+         {
+          "node_id": "@join:send[2]",
+          "output": {
+           "status": "skipped"
+          },
+          "status": "completed"
+         },
+         {
+          "node_id": "@branch:each:0[2]",
+          "output": {
+           "status": "skipped"
+          },
+          "status": "completed"
+         },
+         {
+          "node_id": "send[3]",
+          "output": null,
+          "status": "waiting"
+         }
+        ]
+       }
+      },
+      {
+       "digest": "cc5829ddbb19f63f5a70511ba6ec14741ff43d31a784bbf81c99e347247fc6c3",
+       "event": {
+        "data": {
+         "generation": 1,
+         "node_id": "send[0]",
+         "output": {
+          "status": "confirmed"
+         }
+        },
+        "id": "45ee716b-454f-5544-a3ab-b64249de25e5",
+        "sequence": 4,
+        "timestamp": "2026-10-08T00:00:03Z",
+        "type": "task_completed"
+       },
+       "transition": {
+        "commands": [
+         {
+          "branch": "body",
+          "index": 0,
+          "kind": "accept_output",
+          "node_id": "@branch:each:0[0]"
+         },
+         {
+          "branch": "body",
+          "index": 4,
+          "kind": "spawn_branch",
+          "node_id": "each"
+         },
+         {
+          "action_digest": "dfea596111703683b7ab431da39e8a00290b57dec4d0aa0a85aa7f25d6e2ecbe",
+          "action_reference": "lookup-record@1.0.0",
+          "connection_slot": null,
+          "deadline": "2026-10-08T00:00:33Z",
+          "input": {},
+          "kind": "task",
+          "node_id": "send[4]",
+          "task_type": "lookup-record",
+          "task_version": "1.0.0"
+         }
+        ],
+        "state": {
+         "accepted_sequence": 4,
+         "active": [
+          "send[3]",
+          "send[4]"
+         ],
+         "branches": {
+          "each/body[3]": {
+           "index": 3,
+           "name": "body",
+           "output": null,
+           "owner": "each",
+           "parent": null,
+           "status": "running",
+           "steps": {},
+           "target": "send",
+           "visible": {}
+          },
+          "each/body[4]": {
+           "index": 4,
+           "name": "body",
+           "output": null,
+           "owner": "each",
+           "parent": null,
+           "status": "running",
+           "steps": {},
+           "target": "send",
+           "visible": {}
+          }
+         },
+         "deferred_results": [],
+         "incident": null,
+         "incidents": {},
+         "input": {
+          "items": [
+           1,
+           2,
+           3,
+           4,
+           5
+          ]
+         },
+         "joins": {},
+         "loops": {
+          "each": {
+           "completed": 3,
+           "concurrency": 2,
+           "count": 5,
+           "items": [
+            1,
+            2,
+            3,
+            4,
+            5
+           ],
+           "join": "@join:each",
+           "next_index": 5,
+           "output_bytes": 66,
+           "outputs": {
+            "0": {
+             "status": "confirmed"
+            },
+            "1": {
+             "status": "confirmed"
+            },
+            "2": {
+             "status": "skipped"
+            }
+           },
+           "owner": "each",
+           "running": [
+            3,
+            4
+           ],
+           "status": "running",
+           "visible": {},
+           "yields": 0
+          }
+         },
+         "output": null,
+         "status": "waiting",
+         "steps": {},
+         "waits": {}
+        },
+        "steps": [
+         {
+          "node_id": "send[0]",
+          "output": {
+           "status": "confirmed"
+          },
+          "status": "completed"
+         },
+         {
+          "node_id": "@branch:each:0[0]",
+          "output": {
+           "status": "confirmed"
+          },
+          "status": "completed"
+         },
+         {
+          "node_id": "send[4]",
+          "output": null,
+          "status": "waiting"
+         }
+        ]
+       }
+      },
+      {
+       "digest": "fdfdec98a572c0966c2b1f627b55d08a2112edcc62543690bdeb0e3078569528",
+       "event": {
+        "data": {
+         "generation": 1,
+         "node_id": "send[4]",
+         "output": {
+          "status": "confirmed"
+         }
+        },
+        "id": "54c10fac-a8d6-59e6-82a8-60ba9dae9d8d",
+        "sequence": 5,
+        "timestamp": "2026-10-08T00:00:04Z",
+        "type": "task_completed"
+       },
+       "transition": {
+        "commands": [
+         {
+          "branch": "body",
+          "index": 4,
+          "kind": "accept_output",
+          "node_id": "@branch:each:0[4]"
+         }
+        ],
+        "state": {
+         "accepted_sequence": 5,
+         "active": [
+          "send[3]"
+         ],
+         "branches": {
+          "each/body[3]": {
+           "index": 3,
+           "name": "body",
+           "output": null,
+           "owner": "each",
+           "parent": null,
+           "status": "running",
+           "steps": {},
+           "target": "send",
+           "visible": {}
+          }
+         },
+         "deferred_results": [],
+         "incident": null,
+         "incidents": {},
+         "input": {
+          "items": [
+           1,
+           2,
+           3,
+           4,
+           5
+          ]
+         },
+         "joins": {},
+         "loops": {
+          "each": {
+           "completed": 4,
+           "concurrency": 2,
+           "count": 5,
+           "items": [
+            1,
+            2,
+            3,
+            4,
+            5
+           ],
+           "join": "@join:each",
+           "next_index": 5,
+           "output_bytes": 89,
+           "outputs": {
+            "0": {
+             "status": "confirmed"
+            },
+            "1": {
+             "status": "confirmed"
+            },
+            "2": {
+             "status": "skipped"
+            },
+            "4": {
+             "status": "confirmed"
+            }
+           },
+           "owner": "each",
+           "running": [
+            3
+           ],
+           "status": "running",
+           "visible": {},
+           "yields": 0
+          }
+         },
+         "output": null,
+         "status": "waiting",
+         "steps": {},
+         "waits": {}
+        },
+        "steps": [
+         {
+          "node_id": "send[4]",
+          "output": {
+           "status": "confirmed"
+          },
+          "status": "completed"
+         },
+         {
+          "node_id": "@branch:each:0[4]",
+          "output": {
+           "status": "confirmed"
+          },
+          "status": "completed"
+         }
+        ]
+       }
+      },
+      {
+       "digest": "623bad33d22dc078dcf787de93327bddd1585c50976a5ff7532e4c3c51ed401e",
+       "event": {
+        "data": {
+         "generation": 1,
+         "node_id": "send[3]",
+         "output": {
+          "status": "confirmed"
+         }
+        },
+        "id": "31c951ab-627a-52f7-bf0b-37676bb05d01",
+        "sequence": 6,
+        "timestamp": "2026-10-08T00:00:05Z",
+        "type": "task_completed"
+       },
+       "transition": {
+        "commands": [
+         {
+          "branch": "body",
+          "index": 3,
+          "kind": "accept_output",
+          "node_id": "@branch:each:0[3]"
+         },
+         {
+          "branch": null,
+          "kind": "join",
+          "node_id": "@join:each"
+         }
+        ],
+        "state": {
+         "accepted_sequence": 6,
+         "active": [],
+         "branches": {},
+         "deferred_results": [],
+         "incident": null,
+         "incidents": {},
+         "input": {
+          "items": [
+           1,
+           2,
+           3,
+           4,
+           5
+          ]
+         },
+         "joins": {},
+         "loops": {
+          "each": {
+           "completed": 5,
+           "concurrency": 2,
+           "count": 5,
+           "items": [],
+           "join": "@join:each",
+           "next_index": 5,
+           "output_bytes": 112,
+           "outputs": {},
+           "owner": "each",
+           "running": [],
+           "status": "joined",
+           "visible": {},
+           "yields": 0
+          }
+         },
+         "output": [
+          {
+           "status": "confirmed"
+          },
+          {
+           "status": "confirmed"
+          },
+          {
+           "status": "skipped"
+          },
+          {
+           "status": "confirmed"
+          },
+          {
+           "status": "confirmed"
+          }
+         ],
+         "status": "succeeded",
+         "steps": {
+          "each": {
+           "output": [
+            {
+             "status": "confirmed"
+            },
+            {
+             "status": "confirmed"
+            },
+            {
+             "status": "skipped"
+            },
+            {
+             "status": "confirmed"
+            },
+            {
+             "status": "confirmed"
+            }
+           ]
+          }
+         },
+         "waits": {}
+        },
+        "steps": [
+         {
+          "node_id": "send[3]",
+          "output": {
+           "status": "confirmed"
+          },
+          "status": "completed"
+         },
+         {
+          "node_id": "@branch:each:0[3]",
+          "output": {
+           "status": "confirmed"
+          },
+          "status": "completed"
+         },
+         {
+          "node_id": "each",
+          "output": [
+           {
+            "status": "confirmed"
+           },
+           {
+            "status": "confirmed"
+           },
+           {
+            "status": "skipped"
+           },
+           {
+            "status": "confirmed"
+           },
+           {
+            "status": "confirmed"
+           }
+          ],
+          "status": "completed"
+         },
+         {
+          "node_id": "@join:each",
+          "output": [
+           {
+            "status": "confirmed"
+           },
+           {
+            "status": "confirmed"
+           },
+           {
+            "status": "skipped"
+           },
+           {
+            "status": "confirmed"
+           },
+           {
+            "status": "confirmed"
+           }
+          ],
+          "status": "completed"
+         }
+        ]
+       }
+      }
+     ]
+    }
+   ],
+   "source": "scripts/golden_step_errors.py#golden-loop-error-path"
+  },
+  {
+   "artifact": {
+    "diagnostics": [],
+    "digest": "520da07a25ed5b85db0cc2886432939f929feaed207ab5426c311cc6d92c69bc",
+    "executable": {
+     "apiVersion": "weave/v1alpha1",
+     "connections": {},
+     "dependencies": [],
+     "features": [
+      "flow.onError"
+     ],
+     "graph": {
+      "edges": [
+       {
+        "branch": "errorPath",
+        "kind": "join",
+        "source": "@branch:reply:0",
+        "target": "@join:reply"
+       },
+       {
+        "branch": "errorPath",
+        "kind": "error",
+        "source": "reply",
+        "target": "@branch:reply:0"
+       },
+       {
+        "branch": null,
+        "kind": "next",
+        "source": "@join:reply",
+        "target": "@end"
+       },
+       {
+        "branch": null,
+        "kind": "next",
+        "source": "reply",
+        "target": "@join:reply"
+       },
+       {
+        "branch": null,
+        "kind": "next",
+        "source": "@start",
+        "target": "reply"
+       }
+      ],
+      "entry": "@start",
+      "exit": "@end",
+      "nodes": [
+       {
+        "id": "@start",
+        "kind": "start",
+        "path": "/spec",
+        "scope": []
+       },
+       {
+        "id": "@end",
+        "kind": "end",
+        "output": {
+         "ref": "/steps/reply/output"
+        },
+        "path": "/spec/output",
+        "scope": []
+       },
+       {
+        "branch": "errorPath",
+        "completes": true,
+        "id": "@branch:reply:0",
+        "kind": "branch-output",
+        "output": {
+         "literal": "no reply"
+        },
+        "owner": "reply",
+        "path": "/spec/steps/0/errorPath/output",
+        "scope": [
+         "reply",
+         "errorPath"
+        ]
+       },
+       {
+        "branches": [
+         "@branch:reply:0"
+        ],
+        "completes": true,
+        "id": "@join:reply",
+        "kind": "join",
+        "mode": "error",
+        "owner": "reply",
+        "path": "/spec/steps/0",
+        "scope": []
+       },
+       {
+        "errorJoin": "@join:reply",
+        "errorTarget": "@branch:reply:0",
+        "id": "reply",
+        "kind": "signal",
+        "name": "reply",
+        "onError": "errorOutput",
+        "path": "/spec/steps/0",
+        "schemaRef": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+        "scope": [],
+        "timeoutSeconds": 60
+       }
+      ]
+     },
+     "guards": [
+      {
+       "path": "/spec/inputSchema",
+       "purpose": "workflow_input",
+       "schemaRef": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      },
+      {
+       "path": "/spec/steps/0",
+       "purpose": "signal_payload",
+       "schemaRef": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      },
+      {
+       "path": "/spec/steps/0/errorPath/output",
+       "purpose": "branch_output",
+       "schemaRef": "657f50a60bd802e823edca212d5b74acb3cb34c9d76fc3ef9f6ce83e1f61ce1f"
+      },
+      {
+       "path": "/spec/output",
+       "purpose": "workflow_output",
+       "schemaRef": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      }
+     ],
+     "inputSchema": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+     "irVersion": "weave/ir-v1alpha4",
+     "kind": "Workflow",
+     "metadata": {
+      "name": "golden-wait",
+      "version": "1.0.0"
+     },
+     "outputSchema": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+     "schemas": {
+      "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a": {},
+      "657f50a60bd802e823edca212d5b74acb3cb34c9d76fc3ef9f6ce83e1f61ce1f": {
+       "const": "no reply",
+       "type": "string"
+      }
+     },
+     "timeoutSeconds": null
+    },
+    "omittedCount": 0,
+    "schemaTruncated": false,
+    "sourceHash": "c6f92c4d212e4ab21826ba57e12b9aac3f4a56f16c7b2f569a107ba2dddc03d5",
+    "sourceMap": {
+     "": {
+      "column": 1,
+      "endColumn": 396,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-wait",
+      "line": 1
+     },
+     "/apiVersion": {
+      "column": 16,
+      "endColumn": 32,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-wait",
+      "line": 1
+     },
+     "/kind": {
+      "column": 42,
+      "endColumn": 52,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-wait",
+      "line": 1
+     },
+     "/metadata": {
+      "column": 66,
+      "endColumn": 109,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-wait",
+      "line": 1
+     },
+     "/metadata/name": {
+      "column": 75,
+      "endColumn": 88,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-wait",
+      "line": 1
+     },
+     "/metadata/version": {
+      "column": 101,
+      "endColumn": 108,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-wait",
+      "line": 1
+     },
+     "/spec": {
+      "column": 119,
+      "endColumn": 395,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-wait",
+      "line": 1
+     },
+     "/spec/inputSchema": {
+      "column": 135,
+      "endColumn": 137,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-wait",
+      "line": 1
+     },
+     "/spec/output": {
+      "column": 364,
+      "endColumn": 394,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-wait",
+      "line": 1
+     },
+     "/spec/output/ref": {
+      "column": 372,
+      "endColumn": 393,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-wait",
+      "line": 1
+     },
+     "/spec/outputSchema": {
+      "column": 155,
+      "endColumn": 157,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-wait",
+      "line": 1
+     },
+     "/spec/steps": {
+      "column": 168,
+      "endColumn": 352,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-wait",
+      "line": 1
+     },
+     "/spec/steps/0": {
+      "column": 169,
+      "endColumn": 351,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-wait",
+      "line": 1
+     },
+     "/spec/steps/0/errorPath": {
+      "column": 302,
+      "endColumn": 350,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-wait",
+      "line": 1
+     },
+     "/spec/steps/0/errorPath/output": {
+      "column": 326,
+      "endColumn": 349,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-wait",
+      "line": 1
+     },
+     "/spec/steps/0/errorPath/output/literal": {
+      "column": 338,
+      "endColumn": 348,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-wait",
+      "line": 1
+     },
+     "/spec/steps/0/errorPath/steps": {
+      "column": 312,
+      "endColumn": 314,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-wait",
+      "line": 1
+     },
+     "/spec/steps/0/id": {
+      "column": 176,
+      "endColumn": 183,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-wait",
+      "line": 1
+     },
+     "/spec/steps/0/kind": {
+      "column": 193,
+      "endColumn": 201,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-wait",
+      "line": 1
+     },
+     "/spec/steps/0/name": {
+      "column": 211,
+      "endColumn": 218,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-wait",
+      "line": 1
+     },
+     "/spec/steps/0/onError": {
+      "column": 274,
+      "endColumn": 287,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-wait",
+      "line": 1
+     },
+     "/spec/steps/0/payloadSchema": {
+      "column": 259,
+      "endColumn": 261,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-wait",
+      "line": 1
+     },
+     "/spec/steps/0/timeoutSeconds": {
+      "column": 238,
+      "endColumn": 240,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-wait",
+      "line": 1
+     }
+    }
+   },
+   "name": "golden-wait",
+   "scenarios": [
+    {
+     "input": {},
+     "name": "timeout-handled",
+     "stream": [
+      {
+       "digest": "554740e48a0e1fcef16cca0c48712c7ab80a8f072c444e61ca770f4d6c42434b",
+       "event": {
+        "data": {},
+        "id": "11446874-95f7-53e1-a45a-4e024ba91aa2",
+        "sequence": 1,
+        "timestamp": "2026-10-08T00:00:00Z",
+        "type": "started"
+       },
+       "transition": {
+        "commands": [
+         {
+          "deadline": "2026-10-08T00:01:00Z",
+          "kind": "deadline",
+          "name": "reply",
+          "node_id": "reply"
+         }
+        ],
+        "state": {
+         "accepted_sequence": 1,
+         "active": [
+          "reply"
+         ],
+         "branches": {},
+         "deferred_results": [],
+         "incident": null,
+         "incidents": {},
+         "input": {},
+         "joins": {},
+         "output": null,
+         "status": "waiting",
+         "steps": {},
+         "waits": {
+          "reply": "2026-10-08T00:01:00Z"
+         }
+        },
+        "steps": [
+         {
+          "node_id": "reply",
+          "output": null,
+          "status": "waiting"
+         }
+        ]
+       }
+      },
+      {
+       "digest": "ab7de751a3c39e390874009d2f85bcb73a12e47faf97ff83ac02906dd16bd73f",
+       "event": {
+        "data": {
+         "attempts": 1,
+         "code": "WV-SIGNAL-TIMEOUT",
+         "deadline": "2026-10-08T00:01:00+00:00",
+         "generation": 0,
+         "node_id": "reply",
+         "outcome": "not_started",
+         "wait_id": "7d3e1a2b-5c4f-4e6d-9a8b-1c2d3e4f5a6b"
+        },
+        "id": "9d6e0340-52d8-5379-81db-9c717990cf4e",
+        "sequence": 2,
+        "timestamp": "2026-10-08T00:01:00Z",
+        "type": "step_failed"
+       },
+       "transition": {
+        "commands": [
+         {
+          "branch": "errorPath",
+          "kind": "spawn_branch",
+          "node_id": "reply"
+         },
+         {
+          "branch": "errorPath",
+          "kind": "accept_output",
+          "node_id": "@branch:reply:0"
+         },
+         {
+          "branch": null,
+          "kind": "join",
+          "node_id": "@join:reply"
+         }
+        ],
+        "state": {
+         "accepted_sequence": 2,
+         "active": [],
+         "branches": {},
+         "deferred_results": [],
+         "incident": null,
+         "incidents": {},
+         "input": {},
+         "joins": {},
+         "output": "no reply",
+         "status": "succeeded",
+         "steps": {
+          "reply": {
+           "error": {
+            "attempts": 1,
+            "code": "WV-SIGNAL-TIMEOUT",
+            "instanceKey": "reply",
+            "message": "The signal did not arrive in time.",
+            "outcome": "not_started"
+           },
+           "output": "no reply"
+          }
+         },
+         "waits": {}
+        },
+        "steps": [
+         {
+          "error": {
+           "attempts": 1,
+           "code": "WV-SIGNAL-TIMEOUT",
+           "instanceKey": "reply",
+           "message": "The signal did not arrive in time.",
+           "outcome": "not_started"
+          },
+          "node_id": "reply",
+          "output": null,
+          "status": "failed"
+         },
+         {
+          "node_id": "@branch:reply:0",
+          "output": "no reply",
+          "status": "completed"
+         },
+         {
+          "error": {
+           "attempts": 1,
+           "code": "WV-SIGNAL-TIMEOUT",
+           "instanceKey": "reply",
+           "message": "The signal did not arrive in time.",
+           "outcome": "not_started"
+          },
+          "node_id": "reply",
+          "output": "no reply",
+          "status": "failed"
+         },
+         {
+          "node_id": "@join:reply",
+          "output": "no reply",
+          "status": "completed"
+         }
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "input": {},
+     "name": "receipt-before-the-deadline-wins",
+     "stream": [
+      {
+       "digest": "554740e48a0e1fcef16cca0c48712c7ab80a8f072c444e61ca770f4d6c42434b",
+       "event": {
+        "data": {},
+        "id": "9264cc1b-5c20-5f4a-a0e6-a1f2a2f067a5",
+        "sequence": 1,
+        "timestamp": "2026-10-08T00:00:00Z",
+        "type": "started"
+       },
+       "transition": {
+        "commands": [
+         {
+          "deadline": "2026-10-08T00:01:00Z",
+          "kind": "deadline",
+          "name": "reply",
+          "node_id": "reply"
+         }
+        ],
+        "state": {
+         "accepted_sequence": 1,
+         "active": [
+          "reply"
+         ],
+         "branches": {},
+         "deferred_results": [],
+         "incident": null,
+         "incidents": {},
+         "input": {},
+         "joins": {},
+         "output": null,
+         "status": "waiting",
+         "steps": {},
+         "waits": {
+          "reply": "2026-10-08T00:01:00Z"
+         }
+        },
+        "steps": [
+         {
+          "node_id": "reply",
+          "output": null,
+          "status": "waiting"
+         }
+        ]
+       }
+      },
+      {
+       "digest": "634f9056d02918b7d3df917288bbe40fab9d8ca286ce52f049ceb30acd0b74fc",
+       "event": {
+        "data": {
+         "accepted_at": "2026-10-08T00:00:30+00:00",
+         "deadline": "2026-10-08T00:01:00+00:00",
+         "node_id": "reply",
+         "output": {
+          "answer": "yes"
+         }
+        },
+        "id": "051dd696-cd30-52d9-9404-a5e87a03230a",
+        "sequence": 2,
+        "timestamp": "2026-10-08T00:01:01Z",
+        "type": "signal_received"
+       },
+       "transition": {
+        "commands": [],
+        "state": {
+         "accepted_sequence": 2,
+         "active": [],
+         "branches": {},
+         "deferred_results": [],
+         "incident": null,
+         "incidents": {},
+         "input": {},
+         "joins": {},
+         "output": {
+          "answer": "yes"
+         },
+         "status": "succeeded",
+         "steps": {
+          "reply": {
+           "output": {
+            "answer": "yes"
+           }
+          }
+         },
+         "waits": {}
+        },
+        "steps": [
+         {
+          "node_id": "reply",
+          "output": {
+           "answer": "yes"
+          },
+          "status": "completed"
+         }
+        ]
+       }
+      }
+     ]
+    }
+   ],
+   "source": "scripts/golden_step_errors.py#golden-wait"
+  },
+  {
+   "artifact": {
+    "diagnostics": [],
+    "digest": "c12029d3f8a4c7b03ed59c0a5929f6e7bab3254f1a0a7848901e5306aa0f004d",
+    "executable": {
+     "apiVersion": "weave/v1alpha1",
+     "connections": {},
+     "dependencies": [
+      {
+       "digest": "a1a3726f6d3976ffff4730312efbde95221ab799f4aa5926d3a2cb7f83e4b7ae",
+       "document": {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {
+         "name": "golden-review",
+         "version": "1.0.0"
+        },
+        "spec": {
+         "callable": {},
+         "connections": {},
+         "inputSchema": {},
+         "output": {
+          "literal": {
+           "status": "confirmed"
+          }
+         },
+         "outputSchema": {
+          "additionalProperties": false,
+          "properties": {
+           "status": {
+            "type": "string"
+           }
+          },
+          "required": [
+           "status"
+          ],
+          "type": "object"
+         },
+         "steps": []
+        }
+       },
+       "kind": "Workflow",
+       "reference": "golden-review@1.0.0"
+      }
+     ],
+     "features": [
+      "flow.callWorkflow",
+      "flow.onError"
+     ],
+     "graph": {
+      "edges": [
+       {
+        "branch": null,
+        "kind": "next",
+        "source": "review",
+        "target": "@end"
+       },
+       {
+        "branch": null,
+        "kind": "next",
+        "source": "@start",
+        "target": "review"
+       }
+      ],
+      "entry": "@start",
+      "exit": "@end",
+      "nodes": [
+       {
+        "id": "@start",
+        "kind": "start",
+        "path": "/spec",
+        "scope": []
+       },
+       {
+        "id": "@end",
+        "kind": "end",
+        "output": {
+         "literal": "done"
+        },
+        "path": "/spec/output",
+        "scope": []
+       },
+       {
+        "dependency": "a1a3726f6d3976ffff4730312efbde95221ab799f4aa5926d3a2cb7f83e4b7ae",
+        "id": "review",
+        "kind": "callWorkflow",
+        "mode": "wait",
+        "onError": "continue",
+        "path": "/spec/steps/0",
+        "scope": [],
+        "with": {
+         "literal": {}
+        }
+       }
+      ]
+     },
+     "guards": [
+      {
+       "path": "/spec/inputSchema",
+       "purpose": "workflow_input",
+       "schemaRef": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      },
+      {
+       "path": "/spec/steps/0/with",
+       "purpose": "call_input",
+       "schemaRef": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      },
+      {
+       "path": "/spec/steps/0",
+       "purpose": "call_output",
+       "schemaRef": "7c4bb65cda2f8731afa3a99a88289088d4fc8f822ae9a2b4e2a881cc1af9c765"
+      },
+      {
+       "path": "/spec/output",
+       "purpose": "workflow_output",
+       "schemaRef": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      }
+     ],
+     "inputSchema": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+     "irVersion": "weave/ir-v1alpha4",
+     "kind": "Workflow",
+     "metadata": {
+      "name": "golden-call",
+      "version": "1.0.0"
+     },
+     "outputSchema": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+     "schemas": {
+      "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a": {},
+      "7c4bb65cda2f8731afa3a99a88289088d4fc8f822ae9a2b4e2a881cc1af9c765": {
+       "additionalProperties": false,
+       "properties": {
+        "status": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "status"
+       ],
+       "type": "object"
+      }
+     },
+     "timeoutSeconds": null
+    },
+    "omittedCount": 0,
+    "schemaTruncated": false,
+    "sourceHash": "84d89a84f260d99d687aa42019cd25e28b7c93dc28a48d06ade622440b45354d",
+    "sourceMap": {
+     "": {
+      "column": 1,
+      "endColumn": 322,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-call",
+      "line": 1
+     },
+     "/apiVersion": {
+      "column": 16,
+      "endColumn": 32,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-call",
+      "line": 1
+     },
+     "/kind": {
+      "column": 42,
+      "endColumn": 52,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-call",
+      "line": 1
+     },
+     "/metadata": {
+      "column": 66,
+      "endColumn": 109,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-call",
+      "line": 1
+     },
+     "/metadata/name": {
+      "column": 75,
+      "endColumn": 88,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-call",
+      "line": 1
+     },
+     "/metadata/version": {
+      "column": 101,
+      "endColumn": 108,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-call",
+      "line": 1
+     },
+     "/spec": {
+      "column": 119,
+      "endColumn": 321,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-call",
+      "line": 1
+     },
+     "/spec/inputSchema": {
+      "column": 135,
+      "endColumn": 137,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-call",
+      "line": 1
+     },
+     "/spec/output": {
+      "column": 301,
+      "endColumn": 320,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-call",
+      "line": 1
+     },
+     "/spec/output/literal": {
+      "column": 313,
+      "endColumn": 319,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-call",
+      "line": 1
+     },
+     "/spec/outputSchema": {
+      "column": 155,
+      "endColumn": 157,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-call",
+      "line": 1
+     },
+     "/spec/steps": {
+      "column": 168,
+      "endColumn": 289,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-call",
+      "line": 1
+     },
+     "/spec/steps/0": {
+      "column": 169,
+      "endColumn": 288,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-call",
+      "line": 1
+     },
+     "/spec/steps/0/id": {
+      "column": 176,
+      "endColumn": 184,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-call",
+      "line": 1
+     },
+     "/spec/steps/0/kind": {
+      "column": 194,
+      "endColumn": 208,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-call",
+      "line": 1
+     },
+     "/spec/steps/0/onError": {
+      "column": 277,
+      "endColumn": 287,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-call",
+      "line": 1
+     },
+     "/spec/steps/0/uses": {
+      "column": 218,
+      "endColumn": 239,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-call",
+      "line": 1
+     },
+     "/spec/steps/0/with": {
+      "column": 249,
+      "endColumn": 264,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-call",
+      "line": 1
+     },
+     "/spec/steps/0/with/literal": {
+      "column": 261,
+      "endColumn": 263,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-call",
+      "line": 1
+     }
+    }
+   },
+   "name": "golden-call",
+   "scenarios": [
+    {
+     "input": {},
+     "name": "child-failed",
+     "stream": [
+      {
+       "digest": "aa95e2867e5381ee244c52ea282389719a880c203c75f8655bf86be115d64e09",
+       "event": {
+        "data": {},
+        "id": "2150ad70-4ee2-5f78-bf2c-78ea849bad12",
+        "sequence": 1,
+        "timestamp": "2026-10-08T00:00:00Z",
+        "type": "started"
+       },
+       "transition": {
+        "commands": [
+         {
+          "input": {},
+          "kind": "call",
+          "mode": "wait",
+          "node_id": "review",
+          "on_failure": "stop",
+          "workflow_digest": "a1a3726f6d3976ffff4730312efbde95221ab799f4aa5926d3a2cb7f83e4b7ae",
+          "workflow_reference": "golden-review@1.0.0"
+         }
+        ],
+        "state": {
+         "accepted_sequence": 1,
+         "active": [
+          "review"
+         ],
+         "branches": {},
+         "deferred_results": [],
+         "incident": null,
+         "incidents": {},
+         "input": {},
+         "joins": {},
+         "output": null,
+         "status": "waiting",
+         "steps": {},
+         "waits": {}
+        },
+        "steps": [
+         {
+          "node_id": "review",
+          "output": null,
+          "status": "waiting"
+         }
+        ]
+       }
+      },
+      {
+       "digest": "c599600bf88daf25103a3251eb6bbdf0d60d5bb2a7e6215fddda17f130dbc91d",
+       "event": {
+        "data": {
+         "child_run_id": "2a6c9e1f-4b3d-4f7a-8c5e-9d1b2f3a4c6e",
+         "generation": 0,
+         "node_id": "review",
+         "output": {
+          "code": "NOT_FOUND",
+          "message": "Nothing to review."
+         },
+         "status": "failed"
+        },
+        "id": "cac5ecbe-5a8b-5228-9244-94a982bc4278",
+        "sequence": 2,
+        "timestamp": "2026-10-08T00:00:01Z",
+        "type": "call_completed"
+       },
+       "transition": {
+        "commands": [],
+        "state": {
+         "accepted_sequence": 2,
+         "active": [],
+         "branches": {},
+         "deferred_results": [],
+         "incident": null,
+         "incidents": {},
+         "input": {},
+         "joins": {},
+         "output": "done",
+         "status": "succeeded",
+         "steps": {
+          "review": {
+           "error": {
+            "attempts": 1,
+            "childRunId": "2a6c9e1f-4b3d-4f7a-8c5e-9d1b2f3a4c6e",
+            "code": "NOT_FOUND",
+            "instanceKey": "review",
+            "message": "Nothing to review.",
+            "outcome": "failed"
+           },
+           "output": null
+          }
+         },
+         "waits": {}
+        },
+        "steps": [
+         {
+          "error": {
+           "attempts": 1,
+           "childRunId": "2a6c9e1f-4b3d-4f7a-8c5e-9d1b2f3a4c6e",
+           "code": "NOT_FOUND",
+           "instanceKey": "review",
+           "message": "Nothing to review.",
+           "outcome": "failed"
+          },
+          "node_id": "review",
+          "output": null,
+          "status": "failed"
+         }
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "input": {},
+     "name": "child-cancelled",
+     "stream": [
+      {
+       "digest": "aa95e2867e5381ee244c52ea282389719a880c203c75f8655bf86be115d64e09",
+       "event": {
+        "data": {},
+        "id": "1b94f643-d3f7-547d-8f80-55d11699f04d",
+        "sequence": 1,
+        "timestamp": "2026-10-08T00:00:00Z",
+        "type": "started"
+       },
+       "transition": {
+        "commands": [
+         {
+          "input": {},
+          "kind": "call",
+          "mode": "wait",
+          "node_id": "review",
+          "on_failure": "stop",
+          "workflow_digest": "a1a3726f6d3976ffff4730312efbde95221ab799f4aa5926d3a2cb7f83e4b7ae",
+          "workflow_reference": "golden-review@1.0.0"
+         }
+        ],
+        "state": {
+         "accepted_sequence": 1,
+         "active": [
+          "review"
+         ],
+         "branches": {},
+         "deferred_results": [],
+         "incident": null,
+         "incidents": {},
+         "input": {},
+         "joins": {},
+         "output": null,
+         "status": "waiting",
+         "steps": {},
+         "waits": {}
+        },
+        "steps": [
+         {
+          "node_id": "review",
+          "output": null,
+          "status": "waiting"
+         }
+        ]
+       }
+      },
+      {
+       "digest": "256aa014194c0f9534ecb4d42565bd012cfdbb2682be49c0023427a3c992ae21",
+       "event": {
+        "data": {
+         "child_run_id": "2a6c9e1f-4b3d-4f7a-8c5e-9d1b2f3a4c6e",
+         "generation": 0,
+         "node_id": "review",
+         "output": {
+          "code": "WV-RUN-CANCELLED",
+          "message": "The called run was cancelled."
+         },
+         "status": "cancelled"
+        },
+        "id": "2db8a650-a761-540b-ba7c-9e411904221f",
+        "sequence": 2,
+        "timestamp": "2026-10-08T00:00:01Z",
+        "type": "call_completed"
+       },
+       "transition": {
+        "commands": [],
+        "state": {
+         "accepted_sequence": 2,
+         "active": [],
+         "branches": {},
+         "deferred_results": [],
+         "incident": null,
+         "incidents": {},
+         "input": {},
+         "joins": {},
+         "output": "done",
+         "status": "succeeded",
+         "steps": {
+          "review": {
+           "error": {
+            "attempts": 1,
+            "childRunId": "2a6c9e1f-4b3d-4f7a-8c5e-9d1b2f3a4c6e",
+            "code": "WV-RUN-CANCELLED",
+            "instanceKey": "review",
+            "message": "The called workflow was cancelled.",
+            "outcome": "unknown"
+           },
+           "output": null
+          }
+         },
+         "waits": {}
+        },
+        "steps": [
+         {
+          "error": {
+           "attempts": 1,
+           "childRunId": "2a6c9e1f-4b3d-4f7a-8c5e-9d1b2f3a4c6e",
+           "code": "WV-RUN-CANCELLED",
+           "instanceKey": "review",
+           "message": "The called workflow was cancelled.",
+           "outcome": "unknown"
+          },
+          "node_id": "review",
+          "output": null,
+          "status": "failed"
+         }
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "input": {},
+     "name": "start-refused",
+     "stream": [
+      {
+       "digest": "aa95e2867e5381ee244c52ea282389719a880c203c75f8655bf86be115d64e09",
+       "event": {
+        "data": {},
+        "id": "015608bc-ad64-5561-9480-4ab4f09c2264",
+        "sequence": 1,
+        "timestamp": "2026-10-08T00:00:00Z",
+        "type": "started"
+       },
+       "transition": {
+        "commands": [
+         {
+          "input": {},
+          "kind": "call",
+          "mode": "wait",
+          "node_id": "review",
+          "on_failure": "stop",
+          "workflow_digest": "a1a3726f6d3976ffff4730312efbde95221ab799f4aa5926d3a2cb7f83e4b7ae",
+          "workflow_reference": "golden-review@1.0.0"
+         }
+        ],
+        "state": {
+         "accepted_sequence": 1,
+         "active": [
+          "review"
+         ],
+         "branches": {},
+         "deferred_results": [],
+         "incident": null,
+         "incidents": {},
+         "input": {},
+         "joins": {},
+         "output": null,
+         "status": "waiting",
+         "steps": {},
+         "waits": {}
+        },
+        "steps": [
+         {
+          "node_id": "review",
+          "output": null,
+          "status": "waiting"
+         }
+        ]
+       }
+      },
+      {
+       "digest": "d669c1cd37ad5c2d41dae90028270a8b1899316e8c1b39545695c22faa77bcc5",
+       "event": {
+        "data": {
+         "attempts": 0,
+         "code": "WV-CALL-START",
+         "generation": 0,
+         "node_id": "review",
+         "outcome": "not_started"
+        },
+        "id": "07c09d87-024e-5aae-b256-03370e809fc0",
+        "sequence": 2,
+        "timestamp": "2026-10-08T00:00:01Z",
+        "type": "step_failed"
+       },
+       "transition": {
+        "commands": [],
+        "state": {
+         "accepted_sequence": 2,
+         "active": [],
+         "branches": {},
+         "deferred_results": [],
+         "incident": null,
+         "incidents": {},
+         "input": {},
+         "joins": {},
+         "output": "done",
+         "status": "succeeded",
+         "steps": {
+          "review": {
+           "error": {
+            "attempts": 0,
+            "code": "WV-CALL-START",
+            "instanceKey": "review",
+            "message": "The called workflow could not start.",
+            "outcome": "not_started"
+           },
+           "output": null
+          }
+         },
+         "waits": {}
+        },
+        "steps": [
+         {
+          "error": {
+           "attempts": 0,
+           "code": "WV-CALL-START",
+           "instanceKey": "review",
+           "message": "The called workflow could not start.",
+           "outcome": "not_started"
+          },
+          "node_id": "review",
+          "output": null,
+          "status": "failed"
+         }
+        ]
+       }
+      }
+     ]
+    }
+   ],
+   "source": "scripts/golden_step_errors.py#golden-call"
+  },
+  {
+   "artifact": {
+    "diagnostics": [
+     {
+      "code": "WV-COMP-ON_ERROR_AMBIGUOUS",
+      "hint": null,
+      "message": "This step changes data and is never retried; if its outcome is unknown, the run stops with an incident until someone checks it.",
+      "path": "/spec/steps/0/onError",
+      "related": [],
+      "severity": "info",
+      "source": {
+       "column": 278,
+       "endColumn": 291,
+       "endLine": 1,
+       "file": "scripts/golden_step_errors.py#golden-reconciled",
+       "line": 1
+      },
+      "stage": "semantic",
+      "suggestedEdit": null
+     }
+    ],
+    "digest": "5509920dbea4eefbecc757e7faa0d0c90d742e6c244568710111c733c2b617de",
+    "executable": {
+     "apiVersion": "weave/v1alpha1",
+     "connections": {},
+     "dependencies": [
+      {
+       "digest": "bf9292b0e22c0efef34eff69f0d97a485dbbde151ed35e4e62c1ab905c161838",
+       "document": {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Action",
+        "metadata": {
+         "name": "submit-request",
+         "version": "1.0.0"
+        },
+        "spec": {
+         "implementation": {
+          "kind": "worker",
+          "taskType": "submit-request",
+          "taskVersion": "1.0.0"
+         },
+         "inputSchema": {},
+         "outputSchema": {
+          "additionalProperties": false,
+          "properties": {
+           "status": {
+            "type": "string"
+           }
+          },
+          "required": [
+           "status"
+          ],
+          "type": "object"
+         },
+         "retry": {
+          "initialDelaySeconds": 1,
+          "maxAttempts": 1,
+          "maxDelaySeconds": 30
+         },
+         "sideEffect": "non_idempotent",
+         "timeoutSeconds": 30
+        }
+       },
+       "kind": "Action",
+       "reference": "submit-request@1.0.0"
+      },
+      {
+       "digest": "77009a207b2da12d1e42e16ba4375792b3b5ac95e2a9b02ed2601c6c4c21cd03",
+       "document": {
+        "inputSchema": {},
+        "outputSchema": {
+         "additionalProperties": false,
+         "properties": {
+          "status": {
+           "type": "string"
+          }
+         },
+         "required": [
+          "status"
+         ],
+         "type": "object"
+        },
+        "sideEffect": "non_idempotent",
+        "taskType": "submit-request",
+        "taskVersion": "1.0.0",
+        "timeoutSeconds": 30
+       },
+       "kind": "TaskCapability",
+       "reference": "submit-request@1.0.0"
+      }
+     ],
+     "features": [
+      "flow.onError"
+     ],
+     "graph": {
+      "edges": [
+       {
+        "branch": "errorPath",
+        "kind": "join",
+        "source": "@branch:submit:0",
+        "target": "@join:submit"
+       },
+       {
+        "branch": "errorPath",
+        "kind": "error",
+        "source": "submit",
+        "target": "@branch:submit:0"
+       },
+       {
+        "branch": null,
+        "kind": "next",
+        "source": "@join:submit",
+        "target": "@end"
+       },
+       {
+        "branch": null,
+        "kind": "next",
+        "source": "submit",
+        "target": "@join:submit"
+       },
+       {
+        "branch": null,
+        "kind": "next",
+        "source": "@start",
+        "target": "submit"
+       }
+      ],
+      "entry": "@start",
+      "exit": "@end",
+      "nodes": [
+       {
+        "id": "@start",
+        "kind": "start",
+        "path": "/spec",
+        "scope": []
+       },
+       {
+        "id": "@end",
+        "kind": "end",
+        "output": {
+         "ref": "/steps/submit/output"
+        },
+        "path": "/spec/output",
+        "scope": []
+       },
+       {
+        "branch": "errorPath",
+        "completes": true,
+        "id": "@branch:submit:0",
+        "kind": "branch-output",
+        "output": {
+         "literal": "recovered"
+        },
+        "owner": "submit",
+        "path": "/spec/steps/0/errorPath/output",
+        "scope": [
+         "submit",
+         "errorPath"
+        ]
+       },
+       {
+        "branches": [
+         "@branch:submit:0"
+        ],
+        "completes": true,
+        "id": "@join:submit",
+        "kind": "join",
+        "mode": "error",
+        "owner": "submit",
+        "path": "/spec/steps/0",
+        "scope": []
+       },
+       {
+        "connection": null,
+        "dependency": "bf9292b0e22c0efef34eff69f0d97a485dbbde151ed35e4e62c1ab905c161838",
+        "errorJoin": "@join:submit",
+        "errorTarget": "@branch:submit:0",
+        "id": "submit",
+        "kind": "action",
+        "onError": "errorOutput",
+        "path": "/spec/steps/0",
+        "scope": [],
+        "with": {
+         "literal": {}
+        }
+       }
+      ]
+     },
+     "guards": [
+      {
+       "path": "/spec/inputSchema",
+       "purpose": "workflow_input",
+       "schemaRef": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      },
+      {
+       "path": "/spec/steps/0/with",
+       "purpose": "action_input",
+       "schemaRef": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      },
+      {
+       "path": "/spec/steps/0",
+       "purpose": "action_output",
+       "schemaRef": "7c4bb65cda2f8731afa3a99a88289088d4fc8f822ae9a2b4e2a881cc1af9c765"
+      },
+      {
+       "path": "/spec/steps/0/errorPath/output",
+       "purpose": "branch_output",
+       "schemaRef": "5db7d4dc42f13597b80fd668b28f02d4abbd27df854eeb4985c9abf97cbff85c"
+      },
+      {
+       "path": "/spec/output",
+       "purpose": "workflow_output",
+       "schemaRef": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+      }
+     ],
+     "inputSchema": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+     "irVersion": "weave/ir-v1alpha4",
+     "kind": "Workflow",
+     "metadata": {
+      "name": "golden-reconciled",
+      "version": "1.0.0"
+     },
+     "outputSchema": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+     "schemas": {
+      "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a": {},
+      "5db7d4dc42f13597b80fd668b28f02d4abbd27df854eeb4985c9abf97cbff85c": {
+       "const": "recovered",
+       "type": "string"
+      },
+      "7c4bb65cda2f8731afa3a99a88289088d4fc8f822ae9a2b4e2a881cc1af9c765": {
+       "additionalProperties": false,
+       "properties": {
+        "status": {
+         "type": "string"
+        }
+       },
+       "required": [
+        "status"
+       ],
+       "type": "object"
+      }
+     },
+     "timeoutSeconds": null
+    },
+    "omittedCount": 0,
+    "schemaTruncated": false,
+    "sourceHash": "a9ceb425611f7999ecfdb82a66b7e1157c411ab5577f9b08192345c1e43a4f5b",
+    "sourceMap": {
+     "": {
+      "column": 1,
+      "endColumn": 402,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-reconciled",
+      "line": 1
+     },
+     "/apiVersion": {
+      "column": 16,
+      "endColumn": 32,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-reconciled",
+      "line": 1
+     },
+     "/kind": {
+      "column": 42,
+      "endColumn": 52,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-reconciled",
+      "line": 1
+     },
+     "/metadata": {
+      "column": 66,
+      "endColumn": 115,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-reconciled",
+      "line": 1
+     },
+     "/metadata/name": {
+      "column": 75,
+      "endColumn": 94,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-reconciled",
+      "line": 1
+     },
+     "/metadata/version": {
+      "column": 107,
+      "endColumn": 114,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-reconciled",
+      "line": 1
+     },
+     "/spec": {
+      "column": 125,
+      "endColumn": 401,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-reconciled",
+      "line": 1
+     },
+     "/spec/inputSchema": {
+      "column": 141,
+      "endColumn": 143,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-reconciled",
+      "line": 1
+     },
+     "/spec/output": {
+      "column": 369,
+      "endColumn": 400,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-reconciled",
+      "line": 1
+     },
+     "/spec/output/ref": {
+      "column": 377,
+      "endColumn": 399,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-reconciled",
+      "line": 1
+     },
+     "/spec/outputSchema": {
+      "column": 161,
+      "endColumn": 163,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-reconciled",
+      "line": 1
+     },
+     "/spec/steps": {
+      "column": 174,
+      "endColumn": 357,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-reconciled",
+      "line": 1
+     },
+     "/spec/steps/0": {
+      "column": 175,
+      "endColumn": 356,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-reconciled",
+      "line": 1
+     },
+     "/spec/steps/0/errorPath": {
+      "column": 306,
+      "endColumn": 355,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-reconciled",
+      "line": 1
+     },
+     "/spec/steps/0/errorPath/output": {
+      "column": 330,
+      "endColumn": 354,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-reconciled",
+      "line": 1
+     },
+     "/spec/steps/0/errorPath/output/literal": {
+      "column": 342,
+      "endColumn": 353,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-reconciled",
+      "line": 1
+     },
+     "/spec/steps/0/errorPath/steps": {
+      "column": 316,
+      "endColumn": 318,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-reconciled",
+      "line": 1
+     },
+     "/spec/steps/0/id": {
+      "column": 182,
+      "endColumn": 190,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-reconciled",
+      "line": 1
+     },
+     "/spec/steps/0/kind": {
+      "column": 200,
+      "endColumn": 208,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-reconciled",
+      "line": 1
+     },
+     "/spec/steps/0/onError": {
+      "column": 278,
+      "endColumn": 291,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-reconciled",
+      "line": 1
+     },
+     "/spec/steps/0/uses": {
+      "column": 218,
+      "endColumn": 240,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-reconciled",
+      "line": 1
+     },
+     "/spec/steps/0/with": {
+      "column": 250,
+      "endColumn": 265,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-reconciled",
+      "line": 1
+     },
+     "/spec/steps/0/with/literal": {
+      "column": 262,
+      "endColumn": 264,
+      "endLine": 1,
+      "file": "scripts/golden_step_errors.py#golden-reconciled",
+      "line": 1
+     }
+    }
+   },
+   "name": "golden-reconciled",
+   "scenarios": [
+    {
+     "input": {},
+     "name": "confirmed-no-effect",
+     "stream": [
+      {
+       "digest": "346e0bf3e9fb38d05e3e5b73efcf0835ca56350f0ded885118b1aae685f0c1d2",
+       "event": {
+        "data": {},
+        "id": "e67e904b-4126-5d45-8ae8-888e5c6ba2c7",
+        "sequence": 1,
+        "timestamp": "2026-10-08T00:00:00Z",
+        "type": "started"
+       },
+       "transition": {
+        "commands": [
+         {
+          "action_digest": "bf9292b0e22c0efef34eff69f0d97a485dbbde151ed35e4e62c1ab905c161838",
+          "action_reference": "submit-request@1.0.0",
+          "connection_slot": null,
+          "deadline": "2026-10-08T00:00:30Z",
+          "input": {},
+          "kind": "task",
+          "node_id": "submit",
+          "task_type": "submit-request",
+          "task_version": "1.0.0"
+         }
+        ],
+        "state": {
+         "accepted_sequence": 1,
+         "active": [
+          "submit"
+         ],
+         "branches": {},
+         "deferred_results": [],
+         "incident": null,
+         "incidents": {},
+         "input": {},
+         "joins": {},
+         "output": null,
+         "status": "waiting",
+         "steps": {},
+         "waits": {}
+        },
+        "steps": [
+         {
+          "node_id": "submit",
+          "output": null,
+          "status": "waiting"
+         }
+        ]
+       }
+      },
+      {
+       "digest": "7d56be84bb637a1b1682c539fce91f322b461fef24986a0391f5f572ac98eeb5",
+       "event": {
+        "data": {
+         "code": "WV-TASK-AMBIGUOUS",
+         "generation": 1,
+         "node_id": "submit"
+        },
+        "id": "5b5c0d8e-b6b3-520e-9298-5b9b5f2f1409",
+        "sequence": 2,
+        "timestamp": "2026-10-08T00:00:01Z",
+        "type": "incident_opened"
+       },
+       "transition": {
+        "commands": [],
+        "state": {
+         "accepted_sequence": 2,
+         "active": [
+          "submit"
+         ],
+         "branches": {},
+         "deferred_results": [],
+         "incident": "WV-TASK-AMBIGUOUS",
+         "incidents": {
+          "submit:1": {
+           "code": "WV-TASK-AMBIGUOUS",
+           "generation": 1,
+           "node_id": "submit"
+          }
+         },
+         "input": {},
+         "joins": {},
+         "output": null,
+         "status": "suspended",
+         "steps": {},
+         "waits": {}
+        },
+        "steps": []
+       }
+      },
+      {
+       "digest": "665f29abd33d4b09993707e96457383edfb1d2031cbbd0240e379ec24190fa02",
+       "event": {
+        "data": {
+         "attempts": 1,
+         "generation": 1,
+         "incident_key": "submit:1",
+         "kind": "accept_reconciled_failure",
+         "node_id": "submit"
+        },
+        "id": "1983ce14-6017-5748-a84f-66fc25d9f322",
+        "sequence": 3,
+        "timestamp": "2026-10-08T00:00:02Z",
+        "type": "incident_resolved"
+       },
+       "transition": {
+        "commands": [
+         {
+          "branch": "errorPath",
+          "kind": "spawn_branch",
+          "node_id": "submit"
+         },
+         {
+          "branch": "errorPath",
+          "kind": "accept_output",
+          "node_id": "@branch:submit:0"
+         },
+         {
+          "branch": null,
+          "kind": "join",
+          "node_id": "@join:submit"
+         }
+        ],
+        "state": {
+         "accepted_sequence": 3,
+         "active": [],
+         "branches": {},
+         "deferred_results": [],
+         "incident": null,
+         "incidents": {},
+         "input": {},
+         "joins": {},
+         "output": "recovered",
+         "status": "succeeded",
+         "steps": {
+          "submit": {
+           "error": {
+            "attempts": 1,
+            "code": "WV-TASK-RECONCILED-FAILURE",
+            "instanceKey": "submit",
+            "message": "Someone confirmed that the step had no effect.",
+            "outcome": "failed"
+           },
+           "output": "recovered"
+          }
+         },
+         "waits": {}
+        },
+        "steps": [
+         {
+          "error": {
+           "attempts": 1,
+           "code": "WV-TASK-RECONCILED-FAILURE",
+           "instanceKey": "submit",
+           "message": "Someone confirmed that the step had no effect.",
+           "outcome": "failed"
+          },
+          "node_id": "submit",
+          "output": null,
+          "status": "failed"
+         },
+         {
+          "node_id": "@branch:submit:0",
+          "output": "recovered",
+          "status": "completed"
+         },
+         {
+          "error": {
+           "attempts": 1,
+           "code": "WV-TASK-RECONCILED-FAILURE",
+           "instanceKey": "submit",
+           "message": "Someone confirmed that the step had no effect.",
+           "outcome": "failed"
+          },
+          "node_id": "submit",
+          "output": "recovered",
+          "status": "failed"
+         },
+         {
+          "node_id": "@join:submit",
+          "output": "recovered",
+          "status": "completed"
+         }
+        ]
+       }
+      }
+     ]
+    }
+   ],
+   "source": "scripts/golden_step_errors.py#golden-reconciled"
+  }
+ ]
+}
