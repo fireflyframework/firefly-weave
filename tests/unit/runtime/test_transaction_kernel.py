@@ -478,3 +478,134 @@ def test_a_child_started_late_for_a_step_that_cant_be_undone_ends_by_its_callers
     )
     # Its own limit ends it earlier still.
     assert [d.deadline for d in deadlines(started) if d.node_id == "@run"] == [later.now + timedelta(seconds=30)]
+
+
+def report(source: str) -> dict:
+    return {"id": "report", "kind": "transform", "value": {"ref": source}}
+
+
+def test_a_rolled_back_transaction_with_a_setting_continues_with_its_error():
+    flow_ = compiled(
+        [transaction([hold(), add(), submit()], onError="continue"), report("/steps/move/error/code")],
+        output={"ref": "/steps/report/output"},
+    )
+    run = Run(flow_)
+    run.start()
+    run.done("hold", {"holdId": "h-1"})
+    run.failed("add", "VALIDATION", effect="none")
+    ended = run.done("hold#cancel", {})
+    assert run.txn().status == "cancelled"
+    assert [(change.node_id, change.status) for change in ended.steps if change.status == "failed"] == [
+        ("move", "failed")
+    ]
+    assert run.state.steps["move"] == {
+        "output": None,
+        "error": {
+            "code": "WV-TXN-ROLLED-BACK",
+            "message": TRANSACTION_MESSAGES["WV-TXN-ROLLED-BACK"],
+            "outcome": "failed",
+            "attempts": 1,
+            "instanceKey": "move",
+        },
+    }
+    assert (run.state.status, run.state.output) == ("succeeded", "WV-TXN-ROLLED-BACK")
+    assert run.state.incidents == {} and run.state.incident is None
+
+
+def test_a_rolled_back_transaction_with_an_error_path_runs_it_and_its_output_becomes_the_blocks():
+    block = transaction(
+        [hold(), add(), submit()],
+        onError="errorOutput",
+        errorPath={"steps": [report("/steps/move/error/outcome")], "output": {"literal": "undone"}},
+    )
+    run = Run(compiled([block], output={"ref": "/steps/move/output"}))
+    run.start()
+    run.done("hold", {"holdId": "h-1"})
+    run.failed("add", "VALIDATION", effect="none")
+    run.done("hold#cancel", {})
+    assert (run.state.status, run.state.output) == ("succeeded", "undone")
+    assert run.state.steps["move"]["error"]["code"] == "WV-TXN-ROLLED-BACK"
+    assert all(branch.name != "errorPath" for branch in run.state.branches.values())
+    assert all(join.mode != "error" for join in run.state.joins.values())
+
+
+def test_a_transaction_that_succeeds_never_runs_its_error_path():
+    block = transaction(
+        [hold(), add(), submit()],
+        onError="errorOutput",
+        errorPath={"steps": [], "output": {"literal": "undone"}},
+    )
+    run = Run(compiled([block], output={"ref": "/steps/move/output"}))
+    run.start()
+    run.done("hold", {"holdId": "h-1"})
+    run.done("add", {"id": "a-1"})
+    run.done("submit", {"orderId": "o-1"})
+    run.done("hold#confirm", {})
+    assert (run.txn().status, run.state.status, run.state.output) == ("completed", "succeeded", "moved")
+    assert "error" not in run.state.steps["move"]
+
+
+def test_a_fail_step_still_fails_the_run_when_its_transaction_has_a_setting():
+    stop = {"id": "stop", "kind": "fail", "code": "OUT_OF_RANGE", "message": "The quantity is out of range."}
+    run = Run(flow(hold(), add(), stop, onError="continue"))
+    run.start()
+    run.done("hold", {"holdId": "h-1"})
+    run.done("add", {"id": "a-1"})
+    run.done("add#undo", {})
+    run.done("hold#cancel", {})
+    assert (run.state.status, run.state.output) == (
+        "failed",
+        {"code": "OUT_OF_RANGE", "message": "The quantity is out of range."},
+    )
+
+
+def test_a_definite_failure_of_a_participant_with_a_setting_does_not_abort_its_transaction():
+    run = Run(flow(hold(), add(onError="continue"), submit()))
+    run.start()
+    run.done("hold", {"holdId": "h-1"})
+    went_on = run.failed("add", "VALIDATION", effect="none")
+    assert [task.node_id for task in tasks(went_on)] == ["submit"]
+    assert [(change.node_id, change.status) for change in went_on.steps][:1] == [("add", "failed")]
+    assert run.statuses() == {"hold": "done", "add": "failed", "submit": "dispatched"}
+    assert run.txn().status == "deciding"
+    [confirm] = tasks(run.done("submit", {"orderId": "o-1"}))
+    assert confirm.node_id == "hold#confirm"
+    run.done("hold#confirm", {})
+    assert (run.txn().status, run.state.status) == ("completed", "succeeded")
+    assert run.state.steps == {"move": {"output": "moved"}}
+
+
+def test_a_failure_that_may_have_applied_still_undoes_a_transaction_whose_step_has_a_setting():
+    run = Run(flow(hold(), add(onError="continue"), submit()))
+    run.start()
+    run.done("hold", {"holdId": "h-1"})
+    aborted = run.failed("add", "UNAVAILABLE", effect="unknown")
+    assert [task.node_id for task in tasks(aborted)] == ["add#undo"]
+    assert run.txn().status == "compensating"
+
+
+def test_a_step_that_cant_be_undone_and_failed_definitely_reopens_its_transaction_under_its_setting():
+    run = Run(flow(hold(), add(), {**submit(), "onError": "continue"}))
+    run.start()
+    run.done("hold", {"holdId": "h-1"})
+    run.done("add", {"id": "a-1"})
+    assert run.txn().status == "deciding"
+    went_on = run.failed("submit", "VALIDATION", effect="none")
+    # Nothing was applied, so the body ends without a decision: the transaction commits what it holds.
+    [confirm] = tasks(went_on)
+    assert confirm.node_id == "hold#confirm"
+    assert run.statuses() == {"hold": "confirming", "add": "done", "submit": "failed"}
+    unknown = Run(flow(hold(), add(), {**submit(), "onError": "continue"}))
+    unknown.start()
+    unknown.done("hold", {"holdId": "h-1"})
+    unknown.done("add", {"id": "a-1"})
+    unknown.failed("submit", "TIMEOUT", effect="unknown", generation=2)
+    assert (unknown.txn().status, unknown.state.incidents["submit:2"].code) == ("in_doubt", "WV-TXN-PIVOT-UNKNOWN")
+
+
+def test_a_step_with_a_setting_whose_evaluation_fails_inside_a_transaction_continues_without_undoing_it():
+    shape = {"id": "shape", "kind": "transform", "value": {"ref": "/input/items/3"}, "onError": "continue"}
+    run = held_and_added(shape, submit())
+    went_on = run.done("add", {"id": "a-1"})
+    assert [task.node_id for task in tasks(went_on)] == ["submit"]
+    assert run.state.incidents == {} and run.txn().status == "deciding"

@@ -38,6 +38,7 @@ from firefly_weave.compiler.ir import (
     EndNode,
     FailNode,
     ForEachNode,
+    HandlesErrors,
     HumanTaskNode,
     IRNode,
     JoinNode,
@@ -55,6 +56,7 @@ from firefly_weave.compiler.schemas import validate_payload
 from firefly_weave.contracts.definitions import ActionDefinition, ContractModel, WorkerImplementation, load_definition
 from firefly_weave.contracts.instance_keys import node_of
 from firefly_weave.contracts.limits import Limits
+from firefly_weave.contracts.step_errors import HANDLED_KERNEL_CODES, StepOutcome, step_error
 from firefly_weave.contracts.transactions import (
     HOLD_MARGIN_SECONDS,
     IN_DOUBT_CODES,
@@ -176,6 +178,26 @@ def workflow(artifact: CompiledArtifact) -> WorkflowIR:
     return ir
 
 
+# A step failure's outcome from its event; a step without the field reports an effect that may have happened.
+STEP_OUTCOMES: frozenset[StepOutcome] = frozenset({"not_started", "failed", "unknown"})
+
+
+def error_policy(ir: WorkflowIR, key: str) -> str:
+    """What the final failure of the step instance ``key`` does: ``stop``, ``continue`` or ``errorOutput``."""
+    node = next((node for node in ir.graph.nodes if node.id == node_of(key)), None)
+    if isinstance(node, HandlesErrors) and node.on_error is not None:
+        return node.on_error
+    return "stop"
+
+
+def ambiguous(ir: WorkflowIR, node: Node) -> bool:
+    """Whether an unknown outcome of this step must stop the run: an action that is never retried and changes data."""
+    if not isinstance(node, ActionNode):
+        return False
+    dependency = next(d for d in ir.dependencies if d.digest == node.dependency and d.kind == "Action")
+    return cast(JsonObject, dependency.document["spec"])["sideEffect"] == "non_idempotent"
+
+
 class ContextShapes:
     """Shapes of context parts that repeat across a loop's iterations (the input, values visible at the loop).
 
@@ -261,7 +283,11 @@ def prepare(artifact: CompiledArtifact) -> PreparedWorkflow:
                 for node in body
                 if isinstance(node, (ActionNode, WaitNode, SignalNode, HumanTaskNode, ForEachNode, CallWorkflowNode))
             )
-            if any(isinstance(node, (SwitchNode, ParallelNode, ForEachNode, TransactionNode)) for node in body):
+            if any(
+                isinstance(node, (SwitchNode, ParallelNode, ForEachNode, TransactionNode))
+                or (isinstance(node, HandlesErrors) and node.error_target is not None)
+                for node in body
+            ):
                 nested.add(loop.id)
     return PreparedWorkflow(
         ir=ir,
@@ -373,8 +399,9 @@ class KernelCursor(ContractModel):
     # (at most MAX_INTENTS // 2); both reset per event.
     turn_units: int = Field(default=0, ge=0, exclude_if=lambda v: not v)
     turn_intents: int = Field(default=0, ge=0, exclude_if=lambda v: not v)
-    # Steps inside transactions whose evaluation failed in an earlier pass of this event, with the failure code: the
-    # event is reduced again and each of them fails its transaction instead of being evaluated.
+    # Steps whose evaluation or result failed in an earlier pass of this event, with the failure code: the event is
+    # reduced again, and each of them fails as its onError setting says, or fails its transaction, instead of being
+    # evaluated.
     failing: dict[str, str] = Field(default_factory=dict, exclude_if=lambda v: not v)
 
 
@@ -1041,6 +1068,108 @@ def _advance_owned(
         elif transaction.status == "compensating":
             settle_progress(key)
 
+    def after(node: Node, key: str) -> str:
+        """Where the run goes on after a step: a block goes on after its join."""
+        if isinstance(node, TransactionNode):
+            return successors[node.join] + loop_suffix(key)
+        return successor(key)
+
+    def handles(node: Node, name: str, effect: object) -> bool:
+        """Whether a step's final failure goes to its onError setting instead of its transaction or the run.
+
+        Inside a transaction that is going forward, only a definite failure (nothing was applied) is the step's own.
+        A failure that may have applied anything, and any failure while the transaction goes back, is the transaction's.
+        """
+        if not isinstance(node, HandlesErrors) or node.on_error is None:
+            return False
+        key = owner_of(name)
+        if key is None:
+            return True
+        transaction = record(key)
+        if transaction.rollback or transaction.status not in {"open", "deciding", "committing"}:
+            return False
+        index = participant_index(transaction.participants, name)
+        if index is None:
+            return True
+        item = transaction.participants[index]
+        if fold(item.effect, effect) != "none":
+            return False
+        # The step that can't be undone failed with nothing applied while a cause to go back waits: that cause wins.
+        return not (transaction.status == "deciding" and item.mode == "irreversible" and transaction.pending_abort)
+
+    def handled_participant(name: str) -> None:
+        """A participant's definite failure that its setting handles: nothing to undo, and its transaction goes on."""
+        key = owner_of(name)
+        if key is None:
+            return
+        transaction = record(key)
+        index = participant_index(transaction.participants, name)
+        if index is None:
+            return
+        item = transaction.participants[index]
+        participant(key, index, status="failed", effect="none")
+        if transaction.status == "deciding" and item.mode == "irreversible" and item.status == "dispatched":
+            # Nothing was applied, so nothing is decided: the transaction is open again.
+            update(key, status="open", decide_by=None)
+
+    def fail_step(node: Node, key: str, error: JsonObject) -> None:
+        """A step failed for good and its onError setting handles it: continue, or run its error path."""
+        assert isinstance(node, HandlesErrors) and node.on_error is not None
+        holder = frame(current_state, node, key)
+        target = current_state.steps if holder is None else holder.steps
+        result.steps.append(StepChange(node_id=key, status="failed", output=None, error=error))
+        if node.on_error == "continue":
+            target[node.id] = {"output": None, "error": error}
+            queue.append(after(node, key))
+            return
+        assert node.error_target is not None and node.error_join is not None
+        target[node.id] = {"error": error}
+        suffix = loop_suffix(key)
+        name = branch_key(node.id, "errorPath", suffix)
+        current_state.branches[name] = BranchState(
+            owner=node.id, name="errorPath", target=node.error_target, parent=frame_key(node, key), status="running"
+        )
+        # A transaction's ended body join gives way to its error join under the same key.
+        current_state.joins[key] = JoinState(
+            owner=key,
+            node_id=node.error_join + suffix,
+            mode="error",
+            branches=[name],
+            concurrency=1,
+            required_count=1,
+        )
+        result.commands.append(ControlCommand(kind="spawn_branch", node_id=key, branch="errorPath"))
+        queue.append(node.error_target + suffix)
+
+    def reported_failure(node: Node, key: str, completion: RuntimeEvent) -> JsonObject:
+        """The error object of a ``step_failed`` event, after checking that the step may handle it."""
+        data = completion.data
+        code, outcome, attempts = data.get("code"), data.get("outcome", "unknown"), data.get("attempts", 1)
+        child = data.get("child_run_id")
+        if (
+            not isinstance(node, HandlesErrors)
+            or node.on_error is None
+            or not isinstance(code, str)
+            or not 0 < len(code) <= 128
+            or outcome not in STEP_OUTCOMES
+            or not isinstance(attempts, int)
+            or isinstance(attempts, bool)
+            or attempts < 0
+            or (child is not None and not isinstance(child, str))
+        ):
+            raise KernelError("WV-RUNTIME-EVENT")
+        if outcome == "unknown" and ambiguous(ir, node):
+            # The barrier: an effect that may have happened is never handled; only a person may say it did not.
+            raise KernelError("WV-RUNTIME-EVENT")
+        if "deadline" in data:
+            due = current_state.waits.get(key)
+            if due is None or data["deadline"] != due.isoformat() or completion.timestamp < due:
+                raise KernelError("WV-RUNTIME-EARLY-WAKEUP")
+        try:
+            return step_error(code, cast(StepOutcome, outcome), attempts, key, child_run_id=child)
+        except ValueError as error:
+            raise KernelError("WV-RUNTIME-EVENT") from error
+
     def settled(node: ActionNode | CallWorkflowNode, name: str, value: JsonValue, failed: object = None) -> bool:
         """Record a participant's result; True when its transaction is no longer going forward.
 
@@ -1248,6 +1377,13 @@ def _advance_owned(
             return
         node = nodes[node_of(identifier)]
         if completion.type == "step_failed":
+            if handles(node, identifier, completion.data.get("effect", "unknown")):
+                error = reported_failure(node, identifier, completion)
+                current_state.active.remove(identifier)
+                current_state.waits.pop(identifier, None)
+                handled_participant(identifier)
+                fail_step(node, identifier, error)
+                return
             code = completion.data.get("code")
             if not isinstance(code, str) or not code or owner_of(identifier) is None:
                 raise KernelError("WV-RUNTIME-EVENT")
@@ -1262,6 +1398,31 @@ def _advance_owned(
             start_iterations(identifier.partition("~")[0])
             return
         if isinstance(node, CallWorkflowNode) and completion.type == "call_completed":
+            status = completion.data.get("status")
+            if (
+                node.on_failure != "continue"
+                and completion.data.get("reconciled") is not True
+                and status in {"failed", "cancelled", "timed_out"}
+                and handles(node, identifier, completion.data.get("effect", "unknown"))
+            ):
+                # A child that did not succeed is this step's failure, and its onError setting handles it.
+                failure, child = completion.data.get("output"), completion.data.get("child_run_id")
+                if not isinstance(child, str):
+                    raise KernelError("WV-RUNTIME-EVENT")
+                validate(ir, CALL_ERROR_SCHEMA, failure)
+                failure = cast(JsonObject, failure)
+                error = step_error(
+                    cast(str, failure["code"]),
+                    "failed" if status == "failed" else "unknown",
+                    generation + 1,
+                    identifier,
+                    message=cast(str, failure["message"]) if status == "failed" else None,
+                    child_run_id=child,
+                )
+                current_state.active.remove(identifier)
+                handled_participant(identifier)
+                fail_step(node, identifier, error)
+                return
             holder = owner_of(identifier) if node.txn is not None else None
             if (
                 holder is not None
@@ -1400,7 +1561,10 @@ def _advance_owned(
                         else:
                             lift()
                     return checkpoint(result.model_copy(update={"state": current_state}), done=not queue)
-                if prior is None or kind not in {"retry_safe", "accept_reconciled_result"}:
+                if prior is None or kind not in {"retry_safe", "accept_reconciled_result", "accept_reconciled_failure"}:
+                    raise KernelError("WV-RUNTIME-EVENT")
+                if kind == "accept_reconciled_failure" and error_policy(ir, prior.node_id) == "stop":
+                    # Only a step with an On error setting can go on after its effect was confirmed not to happen.
                     raise KernelError("WV-RUNTIME-EVENT")
                 current_state.incidents.pop(str(key))
                 current_state = current_state.model_copy(
@@ -1410,7 +1574,25 @@ def _advance_owned(
                         else None
                     }
                 )
-                if kind == "accept_reconciled_result":
+                if kind == "accept_reconciled_failure":
+                    attempts = event.data.get("attempts", prior.generation)
+                    completion = event.model_copy(
+                        update={
+                            "type": "step_failed",
+                            "data": {
+                                "node_id": prior.node_id,
+                                "generation": prior.generation,
+                                "code": "WV-TASK-RECONCILED-FAILURE",
+                                "outcome": "failed",
+                                "attempts": attempts,
+                                "effect": "none",
+                            },
+                        }
+                    )
+                    if any(e.data.get("node_id") == prior.node_id for e in current_state.deferred_results):
+                        raise KernelError("WV-RUNTIME-EVENT")
+                    current_state.deferred_results.append(completion)
+                elif kind == "accept_reconciled_result":
                     if isinstance(nodes[node_of(prior.node_id)], CallWorkflowNode):
                         # A reconciled call result arrives as the child's successful completion.
                         completion = event.model_copy(
@@ -1447,13 +1629,16 @@ def _advance_owned(
                     result.commands.clear()
                 return checkpoint(result.model_copy(update={"state": current_state}))
             elif event.type == "step_failed":
-                # A step inside a transaction failed for good: it closes the step's interim failure incident, as a
-                # scheduled retry does, then fails its transaction (or waits behind another barrier).
-                if current not in current_state.active or not in_transaction(txns, current):
+                # A step failed for good. The event closes the step's interim failure incident, as a scheduled retry
+                # does, then goes to the step's onError setting or its transaction (or waits behind another barrier).
+                inside = in_transaction(txns, current)
+                if current not in current_state.active or (not inside and error_policy(ir, current) == "stop"):
                     raise KernelError("WV-RUNTIME-EVENT")
                 generation = event.data.get("generation", 0)
                 if not isinstance(generation, int) or isinstance(generation, bool) or generation < 0:
                     raise KernelError("WV-RUNTIME-EVENT")
+                if not inside or handles(nodes[node_of(current)], current, event.data.get("effect", "unknown")):
+                    reported_failure(nodes[node_of(current)], current, event)
                 interim = current_state.incidents.get(f"{current}:{generation}")
                 if interim is not None and interim.code != "WV-TASK-FAILED":
                     raise KernelError("WV-RUNTIME-STATE")
@@ -1569,8 +1754,13 @@ def _advance_owned(
             node = nodes[node_of(current)]
             suffix = loop_suffix(current)
             if current in failing:
-                # Its evaluation failed in an earlier pass of this event: the step fails its transaction instead.
-                route_failure(current, failing[current], "none")
+                # Its evaluation failed in an earlier pass of this event: nothing it would have done happens. Its
+                # setting handles that, or its transaction does.
+                if failing[current] in HANDLED_KERNEL_CODES and handles(node, current, "none"):
+                    attempts = 0 if isinstance(node, (ActionNode, CallWorkflowNode)) else 1
+                    fail_step(node, current, step_error(failing[current], "not_started", attempts, current))
+                else:
+                    route_failure(current, failing[current], "none")
             elif not runs_now(node, current):
                 pass
             elif isinstance(node, StartNode):
@@ -1780,6 +1970,35 @@ def _advance_owned(
                     queue.append(join.node_id)
                 else:
                     spawn(join)
+            elif isinstance(node, JoinNode) and node.mode == "error":
+                owner = node.owner + suffix
+                path_join = current_state.joins.get(owner)
+                # A transaction's body join stays under the same key once the block succeeded.
+                if path_join is not None and (
+                    path_join.mode == "error" or not isinstance(nodes[node.owner], TransactionNode)
+                ):
+                    # The step's error path finished: the step ends failed, with the path's output.
+                    if (
+                        path_join.mode != "error"
+                        or path_join.status != "waiting"
+                        or path_join.completed_count != path_join.required_count
+                    ):
+                        raise KernelError("WV-RUNTIME-JOIN")
+                    value = current_state.branches[path_join.branches[0]].output
+                    measure_value(value)
+                    owner_node = nodes[node.owner]
+                    enclosing = frame(current_state, owner_node, owner)
+                    owned = current_state.steps if enclosing is None else enclosing.steps
+                    recorded = cast(JsonObject, cast(JsonObject, owned[owner_node.id])["error"])
+                    owned[owner_node.id] = {"output": value, "error": recorded}
+                    result.steps.append(StepChange(node_id=owner, status="failed", output=value, error=recorded))
+                    result.steps.append(StepChange(node_id=current, status="completed", output=value))
+                    result.commands.append(ControlCommand(kind="join", node_id=current))
+                    # The path's frame and join live only while it runs.
+                    del current_state.branches[path_join.branches[0]]
+                    del current_state.joins[owner]
+                # Without an error join the step succeeded and its error path never ran.
+                queue.append(successor(current))
             elif isinstance(node, JoinNode) and node.mode == "each":
                 owner = node.owner + suffix
                 loop_node = cast(ForEachNode, nodes[node.owner])
@@ -1828,15 +2047,23 @@ def _advance_owned(
                     # A clean rollback fails the block: with the code of the fail step that asked for it, or as undone.
                     why = transaction.cause
                     asked = nodes.get(node_of(why.instance_key)) if why is not None else None
+                    asked_to = False
                     if isinstance(asked, FailNode) and why is not None and why.code == asked.code:
                         failure = {"code": asked.code, "message": asked.message}
+                        asked_to = True
                     else:
                         failure = {"code": "WV-TXN-ROLLED-BACK", "message": TRANSACTION_MESSAGES["WV-TXN-ROLLED-BACK"]}
                     current_state.joins[owner] = join.model_copy(update={"status": "terminated"})
-                    current = owner
-                    end_run("failed", failure["code"], cast(JsonObject, failure))
-                    if current_state.status in RUN_TERMINAL:
-                        return checkpoint(result.model_copy(update={"state": current_state}))
+                    block = cast(TransactionNode, nodes[node.owner])
+                    if not asked_to and block.on_error is not None and current_state.ending is None:
+                        # The block's setting handles a clean rollback: nothing it did remains applied.
+                        rolled = step_error(failure["code"], "failed", 1, owner, message=failure["message"])
+                        fail_step(block, owner, rolled)
+                    else:
+                        current = owner
+                        end_run("failed", failure["code"], cast(JsonObject, failure))
+                        if current_state.status in RUN_TERMINAL:
+                            return checkpoint(result.model_copy(update={"state": current_state}))
                 else:
                     raise KernelError("WV-RUNTIME-JOIN")
             elif isinstance(node, JoinNode):
@@ -1962,8 +2189,12 @@ def _advance_owned(
             or code.startswith("WV-SCHEMA-")
             or code in STEP_FAILURE_CODES
         )
-        if step_failure and current not in failing and in_transaction(txns, current):
-            # A step inside a transaction failed: reduce the event again, failing that step instead of evaluating it.
+        failed = nodes.get(node_of(current)) if cursor.admitted else None
+        # Only a step evaluated after the event was admitted is handled; a result refused while admitting it ran.
+        handled = code in HANDLED_KERNEL_CODES and isinstance(failed, HandlesErrors) and failed.on_error is not None
+        if current not in failing and ((step_failure and in_transaction(txns, current)) or handled):
+            # A step failed: reduce the event again, failing that step instead of evaluating it. Its setting or its
+            # transaction then decides what follows.
             fresh = Transition(state=cursor.origin.model_copy(deep=True))
             growing = growing_containers.get()
             if growing is not None:
