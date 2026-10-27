@@ -7347,13 +7347,12 @@ export class App implements CanvasHost {
   }
   /**
    * Execute workflow: the editor bar, the trigger's button, Ctrl/Cmd+Enter
-   * on the canvas. With breakpoints, or waits that don't advance by
-   * themselves, it runs as a session the run log steps through.
+   * on the canvas. With breakpoints it runs as a session the run log steps
+   * through. Waits always advance in Studio for now ("Skip the wait" is
+   * still to come), so test data that keeps them waiting starts none.
    */
   executeWorkflow(): void {
-    const stepThrough =
-      this.breakpoints().size > 0 ||
-      this.testData?.data().waits?.autoAdvance === false;
+    const stepThrough = this.breakpoints().size > 0;
     if (stepThrough) void this.startSession();
     else void this.executeIn({ mode: "workflow" });
   }
