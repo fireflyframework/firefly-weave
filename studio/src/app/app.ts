@@ -341,6 +341,8 @@ const busyLabels: Record<string, string> = {
   validate: "Validating…",
   simulate: "Simulating…",
 };
+/** The runs Home shows from each of its lists. */
+const HOME_RUNS = 5;
 /** The narrowest window that shows the editor's navigation in full. */
 const EDITOR_NAV_FULL_MIN = 900;
 /** The inspector's width: 360–480 px by default, at most 640 px. */
@@ -6600,14 +6602,15 @@ export class App implements CanvasHost {
       );
     if (this.can("run.read")) {
       void this.loadWorkflowVersions();
+      // Home shows five runs of each list: it reads no more, so opening it stays small however many runs exist.
       jobs.push(
-        this.api.page("runs", true).then((page) => {
+        this.api.page("runs", true, undefined, {}, HOME_RUNS).then((page) => {
           this.rememberRuns(page.items);
-          if (current()) this.homeRuns = page.items.slice(0, 5);
+          if (current()) this.homeRuns = page.items.slice(0, HOME_RUNS);
         }),
         Promise.all(
           ["failed", "waiting"].map((status) =>
-            this.api.page("runs", true, undefined, { status }),
+            this.api.page("runs", true, undefined, { status }, HOME_RUNS),
           ),
         ).then(([failedPage, waitingPage]) => {
           failed = failedPage.items.filter((r) =>
@@ -6629,9 +6632,11 @@ export class App implements CanvasHost {
     if (!current()) return;
     this.homeAttention = [
       ...ready.slice(0, 5).map((record) => ({ kind: "task" as const, record })),
-      ...failed.slice(0, 5).map((record) => ({ kind: "run" as const, record })),
+      ...failed
+        .slice(0, HOME_RUNS)
+        .map((record) => ({ kind: "run" as const, record })),
       ...waiting
-        .slice(0, 5)
+        .slice(0, HOME_RUNS)
         .map((record) => ({ kind: "run" as const, record })),
     ];
     for (const result of results)
