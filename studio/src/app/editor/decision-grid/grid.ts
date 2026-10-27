@@ -23,6 +23,7 @@ SPDX-License-Identifier: Apache-2.0
 // after that is kept in the draft a moment later.
 import {
   ChangeDetectionStrategy,
+  ChangeDetectorRef,
   Component,
   type DoCheck,
   DestroyRef,
@@ -51,12 +52,22 @@ import {
   type ColumnRequest,
 } from "./column-dialog";
 import { gridProblems, type GridProblem } from "./grid-checks";
-import { printResult } from "./result-cells";
+import {
+  GridHistory,
+  moveCursor,
+  parsePaste,
+  pasteInto,
+  type CursorCommand,
+} from "./grid-keys";
+import { commandFor, eventCombo, KEY_PLATFORM } from "../state/keymap";
+import { parseResult, printResult } from "./result-cells";
 import {
   addInputColumn,
   addResultColumn,
   addRule,
+  duplicateRule,
   gridOf,
+  moveRule,
   removeInputColumn,
   removeResultColumn,
   removeRule,
@@ -66,6 +77,7 @@ import {
   setCondition,
   setHitPolicy,
   setInputColumnType,
+  setResult,
   type GridColumn,
   type GridView,
   type HitPolicy,
@@ -122,6 +134,7 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
   private readonly element = inject<ElementRef<HTMLElement>>(ElementRef);
   private readonly injector = inject(Injector);
   private readonly lifetime = inject(DestroyRef);
+  private readonly changes = inject(ChangeDetectorRef);
 
   /** The table the grid shows and edits. */
   readonly spec = signal<TableSpec | null>(null);
@@ -171,6 +184,8 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
   /** The draft a first change is starting, until the step moves to it. */
   private starting: Promise<string | null> | null = null;
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The grid's own undo history, apart from the workflow's. */
+  private readonly history = new GridHistory();
 
   constructor() {
     this.lifetime.onDestroy(() => void this.flush());
@@ -194,6 +209,7 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
       this.shownFor = uses;
       const spec = specOf(this.context().tables?.document(uses) ?? null);
       this.spec.set(spec ? structuredClone(spec) : null);
+      this.history.clear();
       this.flagged.set(new Map());
       this.editing.set(null);
       this.notice.set(null);
@@ -381,15 +397,16 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
     const cursor = this.cursor();
     return cursor.row === row && cursor.col === col;
   }
+  /** Moves the cursor and focus at once, so keys typed right after land in the new cell. */
   focusCell(row: number, col: number) {
     this.cursor.set({ row, col });
-    afterNextRender(
-      () =>
-        this.element.nativeElement
-          .querySelector<HTMLElement>(`[data-cell="${row}:${col}"]`)
-          ?.focus(),
-      { injector: this.injector },
-    );
+    const find = () =>
+      this.element.nativeElement.querySelector<HTMLElement>(
+        `[data-cell="${row}:${col}"]`,
+      );
+    const cell = find();
+    if (cell) cell.focus();
+    else afterNextRender(() => find()?.focus(), { injector: this.injector });
   }
   back() {
     void this.flush();
@@ -403,11 +420,16 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
   editable(row: number, col: number): boolean {
     const column = this.cols()[col];
     if (!column || this.readOnly()) return false;
-    if (this.isOtherwise(row)) return false;
+    if (this.isOtherwise(row))
+      return (
+        column.kind === "result" &&
+        !this.mergedResults(row) &&
+        !this.isFormula(row, col)
+      );
     if (column.kind === "name") return true;
     if (column.kind === "input")
       return !this.merged(row) && column.column.type !== null;
-    return false;
+    return !this.mergedResults(row) && !this.isFormula(row, col);
   }
   startEdit(row: number, col: number, typed?: string) {
     if (!this.editable(row, col)) return;
@@ -415,17 +437,15 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
     const original = shown === "-" ? "" : shown;
     this.cursor.set({ row, col });
     this.editing.set({ row, col, text: typed ?? original, original });
-    afterNextRender(
-      () => {
-        const field =
-          this.element.nativeElement.querySelector<HTMLInputElement>(
-            ".dg-cell-input",
-          );
-        field?.focus();
-        if (typed === undefined) field?.select();
-      },
-      { injector: this.injector },
-    );
+    // Drawn now, so the keys typed next go into the field.
+    this.changes.detectChanges();
+    const field =
+      this.element.nativeElement.querySelector<HTMLInputElement>(
+        ".dg-cell-input",
+      );
+    field?.focus();
+    if (typed === undefined) field?.select();
+    else field?.setSelectionRange(typed.length, typed.length);
   }
   editInput(event: Event) {
     const editing = this.editing();
@@ -455,7 +475,7 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
     if (column.kind === "name") {
       flagged.delete(key);
       this.flagged.set(flagged);
-      this.apply(renameRule(spec, row, text.trim()));
+      this.apply(renameRule(spec, row, text.trim()), key);
       return true;
     }
     if (column.kind === "input") {
@@ -483,10 +503,34 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
           column.index,
           reading.kind === "empty" ? null : reading.expression,
         ),
+        key,
       );
       return true;
     }
-    return false;
+    const reading = parseResult(text, column.column);
+    if (reading.kind === "error" || reading.kind === "formula") {
+      flagged.set(key, {
+        text,
+        message:
+          reading.kind === "error"
+            ? reading.message
+            : "Write a formula in the formula editor.",
+      });
+      this.flagged.set(flagged);
+      return false;
+    }
+    flagged.delete(key);
+    this.flagged.set(flagged);
+    this.apply(
+      setResult(
+        spec,
+        this.isOtherwise(row) ? "otherwise" : row,
+        column.index,
+        reading.kind === "empty" ? undefined : reading.expression,
+      ),
+      key,
+    );
+    return true;
   }
   /** Escape on a flagged cell gives back the last cell that was written. */
   restore(row: number, col: number) {
@@ -500,9 +544,10 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
 
   // -------------------------------------------------------------- writing
   /** Applies an edit: in the draft, or by starting the draft of the next version first. */
-  apply(next: TableSpec) {
+  apply(next: TableSpec, key = "command", record = true) {
     const before = this.spec();
     if (!before || next === before || this.readOnly()) return;
+    if (record) this.history.record(before, key, Date.now());
     this.spec.set(next);
     const where = this.where();
     if (where === "draft" || this.starting) return this.scheduleSave();
@@ -692,29 +737,201 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
   }
 
   // ----------------------------------------------------------------- keys
+  /** The grid's keys, from the keymap's decision grid rows; Ctrl/Cmd+Enter does nothing here. */
   cellKey(event: KeyboardEvent, row: number, col: number) {
     const editing = this.editing();
     if (editing) {
-      if (event.key === "Enter") {
-        event.preventDefault();
-        event.stopPropagation();
-        if (this.commitEdit()) this.focusCell(row, col);
-        else this.focusCell(row, col);
+      if (event.key === "Enter" && !event.altKey) {
+        this.handled(event);
+        this.commitEdit();
+        this.focusCell(row, col);
       } else if (event.key === "Escape") {
-        event.preventDefault();
-        event.stopPropagation();
+        this.handled(event);
         this.cancelEdit();
+      } else if (event.key === "Tab") {
+        this.handled(event);
+        this.commitEdit();
+        this.move(event.shiftKey ? "previousCell" : "nextCell", row, col);
       }
       return;
     }
-    if (event.key === "Enter" || event.key === "F2") {
-      event.preventDefault();
-      event.stopPropagation();
-      this.startEdit(row, col);
-    } else if (event.key === "Escape") {
-      event.preventDefault();
-      event.stopPropagation();
+    if (event.key === "Escape") {
+      this.handled(event);
       if (!this.restore(row, col)) this.focusBack();
+      return;
     }
+    const command = commandFor(
+      eventCombo(event, KEY_PLATFORM),
+      "decisionGrid",
+      { platform: KEY_PLATFORM },
+    );
+    switch (command) {
+      case "cellUp":
+      case "cellDown":
+      case "cellLeft":
+      case "cellRight":
+      case "nextCell":
+      case "previousCell":
+        this.handled(event);
+        return this.move(command, row, col);
+      case "editCell":
+        this.handled(event);
+        return this.startEdit(row, col);
+      case "clearCell":
+        this.handled(event);
+        return this.clearCell(row, col);
+      case "addRule":
+        this.handled(event);
+        return this.addRuleAfter(row);
+      case "moveRuleUp":
+      case "moveRuleDown":
+        this.handled(event);
+        return this.moveRuleBy(row, col, command === "moveRuleUp" ? -1 : 1);
+      case "duplicateRule":
+        this.handled(event);
+        return this.duplicateAt(row, col);
+      case "undo":
+      case "redo":
+        this.handled(event);
+        return this.step(command);
+    }
+    // Typing a character starts editing with it, as a spreadsheet does.
+    if (
+      event.key.length === 1 &&
+      !event.ctrlKey &&
+      !event.metaKey &&
+      !event.altKey &&
+      this.editable(row, col)
+    ) {
+      this.handled(event);
+      this.startEdit(row, col, event.key);
+    }
+  }
+  private handled(event: KeyboardEvent) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+  private move(command: CursorCommand, row: number, col: number) {
+    const view = this.view();
+    if (!view) return;
+    const rows = view.rows.length;
+    const otherwise = !!view.otherwise;
+    const drawn = this.rowCols(row);
+    // The cell that covers a column in a row (a merged cell covers several).
+    const covering = (r: number, c: number) =>
+      this.rowCols(r)
+        .filter((index) => index <= c)
+        .at(-1) ?? 0;
+    const horizontal = command !== "cellUp" && command !== "cellDown";
+    const next = moveCursor(
+      horizontal
+        ? { row, column: Math.max(0, drawn.indexOf(col)) }
+        : { row, column: col },
+      command,
+      {
+        rows,
+        columns: horizontal ? drawn.length : this.cols().length,
+        otherwise,
+      },
+    );
+    if (next === "leave-forward")
+      return this.element.nativeElement
+        .querySelector<HTMLElement>(".dg-add-rule")
+        ?.focus();
+    if (next === "leave-backward")
+      return [
+        ...this.element.nativeElement.querySelectorAll<HTMLElement>(
+          ".dg-toolbar button:not([disabled])",
+        ),
+      ]
+        .at(-1)
+        ?.focus();
+    if (!horizontal) return this.focusCell(next.row, covering(next.row, col));
+    if (next.row === row) return this.focusCell(row, drawn[next.column]);
+    // Wrapped to the next or previous row.
+    const there = this.rowCols(next.row);
+    this.focusCell(
+      next.row,
+      command === "previousCell" ? (there.at(-1) ?? 0) : (there[0] ?? 0),
+    );
+  }
+  clearCell(row: number, col: number) {
+    if (!this.editable(row, col)) return;
+    const column = this.cols()[col];
+    const spec = this.spec();
+    if (!column || !spec || column.kind === "name") return;
+    this.restore(row, col);
+    this.apply(
+      column.kind === "input"
+        ? setCondition(spec, row, column.index, null)
+        : setResult(
+            spec,
+            this.isOtherwise(row) ? "otherwise" : row,
+            column.index,
+            undefined,
+          ),
+      this.key(row, col),
+    );
+  }
+  private moveRuleBy(row: number, col: number, delta: -1 | 1) {
+    const spec = this.spec();
+    if (!spec || this.isOtherwise(row)) return;
+    const next = moveRule(spec, row, delta);
+    if (next === spec) return;
+    this.apply(next);
+    this.say(`Moved rule ${row + 1} to position ${row + delta + 1}.`);
+    this.focusCell(row + delta, col);
+  }
+  private duplicateAt(row: number, col: number) {
+    const spec = this.spec();
+    if (!spec || this.isOtherwise(row)) return;
+    this.apply(duplicateRule(spec, row));
+    this.focusCell(row + 1, col);
+  }
+  private step(command: "undo" | "redo") {
+    const current = this.spec();
+    if (!current) return;
+    const other =
+      command === "undo"
+        ? this.history.undo(current)
+        : this.history.redo(current);
+    if (!other)
+      return this.say(
+        command === "undo"
+          ? "Nothing to undo in the table."
+          : "Nothing to redo in the table.",
+      );
+    this.flagged.set(new Map());
+    this.apply(other, command, false);
+  }
+  private say(text: string) {
+    this.announcement.set("");
+    setTimeout(() => {
+      if (!this.lifetime.destroyed) this.announcement.set(text);
+    });
+  }
+  /** Pasting tab-separated cells fills a block from the focused cell, as one undo step. */
+  paste(event: ClipboardEvent) {
+    if (this.editing() || this.readOnly()) return;
+    const text = event.clipboardData?.getData("text/plain") ?? "";
+    const spec = this.spec();
+    const view = this.view();
+    if (!text || !spec || !view) return;
+    event.preventDefault();
+    const cursor = this.cursor();
+    const { spec: next, flagged } = pasteInto(
+      spec,
+      { row: cursor.row, column: cursor.col },
+      parsePaste(text),
+      view,
+    );
+    const marks = new Map(this.flagged());
+    for (const problem of flagged)
+      marks.set(this.key(problem.row, problem.column), {
+        text: problem.text,
+        message: problem.message,
+      });
+    this.flagged.set(marks);
+    this.apply(next, "paste");
   }
 }

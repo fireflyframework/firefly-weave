@@ -84,6 +84,7 @@ SPDX-License-Identifier: Apache-2.0
         class="dg-grid"
         role="grid"
         [attr.aria-label]="gridLabel()"
+        (paste)="paste($event)"
         [attr.aria-rowcount]="rowCount() + 1"
         [attr.aria-colcount]="cols().length + 1"
         [style.grid-template-columns]="template()"

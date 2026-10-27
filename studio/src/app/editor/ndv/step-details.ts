@@ -1730,9 +1730,13 @@ export class StepDetails {
     if (event.key === "Tab") return this.trapTab(event);
     if (event.key === "Escape") return this.escape(event);
     const target = event.target as HTMLElement;
-    const surfaces = target.closest('[data-mode="fixed"]')
-      ? (["fixedField", "stepDetails"] as const)
-      : (["stepDetails"] as const);
+    // The most specific surface first: the decision grid binds no
+    // Ctrl/Cmd+Enter, so executing never starts from it.
+    const surfaces = target.closest("weave-decision-grid")
+      ? (["decisionGrid", "stepDetails"] as const)
+      : target.closest('[data-mode="fixed"]')
+        ? (["fixedField", "stepDetails"] as const)
+        : (["stepDetails"] as const);
     const command = commandFor(eventCombo(event, KEY_PLATFORM), surfaces, {
       platform: KEY_PLATFORM,
       typing: isTyping(target),

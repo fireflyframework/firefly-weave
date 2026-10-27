@@ -18,6 +18,14 @@ SPDX-License-Identifier: Apache-2.0
 // Published decision tables on the mocked platform, and the grid that edits
 // them in step details.
 import { expect, type Locator, type Page } from "@playwright/test";
+import { parse } from "yaml";
+import { connected } from "./support";
+import {
+  openStepFixture,
+  withLanguageFeatures,
+  yamlFile,
+  type StepDetailsPage,
+} from "./step-details-po";
 
 export interface TableDocumentFixture {
   apiVersion: "weave/v1alpha1";
@@ -207,4 +215,56 @@ export class DecisionGridPage {
     await this.root.getByRole("button", { name: "Back to the step" }).click();
     await expect(this.root).toHaveCount(0);
   }
+}
+
+/** A workflow whose one step uses payment-policy@1.2.0. */
+export const ordersWorkflow = yamlFile(
+  "orders.yaml",
+  `apiVersion: weave/v1alpha1
+kind: Workflow
+metadata: { name: orders, version: 1.0.0 }
+spec:
+  inputSchema:
+    type: object
+    properties:
+      amount: { type: number }
+      tier: { type: string }
+  outputSchema: { type: object }
+  steps:
+    - id: score
+      kind: decisionTable
+      uses: payment-policy@1.2.0
+      with: { literal: {} }
+  output: { literal: {} }
+`,
+);
+
+/** Opens that workflow connected, its step's details, and the grid on payment-policy 1.2.0. */
+export async function openPaymentGrid(
+  page: Page,
+): Promise<{ details: StepDetailsPage; grid: DecisionGridPage }> {
+  const details = await openStepFixture(page, ordersWorkflow, async (p) => {
+    const result = await connected(p);
+    await withLanguageFeatures(p);
+    return result;
+  });
+  await routeTables(page, [paymentPolicy("1.2.0")]);
+  await details.open("score");
+  const grid = new DecisionGridPage(page);
+  await grid.open();
+  return { details, grid };
+}
+
+/** The table's document as the Table field's viewer shows it. */
+export async function viewedTable(page: Page, details: StepDetailsPage) {
+  await details.field("table").getByRole("button", { name: "Open" }).click();
+  const viewer = page.getByRole("dialog", { name: /^View payment-policy@/ });
+  const text = await viewer.locator("pre").innerText();
+  await viewer.getByRole("button", { name: "Close" }).click();
+  return parse(text) as {
+    metadata: { version: string };
+    spec: Record<string, unknown> & {
+      rules: { id: string; when: unknown; output: unknown }[];
+    };
+  };
 }
