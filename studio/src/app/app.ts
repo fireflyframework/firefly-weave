@@ -7520,6 +7520,8 @@ export class App implements CanvasHost {
   }
   /** Changes whenever the last results change. */
   runStamp(): unknown {
+    // Read first, so a watcher started before Execute loaded sees it arrive.
+    this.testDataReady();
     return this.execution?.results() ?? null;
   }
   /** The line under a step's tile: what its pin or its last result holds ("3 fields"), or null. */
@@ -7531,8 +7533,10 @@ export class App implements CanvasHost {
     );
     if (!tools || !step) return null;
     const pin = this.testData?.data().pins?.[stepId];
-    const result = this.execution?.results()?.steps[stepId];
-    // Only a step with data has a line: a pin, or a result of the last execution.
+    const kept = this.execution?.results()?.steps[stepId];
+    // Only a step with data has a line: a pin, or a step the last execution
+    // finished (a signal still waiting hasn't received anything).
+    const result = kept?.status === "completed" ? kept : undefined;
     if (!pin && !result) return null;
     const output = pin ? (pin.output as Json) : result?.output;
     return tools.summaryLine(
@@ -7541,6 +7545,15 @@ export class App implements CanvasHost {
       // The path it took, as kept with its result (also after a reload).
       tools.branchVariables(this.execution?.results() ?? null, stepId),
       this.model.definition,
+    );
+  }
+  /** The last execution reached this step (it finished, failed or waits there); pins don't count. */
+  ranInRun(stepId: string): boolean {
+    const steps = this.execution?.results()?.steps ?? {};
+    return Object.entries(steps).some(
+      ([key, result]) =>
+        (key === stepId || key.startsWith(`${stepId}[`)) &&
+        result.status !== "running",
     );
   }
   /** Why the simulated run stopped at a step (it needs test data, a path it didn't take), or null. */

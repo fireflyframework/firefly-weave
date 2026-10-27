@@ -119,6 +119,8 @@ export interface CanvasHost {
   runNote?(stepId: string): string | null;
   /** The code and message of the step a simulated run failed at, or null. */
   runFailure?(stepId: string): { code?: string; message?: string } | null;
+  /** The last execution reached this step (finished, failed or waiting there); pins don't count. */
+  ranInRun?(stepId: string): boolean;
   /** Changes whenever the last results change (the summary lines follow it). */
   runStamp?(): unknown;
   /** L: shows or hides the run log. */

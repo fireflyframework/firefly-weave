@@ -81,4 +81,36 @@ describe("Execute workflow", () => {
       expect(announced.map((a) => a.text)).toEqual([words]);
     }
   });
+
+  it("gives a tile line only to a finished result or a pin, and frames only steps that ran", async () => {
+    const tools = await import("../src/app/editor/state/test-data-tools");
+    const steps = [
+      { id: "paid", kind: "signal", name: "order-paid" },
+      { id: "ask", kind: "humanTask" },
+      { id: "shape", kind: "transform", value: { literal: {} } },
+      { id: "pinned", kind: "transform", value: { literal: {} } },
+    ];
+    const app = Object.create(App.prototype) as App;
+    Object.assign(app, {
+      tools,
+      model: { definition: { spec: { steps } } },
+      testData: { data: () => ({ pins: { pinned: { output: { a: 1 } } } }) },
+      execution: {
+        results: () => ({
+          steps: {
+            paid: { status: "waiting", execution: "x" },
+            ask: { status: "waiting", execution: "x" },
+            shape: { status: "completed", execution: "x", output: { a: 1 } },
+          },
+        }),
+      },
+    });
+    expect(app.summaryOf("paid")).toBeNull();
+    expect(app.summaryOf("ask")).toBeNull();
+    expect(app.summaryOf("shape")).toBe("1 field");
+    expect(app.summaryOf("pinned")).toBe("1 field");
+    expect(
+      ["paid", "ask", "shape", "pinned"].filter((id) => app.ranInRun(id)),
+    ).toEqual(["paid", "ask", "shape"]);
+  });
 });
