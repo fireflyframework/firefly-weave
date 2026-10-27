@@ -3798,7 +3798,10 @@ spec:
       }),
     );
     await page.getByRole("button", { name: "Refresh", exact: true }).click();
-    await expect(page.locator("svg.chart-frame")).toHaveCount(2);
+    // The first statistics read waits a few seconds after the summary.
+    await expect(page.locator("svg.chart-frame")).toHaveCount(2, {
+      timeout: 15_000,
+    });
     await shot("155-overview-statistics", { end: ".page-content" });
   },
 

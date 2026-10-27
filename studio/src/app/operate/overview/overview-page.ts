@@ -71,8 +71,9 @@ import {
   type TileId,
 } from "./overview-model";
 
-// The first statistics read waits this long after the summary.
-const STATISTICS_DELAY_MS = 1_500;
+// The first statistics read waits this long after the summary, so the page's opening reads (Home's too,
+// when it was just open) have finished: a poll's byte budget counts each refresh on its own.
+const STATISTICS_DELAY_MS = 5_000;
 
 @Component({
   selector: "weave-overview-page",

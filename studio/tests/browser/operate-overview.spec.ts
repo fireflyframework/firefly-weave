@@ -1229,7 +1229,8 @@ test.describe("run statistics", () => {
       const requests = await statistics(page);
       await open(page);
       const lines = page.locator("li.figure weave-sparkline svg");
-      await expect(lines).toHaveCount(5);
+      // The first statistics read waits a few seconds after the summary.
+      await expect(lines).toHaveCount(5, { timeout: 15_000 });
       await expect(
         page.getByRole("img", {
           name: "Active runs over the last hour: from 0 to 3",
@@ -1320,7 +1321,7 @@ test.describe("run statistics", () => {
     await overview(page, every, [() => ({ json: summary({ runs_24h: day }) })]);
     const requests = await statistics(page, 501);
     await open(page);
-    await expect.poll(() => requests.length).toBe(2);
+    await expect.poll(() => requests.length, { timeout: 15_000 }).toBe(2);
     await expect(page.locator("li.figure")).toHaveCount(5);
     await expect(page.locator("li.figure weave-sparkline")).toHaveCount(0);
     await expect(
@@ -1368,7 +1369,7 @@ test.describe("run statistics", () => {
     hold!();
     await expect(
       band.getByRole("img", { name: "Runs per hour", exact: true }),
-    ).toBeVisible();
+    ).toBeVisible({ timeout: 15_000 });
     // The next summary could not compute the day: the band says so instead of disappearing.
     fail = true;
     await page.getByRole("button", { name: "Refresh", exact: true }).click();
@@ -1393,7 +1394,9 @@ test.describe("run statistics", () => {
         asked.push(Date.now());
     });
     await open(page);
-    await expect(page.locator("li.figure weave-sparkline svg")).toHaveCount(5);
+    await expect(page.locator("li.figure weave-sparkline svg")).toHaveCount(5, {
+      timeout: 15_000,
+    });
     // A separate refresh: the poll budget counts it on its own, not with the summary and the page's first reads.
     expect(Math.min(...asked) - summaries[0]).toBeGreaterThanOrEqual(1_000);
     expect(requests).toHaveLength(2);
