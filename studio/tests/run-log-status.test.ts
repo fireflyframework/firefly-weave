@@ -40,6 +40,9 @@ describe("the run log's status", () => {
     );
     expect(
       blocked("missing_mock", "lookup", "Step lookup needs test data."),
-    ).toBe("Stopped at lookup");
+    ).toBe("lookup needs test data");
+    expect(
+      blocked("path", "notify", "With this test data, route takes path 2."),
+    ).toBe("Stopped at notify");
   });
 });

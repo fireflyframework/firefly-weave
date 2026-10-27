@@ -96,6 +96,8 @@ export function runStatus(
   if (blocked?.reason === "signal")
     return `Waiting for ${blocked.message.replace(/^Send signal /, "")}`;
   if (blocked?.reason === "human") return `Waiting for ${blocked.nodeId}`;
+  if (blocked?.reason === "missing_mock")
+    return `${blocked.nodeId} needs test data`;
   if (blocked) return `Stopped at ${blocked.nodeId}`;
   if (response.status === "failed") {
     const failed = response.trace.find((entry) => entry.status === "failed");
