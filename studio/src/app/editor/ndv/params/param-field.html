@@ -152,7 +152,9 @@ SPDX-License-Identifier: Apache-2.0
                   class="param-action"
                   [attr.data-action]="action.id"
                   [attr.aria-disabled]="why ? 'true' : null"
-                  [attr.aria-describedby]="why ? ids.control + '-' + action.id : null"
+                  [attr.aria-describedby]="
+                    why ? ids.control + '-' + action.id : null
+                  "
                   [attr.title]="why"
                   (click)="runAction(action, reason)"
                 >
