@@ -19,7 +19,11 @@ SPDX-License-Identifier: Apache-2.0
 // own host code (localAuthoring), and the controls Execute adds.
 import { expect, type Locator, type Page } from "@playwright/test";
 import { localAuthoring, type LocalCalls } from "./local-authoring";
-import { openStepFixture, type WorkflowFile } from "./step-details-po";
+import {
+  openStepFixture,
+  yamlFile,
+  type WorkflowFile,
+} from "./step-details-po";
 import { outputPane } from "./test-data-po";
 import { resolve } from "node:path";
 import type { StepDetailsPage } from "./step-details-po";
@@ -112,4 +116,100 @@ export async function validateWith(page: Page, diagnostics: object[]) {
   const dismiss = page.getByRole("button", { name: "Dismiss notification" });
   await expect(dismiss.first()).toBeVisible();
   await dismiss.first().click();
+}
+
+// Small workflows the tour and the geometry checks execute.
+export const EXECUTE_CHAIN = yamlFile(
+  "chain.yaml",
+  `apiVersion: weave/v1alpha1
+kind: Workflow
+metadata: {name: chain, version: 1.0.0}
+spec:
+  inputSchema:
+    type: object
+    properties:
+      amount: {type: number, title: Amount}
+  outputSchema: {}
+  steps:
+    - id: first
+      kind: transform
+      value: {object: {amount: {ref: /input/amount}}}
+    - id: second
+      kind: transform
+      value: {object: {copied: {ref: /steps/first/output/amount}}}
+    - id: third
+      kind: transform
+      value: {object: {again: {ref: /steps/second/output/copied}}}
+  output: {literal: null}
+`,
+);
+export const EXECUTE_ASKING = yamlFile(
+  "asking.yaml",
+  `apiVersion: weave/v1alpha1
+kind: Workflow
+metadata: {name: asking, version: 1.0.0}
+spec:
+  inputSchema: {type: object}
+  outputSchema: {}
+  steps:
+    - {id: pause, kind: wait, durationSeconds: 300}
+    - id: paid
+      kind: signal
+      name: order-paid
+      timeoutSeconds: 600
+      payloadSchema: {type: object}
+  output: {literal: null}
+`,
+);
+export const EXECUTE_ROWS = yamlFile(
+  "rows.yaml",
+  `apiVersion: weave/v1alpha1
+kind: Workflow
+metadata: {name: rows, version: 1.0.0}
+spec:
+  inputSchema: {type: object}
+  outputSchema: {}
+  steps:
+    - id: rows
+      kind: transform
+      value: {literal: [{id: 1, tier: gold, amount: 1500}, {id: 2, tier: silver, amount: 80}, {id: 3, tier: silver, amount: 240}]}
+  output: {literal: null}
+`,
+);
+export const EXECUTE_ROUTED = yamlFile(
+  "routed.yaml",
+  `apiVersion: weave/v1alpha1
+kind: Workflow
+metadata: {name: routed, version: 1.0.0}
+spec:
+  inputSchema:
+    type: object
+    properties:
+      amount: {type: number, title: Amount}
+  outputSchema: {}
+  steps:
+    - id: route
+      kind: switch
+      cases:
+        - when: {op: {name: gte, args: [{ref: /input/amount}, {literal: 1}]}}
+          steps: []
+          output: {literal: {tier: big}}
+        - when: {op: {name: gt, args: [{ref: /input/amount}, {literal: 1000}]}}
+          steps: []
+          output: {literal: null}
+      default: {steps: [], output: {literal: null}}
+  output: {literal: null}
+`,
+);
+/** Execute workflow from the editor bar, or its workflow-commands menu on narrow windows. */
+export async function executeWorkflowIn(page: Page) {
+  const button = page
+    .locator(".editor-bar")
+    .getByRole("button", { name: "Execute workflow" });
+  if (await button.isVisible()) return button.click();
+  await page
+    .getByRole("toolbar", { name: "Workflow commands" })
+    .getByRole("button", { name: "More", exact: true })
+    .click();
+  await page.getByRole("menuitem", { name: /^Execute workflow/ }).click();
 }

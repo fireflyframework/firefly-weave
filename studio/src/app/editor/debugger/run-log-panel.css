@@ -30,9 +30,18 @@ SPDX-License-Identifier: Apache-2.0
   box-sizing: border-box;
   border-left: 1px solid var(--border);
   background: var(--raised);
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+/* A short sheet scrolls as a whole; the head stays in view. */
+:host > * {
+  flex: none;
 }
 .run-log-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--raised);
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -105,8 +114,8 @@ SPDX-License-Identifier: Apache-2.0
   justify-self: start;
 }
 .run-log-list {
-  flex: 1;
-  min-height: 0;
+  flex: 1 1 0;
+  min-height: 96px;
   margin: 0;
   padding: var(--space-1) 0;
   overflow: auto;
@@ -176,7 +185,7 @@ SPDX-License-Identifier: Apache-2.0
     top: auto;
     left: 0;
     width: auto;
-    height: 40%;
+    height: var(--run-log-sheet, 40%);
     border-top: 1px solid var(--border);
     border-left: 0;
   }

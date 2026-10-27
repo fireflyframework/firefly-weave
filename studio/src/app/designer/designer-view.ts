@@ -232,11 +232,12 @@ import type { App } from "../app";
             <button
               type="button"
               class="primary execute-workflow"
+              aria-label="Execute workflow"
               title="Execute workflow (Ctrl/Cmd+Enter)"
               (click)="h.executeWorkflow()"
             >
               <weave-icon name="execute" /><span class="execute-label"
-                >Execute workflow</span
+                >Execute<span class="execute-label-rest"> workflow</span></span
               >
             </button>
           } @else {

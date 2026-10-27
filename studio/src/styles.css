@@ -3246,10 +3246,11 @@ details.disclosure[open] > summary::before {
     padding-right: 320px;
   }
 }
-/* Below 768 px it is a sheet under the canvas. */
+/* Below 768 px it is a sheet under the canvas, as tall as the space it leaves. */
 @media (max-width: 767px) {
   .canvas-panel.with-run-log {
-    padding-bottom: 40%;
+    --run-log-sheet: max(160px, 40vh);
+    padding-bottom: var(--run-log-sheet);
   }
 }
 /* Simulating: the workflow can't change until the simulation stops. */
@@ -4327,6 +4328,12 @@ kbd {
     display: inline-flex;
   }
 }
+/* Up to 1023 px the toolbar's Execute workflow reads Execute; its name stays whole. */
+@media (max-width: 1023px) {
+  .editor-toolbar .execute-label-rest {
+    display: none;
+  }
+}
 @media (max-width: 767px) {
   .editor-bar {
     padding: 8px 12px;
@@ -4568,6 +4575,7 @@ kbd {
     height: 10px;
   }
   .editor-toolbar .validate-label,
+  .editor-toolbar .execute-label,
   .editor-toolbar .save-label,
   .editor-toolbar weave-row-menu weave-icon {
     display: none;
