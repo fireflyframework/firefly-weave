@@ -382,6 +382,9 @@ weave-step-details {
   border-top-right-radius: 0;
   border-bottom-right-radius: 0;
   gap: var(--space-2);
+  /* Stop takes Execute step's place and size, so the menu half never moves. */
+  min-width: 10rem;
+  justify-content: center;
 }
 /* Unavailable, Execute step wears the disabled tokens, its menu half too;
    both stay focusable: the button explains why, the menu offers what can run. */
@@ -548,11 +551,13 @@ weave-step-details {
 }
 @media (max-width: 767px), (pointer: coarse) {
   .step-details :is(.sd-data-tabs, .sd-segments) button[role="tab"],
-  .sd-execute > button,
   .sd-execute .row-menu-toggle,
   .sd-actions > weave-row-menu .row-menu-toggle {
     min-height: var(--control-touch);
     min-width: var(--control-touch);
+  }
+  .sd-execute > button {
+    min-height: var(--control-touch);
   }
   .sd-separator {
     width: var(--control-touch);

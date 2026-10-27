@@ -551,6 +551,13 @@ weave-input-pane.is-compact .pane-source-field::before {
 .pane-notice .pane-empty-actions {
   justify-content: flex-start;
 }
+/* On a phone the empty state's answers stack, of equal width. */
+@media (max-width: 480px) {
+  .pane-empty-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
 /* The panes' own actions (Execute, Set test output, Stop): 44 px targets on touch. */
 @media (max-width: 767px), (pointer: coarse) {
   .pane-empty-actions > button {
