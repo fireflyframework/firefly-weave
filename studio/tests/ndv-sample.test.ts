@@ -27,6 +27,7 @@ import { withPin, emptyTestData } from "../src/app/editor/state/test-data-ops";
 import type { StoreBackend } from "../src/app/editor/state/browser-store";
 import { StructuredCanvasAdapter } from "../src/app/model";
 import { signal } from "@angular/core";
+import { formulaPreviews } from "../src/app/editor/formula/preview";
 import type { LastResults } from "../src/app/editor/state/last-results";
 
 beforeAll(() => loadKindRegistrations());
@@ -339,5 +340,47 @@ describe("test answers for signals and people", () => {
     expect(JSON.stringify(testData.data())).not.toContain("7731");
     expect(await sample.setScript(null)).toEqual({ ok: true });
     expect(testData.data().signals).toBeUndefined();
+  });
+});
+
+describe("what a step receives before it ran", () => {
+  it("is computed from the earlier steps' data when every one it reads has some", async () => {
+    const { host, testData, model } = setup();
+    // With the browser's formula previews, as step details mount them.
+    const controller: StepDetailsController = new StepDetailsController(
+      host,
+      () => 1000,
+      formulaPreviews(() => controller.previewData()),
+    );
+    model.insert("action", "root", undefined, {
+      id: "notify",
+      uses: "crm.lookup@1.0.0",
+      with: {
+        object: { customerId: { ref: "/steps/lookup/output/customerId" } },
+      },
+    });
+    expect(controller.ndvContext("notify").sample.resolvedInput()).toEqual({
+      state: "none",
+    });
+    const at = "2026-10-20T10:00:00Z";
+    await testData.change(
+      withPin(
+        emptyTestData(at),
+        "lookup",
+        {
+          output: { customerId: "c-7" },
+          source: "manual",
+          pinnedAt: at,
+          configHash: "fnv1a64:0000000000000001",
+          contractHash: "fnv1a64:0000000000000002",
+          upstreamHash: "fnv1a64:0000000000000003",
+        },
+        at,
+      ),
+      ["/pins/lookup"],
+    );
+    expect(
+      controller.ndvContext("notify").sample.resolvedInput(),
+    ).toMatchObject({ state: "available", value: { customerId: "c-7" } });
   });
 });

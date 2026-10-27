@@ -102,6 +102,7 @@ import {
 import {
   ndvRegistry,
   type Edit,
+  type Expression,
   type FormSpec,
   type Json,
   type KindContext,
@@ -1258,7 +1259,21 @@ export class StepDetailsController {
         resolvedInput: () => {
           // What the step received in the last execution (an action's input).
           const result = this.lastResult(target);
-          if (!result || result.input === undefined) return none;
+          if (!result || result.input === undefined) {
+            // Before it ran: what its input computes to from the data the
+            // earlier steps have (test input, pins, last results).
+            const input = step["with"];
+            if (!input || typeof input !== "object") return none;
+            const computed = ctx.evaluate(input as Expression, ["with"]);
+            return computed.ok && computed.value !== undefined
+              ? {
+                  state: "available" as const,
+                  value: computed.value,
+                  source: "simulated" as const,
+                  stale: null,
+                }
+              : none;
+          }
           const now = this.prints().get(target)?.execution;
           return {
             state: "available" as const,
