@@ -53,8 +53,8 @@ def test_statistics_are_registered_reads_that_need_status_read(identifier):
     assert (operation.method, operation.canonical_path) == ("GET", ENVIRONMENT + path)
     assert (operation.response, operation.query, operation.capability) == (response, query, "status.read")
     assert not operation.page and operation.request is None
-    # Published first; the statistics service starts serving them.
-    assert operation.served is False
+    assert operation.served is True
+    assert "501" not in spec()["paths"][operation.canonical_path]["get"]["responses"]
 
 
 @pytest.mark.parametrize("identifier", sorted(EXPECTED))

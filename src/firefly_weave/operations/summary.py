@@ -73,6 +73,7 @@ from firefly_weave.operations.compatibility import CompatibilityService
 from firefly_weave.operations.fact_reads import available
 from firefly_weave.operations.loop_health import LoopHealth, LoopSnapshot
 from firefly_weave.operations.permissions import target_permissions
+from firefly_weave.operations.statistics_reads import last_day
 from firefly_weave.persistence.uow import Transaction, UnitOfWork
 from firefly_weave.settings import Settings
 
@@ -408,6 +409,8 @@ class OperationsSummaryService:
                 await section(self._incidents) if reach.incidents else ForbiddenSection(state="forbidden")
             )
             attention = await section(lambda reader: self._attention(reader, reach))
+            # The last day's runs from run statistics: status.read is all it needs.
+            runs_24h = await section(lambda reader: last_day(reader.tx, observed_at))
         return OperationsSummary(
             observed_at=observed_at,
             api=self._api(scope),
@@ -417,6 +420,7 @@ class OperationsSummaryService:
             targets=targets,
             incidents=incidents,
             attention=attention,
+            runs_24h=runs_24h,
         )
 
     async def telemetry(self, actor: Principal, scope: Scope, *, context: AuditContext) -> OperationsTelemetry:

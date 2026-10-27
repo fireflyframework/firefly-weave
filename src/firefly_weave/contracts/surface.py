@@ -920,7 +920,6 @@ OPERATIONS = {
             StatisticsSeriesAnswer,
             "status.read",
             query=StatisticsSeriesQuery,
-            served=False,
         ),
         Operation(
             "run_statistics.workflows",
@@ -929,7 +928,6 @@ OPERATIONS = {
             WorkflowStatisticsAnswer,
             "status.read",
             query=StatisticsWorkflowsQuery,
-            served=False,
         ),
         Operation(
             "run_statistics.steps",
@@ -938,7 +936,6 @@ OPERATIONS = {
             StepStatisticsAnswer,
             "status.read",
             query=StatisticsStepsQuery,
-            served=False,
         ),
         Operation(
             "retention.plan",

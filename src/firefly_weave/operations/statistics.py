@@ -184,6 +184,8 @@ def fold_task_types(
 
 @dataclass
 class Cursor:
+    # The first bucket the rollup ever recomputed: figures before it are unknown, not zero.
+    covered_from: datetime | None
     rolled_until: datetime | None
     hours_until: datetime | None
     days_until: datetime | None
@@ -313,17 +315,19 @@ class StatisticsRepository:
             "VALUES(:tenant,:project,:environment) ON CONFLICT DO NOTHING"
         )
         (row,) = await self._rows(
-            "SELECT rolled_until,hours_until,days_until,sampled_until,complete_until FROM "
+            "SELECT covered_from,rolled_until,hours_until,days_until,sampled_until,complete_until FROM "
             f"operations_statistics_cursors WHERE {_SCOPE.format(alias='')} FOR UPDATE"
         )
         return Cursor(**row)
 
     async def save(self, cursor: Cursor) -> None:
         await self._execute(
-            "UPDATE operations_statistics_cursors SET rolled_until=:rolled_until,hours_until=:hours_until,"
+            "UPDATE operations_statistics_cursors SET covered_from=:covered_from,rolled_until=:rolled_until,"
+            "hours_until=:hours_until,"
             "days_until=:days_until,sampled_until=:sampled_until,complete_until=:complete_until WHERE "
             + _SCOPE.format(alias=""),
             {
+                "covered_from": cursor.covered_from,
                 "rolled_until": cursor.rolled_until,
                 "hours_until": cursor.hours_until,
                 "days_until": cursor.days_until,
@@ -509,6 +513,8 @@ async def recompute(tx: Transaction, now: datetime) -> Cursor:
     cursor = await statistics.cursor()
     lo, hi = window(now, cursor.rolled_until)
     await statistics.recompute(lo, hi)
+    if cursor.covered_from is None:
+        cursor.covered_from = lo
     if cursor.hours_until is None:
         cursor.hours_until = _floor(lo, HOUR)
     if cursor.days_until is None:

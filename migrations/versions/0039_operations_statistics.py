@@ -110,7 +110,7 @@ def upgrade() -> None:
         PRIMARY KEY({KEY},granularity,at,metric,label),
         FOREIGN KEY({KEY}) REFERENCES environments(tenant_id,project_id,id) ON DELETE CASCADE)""")
     op.execute(f"""CREATE TABLE operations_statistics_cursors(
-        {SCOPE_COLUMNS},rolled_until timestamptz,hours_until timestamptz,days_until timestamptz,
+        {SCOPE_COLUMNS},covered_from timestamptz,rolled_until timestamptz,hours_until timestamptz,days_until timestamptz,
         sampled_until timestamptz,complete_until timestamptz,
         PRIMARY KEY({KEY}),FOREIGN KEY({KEY}) REFERENCES environments(tenant_id,project_id,id) ON DELETE CASCADE)""")
     for table in ("run_stat_buckets", "operations_samples", "operations_statistics_cursors"):
