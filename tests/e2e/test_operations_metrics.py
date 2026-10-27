@@ -50,7 +50,8 @@ ACTION = "metrics-o-j5-sleep-" + SUFFIX
 RUN_TIMEOUT = 10
 SUCCEEDING = [{"ms": 100 + 40 * index} for index in range(20)]
 FAILING = [{"ms": RUN_TIMEOUT * 3000}] * 5
-WAIT_SECONDS = 300
+# complete_until passes a run's end about ten minutes later: the five-minute margin plus the rollup's visits.
+WAIT_SECONDS = 900
 
 
 def _load(name: str, path: Path) -> Any:
@@ -119,25 +120,28 @@ async def measured(run: Any) -> dict:
         succeeded = await until_ended(await start(SUCCEEDING))
         failed = await until_ended(await start(FAILING))
         last_end = max(datetime.fromisoformat(item["ended_at"]) for item in [*succeeded.values(), *failed.values()])
-        window = {"from": began.isoformat().replace("+00:00", "Z")}
-        deadline = time.monotonic() + WAIT_SECONDS
-        while True:
+    window = {"from": began.isoformat().replace("+00:00", "Z")}
+    deadline = time.monotonic() + WAIT_SECONDS
+    while True:
+        # The wait can outlive an access token: each read signs in again.
+        fresh = journeys.Platform(run)
+        async with fresh.client() as reader:
             window["to"] = datetime.now(UTC).isoformat().replace("+00:00", "Z")
-            table = await journeys.statistics(client, platform, "workflows", **window)
+            table = await journeys.statistics(reader, fresh, "workflows", **window)
             complete = table["complete_until"]
             # Every bucket holding these runs is final once complete_until passes the last run's end.
             if complete and datetime.fromisoformat(complete) > last_end:
+                series = await journeys.statistics(
+                    reader,
+                    fresh,
+                    "series",
+                    **window,
+                    workflow=WORKFLOW,
+                    signals=["runs_started", "runs_succeeded", "runs_failed", "failure_rate"],
+                )
                 break
-            assert time.monotonic() < deadline, (complete, last_end.isoformat())
-            await asyncio.sleep(10)
-        series = await journeys.statistics(
-            client,
-            platform,
-            "series",
-            **window,
-            workflow=WORKFLOW,
-            signals=["runs_started", "runs_succeeded", "runs_failed", "failure_rate"],
-        )
+        assert time.monotonic() < deadline, (complete, last_end.isoformat())
+        await asyncio.sleep(10)
     row = next(item for item in table["workflows"] if item["workflow"] == WORKFLOW)
     return {
         "row": row,
