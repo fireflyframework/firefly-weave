@@ -22,6 +22,7 @@ SPDX-License-Identifier: Apache-2.0
 // the amber accent is a fixed brand anchor.
 import { test, expect, Locator, Page } from "@playwright/test";
 import {
+  withClassicDesigner,
   allCapabilities,
   connected,
   insertStep,
@@ -31,6 +32,10 @@ import {
 } from "./support";
 import { DesignerPage } from "./designer-po";
 import { crossingOf } from "./woven-crossing";
+
+test.beforeEach(async ({ page }) => {
+  await withClassicDesigner(page);
+});
 
 /** The brand amber (--accent, --focus): a fixed anchor, not read from CSS. */
 const amber = "rgb(255, 179, 74)";

@@ -19,7 +19,12 @@ SPDX-License-Identifier: Apache-2.0
 // assignments are chosen from the environment instead of typed, and the
 // request carries connector_release_ids.
 import { test, expect } from "@playwright/test";
-import { command, newWorkflow, selectChoice } from "./support";
+import {
+  withClassicDesigner,
+  command,
+  newWorkflow,
+  selectChoice,
+} from "./support";
 import { DesignerPage } from "./designer-po";
 import {
   binding,
@@ -32,6 +37,10 @@ import {
   versionId,
   workerRelease,
 } from "./activation-po";
+
+test.beforeEach(async ({ page }) => {
+  await withClassicDesigner(page);
+});
 
 test("one compatible choice is collapsed and activation fits at 1280x720", async ({
   page,

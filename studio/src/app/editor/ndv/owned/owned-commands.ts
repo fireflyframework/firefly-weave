@@ -49,7 +49,7 @@ export interface OwnedCommandHost {
   readonly editingLocked: boolean;
   readonly actionVersions: readonly Record<string, unknown>[];
   readonly stepDetails: Pick<StepDetailsService, "ownedPublish" | "mounted">;
-  /** "Try the new editor": the publish dialog is part of it. */
+  /** "Use the new editor": the publish dialog is part of it. */
   readonly editorNext?: boolean;
   error: string;
   errorCode: string;
@@ -81,7 +81,7 @@ export function publishOwned(
 
 /** Why Publish… or Simulate stops while the new editor is off. */
 export const NEW_EDITOR_OFF =
-  "Turn on Try the new editor in Settings › Preferences to publish the actions of this workflow's Call an API, email and file steps.";
+  "Turn on Use the new editor in Settings › Preferences to publish the actions of this workflow's Call an API, email and file steps.";
 
 /** What Save to file adds while some of the workflow's actions aren't published. */
 export const exportNote = (model: StructuredCanvasAdapter): string =>

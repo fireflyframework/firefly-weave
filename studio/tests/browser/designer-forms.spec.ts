@@ -20,7 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 // the compiler lets a field read, bind each action input to a value, data or
 // a formula, give every common schema a real editor, and design schemas
 // field by field. Real clicks and keys at 1440x900 and 600x500.
-import { selectChoice } from "./support";
+import { withClassicDesigner, selectChoice } from "./support";
 import { test, expect, Locator, Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
@@ -35,6 +35,10 @@ import {
 import { DesignerPage } from "./designer-po";
 import { chooseAction } from "./integrations-po";
 import { python, pythonAvailable } from "../python-path";
+
+test.beforeEach(async ({ page }) => {
+  await withClassicDesigner(page);
+});
 
 const inspectorHeading = (page: Page) => page.locator(".inspector header h2");
 const draftErrors = (page: Page) =>

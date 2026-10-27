@@ -23,6 +23,7 @@ import {
   newWorkflow,
   offline,
   sourceText,
+  withClassicDesigner,
 } from "./support";
 import { openStoredWorkflow } from "./canvas-po";
 import {
@@ -220,6 +221,9 @@ test.describe("step details beside the classic inspector", () => {
 });
 
 test.describe("step details stay off without the new editor", () => {
+  test.beforeEach(async ({ page }) => {
+    await withClassicDesigner(page);
+  });
   test("double-click on a step keeps the classic designer", async ({
     page,
   }) => {
@@ -275,7 +279,7 @@ test.describe("step details and another workflow", () => {
     const workflows = page.url();
     await page.getByRole("button", { name: "Settings", exact: true }).click();
     await page.getByRole("tab", { name: "Preferences" }).click();
-    await page.getByRole("switch", { name: "Try the new editor" }).uncheck();
+    await page.getByRole("switch", { name: "Use the new editor" }).uncheck();
     // Back to the workflows within Studio, which keeps what it holds in memory.
     await page.goBack();
     await page.goBack();

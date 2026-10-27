@@ -20,7 +20,12 @@ SPDX-License-Identifier: Apache-2.0
 import { execFileSync } from "node:child_process";
 import { expect, test, type Page } from "@playwright/test";
 import { python } from "../python-path";
-import { connected, newWorkflow, selectChoice } from "./support";
+import {
+  withClassicDesigner,
+  connected,
+  newWorkflow,
+  selectChoice,
+} from "./support";
 import { DesignerPage } from "./designer-po";
 import {
   AI_CAPABILITIES,
@@ -36,6 +41,10 @@ import {
   sheet,
   type AiPlatform,
 } from "./ai-models-po";
+
+test.beforeEach(async ({ page }) => {
+  await withClassicDesigner(page);
+});
 
 async function start(page: Page, options: Partial<AiPlatform> = {}) {
   await connected(page, {

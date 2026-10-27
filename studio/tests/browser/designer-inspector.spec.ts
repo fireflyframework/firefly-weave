@@ -18,7 +18,7 @@ SPDX-License-Identifier: Apache-2.0
 // The inspector: decision conditions as rule rows, a wider panel with folding
 // sections and a clear apply model, and one vocabulary for where a value
 // comes from.
-import { selectChoice } from "./support";
+import { withClassicDesigner, selectChoice } from "./support";
 import { test, expect, type Page } from "@playwright/test";
 import {
   closeSheet,
@@ -28,6 +28,10 @@ import {
   sourceText,
 } from "./support";
 import { DesignerPage } from "./designer-po";
+
+test.beforeEach(async ({ page }) => {
+  await withClassicDesigner(page);
+});
 
 const routed = `apiVersion: weave/v1alpha1
 kind: Workflow

@@ -3847,7 +3847,7 @@ spec:
     await open(page, "Settings");
     await page.getByRole("tab", { name: "Preferences" }).click();
     await expect(
-      page.getByRole("switch", { name: "Try the new editor" }),
+      page.getByRole("switch", { name: "Use the new editor" }),
     ).toBeVisible();
     await shot("34-settings-preferences", { end: ".page-content" });
   },

@@ -21,6 +21,7 @@ SPDX-License-Identifier: Apache-2.0
 // 600x500.
 import { test, expect, Locator, Page, Request } from "@playwright/test";
 import {
+  withClassicDesigner,
   allCapabilities,
   closeSheet,
   command,
@@ -31,6 +32,10 @@ import {
   sourceText,
 } from "./support";
 import { DesignerPage } from "./designer-po";
+
+test.beforeEach(async ({ page }) => {
+  await withClassicDesigner(page);
+});
 
 const project = "**/studio/api/api/v1/tenants/tenant/projects/project";
 const workflow = (name: string, steps: unknown[] = []) => ({

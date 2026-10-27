@@ -19,6 +19,7 @@ SPDX-License-Identifier: Apache-2.0
 import { test, expect } from "@playwright/test";
 import { resolve } from "node:path";
 import {
+  withClassicDesigner,
   connected,
   newWorkflow,
   closeSheet,
@@ -27,6 +28,10 @@ import {
 } from "./support";
 import { DesignerPage } from "./designer-po";
 import { chooseAction } from "./integrations-po";
+
+test.beforeEach(async ({ page }) => {
+  await withClassicDesigner(page);
+});
 for (const viewport of [
   { width: 1440, height: 900 },
   { width: 600, height: 500 },

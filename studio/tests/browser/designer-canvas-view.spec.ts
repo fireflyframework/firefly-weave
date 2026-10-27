@@ -19,8 +19,18 @@ SPDX-License-Identifier: Apache-2.0
 // on the focused step with Undo, problems shown on the steps themselves, and
 // a keyboard model with a ring that stays visible at any zoom.
 import { test, expect, type Page } from "@playwright/test";
-import { expectHitTarget, insertStep, newWorkflow, offline } from "./support";
+import {
+  withClassicDesigner,
+  expectHitTarget,
+  insertStep,
+  newWorkflow,
+  offline,
+} from "./support";
 import { DesignerPage } from "./designer-po";
+
+test.beforeEach(async ({ page }) => {
+  await withClassicDesigner(page);
+});
 /** A workflow of twelve steps in the main sequence. */
 const twelve = `apiVersion: weave/v1alpha1
 kind: Workflow

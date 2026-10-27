@@ -234,7 +234,7 @@ describe("Publish…, Simulate and Save to file for a workflow's own actions", (
       published: 0,
     });
     expect(off.host.error).toBe(
-      "Turn on Try the new editor in Settings › Preferences to publish the actions of this workflow's Call an API, email and file steps.",
+      "Turn on Use the new editor in Settings › Preferences to publish the actions of this workflow's Call an API, email and file steps.",
     );
     expect(off.checks).toEqual([""]);
   });

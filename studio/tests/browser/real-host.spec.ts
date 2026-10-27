@@ -243,9 +243,6 @@ test("executes a workflow offline on the real host, with no platform", async ({
   const configHome = realpathSync(
     mkdtempSync(join(tmpdir(), "weave-studio-real-host-")),
   );
-  await page.addInitScript(() =>
-    localStorage.setItem("ui:weave.editorNext", "true"),
-  );
   const elsewhere: string[] = [];
   const outbound = await outboundListener();
   const host = startHost(configHome, await freePort(), outbound.env);

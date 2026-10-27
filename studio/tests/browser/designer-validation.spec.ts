@@ -21,6 +21,7 @@ SPDX-License-Identifier: Apache-2.0
 // keys at 1440x900 and 600x500.
 import { test, expect, Locator, Page, Route } from "@playwright/test";
 import {
+  withClassicDesigner,
   allCapabilities,
   command,
   connected,
@@ -29,6 +30,10 @@ import {
   sourceText,
 } from "./support";
 import { DesignerPage } from "./designer-po";
+
+test.beforeEach(async ({ page }) => {
+  await withClassicDesigner(page);
+});
 
 const project = "**/studio/api/api/v1/tenants/tenant/projects/project";
 const workflow = (steps: unknown[], extra: Record<string, unknown> = {}) =>

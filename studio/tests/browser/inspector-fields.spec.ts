@@ -17,8 +17,17 @@ SPDX-License-Identifier: Apache-2.0
 */
 import { test, expect } from "@playwright/test";
 import { parse } from "yaml";
-import { offline, newWorkflow, sourceText } from "./support";
+import {
+  withClassicDesigner,
+  offline,
+  newWorkflow,
+  sourceText,
+} from "./support";
 import { DesignerPage } from "./designer-po";
+
+test.beforeEach(async ({ page }) => {
+  await withClassicDesigner(page);
+});
 
 const workflow = `apiVersion: weave/v1alpha1
 kind: Workflow

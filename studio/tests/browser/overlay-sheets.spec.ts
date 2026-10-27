@@ -23,6 +23,7 @@ SPDX-License-Identifier: Apache-2.0
 // simulation panel is covered in designer-simulation.spec.ts.
 import { test, expect, Locator, Page } from "@playwright/test";
 import {
+  withClassicDesigner,
   connected,
   insertStep,
   newWorkflow,
@@ -30,6 +31,10 @@ import {
   runSummaries,
 } from "./support";
 import { DesignerPage } from "./designer-po";
+
+test.beforeEach(async ({ page }) => {
+  await withClassicDesigner(page);
+});
 
 interface Size {
   tag: string;

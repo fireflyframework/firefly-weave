@@ -21,6 +21,7 @@ SPDX-License-Identifier: Apache-2.0
 import { test, expect, Page } from "@playwright/test";
 import { parse } from "yaml";
 import {
+  withClassicDesigner,
   command,
   connected,
   insertStep,
@@ -29,6 +30,10 @@ import {
   sourceText,
 } from "./support";
 import { DesignerPage } from "./designer-po";
+
+test.beforeEach(async ({ page }) => {
+  await withClassicDesigner(page);
+});
 
 type Doc = {
   spec: {

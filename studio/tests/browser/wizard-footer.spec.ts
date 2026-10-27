@@ -20,7 +20,11 @@ SPDX-License-Identifier: Apache-2.0
 // below or through it.
 import { test, expect, Page } from "@playwright/test";
 import { acmeDiscovery, platformHost } from "./platform-host";
-import { tokenColor } from "./support";
+import { withClassicDesigner, tokenColor } from "./support";
+
+test.beforeEach(async ({ page }) => {
+  await withClassicDesigner(page);
+});
 
 async function reviewStep(page: Page) {
   await platformHost(page, {

@@ -23,7 +23,7 @@ import { expect, test, type Download, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { stringify } from "yaml";
 import { CanvasPage, openStoredWorkflow, useNewEditor } from "./canvas-po";
-import { command, offline } from "./support";
+import { command, offline, withClassicDesigner } from "./support";
 
 const workflow = stringify({
   apiVersion: "weave/v1alpha1",
@@ -264,6 +264,7 @@ test("with the new editor off, Import takes one workflow file at a time, as befo
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
+  await withClassicDesigner(page);
   await offline(page);
   await expect(page.getByLabel("Choose a workflow file")).not.toHaveAttribute(
     "multiple",

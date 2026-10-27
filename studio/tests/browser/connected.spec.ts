@@ -15,11 +15,15 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-import { runSummaries, selectChoice } from "./support";
+import { withClassicDesigner, runSummaries, selectChoice } from "./support";
 import { execFileSync } from "node:child_process";
 import { test, expect, Page } from "@playwright/test";
 import { chooseAction } from "./integrations-po";
 import { python, pythonAvailable } from "../python-path";
+
+test.beforeEach(async ({ page }) => {
+  await withClassicDesigner(page);
+});
 const profile = {
   name: "Test platform",
   baseUrl: "https://weave.invalid",

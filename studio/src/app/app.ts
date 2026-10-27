@@ -767,7 +767,7 @@ export class App implements CanvasHost {
   /** The "Keyboard shortcuts" sheet. */
   shortcutsOpen = false;
   /**
-   * "Try the new editor" (Settings › Preferences), or `?editor=next` in the
+   * "Use the new editor" (Settings › Preferences), or `?editor=next` in the
    * address when Studio opened.
    */
   editorNext = editorNextEnabled();
@@ -8598,7 +8598,7 @@ export class App implements CanvasHost {
     };
   }
   // ------------------------------------------------------- step details
-  /** What step details show (with "Try the new editor" on). */
+  /** What step details show (with "Use the new editor" on). */
   readonly stepDetails = inject(StepDetailsService);
   /**
    * Opens step details for a step, "$trigger" or "$end", after applying the
@@ -8769,7 +8769,7 @@ export class App implements CanvasHost {
     this.message = `Inserted ${inserted}, ${action.label}.`;
     return inserted;
   }
-  /** True while step details replace the inspector ("Try the new editor"). */
+  /** True while step details replace the inspector ("Use the new editor"). */
   stepDetailsOn(): boolean {
     return stepDetailsEnabled(this as StepDetailsHost);
   }

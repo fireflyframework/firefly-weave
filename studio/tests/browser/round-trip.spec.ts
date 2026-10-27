@@ -17,7 +17,7 @@ SPDX-License-Identifier: Apache-2.0
 */
 // A configured integration step survives YAML and JSON export, re-import and
 // a draft save without losing or reshaping any value.
-import { selectChoice } from "./support";
+import { withClassicDesigner, selectChoice } from "./support";
 import { readFile } from "node:fs/promises";
 import { test, expect, Page, Download } from "@playwright/test";
 import { parse } from "yaml";
@@ -29,6 +29,10 @@ import {
   sourceText,
 } from "./support";
 import { actionPicker, chooseAction } from "./integrations-po";
+
+test.beforeEach(async ({ page }) => {
+  await withClassicDesigner(page);
+});
 
 async function exported(page: Page, trigger: () => Promise<void>) {
   const downloads: Download[] = [];

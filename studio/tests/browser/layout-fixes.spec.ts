@@ -17,7 +17,7 @@ SPDX-License-Identifier: Apache-2.0
 */
 // Regression tests for the layout defects the visual tour found: each test
 // holds one fix at the size where the defect showed.
-import { selectChoice } from "./support";
+import { withClassicDesigner, selectChoice } from "./support";
 import { test, expect, Locator, Page } from "@playwright/test";
 import {
   allCapabilities,
@@ -29,6 +29,10 @@ import {
 } from "./support";
 import { DesignerPage } from "./designer-po";
 import { acmePlatform, platformHost } from "./platform-host";
+
+test.beforeEach(async ({ page }) => {
+  await withClassicDesigner(page);
+});
 
 /** The element's box, or a failed expectation naming it. */
 async function box(locator: Locator) {

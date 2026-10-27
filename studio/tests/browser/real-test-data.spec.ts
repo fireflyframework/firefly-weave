@@ -50,12 +50,6 @@ useRealPlatformSuite("real-test-data");
 const fixture = resolve("tests/fixtures/real-test-data.yaml");
 const sha = (text: string) => createHash("sha256").update(text).digest("hex");
 
-/** The new editor, before the page loads. */
-async function newEditor(page: Page) {
-  await page.addInitScript(() =>
-    localStorage.setItem("ui:weave.editorNext", "true"),
-  );
-}
 /** A platform call through the page's own Studio session, as any client makes it. */
 async function bridge(
   page: Page,
@@ -127,7 +121,6 @@ test("test data and the canvas persist across reload and a second browser profil
   test.setTimeout(420_000);
   const { person, environment } = setup();
   const project = `/api/v1/tenants/${environment.tenant_id}/projects/${environment.project_id}`;
-  await newEditor(page);
   // Every draft and document save's answer, for the report when a step fails.
   page.on("response", async (response) => {
     const request = response.request();
@@ -204,7 +197,6 @@ test("test data and the canvas persist across reload and a second browser profil
     viewport: { width: 1440, height: 900 },
   });
   const second = await other.newPage();
-  await newEditor(second);
   const s2 = await session(second);
   await pair(second, s2.host!, "td-03-second-pairing");
   await addPlatformSignedIn(second, name);

@@ -20,6 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 // the room the chrome gives back.
 import { test, expect, type Page } from "@playwright/test";
 import {
+  withClassicDesigner,
   allCapabilities,
   closeSheet,
   command,
@@ -29,6 +30,10 @@ import {
   offline,
 } from "./support";
 import { DesignerPage } from "./designer-po";
+
+test.beforeEach(async ({ page }) => {
+  await withClassicDesigner(page);
+});
 
 const project = "**/studio/api/api/v1/tenants/tenant/projects/project";
 const environment = `${project}/environments/development`;

@@ -17,6 +17,7 @@ SPDX-License-Identifier: Apache-2.0
 */
 import { test, expect, type Locator, type Page } from "@playwright/test";
 import {
+  withClassicDesigner,
   connected,
   defaultCatalog,
   expectHitTarget,
@@ -24,6 +25,10 @@ import {
   newWorkflow,
 } from "./support";
 import { DesignerPage } from "./designer-po";
+
+test.beforeEach(async ({ page }) => {
+  await withClassicDesigner(page);
+});
 
 const workflow = JSON.stringify({
   apiVersion: "weave/v1alpha1",

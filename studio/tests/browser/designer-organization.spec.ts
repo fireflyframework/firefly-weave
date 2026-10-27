@@ -17,6 +17,7 @@ SPDX-License-Identifier: Apache-2.0
 */
 import { test, expect } from "@playwright/test";
 import {
+  withClassicDesigner,
   offline,
   connected,
   newWorkflow,
@@ -25,6 +26,10 @@ import {
 } from "./support";
 import { DesignerPage } from "./designer-po";
 import { chooseAction } from "./integrations-po";
+
+test.beforeEach(async ({ page }) => {
+  await withClassicDesigner(page);
+});
 
 for (const width of [1440, 1280, 600, 390, 320]) {
   test.describe(`Designer organization at ${width}`, () => {

@@ -21,6 +21,7 @@ SPDX-License-Identifier: Apache-2.0
 // templates on Home and in the "New ▾" menu, and the builder offline.
 import { test, expect, Page, Request } from "@playwright/test";
 import {
+  withClassicDesigner,
   allCapabilities,
   canUndo,
   command,
@@ -44,6 +45,10 @@ import {
   localAuthoring,
   stopLocalAuthoring,
 } from "./local-authoring";
+
+test.beforeEach(async ({ page }) => {
+  await withClassicDesigner(page);
+});
 
 test.afterAll(() => stopLocalAuthoring());
 

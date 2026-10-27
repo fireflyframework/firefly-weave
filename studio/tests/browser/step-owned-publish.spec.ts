@@ -793,7 +793,7 @@ test.describe("when the publishing code can't load", () => {
       await page.route(/\.m?js(\?.*)?$/, async (route) => {
         const response = await route.fetch();
         const body = await response.text();
-        if (body.includes("Turn on Try the new editor in Settings")) {
+        if (body.includes("Turn on Use the new editor in Settings")) {
           refused++;
           return route.abort();
         }

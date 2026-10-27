@@ -17,7 +17,7 @@ SPDX-License-Identifier: Apache-2.0
 */
 // Reproductions of the "Call an action" editor defects, driven with real
 // pointer and keyboard input so hit-testing and focus behave as for a person.
-import { selectChoice } from "./support";
+import { withClassicDesigner, selectChoice } from "./support";
 import { test, expect, Page } from "@playwright/test";
 import {
   connected,
@@ -30,6 +30,10 @@ import {
   sourceText,
 } from "./support";
 import { actionPicker, chooseAction } from "./integrations-po";
+
+test.beforeEach(async ({ page }) => {
+  await withClassicDesigner(page);
+});
 
 const desktopViewports = [
   { width: 1280, height: 720 },

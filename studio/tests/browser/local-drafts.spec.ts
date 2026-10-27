@@ -20,8 +20,18 @@ SPDX-License-Identifier: Apache-2.0
 // editing", Workflows lists "On this computer", and a browser that refuses
 // storage says so.
 import { test, expect, Page } from "@playwright/test";
-import { connected, insertStep, newWorkflow, offline } from "./support";
+import {
+  withClassicDesigner,
+  connected,
+  insertStep,
+  newWorkflow,
+  offline,
+} from "./support";
 import { platformHost } from "./platform-host";
+
+test.beforeEach(async ({ page }) => {
+  await withClassicDesigner(page);
+});
 
 const steps = (page: Page) => page.locator("[data-step]");
 

@@ -15,8 +15,12 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-import { selectChoice, tokenColor } from "./support";
+import { withClassicDesigner, selectChoice, tokenColor } from "./support";
 import { test, expect } from "@playwright/test";
+
+test.beforeEach(async ({ page }) => {
+  await withClassicDesigner(page);
+});
 async function offline(page: any) {
   await page.route("**/studio/session", async (route: any) =>
     route.fulfill({
