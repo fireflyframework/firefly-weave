@@ -65,7 +65,8 @@ for (const size of sizes)
             "Publish payment-policy@1.2.1 before publishing this workflow.",
           )
           .first(),
-      ).toBeVisible();
+        // The platform's check runs the repository's compiler.
+      ).toBeVisible({ timeout: 15_000 });
       expect(posts.filter((post) => post.path === "workflows")).toEqual([]);
       await details.open("score");
       await grid.open();

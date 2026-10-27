@@ -445,16 +445,18 @@ SPDX-License-Identifier: Apache-2.0
   }
   @if (yamlOpen) {
     <weave-modal
-      [heading]="'Edit ' + name() + ' as YAML'"
+      [heading]="yamlHeading()"
       closeLabel="Cancel editing"
       (dismiss)="yamlOpen = false"
     >
-      <label class="sd-yaml-label" for="sd-yaml">Step YAML</label>
+      <label class="sd-yaml-label" for="sd-yaml">{{
+        yamlFor === "action" ? "Action YAML" : "Step YAML"
+      }}</label>
       <textarea
         id="sd-yaml"
         class="sd-yaml"
         spellcheck="false"
-        aria-label="Step YAML"
+        [attr.aria-label]="yamlFor === 'action' ? 'Action YAML' : 'Step YAML'"
         [attr.aria-invalid]="yamlError ? 'true' : null"
         [attr.aria-describedby]="yamlError ? 'sd-yaml-error' : null"
         [value]="yamlText"

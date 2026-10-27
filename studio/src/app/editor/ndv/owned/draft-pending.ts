@@ -22,7 +22,11 @@ SPDX-License-Identifier: Apache-2.0
 // what to publish. Drafts are never published as a side effect.
 import { getAt, parsePointer } from "../../../forms/core/json";
 import type { CanvasSidecar } from "../../state/canvas-sidecar";
-import { accountTables, type AccountHost } from "../../state/host-definitions";
+import {
+  accountActions,
+  accountTables,
+  type AccountHost,
+} from "../../state/host-definitions";
 import { withOwnedPending, type PendingAware } from "./owned-pending";
 import { ownedActionsOf } from "./owned-store";
 
@@ -61,12 +65,18 @@ export type DraftCheckHost = AccountHost;
 
 /** The `name@version` of every draft the signed-in account keeps on this computer. */
 export async function draftUses(host: DraftCheckHost): Promise<Set<string>> {
-  const tables = await accountTables(host);
-  return new Set(
-    (tables?.entries() ?? [])
+  const [tables, actions] = await Promise.all([
+    accountTables(host),
+    accountActions(host),
+  ]);
+  return new Set([
+    ...(tables?.entries() ?? [])
       .filter((entry) => entry.kind === "draft")
       .map((entry) => `${entry.name}@${entry.version}`),
-  );
+    ...(actions?.entries() ?? []).map(
+      (entry) => `${entry.name}@${entry.version}`,
+    ),
+  ]);
 }
 
 /** The platform's check as Studio shows it: owned actions publish first, drafts must be published before. */

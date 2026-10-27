@@ -26,6 +26,7 @@ import type { Json } from "../../forms/core/json";
 import { connectedPrefix, type AccountScope } from "../state/browser-store";
 import { studioBackend } from "../state/studio-storage";
 import { TableDrafts, type TableDocument } from "../state/table-drafts";
+import { ActionDrafts } from "../state/action-drafts";
 
 export interface TableChoice {
   uses: string;
@@ -64,7 +65,11 @@ export class TableCatalog {
     key: string;
     rows: Promise<{ uses: string; id: string }[]>;
   } | null = null;
-  private store: { prefix: string | null; drafts: TableDrafts } | null = null;
+  private store: {
+    prefix: string | null;
+    drafts: TableDrafts;
+    actions: ActionDrafts;
+  } | null = null;
   private storeKey = "";
   private loading = new Map<string, Promise<Json | null>>();
   /** Tables that couldn't be read, with the generation they were asked in. */
@@ -129,6 +134,7 @@ export class TableCatalog {
         this.store = {
           prefix,
           drafts: new TableDrafts(studioBackend(), prefix),
+          actions: new ActionDrafts(studioBackend(), prefix),
         };
       }
     }
@@ -137,6 +143,17 @@ export class TableCatalog {
     return drafts;
   }
 
+  /** The action drafts of the account shown now. */
+  async actions(): Promise<ActionDrafts> {
+    await this.drafts();
+    const actions = this.store!.actions;
+    await actions.ready();
+    return actions;
+  }
+  /** The action drafts kept now, without waiting; null until they are read. */
+  keptActions(): ActionDrafts | null {
+    return this.store?.actions ?? null;
+  }
   /** The drafts kept now, without waiting; null until they are read. */
   private kept(): TableDrafts | null {
     return this.store?.drafts ?? null;

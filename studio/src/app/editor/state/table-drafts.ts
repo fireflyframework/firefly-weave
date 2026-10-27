@@ -63,7 +63,7 @@ const DRAFT = "weave.tableDraft.";
 const COPY = "weave.tableCopy.";
 const NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
 // Semantic versions as the platform takes them: prerelease and build parts too.
-const VERSION =
+export const VERSION =
   /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z.-]+))?(?:\+([0-9A-Za-z.-]+))?$/;
 const POLICIES: ReadonlySet<unknown> = new Set(["first", "unique", "collect"]);
 

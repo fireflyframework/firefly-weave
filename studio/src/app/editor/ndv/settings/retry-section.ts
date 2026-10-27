@@ -116,12 +116,38 @@ let sequence = 0;
             >
               Open action
             </button>
+            @if (canChange()) {
+              <button
+                type="button"
+                class="text-link param-fix"
+                (click)="changeInNewVersion()"
+              >
+                Change in a new version
+              </button>
+            }
           }
         </p>
       }
       @if (saved) {
         <p class="param-line settings-saved" [id]="id + '-saved'">
           <weave-icon name="info" [size]="16" />{{ saved }}
+        </p>
+      }
+      @if (draftText(); as text) {
+        <p class="param-line settings-saved" [id]="id + '-saved'">
+          <weave-icon name="info" [size]="16" />{{ text }}
+          <button
+            type="button"
+            class="text-link param-fix"
+            (click)="publishDraft()"
+          >
+            Publish action
+          </button>
+        </p>
+      }
+      @if (problem(); as text) {
+        <p class="param-line" data-kind="error" role="alert">
+          <weave-icon name="warning" [size]="16" />{{ text }}
         </p>
       }
     </div>
@@ -228,7 +254,7 @@ export class RetrySection {
     return [
       this.spec().description ? `${this.id}-description` : "",
       this.line() ? `${this.id}-line` : "",
-      this.savedIn() ? `${this.id}-saved` : "",
+      this.savedIn() || this.draftText() ? `${this.id}-saved` : "",
     ]
       .filter(Boolean)
       .join(" ");
@@ -240,6 +266,41 @@ export class RetrySection {
     if (!step || recipeOf(step, context)) return null;
     const uses = String(step["uses"] ?? "");
     return uses && context.actionContract(uses) ? uses : null;
+  }
+  /** A published action that isn't a worker's: its retry and timeout change in a new version. */
+  canChange(): boolean {
+    const session = this.session();
+    const step = this.step();
+    if (!step || session.controller.readOnlyReason(session.target))
+      return false;
+    const context = session.controller.kindContext();
+    const document = context.actionContract(String(step["uses"] ?? "")) as {
+      spec?: { implementation?: { kind?: unknown } };
+    } | null;
+    return document?.spec?.implementation?.kind !== "worker";
+  }
+  readonly problem = signal<string | null>(null);
+  async changeInNewVersion() {
+    const session = this.session();
+    this.problem.set(null);
+    await session.controller.startActionDraft(session.target);
+    session.host.refreshView();
+  }
+  /** Where a draft of the action's next version is kept, until Publish action. */
+  draftText(): string | null {
+    const step = this.step();
+    if (!step) return null;
+    const draft = this.session().controller.actionDraft(
+      String(step["uses"] ?? ""),
+    );
+    return draft
+      ? `Saved in ${draft.name} ${draft.version} on this computer. Publish it before publishing this workflow.`
+      : null;
+  }
+  async publishDraft() {
+    const session = this.session();
+    const problem = await session.controller.publishActionDraft(session.target);
+    if (session.isCurrent()) this.problem.set(problem);
   }
   open(uses: string) {
     const session = this.session();

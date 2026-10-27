@@ -1196,6 +1196,15 @@ export class StepDetails {
       },
       { label: "Copy as YAML", run: () => void this.copyYaml() },
       { label: "Edit as YAML", disabled: locked, run: () => this.openYaml() },
+      ...(this.httpActionDraft()
+        ? [
+            {
+              label: "Edit action as YAML",
+              disabled: locked,
+              run: () => this.openActionYaml(),
+            },
+          ]
+        : []),
       {
         label: "Delete",
         danger: true,
@@ -1221,9 +1230,75 @@ export class StepDetails {
     if (!step || this.controller().readOnlyReason()) return;
     this.yamlText = yamlText(step);
     this.yamlError = "";
+    this.yamlFor = "step";
     this.yamlOpen = true;
   }
+  /** What Edit as YAML edits: the step, or the draft of its action's next version. */
+  yamlFor: "step" | "action" = "step";
+  /** The draft of an HTTP action's next version this step calls, kept on this computer. */
+  httpActionDraft() {
+    const step = this.controller().step(this.target());
+    const draft = step
+      ? this.controller().actionDraft(String(step["uses"] ?? ""))
+      : null;
+    const implementation = draft?.document.spec["implementation"] as
+      | { kind?: unknown }
+      | undefined;
+    return draft && implementation?.kind === "http" ? draft : null;
+  }
+  yamlHeading(): string {
+    const draft = this.yamlFor === "action" ? this.httpActionDraft() : null;
+    return draft
+      ? `Edit ${draft.name} ${draft.version} as YAML`
+      : `Edit ${this.name()} as YAML`;
+  }
+  /** Edit action as YAML: the request of an HTTP action draft changes here. */
+  openActionYaml() {
+    const draft = this.httpActionDraft();
+    if (!draft || this.controller().readOnlyReason()) return;
+    this.yamlText = yamlText(draft.document);
+    this.yamlError = "";
+    this.yamlFor = "action";
+    this.yamlOpen = true;
+  }
+  private async applyActionYaml() {
+    const draft = this.httpActionDraft();
+    if (!draft) return;
+    let next: unknown;
+    try {
+      next = parseYaml(this.yamlText);
+    } catch (error) {
+      this.yamlError = `This isn't valid YAML: ${(error as Error).message}`;
+      return;
+    }
+    const value = next as {
+      kind?: unknown;
+      metadata?: { name?: unknown };
+    } | null;
+    if (
+      !value ||
+      value.kind !== "Action" ||
+      value.metadata?.name !== draft.name
+    ) {
+      this.yamlError = `Keep the action's kind and name: ${draft.name}.`;
+      return;
+    }
+    const problem = await this.controller().saveActionDraft(
+      this.target(),
+      this.yamlText,
+    );
+    if (problem) {
+      this.yamlError = problem;
+      return;
+    }
+    this.yamlOpen = false;
+    this.host().refreshView();
+  }
   applyYaml() {
+    if (this.yamlFor === "action") {
+      void this.applyActionYaml();
+      return;
+    }
     const step = this.controller().step(this.target());
     if (!step) return;
     const locked = this.controller().readOnlyReason();

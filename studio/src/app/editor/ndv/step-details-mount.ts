@@ -178,6 +178,11 @@ export class StepDetailsMount {
       );
       controller.ownedProblems = () => this.documentsFor(host).problems();
       controller.tables = this.tablesFor(host);
+      // The action drafts kept on this computer, for Settings and the forms.
+      void controller.tables.actions().then(
+        () => host.refreshView(),
+        () => undefined,
+      );
       this.made = { host, opened, controller };
     }
     return this.made.controller;

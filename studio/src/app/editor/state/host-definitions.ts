@@ -23,6 +23,7 @@ import type { JsonObject } from "../../forms/core/json";
 import { connectedPrefix, type AccountScope } from "./browser-store";
 import { studioBackend } from "./studio-storage";
 import { TableDrafts } from "./table-drafts";
+import { ActionDrafts } from "./action-drafts";
 
 /** The host's body bound. */
 export const MAX_DEFINITION_BYTES = 2 * 1024 * 1024;
@@ -91,20 +92,36 @@ export interface AccountHost {
   readonly runAccount?: AccountScope | null;
 }
 
-/** The decision tables the account keeps on this computer; null when no account can own them. */
-export async function accountTables(
-  host: AccountHost,
-): Promise<TableDrafts | null> {
+/** The account's storage prefix: `local:` offline, null when no account can own data. */
+async function accountPrefix(host: AccountHost): Promise<string | null> {
   const scope = host.runAccount ?? null;
-  const prefix = !host.profile
+  return !host.profile
     ? "local:"
     : scope?.subject
       ? await connectedPrefix(scope).catch(() => null)
       : null;
+}
+
+/** The decision tables the account keeps on this computer; null when no account can own them. */
+export async function accountTables(
+  host: AccountHost,
+): Promise<TableDrafts | null> {
+  const prefix = await accountPrefix(host);
   if (prefix === null) return null;
   const tables = new TableDrafts(studioBackend(), prefix);
   await tables.ready();
   return tables;
+}
+
+/** The action drafts the account keeps on this computer; null when no account can own them. */
+export async function accountActions(
+  host: AccountHost,
+): Promise<ActionDrafts | null> {
+  const prefix = await accountPrefix(host);
+  if (prefix === null) return null;
+  const actions = new ActionDrafts(studioBackend(), prefix);
+  await actions.ready();
+  return actions;
 }
 
 export interface StudioDefinitionsHost extends AccountHost {
@@ -123,7 +140,9 @@ export async function studioDefinitions(
     .map(([, document]) => document as JsonObject);
   return hostDefinitions(workflow, {
     owned,
-    actions: async () => [],
+    actions: async (wanted) =>
+      ((await accountActions(host))?.definitionsFor(wanted) ??
+        []) as unknown as JsonObject[],
     tables: async (wanted) =>
       ((await accountTables(host))?.definitionsFor(wanted) ??
         []) as unknown as JsonObject[],

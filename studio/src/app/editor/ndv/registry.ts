@@ -71,6 +71,8 @@ export interface KindContext {
   workflowContract(uses: string): Json | null;
   /** The recipe of an action this workflow owns (its method, path, timeout and retry), or null. */
   ownedAction?(uses: string): Json | null;
+  /** The draft of a published action's next version kept on this computer, or null. */
+  actionDraft?(uses: string): Json | null;
 }
 export interface FieldSpec {
   /** Relative to the step, e.g. ["with"], ["cases", 0, "when"]. */
