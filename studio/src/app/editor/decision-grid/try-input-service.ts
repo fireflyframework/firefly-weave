@@ -41,6 +41,7 @@ export type TryChecked =
   | { refused: TryRefusal }
   | "checking"
   | "offline-host"
+  | "busy-host"
   | null;
 export interface TryState {
   marks: RowMark[];
@@ -52,6 +53,10 @@ export interface TryState {
 export const CHECK_DELAY = 400;
 export const UNREACHABLE =
   "Studio couldn't reach its own host; the live answer is shown.";
+export const BUSY =
+  "Studio is busy; the live answer is shown. Change the input to check again.";
+/** Refusals about schemas: Studio's live answer doesn't check them, so they aren't a disagreement. */
+const SCHEMA_CODES = new Set(["WV-DECISION-INPUT", "WV-DECISION-OUTPUT"]);
 const MULTIPLE = "WV-DECISION-MULTIPLE_MATCHES";
 const PREDICATE = "WV-DECISION-PREDICATE";
 
@@ -113,8 +118,18 @@ function refusalOf(
   };
 }
 
-const same = (a: unknown, b: unknown) =>
-  JSON.stringify(a) === JSON.stringify(b);
+/** JSON with sorted keys: the host answers in canonical order. */
+const canonical = (value: unknown): string =>
+  JSON.stringify(value, (_key, item: unknown) =>
+    item && typeof item === "object" && !Array.isArray(item)
+      ? Object.fromEntries(
+          Object.entries(item as Record<string, unknown>).sort(([a], [b]) =>
+            a < b ? -1 : a > b ? 1 : 0,
+          ),
+        )
+      : item,
+  );
+const same = (a: unknown, b: unknown) => canonical(a) === canonical(b);
 
 export class TryInputService {
   readonly state = signal<TryState>({
@@ -183,10 +198,19 @@ export class TryInputService {
       if (generation !== this.generation) return;
       const refusal = refusalOf(error);
       if (!refusal) return this.settle("offline-host");
-      if (refusal.status === 503 && refusal.code === "WV-STUDIO-BUSY" && retry)
-        return this.schedule(generation, body, live, false);
+      if (
+        (refusal.status === 503 || refusal.status === 429) &&
+        refusal.code === "WV-STUDIO-BUSY"
+      )
+        return retry
+          ? this.schedule(generation, body, live, false)
+          : this.settle("busy-host");
       if (refusal.status !== 422) return this.settle("offline-host");
-      if (live.ok || live.code !== refusal.code) this.disagree(refusal.code);
+      if (
+        !SCHEMA_CODES.has(refusal.code) &&
+        (live.ok || live.code !== refusal.code)
+      )
+        this.disagree(refusal.code);
       const words = explainRefusal(refusal, this.state().marks);
       return this.settle({
         refused: {

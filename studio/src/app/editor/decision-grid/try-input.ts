@@ -27,7 +27,7 @@ import { Icon } from "../../icon";
 import { TaskForm } from "../../task-form";
 import type { Schema } from "../../forms/core/scope";
 import type { TryState } from "./try-input-service";
-import { UNREACHABLE } from "./try-input-service";
+import { BUSY, UNREACHABLE } from "./try-input-service";
 
 @Component({
   selector: "weave-try-input",
@@ -152,6 +152,9 @@ import { UNREACHABLE } from "./try-input-service";
           @case ("offline") {
             <p class="dg-try-offline">{{ unreachable }}</p>
           }
+          @case ("busy") {
+            <p class="dg-try-offline">{{ busy }}</p>
+          }
         }
       </div>
       <p class="sr-only" aria-live="polite">{{ announcement() }}</p>
@@ -166,6 +169,7 @@ export class TryInput {
   readonly changed = output<Record<string, unknown>>();
   readonly closed = output<void>();
   readonly unreachable = UNREACHABLE;
+  readonly busy = BUSY;
 
   /** Weave's answer once it has checked; until then, Studio's live one. */
   shown(): { output: unknown; matched: string[]; usedDefault: boolean } | null {
@@ -189,9 +193,10 @@ export class TryInput {
   json(value: unknown): string {
     return JSON.stringify(value, null, 2);
   }
-  checkKind(): "checking" | "answer" | "refused" | "offline" | null {
+  checkKind(): "checking" | "answer" | "refused" | "offline" | "busy" | null {
     const checked = this.state().checked;
     if (checked === "checking") return "checking";
+    if (checked === "busy-host") return "busy";
     if (checked === "offline-host") return "offline";
     if (checked && "answer" in checked) return "answer";
     if (checked && "refused" in checked) return "refused";
@@ -208,6 +213,7 @@ export class TryInput {
     const checked = this.state().checked;
     if (!checked || checked === "checking") return "";
     if (checked === "offline-host") return UNREACHABLE;
+    if (checked === "busy-host") return BUSY;
     if ("refused" in checked) return checked.refused.message;
     const matched = checked.answer.matched_rule_ids;
     return `Checked by Weave: ${

@@ -227,6 +227,61 @@ describe("Try an input", () => {
     });
   });
 
+  it("retries once when the host's boundary says it is busy", async () => {
+    let call = 0;
+    const service = new TryInputService(async () => {
+      call++;
+      if (call === 1) throw failure(429, "WV-STUDIO-BUSY");
+      return {
+        output: { approve: true },
+        matched_rule_ids: ["big"],
+        used_default: false,
+      };
+    });
+    service.set(table(), { amount: 2000, tier: "silver" }, 1);
+    await vi.advanceTimersByTimeAsync(800);
+    expect(call).toBe(2);
+    expect(service.state().checked).toMatchObject({
+      answer: { matched_rule_ids: ["big"] },
+    });
+  });
+
+  it("says Studio is busy when it stays busy", async () => {
+    const service = new TryInputService(async () => {
+      throw failure(429, "WV-STUDIO-BUSY");
+    });
+    service.set(table(), { amount: 2000, tier: "silver" }, 1);
+    await vi.advanceTimersByTimeAsync(800);
+    expect(service.state().checked).toBe("busy-host");
+  });
+
+  it("logs no disagreement for the same answer in another key order, or a schema refusal", async () => {
+    const warn = vi.fn();
+    const spec = table();
+    spec.spec.rules[0].output = {
+      object: { limit: lit(5), approve: lit(true) },
+    } as never;
+    const agree = new TryInputService(
+      async () => ({
+        output: { approve: true, limit: 5 },
+        matched_rule_ids: ["big"],
+        used_default: false,
+      }),
+      { warn },
+    );
+    agree.set(spec, { amount: 2000, tier: "silver" }, 1);
+    await vi.advanceTimersByTimeAsync(400);
+    const schema = new TryInputService(
+      async () => {
+        throw failure(422, "WV-DECISION-INPUT", { path: "/amount" });
+      },
+      { warn },
+    );
+    schema.set(table(), { amount: 2000, tier: "silver" }, 1);
+    await vi.advanceTimersByTimeAsync(400);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
   it("says when the host can't be reached and keeps the live answer", async () => {
     const service = new TryInputService(async () => {
       throw new TypeError("Failed to fetch");
@@ -241,7 +296,9 @@ describe("Try an input", () => {
     const warn = vi.fn();
     const service = new TryInputService(
       async () => {
-        throw failure(422, "WV-DECISION-OUTPUT", { path: "/output" });
+        throw failure(422, "WV-DECISION-MULTIPLE_MATCHES", {
+          path: "/spec/rules/1/when",
+        });
       },
       { warn },
     );
@@ -249,7 +306,7 @@ describe("Try an input", () => {
     await vi.advanceTimersByTimeAsync(400);
     expect(warn).toHaveBeenCalledWith(
       "Studio and Weave answered this input differently",
-      { code: "WV-DECISION-OUTPUT" },
+      { code: "WV-DECISION-MULTIPLE_MATCHES" },
     );
   });
 });
