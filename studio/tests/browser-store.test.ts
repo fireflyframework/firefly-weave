@@ -193,21 +193,31 @@ describe("keys from before prefixes", () => {
 });
 
 describe("the new editor flag", () => {
-  it("is off by default, on with ?editor=next or the stored preference", () => {
+  it("is on by default, off with ?editor=classic or a stored false", () => {
     const storage = new MemoryStorage();
+    expect(editorNextEnabled("", () => storage)).toBe(true);
+    expect(editorNextEnabled("?editor=classic", () => storage)).toBe(false);
+    expect(editorNextEnabled("?editor=next", () => storage)).toBe(true);
+    expect(setEditorNext(false, () => storage)).toBe(true);
+    expect(storage.getItem(EDITOR_NEXT_KEY)).toBe("false");
+    expect(EDITOR_NEXT_KEY).toBe("ui:weave.editorNext");
     expect(editorNextEnabled("", () => storage)).toBe(false);
     expect(editorNextEnabled("?editor=next", () => storage)).toBe(true);
-    expect(setEditorNext(true, () => storage)).toBe(true);
-    expect(storage.getItem(EDITOR_NEXT_KEY)).toBe("true");
-    expect(EDITOR_NEXT_KEY).toBe("ui:weave.editorNext");
+    setEditorNext(true, () => storage);
     expect(editorNextEnabled("", () => storage)).toBe(true);
-    setEditorNext(false, () => storage);
-    expect(editorNextEnabled("", () => storage)).toBe(false);
+    expect(editorNextEnabled("?editor=classic", () => storage)).toBe(false);
   });
 
-  it("stays off when storage refuses", () => {
-    expect(editorNextEnabled("", refusing)).toBe(false);
-    expect(setEditorNext(true, refusing)).toBe(false);
+  it("reads anything else stored as the default", () => {
+    const storage = new MemoryStorage();
+    storage.setItem(EDITOR_NEXT_KEY, "maybe");
+    expect(editorNextEnabled("", () => storage)).toBe(true);
+    expect(editorNextEnabled("?editor=other", () => storage)).toBe(true);
+  });
+
+  it("stays on when storage refuses, and says the choice wasn't kept", () => {
+    expect(editorNextEnabled("", refusing)).toBe(true);
+    expect(setEditorNext(false, refusing)).toBe(false);
   });
 });
 

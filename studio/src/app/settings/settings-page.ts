@@ -537,12 +537,12 @@ interface AccountRow {
               aria-describedby="editor-next-hint"
               [checked]="h.editorNext"
               (change)="h.setEditorNextPreference(checked($event))"
-            />Try the new editor</label
+            />Use the new editor</label
           >
           <p class="hint" id="editor-next-hint">
-            Opens workflows on the new left-to-right canvas. Turn it off to go
-            back to the current designer. Studio keeps this choice in this
-            browser.
+            The new editor is on by default. Turn it off to use the classic
+            designer, which Studio keeps for a little longer. Studio keeps this
+            choice in this browser.
           </p>
         </section>
       </div>

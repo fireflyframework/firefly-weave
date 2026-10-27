@@ -15,8 +15,9 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-// "Try the new editor": a per-viewer preference stored under the ui: prefix,
-// and `?editor=next` in the URL for tests. It is off unless turned on.
+// The new editor: a per-viewer preference stored under the ui: prefix, on
+// unless the person turned it off. `?editor=classic` and `?editor=next` in the
+// URL choose for that page, which is how tests open either editor.
 import { uiKey } from "./browser-store";
 import { studioStorage } from "./studio-storage";
 
@@ -70,13 +71,15 @@ export function writeUiFlag(
   }
 }
 
-/** True when this viewer uses the new editor. */
+/** True when this viewer uses the new editor: always, unless they turned it off. */
 export function editorNextEnabled(
   search: string = currentSearch(),
   storage: () => FlagStorage | null = defaultStorage,
 ): boolean {
-  if (new URLSearchParams(search).get("editor") === "next") return true;
-  return readUiFlag(EDITOR_NEXT_KEY, storage);
+  const asked = new URLSearchParams(search).get("editor");
+  if (asked === "next") return true;
+  if (asked === "classic") return false;
+  return readUiChoice(EDITOR_NEXT_KEY, storage) !== false;
 }
 
 /** Saves the preference; false when browser storage refuses it. */
