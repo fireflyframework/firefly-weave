@@ -224,6 +224,13 @@ bodies are camelCase. The Python models are in
 | `POST /studio/local/testdata/check` | `CheckTestDataRequest` | `{entries: [{path, ok, code?}]}` |
 | `POST /studio/local/decision/evaluate` | `{table, input}` | `{output, matched_rule_ids, used_default}` |
 
+- **Try an input.** `decision/evaluate` compiles the table against an empty
+  catalog and evaluates it with `evaluate_decision_table`, as the platform does,
+  on the same two slots as validation. A table that gives no answer is refused
+  with 422, its `WV-DECISION-*` or `WV-EXPR-*` code, a sentence and
+  `result.path` (`result.diagnostics` as `{code, path}` when it doesn't compile);
+  a refusal never repeats a value from the input.
+
 - **Target.** `mode` is `workflow` (Execute workflow, which names no step),
   `step` (Execute step: until the step has output) or `before` (Execute
   previous steps: paused before the step). `step` and `before` name `stepId`;
@@ -356,9 +363,12 @@ assigned, because Weave has no deactivated steps, and Ctrl/Cmd+K is reserved.
 The last section of the sheet, Differences from n8n, lists each row that differs
 as two sentences: what the keys do in Studio, then what they do in n8n.
 
-## Try the new editor
+## The new editor
 
-The new editor is a per-viewer preference, off by default. The key
-`ui:weave.editorNext` holds `true` or `false`, and `?editor=next` in the URL
-turns the new editor on for that page, which is how tests open it. Settings ›
-Preferences offers the same choice with the **Try the new editor** toggle.
+The new editor is on by default. It is a per-viewer preference: the key
+`ui:weave.editorNext` holds `"false"` when the person turned it off (and `"true"`
+when they turned it on again); any other value, no value, or browser storage that
+refuses reads means the new editor. `?editor=classic` and `?editor=next` in the URL
+choose for that page without changing the stored choice, which is how tests open
+either editor. Settings › Preferences offers the same choice with the **Use the
+new editor** switch; the classic designer stays one switch away for now.

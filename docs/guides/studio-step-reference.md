@@ -87,7 +87,7 @@ output; it does not need an artificial Transform just to be a workflow.
   as "Add a step here, after call-api"; in an empty workflow, select **Add your
   first step**. Type in **Search steps and actions**. The list has a **Steps**
   group and a **Published actions** group. Choosing a published action inserts a
-  **Call an action** step that already uses it. With **Try the new editor** on,
+  **Call an action** step that already uses it. In the new editor (on by default),
   a **Common actions** group also lists [Call an API](#call-an-api) and the
   [email and file steps](#email-and-file-steps). Escape closes the picker.
 - **Into an empty branch.** A decision case or parallel branch with no steps
@@ -111,7 +111,7 @@ such as "1 problem".
 ## Edit a step in the inspector
 
 Select a step to edit it. The inspector heading shows the kind's palette label.
-With **Try the new editor** on, a step opens in step details instead, described
+In the new editor (on by default), a step opens in step details instead, described
 in [Configure a step in step details](studio.md#configure-a-step-in-step-details).
 
 - **Step name.** This is the step's ID: later steps read this step's output by
@@ -179,7 +179,7 @@ rules.
 
 ### Fields in step details
 
-With **Try the new editor** on, each step opens in
+In the new editor (on by default), each step opens in
 [step details](studio.md#configure-a-step-in-step-details) with a short form.
 **Parameters** shows the fields a new step starts with, and **Add option** offers
 the rest. **Settings** holds **Notes** and **About this step** for every step
@@ -191,7 +191,7 @@ details and **Assignment binding** in the inspector.
 | Step | Parameters | Add option | Also on Settings |
 | --- | --- | --- | --- |
 | Manual form trigger | **Input fields** | | |
-| Call an action, for a published action | **Action**, **Connection** when the action needs one, then the action's required inputs | The action's optional inputs | **Retry on fail** and **Timeout**, read-only: the action sets them |
+| Call an action, for a published action | **Action**, **Connection** when the action needs one, then the action's required inputs | The action's optional inputs | **Retry on fail** and **Timeout**, read-only: the action sets them. **Change in a new version** starts the action's next version on this computer, where they change (the request of an HTTP action changes with **Edit action as YAML** in the step's **More** menu); **Publish action** publishes it, and the workflow publishes only after it. A worker's action reads "Set by the worker that runs this action." |
 | Call an API | **Connection**, **Method**, **URL**, and **Body** for POST, PUT and PATCH | **Query parameters**, **Headers**, **Response sample**, **Accepted status codes**, **Description** | **Retry on fail**, **Timeout** |
 | Send email | **Connection**, **To**, **Subject**, **Message** | **Cc**, **Bcc**, **HTML version**, **Attachments** | **Retry on fail**, **Timeout** |
 | Reply to an email | **Connection**, **Reply to message**, **Conversation**, **Message** | **Reply to all**, **HTML version**, **Attachments** | **Retry on fail**, **Timeout** |
@@ -199,7 +199,7 @@ details and **Assignment binding** in the inspector.
 | Read a file, Download a file, Delete a file | **Connection**, **Path** (**Item ID** on a drive) | | **Retry on fail**, **Timeout** |
 | Write a file | **Connection**, **File**, **Destination**, and **Name** on a drive | | **Retry on fail**, **Timeout** |
 | Move a file | **Connection**, **Path** (**Item ID** on a drive), **Destination**, and **Name** on a drive | | **Retry on fail**, **Timeout** |
-| Decision table | **Table**, then the table's required inputs | The table's optional inputs | |
+| Decision table | **Table** (with **Edit table** and **New table**), then the table's required inputs | The table's optional inputs | |
 | AI task | **Model**, chosen from the models of your AI connections, and **Prompt** | **Context**, **Structured result**, **Max output tokens**, **Temperature**, **Reasoning pattern**, **Share settings with other AI steps** | **Timeout** |
 | Transform | **Fields**, or **Text** for a text template | | |
 | Decision | Each path's **Runs when** and **Path result**, then **Otherwise** | | |
@@ -222,12 +222,19 @@ while the workflow is open.
 
 ### Decision table
 
-Choose **Decision table** from the Logic palette. Select a **Published table**
-when connected, or enter its immutable `name@version` in **Table version**.
-Map **Table input** from workflow data, a fixed value, or a formula. The table's
-declared output becomes available to later steps in the Data picker.
+In step details, **Table** chooses the table: its published versions, then the
+drafts and copies kept on this computer ("· on this computer"). Under it,
+**Edit table** opens the table in a spreadsheet grid and **New table** starts an
+empty table named after the workflow and the step. **Table input** shows one row
+per required input of the table; its optional inputs are under **Add option**.
+The table's declared output becomes available to later steps in the Data picker.
+The grid is described in
+[Decision tables in the grid](studio.md#decision-tables-in-the-grid).
 
-**Create a reusable decision table** opens the table editor. Set the table name
+In the classic designer, choose **Decision table** from the Logic palette. Select a
+**Published table** when connected, or enter its immutable `name@version` in
+**Table version**. Map **Table input** from workflow data, a fixed value, or a
+formula. **Create a reusable decision table** opens the table editor. Set the table name
 and version, define its input and result fields, and choose the matching policy:
 first matching rule, exactly one matching rule, or collect all matching rules.
 Rule cards provide typed conditions, results, reorder buttons and Remove. Use
@@ -750,7 +757,7 @@ rules, and the operator's one-time setup.
 
 ## Decide where a value comes from
 
-With **Try the new editor** on, step details use **Fixed** and **Mapped**
+In the new editor (on by default), step details use **Fixed** and **Mapped**
 instead of these modes: a Mapped value is a formula, described in
 [Formulas in Studio](../reference/formulas.md). The modes below are the
 classic editor's.
@@ -963,7 +970,7 @@ the version again when it receives it.
 
 ## Execute a step
 
-With **Try the new editor** on, **Execute step** in step details simulates the
+In the new editor (on by default), **Execute step** in step details simulates the
 step on this computer, with what it needs before it, and shows what it returned
 in its Output pane. The [Studio guide](studio.md#execute-steps-and-read-the-run-log)
 explains the three ways to execute and the run log. What each kind shows:
@@ -981,7 +988,7 @@ explains the three ways to execute and the run log. What each kind shows:
 
 ## Simulate before publishing
 
-This section describes the classic editor. With **Try the new editor** on,
+This section describes the classic editor. In the new editor (on by default),
 **Execute workflow** replaces **Simulate**, publishes nothing first and needs no
 platform.
 

@@ -20,6 +20,16 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+- The new editor is now on by default; turn it off in Settings › Preferences to
+  use the classic designer.
+- Decision tables open in a spreadsheet grid with a short cell language,
+  keyboard editing, pasting from spreadsheets and Try an input that works
+  offline, checked by Weave on the Studio host
+  (`POST /studio/local/decision/evaluate`).
+- Table drafts are kept on this computer until you publish them with Publish
+  table; a workflow that uses one waits for it.
+- Published actions offer Change in a new version for retry, timeout and the
+  request.
 - With **Try the new editor** on, **Execute step**, **Execute previous steps**
   and **Execute workflow** simulate in Studio, on this computer, without a
   platform: step details, the trigger's button, the editor bar and
