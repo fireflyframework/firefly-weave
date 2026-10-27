@@ -609,3 +609,72 @@ async def test_a_held_run_never_stops_the_timeouts_of_runs_after_it(platform, mo
     await held(platform, stuck.id)
     for run_id in later:
         assert (await platform.state(run_id))["status"] == "timed_out"
+
+
+async def deciding_by_a_late_call(platform, monkeypatch, wait: float):
+    """A transaction whose step that can't be undone is a call the dispatch refuses for ``wait`` seconds."""
+    import asyncio
+
+    from firefly_weave.runtime.calls import CallService
+
+    lookup = {
+        "id": "first",
+        "kind": "action",
+        "uses": "reports.lookup@1.0.0",
+        "with": {"object": {"reference": {"ref": "/input/moveId"}}},
+    }
+    order = await platform.publish(workflow("slow-order", [lookup], callable_=True, timeout=3))
+    pivot = {
+        "id": "order",
+        "kind": "callWorkflow",
+        "uses": "slow-order@1.0.0",
+        "with": {"object": {"moveId": {"ref": "/input/moveId"}, "quantity": {"ref": "/input/quantity"}}},
+        "irreversible": True,
+    }
+    activation = await platform.publish(
+        workflow("move", [transaction(hold(), add(), pivot)]), **{"slow-order": order.id}
+    )
+    original = CallService.dispatch
+    refusing = [True]
+
+    async def late(self, tx, limit):
+        return (0, 0) if refusing[0] else await original(self, tx, limit)
+
+    monkeypatch.setattr(CallService, "dispatch", late)
+    run = await platform.start(activation)
+    await platform.complete(await platform.lease("hold"))
+    await platform.complete(await platform.lease("add"))
+    await asyncio.sleep(wait)
+    refusing[0] = False
+    await platform.scan()
+    [participant] = [
+        item
+        for item in (await platform.state(run.id))["transactions"]["move"]["participants"]
+        if item["key"] == "order"
+    ]
+    return run, participant
+
+
+async def test_a_called_step_that_cant_be_undone_and_starts_late_cannot_run_past_its_own_deadline(
+    platform, monkeypatch
+):
+    from datetime import datetime
+
+    run, participant = await deciding_by_a_late_call(platform, monkeypatch, 1.5)
+    [call] = await platform.query("SELECT status,child_run_id FROM run_calls WHERE caller_run_id=:run", run=run.id)
+    assert call["status"] == "started"
+    [timeout] = await platform.query(
+        "SELECT deadline FROM run_deadlines WHERE run_id=:run AND node_id='@run'", run=call["child_run_id"]
+    )
+    # It started 1.5 s late: it ends by the deadline the hold check counted on, not 3 s after its own start.
+    assert timeout["deadline"] == datetime.fromisoformat(participant["deadline"])
+
+
+async def test_a_called_step_that_cant_be_undone_is_never_started_after_its_own_deadline(platform, monkeypatch):
+    run, participant = await deciding_by_a_late_call(platform, monkeypatch, 3.5)
+    [call] = await platform.query("SELECT status,child_run_id FROM run_calls WHERE caller_run_id=:run", run=run.id)
+    assert (call["status"], call["child_run_id"]) == ("rejected", None)
+    # Nothing was applied: the transaction goes back.
+    await platform.complete(await platform.lease("add#undo"))
+    await platform.complete(await platform.lease("hold#cancel"))
+    assert (await platform.record(run.id))["state"] == "compensated"

@@ -242,6 +242,8 @@ class RuntimeService:
             if any(node.kind == "transaction" for node in ir.graph.nodes):
                 # Undo steps name operation keys, which start with the run's ID.
                 data["run_id"] = str(run_id)
+            if child is not None and child.not_after is not None:
+                data["not_after"] = child.not_after.isoformat()
             event = RuntimeEvent(id=uuid4(), type="started", timestamp=now, sequence=1, data=data)
             result = await transition(RunState(input=request.input), event, artifact)
             self.require(await load_principal(enlisted.session, actor.id), scope, "run.start", context)

@@ -463,3 +463,18 @@ def test_a_second_confirm_that_cannot_finish_keeps_the_first_incident_as_the_tra
         "first#confirm:2": "WV-TXN-CONFIRM-STUCK",
         "second#confirm:3": "WV-TXN-CONFIRM-STUCK",
     }
+
+
+def test_a_child_started_late_for_a_step_that_cant_be_undone_ends_by_its_callers_deadline():
+    run = Run(compiled([transaction([hold(), add(), submit()])], timeout=300))
+    cap = run.now + timedelta(seconds=40)
+    started = run.send(
+        "started", admission_policy="classified-v1", origin="manual", run_id=str(RUN), not_after=cap.isoformat()
+    )
+    assert [(d.node_id, d.deadline) for d in deadlines(started) if d.node_id == "@run"] == [("@run", cap)]
+    later = Run(compiled([transaction([hold(), add(), submit()])], timeout=30))
+    started = later.send(
+        "started", admission_policy="classified-v1", origin="manual", run_id=str(RUN), not_after=cap.isoformat()
+    )
+    # Its own limit ends it earlier still.
+    assert [d.deadline for d in deadlines(started) if d.node_id == "@run"] == [later.now + timedelta(seconds=30)]

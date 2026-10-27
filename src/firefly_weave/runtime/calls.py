@@ -88,6 +88,17 @@ class ChildStart:
     generation: int
     mode: str
     depth: int
+    # The step that can't be undone of a transaction: its child ends by the deadline its caller's hold check counted on.
+    not_after: datetime | None = None
+
+
+def pivot_deadline(caller: dict[str, Any], key: str) -> datetime | None:
+    """The deadline of the caller's step that can't be undone at ``key``, when the call is that step."""
+    for record in (caller["state"].get("transactions") or {}).values():
+        for item in record.get("participants", []):
+            if item.get("key") == key and item.get("mode") == "irreversible" and item.get("deadline"):
+                return datetime.fromisoformat(item["deadline"])
+    return None
 
 
 def child_key(caller_run_id: UUID, node_id: str, generation: int) -> str:
@@ -408,8 +419,13 @@ class CallService:
 
         if row["depth"] > MAX_CALL_DEPTH:
             return await rejected("WV-CALL-DEPTH")
+        not_after = pivot_deadline(caller, row["node_id"])
+        if not_after is not None and now >= not_after:
+            # Too late for the step that can't be undone: its reservations no longer outlast it. Nothing started,
+            # so nothing was applied, and its transaction goes back.
+            return await rejected("WV-CALL-START")
         child = ChildStart(
-            row["id"], row["caller_run_id"], row["node_id"], row["generation"], row["mode"], row["depth"]
+            row["id"], row["caller_run_id"], row["node_id"], row["generation"], row["mode"], row["depth"], not_after
         )
         from firefly_weave.runtime.capacity import RuntimeCapacityError, capacity_failures
 

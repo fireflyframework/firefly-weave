@@ -1536,10 +1536,22 @@ def _advance_owned(
                         raise KernelError("WV-RUNTIME-EVENT") from error
                     current_state = current_state.model_copy(update={"run_id": run_id})
                 queue.append(ir.graph.entry)
-                if ir.timeout_seconds:
-                    result.commands.append(
-                        Deadline(node_id="@run", deadline=checked_deadline(event.timestamp, ir.timeout_seconds))
-                    )
+                ends: datetime | None = (
+                    checked_deadline(event.timestamp, ir.timeout_seconds) if ir.timeout_seconds else None
+                )
+                cap = event.data.get("not_after")
+                if cap is not None:
+                    # A called step that can't be undone runs no later than the deadline its caller's hold check
+                    # counted on, however late it started.
+                    try:
+                        bound = datetime.fromisoformat(str(cap))
+                    except ValueError as error:
+                        raise KernelError("WV-RUNTIME-EVENT") from error
+                    if bound.tzinfo is None:
+                        raise KernelError("WV-RUNTIME-EVENT")
+                    ends = bound if ends is None else min(ends, bound)
+                if ends is not None:
+                    result.commands.append(Deadline(node_id="@run", deadline=ends))
             else:
                 if (state.status == "suspended" or state.manual_paused) and not settlement_event(txns, state, event):
                     # Validate the immutable fact now, but keep every continuation behind the barrier.
