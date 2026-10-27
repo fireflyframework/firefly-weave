@@ -1037,15 +1037,30 @@ def _advance_owned(
         elif transaction.status == "compensating":
             settle_progress(key)
 
-    def settled(node: ActionNode | CallWorkflowNode, name: str, value: JsonValue) -> bool:
-        """Record a participant's success; True when its transaction is no longer going forward."""
+    def settled(node: ActionNode | CallWorkflowNode, name: str, value: JsonValue, failed: object = None) -> bool:
+        """Record a participant's result; True when its transaction is no longer going forward.
+
+        ``failed`` is the effect of a called step whose child did not succeed while the body continues with its
+        failure as data: the step is recorded as it ended, not as done.
+        """
         key = cast(str, owner_of(name))
         index = cast(int, participant_index(record(key).participants, name))
         assert txns is not None
         scope = record(key).participants[index].scope
         if txns.reads[node.id].own_output:
             scope = {**scope, "output": value}
-        transaction = participant(key, index, status="done", outcome="done", scope=scope)
+        if failed is not None:
+            folded = fold(record(key).participants[index].effect, failed)
+            transaction = participant(
+                key,
+                index,
+                status="unknown" if folded == "unknown" else "failed",
+                outcome="unknown" if folded == "unknown" else None,
+                effect=folded,
+                scope=scope,
+            )
+        else:
+            transaction = participant(key, index, status="done", outcome="done", scope=scope)
         if transaction.status == "deciding" and transaction.participants[index].mode == "irreversible":
             commit(key)
             return False
@@ -1272,7 +1287,9 @@ def _advance_owned(
                 guard(node.path, "call_output", value)
             complete(node, identifier, value)
             current_state.active.remove(identifier)
-            if node.txn is not None and settled(node, identifier, value):
+            ended = completion.data.get("status") == "succeeded" or completion.data.get("reconciled") is True
+            failed = None if ended else completion.data.get("effect", "unknown")
+            if node.txn is not None and settled(node, identifier, value, failed):
                 return
             queue.append(successor(identifier))
             return

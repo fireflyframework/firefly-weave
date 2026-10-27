@@ -421,3 +421,29 @@ def test_a_called_step_still_running_gets_its_full_time_limit_from_the_rollback_
     aborted = run.send("cancelled", reason="stop")
     [settle] = [d for d in deadlines(aborted) if d.node_id == "move#settle"]
     assert settle.deadline == run.now + timedelta(seconds=330)
+
+
+def test_a_called_step_that_continues_after_its_child_failed_is_recorded_as_it_ended():
+    elsewhere = {
+        "id": "elsewhere",
+        "kind": "callWorkflow",
+        "uses": "reverse-target-addition@1.0.0",
+        "with": {"object": {"reference": {"ref": "/input/moveId"}, "addOperation": {"literal": "elsewhere"}}},
+        "onFailure": "continue",
+        "compensate": add()["compensate"],
+    }
+    run = Run(flow(hold(holdSeconds=900), elsewhere, submit()))
+    run.start()
+    run.done("hold", {"holdId": "h-1"})
+    # The body goes on with the child's failure as data, but the step is not recorded as done.
+    [pivot] = tasks(run.called("elsewhere", "failed", {"code": "BROKEN", "message": "It broke."}, effect="unknown"))
+    assert pivot.node_id == "submit"
+    record = next(item for item in run.txn().participants if item.key == "elsewhere")
+    assert (record.status, record.outcome, record.effect) == ("unknown", "unknown", "unknown")
+    # A child that applied nothing is recorded as failed with nothing to undo.
+    other = Run(flow(hold(holdSeconds=900), elsewhere, submit()))
+    other.start()
+    other.done("hold", {"holdId": "h-1"})
+    other.called("elsewhere", "failed", {"code": "BROKEN", "message": "It broke."}, effect="none")
+    record = next(item for item in other.txn().participants if item.key == "elsewhere")
+    assert (record.status, record.effect) == ("failed", "none")
