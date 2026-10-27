@@ -18,7 +18,7 @@
 
 import pytest
 
-from firefly_weave.runtime.transactions import failure_effect, fold
+from firefly_weave.runtime.transactions import deadline_key, failure_effect, fold, split_deadline
 
 ADD = {"sideEffect": "non_idempotent", "definiteFailures": ["VALIDATION"]}
 CONNECTOR = {
@@ -74,3 +74,23 @@ def test_a_participant_applied_nothing_only_when_every_attempt_says_so_from_a_re
 
 def test_once_unknown_always_unknown():
     assert fold("unknown", "none") == "unknown" and fold("none", "none") == "none" and fold("none", None) == "unknown"
+
+
+@pytest.mark.parametrize(
+    ("key", "kind", "generation", "text"),
+    [
+        ("move", "hold", 0, "move#hold"),
+        ("move[2]", "settle", 0, "move[2]#settle"),
+        ("move", "settle", 1, "move#settle.1"),
+        ("move[0][3]", "settle", 12, "move[0][3]#settle.12"),
+        ("move", "decide", 0, "move#decide"),
+    ],
+)
+def test_a_transaction_deadline_key_names_its_transaction_kind_and_generation(key, kind, generation, text):
+    assert deadline_key(key, kind, generation) == text
+    assert split_deadline(text) == (key, kind)
+
+
+@pytest.mark.parametrize("text", ["move#settle.0", "move#settle.01", "move#hold.1", "move#settle.x", "move#undo"])
+def test_other_keys_are_not_transaction_deadlines(text):
+    assert split_deadline(text) is None

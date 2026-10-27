@@ -95,9 +95,15 @@ def failure_effect(action: Mapping[str, Any], error: Mapping[str, Any], *, trans
     return "unknown"
 
 
-def deadline_key(transaction_key: str, kind: DeadlineKind) -> str:
-    """The instance key of a transaction's hold, settle or decide deadline: ``move[2]`` → ``move[2]#settle``."""
-    return f"{transaction_key}#{kind}"
+def deadline_key(transaction_key: str, kind: DeadlineKind, generation: int = 0) -> str:
+    """The instance key of a transaction's hold, settle or decide deadline: ``move[2]`` → ``move[2]#settle``.
+
+    A settle deadline armed again after a person retried a settle timeout gets a key of its own per generation
+    (``move#settle.1``): the one before it was consumed when it fired, and a deadline row fires once.
+    """
+    if generation and kind != "settle":
+        raise ValueError("Only a settle deadline is armed again")
+    return f"{transaction_key}#{kind}" + (f".{generation}" if generation else "")
 
 
 def split_deadline(key: object) -> tuple[str, DeadlineKind] | None:
@@ -108,9 +114,15 @@ def split_deadline(key: object) -> tuple[str, DeadlineKind] | None:
         parsed = split_instance(key)
     except InvalidInstanceKey:
         return None
-    if len(parsed.segments) != 1 or parsed.count is not None or parsed.segments[0] not in DEADLINE_SEGMENTS:
+    if parsed.count is not None or not parsed.segments or parsed.segments[0] not in DEADLINE_SEGMENTS:
         return None
-    return key.rpartition("#")[0], cast(DeadlineKind, parsed.segments[0])
+    if len(parsed.segments) == 2:
+        generation = parsed.segments[1]
+        if parsed.segments[0] != "settle" or not generation.isdigit() or generation.startswith("0"):
+            return None
+    elif len(parsed.segments) != 1:
+        return None
+    return key.partition("#")[0], cast(DeadlineKind, parsed.segments[0])
 
 
 def references(expression: object) -> set[str]:

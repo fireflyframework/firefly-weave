@@ -53,7 +53,7 @@ from firefly_weave.compiler.ir import (
 )
 from firefly_weave.compiler.schemas import validate_payload
 from firefly_weave.contracts.definitions import ActionDefinition, ContractModel, WorkerImplementation, load_definition
-from firefly_weave.contracts.instance_keys import node_of
+from firefly_weave.contracts.instance_keys import InvalidInstanceKey, node_of
 from firefly_weave.contracts.limits import Limits
 from firefly_weave.contracts.transactions import (
     HOLD_MARGIN_SECONDS,
@@ -359,6 +359,51 @@ def validate_action(
         validate(ir, schema, value)
 
 
+def check_reconciliation(transaction: TransactionRecord, value: object) -> tuple[str, dict[str, str], JsonValue]:
+    """Check a person's reconciliation record against a transaction: how it ended, each named step's outcome, and the
+    block output (required when it completed, refused when it was undone).
+
+    Every step that couldn't finish must be named; ``completed`` admits ``confirmed`` (reservations only) and
+    ``done``, ``compensated`` only ``undone``. A record that doesn't fit raises ``KernelError("WV-RUNTIME-OUTPUT")``.
+    """
+    if not isinstance(value, dict) or value.get("as") not in {"completed", "compensated"}:
+        raise KernelError("WV-RUNTIME-OUTPUT")
+    if set(value) - {"as", "participants", "blockOutput"}:
+        raise KernelError("WV-RUNTIME-OUTPUT")
+    ending = cast(str, value["as"])
+    known = {item.key: item for item in transaction.participants}
+    outcomes: dict[str, str] = {}
+    entries = value.get("participants", [])
+    if not isinstance(entries, list):
+        raise KernelError("WV-RUNTIME-OUTPUT")
+    allowed = {"completed": {"confirmed", "done"}, "compensated": {"undone"}}[ending]
+    for entry in entries:
+        if not isinstance(entry, dict) or set(entry) != {"instance_key", "outcome"}:
+            raise KernelError("WV-RUNTIME-OUTPUT")
+        name, outcome = entry["instance_key"], entry["outcome"]
+        if not isinstance(name, str) or name not in known or name in outcomes or outcome not in allowed:
+            raise KernelError("WV-RUNTIME-OUTPUT")
+        if outcome == "confirmed" and known[name].mode != "reserve":
+            raise KernelError("WV-RUNTIME-OUTPUT")
+        outcomes[name] = cast(str, outcome)
+    if any(item.status in STUCK and item.key not in outcomes for item in transaction.participants):
+        # Every step that couldn't finish needs a person's word on what happened to it.
+        raise KernelError("WV-RUNTIME-OUTPUT")
+    if (ending == "completed") != ("blockOutput" in value):
+        raise KernelError("WV-RUNTIME-OUTPUT")
+    output = cast(JsonValue, value.get("blockOutput"))
+    if ending == "completed":
+        measure_value(output)
+    return ending, outcomes, output
+
+
+def block_output(ir: WorkflowIR, node: TransactionNode, value: JsonValue) -> None:
+    """Validate an output a person gave a transaction's block against the block's own output schema."""
+    for item in ir.guards:
+        if item.path == f"{node.path}/output" and item.purpose == "branch_output":
+            validate(ir, ir.schemas[item.schema_ref], value)
+
+
 class KernelCursor(ContractModel):
     """One atomic event's checkpoint and serializable continuation; never a Python stack."""
 
@@ -389,7 +434,9 @@ def begin(state: RunState, event: RuntimeEvent, artifact: CompiledArtifact | Non
 
 def transition(state: RunState, event: RuntimeEvent, artifact: CompiledArtifact | None) -> Transition:
     # A run whose transactions still hold work ends only after they settle: its stop is ordinary work.
-    if event.type in {"cancelled", "timed_out"} and not unsettled(state):
+    # A cancel that skips undoing force-ends the run's transactions and stops it: it is terminal control too.
+    skipping = event.type == "cancelled" and event.data.get("skip_undo") is True
+    if event.type in {"cancelled", "timed_out"} and (not unsettled(state) or skipping):
         # An allocation-limited retained state can still use terminal control.
         # The service falls back to bounded SQL persistence if this ceiling is exceeded.
         token = capacity_failures.set(None)
@@ -402,7 +449,9 @@ def transition(state: RunState, event: RuntimeEvent, artifact: CompiledArtifact 
                 not cursor.done
                 or cursor.result.steps
                 or any(
-                    not isinstance(command, ControlCommand) or command.kind not in {"revoke_leases", "terminate"}
+                    not isinstance(command, ControlCommand)
+                    or command.kind
+                    not in {"revoke_leases", "terminate", *(("transaction", "settle") if skipping else ())}
                     for command in cursor.result.commands
                 )
             ):
@@ -773,7 +822,8 @@ def _advance_owned(
             # a step whose deadline already passed still gets recovery's verdict first.
             due = max(*flying, event.timestamp) + timedelta(seconds=HOLD_MARGIN_SECONDS)
             update(key, settle_by=due)
-            result.commands.append(Deadline(node_id=deadline_key(key, "settle"), deadline=due))
+            settle = deadline_key(key, "settle", record(key).generation)
+            result.commands.append(Deadline(node_id=settle, deadline=due))
 
     def within_body(transaction: TransactionNode, suffix: str, node_id: str, key_suffix: str) -> bool:
         inner = [*transaction.scope, transaction.id, "body"]
@@ -1218,6 +1268,186 @@ def _advance_owned(
         queue[:] = [name for name in queue if owner_of(name) is not None]
         maybe_end()
 
+    def holder_of(name: str) -> str | None:
+        """The transaction that owns a step instance or one of its undo phases."""
+        phase = split_phase(name)
+        return owner_of(phase[0] if phase is not None else name)
+
+    def ended_by_person(name: str) -> bool:
+        """Whether ``name`` is a step or phase of a transaction a person reconciled or force ended."""
+        try:
+            holder = holder_of(name)
+        except InvalidInstanceKey:
+            return False
+        ended = current_state.transactions.get(holder) if holder is not None else None
+        return ended is not None and ended.status in {"reconciled", "force_ended"}
+
+    def stop_transaction(key: str) -> None:
+        """A person ended a transaction in doubt: stop its body and every step or phase of it still in flight."""
+        cancel_scope(key)
+        for name in list(current_state.active):
+            if holder_of(name) == key:
+                current_state.active.remove(name)
+                current_state.waits.pop(name, None)
+                result.commands.append(ControlCommand(kind="settle", node_id=name))
+        current_state.parked[:] = [name for name in current_state.parked if holder_of(name) != key]
+        current_state.deferred_results[:] = [
+            e for e in current_state.deferred_results if holder_of(str(e.data.get("node_id"))) != key
+        ]
+        update(key, resume=[])
+
+    def block_ends(key: str, output: JsonValue | None, failure: JsonObject | None) -> None:
+        """End a transaction's block a person decided: with an output the steps after it read, or as undone."""
+        nonlocal current
+        node = cast(TransactionNode, nodes[node_of(key)])
+        suffix = loop_suffix(key)
+        join = current_state.joins[key]
+        if failure is not None:
+            current_state.joins[key] = join.model_copy(update={"status": "terminated"})
+            current = key
+            if current_state.ending is not None:
+                # The run was already ending (canceled or timed out): it ends that way once nothing else is unsettled.
+                maybe_end()
+            else:
+                end_run("failed", cast(str, failure["code"]), failure)
+            return
+        complete(node, key, output)
+        result.steps.append(StepChange(node_id=node.join + suffix, status="completed", output=output))
+        result.commands.append(ControlCommand(kind="join", node_id=node.join + suffix))
+        current_state.joins[key] = join.model_copy(update={"status": "joined"})
+        if current_state.ending is not None:
+            maybe_end()
+        else:
+            proceed([successor(node.join + suffix)])
+
+    def reconciliation(key: str, value: JsonValue) -> tuple[str, dict[str, str], JsonValue]:
+        """Check a reconciliation record against the transaction: how it ended, each step's outcome, its output."""
+        ending, outcomes, output = check_reconciliation(record(key), value)
+        if ending == "completed":
+            block_output(ir, cast(TransactionNode, nodes[node_of(key)]), output)
+        return ending, outcomes, output
+
+    def force_end(key: str) -> None:
+        """Nothing more of a transaction is done or undone: a person said so, and owns what is left outside."""
+        stop_transaction(key)
+        update(key, status="force_ended", incident=None, ended_at=event.timestamp)
+        if key in current_state.joins:
+            current_state.joins[key] = current_state.joins[key].model_copy(update={"status": "terminated"})
+
+    def resolve_transaction(incident_key: str, prior: IncidentState, kind: object, data: JsonObject) -> None:
+        """Apply a person's resolution of a transaction in doubt; nothing else moves it."""
+        if incident_key == HELD_INCIDENT:
+            # A run too large to undo its transactions: only a force end closes the hold, ending all of them.
+            if kind != "terminate":
+                raise KernelError("WV-RUNTIME-EVENT")
+            for held in [k for k, t in current_state.transactions.items() if t.status in UNSETTLED]:
+                force_end(held)
+            end_run("cancelled")
+            return
+        key = next((k for k, t in current_state.transactions.items() if t.incident == incident_key), None)
+        if key is None:
+            raise KernelError("WV-RUNTIME-STATE")
+        transaction = record(key)
+        name = prior.node_id
+        if kind == "retry_safe":
+            if prior.code == "WV-TXN-PIVOT-UNKNOWN":
+                raise KernelError("WV-RUNTIME-EVENT")
+            if prior.code == "WV-TXN-SETTLE-TIMEOUT":
+                update(key, status="compensating", incident=None, generation=transaction.generation + 1)
+                if any(item.status == "dispatched" for item in record(key).participants):
+                    arm_settle(key)
+                else:
+                    settle_progress(key)
+                return
+            phase = split_phase(name)
+            if phase is not None:
+                # A new attempt of the stuck phase, with the same operation key; the rollback or commit resumes there.
+                index = cast(int, participant_index(transaction.participants, phase[0]))
+                progress = {"confirm": "confirming", "cancel": "cancelling", "compensate": "undoing"}[phase[1]]
+                participant(key, index, status=progress)
+                update(key, status="committing" if phase[1] == "confirm" else "compensating", incident=None)
+                current_state.active.append(name)
+                return
+            # A step after the point of no return runs again; it is safe to retry.
+            update(key, status="committing", incident=None)
+            after = participant_index(transaction.participants, name)
+            if after is not None:
+                participant(key, after, status="dispatched", outcome=None)
+            if runs_task(name) or isinstance(nodes[node_of(name)], CallWorkflowNode):
+                current_state.active.append(name)
+            else:
+                proceed([name])
+            return
+        if kind == "accept_reconciled_failure":
+            # It didn't happen: the step that can't be undone applied nothing, so the transaction goes back.
+            if prior.code != "WV-TXN-PIVOT-UNKNOWN":
+                raise KernelError("WV-RUNTIME-EVENT")
+            index = cast(int, participant_index(transaction.participants, name))
+            participant(key, index, status="failed", effect="none", outcome=None)
+            first = transaction.pending_abort or transaction.cause
+            update(key, status="compensating", cause=first, pending_abort=None, rollback=True, incident=None)
+            rollback(key)
+            return
+        if kind == "accept_reconciled_result" and prior.code == "WV-TXN-PIVOT-UNKNOWN":
+            # It happened: the step's output is the one a person found; the transaction goes ahead from there.
+            node = nodes[node_of(name)]
+            value = data.get("output")
+            if isinstance(node, ActionNode):
+                validate_action(ir, action(node)[1], "output", value)
+                guard(node.path, "action_output", value)
+            elif isinstance(node, CallWorkflowNode):
+                value = call_result(
+                    ir, node, {"status": "succeeded", "output": value, "child_run_id": None, "reconciled": True}
+                )
+            else:
+                raise KernelError("WV-RUNTIME-EVENT")
+            index = cast(int, participant_index(transaction.participants, name))
+            scope = transaction.participants[index].scope
+            if txns is not None and txns.reads[node.id].own_output:
+                scope = {**scope, "output": value}
+            complete(node, name, value)
+            participant(key, index, status="done", outcome="done", scope=scope)
+            update(key, incident=None, cause=None)
+            commit(key)
+            proceed([successor(name)])
+            return
+        if kind == "accept_reconciled_result":
+            ending, outcomes, output = reconciliation(key, data.get("output"))
+            stop_transaction(key)
+            participants = [
+                item.model_copy(
+                    update={
+                        "status": {"undone": "cancelled" if item.mode == "reserve" else "undone"}.get(
+                            outcomes[item.key], outcomes[item.key]
+                        )
+                    }
+                )
+                if item.key in outcomes
+                else item
+                for item in record(key).participants
+            ]
+            update(
+                key,
+                status="reconciled",
+                reconciled_as=ending,
+                participants=participants,
+                incident=None,
+                ended_at=event.timestamp,
+            )
+            if ending == "completed":
+                block_ends(key, output, None)
+            else:
+                block_ends(
+                    key, None, {"code": "WV-TXN-ROLLED-BACK", "message": TRANSACTION_MESSAGES["WV-TXN-ROLLED-BACK"]}
+                )
+            return
+        if kind == "terminate":
+            # Force end: nothing more is done or undone; the run ends canceled once its other transactions settle.
+            force_end(key)
+            end_run("cancelled")
+            return
+        raise KernelError("WV-RUNTIME-EVENT")
+
     def lift() -> None:
         """A barrier lifted: run the steps it stopped, then the results it deferred."""
         nonlocal current_state
@@ -1240,6 +1470,9 @@ def _advance_owned(
             return
         if completion.type == "wait_elapsed" and split_deadline(identifier) is not None:
             deadline_due(cast(str, identifier), completion)
+            return
+        if isinstance(identifier, str) and identifier not in current_state.active and ended_by_person(identifier):
+            # A late result of work a person already settled by hand: nothing is left for it to decide.
             return
         if not isinstance(identifier, str) or identifier not in current_state.active:
             raise KernelError("WV-RUNTIME-EVENT")
@@ -1350,6 +1583,10 @@ def _advance_owned(
                 lift()
                 return checkpoint(result.model_copy(update={"state": current_state}), done=not queue)
             if event.type == "cancelled":
+                if event.data.get("skip_undo") is True:
+                    # A reconciler stops the run without undoing anything: its open transactions end where they are.
+                    for open_key in [k for k, t in current_state.transactions.items() if t.status in UNSETTLED]:
+                        force_end(open_key)
                 end_run("cancelled")
                 return checkpoint(result.model_copy(update={"state": current_state}), done=not queue)
             if event.type == "incident_opened" and event.data.get("node_id") == HELD_NODE:
@@ -1379,7 +1616,27 @@ def _advance_owned(
                     raise KernelError("WV-RUNTIME-STATE")
                 if prior is not None and prior.code in IN_DOUBT_CODES:
                     # A transaction in doubt moves only through the resolutions made for it.
-                    raise KernelError("WV-RUNTIME-STATE")
+                    current_state.incidents.pop(str(key))
+                    current_state = current_state.model_copy(
+                        update={
+                            "incident": current_state.incidents[min(current_state.incidents)].code
+                            if current_state.incidents
+                            else None
+                        }
+                    )
+                    current = prior.node_id
+                    try:
+                        resolve_transaction(str(key), prior, kind, event.data)
+                    except KernelError:
+                        # A resolution that doesn't fit the transaction changes nothing: the incident stays open.
+                        unchanged = state.model_copy(deep=True)
+                        unchanged = unchanged.model_copy(update={"accepted_sequence": event.sequence})
+                        return checkpoint(Transition(state=unchanged))
+                    if current_state.status not in RUN_TERMINAL and not (
+                        current_state.incidents or current_state.manual_paused
+                    ):
+                        lift()
+                    return checkpoint(result.model_copy(update={"state": current_state}), done=not queue)
                 if kind == "terminate":
                     if not unsettled(current_state):
                         terminate("cancelled")

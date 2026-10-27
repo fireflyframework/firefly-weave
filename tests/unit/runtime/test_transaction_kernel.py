@@ -172,8 +172,6 @@ def test_nothing_but_a_resolution_moves_a_transaction_out_of_doubt():
         ("paused", {"reason": "p", "control_revision": stuck.control_revision + 1}),
         ("resumed", {"reason": "r", "control_revision": stuck.control_revision + 1}),
         ("cancelled", {"reason": "c"}),
-        ("incident_resolved", {"incident_key": "add#undo:10", "kind": "retry_safe", "node_id": "add#undo"}),
-        ("incident_resolved", {"incident_key": "add#undo:10", "kind": "terminate", "node_id": "add#undo"}),
     ]
     for kind, data in events:
         run.state = stuck.model_copy(deep=True)

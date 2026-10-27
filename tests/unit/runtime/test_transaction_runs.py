@@ -205,9 +205,23 @@ def test_a_run_holding_its_transactions_replays_the_hold_and_refuses_to_resolve_
     run.send("incident_opened", **held)
     assert (run.state.status, run.state.incident, run.txn().status) == ("suspended", "WV-TXN-RUN-OVERSIZED", "open")
     assert run.state.incidents["@transactions:0"].origin_code == "WV-RUNTIME-CAPACITY"
-    # Forward work waits behind it; only a force cancel closes it.
+    # Forward work waits behind it; only a force end or a force cancel closes it.
     assert tasks(run.done("add", {"id": "a-1"})) == []
-    refused(run, "incident_resolved", incident_key="@transactions:0", kind="retry")
+    before = run.state.model_copy(deep=True)
+    for kind in ("retry_safe", "accept_reconciled_result", "accept_reconciled_failure"):
+        run.send("incident_resolved", incident_key="@transactions:0", node_id="@transactions", kind=kind)
+        assert (run.state.incidents, run.state.transactions) == (before.incidents, before.transactions)
+
+
+def test_force_end_of_a_held_run_ends_every_open_transaction_and_the_run():
+    run = Run(compiled([transaction([hold(), add(), submit()])]))
+    run.start()
+    run.done("hold", {"holdId": "h-1"})
+    held = dict(node_id="@transactions", generation=0, code="WV-TXN-RUN-OVERSIZED", origin_code="WV-RUNTIME-CAPACITY")
+    run.send("incident_opened", **held)
+    ended = run.send("incident_resolved", incident_key="@transactions:0", node_id="@transactions", kind="terminate")
+    assert tasks(ended) == [] and controls(ended, "terminate")
+    assert (run.txn().status, run.state.status, run.state.incidents) == ("force_ended", "cancelled", {})
 
 
 def test_a_run_without_an_open_transaction_cannot_be_held():
@@ -225,3 +239,67 @@ def test_a_run_without_an_open_transaction_cannot_be_held():
     run.done("hold#confirm", {})
     assert (run.txn().status, run.state.status) == ("completed", "waiting")
     refused(run, "incident_opened", node_id="@transactions", generation=0, code="WV-TXN-RUN-OVERSIZED")
+
+
+def test_a_cancel_that_skips_undo_force_ends_open_transactions_and_ends_the_run():
+    run = Run(compiled([transaction([hold(), add(), submit()])]))
+    run.start()
+    run.done("hold", {"holdId": "h-1"})
+    assert "add" in run.state.active
+    ended = run.send("cancelled", reason="stop", skip_undo=True)
+    assert tasks(ended) == [] and controls(ended, "settle") == ["add"] and controls(ended, "terminate")
+    assert (run.txn().status, run.state.status) == ("force_ended", "cancelled")
+
+
+def test_a_run_timeout_does_not_end_a_run_in_doubt_and_ends_it_once_resolved():
+    from uuid import uuid4
+
+    run = Run(compiled([transaction([hold(), add(), submit()])], timeout=300))
+    run_deadline = next(d for d in deadlines(run.start()) if d.node_id == "@run")
+    run.done("hold", {"holdId": "h-1"})
+    run.done("add", {"id": "a-1"})
+    run.failed("submit", "TIMEOUT", effect="unknown", generation=3)
+    assert run.txn().status == "in_doubt"
+    run.now = run_deadline.deadline
+    run.send("timed_out", node_id="@run", deadline=run_deadline.deadline.isoformat(), wait_id="w")
+    assert (run.state.status, run.state.ending.status, run.txn().status) == ("suspended", "timed_out", "in_doubt")
+    run.send(
+        "incident_resolved",
+        incident_key="submit:3",
+        receipt_id=str(uuid4()),
+        node_id="submit",
+        generation=3,
+        kind="accept_reconciled_failure",
+        reason="checked",
+        evidence_reference="T",
+        actor_id=str(uuid4()),
+    )
+    run.done("add#undo", {})
+    run.done("hold#cancel", {})
+    assert (run.txn().status, run.state.status) == ("compensated", "timed_out")
+
+
+def test_a_run_that_timed_out_in_doubt_ends_timed_out_once_reconciled():
+    from uuid import uuid4
+
+    run = Run(compiled([transaction([hold(), add(), submit()])], timeout=300))
+    run_deadline = next(d for d in deadlines(run.start()) if d.node_id == "@run")
+    run.done("hold", {"holdId": "h-1"})
+    run.failed("add", "UNAVAILABLE", effect="unknown")
+    run.failed("add#undo", "UNAVAILABLE", generation=10)
+    assert run.txn().status == "in_doubt"
+    run.now = run_deadline.deadline
+    run.send("timed_out", node_id="@run", deadline=run_deadline.deadline.isoformat(), wait_id="w")
+    run.send(
+        "incident_resolved",
+        incident_key="add#undo:10",
+        receipt_id=str(uuid4()),
+        node_id="add#undo",
+        generation=10,
+        kind="accept_reconciled_result",
+        output={"as": "compensated", "participants": [{"instance_key": "add", "outcome": "undone"}]},
+        reason="checked",
+        evidence_reference="T",
+        actor_id=str(uuid4()),
+    )
+    assert (run.txn().status, run.state.status) == ("reconciled", "timed_out")
