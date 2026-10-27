@@ -257,3 +257,23 @@ def test_a_secret_in_a_person_s_answer_is_refused_with_its_pointer():
         )
     )
     assert (secret.status, secret.code, secret.paths) == (422, "WV-SCHEMA-SECRET_VALUE", ["/payload/data"])
+
+
+PAUSE = {"id": "pause", "kind": "wait", "durationSeconds": 300}
+
+
+def test_continue_lets_waits_pass_and_uses_test_answers_up_to_a_breakpoint():
+    paid = {"id": "paid", "kind": "signal", "name": "order-paid", "timeoutSeconds": 600, "payloadSchema": {}}
+    sessions = HostSessions()
+    session = sessions.create(
+        request(
+            workflow(PAUSE, paid, SHAPE | {"value": {"literal": 1}}),
+            scripts={"signals": {"paid": {"payload": {}, "source": "manual"}}},
+        ),
+        None,
+        now=0,
+    )
+    marked = sessions.command(session.id, 1, DebugCommand(kind="breakpoints", node_ids=["shape"]), now=1)
+    paused = sessions.command(session.id, marked.revision, DebugCommand(kind="continue"), now=2)
+    assert paused.view.status == "paused"
+    assert "shape" in paused.view.current_nodes

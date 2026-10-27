@@ -35,7 +35,7 @@ if TYPE_CHECKING:
     from firefly_weave.compiler.catalog import CatalogSnapshot
     from firefly_weave.operations.debug.models import DebugCommand, DebugSession
     from firefly_weave.operations.debug.simulator import Simulator
-    from firefly_weave.studio.local_contracts import SimulationRequest
+    from firefly_weave.studio.local_contracts import ExecuteScripts, SimulationRequest
 
 SESSIONS = 4
 IDLE_SECONDS = 1800
@@ -48,6 +48,8 @@ class _Kept:
     revision: int
     created_at: datetime
     touched: float
+    # Test answers and waits that pass by themselves, for Continue; None steps through time by hand.
+    scripts: ExecuteScripts | None = None
 
 
 class HostSessions:
@@ -85,7 +87,13 @@ class HostSessions:
                 422, "WV-STUDIO-REQUEST", "The workflow doesn't compile; execute it to see what to fix"
             )
         identifier = uuid4()
-        kept = _Kept(state="", revision=1, created_at=datetime.now(UTC), touched=now)
+        kept = _Kept(
+            state="",
+            revision=1,
+            created_at=datetime.now(UTC),
+            touched=now,
+            scripts=request.scripts if request.scripts.autoAdvanceWaits else None,
+        )
         self._keep(identifier, kept, simulator)
         return self._session(identifier, kept, simulator)
 
@@ -104,12 +112,19 @@ class HostSessions:
         simulator = self._restored(kept)
         _refuse_secret_answer(simulator, command)
         try:
-            simulator.command(command)
+            if command.kind == "continue" and kept.scripts is not None:
+                # As Execute does: waits pass by themselves and test answers
+                # are used, up to a breakpoint, the end, or a question.
+                _continue(simulator, kept.scripts)
+            else:
+                simulator.command(command)
         except DebugError as error:
             raise SimulationRefused(422, error.code, "The run log couldn't do that here") from None
         except KernelError as error:
             raise SimulationRefused(422, str(error), "The simulated run refused that") from None
-        moved = _Kept(state="", revision=kept.revision + 1, created_at=kept.created_at, touched=now)
+        moved = _Kept(
+            state="", revision=kept.revision + 1, created_at=kept.created_at, touched=now, scripts=kept.scripts
+        )
         self._keep(identifier, moved, simulator)
         return self._session(identifier, moved, simulator)
 
@@ -193,3 +208,11 @@ def _refuse_secret_answer(simulator: Simulator, command: DebugCommand) -> None:
             raise SimulationRefused(
                 422, "WV-SCHEMA-RESOURCE_LIMIT", "This answer is too large to check", [path]
             ) from None
+
+
+def _continue(simulator: Simulator, scripts: ExecuteScripts) -> None:
+    from firefly_weave.compiler.ir import HumanTaskNode, SignalNode
+    from firefly_weave.operations.debug.simulator import TERMINAL
+    from firefly_weave.studio.simulation import _drive
+
+    _drive(simulator, scripts, SignalNode, HumanTaskNode, TERMINAL)
