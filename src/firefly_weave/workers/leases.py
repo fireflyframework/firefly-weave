@@ -72,7 +72,10 @@ async def release_awareness(repository: WorkerRepository, release: UUID, worker:
     """
     if worker is not None and worker.release != release:
         raise CatalogError(409, "WV-WORKER-RELEASE", "The claim names a release this worker did not register with")
-    if worker is not None:
+    query = f"SELECT transaction_aware FROM worker_release_awareness WHERE {SCOPE} AND release_id=:release"
+    rows = await repository.rows(query, release=release)
+    if not rows and worker is not None:
+        # Written once, by the first claim that declares; every later claim poll only reads it.
         await repository.execute(
             "INSERT INTO worker_release_awareness(tenant_id,project_id,environment_id,release_id,transaction_aware,"
             "declared_at) VALUES(:tenant,:project,:environment,:release,:aware,clock_timestamp()) "
@@ -80,10 +83,7 @@ async def release_awareness(repository: WorkerRepository, release: UUID, worker:
             release=release,
             aware=worker.transaction_aware,
         )
-    rows = await repository.rows(
-        f"SELECT transaction_aware FROM worker_release_awareness WHERE {SCOPE} AND release_id=:release",
-        release=release,
-    )
+        rows = await repository.rows(query, release=release)
     declared = bool(rows and rows[0]["transaction_aware"])
     if worker is not None and declared != worker.transaction_aware:
         raise CatalogError(
