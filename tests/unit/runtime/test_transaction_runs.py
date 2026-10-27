@@ -170,7 +170,7 @@ def test_a_failure_outside_a_transaction_undoes_the_transaction_beside_it_before
     assert (run.state.status, run.state.output) == ("failed", {"code": "STOPPED", "message": "Stopped."})
 
 
-def test_a_forward_result_deferred_behind_a_barrier_is_undone_after_the_transaction_went_back():
+def test_a_forward_result_deferred_behind_a_pause_is_applied_when_its_transaction_goes_back():
     run = Run(compiled([transaction([hold(), add(), submit()])]))
     run.start()
     run.send("paused", reason="look", control_revision=1)
@@ -178,7 +178,11 @@ def test_a_forward_result_deferred_behind_a_barrier_is_undone_after_the_transact
     assert [event.data["node_id"] for event in run.state.deferred_results] == ["hold"]
     run.later(600)
     expired = run.fire("move#hold")
-    # The hold is still in flight as far as the transaction knows: it settles first.
-    assert controls(expired, "settle") == ["hold"] and run.txn().status == "compensating"
-    [release] = tasks(run.send("resumed", reason="go", control_revision=2))
-    assert release.node_id == "hold#cancel"
+    # Weave already has the reservation's result: it is settlement work now, so the reservation is released while
+    # the run stays paused, and no settle deadline is needed.
+    [release] = tasks(expired)
+    assert release.node_id == "hold#cancel" and release.settlement
+    assert run.state.deferred_results == [] and run.state.manual_paused
+    assert run.statuses()["hold"] == "cancelling" and run.txn().settle_by is None
+    run.done("hold#cancel", {})
+    assert run.txn().status == "cancelled"

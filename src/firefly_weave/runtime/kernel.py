@@ -800,7 +800,18 @@ def _advance_owned(
         rollback(key)
 
     def rollback(key: str) -> None:
+        nonlocal current_state
         cancel_scope(key)
+        # A participant's result held behind a pause or another incident is settlement work now: the rollback
+        # applies it at once instead of waiting in flight for a result Weave already has.
+        flying = {item.key for item in record(key).participants if item.status == "dispatched"}
+        held = [e for e in current_state.deferred_results if e.data.get("node_id") in flying]
+        if held:
+            current_state = current_state.model_copy(
+                update={"deferred_results": [e for e in current_state.deferred_results if e not in held]}
+            )
+            for completion in held:
+                accept(completion)
         for item in record(key).participants:
             if item.status == "dispatched":
                 result.commands.append(ControlCommand(kind="settle", node_id=item.key))

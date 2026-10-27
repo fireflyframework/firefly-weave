@@ -16,7 +16,7 @@
 
 """Settlement work is never blocked: pause and unrelated incidents hold back only new forward steps."""
 
-from transaction_support import INPUT, Run, add, compiled, controls, hold, submit, tasks, transaction
+from transaction_support import INPUT, Run, add, compiled, hold, submit, tasks, transaction
 
 
 def lookup(identifier: str = "lookup") -> dict:
@@ -69,7 +69,7 @@ def test_a_forward_result_of_an_open_transaction_waits_behind_the_same_barrier()
     assert [event.data["node_id"] for event in run.state.deferred_results] == ["hold"]
 
 
-def test_a_hold_deadline_undoes_the_transaction_while_paused_and_the_next_step_waits_for_resume():
+def test_a_hold_deadline_undoes_the_transaction_while_paused_with_the_result_it_already_has():
     run = Run(compiled([transaction([hold(), add(), submit()]), lookup("after")]))
     run.start()
     run.done("hold", {"holdId": "h-1"})
@@ -79,9 +79,16 @@ def test_a_hold_deadline_undoes_the_transaction_while_paused_and_the_next_step_w
     deferred = run.done("add", {"id": "a-1"})
     assert tasks(deferred) == []
     expired = run.fire("move#hold")
-    assert controls(expired, "settle") == ["add"]
-    [undo] = tasks(run.send("resumed", reason="go", control_revision=2))
-    assert undo.node_id == "add#undo"
+    # add's result is already here: it is applied to the rollback at once, and its undo starts while paused.
+    [undo] = tasks(expired)
+    assert undo.node_id == "add#undo" and run.state.deferred_results == [] and run.state.manual_paused
+    [release] = tasks(run.done("add#undo", {}))
+    assert release.node_id == "hold#cancel"
+    run.done("hold#cancel", {})
+    # The block's end, and the step after it, wait for resume.
+    assert run.txn().status == "compensated" and run.state.parked == ["@join:move"]
+    run.send("resumed", reason="go", control_revision=2)
+    assert run.state.status == "failed"
 
 
 def test_while_paused_a_transaction_finishes_its_commit_and_the_step_after_it_waits_for_resume():
@@ -126,3 +133,15 @@ def test_one_transaction_in_doubt_does_not_stop_another_from_rolling_back():
     # The block's end waits behind the barrier; the transaction in doubt emitted nothing.
     assert run.state.parked == ["@join:move[4]"] and tasks(ended) == []
     assert run.txn("move[2]").status == "in_doubt"
+
+
+def test_a_forward_result_held_behind_another_incident_is_applied_when_its_transaction_goes_back():
+    run = Run(compiled(beside(hold(), add(), submit())))
+    run.start()
+    suspended_by_lookup(run)
+    run.done("hold", {"holdId": "h-1"})
+    assert [event.data["node_id"] for event in run.state.deferred_results] == ["hold"]
+    run.later(600)
+    [release] = tasks(run.fire("move#hold"))
+    assert release.node_id == "hold#cancel" and run.state.deferred_results == []
+    assert run.state.status == "suspended" and run.txn().status == "compensating"
