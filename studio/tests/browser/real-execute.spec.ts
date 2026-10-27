@@ -204,8 +204,14 @@ spec:
   const details = new StepDetailsPage(page);
   await details.open("lookup");
   const pane = await outputPane(details);
-  await pane.getByRole("button", { name: "Generate sample" }).click();
-  await expect(pane.locator(".pinned-banner")).toBeVisible();
+  // The catalog that knows the new action's output fields may still be on
+  // its way after the reload: a sample needs them.
+  await expect(async () => {
+    await pane.getByRole("button", { name: "Generate sample" }).click();
+    await expect(pane.locator(".pinned-banner")).toBeVisible({
+      timeout: 3_000,
+    });
+  }).toPass({ timeout: 90_000 });
   await details.close();
 
   const before = await bridge(page, runs);
