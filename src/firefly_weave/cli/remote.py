@@ -198,6 +198,7 @@ def command(operation_id: str, name: str | None = None) -> click.Command:
                 "correlation_key",
                 "status",
                 "include_archived",
+                "force",
             ):
                 if options.get(key) is not None:
                     query[key] = str(options[key]).lower() if isinstance(options[key], bool) else options[key]
@@ -346,6 +347,15 @@ def command(operation_id: str, name: str | None = None) -> click.Command:
                 ["--pin-current-calls"],
                 is_flag=True,
                 help="Pin the current activation of each workflow version this workflow calls; prints the pins.",
+            )
+        )
+    if operation_id == "activations.retire":
+        params.append(
+            click.Option(
+                ["--force"],
+                is_flag=True,
+                default=None,
+                help="Retire even if a running transaction may need it to undo a step (transaction.reconcile).",
             )
         )
     if operation.page or operation_id in {"runs.history", "runs.export", "runs.replay"}:
