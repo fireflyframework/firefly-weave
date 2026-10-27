@@ -328,12 +328,13 @@ async def test_rollup_of_a_busy_window_fits_its_slice(dataset):
     for _ in range(3):
         async with case.tx() as tx:
             started = time.perf_counter()
-            await statistics.recompute(tx, now)
+            # The whole cycle the slice pays for: recompute, closing, sampling and pruning.
+            await statistics.rollup(tx, now)
             timings.append(time.perf_counter() - started)
     fastest = min(timings) * 1000
     record(
         "rollup_ms",
-        "busy-window-recompute",
+        "busy-window-cycle",
         {"fastest": round(fastest, 1), "all": [round(t * 1000, 1) for t in timings]},
     )
     assert fastest <= statistics_slice_ms(), f"rollup {fastest:.0f}ms over the {statistics_slice_ms():.0f}ms slice"

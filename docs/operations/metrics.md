@@ -37,7 +37,9 @@ collector or exporter is involved.
   are part of the page's address, so you can share it. The page refreshes every
   minute while it is visible.
 - **On Operate › Overview**, each Load figure has a line for the last hour, and
-  **Last 24 h** shows runs per hour, the failure rate and the day's totals.
+  **Last 24 h** shows runs per hour, the failure rate and the day's totals. The
+  totals count the last 288 five-minute buckets; the chart shows whole hours,
+  so the two can differ by the runs of the current hour.
 - **From the CLI**, the three reads are `weave operations statistics series`,
   `workflows` and `steps`:
 
@@ -66,7 +68,9 @@ and `run_statistics.steps`; see the [API reference](../reference/api.md).
   to the ended runs.
 - A run whose details the platform withholds from you counts under the
   workflow **(other)**, without a version, so totals stay exact and no withheld
-  name appears.
+  name appears. Naming is decided when a bucket is computed: a run withheld
+  later (a policy block, or a new classification policy) keeps its workflow
+  name in the hours and days that already closed.
 - Step figures count each step by its end. Iterations of a loop and calls of
   the same step count under the step itself. A failure the workflow handled
   still counts as a failure of the step. Queue wait is the time from when the
@@ -100,14 +104,21 @@ starts or spans more than 400 days, answer `422 WV-FILTER`.
 | 1 hour | 35 days |
 | 1 day | 400 days |
 
-Queue, outbox and worker figures are sampled once a minute and kept for 24
-hours, and hourly for 35 days.
+Queue, outbox and worker figures are sampled each time the operations loop
+visits the environment, and kept for 24 hours, then hourly for 35 days. The
+loop visits one environment of each tenant per minute, so an environment is
+sampled about once a minute when its tenant has one environment and every few
+minutes when it has several; a bucket without a sample shows as a gap, never
+as zero. Ready tasks are averaged over every sampled minute, counting the
+minutes a task type had none.
 
-The operations loop recomputes the last ten minutes of buckets every cycle, so
-runs that commit late are counted. Each answer says `complete_until`: buckets
+Each visit recomputes the last ten minutes of buckets, so runs that commit late
+are counted. The rollup takes at most 0.4 seconds of each visit and works in
+chunks of up to fifteen minutes, each saved as it completes. Each answer says `complete_until`: buckets
 that end at or before that time no longer change. Studio shows it as "Data
-complete until 14:32". After the loop was stopped, it catches up one hour per
-cycle.
+complete until 14:32". After the loop was stopped, it catches up in those chunks, up to an hour per
+visit. After an outage longer than two days, the five-minute rows of the gap
+are gone before they are rolled up, and those buckets read as zero runs.
 
 Figures start when the platform is upgraded to a version with run statistics;
 runs before that are not counted.

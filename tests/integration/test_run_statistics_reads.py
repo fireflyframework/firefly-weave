@@ -299,3 +299,59 @@ async def test_the_routes_serve_from_and_to_and_answer_the_query_errors(operatio
     assert table.status_code == 200 and table.json()["workflows"] == []
     other = {"Authorization": "Bearer " + tokens[1]}
     assert (await client.get(environment + "/workflows", params=dict(RANGE), headers=other)).status_code == 403
+
+
+async def test_grouping_by_workflow_keeps_the_busiest_and_the_version_filter_holds(operations_case):
+    runs = await started_runs(operations_case, 5)
+    for index, run in enumerate(runs):
+        workflow, version = ("busy", "2.0.0") if index < 3 else ("quiet", "1.0.0")
+        if index == 2:
+            version = "1.0.0"
+        await place(
+            operations_case, run, started=B0, ended=B0 + ms(100), status="succeeded", workflow=workflow, version=version
+        )
+    await rollup(operations_case)
+    grouped = await read(
+        operations_case,
+        statistics_reads.series,
+        series_query(signals=["runs_started"], group_by="workflow", top=1),
+    )
+    assert [item.labels for item in grouped.series] == [{"workflow": "busy"}, {"workflow": "(other)"}]
+    assert at(grouped, "runs_started", workflow="busy") == 3
+    assert at(grouped, "runs_started", workflow="(other)") == 2
+    versioned = await read(
+        operations_case,
+        statistics_reads.series,
+        series_query(signals=["runs_started"], workflow="busy", version="2.0.0"),
+    )
+    assert at(versioned, "runs_started") == 2
+
+
+async def test_a_run_classified_under_an_older_policy_counts_under_other(operations_case):
+    current, older = await started_runs(operations_case, 2)
+    await place(operations_case, current, started=B0, ended=B0 + ms(100), status="succeeded")
+    await place(operations_case, older, started=B0, ended=B0 + ms(100), status="succeeded", workflow="old-policy")
+    await owner(
+        operations_case, "UPDATE run_facts SET classification_policy='classified-v0' WHERE run_id=:run", run=older
+    )
+    await rollup(operations_case)
+    table = await read(operations_case, statistics_reads.workflows, StatisticsWorkflowsQuery.model_validate(RANGE))
+    assert [item.workflow for item in table.workflows] == ["orders", "(other)"]
+    assert "old-policy" not in table.model_dump_json()
+
+
+async def test_the_last_day_is_exactly_the_last_288_buckets(operations_case):
+    first = statistics_reads.bucket_floor(NOW, "5m") - timedelta(minutes=5 * 287)
+    for start, started in ((first, 3), (first - timedelta(minutes=5), 100)):
+        await owner(
+            operations_case,
+            "INSERT INTO run_stat_buckets(tenant_id,project_id,environment_id,granularity,bucket_start,workflow_name,"
+            "workflow_version,started,duration_hist) VALUES(:tenant,:project,:environment,'5m',:start,'','',:started,"
+            ":hist)",
+            start=start,
+            started=started,
+            hist=list(histogram([])),
+        )
+    async with operations_case.tx() as tx:
+        day = await statistics_reads.last_day(tx, NOW)
+    assert day.started == 3

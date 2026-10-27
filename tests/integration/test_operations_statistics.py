@@ -588,3 +588,19 @@ async def test_an_hour_of_samples_averages_ready_tasks_over_every_sampled_minute
     )
     # Eight ready tasks in one of four sampled minutes: two on average, eight at most.
     assert (row["value_avg"], row["value_max"], row["samples"]) == (2, 8, 4)
+
+
+async def test_active_runs_samples_leave_out_active_test_runs(operations_case):
+    real, trial = await started_runs(operations_case, 2)
+    await place(operations_case, trial, started=B0, status="running", test=True)
+    await rollup(operations_case, datetime(2031, 3, 4, 12, 0, 30, tzinfo=UTC))
+    (active,) = await owner(
+        operations_case,
+        "SELECT value_avg FROM operations_samples WHERE environment_id=:environment AND metric='runs_active' "
+        "AND granularity='1m'",
+    )
+    usage = await owner(
+        operations_case,
+        "SELECT value FROM operation_usage WHERE environment_id=:environment AND metric='runs_active'",
+    )
+    assert usage[0]["value"] == 2 and active["value_avg"] == 1
