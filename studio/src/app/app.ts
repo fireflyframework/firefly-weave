@@ -5769,7 +5769,27 @@ export class App implements CanvasHost {
   }
   private focusLater(find: () => HTMLElement | null) {
     this.cdr.markForCheck();
-    afterNextRender(() => setTimeout(() => find()?.focus()), {
+    // The designer loads after the first page (with test data and its
+    // tools): look again for a while until what to focus has drawn.
+    let tries = 0;
+    const before = document.activeElement;
+    const attempt = () => {
+      // Someone moved focus to a control meanwhile: theirs wins (a page's
+      // heading, focused when the view changes, is not a choice).
+      const now = document.activeElement;
+      if (
+        tries &&
+        now &&
+        now !== before &&
+        now !== document.body &&
+        !now.matches("h1, h2, main, [tabindex='-1']")
+      )
+        return;
+      const target = find();
+      if (target) target.focus();
+      else if (++tries < 60) setTimeout(attempt, 50);
+    };
+    afterNextRender(() => setTimeout(attempt), {
       injector: this.injector,
     });
   }
