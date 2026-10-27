@@ -29,7 +29,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
-from firefly_weave.studio.simulation import SimulationRefused, simulator_for
+from firefly_weave.studio.simulation import SimulationRefused, simulator_for, stuck_at, unsimulated
 
 if TYPE_CHECKING:
     from firefly_weave.compiler.catalog import CatalogSnapshot
@@ -122,6 +122,11 @@ class HostSessions:
             raise SimulationRefused(422, error.code, "The run log couldn't do that here") from None
         except KernelError as error:
             raise SimulationRefused(422, str(error), "The simulated run refused that") from None
+        except SimulationRefused:
+            raise
+        except Exception:  # noqa: BLE001 - never a 500: the session stops where the simulator did
+            place = stuck_at(self._restored(kept))
+            raise SimulationRefused(422, "WV-STUDIO-SIMULATION", unsimulated(place)) from None
         moved = _Kept(
             state="", revision=kept.revision + 1, created_at=kept.created_at, touched=now, scripts=kept.scripts
         )

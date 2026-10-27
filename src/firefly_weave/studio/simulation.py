@@ -604,6 +604,35 @@ def simulator_for(
     return summary, simulator, misfits
 
 
+def stuck_at(simulator: Any) -> str:
+    """Where a run stops on something the simulator can't carry on with: replays it one boundary at a time.
+
+    ``simulator`` is a fresh one (the failed one's state is unknown). Each step's current nodes are noted before
+    it moves; the step that raises names the place.
+    """
+    from firefly_weave.contracts.instance_keys import node_of
+    from firefly_weave.operations.debug.models import DebugCommand
+    from firefly_weave.operations.debug.simulator import TERMINAL
+
+    for _ in range(ROUNDS):
+        try:
+            here = list(simulator.inspect().current_nodes)
+        except Exception:  # noqa: BLE001 - nothing to name
+            break
+        try:
+            view = simulator.command(DebugCommand(kind="next"))
+        except Exception:  # noqa: BLE001 - this boundary is where it stops
+            return f"step {node_of(here[0])}" if here else "the current step"
+        if view.status in TERMINAL:
+            break
+    return "the current step"
+
+
+def unsimulated(place: str) -> str:
+    """The sentence for a run the simulator couldn't carry on with."""
+    return f"Studio couldn't simulate {place}, so the simulated run stopped there."
+
+
 def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> ExecuteResponse:
     """Simulate the target of an Execute request; the answer is ``ExecuteResponse``.
 
@@ -655,6 +684,18 @@ def execute(request: ExecuteRequest, project: CatalogSnapshot | None) -> Execute
             # A step the runtime refused (a condition that isn't true or false, say): the run fails there.
             stopped = Diagnostic(
                 code=str(error), severity="error", stage="evaluation", path="", message="The simulated run stopped."
+            )
+            return ExecuteResponse(status="failed", compile=summary, trace=[], diagnostics=[stopped])
+        except (DebugError, SimulationRefused):
+            raise
+        except Exception:  # noqa: BLE001 - never a 500: the run fails where the simulator stopped
+            _, fresh, _ = simulator_for(request, project, document, whole=whole, sliced=sliced)
+            stopped = Diagnostic(
+                code="WV-STUDIO-SIMULATION",
+                severity="error",
+                stage="evaluation",
+                path="",
+                message=unsimulated(stuck_at(fresh) if fresh is not None else "the current step"),
             )
             return ExecuteResponse(status="failed", compile=summary, trace=[], diagnostics=[stopped])
     except DebugError as error:

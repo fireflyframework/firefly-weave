@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 from starlette.testclient import TestClient
-from test_studio_simulation_execute import ACTION, CHECK, SHAPE, workflow
+from test_studio_simulation_execute import ACTION, CALL, CHECK, SHAPE, callee_definition, workflow
 
 from firefly_weave.operations.debug.models import DebugCommand
 from firefly_weave.studio import debug_sessions
@@ -67,6 +67,25 @@ def test_a_session_steps_one_boundary_at_a_time_and_continues_to_a_breakpoint():
     assert paused.view.status == "paused"
     assert paused.view.selected_node == "shape" or "shape" in paused.view.current_nodes
     assert sessions.read(session.id, now=4).revision == paused.revision
+
+
+def test_a_called_workflow_that_returns_null_stops_the_session_with_a_refusal_not_a_crash():
+    callee = callee_definition()
+    callee["spec"]["output"] = {"literal": None}
+    sessions = HostSessions()
+    session = sessions.create(
+        request(
+            workflow(CALL),
+            definitions=[ACTION, callee],
+            workflows={"enrich@1.0.0": {"mocks": PIN}},
+            scripts={"autoAdvanceWaits": True},
+        ),
+        None,
+        now=0,
+    )
+    stopped = refusal(lambda: sessions.command(session.id, 1, DebugCommand(kind="continue"), now=1))
+    assert (stopped.status, stopped.code) == (422, "WV-STUDIO-SIMULATION")
+    assert "enrich" in stopped.message
 
 
 def test_session_commands_need_the_current_revision():

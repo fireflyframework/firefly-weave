@@ -442,6 +442,19 @@ def test_a_null_mock_for_a_call_inside_a_called_workflow_is_refused_with_its_poi
     assert refused.value.paths == ["/workflows/enrich@1.0.0/mocks/node:enrich"]
 
 
+def test_a_called_workflow_that_returns_null_fails_the_run_with_a_diagnostic():
+    callee = callee_definition()
+    callee["spec"]["output"] = {"literal": None}
+    answer = run(
+        workflow(CALL),
+        definitions=[ACTION, callee],
+        workflows={"enrich@1.0.0": {"mocks": {"node:check": {"eligible": True}}}},
+    )
+    assert answer["status"] == "failed", answer
+    assert [d["code"] for d in answer["diagnostics"]] == ["WV-STUDIO-SIMULATION"]
+    assert "enrich" in answer["diagnostics"][0]["message"]
+
+
 def test_a_secret_in_a_called_workflow_s_mock_is_refused_with_its_pointer():
     secret = json.loads(json.dumps(ACTION))
     secret["spec"]["outputSchema"]["properties"]["eligible"]["x-secret"] = True
