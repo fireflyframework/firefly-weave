@@ -394,6 +394,45 @@ async def test_cancelling_a_run_cancels_its_called_participant_which_undoes_its_
     assert (await platform.record(run.id))["state"] == "compensated"
 
 
+async def test_a_called_step_that_cant_be_undone_and_never_starts_is_cancelled_and_its_transaction_goes_back(
+    platform, monkeypatch
+):
+    import asyncio
+
+    from firefly_weave.runtime.calls import CallService
+
+    order = await platform.publish(workflow("quick-order", [], callable_=True, timeout=1))
+    pivot = {
+        "id": "order",
+        "kind": "callWorkflow",
+        "uses": "quick-order@1.0.0",
+        "with": {"object": {"moveId": {"ref": "/input/moveId"}, "quantity": {"ref": "/input/quantity"}}},
+        "irreversible": True,
+    }
+    activation = await platform.publish(
+        workflow("move", [transaction(hold(), add(), pivot)]), **{"quick-order": order.id}
+    )
+
+    async def refused_for_now(self, tx, limit):
+        # Every start is refused for now, as at a full quota or behind a busy lock.
+        return 0, 0
+
+    monkeypatch.setattr(CallService, "dispatch", refused_for_now)
+    run = await platform.start(activation)
+    await platform.complete(await platform.lease("hold"))
+    await platform.complete(await platform.lease("add"))
+    assert (await platform.record(run.id))["state"] == "deciding"
+    # The called workflow's own 1 s, plus the 30 s margin, from dispatch.
+    await asyncio.sleep(31.5)
+    await platform.scan()
+    [call] = await platform.query("SELECT status,effect FROM run_calls WHERE caller_run_id=:run", run=run.id)
+    assert call == {"status": "cancelled", "effect": "none"}
+    await platform.complete(await platform.lease("add#undo"))
+    await platform.complete(await platform.lease("hold#cancel"))
+    assert (await platform.state(run.id))["status"] == "failed"
+    assert (await platform.record(run.id))["state"] == "compensated"
+
+
 async def test_a_run_that_times_out_undoes_its_transaction_and_then_ends_timed_out(platform):
     import asyncio
 

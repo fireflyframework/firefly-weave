@@ -27,6 +27,7 @@ from firefly_weave.runtime.kernel import deadline_order, duration_steps, workflo
 from firefly_weave.runtime.kernel import transition_async as transition
 from firefly_weave.runtime.models import RuntimeEvent
 from firefly_weave.runtime.repository import SCOPE, RuntimeRepository
+from firefly_weave.runtime.transactions import split_deadline
 
 TERMINAL = {"succeeded", "failed", "cancelled", "timed_out"}
 
@@ -78,16 +79,30 @@ async def settle(repository: RuntimeRepository, row: dict[str, Any], *, terminal
         elapsed = step in duration_nodes
         if terminal_only and elapsed:
             continue
+        data: dict[str, Any] = {
+            "node_id": deadline["node_id"],
+            "deadline": deadline["deadline"].isoformat(),
+            "wait_id": str(deadline["id"]),
+        }
+        bound = split_deadline(deadline["node_id"])
+        if bound is not None and bound[1] == "decide":
+            # Whether the called step that can't be undone ever started, read under the caller's lock that every
+            # call start also takes; the event records it, so replay decides the same way.
+            record = view.state.transactions.get(bound[0])
+            pivot = next((i.key for i in (record.participants if record else []) if i.mode == "irreversible"), None)
+            calls = await repository.rows(
+                f"SELECT status FROM run_calls WHERE {SCOPE} AND caller_run_id=:run AND node_id=:node "
+                "ORDER BY generation DESC LIMIT 1",
+                run=view.id,
+                node=pivot,
+            )
+            data["started"] = not calls or calls[0]["status"] != "requested"
         event = RuntimeEvent(
             id=uuid4(),
             type="wait_elapsed" if elapsed else "timed_out",
             timestamp=now,
             sequence=view.state.accepted_sequence + 1,
-            data={
-                "node_id": deadline["node_id"],
-                "deadline": deadline["deadline"].isoformat(),
-                "wait_id": str(deadline["id"]),
-            },
+            data=data,
         )
         from firefly_weave.runtime.capacity import RuntimeCapacityError
 

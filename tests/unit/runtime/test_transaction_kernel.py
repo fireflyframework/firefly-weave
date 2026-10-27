@@ -30,6 +30,7 @@ from transaction_support import (
     notify,
     reverse_by_call,
     submit,
+    submit_by_call,
     tasks,
     transaction,
 )
@@ -361,3 +362,62 @@ def test_a_called_reversal_that_fails_is_stuck_and_never_rerun_on_its_own():
     run.failed("add", effect="unknown")
     stuck = run.called("add#undo", "failed", {"code": "BROKEN", "message": "It broke."})
     assert calls(stuck) == [] and run.state.incidents["add#undo:0"].code == "WV-TXN-UNDO-STUCK"
+
+
+def deciding_by_call(*, cancel: bool = False) -> tuple[Run, object]:
+    run = Run(flow(hold(holdSeconds=900), add(), submit_by_call()))
+    run.start()
+    run.done("hold", {"holdId": "h-1"})
+    dispatched = run.done("add", {"id": "a-1"})
+    assert [c.node_id for c in calls(dispatched)] == ["submit"] and run.txn().status == "deciding"
+    if cancel:
+        run.send("cancelled", reason="stop")
+    [bound] = [d for d in deadlines(dispatched) if d.node_id == "move#decide"]
+    return run, bound
+
+
+def test_a_called_step_that_cant_be_undone_and_never_started_is_cancelled_when_its_time_is_up():
+    run, bound = deciding_by_call()
+    # From dispatch: the called workflow's own 300 s, plus the 30 s margin.
+    assert bound.deadline == run.now + timedelta(seconds=330) and run.txn().decide_by == bound.deadline
+    fired = run.fire("move#decide", started=False)
+    # No child ever started: the call is cancelled with nothing applied, and that outcome sends it back.
+    assert controls(fired, "settle") == ["submit"] and run.txn().status == "deciding"
+    [undo] = tasks(run.called("submit", "cancelled", {"code": "WV-TXN-ROLLED-BACK"}, effect="none"))
+    assert undo.node_id == "add#undo" and run.txn().status == "compensating"
+
+
+def test_a_called_step_that_cant_be_undone_and_is_still_running_when_its_time_is_up_is_in_doubt():
+    run, _ = deciding_by_call(cancel=True)
+    fired = run.fire("move#decide", started=True)
+    assert run.txn().status == "in_doubt" and tasks(fired) == [] and controls(fired, "settle") == []
+    assert run.state.incidents["submit:0"].code == "WV-TXN-PIVOT-UNKNOWN"
+    # The cancel that waited for the decision stays recorded; only a person moves the transaction on.
+    assert run.state.ending is not None and run.state.status not in {"cancelled", "succeeded"}
+
+
+def test_a_decided_transaction_ignores_its_bound_while_deciding():
+    run, _ = deciding_by_call()
+    run.called("submit", "succeeded", {"orderId": "o-1"})
+    assert run.txn().status == "committing"
+    fired = run.fire("move#decide", started=True)
+    assert run.txn().status == "committing" and tasks(fired) == [] and run.state.incidents == {}
+
+
+def test_a_called_step_still_running_gets_its_full_time_limit_from_the_rollback_to_settle():
+    elsewhere = {
+        "id": "elsewhere",
+        "kind": "callWorkflow",
+        "uses": "reverse-target-addition@1.0.0",
+        "with": {"object": {"reference": {"ref": "/input/moveId"}, "addOperation": {"literal": "elsewhere"}}},
+        "compensate": add()["compensate"],
+    }
+    run = Run(flow(hold(holdSeconds=900), elsewhere, submit()))
+    run.start()
+    dispatched = run.done("hold", {"holdId": "h-1"})
+    assert [c.node_id for c in calls(dispatched)] == ["elsewhere"]
+    # Its child may have started only now: it has its whole 300 s from here, plus the margin.
+    run.later(200)
+    aborted = run.send("cancelled", reason="stop")
+    [settle] = [d for d in deadlines(aborted) if d.node_id == "move#settle"]
+    assert settle.deadline == run.now + timedelta(seconds=330)

@@ -153,6 +153,7 @@ class TransactionRecord(ContractModel):
     ended_at: datetime | None = Field(default=None, exclude_if=lambda v: v is None)
     hold_by: datetime | None = Field(default=None, exclude_if=lambda v: v is None)
     settle_by: datetime | None = Field(default=None, exclude_if=lambda v: v is None)
+    decide_by: datetime | None = Field(default=None, exclude_if=lambda v: v is None)
     # Settle deadlines armed so far; the next one is armed at this generation.
     generation: int = Field(default=0, ge=0, exclude_if=lambda v: not v)
     # The in-doubt incident's key while the transaction is in doubt.

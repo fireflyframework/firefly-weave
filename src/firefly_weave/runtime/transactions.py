@@ -40,7 +40,10 @@ from firefly_weave.contracts.transactions import Effect, split_phase
 from firefly_weave.contracts.values import JsonObject, JsonValue
 
 # The segments of a transaction's own deadlines.
-DEADLINE_SEGMENTS: Final = frozenset({"hold", "settle"})
+# A transaction's own deadlines: its reservations' hold, the settle bound of a rollback, and the bound of a called
+# step that can't be undone while the transaction decides.
+type DeadlineKind = Literal["hold", "settle", "decide"]
+DEADLINE_SEGMENTS: Final = frozenset({"hold", "settle", "decide"})
 # Transaction states in which a run's transaction still holds work, so the run cannot end yet.
 UNSETTLED: Final = frozenset({"open", "deciding", "committing", "compensating", "in_doubt"})
 # Codes the kernel turns into a failure of a step inside a transaction instead of an incident: evaluation and
@@ -88,12 +91,12 @@ def failure_effect(action: Mapping[str, Any], error: Mapping[str, Any], *, trans
     return "unknown"
 
 
-def deadline_key(transaction_key: str, kind: Literal["hold", "settle"]) -> str:
-    """The instance key of a transaction's hold or settle deadline: ``move[2]`` → ``move[2]#settle``."""
+def deadline_key(transaction_key: str, kind: DeadlineKind) -> str:
+    """The instance key of a transaction's hold, settle or decide deadline: ``move[2]`` → ``move[2]#settle``."""
     return f"{transaction_key}#{kind}"
 
 
-def split_deadline(key: object) -> tuple[str, Literal["hold", "settle"]] | None:
+def split_deadline(key: object) -> tuple[str, DeadlineKind] | None:
     """The transaction instance key and the kind of a transaction deadline key, or ``None`` for any other key."""
     if not isinstance(key, str):
         return None
@@ -103,7 +106,7 @@ def split_deadline(key: object) -> tuple[str, Literal["hold", "settle"]] | None:
         return None
     if len(parsed.segments) != 1 or parsed.count is not None or parsed.segments[0] not in DEADLINE_SEGMENTS:
         return None
-    return key.rpartition("#")[0], cast(Literal["hold", "settle"], parsed.segments[0])
+    return key.rpartition("#")[0], cast(DeadlineKind, parsed.segments[0])
 
 
 def references(expression: object) -> set[str]:
@@ -231,7 +234,7 @@ def settlement_event(shapes_of: TransactionShapes | None, state: object, event: 
     """Whether an event is settlement work, which no pause or unrelated incident holds back.
 
     Settlement work finishes what a transaction already decided or must undo: results of confirms, cancels and undos,
-    a transaction's hold and settle deadlines, and results of steps still in flight while their transaction is
+    a transaction's own deadlines, and results of steps still in flight while their transaction is
     deciding or being undone. It depends only on the event, the run's state and the artifact, so replay reproduces it.
     """
     from firefly_weave.runtime.models import RunState, RuntimeEvent

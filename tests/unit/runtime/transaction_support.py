@@ -115,6 +115,17 @@ def submit(identifier: str = "submit") -> dict[str, Any]:
     }
 
 
+def submit_by_call(identifier: str = "submit") -> dict[str, Any]:
+    """The step that can't be undone, run by a called workflow whose own time limit is 300 s."""
+    return {
+        "id": identifier,
+        "kind": "callWorkflow",
+        "uses": "reverse-target-addition@1.0.0",
+        "with": {"object": {"reference": {"ref": "/input/moveId"}, "addOperation": {"literal": "order"}}},
+        "irreversible": True,
+    }
+
+
 def notify(identifier: str = "notify") -> dict[str, Any]:
     return {
         "id": identifier,
@@ -223,12 +234,14 @@ class Run:
             data["effect"] = effect
         return self.send("call_completed", **data)
 
-    def fire(self, key: str) -> Transition:
-        """Deliver every due deadline the run issued at ``key``, latest issue first, as the deadline scan does."""
+    def fire(self, key: str, **observed: Any) -> Transition:
+        """Deliver the latest deadline the run issued at ``key``, as the deadline scan does, with what it observed."""
         due = [command for result in self.transitions for command in result.commands]
         deadline = next(c for c in reversed(due) if isinstance(c, Deadline) and c.node_id == key)
         self.now = max(self.now, deadline.deadline)
-        return self.send("wait_elapsed", node_id=key, deadline=deadline.deadline.isoformat(), wait_id=str(uuid4()))
+        return self.send(
+            "wait_elapsed", node_id=key, deadline=deadline.deadline.isoformat(), wait_id=str(uuid4()), **observed
+        )
 
     def txn(self, key: str = "move") -> TransactionRecord:
         return self.state.transactions[key]

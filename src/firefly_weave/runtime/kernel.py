@@ -749,8 +749,21 @@ def _advance_owned(
             update(key, hold_by=due)
             result.commands.append(Deadline(node_id=deadline_key(key, "hold"), deadline=due))
 
+    def own_deadline(item: ParticipantRecord) -> datetime | None:
+        """When a step in flight must have ended: a called step's child may have started only now, so it gets its
+        called workflow's whole time limit from here."""
+        node = nodes[node_of(item.key)]
+        if isinstance(node, CallWorkflowNode) and item.deadline is not None:
+            limit = cast(int, called_workflow(ir, node)[1]["timeoutSeconds"])
+            return max(item.deadline, checked_deadline(event.timestamp, limit))
+        return item.deadline
+
     def arm_settle(key: str) -> None:
-        flying = [item.deadline for item in record(key).participants if item.status == "dispatched" and item.deadline]
+        flying = [
+            due
+            for item in record(key).participants
+            if item.status == "dispatched" and (due := own_deadline(item)) is not None
+        ]
         if flying:
             # The latest own deadline of a step in flight, plus the margin; never less than the margin from now, so
             # a step whose deadline already passed still gets recovery's verdict first.
@@ -1076,6 +1089,12 @@ def _advance_owned(
         entry = ParticipantRecord(key=name, mode=node.txn.mode, deadline=deadline, expires_at=expires, scope=scope)
         update(key, participants=[*transaction.participants, entry], **({"status": "deciding"} if pivot else {}))
         arm_hold(key)
+        if pivot and isinstance(node, CallWorkflowNode):
+            # A called step that can't be undone may wait to start, or its child may never end: the decision is
+            # bounded from dispatch by the called workflow's own time limit, plus the margin.
+            decide = deadline + timedelta(seconds=HOLD_MARGIN_SECONDS)
+            update(key, decide_by=decide)
+            result.commands.append(Deadline(node_id=deadline_key(key, "decide"), deadline=decide))
         return TaskTransaction(
             id=key, branch=name, phase="try" if node.txn.mode == "reserve" else "forward", mode=node.txn.mode
         ), pivot
@@ -1113,6 +1132,8 @@ def _advance_owned(
         due = transaction.hold_by if transaction is not None and kind == "hold" else None
         if transaction is not None and kind == "settle":
             due = transaction.settle_by
+        if transaction is not None and kind == "decide":
+            due = transaction.decide_by
         if transaction is None or due is None or completion.data.get("deadline") != due.isoformat():
             return
         if completion.timestamp < due:
@@ -1125,6 +1146,23 @@ def _advance_owned(
             and any(item.status == "dispatched" for item in transaction.participants)
         ):
             in_doubt(key, "WV-TXN-SETTLE-TIMEOUT", key, transaction.generation, None)
+        elif kind == "decide" and transaction.status == "deciding":
+            pivot = next(
+                (i for i in transaction.participants if i.mode == "irreversible" and i.status == "dispatched"), None
+            )
+            if pivot is None:
+                return
+            if completion.data.get("started") is False:
+                # The call never started, so nothing was applied: it is cancelled, and that outcome decides.
+                result.commands.append(ControlCommand(kind="settle", node_id=pivot.key))
+            else:
+                # Its child may have applied the step, or may still do so: only a person can tell.
+                update(
+                    key,
+                    cause=transaction.pending_abort
+                    or TransactionCause(code="WV-TXN-PIVOT-UNKNOWN", instance_key=pivot.key),
+                )
+                in_doubt(key, "WV-TXN-PIVOT-UNKNOWN", pivot.key, 0, None)
 
     def maybe_end() -> None:
         nonlocal current_state
