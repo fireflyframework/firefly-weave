@@ -27,6 +27,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { python, pythonAvailable, repository } from "../python-path";
 import { CanvasPage } from "./canvas-po";
+import { withClassicDesigner } from "./support";
 
 /**
  * A loopback port nothing listens on. A fixed port can stay blocked for a
@@ -177,6 +178,8 @@ test(
       if (m.type() === "error" && m.text().includes("Content Security Policy"))
         errors.push(m.text());
     });
+    // This check goes through the classic designer's palette.
+    await withClassicDesigner(page);
     let host = startHost(configHome, await freePort());
     try {
       // A fresh configuration: no saved platform, so Studio asks how to work.

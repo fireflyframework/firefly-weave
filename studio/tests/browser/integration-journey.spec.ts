@@ -17,7 +17,7 @@ SPDX-License-Identifier: Apache-2.0
 */
 // The "Call an action" journey: explicit catalog states, the action's
 // requirements, connection slots, schema-driven input and activation bindings.
-import { selectChoice } from "./support";
+import { selectChoice, withClassicDesigner } from "./support";
 import { test, expect, Page } from "@playwright/test";
 import {
   allCapabilities,
@@ -39,6 +39,7 @@ const inspectorHeading = (page: Page) => page.locator(".inspector header h2");
 
 test.beforeEach(async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
+  await withClassicDesigner(page);
 });
 
 test("offline: explains how to connect and declares a connection slot", async ({

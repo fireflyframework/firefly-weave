@@ -34,6 +34,7 @@ import {
   scaledMs,
 } from "./execute-calibration";
 import { executions, openExecuteWorkflow, pinSample } from "./execute-po";
+import { withClassicDesigner } from "./support";
 
 /** One frame at 60 Hz, in milliseconds. */
 const FRAME_BUDGET_MS = 16.7;
@@ -172,6 +173,8 @@ test(
   { tag: "@performance" },
   async ({ page }, info) => {
     test.setTimeout(60000);
+    // These numbers measure the classic designer's canvas.
+    await withClassicDesigner(page);
     await openNewWorkflow(page);
     const result: any = {
       platform: platform(),

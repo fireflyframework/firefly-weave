@@ -27,7 +27,7 @@ SPDX-License-Identifier: Apache-2.0
 // no icon name without a drawing.
 // The platform and the local host are mocked; the local authoring endpoints
 // and the simulation artifact use the repository's real Python code.
-import { selectChoice } from "./support";
+import { selectChoice, withClassicDesigner } from "./support";
 import { test, expect, Locator, Page, Request, Route } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { copyFileSync, mkdirSync, writeFileSync } from "node:fs";
@@ -2317,6 +2317,8 @@ ${paths}
   },
 
   async "workflows-local"({ page, shot }) {
+    // A scene of the classic designer, which the new editor replaces.
+    await withClassicDesigner(page);
     await hosted(page, {});
     await newWorkflow(page);
     await addStep(page, "transform");
@@ -2722,6 +2724,8 @@ ${paths}
     await shot("37-ai-connection-failed", { end: ".modal-panel" });
   },
   async "designer-lanes"({ page, shot }) {
+    // A scene of the classic designer, which the new editor replaces.
+    await withClassicDesigner(page);
     await offline(page);
     await page
       .getByLabel("Choose a workflow file")
@@ -2744,6 +2748,8 @@ ${paths}
   },
 
   async "inspector-fields"({ page, shot }) {
+    // A scene of the classic designer, which the new editor replaces.
+    await withClassicDesigner(page);
     await offline(page);
     await newWorkflow(page);
     const designer = new DesignerPage(page);
@@ -2767,6 +2773,8 @@ ${paths}
   },
 
   async "inspector-paths-settings"({ page, shot }) {
+    // A scene of the classic designer, which the new editor replaces.
+    await withClassicDesigner(page);
     await offline(page);
     await page
       .getByLabel("Choose a workflow file")
@@ -2797,6 +2805,8 @@ ${paths}
   },
 
   async "condition-operators"({ page, shot }) {
+    // A scene of the classic designer, which the new editor replaces.
+    await withClassicDesigner(page);
     await offline(page);
     await newWorkflow(page);
     const designer = new DesignerPage(page);
@@ -2833,6 +2843,8 @@ spec:
   },
 
   async "designer-canvas"({ page, shot }) {
+    // A scene of the classic designer, which the new editor replaces.
+    await withClassicDesigner(page);
     await offline(page);
     await newWorkflow(page);
     const designer = new DesignerPage(page);
@@ -2939,6 +2951,8 @@ spec:
   },
 
   async "human-task-inspector"({ page, shot }) {
+    // A scene of the classic designer, which the new editor replaces.
+    await withClassicDesigner(page);
     await offline(page);
     await newWorkflow(page);
     const designer = new DesignerPage(page);
@@ -2964,6 +2978,8 @@ spec:
   },
 
   async "designer-schema"({ page, shot }) {
+    // A scene of the classic designer, which the new editor replaces.
+    await withClassicDesigner(page);
     await offline(page);
     await newWorkflow(page);
     const designer = new DesignerPage(page);
@@ -2986,6 +3002,8 @@ spec:
   },
 
   async "designer-diagnostics"({ page, shot }) {
+    // A scene of the classic designer, which the new editor replaces.
+    await withClassicDesigner(page);
     await offline(page);
     await localProblems(page);
     await newWorkflow(page);
@@ -3006,6 +3024,8 @@ spec:
   },
 
   async "designer-action"({ page, shot }) {
+    // A scene of the classic designer, which the new editor replaces.
+    await withClassicDesigner(page);
     await connected(page);
     await newWorkflow(page);
     const designer = new DesignerPage(page);
@@ -3041,6 +3061,8 @@ spec:
   },
 
   async "designer-simulation"({ page, shot }) {
+    // A scene of the classic designer, which the new editor replaces.
+    await withClassicDesigner(page);
     const artifact = simulationArtifact();
     test.skip(!artifact, "Needs the repository's Python environment.");
     await connected(page, { capabilities: [...allCapabilities, "compile"] });
@@ -3120,6 +3142,8 @@ spec:
   },
 
   async "designer-activation"({ page, shot }) {
+    // A scene of the classic designer, which the new editor replaces.
+    await withClassicDesigner(page);
     const getPet = {
       apiVersion: "weave/v1alpha1",
       kind: "Action",
@@ -3385,6 +3409,8 @@ spec:
   },
 
   async "api-builder"({ page, shot }) {
+    // A scene of the classic designer, which the new editor replaces.
+    await withClassicDesigner(page);
     test.skip(!hasPython, "Needs the repository's Python environment.");
     await httpPlatform(page);
     await localAuthoring(page);
@@ -3436,6 +3462,8 @@ spec:
   },
 
   async "openapi-import"({ page, shot }) {
+    // A scene of the classic designer, which the new editor replaces.
+    await withClassicDesigner(page);
     test.skip(!hasPython, "Needs the repository's Python environment.");
     await httpPlatform(page);
     await localAuthoring(page);

@@ -166,7 +166,11 @@ for (const viewport of [
             throw new DOMException("Storage is blocked", "SecurityError");
           };
           Storage.prototype.setItem = refuse;
-          Storage.prototype.getItem = refuse;
+          // The classic designer stays chosen; everything else is refused.
+          Storage.prototype.getItem = (key: string) => {
+            if (key === "ui:weave.editorNext") return "false";
+            return refuse();
+          };
         });
         await offline(page);
         await newWorkflow(page);

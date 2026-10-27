@@ -39,7 +39,7 @@ import {
   showParameters,
   type Box,
 } from "./step-geometry";
-import { command, connected, offline } from "./support";
+import { command, connected, offline, withClassicDesigner } from "./support";
 import { hasPython, stopLocalAuthoring } from "./local-authoring";
 import { publishDialog, withOwnedSteps } from "./owned-actions";
 import { openActivation, platform } from "./activation-po";
@@ -768,6 +768,7 @@ test.describe("Save to file", () => {
   }) => {
     // Only the classic editor words that note: the new editor's canvas file
     // keeps the steps' action settings.
+    await withClassicDesigner(page);
     await offline(page);
     await page.getByLabel("Choose a workflow file").setInputFiles(stepFixture);
     await expect(page.locator(".editor-bar")).toBeVisible();

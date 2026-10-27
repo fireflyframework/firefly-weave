@@ -24,6 +24,7 @@ import {
   connected,
   newWorkflow,
   type CatalogEntry,
+  withClassicDesigner,
   workerAction,
 } from "./support";
 import { DesignerPage } from "./designer-po";
@@ -113,6 +114,8 @@ export async function platform(page: Page, options: Platform = {}) {
     exports: number;
     contracts: string[];
   } = { body: null, exports: 0, contracts: [] };
+  // Activation is driven from the classic designer here.
+  await withClassicDesigner(page);
   captured.contracts = (await connected(page, { catalog })).exports;
   await page.route("**/environments/development/connections?*", (r) =>
     r.fulfill({
