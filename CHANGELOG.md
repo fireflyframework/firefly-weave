@@ -20,6 +20,23 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+- Steps can handle their own failures with the On error setting: `onError:
+  continue` goes on with a `null` output, and `onError: errorOutput` runs the
+  step's `errorPath`, whose output becomes the step's output. Actions, AI tasks,
+  transforms, decision tables, human tasks, signals, transactions and waiting
+  calls accept it; the platform lists `flow.onError`. A handled failure is read
+  at `/steps/<id>/error` as `{code, message, outcome, attempts, instanceKey,
+  childRunId?}`, opens no incident, records a `step_failed` event and a `failed`
+  step change, counts in run facts (`handled_errors`) and in
+  `weave.step_errors`, and exports and replays. Retries come first, and an
+  unknown outcome of an action that changes data and is never retried still
+  stops the run until a person resolves it, now also with Confirm it had no
+  effect (`accept_reconciled_failure`, evidence required). Debug sessions and
+  `weave workflow simulate --error KEY=CODE` make steps fail on purpose. The
+  compiler reports `WV-COMP-ERROR_PATH`, `WV-COMP-ERROR_PATH_OUTPUT`,
+  `WV-COMP-ERROR_REFERENCE`, `WV-COMP-ON_ERROR_AMBIGUOUS` and
+  `WV-COMP-CALL_MODE` for `onError`. No migration. See
+  [Handle step errors](docs/guides/handle-step-errors.md).
 - Workers declare per release whether they report failures that applied
   nothing: the first claim that sends `worker: {release, transaction_aware}`
   fixes the answer for that release, and a claim naming another release than

@@ -351,7 +351,7 @@ capability.
 | `create_connection`, `read_connection`, `test_connection`, `list_connections` | Immutable integration connections that hold only secret handles, and explicit checks |
 | `start_run`, `read_run`, `signal`, `cancel`, `retry`, `list_runs` | Durable runs |
 | `pause_run`, `resume_run`, `run_lifecycle`, `archive_run`, `restore_run`, `purge_run` | Run lifecycle management |
-| `history`, `export_run`, `replay`, `run_incidents`, `list_incidents`, `read_incident`, `resolve_incident` | Bounded evidence and audited recovery |
+| `history`, `export_run`, `replay`, `run_incidents`, `list_incidents`, `read_incident`, `resolve_incident` | Bounded evidence and audited recovery; `resolve_incident` accepts `accept_reconciled_failure` (Confirm it had no effect) for a step with an On error setting |
 | `run_calls`; `firefly_weave.sdk.call_pins.current_call_pins(client, request)` | The calls a run made, with each child run; pin the current activation of every workflow version an activation request's workflow calls |
 | `human_tasks`, `read_human_task`, `claim_human_task`, `release_human_task`, `complete_human_task`, `reassign_human_task` | Human task inbox and decisions |
 | `assignment_bindings`, `put_assignment_binding`, `put_human_group` | Who may work on which human task |

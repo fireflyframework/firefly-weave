@@ -443,6 +443,33 @@ prints one line per frame, such as
 when a called workflow its caller waits for is `suspended`, because that caller
 would wait forever. A suspended detached call does not fail the command.
 
+## Make steps fail on purpose
+
+`errors` sits next to `mocks` in a session request and uses the same keys:
+`node:<step>` for every instance, `node:<instance key>` for one, and
+`action:<reference>` for every step that uses the action. Each entry is
+`{"code": "RATE_LIMITED", "outcome": "failed", "attempts": 1}`; `outcome` and
+`attempts` are optional. One lookup decides each step, in this order: the
+instance key, the step, the action. The first key found in either `mocks` or
+`errors` wins, and a key in both is refused (`WV-DEBUG-MOCK-CONFLICT`).
+
+- A step with an On error setting handles the failure as a platform run would:
+  its error path runs, or it continues with `null`.
+- A step without the setting stops behind the incident recovery would open:
+  `WV-TASK-RETRIES-EXHAUSTED` for an action that is safe to repeat,
+  `WV-TASK-AMBIGUOUS` for one that is not. An unknown outcome of an action that
+  changes data and is never retried stops the session too, whatever its setting.
+- A transform or decision table with a setting fails without being evaluated.
+- Signals and human tasks with a setting fail when they start waiting; moving
+  time past their timeout fails them too, as on a platform.
+
+Scripted failures apply to the simulated workflow itself, not inside called
+workflows. With the local simulation, repeat `--error KEY=CODE`:
+
+```bash
+weave workflow simulate request.json --error 'node:send[2]=RATE_LIMITED' --output json
+```
+
 ## Use the Python library
 
 Embedders use the `Simulator` class. Run this from a source checkout with

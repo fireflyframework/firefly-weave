@@ -96,7 +96,7 @@ platform; the others need the `client` extra and either a
 | Goal | Commands | Prerequisite and guide |
 | --- | --- | --- |
 | Create a starter or find a guide | `init DIRECTORY`, `docs [TOPIC]` | Base package; [quickstart](../quickstart.md) |
-| Validate, compile, explain, simulate, or draw a local workflow | `workflow validate`, `compile`, `explain`, `simulate`, `graph` | Base package and explicit files; [authoring guide](../guides/workflow-authoring.md) |
+| Validate, compile, explain, simulate, or draw a local workflow | `workflow validate`, `compile`, `explain`, `simulate` (`--error KEY=CODE` makes a step fail on purpose), `graph` | Base package and explicit files; [authoring guide](../guides/workflow-authoring.md) |
 | Export the language schemas | `schema export` | Base package |
 | Describe an HTTP API without code, import OpenAPI, or build a connector package | `connector http-action`, `import-openapi`, `descriptor`, `init`, `validate`, `test`, `package` | Base package; publishing needs a platform; [no-code REST integration](../connectors/http-without-code.md) |
 | Run durable workflows on your computer | `platform doctor`, `up`, `setup`, `start`, `status`, `logs`, `demo`, `user`, `token`, `stop` | Matching checkout, uv, and local Docker; [local platform](../guides/local-platform.md) |

@@ -155,6 +155,21 @@ outcome that does not match its call evidence makes the report `inconsistent`
 (`WV-REPLAY-CALL` or `WV-REPLAY-CALL-ISSUANCE`); missing call evidence makes it
 `incomplete` (`WV-REPLAY-CALL-PROVENANCE`).
 
+## Handled step failures in a history
+
+A step whose On error setting handles a failure records a `step_failed` event
+with `node_id` (the instance key), `generation`, `code`, `outcome`, `attempts`,
+and, when known, `child_run_id`, `deadline`, `wait_id`, and `effect` (inside a
+transaction). Exports keep only these codes, outcomes, and counts, never worker
+or provider text. The step change that follows has `status: failed` and the
+error object; an error path's join records the step's final change with the
+path's output. Replay checks each event against its source: the task receipt and
+recovery timing for a task that failed after its retries or that nobody claimed
+before its deadline, the deadline and its order for a signal or human task that
+timed out, and the refused call row for a call that could not start. Confirm it
+had no effect (`accept_reconciled_failure`) replays only for a task incident of
+a step with a setting, and `incident_resolved` keeps its `attempts`.
+
 ## Routes, pagination, and limits
 
 All routes are under

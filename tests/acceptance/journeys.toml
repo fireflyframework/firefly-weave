@@ -50,7 +50,7 @@
 "workflow-call-simulation" = true
 "workflow-call-fast-path" = false
 "language-docs" = false
-"step-error-handling" = false
+"step-error-handling" = true
 "ai-gateway" = true
 "ai-setup" = false
 "ai-models-screen" = true

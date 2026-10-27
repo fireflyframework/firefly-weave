@@ -113,6 +113,7 @@ commands use [explicit mode](../guides/connect-to-api.md#scripts-and-ci-explicit
     | --- | --- | --- |
     | `retry_safe` | The action is safe to repeat | Only for actions declared `read_only`, `idempotent`, or `idempotency_key` |
     | `accept_reconciled_result` | Independent evidence shows the result | An `output` valid for the action's pinned output schema, and an `evidence_reference` |
+    | `accept_reconciled_failure` | Independent evidence shows the action had no effect, and its step has an On error setting (Confirm it had no effect) | An `evidence_reference`; the step's setting then applies with error code `WV-TASK-RECONCILED-FAILURE` and outcome `failed`, and the task ends `handled` |
     | `terminate` | The run should stop | Nothing else |
 
 5. **Write the decision.** Generate a new UUID for `receipt_id`; reusing one
@@ -351,7 +352,7 @@ Some runs created before the current admission policy cannot be shown safely.
 
 | What you see | Why | What to do |
 | --- | --- | --- |
-| HTTP 409 `WV-RUNTIME-RECONCILIATION_REQUIRED` | `retry_safe` was used for an action that is not safe to repeat, the incident is not tied to an action (only `terminate` works), or a reconciled result lacks `output` or `evidence_reference` | Reconcile externally and use `accept_reconciled_result` with both fields, or `terminate` |
+| HTTP 409 `WV-RUNTIME-RECONCILIATION_REQUIRED` | `retry_safe` was used for an action that is not safe to repeat, the incident is not tied to an action (only `terminate` works), a reconciled result lacks `output` or `evidence_reference`, or `accept_reconciled_failure` was used for a step without an On error setting, without `evidence_reference`, or for a call | Reconcile externally and use `accept_reconciled_result` with both fields, or `terminate` |
 | HTTP 409 `WV-INCIDENT-REVISION` | Another decision changed the incident since you read it | Read the incident again; decide only if it is still active |
 | A task incident keyed `send[2]:0` | A task failed in iteration 2 of a loop; the other iterations' results wait behind the incident | Decide it like any task incident; `retry_safe` retries only that iteration |
 | `WV-RUNTIME-LOOP-ITEMS`, `WV-RUNTIME-LOOP-LIMIT`, or `WV-RUNTIME-LOOP-OUTPUT` | A loop's list was not a list, was longer than `maxItems`, or its results exceeded the payload limit; see [loops at run time](compiler.md#loops-at-run-time) | Only `terminate` applies; fix the workflow and start a new run |

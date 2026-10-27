@@ -141,6 +141,7 @@ def test_the_committed_map_is_valid():
         "workflow-call-compiler",
         "workflow-call-runtime",
         "workflow-call-simulation",
+        "step-error-handling",
         "ai-gateway",
         "ai-models-screen",
         "run-views",
@@ -167,7 +168,9 @@ def test_the_committed_map_is_valid():
     # J9: authorization (J9.1, J9.2), private origins (J9.3) and the canary scan (J9.4); cluster hardening is J6.1.
     assert enablement.journey_steps("J9") == tuple(f"J9.{n}" for n in range(1, 5))
     assert enablement.applies("J8.4", "nightly") and not enablement.applies("J8.4", "pr")
-    assert "step-error-handling" in enablement.missing("J3.10")
+    # Step error handling landed; the journey still waits for the Studio controls it drives.
+    assert "step-error-handling" not in enablement.missing("J3.10")
+    assert "activation-dialog" in enablement.missing("J3.10")
     assert enablement.checks("J9.2") == ("J9.2/execute-in-local", "J9.2/operations-controls")
     # The connection Test that sends a request is J1.3's, not J9.3's; it waits for connections in step details.
     assert "step-details" in enablement.missing("J1.3/test-sends-request")
