@@ -28,6 +28,8 @@ import {
   Injector,
   ViewEncapsulation,
   afterNextRender,
+  effect,
+  untracked,
   inject,
   input,
   viewChild,
@@ -318,6 +320,19 @@ export class CanvasView implements OnInit, DoCheck {
 
   constructor() {
     this.lifetime.onDestroy(() => clearTimeout(this.panningTimer));
+    // After an execution (the run log takes its share of the canvas), the
+    // steps that ran stay in sight.
+    effect(() => {
+      const run = this.host().runStamp?.() ?? null;
+      untracked(() => {
+        const first = this.keptRun === undefined;
+        this.keptRun = run;
+        if (!first && run)
+          afterNextRender(() => this.keepRunInView(), {
+            injector: this.injector,
+          });
+      });
+    });
     inject(FControlSchemeController).setScheme({
       nodeMove: () => false,
       createConnection: () => false,
@@ -382,17 +397,6 @@ export class CanvasView implements OnInit, DoCheck {
         },
         { injector: this.injector },
       );
-    }
-    // After an execution (the run log takes its share of the canvas), the
-    // steps that ran stay in sight.
-    const run = h.runStamp?.() ?? null;
-    if (run !== this.keptRun) {
-      const first = this.keptRun === undefined;
-      this.keptRun = run;
-      if (!first && run)
-        afterNextRender(() => this.keepRunInView(), {
-          injector: this.injector,
-        });
     }
     this.syncSelection();
     const selected = h.model.selected;
@@ -1548,61 +1552,169 @@ export class CanvasView implements OnInit, DoCheck {
   }
   /** Pans so a tile and its label sit at least `margin` px inside the canvas. */
   /**
-   * Brings the steps the last execution reached into the canvas's visible
-   * area: panned when they fit at this zoom, else as Fit view shows them.
-   * Nothing moves when they are all in sight.
+   * Brings the steps the last execution reached (and the trigger it started
+   * from) into the canvas's visible area, above the floating canvas tools:
+   * at this zoom when they fit, else zoomed out as far as 40%. The view then
+   * settles where no tile is cut at an edge, keeping the last of those steps
+   * and as many of the others as fit in sight. Nothing moves when they all are.
    */
-  keepRunInView() {
+  keepRunInView(stage = 0) {
     const h = this.host();
     const root = this.root().nativeElement;
     if (this.lifetime.destroyed || !root.clientWidth || !root.clientHeight)
       return;
-    const ran = this.layout().tiles.filter(
-      (tile) => !tile.id.startsWith("$") && h.summaryOf?.(tile.id),
+    const frame = root.getBoundingClientRect();
+    // Tiles as drawn (body, label, summary line), in world units.
+    const { zoom, pan } = this.view;
+    const tiles = [...root.querySelectorAll<HTMLElement>(".tile-node")]
+      .map((node) => {
+        const boxes = [
+          ...node.querySelectorAll<HTMLElement>(
+            ".tile-body, .tile-label, .tile-output",
+          ),
+        ]
+          .map((part) => part.getBoundingClientRect())
+          .filter((box) => box.width > 0 && box.height > 0);
+        if (!boxes.length) return null;
+        const left = Math.min(...boxes.map((box) => box.left)) - frame.left;
+        const top = Math.min(...boxes.map((box) => box.top)) - frame.top;
+        const right = Math.max(...boxes.map((box) => box.right)) - frame.left;
+        const bottom = Math.max(...boxes.map((box) => box.bottom)) - frame.top;
+        return {
+          id: node.dataset["tile"] ?? "",
+          x: (left - pan.x) / zoom,
+          y: (top - pan.y) / zoom,
+          right: (right - pan.x) / zoom,
+          bottom: (bottom - pan.y) / zoom,
+        };
+      })
+      .filter((tile) => tile !== null);
+    const steps = tiles.filter(
+      (tile) => !tile.id.startsWith("$") && h.ranInRun?.(tile.id),
     );
-    if (!ran.length) return;
-    const rect = {
+    if (!steps.length) return;
+    const ran = [
+      ...tiles.filter((tile) => tile.id.startsWith("$trigger:")),
+      ...steps,
+    ];
+    const last = steps.reduce((a, b) => (b.x > a.x ? b : a));
+    // The area the tiles may use: the canvas above its floating tools.
+    let height = root.clientHeight;
+    for (const tools of root.querySelectorAll<HTMLElement>(
+      ".canvas-tools, .canvas-v2-tools, .canvas-v2-tools-menu",
+    )) {
+      const box = tools.getBoundingClientRect();
+      if (box.width && box.height)
+        height = Math.min(height, box.top - frame.top);
+    }
+    // The run log docks over the canvas's right side (a sheet over its
+    // bottom on narrow windows): the tiles keep clear of it.
+    let width = root.clientWidth;
+    const log = root.closest(".canvas-panel")?.querySelector("weave-run-log");
+    if (log) {
+      const box = log.getBoundingClientRect();
+      if (box.width && box.height) {
+        if (box.top <= frame.top + 1)
+          width = Math.min(width, box.left - frame.left);
+        else height = Math.min(height, box.top - frame.top);
+      }
+    }
+    const margin = 4;
+    const span = {
       x: Math.min(...ran.map((tile) => tile.x)),
       y: Math.min(...ran.map((tile) => tile.y)),
-      width: 0,
-      height: 0,
+      right: Math.max(...ran.map((tile) => tile.right)),
+      bottom: Math.max(...ran.map((tile) => tile.bottom)),
     };
-    rect.width = Math.max(...ran.map((tile) => tile.x + tile.width)) - rect.x;
-    rect.height =
-      Math.max(...ran.map((tile) => tile.labelY + LTR.labelHeight)) - rect.y;
-    const size = { width: root.clientWidth, height: root.clientHeight };
-    const margin = 16;
-    const zoom = this.view.zoom;
-    const left = rect.x * zoom + this.view.pan.x;
-    const top = rect.y * zoom + this.view.pan.y;
-    const shown =
-      left >= 0 &&
-      top >= 0 &&
-      left + rect.width * zoom <= size.width &&
-      top + rect.height * zoom <= size.height;
-    if (shown) return;
-    const fits =
-      rect.width * zoom + 2 * margin <= size.width &&
-      rect.height * zoom + 2 * margin <= size.height;
-    if (fits)
-      this.setView({ zoom, pan: reveal(this.view, rect, size, margin) });
-    else {
-      // All of them at 50% or more, else from the first; the step the run
-      // ended at stays in sight either way.
+    const inside = (z: number, px: number, py: number, t: typeof span) =>
+      t.x * z + px >= margin - 0.5 &&
+      t.y * z + py >= margin - 0.5 &&
+      t.right * z + px <= width - margin + 0.5 &&
+      t.bottom * z + py <= height - margin + 0.5;
+    if (ran.every((tile) => inside(zoom, pan.x, pan.y, tile))) return;
+    const room = Math.min(
+      (width - 2 * margin) / (span.right - span.x),
+      (height - 2 * margin) / (span.bottom - span.y),
+    );
+    // Down to 40%, where tiles still show their labels. Labels change size
+    // with the zoom on narrow windows, so the place is chosen once the new
+    // zoom has drawn.
+    const z = stage > 0 || room >= zoom ? zoom : Math.max(room, 0.4);
+    if (z !== zoom) {
+      this.setView(
+        zoomAt(this.view, z / zoom, { x: width / 2, y: height / 2 }),
+      );
+      afterNextRender(() => this.keepRunInView(1), {
+        injector: this.injector,
+      });
+      return;
+    }
+    // Offsets that put a tile's edge on the area's edge, and the one that
+    // centers the run: the candidates where nothing is cut.
+    const xs = new Set<number>([
+      (width - (span.x + span.right) * z) / 2,
+      margin - span.x * z,
+      width - margin - span.right * z,
+    ]);
+    const ys = new Set<number>([
+      (height - (span.y + span.bottom) * z) / 2,
+      margin - span.y * z,
+      height - margin - span.bottom * z,
+    ]);
+    for (const tile of tiles) {
+      xs.add(margin - tile.x * z);
+      xs.add(width - margin - tile.right * z);
+      xs.add(-tile.right * z - 1);
+      xs.add(width - tile.x * z + 1);
+      ys.add(margin - tile.y * z);
+      ys.add(height - margin - tile.bottom * z);
+      ys.add(-tile.bottom * z - 1);
+      ys.add(height - tile.y * z + 1);
+    }
+    const out = (px: number, py: number, t: typeof span) =>
+      t.right * z + px <= 0 ||
+      t.x * z + px >= width ||
+      t.bottom * z + py <= 0 ||
+      t.y * z + py >= height;
+    let best: { x: number; y: number; score: number } | null = null;
+    for (const x of xs)
+      for (const y of ys) {
+        if (!tiles.every((t) => inside(z, x, y, t) || out(x, y, t))) continue;
+        const shown = ran.filter((t) => inside(z, x, y, t)).length;
+        const score =
+          shown * 4 +
+          (inside(z, x, y, last) ? 1000 : 0) -
+          (Math.abs(x - pan.x) + Math.abs(y - pan.y)) / 100000;
+        if (!best || score > best.score) best = { x, y, score };
+      }
+    // The last step can't be shown without cutting a tile: the columns
+    // don't divide the width. Zoom so a whole number of them does, once.
+    if ((!best || best.score < 1000) && stage < 2) {
+      const row = ran
+        .filter((t) => Math.abs(t.y - last.y) < 1)
+        .sort((a, b) => a.x - b.x);
+      const steps = row.slice(1).map((t, i) => (t.x - row[i].x) * z);
+      const pitch = steps.length ? Math.min(...steps) : 0;
+      if (pitch > 0) {
+        const columns = Math.max(1, Math.floor((width - margin) / pitch));
+        const snapped = Math.min(1, (z * (width - margin)) / (columns * pitch));
+        this.setView(
+          zoomAt(this.view, snapped / z, { x: width / 2, y: height / 2 }),
+        );
+        afterNextRender(() => this.keepRunInView(2), {
+          injector: this.injector,
+        });
+        return;
+      }
+    }
+    if (best) this.setView({ zoom: z, pan: { x: best.x, y: best.y } });
+    else
       this.setView(
         openView(
-          {
-            minX: rect.x,
-            minY: rect.y,
-            maxX: rect.x + rect.width,
-            maxY: rect.y + rect.height,
-          },
-          size,
+          { minX: span.x, minY: span.y, maxX: span.right, maxY: span.bottom },
+          { width, height },
         ),
       );
-      const last = ran.reduce((a, b) => (b.x > a.x ? b : a));
-      this.revealTile(last.id, margin);
-    }
     this.cdr.markForCheck();
   }
   revealTile(id: string, margin = 64) {

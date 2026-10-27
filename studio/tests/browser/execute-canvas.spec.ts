@@ -20,6 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 // step; badges and summary lines; one announcement when it ends.
 import { expect, test, type Page } from "@playwright/test";
 import {
+  EXECUTE_ASKING,
   EXECUTE_CHAIN,
   executeWorkflowIn,
   executions,
@@ -258,50 +259,99 @@ test("the live region speaks once", async ({ page }) => {
   expect(said).toEqual(["Executed 2 steps."]);
 });
 
+/** Each tile as drawn (body, label, summary line): wholly in the canvas's free area, wholly out, or cut. */
+async function tilePlaces(page: Page) {
+  return page.evaluate(() => {
+    const canvas = document.querySelector(".canvas-panel .canvas")!;
+    const frame = canvas.getBoundingClientRect();
+    let bottom = frame.bottom;
+    let right = frame.right;
+    const log = document.querySelector("weave-run-log");
+    if (log) {
+      const box = log.getBoundingClientRect();
+      if (box.top <= frame.top + 1) right = Math.min(right, box.left);
+      else bottom = Math.min(bottom, box.top);
+    }
+    for (const tools of canvas.querySelectorAll(
+      ".canvas-tools, .canvas-v2-tools, .canvas-v2-tools-menu",
+    )) {
+      const box = tools.getBoundingClientRect();
+      if (box.width && box.height) bottom = Math.min(bottom, box.top);
+    }
+    const places: Record<string, "in" | "out" | "cut"> = {};
+    for (const node of canvas.querySelectorAll<HTMLElement>(".tile-node")) {
+      const boxes = [
+        ...node.querySelectorAll(".tile-body, .tile-label, .tile-output"),
+      ]
+        .map((part) => part.getBoundingClientRect())
+        .filter((box) => box.width > 0 && box.height > 0);
+      if (!boxes.length) continue;
+      const left = Math.min(...boxes.map((b) => b.left));
+      const top = Math.min(...boxes.map((b) => b.top));
+      const end = Math.max(...boxes.map((b) => b.right));
+      const lower = Math.max(...boxes.map((b) => b.bottom));
+      const inside =
+        left >= frame.left - 0.5 &&
+        top >= frame.top - 0.5 &&
+        end <= right + 0.5 &&
+        lower <= bottom + 0.5;
+      const outside =
+        end <= frame.left + 0.5 ||
+        left >= right - 0.5 ||
+        lower <= frame.top + 0.5 ||
+        top >= bottom - 0.5;
+      places[node.dataset["tile"] ?? ""] = inside
+        ? "in"
+        : outside
+          ? "out"
+          : "cut";
+    }
+    return places;
+  });
+}
+
 for (const viewport of [
   { width: 1440, height: 900 },
   { width: 360, height: 740 },
 ])
   test.describe(`the run in view at ${viewport.width}x${viewport.height}`, () => {
     test.use({ viewport });
-    // Every step that ran on a wide window; on a phone, where they don't all
-    // fit at a readable zoom, the step the run ended at.
-    const shown =
-      viewport.width >= 768 ? ["first", "second", "third"] : ["third"];
-    test("after Execute workflow the steps that ran are in sight beside the run log", async ({
+    const wide = viewport.width >= 768;
+    test("after Execute workflow no tile is cut, and the steps that ran are in sight", async ({
       page,
     }) => {
       await openExecuteWorkflow(page, EXECUTE_CHAIN);
       await executeWorkflowIn(page);
-      await expect(page.locator("weave-run-log")).toBeVisible();
       for (const id of ["first", "second", "third"])
         await expect(badge(page, id)).toHaveAttribute("data-badge", "done");
-      const canvas = await page.locator(".canvas-panel .canvas").boundingBox();
-      const log = await page.locator("weave-run-log").boundingBox();
       await expect
         .poll(async () => {
-          const missing: string[] = [];
-          for (const id of shown) {
-            const box = await tile(page, id)
-              .locator(".tile-body")
-              .boundingBox();
-            if (
-              !box ||
-              !canvas ||
-              !log ||
-              box.x < canvas.x - 0.5 ||
-              box.y < canvas.y - 0.5 ||
-              box.x + box.width > canvas.x + canvas.width + 0.5 ||
-              box.y + box.height > canvas.y + canvas.height + 0.5 ||
-              (box.x < log.x + log.width &&
-                box.x + box.width > log.x &&
-                box.y < log.y + log.height &&
-                box.y + box.height > log.y)
-            )
-              missing.push(id);
-          }
-          return missing;
+          const places = await tilePlaces(page);
+          const cut = Object.keys(places).filter((id) => places[id] === "cut");
+          const ran = (wide ? ["first", "second", "third"] : ["third"]).filter(
+            (id) => places[id] !== "in",
+          );
+          const trigger = Object.keys(places).filter(
+            (id) => id.startsWith("$trigger:") && wide && places[id] !== "in",
+          );
+          return { cut, ran, trigger };
         })
-        .toEqual([]);
+        .toEqual({ cut: [], ran: [], trigger: [] });
+    });
+    test("a run waiting for a signal keeps the trigger and the waiting step whole", async ({
+      page,
+    }) => {
+      await openExecuteWorkflow(page, EXECUTE_ASKING);
+      await executeWorkflowIn(page);
+      await expect(page.locator(".run-log-status")).toContainText("Waiting");
+      await expect
+        .poll(async () => {
+          const places = await tilePlaces(page);
+          const cut = Object.keys(places).filter((id) => places[id] === "cut");
+          return { cut, paid: places["paid"] };
+        })
+        .toEqual({ cut: [], paid: "in" });
+      // A signal still waiting hasn't received anything.
+      await expect(tile(page, "paid").locator(".tile-output")).toHaveCount(0);
     });
   });
