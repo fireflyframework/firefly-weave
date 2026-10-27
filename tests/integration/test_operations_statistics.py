@@ -604,3 +604,52 @@ async def test_active_runs_samples_leave_out_active_test_runs(operations_case):
         "SELECT value FROM operation_usage WHERE environment_id=:environment AND metric='runs_active'",
     )
     assert usage[0]["value"] == 2 and active["value_avg"] == 1
+
+
+async def test_a_rollup_stopped_past_retention_records_the_gap_and_reads_it_as_unknown(operations_case):
+    from firefly_weave.contracts.run_statistics import StatisticsSeriesQuery
+    from firefly_weave.operations import statistics_reads
+
+    stopped = NOW - timedelta(days=9)
+    await owner(
+        operations_case,
+        "INSERT INTO operations_statistics_cursors(tenant_id,project_id,environment_id,covered_from,rolled_until) "
+        "VALUES(:tenant,:project,:environment,:covered,:at)",
+        covered=NOW - timedelta(days=30),
+        at=stopped,
+    )
+    await rollup(operations_case)
+    (cursor,) = await owner(
+        operations_case,
+        "SELECT gap_starts,gap_ends FROM operations_statistics_cursors WHERE environment_id=:environment",
+    )
+    assert cursor["gap_starts"] == [datetime(2031, 2, 23, 12, 5, tzinfo=UTC)]
+    assert cursor["gap_ends"] == [statistics.window(NOW, stopped)[0]]
+    async with operations_case.tx() as tx:
+        answer = await statistics_reads.series(
+            tx,
+            StatisticsSeriesQuery.model_validate(
+                {
+                    "from": "2031-02-20T00:00:00Z",
+                    "to": "2031-03-04T00:00:00Z",
+                    "granularity": "1d",
+                    "signals": ["runs_started"],
+                }
+            ),
+        )
+    points = dict(answer.series[0].points)
+    # Before the stop the rollup counted (zero runs); the stopped days are unknown.
+    assert points[datetime(2031, 2, 21, tzinfo=UTC)] == 0
+    assert points[datetime(2031, 2, 25, tzinfo=UTC)] is None
+
+
+async def test_a_smaller_chunk_never_moves_the_cursor_back(operations_case):
+    await rollup(operations_case)
+    (before,) = await owner(
+        operations_case,
+        "SELECT rolled_until,complete_until FROM operations_statistics_cursors WHERE environment_id=:environment",
+    )
+    async with operations_case.tx() as tx:
+        after = await statistics.recompute(tx, NOW + timedelta(seconds=20), buckets=1)
+    assert after.rolled_until == before["rolled_until"]
+    assert after.complete_until == before["complete_until"]

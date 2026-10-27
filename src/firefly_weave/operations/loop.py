@@ -185,20 +185,28 @@ class OperationsLoop:
             raise AccessDenied()
         now = self.clock()
         key = authority.scope.model_dump_json()
-        completed, until = True, None
+        completed, until, progressed = True, None, False
         for name, step in statistics.STEPS:
-            chunks = 0
+            chunks, took = 0, 0.0
             while True:
                 buckets = self.chunks.get(key, statistics.CHUNK_BUCKETS)
+                if progressed and deadline_monotonic - self.monotonic() < took:
+                    # Another chunk would not fit what is left: the visit ends here, healthy, chunk size kept.
+                    return until if completed else False
+                started = self.monotonic()
                 try:
-                    async with asyncio.timeout(max(0.0, deadline_monotonic - self.monotonic())):
+                    async with asyncio.timeout(max(0.0, deadline_monotonic - started)):
                         async with self._unit(authority, deadline_monotonic, mutation=True) as tx:
                             cursor = await (
                                 statistics.recompute_chunk(step, tx, now, buckets)
                                 if name == "recompute"
                                 else step(tx, now)
                             )
-                except (QuantumIncomplete, TimeoutError):
+                except QuantumIncomplete:
+                    # The slice was spent before this unit began: not this step's fault, so nothing halves.
+                    return until if progressed and completed else False
+                except TimeoutError:
+                    # A statement outran the slice: a smaller chunk next time.
                     if name == "recompute":
                         self.chunks[key] = max(1, buckets // 2)
                     return False
@@ -208,7 +216,7 @@ class OperationsLoop:
                         self.chunks[key] = max(1, buckets // 2)
                     completed = False
                     break
-                until = cursor.complete_until
+                until, progressed, took = cursor.complete_until, True, self.monotonic() - started
                 if name != "recompute":
                     break
                 self.chunks[key] = min(statistics.CHUNK_BUCKETS, buckets * 2)

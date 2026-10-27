@@ -172,6 +172,8 @@ class _Cursor:
     days_until: datetime | None = None
     sampled_until: datetime | None = None
     complete_until: datetime | None = None
+    gap_starts: list[datetime] = field(default_factory=list)
+    gap_ends: list[datetime] = field(default_factory=list)
 
 
 @dataclass
@@ -223,7 +225,8 @@ class RunStatisticsReader:
 
     async def cursor(self) -> _Cursor:
         found = await self._rows(
-            "SELECT covered_from,rolled_until,hours_until,days_until,sampled_until,complete_until FROM "
+            "SELECT covered_from,rolled_until,hours_until,days_until,sampled_until,complete_until,gap_starts,gap_ends "
+            "FROM "
             f"operations_statistics_cursors WHERE {_SCOPE}"
         )
         return _Cursor(**found[0]) if found else _Cursor()
@@ -429,7 +432,13 @@ def _covered(cursor: _Cursor, at: datetime, granularity: Granularity) -> bool:
     """Whether the rollup has looked at this bucket: zero then means no run, not no statistics."""
     if cursor.covered_from is None or cursor.rolled_until is None:
         return False
-    return at + GRANULARITY[granularity] > cursor.covered_from and at < cursor.rolled_until
+    end = at + GRANULARITY[granularity]
+    if any(
+        at < gap_end and end > gap_start for gap_start, gap_end in zip(cursor.gap_starts, cursor.gap_ends, strict=True)
+    ):
+        # The rollup stopped too long to count these buckets: unknown, not zero.
+        return False
+    return end > cursor.covered_from and at < cursor.rolled_until
 
 
 def _series(signal: str, labels: dict[str, str], values: list[tuple[datetime, float | None]]) -> StatisticsSeries:

@@ -105,20 +105,30 @@ starts or spans more than 400 days, answer `422 WV-FILTER`.
 | 1 day | 400 days |
 
 Queue, outbox and worker figures are sampled each time the operations loop
-visits the environment, and kept for 24 hours, then hourly for 35 days. The
-loop visits one environment of each tenant per minute, so an environment is
-sampled about once a minute when its tenant has one environment and every few
-minutes when it has several; a bucket without a sample shows as a gap, never
-as zero. Ready tasks are averaged over every sampled minute, counting the
-minutes a task type had none.
+visits the environment, and kept for 24 hours, then hourly for 35 days. Each
+cycle of the loop takes a minute plus its work and visits one environment of
+each of up to 16 tenants, so an environment is visited about every
+*environments in its tenant × ⌈tenants ÷ 16⌉* minutes. With one tenant of three
+environments that is every 3 minutes; with 40 tenants of three environments
+each, every 9 minutes or more. Capacity lines show gaps between visits, never
+zeros, and five-minute capacity charts are sparse on large installations; the
+hourly and daily ones are not. Ready tasks are averaged over every sampled
+minute, counting the minutes a task type had none.
 
 Each visit recomputes the last ten minutes of buckets, so runs that commit late
-are counted. The rollup takes at most 0.4 seconds of each visit and works in
-chunks of up to fifteen minutes, each saved as it completes. Each answer says `complete_until`: buckets
-that end at or before that time no longer change. Studio shows it as "Data
-complete until 14:32". After the loop was stopped, it catches up in those chunks, up to an hour per
-visit. After an outage longer than two days, the five-minute rows of the gap
-are gone before they are rolled up, and those buckets read as zero runs.
+are counted. Each answer says `complete_until`: buckets that end at or before
+that time no longer change. Studio shows it as "Data complete until 14:32", and
+it follows the visits. The rollup takes at
+most 0.4 seconds of each visit and works in chunks of up to fifteen minutes,
+each saved as it completes; after a pause it catches up in those chunks, up to
+an hour per visit.
+
+When statistics stop advancing for more than two days, for any reason (a
+stopped scheduler, or a statistics step that keeps failing, which shows as a
+degraded `operations_loop` in the environment summary), the five-minute buckets
+of that stretch can no longer be counted. The rollup records the stretch, and
+its buckets read as unknown, not as zero runs. It remembers the latest 20 such
+stretches.
 
 Figures start when the platform is upgraded to a version with run statistics;
 runs before that are not counted.

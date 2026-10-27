@@ -30,7 +30,7 @@ and roll into hourly averages and maxima. Expired rows are pruned in batches of 
 """
 
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -47,6 +47,7 @@ CATCH_UP = timedelta(hours=1)
 # One recompute chunk at most: three buckets cover the whole window once caught up. The loop halves it after a
 # failed chunk and repeats chunks while behind, up to CHUNKS_PER_CYCLE (an hour of catch-up) per cycle.
 CHUNK_BUCKETS = 3
+MAX_GAPS = 20
 CHUNKS_PER_CYCLE = 4
 SERIES_CAP = 2000
 TASK_TYPE_CAP = 50
@@ -83,6 +84,20 @@ def window(now: datetime, rolled_until: datetime | None, span: timedelta = CATCH
     back = now - WINDOW if rolled_until is None else min(rolled_until, now - WINDOW)
     lo = max(_floor(back, FIVE_MINUTES), _ceil(now - RETENTION["5m"], FIVE_MINUTES))
     return lo, _ceil(min(now, lo + span), FIVE_MINUTES)
+
+
+def missed(now: datetime, rolled_until: datetime | None) -> tuple[datetime, datetime] | None:
+    """Buckets a stopped rollup can no longer count: from its cursor to the oldest kept five-minute bucket."""
+    if rolled_until is None:
+        return None
+    start = _floor(min(rolled_until, now - WINDOW), FIVE_MINUTES)
+    lo, _ = window(now, rolled_until)
+    return (start, lo) if lo > start else None
+
+
+def advanced(rolled_until: datetime | None, hi: datetime) -> datetime:
+    """The cursor after a chunk ending at ``hi``: never behind where it was, so completeness never steps back."""
+    return hi if rolled_until is None else max(rolled_until, hi)
 
 
 def complete_until(now: datetime, rolled_until: datetime | None) -> datetime | None:
@@ -197,6 +212,9 @@ class Cursor:
     days_until: datetime | None
     sampled_until: datetime | None
     complete_until: datetime | None
+    # Ranges the rollup stopped too long to count (the newest MAX_GAPS): they read as unknown, not zero.
+    gap_starts: list[datetime] = field(default_factory=list)
+    gap_ends: list[datetime] = field(default_factory=list)
 
 
 # Withheld runs (not available under the current policy, or blocked) count under (other) with no version.
@@ -326,7 +344,8 @@ class StatisticsRepository:
             "VALUES(:tenant,:project,:environment) ON CONFLICT DO NOTHING"
         )
         (row,) = await self._rows(
-            "SELECT covered_from,rolled_until,hours_until,days_until,sampled_until,complete_until FROM "
+            "SELECT covered_from,rolled_until,hours_until,days_until,sampled_until,complete_until,gap_starts,gap_ends "
+            "FROM "
             f"operations_statistics_cursors WHERE {_SCOPE.format(alias='')} FOR UPDATE"
         )
         return Cursor(**row)
@@ -335,7 +354,8 @@ class StatisticsRepository:
         await self._execute(
             "UPDATE operations_statistics_cursors SET covered_from=:covered_from,rolled_until=:rolled_until,"
             "hours_until=:hours_until,"
-            "days_until=:days_until,sampled_until=:sampled_until,complete_until=:complete_until WHERE "
+            "days_until=:days_until,sampled_until=:sampled_until,complete_until=:complete_until,"
+            "gap_starts=cast(:gap_starts AS timestamptz[]),gap_ends=cast(:gap_ends AS timestamptz[]) WHERE "
             + _SCOPE.format(alias=""),
             {
                 "covered_from": cursor.covered_from,
@@ -344,6 +364,8 @@ class StatisticsRepository:
                 "days_until": cursor.days_until,
                 "sampled_until": cursor.sampled_until,
                 "complete_until": cursor.complete_until,
+                "gap_starts": cursor.gap_starts,
+                "gap_ends": cursor.gap_ends,
             },
         )
 
@@ -529,6 +551,10 @@ async def recompute(tx: Transaction, now: datetime, *, buckets: int = CHUNK_BUCK
     """Recompute the next chunk of at most ``buckets`` five-minute buckets and advance the cursor past it."""
     statistics = StatisticsRepository(tx)
     cursor = await statistics.cursor()
+    gap = missed(now, cursor.rolled_until)
+    if gap is not None:
+        cursor.gap_starts = [*cursor.gap_starts, gap[0]][-MAX_GAPS:]
+        cursor.gap_ends = [*cursor.gap_ends, gap[1]][-MAX_GAPS:]
     lo, hi = window(now, cursor.rolled_until, FIVE_MINUTES * buckets)
     await statistics.recompute(lo, hi)
     if cursor.covered_from is None:
@@ -537,8 +563,8 @@ async def recompute(tx: Transaction, now: datetime, *, buckets: int = CHUNK_BUCK
         cursor.hours_until = _floor(lo, HOUR)
     if cursor.days_until is None:
         cursor.days_until = _floor(lo, DAY)
-    cursor.rolled_until = hi
-    cursor.complete_until = complete_until(now, hi)
+    cursor.rolled_until = advanced(cursor.rolled_until, hi)
+    cursor.complete_until = complete_until(now, cursor.rolled_until)
     await statistics.save(cursor)
     return cursor
 

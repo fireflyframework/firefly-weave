@@ -251,3 +251,59 @@ async def test_catch_up_repeats_chunks_while_behind_and_halves_them_after_a_fail
     # One bucket at a time while behind, growing back to three once a chunk succeeds.
     assert asked[0] == 1 and asked[1:3] == [2, 3]
     assert behind["rolled"] >= AT - timedelta(minutes=5)
+
+
+async def test_running_out_of_the_slice_after_progress_neither_halves_nor_fails(monkeypatch):
+    loop = operations_loop(monkeypatch)
+    clock = {"now": 100.0}
+    loop.monotonic = lambda: clock["now"]
+    quiet(monkeypatch, loop, [])
+    opened: list = []
+
+    @asynccontextmanager
+    async def unit(scope, deadline, *, mutation):
+        if clock["now"] >= deadline:
+            raise operations.QuantumIncomplete()
+        opened.append(deadline)
+        yield object()
+
+    monkeypatch.setattr(loop, "_unit", unit)
+    behind = {"rolled": AT - timedelta(hours=2)}
+
+    async def recompute(tx, now, *, buckets):
+        # Each chunk takes 0.15 s of the 0.4 s slice.
+        clock["now"] += 0.15
+        behind["rolled"] += timedelta(minutes=5 * buckets)
+        return SimpleNamespace(complete_until=behind["rolled"] - timedelta(minutes=5), rolled_until=behind["rolled"])
+
+    async def other(tx, now):
+        raise AssertionError("no time is left for the other steps")
+
+    monkeypatch.setattr(
+        statistics,
+        "STEPS",
+        (("recompute", recompute), *((name, other) for name in ("hours", "days", "sample", "prune"))),
+    )
+    environment = authority()
+    until = await loop.roll_statistics(environment, 100.4)
+    # Two chunks fit; the third would not: the visit stops healthy, keeps its chunk size and reports progress.
+    assert until == behind["rolled"] - timedelta(minutes=5)
+    assert len(opened) == 2
+    assert loop.chunks[environment.scope.model_dump_json()] == 3
+
+
+async def test_a_chunk_that_times_out_halves_the_next_and_fails_the_visit(monkeypatch):
+    import asyncio
+
+    loop = operations_loop(monkeypatch)
+    quiet(monkeypatch, loop, [])
+    units(monkeypatch, loop, [])
+
+    async def slow(tx, now, *, buckets):
+        raise TimeoutError()
+
+    monkeypatch.setattr(statistics, "STEPS", (("recompute", slow),))
+    environment = authority()
+    assert await loop.roll_statistics(environment, 100.4) is False
+    assert loop.chunks[environment.scope.model_dump_json()] == 1
+    del asyncio

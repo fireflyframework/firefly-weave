@@ -177,3 +177,24 @@ def test_fifty_task_types_fold_nothing():
     rows = [(f"type-{index:02d}", 1, None) for index in range(50)]
     assert len(fold_task_types(rows, cap=50)) == 50
     assert all(name != "(other)" for name, _, _ in fold_task_types(rows, cap=50))
+
+
+def test_a_rollup_that_stopped_past_the_retention_records_what_it_missed():
+    from firefly_weave.operations.statistics import missed
+
+    assert missed(NOW, None) is None
+    assert missed(NOW, NOW - timedelta(hours=3)) is None
+    # Stopped nine days ago: the buckets between the cursor and the oldest kept five-minute bucket were never counted.
+    stopped = NOW - timedelta(days=9)
+    lo, _ = window(NOW, stopped)
+    assert missed(NOW, stopped) == (datetime(2026, 10, 17, 14, 30, tzinfo=UTC), lo)
+
+
+def test_the_cursor_never_steps_back():
+    from firefly_weave.operations.statistics import advanced
+
+    ahead = datetime(2026, 10, 26, 14, 35, tzinfo=UTC)
+    # A one-bucket chunk inside the window ends before the cursor: the cursor stays where it was.
+    assert advanced(ahead, datetime(2026, 10, 26, 14, 25, tzinfo=UTC)) == ahead
+    assert advanced(None, ahead) == ahead
+    assert advanced(datetime(2026, 10, 26, 11, 0, tzinfo=UTC), ahead) == ahead

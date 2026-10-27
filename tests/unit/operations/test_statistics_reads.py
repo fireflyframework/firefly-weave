@@ -269,3 +269,35 @@ def test_buckets_past_the_rollups_edge_are_unknown_not_zero():
     assert statistics_reads._covered(cursor, AT - timedelta(hours=2), "5m") is False
     # An hour that only partly overlaps coverage is covered.
     assert statistics_reads._covered(cursor, AT - timedelta(minutes=90), "1h") is True
+
+
+def test_task_types_rank_by_their_average_over_every_sampled_minute():
+    # Five sampled minutes: a had 10 ready tasks in one minute (2 on average), b had 3 in every minute (3).
+    found = _bucketed(
+        AT,
+        [("workers_online", "", 1, 5), ("tasks_ready", "a", 10, 1), ("tasks_ready", "b", 3, 5)],
+    )
+    query = StatisticsSeriesQuery.model_validate(
+        {
+            "from": "2026-10-26T12:00:00Z",
+            "to": "2026-10-26T12:05:00Z",
+            "signals": ["tasks_ready"],
+            "group_by": "task_type",
+            "top": 1,
+        }
+    )
+    grouped = statistics_reads._sample_series(query, ["tasks_ready"], [AT], found)
+    assert [item.labels["task_type"] for item in grouped] == ["b", "(other)"]
+
+
+def test_buckets_the_rollup_missed_read_as_unknown():
+    cursor = _Cursor(
+        covered_from=AT - timedelta(days=30),
+        rolled_until=AT + timedelta(minutes=10),
+        gap_starts=[AT - timedelta(days=9)],
+        gap_ends=[AT - timedelta(days=2)],
+    )
+    assert statistics_reads._covered(cursor, AT - timedelta(days=5), "1d") is False
+    assert statistics_reads._covered(cursor, AT - timedelta(days=9, hours=1), "1d") is False
+    assert statistics_reads._covered(cursor, AT - timedelta(days=12), "1d") is True
+    assert statistics_reads._covered(cursor, AT - timedelta(days=1), "1h") is True
