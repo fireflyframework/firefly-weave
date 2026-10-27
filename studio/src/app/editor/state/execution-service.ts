@@ -119,6 +119,8 @@ export class ExecutionService {
   readonly results = signal<LastResults | null>(null);
   /** The last answer, for the run log and a decision's paths. */
   readonly last = signal<ExecuteResponse | null>(null);
+  /** The last execution ran with a sample of the input fields (no test input). */
+  readonly sampledInput = signal(false);
   /** Bumped by open and forget: an answer asked for before never lands. */
   private generation = 0;
   /** Bumped by every execution and by Stop: only the newest answer lands. */
@@ -185,13 +187,15 @@ export class ExecutionService {
       this.last.set(null);
     }
     const previous = this.results();
+    const testData = this.host.testData();
+    const sampled = testData.input?.value === undefined;
     const body: ExecuteRequest = executeRequest({
       source: draft.source,
       format: draft.format,
       workflow: draft.workflow,
       definitions: this.host.definitions(),
       connected: this.host.connected(),
-      testData: this.host.testData(),
+      testData,
       results: previous,
       sampleInput: sampleFromSchema(this.host.inputSchema()),
       target,
@@ -228,6 +232,7 @@ export class ExecutionService {
     if (prints) results = pruneResults(results, (id) => prints.has(id));
     this.results.set(results);
     this.last.set(answer);
+    this.sampledInput.set(sampled);
     await this.keep(place, draft.id, results);
     return { kind: "done", response: answer };
   }

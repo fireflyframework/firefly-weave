@@ -124,6 +124,11 @@ export function runStatus(
         <weave-icon name="close" [size]="16" />
       </button>
     </header>
+    @if (!host().runSession() && host().execution?.sampledInput()) {
+      <p class="run-log-note">
+        Executed with a sample input. Add test input to choose your own.
+      </p>
+    }
     @if (host().runSession(); as session) {
       <div class="run-log-controls" role="group" aria-label="Step through">
         <button

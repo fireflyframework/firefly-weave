@@ -284,13 +284,16 @@ describe("the execution service", () => {
   it("sends a sample of the input fields when there is no test input", async () => {
     const { service, sent } = fixture();
     await service.open("d-1");
-    void service.execute({ mode: "workflow" });
+    const running = service.execute({ mode: "workflow" });
     await settle();
     expect(sent[0].path).toBe("/studio/local/debug/execute");
     expect((sent[0].body as { input: unknown }).input).toEqual(
       sampleFromSchema(INPUT_SCHEMA),
     );
     expect((sent[0].body as { catalog: string }).catalog).toBe("none");
+    sent[0].answer(RESPONSE);
+    await running;
+    expect(service.sampledInput()).toBe(true);
   });
 
   it("Stop drops the running answer", async () => {
