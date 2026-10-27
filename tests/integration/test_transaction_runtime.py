@@ -450,7 +450,7 @@ async def test_a_run_that_times_out_undoes_its_transaction_and_then_ends_timed_o
     assert (await platform.record(run.id))["cause"]["code"] == "WV-TXN-RUN-TIMED-OUT"
 
 
-async def test_a_run_whose_transaction_is_in_doubt_cannot_be_archived_or_purged(platform):
+async def test_a_run_whose_transaction_is_in_doubt_cannot_be_archived(platform):
     from firefly_weave.contracts.run_lifecycle import RunLifecycleRequest
     from firefly_weave.definitions.models import CatalogError
     from firefly_weave.runtime.lifecycle import RunLifecycleService

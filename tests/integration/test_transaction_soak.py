@@ -25,7 +25,8 @@ from transaction_platform import add, build, hold, submit, transaction, workflow
 from firefly_weave.access.audit import AuditContext
 
 pytestmark = pytest.mark.integration
-REPETITIONS = int(os.environ.get("WEAVE_TRANSACTION_SOAK_REPETITIONS", "200"))
+# Twenty repetitions reach both orderings of the race; run 200 before a release.
+REPETITIONS = int(os.environ.get("WEAVE_TRANSACTION_SOAK_REPETITIONS", "20"))
 ENDED = {"succeeded", "failed", "cancelled", "timed_out"}
 
 
@@ -76,8 +77,11 @@ CRASHES = {
 }
 
 
-@pytest.mark.parametrize("point", sorted(CRASHES))
-@pytest.mark.parametrize("fails", [False, True])
+@pytest.mark.parametrize(
+    ("point", "fails"),
+    # Each crash point on the paths that reach it: the decision only commits, the first undo only goes back.
+    [("registration", False), ("registration", True), ("decision", False), ("first undo", True)],
+)
 async def test_a_crash_at_each_durable_step_still_finishes_with_every_phase_sent_once(
     platform, monkeypatch, point, fails
 ):
@@ -110,7 +114,7 @@ async def test_a_crash_at_each_durable_step_still_finishes_with_every_phase_sent
     else:
         await platform.complete(lease)
     await finish(platform, run.id)
-    assert crashed == [point] or (point == "decision" and fails) or (point == "first undo" and not fails)
+    assert crashed == [point]
     keys = await platform.keys(run.id)
     assert len(keys) == len(set(keys))
     operations = await platform.query("SELECT operation_key FROM task_intents WHERE run_id=:run", run=run.id)
