@@ -33,6 +33,29 @@ SPDX-License-Identifier: Apache-2.0
   `.steps` (`status.read`; `weave operations statistics`), errors
   `WV-STATS-RANGE` and `WV-STATS-SERIES`, and the summary's optional
   `runs_24h`. Migration `0038_operations_statistics`.
+- With **Try the new editor** on, **Execute step**, **Execute previous steps**
+  and **Execute workflow** simulate in Studio, on this computer, without a
+  platform: step details, the trigger's button, the editor bar and
+  **Ctrl+Enter** / **Cmd+Enter**. They use pinned output, the last results, the
+  test input (or a sample of the input fields) and saved AI turns; actions
+  nobody has run on stubs. The canvas plays the run back, finished steps show a
+  line such as "3 fields", the Output and Input panes show what each step
+  returned and received (Schema, Table and JSON), and a decision lists its paths
+  as taken, not taken or not checked. Last results stay on this computer under
+  your account and are marked out of date when the step changes. The Studio
+  host serves `POST /studio/local/debug/execute` and step-through sessions under
+  `/studio/local/debug/sessions`, behind its session and CSRF checks.
+- The run log replaces the simulation panel in the new editor: it lists what
+  ran, opens each step, marks results out of date, asks for a signal or a
+  decision the test data doesn't answer, and steps through breakpoints set with
+  **F9**. **L** shows or hides it; **I** and **O** open an entry's data; **?**
+  in step details lists the keys.
+- Test answers for signals and human tasks: a payload (and when it arrives), a
+  decision and its data, or letting the step time out or expire.
+- Executing no longer publishes a workflow's own actions first; their
+  documents go to the Studio host instead.
+- A simulated run whose deadline passes now fails at the step that waited, and
+  a call to another workflow without test data stops for test data.
 - Workers declare per release whether they report failures that applied
   nothing: the first claim that sends `worker: {release, transaction_aware}`
   fixes the answer for that release, and a claim naming another release than

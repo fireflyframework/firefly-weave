@@ -54,7 +54,12 @@ import {
   type CanvasSidecar,
   type StepNote,
 } from "../state/canvas-sidecar";
-import { CANVAS_MAX_BYTES, type DataSource } from "../state/test-data";
+import {
+  CANVAS_MAX_BYTES,
+  type DataSource,
+  type HumanEntry,
+  type SignalEntry,
+} from "../state/test-data";
 import { TestDataService } from "../state/test-data-service";
 import { checkInputsOf } from "../state/test-data-inputs";
 import {
@@ -62,6 +67,7 @@ import {
   withPin,
   withoutInput,
   withoutPin,
+  withScript,
 } from "../state/test-data-ops";
 import { fingerprints, type StepFingerprints } from "../state/fingerprints";
 import {
@@ -96,15 +102,20 @@ import {
 import {
   ndvRegistry,
   type Edit,
+  type Expression,
   type FormSpec,
   type Json,
   type KindContext,
   type NdvContext,
   type ParamSpec,
   type Path,
+  type StaleReason,
   type StepKindDescriptor,
 } from "./registry";
 import type { StepDetailsHost } from "./step-details-host";
+import type { BlockedReason } from "../state/execution";
+import type { LastResult } from "../state/last-results";
+import { instanceStep } from "../state/instance-keys";
 import type { HostDiagnostic } from "../../integrations/http-action-client";
 import {
   PendingEntries,
@@ -138,8 +149,25 @@ export type ControllerHost = Pick<
   | "testDataPrints"
   | "openTestData"
   | "pinFromElsewhere"
+  | "execution"
 >;
 /** A diagnostic of one step, located in it. */
+/** Whether a schema marks any value secret, anywhere in it. */
+const marksSecret = (schema: unknown): boolean =>
+  schema !== null &&
+  schema !== undefined &&
+  /"(x-secret|writeOnly)"\s*:\s*true/.test(JSON.stringify(schema));
+
+/** The last execution's answer about a step, in its Output pane. */
+export interface ExecuteNotice {
+  /** The step it is about. */
+  target: string;
+  message: string;
+  /** Why the run stopped there; null for a refusal or a failure. */
+  reason: BlockedReason | null;
+  /** "Edit test input" is the way out. */
+  input?: boolean;
+}
 export interface StepDiagnostic {
   code: string;
   severity: string;
@@ -354,6 +382,122 @@ export class StepDetailsController {
     );
     return safeSample(schema ?? {}, pin.entry.output);
   }
+  // --------------------------------------------------- executed data
+  /** A step's (or an iteration's) last result, from the last execution on this computer, or null. */
+  lastResult(key: string): LastResult | null {
+    return this.host.execution?.results()?.steps[key] ?? null;
+  }
+  /**
+   * What a step's output reads now, the same for the Output pane, the Input
+   * pane and formula previews: its pin, else its last result (still used when
+   * out of date), else nothing. Secret fields are left out.
+   */
+  stepData(
+    key: string,
+  ):
+    | { value: Json; source: "pinned" | "simulated"; stale: StaleReason | null }
+    | undefined {
+    const stepId = instanceStep(key);
+    const pin = this.pinOfTarget(key) ?? this.pinOfTarget(stepId);
+    if (pin)
+      return {
+        value: this.pinnedOutput(pin.key) ?? {},
+        source: "pinned",
+        stale: pin.stale,
+      };
+    const result = this.lastResult(key);
+    if (!result || result.output === undefined) return undefined;
+    const step = this.step(stepId);
+    const schema = step
+      ? this.descriptor(stepId)?.outputSchema(step, this.kindContext())
+      : null;
+    // The host refused every secret value before it simulated, so a result
+    // too large to copy field by field is shown as it is unless its output
+    // fields mark something secret.
+    const value =
+      safeSample(schema ?? {}, result.output) ??
+      (marksSecret(schema) ? undefined : result.output);
+    if (value === undefined) return undefined;
+    const now = this.prints().get(stepId)?.execution;
+    return {
+      value,
+      source: "simulated",
+      stale: now === result.execution ? null : "upstream",
+    };
+  }
+  /** What the last execution asked of this step, or why it couldn't run (shown in its Output). */
+  readonly executeNotice = signal<ExecuteNotice | null>(null);
+  /** Step details' Execute, for the panes' own buttons (set by step details). */
+  executeHook: ((mode: "step" | "before") => void) | null = null;
+  requestExecute(mode: "step" | "before"): void {
+    this.executeHook?.(mode);
+  }
+  /** What runs now: Execute's target, or null. */
+  running() {
+    return this.host.execution?.running() ?? null;
+  }
+  /** Whether Execute is available here at all (the host loaded it). */
+  canExecute(): boolean {
+    return !!this.host.execution && !this.readOnlyReason();
+  }
+
+  // --------------------------------------------------- test answers
+  /** Where a step's test answer lives: signals, humans, or nowhere. */
+  private answerSection(key: string): "signals" | "humans" | null {
+    const kind = this.step(instanceStep(key))?.kind as string | undefined;
+    return kind === "signal"
+      ? "signals"
+      : kind === "humanTask"
+        ? "humans"
+        : null;
+  }
+  /** A signal's or a person's test answer: the iteration's first, then the step's; null without one. */
+  scriptOf(key: string): Json | null {
+    const section = this.answerSection(key);
+    if (!section) return null;
+    this.testData.version();
+    const answers = (this.testData.data()[section] ?? {}) as unknown as Record<
+      string,
+      Json
+    >;
+    return answers[key] ?? answers[instanceStep(key)] ?? null;
+  }
+  /**
+   * Keeps (or, with null, removes, with Undo) the step's test answer, checked
+   * as all test data is: a value marked secret is refused and nothing is kept.
+   */
+  async setScript(
+    key: string,
+    value: Json | null,
+  ): Promise<{ ok: true } | { ok: false; message: string }> {
+    const section = this.answerSection(key);
+    if (!section)
+      return {
+        ok: false,
+        message: "Only signals and people take a test answer.",
+      };
+    const service = this.testData;
+    const previous = service.data();
+    // A time-out or an expiry is no value: it has no source.
+    const entry =
+      value === null
+        ? null
+        : ((typeof value === "object" && value !== null && "outcome" in value
+            ? value
+            : { ...(value as object), source: "manual" }) as unknown as
+            | SignalEntry
+            | HumanEntry);
+    const pointer = `/${section}/${key.replace(/~/g, "~0").replace(/\//g, "~1")}`;
+    const outcome = await service.change(
+      withScript(previous, section, key, entry, new Date().toISOString()),
+      entry === null ? [] : [pointer],
+    );
+    if (!outcome.ok) return { ok: false, message: outcome.message };
+    if (entry === null)
+      this.offerUndo(`Removed the test answer of ${key}.`, outcome.previous);
+    return { ok: true };
+  }
+
   /** Whether this step's output can be pinned (actions, AI tasks, Call a workflow that waits…). */
   pinnable(target: string): boolean {
     const step = this.step(target);
@@ -391,15 +535,17 @@ export class StepDetailsController {
     return null;
   }
   /** Unpins the step's output, with an Undo toast. */
-  unpin(target: string): void {
+  /** Unpins with an Undo toast; resolves true once the pin is gone. */
+  unpin(target: string): Promise<boolean> {
     const service = this.testData;
-    if (!service.data().pins?.[target]) return;
+    if (!service.data().pins?.[target]) return Promise.resolve(false);
     const previous = service.data();
     const at = new Date().toISOString();
-    void service
+    return service
       .change(withoutPin(previous, target, at), [])
       .then((outcome) => {
         if (outcome.ok) this.offerUndo(`Unpinned ${target}.`, outcome.previous);
+        return outcome.ok;
       });
   }
   /** This step's pin came from another workflow and isn't kept here yet. */
@@ -454,11 +600,13 @@ export class StepDetailsController {
   previewData(): PreviewData {
     return {
       input: () => this.testEvent(),
-      output: (id) => this.pinnedOutput(id),
+      // The same precedence as the Output pane: a pin, else the last result.
+      output: (id) => this.stepData(id)?.value,
       stamp: () => [
         this.host.model.revision,
         this.testData.version(),
         this.testData.generation(),
+        this.host.execution?.results() ?? null,
       ],
     };
   }
@@ -1101,35 +1249,50 @@ export class StepDetailsController {
             pointer(fieldPath),
             this.scopeOptions(),
           ).steps) {
-            const output = this.pinnedOutput(visible.id);
+            const output = this.stepData(visible.id)?.value;
             if (output !== undefined) steps[visible.id] = { output };
           }
           return input === undefined && !Object.keys(steps).length
             ? null
             : { input: input ?? {}, steps };
         },
-        resolvedInput: () => none,
+        resolvedInput: () => {
+          // What the step received in the last execution (an action's input).
+          const result = this.lastResult(target);
+          if (!result || result.input === undefined) {
+            // Before it ran: what its input computes to from the data the
+            // earlier steps have (test input, pins, last results).
+            const input = step["with"];
+            if (!input || typeof input !== "object") return none;
+            const computed = ctx.evaluate(input as Expression, ["with"]);
+            return computed.ok && computed.value !== undefined
+              ? {
+                  state: "available" as const,
+                  value: computed.value,
+                  source: "simulated" as const,
+                  stale: null,
+                }
+              : none;
+          }
+          const now = this.prints().get(target)?.execution;
+          return {
+            state: "available" as const,
+            value: result.input,
+            source: "simulated" as const,
+            stale: now === result.execution ? null : ("upstream" as const),
+          };
+        },
         output: () => {
-          const pin = this.pinOfTarget(target);
-          return pin
-            ? {
-                state: "available" as const,
-                value: this.pinnedOutput(target) ?? {},
-                source: "pinned" as const,
-                stale: pin.stale,
-              }
-            : none;
+          const data = this.stepData(target);
+          return data ? { state: "available" as const, ...data } : none;
         },
         setPin: async (value) => {
           const message = await this.pin(target, value, "manual");
           return message === null ? { ok: true } : { ok: false, message };
         },
         clearPin: () => this.unpin(target),
-        script: () => null,
-        setScript: async () => ({
-          ok: false,
-          message: "Test scripts aren't available yet.",
-        }),
+        script: () => this.scriptOf(target),
+        setScript: (value) => this.setScript(target, value),
       },
       catalog: {
         actions: async () =>

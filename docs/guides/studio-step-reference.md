@@ -961,7 +961,29 @@ On the canvas, a step with problems has a red border and a chip such as
 project compile. Without it, the local check must pass, and the platform compiles
 the version again when it receives it.
 
+## Execute a step
+
+With **Try the new editor** on, **Execute step** in step details simulates the
+step on this computer, with what it needs before it, and shows what it returned
+in its Output pane. The [Studio guide](studio.md#execute-steps-and-read-the-run-log)
+explains the three ways to execute and the run log. What each kind shows:
+
+| Step | After Execute step |
+| --- | --- |
+| Call an action, Call an API, email and file steps | The pinned output, otherwise the last result. Without either, "Step *ID* needs test data." with **Set test output** and **Generate sample**. |
+| AI task | Its saved turn, replayed with no model call and a usage of 0. Without one, it needs test data. |
+| Transform | What it computes from the data the earlier steps have. |
+| Decision | Each path as **Taken**, **Not taken** or **Not checked**, then the taken path's result. On the canvas, "Path: *condition*". |
+| Wait for time | Advances by itself; the canvas line reads "Waited 5 min". |
+| Wait for signal | Its **Test answer** (payload, and after how long), or the run log asks "Send signal *name*". Letting it time out fails the run there. |
+| Human task | Its **Test answer** (decision and data), or the run log asks "Decide for *ID*". Letting it expire fails the run there. |
+| Call a workflow that waits | Its pinned output, or the called workflow's own steps with their test data. Without either, it needs test data. |
+
 ## Simulate before publishing
+
+This section describes the classic editor. With **Try the new editor** on,
+**Execute workflow** replaces **Simulate**, publishes nothing first and needs no
+platform.
 
 **Simulate** runs the compiled workflow on the platform without calling any real
 system. It needs a connected platform and the `simulate` permission; otherwise

@@ -121,6 +121,31 @@ describe("the corner badge", () => {
   });
 });
 
+describe("a simulated run on the tiles", () => {
+  it("a simulated run's finished step says test run", () => {
+    expect(tileBadge(facts({ run: "done", simulated: true }))?.text).toBe(
+      "Finished in the last test run",
+    );
+    expect(tileBadge(facts({ run: "done" }))?.text).toBe(
+      "Finished in the last run",
+    );
+  });
+  it("a failed simulated step shows its code", () => {
+    expect(
+      tileBadge(
+        facts({
+          run: "failed",
+          simulated: true,
+          failure: {
+            code: "WV-RUNTIME-PREDICATE",
+            message: "The simulated run stopped.",
+          },
+        }),
+      )?.text,
+    ).toBe("Failed: WV-RUNTIME-PREDICATE, The simulated run stopped.");
+  });
+});
+
 describe("tile borders", () => {
   it("mark only selected, live and error", () => {
     expect(

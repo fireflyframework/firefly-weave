@@ -1182,8 +1182,10 @@ becomes part of the workflow definition.
 - **Copy, rename and delete.** Copied steps bring their pinned output, except
   output recorded from a run. Renaming a step keeps its test data, and Undo of
   a deletion, from the toast or the toolbar, brings its pinned output back.
-- **Simulate.** The simulation's forms start from the test input and the pinned
-  outputs.
+- **Execute.** Executing a step or the workflow uses the test input and the
+  pinned outputs, and keeps what each step returned as its last results (see
+  [Execute steps and read the run log](#execute-steps-and-read-the-run-log)).
+  The classic editor's simulation forms start from them too.
 - **Where it is kept.** For a workflow on this computer, next to the draft; in
   the desktop app, in Studio's private store, so it survives quitting. For a
   platform draft, on the platform with the draft, with a copy on this
@@ -1228,7 +1230,81 @@ as one undoable change. Select **Diagnostics** to fold or unfold the rows. Steps
 on the canvas show the same problems as a red border and a chip such as
 "2 problems".
 
+### Execute steps and read the run log
+
+With **Try the new editor** on, you test a workflow by executing it. Executing
+is a simulation that the Studio host on this computer runs: it never calls a
+connector, a worker, a model or the platform's runtime, needs no platform
+account, and publishes nothing. When you are connected, the host reads the
+project's catalog once, with your own session, so actions from the catalog
+compile; nothing else reaches the platform.
+
+- **Execute step** (the primary button in step details, or **Ctrl+Enter** /
+  **Cmd+Enter**, also while typing in a field) runs what the step needs and the
+  step itself, and fills its Output with what it returned, tagged
+  **Simulated**. A step later in the workflow, even a broken one, never stops
+  it.
+- **Execute previous steps** (the button's menu, or the Input pane's empty
+  state) runs everything up to the step and stops before it, so its Input shows
+  what it receives. The run log then reads "Paused before *step*".
+- **Execute workflow** (the editor bar, the trigger's button when you point at
+  it or focus it, or **Ctrl+Enter** / **Cmd+Enter** on the canvas) runs every
+  step from the trigger. The canvas plays the run back one step at a time: the
+  current step gets a live border, finished steps a check and the badge
+  "Finished in the last test run", and each finished step shows a line under
+  its name, such as "3 fields", "12 items", "Path: amount > 1000" or "Waited
+  5 min". With reduced motion turned on, the end shows at once.
+
+**What executing uses.** A step that calls something (an action, an AI task, a
+call to another workflow that waits) uses its pinned output, otherwise its last
+result, otherwise it stops with "Step *check* needs test data." and offers **Set
+test output** and **Generate sample**. Without test input, Studio executes with a
+sample of the workflow's input fields and says so. AI tasks replay their saved
+turns and never call a model. Actions that neither this computer nor the
+catalog has run on read-only stubs that return their pinned output; their step
+details say "Contract not checked".
+
+**Before executing, Studio asks** when a step that would run has an error ("Fix
+1 issue first", with **Fix** to go to the field; warnings never stop it), and,
+for **Execute step** on a pinned step, "Unpin and execute?". While it runs, the
+primary button reads **Stop**.
+
+**Last results** are kept on this computer only, under your account, for each
+workflow, and leave when you sign out. They are marked "Out of date" when the
+step, what it calls or what it reads changes, and are still used until you
+execute again. Executing one step keeps the results of the others.
+
+**Decisions** show their paths in the Output pane: each one is **Taken**, **Not
+taken** or **Not checked**, followed by the taken path's result. When the test
+data leads elsewhere, Execute step says so: "With this test data, *route* takes
+Otherwise, so *big* isn't reached."
+
+**The run log** opens beside the canvas (as a sheet on narrow windows) after
+you execute, or with **L**. It lists every step that ran with its line,
+"Out of date" when its result is, and a dot for a breakpoint. **Enter** on an
+entry opens its step details; **I** and **O** open them on the Input or
+Output. When the run waits for a signal or a person that the test data doesn't
+answer, the log asks ("Send signal order-paid", "Decide for approval"); your
+answer is kept as the step's test answer and the workflow executes again, so
+the next run doesn't ask. Waits finish by themselves.
+
+**Test answers.** A signal's or a human task's Output pane holds its **Test
+answer**: the payload (and after how long it arrives), or the decision and its
+data, or **Let it time out instead** / **Let it expire instead**. Executing
+uses it instead of asking. Values marked secret are refused, as for all test
+data.
+
+**Breakpoints.** Press **F9** on a step on the canvas. **Execute workflow**
+then pauses before it, and the run log offers **Next**, **Continue** and
+**Stop**.
+
+**Keys.** Press **?** in step details or on the canvas to list them, including
+**Ctrl+Enter** / **Cmd+Enter**, **L**, **I**, **O** and **F9**.
+
 ### Simulate a run
+
+This section describes the classic editor. With **Try the new editor** on,
+**Execute workflow** and the run log take the simulation's place.
 
 **Simulate** runs the compiled workflow step by step without calling real
 systems. It needs a connected platform and permission to simulate. When Call an

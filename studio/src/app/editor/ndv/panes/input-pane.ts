@@ -18,9 +18,9 @@ SPDX-License-Identifier: Apache-2.0
 // The Input pane: what the step can read. The source selector lists the
 // earlier steps the step can see, nearest first, then the workflow input;
 // Schema shows that source's fields (draggable), with the other sources as
-// "Also available". With test data (the test input, an earlier step's pinned
-// output) Schema shows each field's value and JSON the data; Table waits for
-// execution. Compact (Edit formula's
+// "Also available". With data (the test input, an earlier step's pin or last
+// result) Schema shows each field's value, Table its rows and JSON the data.
+// Compact (Edit formula's
 // column): the fields to drag, with the search and the source on one row,
 // and no header or empty-state text.
 import {
@@ -40,6 +40,8 @@ import {
   WORKFLOW,
 } from "../../../forms/core/scope";
 import { DataTree } from "./data-tree";
+import { DataTable } from "./data-table";
+import { tableCount } from "./table-view";
 import {
   countLabel,
   defaultSource,
@@ -61,7 +63,7 @@ import { ndvRegistry, type Json } from "../registry";
   selector: "weave-input-pane",
   standalone: true,
   changeDetection: ChangeDetectionStrategy.Eager,
-  imports: [Icon, DataTree],
+  imports: [Icon, DataTree, DataTable],
   host: { "[class.is-compact]": "compact()" },
   template: `@let sources = this.sources();
     @let chosen = selectedSource();
@@ -137,12 +139,17 @@ import { ndvRegistry, type Json } from "../registry";
         </span>
       }
       @if (data !== undefined && sources.length) {
-        <span class="pill pane-source-tag" data-tone="info">{{
-          chosen === "input" ? "Test input" : "Pinned"
-        }}</span>
+        @let tag = sourceTag(chosen);
+        <span
+          class="pill pane-source-tag"
+          [attr.data-tone]="tag === 'Simulated' ? null : 'info'"
+          >{{ tag }}</span
+        >
       }
       <span class="pane-count">{{
-        countLabel(all.length, query() ? shown.length : undefined)
+        data !== undefined && shownView() === "table"
+          ? tableCount(data, query())
+          : countLabel(all.length, query() ? shown.length : undefined)
       }}</span>
     </div>
     <div class="sd-pane-body">
@@ -151,25 +158,79 @@ import { ndvRegistry, type Json } from "../registry";
           <p class="pane-empty-text">This step doesn't read data.</p>
         } @else if (data !== undefined && shownView() !== "schema") {
           @if (shownView() === "table") {
-            <p class="pane-empty-text">
-              Table view isn't available for this sample yet.
-            </p>
-            <button type="button" (click)="setView('json')">View JSON</button>
+            <weave-data-table
+              [value]="data"
+              label="Input data"
+              [query]="query()"
+            />
           } @else {
             <pre class="pane-json" tabindex="0" aria-label="Input data">{{
               json(data)
             }}</pre>
           }
         } @else {
-          @if (!compact() && data === undefined) {
+          @if (!compact() && session().controller.running()) {
+            <div class="pane-empty" role="status">
+              <span class="loading-spinner small" aria-hidden="true"></span>
+              <h4>Executing previous steps…</h4>
+              <div class="pane-empty-actions">
+                <button type="button" class="sm" (click)="stop()">
+                  <weave-icon name="close" [size]="16" />Stop
+                </button>
+              </div>
+            </div>
+          } @else if (!compact() && data === undefined) {
+            @let missing = notRun(chosen);
             <div class="pane-empty">
               <span class="pane-empty-icon" aria-hidden="true"
                 ><weave-icon name="play" [size]="20"
               /></span>
-              <h4>No input data yet</h4>
+              @if (missing) {
+                <p>
+                  {{ missing }} hasn't run yet. Execute previous steps, or map
+                  from the fields below.
+                </p>
+              } @else {
+                <h4>No input data yet</h4>
+                <p>
+                  Execute the previous steps to see what this step receives, or
+                  add test input.
+                </p>
+              }
+              <div class="pane-empty-actions">
+                @if (session().controller.canExecute()) {
+                  <button
+                    type="button"
+                    class="sm"
+                    title="Runs from the trigger up to this step, reusing pinned and current results"
+                    (click)="executePrevious()"
+                  >
+                    <weave-icon name="play" [size]="16" />Execute previous steps
+                  </button>
+                }
+                @if (!missing) {
+                  <button type="button" class="sm" (click)="addTestInput()">
+                    Add test input
+                  </button>
+                }
+              </div>
+            </div>
+          } @else if (!compact() && staleSource(chosen)) {
+            <div class="pinned-banner pane-stale" data-tone="warning">
+              <weave-icon name="stale" [size]="16" aria-hidden="true" />
               <p>
-                Fields below show what this step can read. Executing previous
-                steps isn’t available yet.
+                <span role="status"
+                  >Earlier steps changed since this data was produced.</span
+                >&ngsp;
+                @if (session().controller.canExecute()) {
+                  <button
+                    type="button"
+                    class="text-link"
+                    (click)="executePrevious()"
+                  >
+                    Execute previous steps
+                  </button>
+                }
               </p>
             </div>
           }
@@ -231,6 +292,7 @@ export class InputPane implements OnInit {
   readonly query = signal("");
   readonly selectId = `input-source-${Math.random().toString(36).slice(2, 8)}`;
   readonly countLabel = countLabel;
+  readonly tableCount = tableCount;
   readonly defaultSource = defaultSource;
   readonly views: { id: DataView; label: string; icon: string }[] = [
     { id: "schema", label: "Schema", icon: "schemaView" },
@@ -301,10 +363,49 @@ export class InputPane implements OnInit {
   /** The chosen source's data: the test input, an earlier step's pinned output, or what the step received. */
   dataOf(source: string): Json | undefined {
     const controller = this.session().controller;
-    if (source === "input") return controller.testEvent() ?? this.value();
+    if (source === "input")
+      return (
+        controller.testEvent() ??
+        this.session().host.execution?.sampleUsed() ??
+        this.value()
+      );
     if (source.startsWith("step:"))
-      return controller.pinnedOutput(source.slice(5)) ?? this.value();
+      return controller.stepData(source.slice(5))?.value ?? this.value();
     return this.value();
+  }
+  /** The earlier step chosen as the source, when it has no data yet (it hasn't run). */
+  notRun(source: string): string | null {
+    if (!source.startsWith("step:")) return null;
+    const id = source.slice(5);
+    return this.session().controller.stepData(id) ? null : id;
+  }
+  /** The chosen source's last result is out of date. */
+  staleSource(source: string): boolean {
+    if (!source.startsWith("step:")) return false;
+    const data = this.session().controller.stepData(source.slice(5));
+    return data?.source === "simulated" && data.stale !== null;
+  }
+  executePrevious() {
+    this.session().controller.requestExecute("before");
+  }
+  stop() {
+    this.session().host.execution?.stop();
+  }
+  /** Add test input: the trigger's Test event. */
+  addTestInput() {
+    void this.session().host.openStepDetails("$trigger");
+  }
+  /** Where the chosen source's data comes from: test input, a pin, or the last execution. */
+  sourceTag(source: string): string {
+    if (source === "input")
+      return this.session().controller.testEvent() === undefined &&
+        this.session().host.execution?.sampleUsed() != null
+        ? "Sample"
+        : "Test input";
+    const data = source.startsWith("step:")
+      ? this.session().controller.stepData(source.slice(5))
+      : undefined;
+    return data?.source === "simulated" ? "Simulated" : "Pinned";
   }
   rows(source: string, data?: Json): TreeRow[] {
     return withSamples(

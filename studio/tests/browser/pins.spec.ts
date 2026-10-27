@@ -117,15 +117,16 @@ for (const size of sizes)
       ).toBeVisible();
     });
 
-    test("a transform says to pin the steps it reads instead", async ({
+    test("a transform offers to execute it, never to pin it", async ({
       page,
     }) => {
       const details = await openTestDataFixture(page);
       await details.open("score");
       const pane = await outputPane(details);
-      await expect(pane).toContainText(
-        "Output is computed from the input; pin the steps it reads instead.",
-      );
+      await expect(pane).toContainText("Execute this step to see its output.");
+      await expect(
+        pane.getByRole("button", { name: "Set test output" }),
+      ).toHaveCount(0);
       await expect(pinButton(pane)).toHaveCount(0);
     });
 

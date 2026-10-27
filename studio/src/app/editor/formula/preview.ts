@@ -227,7 +227,10 @@ export function previewFormula(
         return failed(UNAVAILABLE, `\`${name}\` isn't available here.`);
       const output = at.data.output(id);
       if (output === undefined)
-        return failed(WAITING, `Can't compute yet: ${name} has no data.`);
+        return failed(
+          WAITING,
+          `Can't compute yet: ${name} has no data. Execute previous steps.`,
+        );
       steps[id] = { output };
     }
     if (root === "item" || root === "index" || root === "loops")

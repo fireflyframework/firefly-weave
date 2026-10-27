@@ -202,8 +202,14 @@ class StudioOptions:
             raise ValueError("Studio assets unavailable; build or install the matching Studio bundle")
 
 
-def problem(status: int, code: str, message: str) -> JSONResponse:
-    return JSONResponse({"status": status, "code": code, "message": message}, status_code=status)
+CATALOG_SECONDS = 30
+
+
+def problem(status: int, code: str, message: str, result: dict[str, Any] | None = None) -> JSONResponse:
+    body: dict[str, Any] = {"status": status, "code": code, "message": message}
+    if result is not None:
+        body["result"] = result
+    return JSONResponse(body, status_code=status)
 
 
 def secret_matches(value: str, expected: str) -> bool:
@@ -225,6 +231,8 @@ class StudioService:
         self.session_deadline = 0.0
         self.pairing_failures = 0
         self.paired_once = False
+        # The project catalog a simulation compiles against: (generation, project, read at, snapshot).
+        self.catalog_cache: tuple[int, UUID, float, Any] | None = None
         self.client = httpx.AsyncClient(
             timeout=30, follow_redirects=False, trust_env=False, transport=options.transport
         )
@@ -371,6 +379,41 @@ class StudioService:
         except ValueError:
             return False
         return True
+
+    async def project_catalog(self, *, refresh: bool = False) -> Any:
+        """The selected project's catalog lock as a ``CatalogSnapshot``, read through the bridge with the person's
+        own session; kept 30 s per connection and project. None when it can't be read or the connection changed."""
+        import json
+
+        from firefly_weave.compiler.catalog import CatalogSnapshot
+
+        profile, generation = self.options.profile, self.connection_generation
+        if profile is None or profile.tenant_id is None or profile.project_id is None:
+            return None
+        cached = self.catalog_cache
+        now = time.monotonic()
+        if (
+            not refresh
+            and cached is not None
+            and cached[:2] == (generation, profile.project_id)
+            and now - cached[2] < CATALOG_SECONDS
+        ):
+            return cached[3]
+
+        async def empty() -> dict[str, Any]:
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        read = Request({"type": "http", "method": "GET", "headers": [], "query_string": b"", "path": "/"}, empty)
+        path = f"/api/v1/tenants/{profile.tenant_id}/projects/{profile.project_id}/catalog"
+        response = await self.bridge(read, path)
+        if response.status_code != 200 or generation != self.connection_generation:
+            return None
+        try:
+            snapshot = CatalogSnapshot.from_lock(json.loads(bytes(response.body)))
+        except (ValueError, TypeError, KeyError, AttributeError):
+            return None
+        self.catalog_cache = (generation, profile.project_id, now, snapshot)
+        return snapshot
 
     async def bridge(self, request: Request, path: str) -> Response:
         generation = self.connection_generation

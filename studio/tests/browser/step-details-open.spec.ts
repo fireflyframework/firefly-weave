@@ -117,7 +117,7 @@ for (const size of sizes)
         ).toBe(true);
       }
       await details.dialog
-        .getByRole("button", { name: "Previous step" })
+        .getByRole("button", { name: "Previous step", exact: true })
         .focus();
       for (let i = 0; i < 40; i++) {
         await page.keyboard.press("Shift+Tab");

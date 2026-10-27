@@ -46,9 +46,47 @@ either with a step or continue. Virtual time and a server session's real-time
 expiry are independent.
 [Open diagram at full size](../diagrams/authoring-simulation-controls.svg)
 
+## Execute in Studio's new editor
+
+With **Try the new editor** on, Studio simulates on its own host, on this
+computer, instead of on the platform: **Execute step**, **Execute previous
+steps** and **Execute workflow** (see the
+[Studio guide](../guides/studio.md#execute-steps-and-read-the-run-log)).
+
+- **What it compiles against.** What ships with Weave (the HTTP, email and file
+  connectors and the AI action), the actions this workflow uses that Studio has
+  (the ones it owns, before they are published), and, when connected, the
+  project's catalog, read once with your session and kept for 30 seconds.
+  Actions none of them has run on read-only stubs; decision tables are never
+  stubbed. A definition on this computer with the same name and version as a
+  different one in the catalog is refused.
+- **What it uses as data, in order.** For a step that calls something, its
+  pinned output (for one iteration, then for the step), otherwise its last
+  result. The test input, or a sample of the input fields. The test answers of
+  signals and human tasks, and the saved turns of AI tasks. Executing one step
+  sends only the test data of the steps it runs, and a later step never stops
+  it.
+- **When it stops.** A step with no data blocks with "Step *ID* needs test
+  data."; a signal or a person without a test answer blocks with "Send signal
+  *name*" or "Decide for *ID*"; a step the test data doesn't reach says which
+  path was taken; a deadline that passes fails the run at that step. Waits
+  advance by themselves.
+- **Secrets.** Test input, step mocks (in this workflow and in called
+  workflows), signal payloads and decisions are checked against their schemas
+  before anything runs; a value marked secret is refused with its location
+  only, and never appears in an answer.
+- **Step-through sessions.** With breakpoints, the host keeps a session in
+  memory that the run log steps through with **Next** and **Continue**. A
+  session's answers are checked the same way.
+- **Limits.** One execution at a time, 30 seconds each; at most 4 sessions,
+  each up to 16 MiB and closed after 30 minutes without use. Sessions end when
+  you sign in, switch or sign out.
+- **What reaches the platform.** Only the catalog read. Executing never starts
+  a run or an activation, never publishes, and needs no `simulate` permission.
+
 ## Simulate in Studio
 
-In Studio, select **Simulate** on a workflow. Studio needs a connected platform
+With **Try the new editor** off, in Studio, select **Simulate** on a workflow. Studio needs a connected platform
 and an account with permission to simulate (the `developer` role grants it),
 because it creates a real debug session on the platform (see
 [Server sessions](#server-sessions)).

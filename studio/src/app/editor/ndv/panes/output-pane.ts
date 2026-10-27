@@ -16,11 +16,11 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 // The Output pane: the shape later steps can map (Schema), and what this
-// step returns: its pinned test output (Schema with values, and JSON) until
-// it runs. A step whose output can be pinned has Pin output (P) in the
-// header, and without a pin offers Set test output and Generate sample.
-// Steps with no output say why; steps that compute their output from their
-// input say to pin the steps they read instead.
+// step returns: its pinned test output, else what it returned in the last
+// execution ("Simulated"), as Schema with values and JSON. Without data it
+// offers Execute step and, for a step whose output can be pinned (Pin
+// output, P, in the header), Set test output and Generate sample. Steps with
+// no output say why.
 import {
   ChangeDetectionStrategy,
   Component,
@@ -35,6 +35,12 @@ import {
 } from "@angular/core";
 import { Icon } from "../../../icon";
 import { DataTree } from "./data-tree";
+import { DataTable } from "./data-table";
+import { PathList } from "./path-list";
+import { ScriptEditor } from "./script-editor";
+import { pathRows, type PathRow } from "../../state/run-summary";
+import { branchVariables } from "../../state/last-results";
+import { tableCount } from "./table-view";
 import { PinnedBanner } from "./pinned-banner";
 import { OutputEditor } from "./output-editor";
 import {
@@ -58,7 +64,15 @@ import { ndvRegistry, type Json } from "../registry";
   selector: "weave-output-pane",
   standalone: true,
   changeDetection: ChangeDetectionStrategy.Eager,
-  imports: [Icon, DataTree, PinnedBanner, OutputEditor],
+  imports: [
+    Icon,
+    DataTree,
+    DataTable,
+    PathList,
+    PinnedBanner,
+    OutputEditor,
+    ScriptEditor,
+  ],
   template: `@let none = noOutput();
     @let pin = pinned();
     @let canPin = pinnable();
@@ -106,18 +120,26 @@ import { ndvRegistry, type Json } from "../registry";
         />
       </div>
     }
+    @let ran = simulated();
     <div class="pane-sub">
       @if (pin) {
         <span class="pill" data-tone="info">Pinned</span>
+      } @else if (ran) {
+        <span class="pill pane-source-tag">Simulated</span>
       } @else if (event() !== undefined && value() === undefined) {
         <span class="pill" data-tone="info">Sample</span>
       }
+      @let paths = this.paths();
       <span class="pane-count">{{
         none
           ? ""
-          : event() !== undefined && view() !== "schema"
-            ? sampleCount(event())
-            : countLabel(rows.length, query() ? shown.length : undefined)
+          : paths
+            ? paths.took
+            : event() !== undefined && view() === "table"
+              ? tableCount(event(), query())
+              : event() !== undefined && view() !== "schema"
+                ? sampleCount(event())
+                : countLabel(rows.length, query() ? shown.length : undefined)
       }}</span>
       @if (canPin) {
         <button
@@ -163,45 +185,19 @@ import { ndvRegistry, type Json } from "../registry";
               [stale]="pin.stale !== null"
               [reason]="pinFromElsewhere() ? 'elsewhere' : pin.stale"
               [localOnly]="localOnly()"
+              [canExecute]="session().controller.canExecute()"
               (unpin)="unpin()"
               (keep)="keepPinned()"
+              (execute)="execute()"
             />
           }
           @if (problem()) {
             <p class="pane-problem" role="alert">{{ problem() }}</p>
           }
-          @if (none) {
-            <p class="pane-empty-text">{{ none }}</p>
-          } @else if (event() !== undefined && view() !== "schema") {
-            @if (view() === "table") {
-              <p class="pane-empty-text">
-                Table view isn't available for this sample yet.
-              </p>
-              <button type="button" (click)="setView('json')">View JSON</button>
-            } @else {
-              <pre class="pane-json" tabindex="0" aria-label="Output data">{{
-                json(event())
-              }}</pre>
-            }
-          } @else if (view() === "schema") {
-            @if (session().target === "$trigger" && event() === undefined) {
-              <p class="pane-empty-text">No test event yet</p>
-            }
-            @if (computed()) {
-              <p class="pane-empty-text">
-                Output is computed from the input; pin the steps it reads
-                instead.
-              </p>
-            }
-            @if (canPin && !pin) {
-              <div class="pane-empty">
-                <span class="pane-empty-icon" aria-hidden="true"
-                  ><weave-icon name="pin" [size]="20"
-                /></span>
-                <h4>No output yet</h4>
-                <p>
-                  Set test output, or generate a sample from the output fields.
-                </p>
+          @if (notice(); as said) {
+            <div class="pane-notice" role="status">
+              <p class="pane-notice-text">{{ said.message }}</p>
+              @if (said.reason === "missing_mock" && canPin && !pin) {
                 <div class="pane-empty-actions">
                   <button type="button" class="sm" (click)="setOutput()">
                     Set test output
@@ -210,7 +206,70 @@ import { ndvRegistry, type Json } from "../registry";
                     <weave-icon name="refresh" [size]="16" />Generate sample
                   </button>
                 </div>
-              </div>
+              }
+            </div>
+          }
+          @if (none) {
+            <p class="pane-empty-text">{{ none }}</p>
+          } @else if (returnedNull()) {
+            <p class="pane-empty-text">This step returned no data (null).</p>
+          } @else if (event() !== undefined && view() !== "schema") {
+            @if (view() === "table") {
+              <weave-data-table
+                [value]="event()"
+                label="Output data"
+                [query]="query()"
+              />
+            } @else {
+              <pre class="pane-json" tabindex="0" aria-label="Output data">{{
+                json(event())
+              }}</pre>
+            }
+          } @else if (view() === "schema" && paths) {
+            <weave-path-list [rows]="paths.rows" [result]="paths.result" />
+          } @else if (view() === "schema") {
+            @if (answerable()) {
+              <weave-script-editor [session]="session()" />
+            }
+            @if (session().target === "$trigger" && event() === undefined) {
+              <p class="pane-empty-text">No test event yet</p>
+            }
+            @if (session().target !== "$trigger" && event() === undefined) {
+              @if (session().controller.running(); as runs) {
+                <div class="pane-empty" role="status">
+                  <span class="loading-spinner small" aria-hidden="true"></span>
+                  <h4>Executing…</h4>
+                </div>
+              } @else if (!notice()) {
+                <div class="pane-empty">
+                  <span class="pane-empty-icon" aria-hidden="true"
+                    ><weave-icon name="execute" [size]="20"
+                  /></span>
+                  <h4>No output yet</h4>
+                  <p>
+                    Execute this step to see its output.{{
+                      canPin
+                        ? " You can also set test output, or generate a sample."
+                        : ""
+                    }}
+                  </p>
+                  <div class="pane-empty-actions">
+                    @if (session().controller.canExecute()) {
+                      <button type="button" class="sm" (click)="execute()">
+                        <weave-icon name="execute" [size]="16" />Execute step
+                      </button>
+                    }
+                    @if (canPin) {
+                      <button type="button" class="sm" (click)="setOutput()">
+                        Set test output
+                      </button>
+                      <button type="button" class="sm" (click)="generate()">
+                        <weave-icon name="refresh" [size]="16" />Generate sample
+                      </button>
+                    }
+                  </div>
+                </div>
+              }
             }
             @if (rows.length) {
               <weave-data-tree [rows]="shown" label="Output fields" />
@@ -247,12 +306,17 @@ export class OutputPane {
   value = input<Json | undefined>(undefined);
   readonly chosenView = signal<DataView | undefined>(savedView("output"));
   view(): DataView {
-    return this.chosenView() ?? defaultOutputView(this.event());
+    // A decision that ran opens on its paths (Schema).
+    return (
+      this.chosenView() ??
+      (this.paths() ? "schema" : defaultOutputView(this.event()))
+    );
   }
   readonly searching = signal(false);
   readonly query = signal("");
   readonly countLabel = countLabel;
   readonly sampleCount = sampleCount;
+  readonly tableCount = tableCount;
   readonly views: { id: DataView; label: string; icon: string }[] = [
     { id: "schema", label: "Schema", icon: "schemaView" },
     { id: "table", label: "Table", icon: "tableView" },
@@ -273,13 +337,73 @@ export class OutputPane {
     const step = this.session().controller.step(this.session().target);
     return step ? noOutputSentence(step) : null;
   }
-  /** The step's data: its output once known, its pinned output, and the trigger's test event. */
+  /** The step's data: its output once known, its pin or its last result, and the trigger's test event. */
   event(): Json | undefined {
     if (this.value() !== undefined) return this.value();
     const { controller, target } = this.session();
     return target === "$trigger"
       ? controller.testEvent()
-      : controller.pinnedOutput(target);
+      : controller.stepData(target)?.value;
+  }
+  /**
+   * A decision that ran: its paths as the last execution took them, the
+   * count's words ("Took path 1") and the taken path's result; null otherwise.
+   */
+  paths(): { rows: PathRow[]; took: string; result: Json | undefined } | null {
+    const { controller, target, host } = this.session();
+    const step = controller.step(target);
+    if (step?.kind !== "switch" || this.pinned()) return null;
+    // The path it took, as kept with its last result (also after a reload).
+    const variables = branchVariables(
+      host.execution?.results() ?? null,
+      target,
+    );
+    const rows = pathRows(step, variables, host.model.definition);
+    const taken = rows?.find((row) => row.outcome === "taken");
+    if (!rows || !taken) return null;
+    const branch = Object.values(variables?.branches ?? {})[0] as
+      | { output?: Json }
+      | undefined;
+    return {
+      rows,
+      took:
+        taken.label === "Otherwise"
+          ? "Took Otherwise"
+          : `Took ${taken.label.toLowerCase()}`,
+      result: branch?.output,
+    };
+  }
+  /** Signals and human tasks take a test answer. */
+  answerable(): boolean {
+    const { controller, target } = this.session();
+    const kind = controller.step(target)?.kind as string | undefined;
+    return kind === "signal" || kind === "humanTask";
+  }
+  /** The step ran and returned null. */
+  returnedNull(): boolean {
+    const { controller, target } = this.session();
+    if (target.startsWith("$")) return false;
+    const data = controller.stepData(target);
+    // A decision whose path has no result says so in its path list.
+    return data?.source === "simulated" && data.value === null && !this.paths();
+  }
+  /** Execute step from the pane (its empty state, the stale pin's banner). */
+  execute() {
+    this.session().controller.requestExecute("step");
+  }
+  /** What the step returned in the last execution, when no pin stands for it. */
+  simulated(): boolean {
+    const { controller, target } = this.session();
+    return (
+      !target.startsWith("$") &&
+      controller.stepData(target)?.source === "simulated"
+    );
+  }
+  /** What the last execution said about this step (it needs test data, a path it didn't take…). */
+  notice() {
+    const { controller, target } = this.session();
+    const notice = controller.executeNotice();
+    return notice?.target === target ? notice : null;
   }
   readonly noPinYet = "Set test output or generate a sample to pin it.";
   readonly problem = signal("");
@@ -290,14 +414,6 @@ export class OutputPane {
   pinnable(): boolean {
     const { controller, target } = this.session();
     return !target.startsWith("$") && controller.pinnable(target);
-  }
-  /** Kinds whose output comes from their input (transform, decision, parallel…): nothing to pin. */
-  computed(): boolean {
-    const { controller, target } = this.session();
-    const step = controller.step(target);
-    return (
-      !!step && !this.pinnable() && !this.noOutput() && !target.startsWith("$")
-    );
   }
   /** The pin came from another workflow and isn't kept here yet. */
   pinFromElsewhere(): boolean {

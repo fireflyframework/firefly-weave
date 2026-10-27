@@ -170,21 +170,39 @@ SPDX-License-Identifier: Apache-2.0
               [attr.data-clear]="bar.clear"
             >
               @if (bar.trigger; as trigger) {
+                @if (trigger.execute) {
+                  <button
+                    type="button"
+                    class="icon-button"
+                    [style.outline-width.px]="focusWidth() / bar.scale"
+                    [style.outline-offset.px]="focusWidth() / bar.scale"
+                    data-action="execute-workflow"
+                    aria-label="Execute workflow"
+                    title="Execute workflow (Ctrl/Cmd+Enter)"
+                    [attr.tabindex]="bar.tabIndex"
+                  >
+                    <weave-icon name="execute" [size]="16" />
+                  </button>
+                }
+              }
+              @if (bar.trigger?.intent; as intent) {
                 <button
                   type="button"
                   class="icon-button"
                   [style.outline-width.px]="focusWidth() / bar.scale"
                   [style.outline-offset.px]="focusWidth() / bar.scale"
                   data-action="remove-trigger"
-                  [attr.data-target]="trigger.intent"
-                  [attr.aria-label]="'Remove the ' + trigger.label + ' trigger'"
-                  [attr.title]="'Remove the ' + trigger.label + ' trigger'"
+                  [attr.data-target]="intent"
+                  [attr.aria-label]="
+                    'Remove the ' + bar.trigger!.label + ' trigger'
+                  "
+                  [attr.title]="'Remove the ' + bar.trigger!.label + ' trigger'"
                   [attr.aria-disabled]="bar.locked || null"
                   [attr.tabindex]="bar.tabIndex"
                 >
                   <weave-icon name="trash" [size]="16" />
                 </button>
-              } @else {
+              } @else if (!bar.trigger) {
                 <button
                   type="button"
                   class="icon-button"
@@ -378,6 +396,14 @@ SPDX-License-Identifier: Apache-2.0
   <p class="sr-only" id="canvas-v2-help">
     Arrow keys move between steps. Scroll to pan; hold Ctrl or Command and
     scroll to zoom. Press ? for keyboard shortcuts.
+  </p>
+  @let said = h.runAnnouncement?.();
+  <!-- How a simulated run ended, said once when its playback ends. -->
+  <p class="sr-only canvas-run-status" role="status">
+    {{ said && !said.urgent ? said.text : "" }}
+  </p>
+  <p class="sr-only canvas-run-alert" role="alert">
+    {{ said?.urgent ? said.text : "" }}
   </p>
 </div>
 @if (sheetOpen) {
