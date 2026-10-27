@@ -134,8 +134,17 @@ test("executing a draft with a published worker action reads the catalog and sta
   await pair(page, s.host!, "ex-01-pairing");
   await connectAndSignIn(page, name, person);
 
-  // A worker action published to the platform's catalog for this test.
-  const action = `e2e.lookup-${uniqueName("a").slice(2)}`;
+  // A worker action published to the platform's catalog for this test, on
+  // the task type the platform's fixture worker serves (example-sleep).
+  const capability = (
+    JSON.parse(
+      readFileSync(
+        join(repository, "tests/fixtures/operations-worker/manifest.json"),
+        "utf8",
+      ),
+    ) as { capabilities: Record<string, unknown>[] }
+  ).capabilities[0];
+  const action = `e2e.sleep-${uniqueName("a").slice(2)}`;
   const published = await bridge(page, `${project}/actions`, "POST", {
     format: "json",
     source: JSON.stringify({
@@ -145,19 +154,13 @@ test("executing a draft with a published worker action reads the catalog and sta
       spec: {
         implementation: {
           kind: "worker",
-          taskType: action,
-          taskVersion: "1.0.0",
+          taskType: capability["taskType"],
+          taskVersion: capability["taskVersion"],
         },
-        sideEffect: "read_only",
-        timeoutSeconds: 30,
-        inputSchema: {
-          type: "object",
-          properties: { customerId: { type: "string", title: "Customer ID" } },
-        },
-        outputSchema: {
-          type: "object",
-          properties: { tier: { type: "string" } },
-        },
+        sideEffect: capability["sideEffect"],
+        timeoutSeconds: capability["timeoutSeconds"],
+        inputSchema: capability["inputSchema"],
+        outputSchema: capability["outputSchema"],
       },
     }),
   });
@@ -172,19 +175,16 @@ test("executing a draft with a published worker action reads the catalog and sta
 kind: Workflow
 metadata: {name: execute-real, version: 1.0.0}
 spec:
-  inputSchema:
-    type: object
-    properties:
-      customerId: {type: string, title: Customer ID}
+  inputSchema: {type: object}
   outputSchema: {}
   steps:
     - id: lookup
       kind: action
       uses: ${action}@1.0.0
-      with: {object: {customerId: {ref: /input/customerId}}}
+      with: {object: {ms: {literal: 1}}}
     - id: shape
       kind: transform
-      value: {object: {tier: {ref: /steps/lookup/output/tier}}}
+      value: {object: {slept: {ref: /steps/lookup/output/slept_ms}}}
   output: {literal: null}
 `,
     ) as { name: string; mimeType: string; buffer: Buffer },
