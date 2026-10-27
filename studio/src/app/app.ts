@@ -961,6 +961,7 @@ export class App implements CanvasHost {
     { value: "deployment_operator", label: "Deployment operator" },
     { value: "deployment_runner", label: "Deployment runner" },
     { value: "worker_operator", label: "Worker operator" },
+    { value: "transaction_reconciler", label: "Transaction reconciler" },
   ];
   // Published action catalog, loaded once per workspace and shared by every action step.
   actionVersions: Record<string, unknown>[] = [];

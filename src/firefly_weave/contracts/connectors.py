@@ -29,7 +29,7 @@ from firefly_weave.contracts.definitions import ContractModel, ResourceName
 from firefly_weave.contracts.values import JsonObject, JsonObjectData, JsonValue
 
 if TYPE_CHECKING:
-    from firefly_weave.contracts.workers import ConnectorExecutionPin
+    from firefly_weave.contracts.workers import ConnectorExecutionPin, LeaseTransaction
 
 # Reserved secret handle for model endpoints that take no credential (an approved local Ollama).
 # It is never resolved, leased, logged or sent; operator grants under this name are ignored.
@@ -130,8 +130,17 @@ class ConnectorInvocation:
 
 
 class ConnectorFailure(Exception):
-    def __init__(self, code: str, outcome: Literal["not_started", "failed", "unknown"] = "unknown") -> None:
-        self.code, self.outcome = code, outcome
+    """A failed action. ``effect="none"`` says nothing was applied; Weave trusts it only from a release that declared
+    itself transaction-aware."""
+
+    def __init__(
+        self,
+        code: str,
+        outcome: Literal["not_started", "failed", "unknown"] = "unknown",
+        *,
+        effect: Literal["none", "unknown"] = "unknown",
+    ) -> None:
+        self.code, self.outcome, self.effect = code, outcome, effect
         super().__init__(code)
 
 
@@ -144,6 +153,8 @@ class ActionContext:
     authorize: Callable[[], Awaitable[None]] | None = field(default=None, repr=False)
     reference: Callable[[UUID, int, str | None], Awaitable[JsonObject]] | None = field(default=None, repr=False)
     email_submit: Callable[[JsonObject], Awaitable[JsonObject]] | None = field(default=None, repr=False)
+    # The workflow transaction this call runs for, if any: its phase and the operation key of the step it belongs to.
+    transaction: "LeaseTransaction | None" = None
 
 
 class ConnectorAdapter(Protocol):

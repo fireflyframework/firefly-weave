@@ -135,7 +135,7 @@ class WorkerController:
         body = ClaimRequest.model_validate_json(await request.body())
         authority = self.authority(request)
         async with self.service.definitions.transaction(authority["scope"], None) as tx:
-            result = await self.tasks.claim(tx, body.worker_id, body.limit, **authority)
+            result = await self.tasks.claim(tx, body.worker_id, body.limit, worker=body.worker, **authority)
         return JSONResponse([lease.model_dump(mode="json") for lease in result])
 
     @operation("tasks.heartbeat")

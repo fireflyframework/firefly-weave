@@ -140,6 +140,9 @@ TRANSACTION_MESSAGES: Final[Mapping[str, str]] = MappingProxyType(
         "WV-TXN-RUN-CANCELLED": "The run was canceled, so the transaction was undone.",
         "WV-TXN-RUN-TIMED-OUT": "The run timed out, so the transaction was undone.",
         "WV-TXN-IN-DOUBT": "Resolve the transaction first.",
+        "WV-TXN-RUN-OVERSIZED": (
+            "The run grew too large to undo its transactions, so they're held until someone force cancels the run."
+        ),
         "WV-TXN-UNDO-PINNED": "A transaction that is still running may need this activation to undo a step.",
         "WV-TXN-RECONCILE-DENIED": "This run isn't allowed to resolve the transaction.",
         "WV-COMPLETION-EFFECT": "A failure whose outcome is unknown can't also say that nothing was applied.",
@@ -155,6 +158,7 @@ IN_DOUBT_CODES: Final = frozenset(
         "WV-TXN-AFTER-PIVOT-STUCK",
         "WV-TXN-PIVOT-UNKNOWN",
         "WV-TXN-SETTLE-TIMEOUT",
+        "WV-TXN-RUN-OVERSIZED",
     }
 )
 

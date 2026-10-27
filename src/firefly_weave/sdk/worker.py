@@ -148,7 +148,8 @@ class Worker:
                     output = execution.result()
                 except ConnectorFailure as error:
                     await self.client.fail(
-                        lease.proof, TaskError(completion_id=uuid4(), code=error.code, outcome=error.outcome)
+                        lease.proof,
+                        TaskError(completion_id=uuid4(), code=error.code, outcome=error.outcome, effect=error.effect),
                     )
                     return
                 except Exception:

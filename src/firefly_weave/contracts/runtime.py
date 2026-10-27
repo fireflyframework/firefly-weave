@@ -94,6 +94,8 @@ class RunView(ContractModel):
     parent_run_id: UUID | None = None
     external_effects_may_continue: bool = False
     caller: RunCaller | None = Field(default=None, exclude_if=lambda v: v is None)
+    # A cancel or timeout that undoes the run's open transactions first: the run ends once they settle.
+    pending_undo: bool = Field(default=False, exclude_if=lambda v: not v)
 
 
 class SignalRequest(ContractModel):

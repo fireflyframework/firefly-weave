@@ -212,7 +212,14 @@ class ConnectorExecutionService:
             return await self.registry.get(adapter).execute(
                 cast(JsonObject, lease.input),
                 ActionContext(
-                    lease.operation_key, lease.deadline, credentials, invocation, authorize, reference, email_submit
+                    lease.operation_key,
+                    lease.deadline,
+                    credentials,
+                    invocation,
+                    authorize,
+                    reference,
+                    email_submit,
+                    lease.transaction,
                 ),
             )
         finally:

@@ -65,7 +65,7 @@ longer than later starts. The CLI prints the API address and sign-in instruction
 it is shown once, and subsequent starts do not change it.
 
 Without `--role`, `up` gives this first account the local owner roles in the demo
-workspace: `developer`, `deployer`, `operator`, `viewer`, `task_participant`, `tenant_admin`, `lumi_manager`, `execution_manager`, `worker_operator`, `deployment_reader`, `deployment_planner`, `deployment_approver` and `deployment_operator`. That is enough to author, run and operate workflows,
+workspace: `developer`, `deployer`, `operator`, `viewer`, `task_participant`, `tenant_admin`, `lumi_manager`, `execution_manager`, `worker_operator`, `deployment_reader`, `deployment_planner`, `deployment_approver`, `deployment_operator` and `transaction_reconciler`. That is enough to author, run and operate workflows,
 administer connections, and set up AI models and Weave AI in Studio. To manage
 reviewer groups, add `task_manager` later; `user grant` adds roles to an account
 this platform created and never removes any:

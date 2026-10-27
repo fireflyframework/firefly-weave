@@ -63,12 +63,17 @@ class DeadlineService:
         self, repository: RuntimeRepository, identifier: UUID, counts: dict[str, int], terminal_only: bool
     ) -> None:
         from firefly_weave.runtime.service import event_hash
-        from firefly_weave.runtime.terminal_capacity import due_terminal, oversized_row, persist_terminal
+        from firefly_weave.runtime.terminal_capacity import (
+            due_terminal,
+            hold_transactions,
+            oversized_row,
+            persist_terminal,
+        )
 
         oversized = await oversized_row(repository, identifier)
         if oversized is not None:
             event = await due_terminal(repository, oversized)
-            if event is not None:
+            if event is not None and not await hold_transactions(repository, oversized, event):
                 await persist_terminal(repository, oversized, event, event_hash(event))
                 counts["timed_out"] += 1
             return
