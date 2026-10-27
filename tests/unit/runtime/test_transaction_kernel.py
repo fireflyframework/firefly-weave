@@ -447,3 +447,19 @@ def test_a_called_step_that_continues_after_its_child_failed_is_recorded_as_it_e
     other.called("elsewhere", "failed", {"code": "BROKEN", "message": "It broke."}, effect="none")
     record = next(item for item in other.txn().participants if item.key == "elsewhere")
     assert (record.status, record.effect) == ("failed", "none")
+
+
+def test_a_second_confirm_that_cannot_finish_keeps_the_first_incident_as_the_transactions():
+    run = Run(flow(hold("first"), hold("second"), add(), submit()))
+    run.start()
+    run.done("first", {"holdId": "h-1"})
+    run.done("second", {"holdId": "h-2"})
+    run.done("add", {"id": "a-1"})
+    run.done("submit", {"orderId": "o-1"})
+    run.failed("first#confirm", "HOLD_EXPIRED", effect="none", generation=2)
+    run.failed("second#confirm", "HOLD_EXPIRED", effect="none", generation=3)
+    assert run.txn().incident == "first#confirm:2"
+    assert {key: item.code for key, item in run.state.incidents.items()} == {
+        "first#confirm:2": "WV-TXN-CONFIRM-STUCK",
+        "second#confirm:3": "WV-TXN-CONFIRM-STUCK",
+    }

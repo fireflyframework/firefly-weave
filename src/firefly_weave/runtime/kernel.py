@@ -732,7 +732,8 @@ def _advance_owned(
         return True
 
     def in_doubt(key: str, code: str, at: str, generation: int, origin: str | None) -> None:
-        update(key, status="in_doubt", incident=f"{at}:{generation}")
+        # The transaction names the first incident that put it in doubt; any later one stays open beside it.
+        update(key, status="in_doubt", incident=record(key).incident or f"{at}:{generation}")
         incident(at, code, generation, origin)
 
     def arm_hold(key: str) -> None:
