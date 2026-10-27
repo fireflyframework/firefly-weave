@@ -257,10 +257,16 @@ class RunStatisticsReader:
         extra: Mapping[str, Any] | None = None,
         keep: Sequence[str] | None = None,
         by_bucket: bool = True,
+        versions: bool = False,
+        histograms: Sequence[str] = (),
+        ranked: int | None = None,
     ) -> list[dict[str, Any]]:
-        """Summed counts and merged histograms grouped by ``by`` (and bucket), from every source of the range.
+        """Summed counts grouped by ``by`` (and bucket, and version when asked), from every source of the range.
 
-        With ``keep``, names outside it are summed under ``(other)``.
+        With ``keep``, names outside it are summed under ``(other)``; with ``ranked``, the names kept are the ``ranked``
+        busiest of the range, chosen in the same statement, so the rows are scanned once. Only the ``histograms`` asked
+        for are merged:
+        most reads need none, and each merged one costs a pass over every row.
         """
         parts = sources(target, lo, hi, cursor)
         if not parts:
@@ -270,23 +276,33 @@ class RunStatisticsReader:
         if keep is not None:
             values["keep"] = list(keep)
             key = f"CASE WHEN {by}=ANY(cast(:keep AS text[])) THEN {by} ELSE '{OTHER}' END"
-        version = "workflow_version" if by == "workflow_name" else "''"
+        version = "workflow_version" if versions else "''"
+        merged = "".join(f",weave_histogram_sum({column}) AS {column}" for column in histograms)
         inner = self._union(
             target,
             parts,
             "workflow_name,workflow_version,node_id,kind,started,succeeded,failed,cancelled,timed_out,"
-            "duration_hist,queue_hist,last_ended_at",
+            + "".join(f"{column}," for column in histograms)
+            + "last_ended_at",
             where,
             values,
         )
         leading = "bucket," if by_bucket else ""
         grouping = "1,2,3" if by_bucket else "1,2"
+        source = f"({inner}) s"
+        prefix = ""
+        if ranked is not None:
+            values["ranked"] = ranked
+            prefix = (
+                f"WITH s AS MATERIALIZED ({inner}),ranked AS (SELECT {by} FROM s WHERE {by}<>'{OTHER}' GROUP BY 1 "
+                "ORDER BY sum(started+succeeded+failed+cancelled+timed_out) DESC,1 LIMIT :ranked) "
+            )
+            key = f"CASE WHEN {by} IN (SELECT {by} FROM ranked) THEN {by} ELSE '{OTHER}' END"
+            source = "s"
         sql = (
-            f"SELECT {leading}{key} AS name,{version} AS version,max(kind) AS kind,sum(started) AS started,"
-            "sum(succeeded) AS succeeded,sum(failed) AS failed,sum(cancelled) AS cancelled,sum(timed_out) AS timed_out,"
-            "weave_histogram_sum(duration_hist) AS duration_hist,"
-            "weave_histogram_sum(coalesce(queue_hist,array_fill(0,ARRAY[64]))) AS queue_hist,"
-            f"max(last_ended_at) AS last_ended_at FROM ({inner}) s GROUP BY {grouping}"
+            f"{prefix}SELECT {leading}{key} AS name,{version} AS version,max(kind) AS kind,sum(started) AS started,"
+            "sum(succeeded) AS succeeded,sum(failed) AS failed,sum(cancelled) AS cancelled,sum(timed_out) AS timed_out"
+            f"{merged},max(last_ended_at) AS last_ended_at FROM {source} GROUP BY {grouping}"
         )
         return await self._rows(sql, **values)
 
@@ -334,26 +350,42 @@ async def series(tx: Transaction, query: StatisticsSeriesQuery) -> StatisticsSer
     run_signals = [signal for signal in query.signals if signal in RUN_SIGNALS]
     sample_signals = [signal for signal in query.signals if signal not in RUN_SIGNALS]
     if run_signals:
-        where = "node_id=''"
+        # Percentiles need the merged histograms; counts and rates do not.
+        durations = ("duration_hist",) if {"duration_p50", "duration_p95"} & set(run_signals) else ()
+        # Environment-wide signals read each bucket's total row; per-workflow ones leave it out.
+        where = (
+            "node_id='' AND workflow_name=''"
+            if query.workflow is None and query.group_by != "workflow"
+            else ("node_id='' AND workflow_name<>''")
+        )
         extra: dict[str, Any] = {}
         if query.workflow is not None:
-            where += " AND workflow_name=:workflow"
+            where = "node_id='' AND workflow_name=:workflow"
             extra["workflow"] = query.workflow
             if query.version is not None:
                 where += " AND workflow_version=:version"
                 extra["version"] = query.version
         if query.group_by == "workflow":
-            ranking = await reader.runs(granularity, lo, hi, cursor, by="workflow_name", by_bucket=False)
-            totals: dict[str, float] = defaultdict(float)
-            for row in ranking:
-                totals[row["name"]] += float(Outcomes().add(row).ended + int(row["started"] or 0))
-            names = top(totals, query.top)
             rows = await reader.runs(
-                granularity, lo, hi, cursor, by="workflow_name", where=where, extra=extra, keep=names
+                granularity,
+                lo,
+                hi,
+                cursor,
+                by="workflow_name",
+                where=where,
+                extra=extra,
+                ranked=query.top,
+                histograms=durations,
             )
             grouped: dict[str, dict[datetime, Outcomes]] = defaultdict(dict)
+            totals: dict[str, float] = defaultdict(float)
             for row in rows:
-                grouped[row["name"]].setdefault(row["bucket"], Outcomes()).add(row)
+                bucket = grouped[row["name"]].setdefault(row["bucket"], Outcomes())
+                before = bucket.started + bucket.ended
+                bucket.add(row)
+                totals[row["name"]] += bucket.started + bucket.ended - before
+            # The statement kept the busiest; their order is the same ranking.
+            names = top(totals, query.top)
             labels = [*names, *([OTHER] if OTHER in grouped else [])]
             for signal in run_signals:
                 for name in labels:
@@ -365,7 +397,9 @@ async def series(tx: Transaction, query: StatisticsSeriesQuery) -> StatisticsSer
                         )
                     )
         else:
-            rows = await reader.runs(granularity, lo, hi, cursor, by="''", where=where, extra=extra)
+            rows = await reader.runs(
+                granularity, lo, hi, cursor, by="''", where=where, extra=extra, histograms=durations
+            )
             merged: dict[datetime, Outcomes] = {}
             for row in rows:
                 merged.setdefault(row["bucket"], Outcomes()).add(row)
@@ -491,7 +525,17 @@ async def workflows(tx: Transaction, query: StatisticsWorkflowsQuery) -> Workflo
     reader = RunStatisticsReader(tx)
     cursor = await reader.cursor()
     granularity = query.resolved_granularity
-    rows = await reader.runs(granularity, query.first_bucket, query.to, cursor, by="workflow_name", by_bucket=False)
+    rows = await reader.runs(
+        granularity,
+        query.first_bucket,
+        query.to,
+        cursor,
+        by="workflow_name",
+        where="node_id='' AND workflow_name<>''",
+        by_bucket=False,
+        versions=True,
+        histograms=("duration_hist",),
+    )
     per: dict[str, Outcomes] = defaultdict(Outcomes)
     versions: dict[str, dict[str, datetime | None]] = defaultdict(dict)
     totals = Outcomes()
@@ -578,7 +622,15 @@ async def steps(tx: Transaction, query: StatisticsStepsQuery) -> StepStatisticsA
         where += " AND workflow_version=:version"
         extra["version"] = query.version
     rows = await reader.runs(
-        granularity, query.first_bucket, query.to, cursor, by="node_id", where=where, extra=extra, by_bucket=False
+        granularity,
+        query.first_bucket,
+        query.to,
+        cursor,
+        by="node_id",
+        where=where,
+        extra=extra,
+        by_bucket=False,
+        histograms=("duration_hist", "queue_hist"),
     )
     per: dict[str, tuple[str, Outcomes]] = {}
     for row in rows:
@@ -624,7 +676,7 @@ async def last_day(tx: Transaction, observed_at: datetime) -> RunsDaySection:
         "SELECT coalesce(sum(started),0) AS started,coalesce(sum(succeeded),0) AS succeeded,"
         "coalesce(sum(failed),0) AS failed,coalesce(sum(cancelled),0) AS cancelled,"
         f"coalesce(sum(timed_out),0) AS timed_out FROM run_stat_buckets WHERE {_SCOPE} AND granularity='5m' "
-        "AND node_id='' AND bucket_start>=:lo",
+        "AND node_id='' AND workflow_name='' AND bucket_start>=:lo",
         lo=lo,
     )
     outcomes = Outcomes().add(rows[0])

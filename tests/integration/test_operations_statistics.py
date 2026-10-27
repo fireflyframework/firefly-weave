@@ -129,14 +129,16 @@ async def rollup(case, now: datetime = NOW):
         return await statistics.rollup(tx, now)
 
 
-async def rows(case, granularity: str = "5m", **where) -> list[dict]:
+async def rows(case, granularity: str = "5m", *, totals: bool = False, **where) -> list[dict]:
+    """The rows of a granularity; the all-workflows total rows only when asked for."""
     found = await owner(
         case,
         "SELECT bucket_start,workflow_name,workflow_version,node_id,kind,started,succeeded,failed,cancelled,"
         "timed_out,duration_hist,queue_hist,duration_sum_ms,last_ended_at FROM run_stat_buckets WHERE "
         "tenant_id=:tenant AND project_id=:project AND environment_id=:environment AND granularity=:granularity "
-        "ORDER BY bucket_start,workflow_name,workflow_version,node_id",
+        "AND (workflow_name='')=:totals ORDER BY bucket_start,workflow_name,workflow_version,node_id",
         granularity=granularity,
+        totals=totals,
     )
     return [item for item in found if all(item[key] == value for key, value in where.items())]
 
@@ -384,7 +386,8 @@ async def test_rollups_never_cross_environments(operations_case):
         operations_case,
         "SELECT environment_id,count(*) AS n FROM run_stat_buckets WHERE tenant_id=:tenant GROUP BY 1",
     )
-    assert {item["environment_id"]: item["n"] for item in written} == {operations_case.scope.environment_id: 1}
+    # One series and its bucket's total.
+    assert {item["environment_id"]: item["n"] for item in written} == {operations_case.scope.environment_id: 2}
 
 
 async def test_the_rollup_reads_use_their_indexes(operations_case):
@@ -500,7 +503,7 @@ async def test_one_cycle_rolls_samples_and_prunes_one_environment_and_leaves_ano
         operations_case,
         "SELECT workflow_name FROM run_stat_buckets WHERE environment_id=:environment ORDER BY workflow_name",
     )
-    assert [item["workflow_name"] for item in mine] == ["orders"]
+    assert [item["workflow_name"] for item in mine] == ["", "orders"]
     theirs = await owner(
         operations_case,
         "SELECT (SELECT count(*) FROM run_stat_buckets WHERE environment_id=:other) AS buckets,"
@@ -513,3 +516,26 @@ async def test_one_cycle_rolls_samples_and_prunes_one_environment_and_leaves_ano
         operations_case, "SELECT count(*) AS n FROM operations_samples WHERE environment_id=:environment"
     )
     assert samples["n"] > 0
+
+
+async def test_each_bucket_keeps_a_total_of_every_workflow(operations_case):
+    first, second, withheld = await started_runs(operations_case, 3)
+    await place(operations_case, first, started=B0, ended=B0 + ms(100), status="succeeded")
+    await place(operations_case, second, started=B0, ended=B0 + ms(900), status="failed", workflow="invoices")
+    await place(
+        operations_case,
+        withheld,
+        started=B0,
+        ended=B0 + ms(300),
+        status="timed_out",
+        workflow="secret-flow",
+        classification="unavailable",
+    )
+    await step(operations_case, first, "send", ended=B0 + ms(50))
+    await rollup(operations_case)
+    (total,) = await rows(operations_case, totals=True)
+    series = await rows(operations_case, node_id="")
+    assert (total["workflow_version"], total["node_id"], total["queue_hist"]) == ("", "", None)
+    for column in ("started", "succeeded", "failed", "timed_out", "cancelled", "duration_sum_ms"):
+        assert total[column] == sum(item[column] for item in series), column
+    assert total["duration_hist"] == list(merge(*(item["duration_hist"] for item in series)))

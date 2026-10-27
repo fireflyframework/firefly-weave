@@ -169,6 +169,7 @@ async def test_hourly_and_daily_reads_join_closed_and_open_periods(operations_ca
                 "to": "2031-03-04T12:00:00Z",
                 "granularity": "1h",
                 "signals": ["runs_started"],
+                "workflow": "orders",
             }
         ),
     )
@@ -183,6 +184,7 @@ async def test_hourly_and_daily_reads_join_closed_and_open_periods(operations_ca
                 "to": "2031-03-04T12:00:00Z",
                 "granularity": "1d",
                 "signals": ["runs_started"],
+                "workflow": "orders",
             }
         ),
     )

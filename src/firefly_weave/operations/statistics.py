@@ -17,16 +17,16 @@
 
 """Run statistics rollup: finished runs and steps into duration histograms, and minute samples of shared capacity.
 
-Each cycle recomputes the five-minute buckets of the last ``WINDOW`` (ten minutes) from ``run_facts`` and
-``step_facts`` as a full replacement, so recomputing is idempotent and absorbs late commits; after downtime it
-catches up ``CATCH_UP`` (one hour) per cycle from its cursor, never past the five-minute retention. A run counts in
-the bucket of its start for ``started`` and of its end for its outcome; test runs never count; a run whose metadata
-the platform withholds counts under the workflow ``(other)`` with no version. Steps count by their end under their
-static step ID, so loop iterations and calls never add series. Past ``SERIES_CAP`` run-level series in a bucket the
-smallest fold into ``(other)``. Closed hours are recomputed from their five-minute buckets and closed days from their
-hours. Samples record ready tasks per task type (``TASK_TYPE_CAP`` of them, the rest under ``(other)``), active runs,
-waits, outbox and provider backlogs and worker capacity once a minute, and roll into hourly averages and maxima.
-Expired rows are pruned in batches of ``PRUNE_BATCH``.
+Each cycle recomputes the five-minute buckets of the last ``WINDOW`` (ten minutes) from ``run_facts`` and ``step_facts``
+as a full replacement, so recomputing is idempotent and absorbs late commits; after downtime it catches up ``CATCH_UP``
+(one hour) per cycle from its cursor, never past the five-minute retention. A run counts in the bucket of its start for
+``started`` and of its end for its outcome; test runs never count; a run whose metadata the platform withholds counts
+under the workflow ``(other)`` with no version. Steps count by their end under their static step ID, so loop iterations
+and calls never add series. Past ``SERIES_CAP`` run-level series in a bucket the smallest fold into ``(other)``; each
+bucket also keeps the total of every workflow under the workflow ``''``. Closed hours are recomputed from their
+five-minute buckets and closed days from their hours. Samples record ready tasks per task type (``TASK_TYPE_CAP`` of
+them, the rest under ``(other)``), active runs, waits, outbox and provider backlogs and worker capacity once a minute,
+and roll into hourly averages and maxima. Expired rows are pruned in batches of ``PRUNE_BATCH``.
 """
 
 from collections.abc import Iterable, Sequence
@@ -53,6 +53,8 @@ DAYS_PER_CYCLE = 1
 RETENTION = {"5m": timedelta(days=2), "1h": timedelta(days=35), "1d": timedelta(days=400)}
 SAMPLE_RETENTION = {"1m": timedelta(hours=24), "1h": timedelta(days=35)}
 FIVE_MINUTES = timedelta(minutes=5)
+# The workflow name of each bucket's total of every workflow; no workflow can have it.
+TOTAL = ""
 HOUR = timedelta(hours=1)
 DAY = timedelta(days=1)
 EPOCH = datetime(2000, 1, 1, tzinfo=UTC)
@@ -357,6 +359,13 @@ class StatisticsRepository:
             )
             runs[key] = runs[key].add(ended) if key in runs else ended
         kept, folded = cap_series(runs.values())
+        # One total of every workflow per bucket (workflow '' is never a workflow's name), so environment-wide reads
+        # read one row per bucket instead of merging every series' histogram.
+        totals: dict[datetime, BucketRow] = {}
+        for series in kept:
+            start = series.bucket_start
+            totals[start] = totals.get(start, BucketRow(start, TOTAL, "")).add(series)
+        kept = [*kept, *totals.values()]
         rows = [
             {
                 **_counts(item),
