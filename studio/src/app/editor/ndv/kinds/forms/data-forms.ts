@@ -125,6 +125,7 @@ export function decisionTableForm(step: Step, ctx: KindContext): FormSpec {
     type: "resource" as const,
     label: "Table",
     required: true,
+    requiredText: "Choose a decision table.",
     placeholder: "payment-policy@1.0.0",
     hint: "The workflow uses this exact published version.",
     choices: tableChoices,

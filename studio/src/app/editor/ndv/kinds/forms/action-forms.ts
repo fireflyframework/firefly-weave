@@ -420,6 +420,7 @@ export function publishedActionForm(step: Step, ctx: KindContext): FormSpec {
     type: "resource",
     label: "Action",
     required: true,
+    requiredText: "Choose an action to call.",
     placeholder: "orders.get@1.0.0",
     hint: "The workflow uses this exact published version.",
     choices: actionChoices,

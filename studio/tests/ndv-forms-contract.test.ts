@@ -18,6 +18,7 @@ SPDX-License-Identifier: Apache-2.0
 import "@angular/compiler";
 import { beforeAll, describe, expect, it } from "vitest";
 import { allParams, formProblems } from "../src/app/editor/ndv/form-contract";
+import { requiredMessage } from "../src/app/editor/ndv/params/field-rules";
 import {
   expressionRoot,
   pathKey,
@@ -433,6 +434,26 @@ describe("the decision table step's form", () => {
     );
     expect(edit.disabled!(chosen, ndv(tiers as Json))).toBeNull();
     expect(table.actions![1].disabled?.(step, ndv(null)) ?? null).toBeNull();
+  });
+});
+
+describe("what an empty required field says, per kind", () => {
+  it("uses the words of each kind for its first required field", () => {
+    const first = (kind: Kind, id: string) => {
+      const step = newStep(kind);
+      const field = ndvRegistry.kind(kind)!.form!(step, realCtx()).fields.find(
+        (spec) => spec.id === id,
+      )!;
+      return requiredMessage(field);
+    };
+    expect(first("action", "action")).toBe("Choose an action to call.");
+    expect(first("decisionTable", "table")).toBe("Choose a decision table.");
+    expect(first("signal", "name")).toBe(
+      "Choose a signal name; names are unique in a workflow.",
+    );
+    expect(first("fail", "message")).toBe(
+      "Write a message the run will report.",
+    );
   });
 });
 

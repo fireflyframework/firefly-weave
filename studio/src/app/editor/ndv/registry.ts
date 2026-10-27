@@ -185,6 +185,8 @@ export interface ParamSpec {
   choices?: Choice[] | ((ctx: NdvContext) => Promise<Choice[]>);
   /** resource only: what an empty list says instead of "Nothing to choose from yet". */
   emptyChoices?(ctx: NdvContext): string | null;
+  /** What the field says while it is required and empty, in the words of its kind. */
+  requiredText?: string;
   /** Buttons in the field's action row, under its control: commands, not fields. */
   actions?: FieldAction[];
   min?: number;
