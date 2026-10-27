@@ -169,13 +169,20 @@ def test_a_stored_run_transition_event_keeps_its_bytes():
     assert IntegrationEvent.model_validate_json(stored).model_dump_json() == stored
 
 
-def test_subscriptions_accept_five_event_types():
+def test_subscriptions_accept_up_to_twelve_event_types():
     every = (
         "run.transition",
         "definition.published",
         "activation.activated",
         "activation.retired",
         "change_request.transition",
+        "transaction.completed",
+        "transaction.compensated",
+        "transaction.cancelled",
+        "transaction.in_doubt",
+        "transaction.reconciled",
+        "transaction.force_ended",
+        "run.transition",
     )
     base = {
         "name": "notifications",
@@ -189,7 +196,7 @@ def test_subscriptions_accept_five_event_types():
     except ValidationError:
         pass
     else:
-        raise AssertionError("six event types were accepted")
+        raise AssertionError("thirteen event types were accepted")
 
 
 def test_subscribing_to_change_request_events_needs_deployment_read():
