@@ -104,8 +104,11 @@ async def settle(repository: RuntimeRepository, row: dict[str, Any], *, terminal
             sequence=view.state.accepted_sequence + 1,
             data=data,
         )
-        from firefly_weave.runtime.capacity import RuntimeCapacityError
+        from firefly_weave.runtime.capacity import RuntimeCapacityError, capacity_failures
 
+        failures = capacity_failures.get()
+        marked = list(failures) if failures is not None else None
+        candidate = repository.tx.session.info.get("weave_runtime_candidate")
         try:
             result = await transition(view.state, event, artifact)
         except RuntimeCapacityError:
@@ -113,8 +116,16 @@ async def settle(repository: RuntimeRepository, row: dict[str, Any], *, terminal
                 raise
             from firefly_weave.runtime.terminal_capacity import hold_transactions, persist_terminal
 
+            # A timeout of a run whose transactions are not settled is held instead: the capacity mark this
+            # transition left would roll the hold back with the unit of work, so it is cleared first.
+            restored = list(failures) if failures is not None else None
+            if failures is not None and marked is not None:
+                failures[:] = marked
             if await hold_transactions(repository, row, event):
+                repository.tx.session.info["weave_runtime_candidate"] = candidate
                 return 1
+            if failures is not None and restored is not None:
+                failures[:] = restored
             await persist_terminal(repository, row, event, canonical_digest({"timeout": str(deadline["id"])}))
             return 1
         if not elapsed and result.state.status in TERMINAL:

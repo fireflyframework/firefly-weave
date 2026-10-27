@@ -186,3 +186,42 @@ def test_a_forward_result_deferred_behind_a_pause_is_applied_when_its_transactio
     assert run.statuses()["hold"] == "cancelling" and run.txn().settle_by is None
     run.done("hold#cancel", {})
     assert run.txn().status == "cancelled"
+
+
+def refused(run: Run, event_type: str, **data) -> None:
+    """The kernel refuses the event: it records a runtime-state incident and changes nothing else."""
+    before = dict(run.state.incidents)
+    run.send(event_type, **data)
+    added = {key: item.code for key, item in run.state.incidents.items() if key not in before}
+    assert len(added) == 1 and next(iter(added.values())) in {"WV-RUNTIME-STATE", "WV-RUNTIME-EVENT"}
+    assert all(run.state.incidents[key] == item for key, item in before.items())
+
+
+def test_a_run_holding_its_transactions_replays_the_hold_and_refuses_to_resolve_it():
+    run = Run(compiled([transaction([hold(), add(), submit()])]))
+    run.start()
+    run.done("hold", {"holdId": "h-1"})
+    held = dict(node_id="@transactions", generation=0, code="WV-TXN-RUN-OVERSIZED", origin_code="WV-RUNTIME-CAPACITY")
+    run.send("incident_opened", **held)
+    assert (run.state.status, run.state.incident, run.txn().status) == ("suspended", "WV-TXN-RUN-OVERSIZED", "open")
+    assert run.state.incidents["@transactions:0"].origin_code == "WV-RUNTIME-CAPACITY"
+    # Forward work waits behind it; only a force cancel closes it.
+    assert tasks(run.done("add", {"id": "a-1"})) == []
+    refused(run, "incident_resolved", incident_key="@transactions:0", kind="retry")
+
+
+def test_a_run_without_an_open_transaction_cannot_be_held():
+    after = {
+        "id": "after",
+        "kind": "action",
+        "uses": "reports.lookup@1.0.0",
+        "with": {"object": {"reference": {"ref": "/input/moveId"}}},
+    }
+    run = Run(compiled([transaction([hold(), add(), submit()]), after]))
+    run.start()
+    run.done("hold", {"holdId": "h-1"})
+    run.done("add", {"id": "a-1"})
+    run.done("submit", {"orderId": "o-1"})
+    run.done("hold#confirm", {})
+    assert (run.txn().status, run.state.status) == ("completed", "waiting")
+    refused(run, "incident_opened", node_id="@transactions", generation=0, code="WV-TXN-RUN-OVERSIZED")

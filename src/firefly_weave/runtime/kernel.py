@@ -114,6 +114,9 @@ from firefly_weave.runtime.models import (
     Transition,
 )
 from firefly_weave.runtime.transactions import (
+    HELD_CODE,
+    HELD_INCIDENT,
+    HELD_NODE,
     IN_PROGRESS,
     STEP_FAILURE_CODES,
     STUCK,
@@ -1349,6 +1352,25 @@ def _advance_owned(
             if event.type == "cancelled":
                 end_run("cancelled")
                 return checkpoint(result.model_copy(update={"state": current_state}), done=not queue)
+            if event.type == "incident_opened" and event.data.get("node_id") == HELD_NODE:
+                # A run too large to undo its transactions holds them, open, behind an in-doubt incident that only a
+                # force cancel closes. It is recorded without the kernel (the run is past its limits); replay agrees.
+                if (
+                    event.data.get("code") != HELD_CODE
+                    or not unsettled(current_state)
+                    or HELD_INCIDENT in current_state.incidents
+                ):
+                    raise KernelError("WV-RUNTIME-EVENT")
+                current_state.incidents[HELD_INCIDENT] = IncidentState(
+                    node_id=HELD_NODE, code=HELD_CODE, origin_code="WV-RUNTIME-CAPACITY"
+                )
+                current_state = current_state.model_copy(
+                    update={
+                        "status": "suspended",
+                        "incident": current_state.incidents[min(current_state.incidents)].code,
+                    }
+                )
+                return checkpoint(result.model_copy(update={"state": current_state}))
             if event.type == "incident_resolved":
                 key = event.data.get("incident_key")
                 kind = event.data.get("kind")

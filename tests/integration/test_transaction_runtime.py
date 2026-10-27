@@ -493,35 +493,119 @@ async def test_a_run_too_large_for_its_state_is_never_cancelled_past_its_open_tr
     assert (await platform.record(run.id))["state"] == "open"
 
 
-async def test_a_run_too_large_for_its_state_that_times_out_holds_its_transaction_behind_an_incident(
-    platform, monkeypatch
-):
-    import asyncio
+def too_large(monkeypatch, limit: str) -> None:
+    """Make the run too large to fetch, or its next transition too large for the state limit."""
+    from firefly_weave.runtime import kernel, repository
 
-    from firefly_weave.runtime import repository
+    if limit == "fetch":
+        monkeypatch.setattr(repository, "RUN_FETCH_BYTES", 1)
+    else:
+        monkeypatch.setattr(kernel, "STATE_BYTES", 1)
 
-    activation = await platform.publish(workflow("move", [transaction(hold(), add(), submit())], timeout=5))
-    run = await platform.start(activation)
-    await platform.complete(await platform.lease("hold"))
-    monkeypatch.setattr(repository, "RUN_FETCH_BYTES", 1)
-    await asyncio.sleep(5.2)
-    await platform.scan()
-    # Nothing is abandoned: the transaction stays open and a person decides, through a force cancel.
-    assert (await platform.state(run.id))["status"] == "waiting"
-    assert (await platform.record(run.id))["state"] == "open"
+
+async def held(platform, run_id) -> None:
+    """The run is held behind its in-doubt incident: its timeout fired once and nothing was abandoned."""
+    state = await platform.state(run_id)
+    assert (state["status"], state["incident"]) == ("suspended", "WV-TXN-RUN-OVERSIZED")
+    assert (await platform.record(run_id))["state"] == "open"
     [incident] = await platform.query(
-        "SELECT incident_key,code,origin_code,status FROM incidents WHERE run_id=:run", run=run.id
+        "SELECT incident_key,code,origin_code,status FROM incidents WHERE run_id=:run", run=run_id
     )
     assert incident == {
-        "incident_key": "@transactions",
+        "incident_key": "@transactions:0",
         "code": "WV-TXN-RUN-OVERSIZED",
         "origin_code": "WV-RUNTIME-CAPACITY",
         "status": "active",
     }
     [timeout] = await platform.query(
-        "SELECT consumed FROM run_deadlines WHERE run_id=:run AND node_id='@run'", run=run.id
+        "SELECT consumed FROM run_deadlines WHERE run_id=:run AND node_id='@run'", run=run_id
     )
     assert timeout == {"consumed": True}
+    assert not await platform.query("SELECT 1 FROM runtime_capacity_blocks WHERE run_id=:run AND active", run=run_id)
+
+
+@pytest.mark.parametrize("limit", ["fetch", "state"])
+async def test_a_run_too_large_for_its_state_that_times_out_holds_its_transaction_behind_an_incident(
+    platform, monkeypatch, limit
+):
+    import asyncio
+
+    activation = await platform.publish(workflow("move", [transaction(hold(), add(), submit())], timeout=5))
+    run = await platform.start(activation)
+    await platform.complete(await platform.lease("hold"))
+    too_large(monkeypatch, limit)
+    await asyncio.sleep(5.2)
+    await platform.scan()
+    # Nothing is abandoned: the transaction stays open and a person decides, through a force cancel.
+    await held(platform, run.id)
     # The timeout fired once: a later scan changes nothing.
     await platform.scan()
-    assert len(await platform.query("SELECT 1 FROM incidents WHERE run_id=:run", run=run.id)) == 1
+    await held(platform, run.id)
+
+
+async def test_a_held_run_stays_held_when_it_later_records_a_change(platform, monkeypatch):
+    import asyncio
+    from uuid import uuid4
+
+    from firefly_weave.contracts.human_tasks import ManualControlRequest
+    from firefly_weave.runtime import kernel
+
+    activation = await platform.publish(workflow("move", [transaction(hold(), add(), submit())], timeout=5))
+    run = await platform.start(activation)
+    await platform.complete(await platform.lease("hold"))
+    limit = kernel.STATE_BYTES
+    too_large(monkeypatch, "state")
+    await asyncio.sleep(5.2)
+    await platform.scan()
+    monkeypatch.setattr(kernel, "STATE_BYTES", limit)
+    # A later change the run records (here a pause) keeps the incident: only a force cancel closes it.
+    revision = (await platform.state(run.id)).get("control_revision", 0)
+    await platform.runtime.manual_control(
+        platform.actor,
+        platform.scope,
+        run.id,
+        ManualControlRequest(expected_revision=revision, reason="look"),
+        str(uuid4()),
+        paused=True,
+        context=AuditContext(),
+    )
+    assert (await platform.state(run.id))["manual_paused"] is True
+    await held(platform, run.id)
+    # A plain cancel never undoes past the hold either: only a force cancel ends the run.
+    from firefly_weave.definitions.models import CatalogError
+
+    with pytest.raises(CatalogError) as refused:
+        async with platform.runtime.definitions.transaction(platform.scope, None) as tx:
+            await platform.runtime.cancel(
+                tx, run.id, "stop", actor=platform.actor, scope=platform.scope, context=AuditContext()
+            )
+    assert (refused.value.status, refused.value.code) == (409, "WV-TXN-IN-DOUBT")
+    await held(platform, run.id)
+
+
+async def test_a_held_run_never_stops_the_timeouts_of_runs_after_it(platform, monkeypatch):
+    import asyncio
+
+    lookup = {
+        "id": "first",
+        "kind": "action",
+        "uses": "reports.lookup@1.0.0",
+        "with": {"object": {"reference": {"ref": "/input/moveId"}}},
+    }
+    stuck = await platform.start(
+        await platform.publish(workflow("move", [transaction(hold(), add(), submit())], timeout=5))
+    )
+    await platform.complete(await platform.lease("hold"))
+    plain = await platform.publish(workflow("look", [lookup], timeout=6))
+    later = []
+    while len(later) < 8:
+        run = await platform.start(plain, move=f"M-{len(later)}")
+        if str(run.id) > str(stuck.id):
+            # Each of these sorts after the held run, so a scan that kept picking it first would never reach them.
+            later.append(run.id)
+    too_large(monkeypatch, "state")
+    await asyncio.sleep(6.5)
+    await platform.scan()
+    await held(platform, stuck.id)
+    for run_id in later:
+        assert (await platform.state(run_id))["status"] == "timed_out"

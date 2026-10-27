@@ -649,7 +649,12 @@ class RuntimeService:
                 )
             if previous.state.status in TERMINAL:
                 raise CatalogError(409, "WV-RUNTIME-TERMINAL", "Historical terminal runs cannot be cancelled")
-            if any(record.status == "in_doubt" for record in previous.state.transactions.values()):
+            from firefly_weave.contracts.transactions import IN_DOUBT_CODES
+
+            if any(record.status == "in_doubt" for record in previous.state.transactions.values()) or any(
+                item.code in IN_DOUBT_CODES for item in previous.state.incidents.values()
+            ):
+                # A transaction in doubt, or a run holding its transactions because it grew too large to undo them.
                 from firefly_weave.contracts.transactions import TRANSACTION_MESSAGES
 
                 raise CatalogError(409, "WV-TXN-IN-DOUBT", TRANSACTION_MESSAGES["WV-TXN-IN-DOUBT"])

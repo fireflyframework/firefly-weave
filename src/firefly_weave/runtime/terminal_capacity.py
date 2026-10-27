@@ -22,10 +22,12 @@ from typing import Any, Literal, cast
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from firefly_weave.compiler.api import import_artifact
+from firefly_weave.compiler.canonical import canonical_digest
 from firefly_weave.contracts.instance_keys import node_of
 from firefly_weave.contracts.integration_events import EventMetadata, IntegrationEvent
 from firefly_weave.contracts.operations import RecordedEvidence, SignalFact, WaitReceipt
 from firefly_weave.contracts.runtime import CapacityRunAcknowledgment
+from firefly_weave.contracts.values import JsonValue
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.operations.execution import execute_pure
 from firefly_weave.operations.exports import lock_digest
@@ -91,8 +93,10 @@ UNSETTLED_SQL = "('open','deciding','committing','compensating','in_doubt')"
 
 async def hold_transactions(repository: RuntimeRepository, row: dict[str, Any], event: RuntimeEvent) -> bool:
     """A run too large for its own state cannot undo its transactions, and a plain cancel or timeout never abandons
-    them: a cancel is refused, and a timeout fires once and holds the run behind an in-doubt incident that only a
-    force cancel closes. True when the timeout was held this way.
+    them. A cancel is refused. A timeout fires once and holds the run, its transactions left open, behind an in-doubt
+    incident in the run's own state that only a force cancel closes, so later changes keep it and forward work waits.
+    It is written in SQL, as the oversized terminal path is, because the kernel cannot take the run any more. True when
+    the timeout was held this way.
     """
     unsettled = await repository.rows(
         f"SELECT 1 FROM run_transactions WHERE {SCOPE} AND run_id=:run AND state IN {UNSETTLED_SQL} LIMIT 1",
@@ -101,32 +105,95 @@ async def hold_transactions(repository: RuntimeRepository, row: dict[str, Any], 
     if not unsettled:
         return False
     from firefly_weave.contracts.transactions import TRANSACTION_MESSAGES
+    from firefly_weave.runtime.transactions import HELD_CODE, HELD_INCIDENT, HELD_NODE
 
     if event.type == "cancelled":
-        raise CatalogError(409, "WV-TXN-IN-DOUBT", TRANSACTION_MESSAGES["WV-TXN-RUN-OVERSIZED"])
+        raise CatalogError(409, "WV-TXN-IN-DOUBT", TRANSACTION_MESSAGES[HELD_CODE])
+    wait = UUID(str(event.data["wait_id"]))
     await repository.execute(
         "INSERT INTO wait_wakeups VALUES(:tenant,:project,:environment,:wait,'timeout',:now) ON CONFLICT DO NOTHING",
-        wait=UUID(str(event.data["wait_id"])),
+        wait=wait,
         now=event.timestamp,
     )
     await repository.execute(
-        f"UPDATE run_deadlines SET consumed=true WHERE {SCOPE} AND run_id=:run AND id=:wait",
-        run=row["id"],
-        wait=UUID(str(event.data["wait_id"])),
+        f"UPDATE run_deadlines SET consumed=true WHERE {SCOPE} AND run_id=:run AND id=:wait", run=row["id"], wait=wait
     )
+    data: dict[str, JsonValue] = {
+        "node_id": HELD_NODE,
+        "generation": 0,
+        "code": HELD_CODE,
+        "origin_code": "WV-RUNTIME-CAPACITY",
+    }
+    held = RuntimeEvent(
+        id=uuid5(NAMESPACE_URL, f"firefly-weave/held/{row['id']}/{wait}"),
+        type="incident_opened",
+        timestamp=event.timestamp,
+        sequence=event.sequence,
+        data=data,
+    )
+    incident = {"node_id": HELD_NODE, "code": HELD_CODE, "origin_code": "WV-RUNTIME-CAPACITY"}
+    inserted = await repository.rows(
+        "WITH updated AS (UPDATE runs SET state=state || jsonb_build_object('status','suspended',"
+        "'accepted_sequence',cast(:sequence AS bigint),'incident',cast(:code AS text),'incidents',"
+        "coalesce(state->'incidents','{}'::jsonb) || jsonb_build_object(cast(:key AS text),cast(:incident AS jsonb))) "
+        f"WHERE {SCOPE} AND id=:run AND (state->>'accepted_sequence')::bigint=:previous RETURNING *) "
+        "INSERT INTO run_events SELECT tenant_id,project_id,environment_id,id,:event,:sequence,'incident_opened',"
+        "cast(:data AS jsonb),:now,:hash,jsonb_build_object('state',state,'steps','[]'::jsonb,'commands','[]'::jsonb),"
+        "jsonb_build_object('id',id,'activation',activation,'artifact_digest',artifact->>'digest','state',state,"
+        "'correlation_key',request->'correlation_key','business_key',request->'business_key',"
+        "'parent_run_id',(SELECT parent_run_id FROM run_retry_links l WHERE l.run_id=updated.id),"
+        "'external_effects_may_continue',false) FROM updated RETURNING id",
+        run=row["id"],
+        sequence=held.sequence,
+        previous=held.sequence - 1,
+        code=HELD_CODE,
+        key=HELD_INCIDENT,
+        incident=json.dumps(incident),
+        event=held.id,
+        data=json.dumps(data),
+        now=held.timestamp,
+        hash=canonical_digest({"held": str(wait)}),
+    )
+    if len(inserted) != 1:
+        raise CatalogError(409, "WV-RUNTIME-SEQUENCE", "Run sequence changed")
     await repository.execute(
         "WITH opened AS (INSERT INTO incidents(id,tenant_id,project_id,environment_id,run_id,incident_key,node_id,"
-        "generation,origin_code,code,status,revision) VALUES(md5(cast(cast(:run AS uuid) AS text) || ':@transactions')"
-        "::uuid,:tenant,:project,:environment,:run,'@transactions',NULL,NULL,'WV-RUNTIME-CAPACITY',"
-        "'WV-TXN-RUN-OVERSIZED','active',1) ON CONFLICT(run_id,incident_key) DO NOTHING RETURNING id) "
+        "generation,origin_code,code,status,revision) VALUES(md5(cast(cast(:run AS uuid) AS text) || ':' || :key)"
+        "::uuid,:tenant,:project,:environment,:run,:key,:node,0,'WV-RUNTIME-CAPACITY',:code,'active',1) "
+        "ON CONFLICT(run_id,incident_key) DO NOTHING RETURNING id) "
         "INSERT INTO incident_facts(tenant_id,project_id,environment_id,incident_id,node_id,instance_key,opened_at,"
         "updated_at,workflow_name,workflow_version,test) SELECT :tenant,:project,:environment,o.id,NULL,'',:at,:at,"
         "f.workflow_name,f.workflow_version,f.test FROM opened o "
         f"JOIN run_facts f ON f.run_id=:run AND f.{SCOPE.replace(' AND ', ' AND f.')} "
         "ON CONFLICT(incident_id) DO NOTHING",
         run=row["id"],
-        at=event.timestamp,
+        key=HELD_INCIDENT,
+        node=HELD_NODE,
+        code=HELD_CODE,
+        at=held.timestamp,
     )
+    await repository.execute(
+        "UPDATE run_facts SET status='suspended',updated_at=greatest(updated_at,:at),last_event_sequence=:sequence,"
+        f"active_incidents=(SELECT count(*) FROM incidents WHERE {SCOPE} AND run_id=:run AND status='active') "
+        f"WHERE {SCOPE} AND run_id=:run AND last_event_sequence<:sequence",
+        run=row["id"],
+        at=held.timestamp,
+        sequence=held.sequence,
+    )
+    if repository.outbox is not None:
+        await repository.outbox.append(
+            repository.tx,
+            IntegrationEvent(
+                event_id=uuid5(NAMESPACE_URL, f"run:{row['id']}:{held.id}"),
+                type="run.transition",
+                scope=repository.tx.scope,
+                resource_id=row["id"],
+                correlation_id=row["id"],
+                emitted_at=held.timestamp,
+                payload=EventMetadata(status="suspended", sequence=held.sequence),
+            ),
+        )
+    repository.tx.record("transition", "deadline")
     return True
 
 
