@@ -89,5 +89,5 @@ export function finalAnnouncement(response: ExecuteResponse): string {
     return response.blocked.message;
   if (response.status === "limit")
     return "The simulation stopped at its limit.";
-  return "The execution failed.";
+  return "The test run failed.";
 }

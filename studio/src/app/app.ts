@@ -7339,7 +7339,9 @@ export class App implements CanvasHost {
         text:
           outcome.kind === "refused" || outcome.kind === "failed"
             ? outcome.message
-            : "The execution didn't run.",
+            : outcome.kind === "conflict"
+              ? "A definition on this computer differs from the project's catalog, so the test run didn't start."
+              : "The test run didn't start.",
         urgent: true,
       });
     this.cdr.markForCheck();

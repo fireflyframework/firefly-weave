@@ -56,4 +56,29 @@ describe("Execute workflow", () => {
     expect(waits.startSession).not.toHaveBeenCalled();
     expect(waits.executeIn).toHaveBeenCalledWith({ mode: "workflow" });
   });
+
+  it("says why a test run didn't start, in the glossary's words", async () => {
+    for (const [outcome, words] of [
+      [
+        { kind: "conflict" },
+        "A definition on this computer differs from the project's catalog, so the test run didn't start.",
+      ],
+      [{ kind: "catalog" }, "The test run didn't start."],
+    ] as const) {
+      const app = Object.create(App.prototype) as App;
+      const announced: { text: string }[] = [];
+      Object.assign(app, {
+        execution: { execute: vi.fn(async () => outcome) },
+        ensureApplied: async () => true,
+        dialogs: { confirm: async () => false },
+        draftId: "d-1",
+        runAnnouncement: {
+          set: (value: { text: string }) => announced.push(value),
+        },
+        cdr: { markForCheck: () => undefined },
+      });
+      await app.executeIn({ mode: "workflow" });
+      expect(announced.map((a) => a.text)).toEqual([words]);
+    }
+  });
 });

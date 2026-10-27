@@ -56,5 +56,8 @@ describe("playback", () => {
     });
     expect(finalAnnouncement(blocked)).toBe("Step send needs test data.");
     expect(finalAnnouncement(RESPONSE)).toBe("Executed 3 steps.");
+    expect(finalAnnouncement({ ...RESPONSE, status: "failed" })).toBe(
+      "The test run failed.",
+    );
   });
 });
