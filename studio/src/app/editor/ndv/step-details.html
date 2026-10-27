@@ -225,7 +225,13 @@ SPDX-License-Identifier: Apache-2.0
                   title="Stop executing"
                   (click)="stop()"
                 >
-                  <weave-icon name="close" [size]="16" />Stop
+                  <weave-icon name="close" [size]="16" /><span
+                    class="sd-label-stack"
+                    ><span>Stop</span
+                    ><span class="sd-label-sizer" aria-hidden="true">{{
+                      executeLabel()
+                    }}</span></span
+                  >
                 </button>
               } @else {
                 <button

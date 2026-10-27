@@ -382,9 +382,19 @@ weave-step-details {
   border-top-right-radius: 0;
   border-bottom-right-radius: 0;
   gap: var(--space-2);
-  /* Stop takes Execute step's place and size, so the menu half never moves. */
-  min-width: 10rem;
   justify-content: center;
+}
+/* Stop holds Execute step's label, unseen, so it takes the same place and
+   size in any font: the menu half never moves. */
+.sd-label-stack {
+  display: inline-grid;
+  justify-items: center;
+}
+.sd-label-stack > * {
+  grid-area: 1 / 1;
+}
+.sd-label-sizer {
+  visibility: hidden;
 }
 /* Unavailable, Execute step wears the disabled tokens, its menu half too;
    both stay focusable: the button explains why, the menu offers what can run. */
