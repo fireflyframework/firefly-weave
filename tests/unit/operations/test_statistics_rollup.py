@@ -78,6 +78,11 @@ def test_hours_close_only_after_their_last_bucket_left_the_window():
         datetime(2026, 10, 26, 13, 0, tzinfo=UTC),
     ]
     assert hours_to_close(datetime(2026, 10, 26, 14, 0, tzinfo=UTC), rolled) == []
+    # At 14:06 the cursor sits on 14:10, and the next window still recomputes 13:55: the 13:00 hour stays open.
+    assert hours_to_close(datetime(2026, 10, 26, 13, 0, tzinfo=UTC), datetime(2026, 10, 26, 14, 10, tzinfo=UTC)) == []
+    assert hours_to_close(datetime(2026, 10, 26, 13, 0, tzinfo=UTC), datetime(2026, 10, 26, 14, 15, tzinfo=UTC)) == [
+        datetime(2026, 10, 26, 13, 0, tzinfo=UTC)
+    ]
     assert hours_to_close(None, rolled) == []
     many = hours_to_close(datetime(2026, 10, 25, 0, 0, tzinfo=UTC), rolled)
     assert len(many) == HOURS_PER_CYCLE and many[0] == datetime(2026, 10, 25, 0, 0, tzinfo=UTC)
