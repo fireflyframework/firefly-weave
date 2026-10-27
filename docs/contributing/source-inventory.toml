@@ -566,6 +566,15 @@ author = "Firefly Software Foundation"
 license = "Apache-2.0"
 
 [[exceptions]]
+path = "studio/tests/fixtures/decision-cases.json"
+kind = "generated"
+source = "scripts/studio_decision_cases.py"
+reason = "Decision tables, inputs and the answers the platform's evaluator gives; Studio's Try an input must give the same answers. Regenerate with the generator, which also checks freshness."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
 path = "studio/tests/fixtures/language/transactions.json"
 kind = "generated"
 source = "scripts/language_fixtures.py"
