@@ -353,6 +353,7 @@ capability.
 | `pause_run`, `resume_run`, `run_lifecycle`, `archive_run`, `restore_run`, `purge_run` | Run lifecycle management |
 | `history`, `export_run`, `replay`, `run_incidents`, `list_incidents`, `read_incident`, `resolve_incident` | Bounded evidence and audited recovery |
 | `run_calls`; `firefly_weave.sdk.call_pins.current_call_pins(client, request)` | The calls a run made, with each child run; pin the current activation of every workflow version an activation request's workflow calls |
+| `run_transactions`; `cancel(..., skip_undo=True)`; `retire_activation(..., force=True)` | A run's workflow transactions, without business values; stop a run without undoing its transactions, or retire an activation a running transaction may still need (both need `transaction.reconcile`) |
 | `human_tasks`, `read_human_task`, `claim_human_task`, `release_human_task`, `complete_human_task`, `reassign_human_task` | Human task inbox and decisions |
 | `assignment_bindings`, `put_assignment_binding`, `put_human_group` | Who may work on which human task |
 | `register_release`, `read_release`, `list_releases`, `register_worker`, `read_worker`, `list_workers`, `revoke_worker`, `grant_connection` | Trusted worker releases and instances |

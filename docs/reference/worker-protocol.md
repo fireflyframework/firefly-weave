@@ -160,6 +160,18 @@ when recovery creates a new generation.
   fence late requests by it. A confirm, cancel or undo is claimed even while its
   run is paused or held by another incident, and it retries on its
   transaction's undo policy instead of its action's own.
+- **What a participant must do.** The system a transaction step calls must
+  behave so that undoing is always safe:
+
+    | Situation | What the system must do |
+    | --- | --- |
+    | The same confirm, cancel or undo arrives twice | Change nothing the second time and answer as the first (use the operation key) |
+    | A cancel arrives for a reservation that never went through | Succeed: there is nothing to release |
+    | A step hangs past its time limit | Nothing; Weave treats its outcome as unknown and undoes it, so the undo must cope with a step that did or didn't apply |
+    | A confirm arrives after the reservation expired | Fail with a code the action lists in `definiteFailures`, or report `effect: none`; the transaction is then in doubt for a person |
+
+  A person may later retry a stuck confirm, cancel or undo: it runs again with
+  the same operation key, as the next generation of the same task.
 
 **Example.** The target records a customer, and the worker crashes before Weave
 accepts the completion. Recovery issues generation 2 of the same task. Its

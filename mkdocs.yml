@@ -99,6 +99,7 @@ nav:
       - Publish and run with the CLI: guides/cli-tutorial.md
       - Add human approvals: guides/human-tasks.md
       - Call another workflow: guides/call-workflows.md
+      - Undo steps together with a transaction: guides/transactions.md
       - Work with files: guides/files.md
       - Connect FTP and cloud drives: guides/file-connectors.md
       - Evaluate decision tables: reference/decision-tables.md

@@ -20,6 +20,27 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+- Workflow transactions run. A `transaction` step confirms its reservations
+  once it goes ahead and undoes what went through, newest first, when a step
+  fails, the run is canceled or it times out; the platform lists
+  `flow.transaction`. When Weave can't tell what happened, the run stops behind
+  a high-priority in-doubt incident that carries the transaction, and only a
+  person's decision moves it: **Retry the undo** (the same operation key, a
+  fresh time limit), **Mark as reconciled** with a record of how it ended (and
+  the block's output when it completed), **It happened** or **It didn't happen**
+  for the step that can't be undone (new resolution kind
+  `accept_reconciled_failure`), or **Force end**. Every decision but Retry needs
+  the `transaction_reconciler` role, a reason and evidence. A cancel can skip
+  undoing (`skip_undo`, for reconcilers), undoing finishes at a full byte
+  quota, and retiring an activation a running transaction may need is refused
+  (`WV-TXN-UNDO-PINNED`) unless forced. `runs.transactions` (`weave runs
+  transactions`, `run_transactions()`) lists a run's transactions, run
+  summaries carry and filter `transaction_state`, six `transaction.*` events
+  leave through the outbox (subscriptions now select up to 12 types), and
+  `weave.transactions` and `weave.transaction_phases` count them. Histories
+  with transactions export and replay. Debug sessions don't simulate
+  transactions yet. Weave AI's guide names the `transaction` step. Migration
+  `0038_language_transactions_reserve` changes only the catalog.
 - Workers declare per release whether they report failures that applied
   nothing: the first claim that sends `worker: {release, transaction_aware}`
   fixes the answer for that release, and a claim naming another release than

@@ -155,6 +155,28 @@ outcome that does not match its call evidence makes the report `inconsistent`
 (`WV-REPLAY-CALL` or `WV-REPLAY-CALL-ISSUANCE`); missing call evidence makes it
 `incomplete` (`WV-REPLAY-CALL-PROVENANCE`).
 
+## Transactions in a history
+
+A run with a workflow transaction records its phases at their own keys: the
+confirm, cancel and undo of a step `hold` run at `hold#confirm`, `hold#cancel`
+and `hold#undo`, with task and call evidence like any step, and a transaction's
+own deadlines fire at `move#hold`, `move#settle` (and `move#settle.1`, … when a
+person retries a settle timeout) and `move#decide`. A step's final failure is a
+`step_failed` event with `node_id`, `generation`, `code`, `outcome`, `attempts`
+and `effect` (`none` only when the worker's release proved nothing was applied);
+exports keep exactly these fields and the `effect` of `task_failed`,
+`recovery_scheduled` and `call_completed`, the `run_id` a transaction's run
+starts with, and `skip_undo` of a cancel. A resolution of a transaction in doubt
+records the incident's `code`, so its `output` (the step's output, or a
+reconciliation record whose `blockOutput` is classified by the block's output
+schema) is exported safely. Replay checks the resolution through the kernel and
+compares transitions byte for byte: a tampered `effect` replays `inconsistent`.
+
+A run that grew too large to undo its transactions records its hold
+(`incident_opened` at `@transactions`) with evidence that omits the expected
+transition for its size, so replay stops there as `incomplete`, as it stops at
+an oversized stop.
+
 ## Routes, pagination, and limits
 
 All routes are under

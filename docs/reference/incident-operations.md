@@ -249,6 +249,36 @@ atomically. The response sets `external_effects_may_continue: true`. Authentic
 late completions for revoked generations may receive an immutable `ignored`
 receipt; they never advance the run.
 
+### Transactions in doubt
+
+An incident whose code starts with `WV-TXN-` holds a workflow transaction that
+Weave can't finish on its own. Its view has `priority: "high"` and a
+`transaction` object: the transaction's instance key, state and business key,
+each step (`node_id`, `instance_key`, `mode`, `status`, `effect`, `attempts`)
+and the keys of the steps still `pending`, with no business values. Nothing but
+one of these decisions closes it; a plain cancel is refused with HTTP 409
+`WV-TXN-IN-DOUBT`.
+
+| Decision | `kind` | Needs | Effect |
+| --- | --- | --- | --- |
+| Retry the undo, the confirm, or a step after the point of no return | `retry_safe` | `incident.resolve` | The stuck step's task is made ready again with the same operation key and a fresh time limit (`undoTimeoutSeconds` for an undo, confirm or cancel); a called undo starts the next generation of its call. Refused for the step that can't be undone. After a settle timeout, it waits again for the steps still in flight |
+| Mark as reconciled | `accept_reconciled_result` | `incident.resolve`, `transaction.reconcile`, `evidence_reference` | `output` is `{"as": "compensated" \| "completed", "participants": [{"instance_key", "outcome": "undone" \| "confirmed" \| "done"}], "blockOutput"}`. Every stuck step must be named; `blockOutput` is required with `completed` (checked against the block's output) and refused with `compensated`. The rest of the transaction does not run; the block fails with `WV-TXN-ROLLED-BACK` or completes with `blockOutput` |
+| It happened (`WV-TXN-PIVOT-UNKNOWN` only) | `accept_reconciled_result` | `incident.resolve`, `transaction.reconcile`, `evidence_reference` | `output` is the step's own output; the transaction goes ahead: confirms, then the steps after it |
+| It didn't happen (`WV-TXN-PIVOT-UNKNOWN` only) | `accept_reconciled_failure` | `incident.resolve`, `transaction.reconcile`, `evidence_reference` | The transaction undoes the steps before it |
+| Force end | `terminate` | `incident.resolve`, `transaction.reconcile` | The transaction ends `force_ended` and the run `cancelled`, `external_effects_may_continue: true`. On a run held behind `WV-TXN-RUN-OVERSIZED`, every open transaction ends this way |
+
+A decision while the stuck step's latest attempt or child run is still running
+is refused (HTTP 409 `WV-RUNTIME-STATE`). A record that doesn't fit the
+transaction answers HTTP 422 `WV-RUNTIME-OUTPUT`. The audit record adds the
+transaction's key and, for a reconciliation, how it ended.
+
+A reconciler can also cancel a run without undoing its open transactions:
+`{"reason": "...", "skip_undo": true}` needs `transaction.reconcile`, ends them
+`force_ended`, and answers `external_effects_may_continue: true`. Retiring an
+activation that a running transaction may still need to undo a step is refused
+(HTTP 409 `WV-TXN-UNDO-PINNED`) unless the request has `?force=true` and the
+caller holds `transaction.reconcile`.
+
 **Several incidents.** Each resolution stores the actor, reason, kind, evidence,
 time, and receipt. Independent incidents on different nodes or generations share a
 run-wide suspension barrier: authenticated results that arrive meanwhile are kept,
@@ -257,7 +287,8 @@ overall or wait deadline can still end a suspended run; reconciliation cannot
 bypass it.
 
 **Cancel and retry requests.** Cancel takes `{"reason": "..."}` (nonblank, at most
-2,000 characters). Retry takes a normal start request, `{activation_id, input}`
+2,000 characters), and optionally `"skip_undo": true` (see
+[Transactions in doubt](#transactions-in-doubt)). Retry takes a normal start request, `{activation_id, input}`
 with optional `correlation_key` and `business_key`, and requires an
 `Idempotency-Key` header.
 
