@@ -193,6 +193,20 @@ def test_the_host_creates_reads_commands_and_deletes_sessions(tmp_path):
         assert browser.get(f"{SESSIONS}/{identifier}", headers=headers).status_code == 404
 
 
+def test_the_run_log_can_close_every_session_when_the_host_is_full(tmp_path):
+    with client(tmp_path) as browser:
+        headers = pair(browser)
+        for _ in range(4):
+            assert (
+                browser.post(SESSIONS, json=body(workflow(CHECK, SHAPE), mocks=PIN), headers=headers).status_code == 201
+            )
+        full = browser.post(SESSIONS, json=body(workflow(CHECK, SHAPE), mocks=PIN), headers=headers)
+        assert full.status_code == 429 and full.json()["code"] == "WV-STUDIO-SESSIONS-FULL"
+        assert browser.delete(SESSIONS, headers={"Origin": ORIGIN}).status_code in {401, 403}
+        assert browser.delete(SESSIONS, headers=headers).status_code == 204
+        assert browser.post(SESSIONS, json=body(workflow(CHECK, SHAPE), mocks=PIN), headers=headers).status_code == 201
+
+
 def test_signing_out_clears_every_session(tmp_path):
     # The desktop shell pairs again after an unpairing, so the same host can be asked again.
     with client(tmp_path, reusable_pairing=True) as browser:

@@ -7400,7 +7400,23 @@ export class App implements CanvasHost {
       this.runSession.set(session);
       this.runLogOpen.set(true);
     } catch (error) {
-      this.notify(describeError(error).message, undefined, "danger");
+      if (error instanceof ApiError && error.status === 429)
+        // Run logs left open elsewhere (another window): offer to close them.
+        this.notify(
+          "Studio keeps at most 4 run logs at once.",
+          {
+            label: "Close them and start again",
+            run: () =>
+              void service.sessions
+                .closeAll()
+                .then(() => this.startSession())
+                .catch((e) =>
+                  this.notify(describeError(e).message, undefined, "danger"),
+                ),
+          },
+          "danger",
+        );
+      else this.notify(describeError(error).message, undefined, "danger");
     }
     this.cdr.markForCheck();
   }

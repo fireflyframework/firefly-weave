@@ -136,6 +136,7 @@ export class ExecutionService {
   /** Opens a draft's kept results (this computer, this account), or none. */
   async open(draftId: string): Promise<void> {
     const generation = ++this.generation;
+    this.dropSession();
     this.running.set(null);
     this.results.set(null);
     this.last.set(null);
@@ -157,7 +158,19 @@ export class ExecutionService {
     this.running.set(null);
     this.results.set(null);
     this.last.set(null);
+    this.dropSession();
+  }
+
+  /** Closes the step-through session on the host before Studio lets go of it: the host keeps only four. */
+  private dropSession(): void {
+    const session = this.session;
     this.session = null;
+    if (session) this.deleteSession(session.id);
+  }
+  private deleteSession(id: string): void {
+    void this.host.api
+      .request(`${SESSIONS}/${encodeURIComponent(id)}`, "DELETE")
+      .catch(() => undefined);
   }
 
   /** Stops waiting for the running execution; its answer is dropped. */
@@ -261,7 +274,12 @@ export class ExecutionService {
         "POST",
         body satisfies SimulationRequest,
       );
-      if (generation !== this.generation) return null;
+      if (generation !== this.generation) {
+        // The draft changed while the host made it: nobody will close it.
+        this.deleteSession(session.id);
+        return null;
+      }
+      this.dropSession();
       return (this.session = session);
     },
     /** The session as the host keeps it now (after a 409, say). */
@@ -285,6 +303,11 @@ export class ExecutionService {
       );
       if (this.session?.id !== session.id) return null;
       return (this.session = moved);
+    },
+    /** Closes every run log the host keeps (another window may have left them open). */
+    closeAll: async (): Promise<void> => {
+      this.session = null;
+      await this.host.api.request(SESSIONS, "DELETE");
     },
     close: async (): Promise<void> => {
       const session = this.session;

@@ -760,6 +760,12 @@ class StudioController:
         sessions = self._debug_sessions()
         return await self._session_work(lambda: sessions.command(identifier, int(match), command, time.monotonic()))
 
+    @delete_mapping("/studio/local/debug/sessions")
+    async def debug_sessions_clear(self, request: Request) -> Response:
+        """Closes every run log this host keeps: the way out when another window left four open."""
+        sessions = self._debug_sessions()
+        return await self._session_work(sessions.clear)
+
     @delete_mapping("/studio/local/debug/sessions/{identifier}")
     async def debug_session_delete(self, request: Request) -> Response:
         identifier = _session_id(request)

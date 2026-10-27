@@ -191,6 +191,42 @@ test("Next steps one step, Continue runs to a breakpoint set with F9", async ({
   ).toHaveCount(0);
 });
 
+test("when the host keeps four run logs already, the toast closes them and starts again", async ({
+  page,
+}) => {
+  await openExecuteWorkflow(page, CHAIN);
+  let full = true;
+  await page.route("**/studio/local/debug/sessions", async (route) => {
+    if (route.request().method() === "POST" && full) {
+      full = false;
+      return route.fulfill({
+        status: 429,
+        json: {
+          status: 429,
+          code: "WV-STUDIO-SESSIONS-FULL",
+          title: "Studio keeps at most 4 run logs at once; close one first",
+        },
+      });
+    }
+    return route.fallback();
+  });
+  const cleared = page.waitForRequest(
+    (request) =>
+      request.method() === "DELETE" &&
+      new URL(request.url()).pathname === "/studio/local/debug/sessions",
+  );
+  await tileBody(page, "second").click();
+  await page.keyboard.press("F9");
+  await executeInBar(page).click();
+  await page
+    .getByRole("button", { name: "Close them and start again" })
+    .click();
+  await cleared;
+  await expect(runLog(page).locator(".run-log-status")).toHaveText(
+    "Paused before second",
+  );
+});
+
 test("L toggles the run log, I and O open an entry's data", async ({
   page,
 }) => {

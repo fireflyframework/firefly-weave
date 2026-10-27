@@ -82,6 +82,9 @@ def session_reply(path, raw, method, match):
     SESSIONS = SESSIONS or HostSessions()
     parts = path.removeprefix("/studio/local/debug/sessions").strip("/").split("/")
     try:
+        if parts == [""] and method == "DELETE":
+            SESSIONS.clear()
+            return {"__status": 204}
         if parts == [""]:
             session = SESSIONS.create(SimulationRequest.model_validate_json(raw), None, time.monotonic())
             return {"__status": 201, **json.loads(session.model_dump_json(by_alias=True))}

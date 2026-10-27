@@ -331,6 +331,48 @@ describe("the execution service", () => {
     await closed;
     expect(service.sessions.current()).toBeNull();
   });
+  it("closes the host's session when the draft changes or Studio forgets", async () => {
+    for (const leave of [
+      (service: ExecutionService) => service.forget(),
+      (service: ExecutionService) => void service.open("d-2"),
+    ]) {
+      const { service, sent } = fixture();
+      const created = service.sessions.create();
+      await settle();
+      sent[0].answer({ id: "s-1", revision: 1, view: { status: "paused" } });
+      await created;
+      leave(service);
+      await settle();
+      const deletes = sent.filter((call) => call.method === "DELETE");
+      expect(deletes.map((call) => call.path)).toEqual([
+        "/studio/local/debug/sessions/s-1",
+      ]);
+      expect(service.sessions.current()).toBeNull();
+    }
+  });
+  it("closes every session the host keeps when asked", async () => {
+    const { service, sent } = fixture();
+    const closed = service.sessions.closeAll();
+    await settle();
+    expect([sent[0].path, sent[0].method]).toEqual([
+      "/studio/local/debug/sessions",
+      "DELETE",
+    ]);
+    sent[0].answer(undefined);
+    await closed;
+  });
+  it("closes a session the host created after the draft changed", async () => {
+    const { service, sent } = fixture();
+    const created = service.sessions.create();
+    await settle();
+    service.forget();
+    sent[0].answer({ id: "s-late", revision: 1, view: { status: "paused" } });
+    expect(await created).toBeNull();
+    await settle();
+    expect(
+      sent.filter((call) => call.method === "DELETE").map((call) => call.path),
+    ).toEqual(["/studio/local/debug/sessions/s-late"]);
+  });
   it("never uses another draft's results, even before that draft's own open", async () => {
     const { service, sent, state, values } = fixture();
     await service.open("d-1");
