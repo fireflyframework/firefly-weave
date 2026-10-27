@@ -34,6 +34,8 @@ export interface TileFacts extends StepFacts {
   stale: string | null;
   pinned: boolean;
   selected: boolean;
+  /** The run is a simulation Studio played back, not a real run. */
+  simulated?: boolean;
 }
 export type BadgeKind =
   | "failed"
@@ -115,7 +117,9 @@ export function tileBadge(facts: TileFacts): TileBadge | null {
       kind: "done",
       tone: "success",
       icons: ["check"],
-      text: "Finished in the last run",
+      text: facts.simulated
+        ? "Finished in the last test run"
+        : "Finished in the last run",
     };
   return null;
 }

@@ -317,8 +317,13 @@ weave-canvas-view,
 }
 /* A step note shown on the canvas is its label's third line: the name
    keeps to one line so the block stays three lines high. */
-.canvas-v2 .tile-label.has-note strong {
+.canvas-v2 .tile-label.has-note strong,
+.canvas-v2 .tile-label.has-output strong {
   -webkit-line-clamp: 1;
+}
+/* What the step's data holds ("3 fields"), under its subtitle. */
+.canvas-v2 .tile-label span.tile-output {
+  color: var(--text);
 }
 
 /* Handles: drawn 12 px, hit area 24 × 24 */

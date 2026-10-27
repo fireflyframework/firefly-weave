@@ -38,6 +38,7 @@ import {
   type PlatformCall,
 } from "./owned-actions";
 import { openStepFixture, sizes, yamlFile } from "./step-details-po";
+import { executions } from "./execute-po";
 import {
   box,
   boxes,
@@ -373,45 +374,18 @@ for (const size of sizes)
       ]);
     });
 
-    test("Simulate publishes the step actions first and opens the simulation setup, without publishing the workflow", async ({
+    test("Execute workflow publishes nothing and sends the step actions' documents to the Studio host", async ({
       page,
     }) => {
       const { platform } = await withOwnedSteps(page);
-      await command(page, "Simulate");
-      const dialog = page.getByRole("dialog", {
-        name: "Publish actions to simulate order-intake?",
-      });
-      await expect(dialog.locator(".owned-state")).toHaveText([
-        "Ready",
-        "Ready",
-      ]);
-      await dialog
-        .getByRole("button", { name: "Publish 2 actions and simulate" })
-        .click();
+      const calls = await localAuthoring(page);
+      platform.calls.length = 0;
+      await command(page, "Execute workflow");
+      await expect.poll(() => executions(calls).length).toBe(1);
+      expect(posted(platform.calls)).toEqual([]);
       await expect(
-        page.getByRole("dialog", { name: "Simulate this workflow" }),
-      ).toBeVisible();
-      expect(posted(platform.calls)).toEqual([API, EMAIL]);
-    });
-
-    test("without permission to publish, Simulate says why and sends nothing", async ({
-      page,
-    }) => {
-      const { platform } = await withOwnedSteps(page, {
-        capabilities: [
-          ...allCapabilities.filter(
-            (capability) => capability !== "definition.publish",
-          ),
-          "compile",
-        ],
-      });
-      await command(page, "Simulate");
-      await expect(
-        page.getByText(
-          "Simulating this workflow publishes the actions of its Call an API, email and file steps first, and your account can't publish actions in this workspace.",
-        ),
-      ).toBeVisible();
-      expect(platform.calls).toEqual([]);
+        page.getByRole("dialog", { name: /^Publish actions/ }),
+      ).toHaveCount(0);
     });
 
     test("an action that can't be built yet stops before anything is published", async ({
@@ -806,15 +780,13 @@ test.describe("saving a draft on the platform", () => {
   });
 });
 
-// Publish… and Simulate load the code that publishes the workflow's own
-// actions on first use; when it can't load, they stop and say so.
+// Publish… loads the code that publishes the workflow's own actions on
+// first use; when it can't load, it stops and says so. (With the new editor
+// Execute workflow publishes nothing, so it never loads that code.)
 test.describe("when the publishing code can't load", () => {
   test.use({ viewport: { width: 1440, height: 900 } });
 
-  for (const [name, purpose] of [
-    ["Publish…", "Publish…"],
-    ["Simulate", "Simulate"],
-  ])
+  for (const [name, purpose] of [["Publish…", "Publish…"]])
     test(`${name} stops and says so`, async ({ page }) => {
       const { platform } = await withOwnedSteps(page);
       let refused = 0;
@@ -836,47 +808,6 @@ test.describe("when the publishing code can't load", () => {
       expect(platform.calls).toEqual([]);
     });
 });
-
-// The publishing code may arrive after the click has been drawn: what it
-// decides still shows at once, with nothing else on the page changing.
-for (const size of [
-  { tag: "1440x900", width: 1440, height: 900 },
-  { tag: "600x500", width: 600, height: 500 },
-])
-  test.describe(`when the publishing code loads late at ${size.tag}`, () => {
-    test.use({ viewport: { width: size.width, height: size.height } });
-
-    test("Simulate's refusal shows as soon as the code arrives", async ({
-      page,
-    }) => {
-      const { platform } = await withOwnedSteps(page, {
-        capabilities: [
-          ...allCapabilities.filter(
-            (capability) => capability !== "definition.publish",
-          ),
-          "compile",
-        ],
-      });
-      let delayed = 0;
-      await page.route(/\.m?js(\?.*)?$/, async (route) => {
-        const response = await route.fetch();
-        const body = await response.text();
-        if (body.includes("Turn on Try the new editor in Settings")) {
-          delayed++;
-          await new Promise((done) => setTimeout(done, 1500));
-        }
-        return route.fulfill({ response, body });
-      });
-      await command(page, "Simulate");
-      await expect(
-        page.getByText(
-          "Simulating this workflow publishes the actions of its Call an API, email and file steps first, and your account can't publish actions in this workspace.",
-        ),
-      ).toBeVisible({ timeout: 5000 });
-      expect(delayed).toBeGreaterThan(0);
-      expect(platform.calls).toEqual([]);
-    });
-  });
 
 // Publishing records into the last undo step. A workflow opened again has
 // none: the record then adds no undo step of its own, which would change

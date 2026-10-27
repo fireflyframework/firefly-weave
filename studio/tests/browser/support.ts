@@ -434,6 +434,24 @@ export async function routeTestDataCheck(page: Page) {
             : { path, ok: true },
       );
     }
+    // Test answers: a signal's payload against its payload fields, a
+    // person's form data against the task's form.
+    for (const [section, schemaKey, valueKey] of [
+      ["signals", "payloadSchema", "payload"],
+      ["humans", "formSchema", "data"],
+    ] as const)
+      for (const [key, entry] of Object.entries(
+        (body.testData[section] as Json | undefined) ?? {},
+      )) {
+        const id = key.split(/[[#~]/)[0];
+        const step = stepsOf(spec["steps"]).find((item) => item["id"] === id);
+        const path = `/${section}/${key.replace(/~/g, "~0").replace(/\//g, "~1")}`;
+        entries.push(
+          step && secretIn(step[schemaKey], (entry as Json)[valueKey])
+            ? { path, ok: false, code: "WV-SCHEMA-SECRET_VALUE" }
+            : { path, ok: true },
+        );
+      }
     await route.fulfill({ json: { entries } });
   });
 }

@@ -72,44 +72,31 @@ for (const size of sizes)
       await expect(
         dialog.getByRole("button", { name: "Rename lookup" }),
       ).toBeVisible();
-      await expect(
-        dialog.getByRole("button", { name: "Execute step", exact: true }),
-      ).toHaveAttribute("aria-disabled", "true");
-      const execute = dialog.getByRole("button", {
-        name: "Execute step",
-        exact: true,
-      });
-      // Unavailable, it reads as disabled (the disabled tokens), never as the accent action.
+      const execute = dialog
+        .locator(".sd-execute")
+        .getByRole("button", { name: "Execute step", exact: true });
+      // Execute step is the one primary action: the accent tokens, its menu half too.
+      await expect(execute).not.toHaveAttribute("aria-disabled", "true");
       const tokens = await execute.evaluate((el) => {
         const sample = document.createElement("span");
         el.append(sample);
-        const read = (background: string, color: string) => {
-          sample.style.backgroundColor = background;
-          sample.style.color = color;
-          const style = getComputedStyle(sample);
-          return { background: style.backgroundColor, color: style.color };
-        };
+        sample.style.backgroundColor = "var(--accent)";
+        sample.style.color = "var(--on-accent)";
+        const style = getComputedStyle(sample);
         const result = {
-          disabled: read("var(--disabled-bg)", "var(--disabled-ink)"),
-          enabled: read("var(--accent)", "var(--on-accent)"),
+          background: style.backgroundColor,
+          color: style.color,
         };
         sample.remove();
         return result;
       });
-      await expect(execute).toHaveCSS(
-        "background-color",
-        tokens.disabled.background,
-      );
-      await expect(execute).toHaveCSS("color", tokens.disabled.color);
-      expect(tokens.disabled.background).not.toBe(tokens.enabled.background);
+      await expect(execute).toHaveCSS("background-color", tokens.background);
+      await expect(execute).toHaveCSS("color", tokens.color);
       const toggle = dialog.getByRole("button", {
         name: "More ways to execute",
       });
-      await expect(toggle).toHaveCSS(
-        "background-color",
-        tokens.disabled.background,
-      );
-      await expect(toggle).toHaveCSS("color", tokens.disabled.color);
+      await expect(toggle).toHaveCSS("background-color", tokens.background);
+      await expect(toggle).toHaveCSS("color", tokens.color);
       const box = (await execute.boundingBox())!;
       const center = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
       expect(
@@ -119,18 +106,6 @@ for (const size of sizes)
           center,
         ),
       ).toBe(true);
-      // It is focusable and explains its limitation; the native button is enabled.
-      await page.mouse.click(center.x, center.y);
-      await expect(page.locator(".toast-region")).toContainText(
-        "Executing a single step isn't available yet.",
-      );
-      await page.getByRole("button", { name: "Dismiss notification" }).click();
-      await expect(page.locator(".toast-region .toast")).toHaveCount(0);
-      await execute.focus();
-      await page.keyboard.press("Enter");
-      await expect(page.locator(".toast-region")).toContainText(
-        "Executing a single step isn't available yet.",
-      );
       await expect(
         dialog.getByRole("button", { name: "More ways to execute" }),
       ).toBeVisible();
@@ -147,22 +122,24 @@ for (const size of sizes)
       );
     });
 
-    test("Ctrl/Cmd+Enter explains that single-step execution isn't available", async ({
+    test("the split menu offers Execute previous steps, and Escape closes it first", async ({
       page,
     }) => {
       const details = await openStepFixture(page);
       await details.open("lookup");
-      await page.keyboard.press("ControlOrMeta+Enter");
-      await expect(page.locator(".toast-region")).toContainText(
-        "Executing a single step isn't available yet.",
-      );
+      if (size.width < 768)
+        await details.dialog
+          .getByRole("tab", { name: "Parameters", exact: true })
+          .first()
+          .click();
       await details.dialog
         .getByRole("button", { name: "More ways to execute" })
         .click();
-      await expect(
-        page.getByRole("menuitem", { name: /Simulate the workflow/ }),
-      ).toHaveAttribute("aria-disabled", "true");
+      const items = page.getByRole("menuitem");
+      await expect(items).toHaveCount(1);
+      await expect(items.first()).toContainText("Execute previous steps");
       await page.keyboard.press("Escape");
+      await expect(items).toHaveCount(0);
       await expect(details.dialog).toBeVisible();
     });
 
@@ -1114,7 +1091,9 @@ for (const size of [
       const subtitle = await textBox(dialog.locator(".sd-subtitle"));
       const block = await box(dialog.locator(".sd-name-block"));
       const execute = await box(
-        dialog.getByRole("button", { name: "Execute step", exact: true }),
+        dialog
+          .locator(".sd-execute")
+          .getByRole("button", { name: "Execute step", exact: true }),
       );
       const toggle = await box(
         dialog.getByRole("button", { name: "More ways to execute" }),
@@ -1192,9 +1171,9 @@ test.describe("the shell while step details is open", () => {
     await expect(page.locator("header.topbar")).toHaveJSProperty("inert", true);
     expect(await exposed()).toEqual([]);
     // Toasts stay usable: an explanation still reaches the person.
-    await page.keyboard.press("ControlOrMeta+Enter");
+    await page.keyboard.press("p");
     await expect(page.locator(".toast-region")).toContainText(
-      "Executing a single step isn't available yet.",
+      "Set test output or generate a sample to pin it.",
     );
     // And it paints above step details, where the person is looking.
     const toast = page.locator(".toast-region .toast").last();
@@ -1286,10 +1265,10 @@ for (const size of [
     }) => {
       const details = await openStepFixture(page);
       await details.open("lookup");
-      await page.keyboard.press("ControlOrMeta+Enter");
+      await page.keyboard.press("p");
       const toast = page.locator(".toast-region .toast").last();
       await expect(toast).toContainText(
-        "Executing a single step isn't available yet.",
+        "Set test output or generate a sample to pin it.",
       );
       await details.dialog
         .getByRole("button", { name: "More actions for lookup" })

@@ -125,6 +125,10 @@ class DebugState(ContractModel):
     # Omitted for sessions without called workflows, so stored sessions keep their bytes.
     workflows: dict[str, CalledWorkflow] = Field(default_factory=dict, exclude_if=lambda v: not v)
     frames: list[FrameState] = Field(default_factory=list, exclude_if=lambda v: not v)
+    # What each step received (an action's input; a human task's title and context) and returned, by instance key,
+    # prefixed with the frame key inside called workflows. Omitted when empty, so stored sessions keep their bytes.
+    inputs: dict[str, JsonData] = Field(default_factory=dict, exclude_if=lambda v: not v)
+    outputs: dict[str, JsonData] = Field(default_factory=dict, exclude_if=lambda v: not v)
 
 
 class LoopView(ContractModel):
