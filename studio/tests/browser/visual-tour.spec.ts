@@ -2124,6 +2124,62 @@ const scenes: Record<string, Scene> = {
     );
     await shot("167-decision-grid-problems", { tabs: 0, end: ".sd-panes" });
   },
+  async "decision-grid-column-dialog"({ page, shot }) {
+    const { grid } = await openPaymentGrid(page);
+    await grid.root.getByRole("button", { name: "Add input column" }).click();
+    const dialog = page.getByRole("dialog", { name: "Add input column" });
+    await dialog.getByLabel("Name").fill("region");
+    await dialog.getByRole("radio", { name: "Text", exact: true }).check();
+    await expect(
+      dialog.getByRole("button", { name: "Add column" }),
+    ).toBeEnabled();
+    await shot("168-decision-grid-column-dialog", { tabs: 2 });
+  },
+  async "decision-grid-exactly-one"({ page, shot }) {
+    await keepPaymentDraft(page);
+    const details = await openStepFixture(page, draftWorkflow);
+    await localAuthoring(page);
+    await details.open("score");
+    const grid = new DecisionGridPage(page);
+    await grid.open();
+    await grid.root.getByRole("button", { name: "Try an input" }).click();
+    const panel = grid.root.getByRole("region", { name: "Try an input" });
+    await grid.policy("Exactly one");
+    await panel.getByLabel("amount").fill("6000");
+    await panel.getByLabel("tier").fill("gold");
+    await expect(panel).toContainText(
+      "Two rules matched but the policy allows exactly one (rules 1 and 3).",
+    );
+    await page.evaluate(() => (document.activeElement as HTMLElement).blur());
+    await shot("169-decision-grid-exactly-one", { tabs: 0, end: ".sd-panes" });
+  },
+  async "action-change-in-new-version"({ page, shot }) {
+    const details = await openStepFixture(page, stepFixture, async (p) => {
+      const result = await connected(p, {
+        capabilities: [...allCapabilities, "compile"],
+      });
+      await withLanguageFeatures(p);
+      return result;
+    });
+    await details.open("lookup");
+    await details.tab("Settings").click();
+    const retry = details.field("retry");
+    await expect(retry).toContainText("Set by sql.lookup@1.0.0.");
+    const panel = { tabs: 0, end: ".sd-tabpanel:not([hidden])" };
+    await shot("170-action-settings-published", panel);
+    await retry
+      .getByRole("button", { name: "Change in a new version" })
+      .click();
+    await expect(retry).toContainText(
+      "Saved in sql.lookup 1.0.1 on this computer. Publish it before publishing this workflow.",
+    );
+    await expect(
+      details
+        .field("retry.maxAttempts")
+        .getByRole("textbox", { name: "Max tries" }),
+    ).toBeEditable();
+    await shot("171-action-change-in-new-version", panel);
+  },
   async "step-details-decision"({ page, shot }) {
     const details = await openStepFixture(page);
     await details.open("route-by-value");
