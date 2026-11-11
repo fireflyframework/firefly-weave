@@ -45,6 +45,11 @@ LoginFlow = Literal["auto", "browser", "device", "pkce"]
 LoginPrompt = Literal["login", "select_account"]
 SessionState = Literal["signed_in", "expired", "signed_out", "in_progress"]
 PROMPTS = frozenset({"login", "select_account"})
+# Keycloak refuses a replaced refresh token only when it was issued in an earlier whole second
+# than the newest token of its chain, so tokens issued within one second stay replayable until a
+# later rotation. Never presenting a refresh token sooner than this after it was obtained keeps
+# every rotation in a later second; two seconds leave room for clock-rate drift.
+ROTATION_SPACING_SECONDS = 2.0
 
 
 class AuthError(Exception):
@@ -317,12 +322,14 @@ class OAuthSession:
             or tokens.token_type.lower() != "bearer"
         ):
             raise AuthError("WV-AUTH-PROVIDER", 3)
+        now = time.time()
         return CredentialRecord(
             binding=self.config.binding,
             state="active",
             access_token=SecretStr(tokens.access_token),
             refresh_token=SecretStr(tokens.refresh_token) if tokens.refresh_token else None,
-            expires_at=time.time() + tokens.expires_in,
+            expires_at=now + tokens.expires_in,
+            obtained_at=now,
             scopes=tuple(tokens.scope.split()) if tokens.scope else self.config.scopes,
         )
 
@@ -571,6 +578,12 @@ class OAuthSession:
                 return record.access_token.get_secret_value()
             if record.refresh_token is None:
                 raise AuthError()
+            # Bounded by the spacing, even when the stored time lies ahead of a clock that moved back.
+            spacing = min(record.obtained_at + ROTATION_SPACING_SECONDS - time.time(), ROTATION_SPACING_SECONDS)
+            if spacing > 0:
+                if record.expires_at > time.time():
+                    return record.access_token.get_secret_value()
+                await asyncio.sleep(spacing)
             try:
                 metadata = await self.discover()
             except _NotSent:

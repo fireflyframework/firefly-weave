@@ -74,8 +74,8 @@ async def live_cli(release_backends):
         )
         assert (await client.put(admin + "/clients/" + record["id"], headers=headers, json=record)).status_code == 204
         realm = (await client.get(admin, headers=headers)).json()
-        realm.update(revokeRefreshToken=True, refreshTokenMaxReuse=0)
-        assert (await client.put(admin, headers=headers, json=realm)).status_code == 204
+        # Rotation must come from the shipped realm, so a regression there fails here instead of being patched over.
+        assert realm["revokeRefreshToken"] is True and realm["refreshTokenMaxReuse"] == 0
         username = "c6-browser-" + uuid4().hex
         password = secrets.token_urlsafe(32)
         response = await client.post(
@@ -221,16 +221,9 @@ async def test_live_pkce_ephemeral_rotation_logout_and_token_purpose(
     authorization.require(actor, scopes[0], "definition.write")
     with pytest.raises(AccessDenied):
         authorization.require(actor, scopes[1], "definition.write")
-    # Keycloak stale-token comparison has whole-second iat granularity.
-    # Advance to the next actual token timestamp before creating the newer chain.
-    import time
-
     import jwt
 
-    issued = jwt.decode(first.refresh_token.get_secret_value(), options={"verify_signature": False})["iat"]
-    async with asyncio.timeout(2):
-        while int(time.time()) <= issued:
-            await asyncio.sleep(0.02)
+    # Expire each fresh credential at once: the client itself must space the rotations.
     store.save(config.binding, first.model_copy(update={"expires_at": 0}))
     results = await asyncio.gather(*(session.get_access_token(config.target) for _ in range(4)))
     assert len(set(results)) == 1
@@ -240,6 +233,14 @@ async def test_live_pkce_ephemeral_rotation_logout_and_token_purpose(
     await session.get_access_token(config.target)
     third = store.load(config.binding)
     assert third.refresh_token != second.refresh_token
+
+    def issued(record):
+        return jwt.decode(record.refresh_token.get_secret_value(), options={"verify_signature": False})["iat"]
+
+    # Keycloak refuses a replaced refresh token only when it was issued in an earlier whole second
+    # than the newest one of its chain. Check that on the provider's own issue times, never on this
+    # machine's clock, which can drift from the provider's under load.
+    assert issued(first) < issued(second) < issued(third)
     async with httpx.AsyncClient(timeout=10, trust_env=False) as client:
         stale = await client.post(
             config.issuer + "/protocol/openid-connect/token",
@@ -254,6 +255,44 @@ async def test_live_pkce_ephemeral_rotation_logout_and_token_purpose(
     assert store.load(config.binding) is None
     with pytest.raises(AuthError):
         await session.get_access_token(config.target)
+
+
+async def test_live_concurrent_replay_of_one_refresh_token_is_refused(live_cli, tmp_path):
+    from firefly_weave.sdk.auth import LoginConfig, OAuthSession
+    from firefly_weave.sdk.credentials import FileCredentialStore
+
+    root, username, password = live_cli
+    tmp_path.chmod(0o700)
+    config = LoginConfig(
+        provider_id="local-keycloak",
+        issuer=root + "/realms/weave",
+        client_id="weave-cli",
+        target="https://api.example",
+        account=username,
+        scopes=("openid",),
+        allow_loopback_http=True,
+    )
+    store = FileCredentialStore(tmp_path / "replay.json")
+    session = OAuthSession(config, store)
+    assert (await session.login(flow="pkce", browser=lambda url: browser_login(url, root, username, password)))[
+        "authenticated"
+    ]
+    endpoint = config.issuer + "/protocol/openid-connect/token"
+    form = {
+        "client_id": config.client_id,
+        "grant_type": "refresh_token",
+        "refresh_token": store.load(config.binding).refresh_token.get_secret_value(),
+    }
+    async with httpx.AsyncClient(timeout=30, trust_env=False) as client:
+        # Several holders of one refresh token race the provider, bypassing the client's single flight.
+        responses = await asyncio.gather(*(client.post(endpoint, data=form) for _ in range(4)))
+        accepted = [response for response in responses if response.status_code == 200]
+        assert len(accepted) == 1, sorted(response.status_code for response in responses)
+        refused = [response for response in responses if response is not accepted[0]]
+        assert all(response.status_code == 400 and response.json()["error"] == "invalid_grant" for response in refused)
+        # A detected reuse ends the whole chain: the winning rotation's token is refused too.
+        follow = await client.post(endpoint, data={**form, "refresh_token": accepted[0].json()["refresh_token"]})
+        assert follow.status_code == 400 and follow.json()["error"] == "invalid_grant"
 
 
 async def test_live_device_pkce_completion_and_cancel_no_late_save(live_cli, tmp_path):

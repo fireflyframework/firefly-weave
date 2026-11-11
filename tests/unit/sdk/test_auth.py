@@ -1178,3 +1178,105 @@ async def test_abandoning_an_attempt_never_touches_a_newer_one(tmp_path):
     store.save(settings.binding, newer)
     await auth.OAuthSession(settings, store)._abandon(stale.generation)
     assert store.load(settings.binding) == newer
+
+
+class FakeClock:
+    """Wall clock the session reads, advanced only by the session's own waits."""
+
+    def __init__(self, now):
+        self.now, self.waits = now, []
+
+    def time(self):
+        return self.now
+
+    async def sleep(self, delay):
+        self.waits.append(delay)
+        self.now += delay
+
+
+def rotating_provider(store, settings, clock, posts):
+    def receive(request):
+        if request.method == "GET":
+            return discovery(request)
+        posts.append(clock.now)
+        assert store.load(settings.binding).state == "refreshing"
+        return httpx.Response(
+            200,
+            json={
+                "access_token": "new-access",
+                "refresh_token": "new-refresh",
+                "token_type": "Bearer",
+                "expires_in": 300,
+                "scope": "openid",
+            },
+        )
+
+    return receive
+
+
+async def test_refresh_token_is_not_rotated_while_fresh_and_its_access_token_valid(tmp_path, monkeypatch):
+    # Keycloak refuses a replaced refresh token only when it was issued in an earlier second than
+    # the newest one; rotating a token in the second it was issued would leave it replayable.
+    auth, credentials = modules()
+    tmp_path.chmod(0o700)
+    settings = config(auth)
+    store = credentials.FileCredentialStore(tmp_path / "tokens.json")
+    clock, posts = FakeClock(1_000_000.0), []
+    monkeypatch.setattr(auth, "time", clock)
+    store.save(
+        settings.binding,
+        credentials.CredentialRecord(
+            binding=settings.binding,
+            state="active",
+            access_token="fresh-access",
+            refresh_token="fresh-refresh",
+            # Inside the usual renewal margin, but obtained half a second ago and still valid.
+            expires_at=clock.now + 10,
+            obtained_at=clock.now - 0.5,
+            scopes=("openid",),
+        ),
+    )
+    receive = rotating_provider(store, settings, clock, posts)
+    session = auth.OAuthSession(settings, store, transport_factory=lambda: httpx.MockTransport(receive))
+    assert await session.get_access_token(settings.target) == "fresh-access"
+    assert posts == [] and store.load(settings.binding).refresh_token.get_secret_value() == "fresh-refresh"
+
+
+@pytest.mark.parametrize(
+    ("obtained_offset", "expected_wait"),
+    [(0.0, 2.0), (-1.5, 0.5), (3600.0, 2.0)],
+    ids=["just-obtained", "partly-aged", "clock-moved-back"],
+)
+async def test_expired_fresh_refresh_token_waits_out_the_rotation_spacing(
+    tmp_path, monkeypatch, obtained_offset, expected_wait
+):
+    auth, credentials = modules()
+    tmp_path.chmod(0o700)
+    settings = config(auth)
+    store = credentials.FileCredentialStore(tmp_path / "tokens.json")
+    clock, posts = FakeClock(1_000_000.0), []
+    monkeypatch.setattr(auth, "time", clock)
+    monkeypatch.setattr(auth.asyncio, "sleep", clock.sleep)
+    started = clock.now
+    store.save(
+        settings.binding,
+        credentials.CredentialRecord(
+            binding=settings.binding,
+            state="active",
+            access_token="expired-access",
+            refresh_token="fresh-refresh",
+            expires_at=started - 1,
+            obtained_at=started + obtained_offset,
+            scopes=("openid",),
+        ),
+    )
+    receive = rotating_provider(store, settings, clock, posts)
+    session = auth.OAuthSession(settings, store, transport_factory=lambda: httpx.MockTransport(receive))
+    assert await session.get_access_token(settings.target) == "new-access"
+    # The wait is bounded by the spacing even when the stored time lies in the future.
+    assert clock.waits == [pytest.approx(expected_wait)]
+    assert posts == [pytest.approx(started + expected_wait)]
+    rotated = store.load(settings.binding)
+    # The rotated token records when it was obtained, so the next rotation is spaced too.
+    assert rotated.refresh_token.get_secret_value() == "new-refresh"
+    assert rotated.obtained_at == pytest.approx(started + expected_wait)
