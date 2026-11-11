@@ -251,6 +251,11 @@ SPDX-License-Identifier: Apache-2.0
   `0.1.17`.
 - Pin the Agentic and Files 0.1.9 packages to core 0.1.0a17. The Agentic worker
   also adds the AI changes above; the Files worker has no other change.
+- Update certifi to 2026.10.23 in the core package and both workers, which
+  removes root certificates whose intermediate keys were compromised
+  (GHSA-6q48-6c7w-9gw2), and authlib to 1.9.1 in the Agentic worker, which no
+  longer accepts a JWS JSON object without signatures as verified
+  (GHSA-6v38-4h7w-rj9h).
 - Schema revision becomes `0038_operations_statistics`, with five new
   migrations: `0034_operations_change_requests`, `0035_principal_idempotency`,
   `0036_editor_studio_documents`, `0037_language_transactions` and
