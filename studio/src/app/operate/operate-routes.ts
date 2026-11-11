@@ -29,6 +29,7 @@ export const operatePages = [
   "incidents",
   "workers",
   "clusters",
+  "metrics",
 ] as const;
 export type OperatePage = (typeof operatePages)[number];
 /** The Clusters records that have their own screen. */
@@ -57,6 +58,7 @@ export const operateCapabilities: Record<OperatePage, string> = {
   incidents: "incident.read",
   workers: "status.read",
   clusters: "deployment.read",
+  metrics: "status.read",
 };
 
 const isOperatePage = (view: string): view is OperatePage =>
@@ -128,6 +130,40 @@ export function releasesPath(id = ""): string {
   return id
     ? `/operate/workers/releases/${encodeURIComponent(id)}`
     : "/operate/workers/releases";
+}
+
+/** The Metrics ranges, in menu order; 24 hours is the default. */
+export const metricsRanges = ["1h", "6h", "24h", "7d", "30d"] as const;
+export type MetricsRange = (typeof metricsRanges)[number];
+const workflowName = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,199}$/;
+
+/** A Metrics address: the range and the workflow drill-down, both shareable. */
+export interface MetricsRoute {
+  range: MetricsRange;
+  /** The workflow whose steps are shown, or "" for every workflow. */
+  workflow: string;
+}
+
+/** Reads "/operate/metrics?range=7d&workflow=NAME"; anything unknown falls back. */
+export function metricsRoute(search: string): MetricsRoute {
+  const query = new URLSearchParams(search);
+  const range = query.get("range") ?? "";
+  const workflow = query.get("workflow") ?? "";
+  return {
+    range: (metricsRanges as readonly string[]).includes(range)
+      ? (range as MetricsRange)
+      : "24h",
+    workflow: workflowName.test(workflow) ? workflow : "",
+  };
+}
+
+/** "/operate/metrics", with the range and workflow when they differ from the default. */
+export function metricsPath(route: MetricsRoute): string {
+  const query = new URLSearchParams();
+  if (route.range !== "24h") query.set("range", route.range);
+  if (route.workflow) query.set("workflow", route.workflow);
+  const text = query.toString();
+  return text ? `/operate/metrics?${text}` : "/operate/metrics";
 }
 
 /** A Clusters address: one record's screen, or the tab list. */

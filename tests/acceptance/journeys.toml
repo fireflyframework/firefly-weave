@@ -65,7 +65,7 @@
 "run-views" = true
 "compose-operations" = true
 "kubernetes-operations" = false
-"metrics" = false
+"metrics" = true
 "logs" = false
 "alerts" = false
 "operations-explanations" = false

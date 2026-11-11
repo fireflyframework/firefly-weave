@@ -105,7 +105,12 @@ class UnitOfWork:
         self.telemetry = telemetry
 
     @asynccontextmanager
-    async def open(self, scope: Scope, *, mutation: bool = True) -> AsyncIterator[Transaction]:
+    async def open(self, scope: Scope, *, mutation: bool = True, admission: bool = True) -> AsyncIterator[Transaction]:
+        """A scoped transaction; a project mutation first takes the project's operation lock.
+
+        ``admission=False`` is for writers of tables no operation admits or charges (the run statistics): they
+        neither wait for nor hold that lock, so they never delay or refuse a person's change to the project.
+        """
         from sqlalchemy.exc import DBAPIError
 
         from firefly_weave.definitions.models import CatalogError
@@ -120,7 +125,7 @@ class UnitOfWork:
                 if not mutation:
                     await session.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"))
                 await bind_scope(session, scope)
-                if mutation and scope.project_id is not None:
+                if mutation and admission and scope.project_id is not None:
                     await session.execute(text("SET LOCAL lock_timeout='250ms'"))
                     await session.execute(
                         text(
