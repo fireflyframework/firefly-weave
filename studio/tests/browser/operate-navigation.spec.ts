@@ -130,6 +130,35 @@ for (const viewport of [
         ]);
     });
 
+    test("a status reader sees Metrics last under Operate, and it opens", async ({
+      page,
+    }) => {
+      await connected(page, { capabilities: ["status.read"] });
+      await expect(
+        page.getByRole("button", { name: "Metrics", exact: true }),
+      ).toBeVisible();
+      if (viewport.width > 1280)
+        expect(await navLabels(page)).toEqual([
+          "Home",
+          "Build",
+          "Workflows",
+          "Connections",
+          "Work",
+          "My tasks",
+          "Email",
+          "Operate",
+          "Overview",
+          "Workers",
+          "Metrics",
+          "Settings",
+          "Collapse sidebar",
+        ]);
+      await page.getByRole("button", { name: "Metrics", exact: true }).click();
+      await expect(page).toHaveURL(/\/operate\/metrics$/);
+      await expect(page.locator("#main h1")).toHaveText("Metrics");
+      await expect(page).toHaveTitle("Metrics | Firefly Weave Studio");
+    });
+
     test("a target-scoped deployment reader still sees Clusters", async ({
       page,
     }) => {

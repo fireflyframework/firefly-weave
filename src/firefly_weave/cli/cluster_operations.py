@@ -37,7 +37,8 @@ def operations() -> None:
     approve and apply the plan. Observe, plan, approve and apply step by step
     with the low-level families. The runner keeps provider credentials locally.
     `summary` and `telemetry` read the environment's platform health and the
-    project's telemetry settings.
+    project's telemetry settings; `statistics` reads run throughput, failure
+    rates and durations over time.
     """
 
 
@@ -49,6 +50,7 @@ for name, prefix in (
     ("jobs", "deployment_jobs"),
     ("runners", "deployment_runners"),
     ("change-requests", "deployment_change_requests"),
+    ("statistics", "run_statistics"),
 ):
     operations.add_command(family(name, prefix))
 operations.add_command(command("operations_summary.read", "summary"))

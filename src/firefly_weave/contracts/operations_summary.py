@@ -26,6 +26,7 @@ from uuid import UUID
 from pydantic import AwareDatetime, Field
 
 from firefly_weave.contracts.definitions import ContractModel
+from firefly_weave.contracts.run_statistics import RunsDaySection
 
 type Count = Annotated[int, Field(ge=0)]
 type Seconds = Annotated[float, Field(ge=0)]
@@ -135,6 +136,8 @@ class OperationsSummary(ContractModel):
     targets: TargetsSection | ForbiddenSection | UnavailableSection
     incidents: IncidentsSection | ForbiddenSection | UnavailableSection
     attention: Annotated[list[AttentionItem], Field(max_length=ATTENTION_LIMIT)] | UnavailableSection
+    # Read from run statistics; servers without them leave it out.
+    runs_24h: RunsDaySection | UnavailableSection | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class TelemetryEndpoint(ContractModel):
