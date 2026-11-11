@@ -329,6 +329,21 @@ def test_a_waiting_call_runs_the_called_workflow_in_a_frame_and_continues_with_i
     assert all(frame == "enrich" for frame, _ in inside)
 
 
+@pytest.mark.parametrize("answer", ["frame", "mock"])
+def test_a_called_workflow_that_returns_null_gives_null_to_the_waiting_call(answer):
+    quiet = workflow("quiet", [{"id": "note", "kind": "transform", "value": {"literal": "noted"}}], {"literal": None})
+    quiet["spec"]["outputSchema"] = {}
+    artifact = caller([call(uses="quiet@1.0.0")], {"object": {"received": {"ref": "/steps/enrich/output"}}}, quiet)
+    if answer == "frame":
+        workflows = {"quiet@1.0.0": CalledWorkflow(artifact=artifact_of(quiet))}
+        session = Simulator(artifact, mocks={}, input={"customerId": "c-1"}, now=NOW, workflows=workflows)
+    else:
+        session = Simulator(artifact, mocks={"node:enrich": None}, input={"customerId": "c-1"}, now=NOW)
+    view = session.continue_until_breakpoint()
+    assert (view.status, view.variables["output"]) == ("succeeded", {"received": None})
+    assert [(data["status"], data["output"]) for data in calls(view)] == [("succeeded", None)]
+
+
 def test_a_mock_on_the_call_wins_over_the_called_workflow():
     artifact = caller([call()], {"ref": "/steps/enrich/output"})
     mocks = {"node:enrich": {"tier": "silver", "score": 1}}

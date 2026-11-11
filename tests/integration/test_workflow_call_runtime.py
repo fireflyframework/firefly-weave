@@ -76,6 +76,8 @@ NOTIFY = workflow("notify", [RECORD], {"ref": "/steps/record/output"}, output_sc
 REFUSE = workflow(
     "refuse", [{"id": "stop", "kind": "fail", "code": "NO_CUSTOMER", "message": "Unknown customer."}], {"literal": None}
 )
+# A child that succeeds and returns null, as a workflow that computes no output does.
+QUIET = workflow("quiet", [RECORD], {"literal": None})
 HOLD = workflow(
     "hold",
     [{"id": "release", "kind": "signal", "name": "release", "timeoutSeconds": 3600, "payloadSchema": {}}],
@@ -266,6 +268,24 @@ async def test_a_failed_child_fails_a_caller_that_stops_and_gives_an_envelope_to
                 "error": {"code": "NO_CUSTOMER", "message": "Unknown customer."},
             },
         )
+
+
+@pytest.mark.parametrize("on_failure", ["stop", "continue"])
+async def test_a_child_that_succeeds_with_null_gives_null_to_a_waiting_caller(platform, on_failure):
+    leaf = await activate(platform, QUIET)
+    after = {"id": "after", "kind": "transform", "value": {"object": {"received": {"ref": "/steps/check/output"}}}}
+    flow = caller(
+        "checks", call("check", "quiet@1.0.0", onFailure=on_failure), after, output={"ref": "/steps/after/output"}
+    )
+    run = await start(platform, await activate(platform, flow, quiet=leaf.id))
+    await scan(platform)
+    result = await state(platform, run.id)
+    [row] = await calls(platform, run.id)
+    assert (row["status"], row["delivered"], row["code"], row["result"]) == ("succeeded", True, None, None)
+    received = (
+        None if on_failure == "stop" else {"status": "succeeded", "runId": str(row["child_run_id"]), "output": None}
+    )
+    assert (result["status"], result["incident"], result["output"]) == ("succeeded", None, {"received": received})
 
 
 async def test_a_caller_whose_principal_lost_run_start_opens_a_start_incident_and_no_child_exists(platform):

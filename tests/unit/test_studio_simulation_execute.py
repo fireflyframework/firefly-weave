@@ -453,7 +453,7 @@ def test_a_null_mock_for_a_call_inside_a_called_workflow_is_refused_with_its_poi
     assert refused.value.paths == ["/workflows/enrich@1.0.0/mocks/node:enrich"]
 
 
-def test_a_called_workflow_that_returns_null_fails_the_run_with_a_diagnostic():
+def test_a_called_workflow_that_returns_null_gives_null_to_the_call():
     callee = callee_definition()
     callee["spec"]["output"] = {"literal": None}
     answer = run(
@@ -461,27 +461,33 @@ def test_a_called_workflow_that_returns_null_fails_the_run_with_a_diagnostic():
         definitions=[ACTION, callee],
         workflows={"enrich@1.0.0": {"mocks": {"node:check": {"eligible": True}}}},
     )
-    assert answer["status"] == "failed", answer
-    assert [d["code"] for d in answer["diagnostics"]] == ["WV-STUDIO-SIMULATION"]
-    assert "enrich" in answer["diagnostics"][0]["message"]
+    assert answer["status"] == "completed", answer
+    assert [(e["nodeId"], e["status"], e["output"]) for e in answer["trace"]] == [("enrich", "completed", None)]
 
 
-def test_after_a_signal_a_null_returning_callee_is_named_and_what_ran_is_kept(caplog):
-    callee = callee_definition()
-    callee["spec"]["output"] = {"literal": None}
+def test_after_a_signal_a_step_the_simulator_cant_carry_on_with_is_named_and_what_ran_is_kept(caplog, monkeypatch):
+    from firefly_weave.runtime import kernel
+
+    def defect(*_: object) -> None:
+        raise TypeError("a defect in the runtime")
+
+    # No valid workflow trips the simulator on purpose: a defect stands in where the called run's result arrives.
+    monkeypatch.setattr(kernel, "call_result", defect)
     with caplog.at_level("DEBUG", logger="firefly_weave.studio.simulation"):
         answer = run(
             workflow(PAID, CALL),
-            definitions=[ACTION, callee],
+            definitions=[ACTION, callee_definition()],
             workflows={"enrich@1.0.0": {"mocks": {"node:check": {"eligible": True}}}},
             scripts={"signals": {"paid": {"payload": {"secret-ish": "v-123"}, "source": "manual"}}},
         )
     assert answer["status"] == "failed", answer
-    assert "step enrich" in answer["diagnostics"][0]["message"]
+    assert [(d["code"], d["message"]) for d in answer["diagnostics"]] == [
+        ("WV-STUDIO-SIMULATION", "Studio couldn't simulate step enrich, so the simulated run stopped there.")
+    ]
     assert [(e["nodeId"], e["status"]) for e in answer["trace"]][0] == ("paid", "completed")
     logged = " ".join(record.getMessage() for record in caplog.records)
     assert "TypeError" in logged and "enrich" in logged
-    assert "v-123" not in logged
+    assert "v-123" not in logged and "a defect in the runtime" not in logged
 
 
 def test_a_secret_in_a_called_workflow_s_mock_is_refused_with_its_pointer():
