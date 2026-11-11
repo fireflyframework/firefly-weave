@@ -31,7 +31,10 @@ export const hasPython = pythonAvailable();
 // Mirrors the local handlers in src/firefly_weave/studio/host.py, and answers
 // a test compile against a catalog the test keeps.
 const helper = `
-import json, sys
+import json, os, sys, time
+# A test stands in for a slow machine by delaying the start, before the
+# host's modules load.
+time.sleep(float(os.environ.get("WEAVE_TEST_HELPER_START_DELAY", "0")))
 from pydantic import ValidationError
 from firefly_weave.studio.host import HttpActionBuild, OpenAPIImportRequest, OpenAPIInventoryRequest
 from firefly_weave.sdk.http_actions import author_http_action
@@ -105,6 +108,9 @@ def session_reply(path, raw, method, match):
         return refused(error.status, error.code, error.message, error.paths)
 
 def handle(path, raw, method="POST", match=None):
+    if path == "/test/ready":
+        # Answered once the host's modules have loaded.
+        return {}
     if path.startswith("/studio/local/debug/sessions"):
         return session_reply(path, raw, method, match)
     if path == "/test/compile":
@@ -305,5 +311,8 @@ export async function localAuthoring(page: Page): Promise<LocalCalls[]> {
   // Globs match a segment at a time: the collection, then its members.
   await page.route("**/studio/local/debug/sessions", sessions);
   await page.route("**/studio/local/debug/sessions/**", sessions);
+  // Start the helper now and wait until it answers: its start takes seconds on
+  // a slow machine, which mustn't count against the page's first request.
+  await ask("/test/ready", "{}");
   return calls;
 }
