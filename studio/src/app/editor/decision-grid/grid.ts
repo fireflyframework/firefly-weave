@@ -546,9 +546,16 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
       this.element.nativeElement.querySelector<HTMLElement>(
         `[data-cell="${row}:${col}"]`,
       );
+    // The browser leaves a cell that is partly in view where it is, which can
+    // be under the header or the columns that stay put: scroll it clear of
+    // them (the scroll box's padding).
+    const show = (cell: HTMLElement | null) => {
+      cell?.focus({ preventScroll: true });
+      cell?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    };
     const cell = find();
-    if (cell) cell.focus();
-    else afterNextRender(() => find()?.focus(), { injector: this.injector });
+    if (cell) show(cell);
+    else afterNextRender(() => show(find()), { injector: this.injector });
   }
   back() {
     void this.flush();

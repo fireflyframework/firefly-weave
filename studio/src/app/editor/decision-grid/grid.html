@@ -65,6 +65,7 @@ SPDX-License-Identifier: Apache-2.0
           (choose)="setPolicy($event)"
         />
       </div>
+      <p class="dg-hint" id="dg-policy-hint">{{ policyHint() }}</p>
       <span class="dg-spacer"></span>
       <button
         type="button"
@@ -91,7 +92,6 @@ SPDX-License-Identifier: Apache-2.0
         <weave-icon name="plus" [size]="16" />Add result column
       </button>
     </div>
-    <p class="dg-hint" id="dg-policy-hint">{{ policyHint() }}</p>
     @if (banner(); as text) {
       <p class="dg-banner" role="note">
         <weave-icon name="info" [size]="16" />{{ text }}

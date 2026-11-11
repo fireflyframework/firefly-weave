@@ -97,10 +97,22 @@ button.dg-tool {
   min-height: var(--dg-tool);
   white-space: nowrap;
 }
+/* The policy's explanation: a line of its own under the commands, and right
+   under the policy on a phone, where the commands wrap (below). */
 .dg-hint {
-  margin: calc(-1 * var(--space-2)) 0 0;
+  flex-basis: 100%;
+  order: 1;
+  margin: 0;
   font: var(--type-caption);
   color: var(--muted);
+}
+@media (max-width: 767px) {
+  .dg-hint {
+    order: 0;
+  }
+  .dg-toolbar > .dg-spacer {
+    display: none;
+  }
 }
 .dg-banner,
 .dg-notice {
@@ -128,6 +140,10 @@ button.dg-tool {
   overflow: auto;
   overscroll-behavior: contain;
   max-height: min(60vh, 560px);
+  /* A cell the cursor moves to scrolls clear of the header and the columns
+     that stay put. */
+  scroll-padding: calc(24px + var(--dg-row)) 0 0
+    calc(var(--dg-mark) + var(--dg-name-max));
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--surface);
@@ -339,11 +355,24 @@ button.dg-tool {
   padding: 0;
   border: 0;
 }
+:host ::ng-deep .dg-column-types legend {
+  margin-bottom: var(--space-1);
+  padding: 0;
+  font: var(--type-label);
+  color: var(--text);
+}
 :host ::ng-deep .dg-column-type {
   display: flex;
   align-items: center;
   gap: var(--space-2);
   min-height: var(--dg-row);
+}
+/* A radio keeps its own size beside its name (fields take the full width). */
+:host ::ng-deep .dg-column-type input[type="radio"] {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 0;
 }
 :host ::ng-deep .dg-column-type.is-disabled {
   color: var(--muted);
@@ -425,12 +454,19 @@ button.dg-try-toggle[aria-pressed="true"] {
   .dg {
     --dg-name-max: 160px;
   }
+  /* Grid cells keep their stacking order even when not positioned: the names
+     drop theirs so they pass under the numbers. */
   .dg-name-cell,
   .dg-th.dg-name-cell {
     position: static;
+    z-index: auto;
   }
   .dg-group-start {
     position: static;
+    z-index: auto;
+  }
+  .dg-scroll {
+    scroll-padding-left: var(--dg-mark);
   }
   .dg-head {
     flex-wrap: wrap;
@@ -442,10 +478,8 @@ button.dg-try-toggle[aria-pressed="true"] {
   background: var(--raised);
   font: var(--type-mono);
 }
-/* While Try an input is open, the rules that match stand out. */
+/* While Try an input is open, the rules that match stand out (their check
+   mark says so in words for a screen reader). */
 .dg-row.is-match > .dg-td:not(.is-cursor) {
   background: var(--success-bg);
-}
-.dg-row.is-match > .dg-mark-cell {
-  box-shadow: inset 2px 0 0 var(--success);
 }

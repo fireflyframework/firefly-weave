@@ -233,6 +233,18 @@ for (const size of SIZES)
       expect(text.height, "the policy's text box").toBeGreaterThanOrEqual(
         field.height - 2.5,
       );
+      // The policy's explanation sits right under it, before any other command.
+      const hint = await box(grid.root.locator("#dg-policy-hint"));
+      const policy = await box(grid.root.locator(".dg-policy"));
+      expectAligned([hint.x, policy.x], "the explanation's left edge");
+      expect(
+        hint.y - policy.bottom,
+        "the explanation under the policy",
+      ).toBeGreaterThanOrEqual(-0.5);
+      expect(
+        hint.y - policy.bottom,
+        "the explanation under the policy",
+      ).toBeLessThanOrEqual(12);
 
       const headers = await boxes(grid.root.locator(".dg-header > .dg-th"));
       expectAligned(
@@ -329,7 +341,52 @@ for (const size of SIZES)
         "rule names",
         0.5,
       );
+      // What stays put is drawn over the cells that scroll under it.
+      const onTop = (at: Box) =>
+        page.evaluate(
+          ({ x, y }) =>
+            !!document.elementFromPoint(x, y)?.closest(".dg-mark-cell"),
+          { x: at.x + at.width / 2, y: at.middle },
+        );
+      // A rule halfway down the box, in the numbers' column; 100 px over,
+      // the rule names pass under the numbers.
+      await scroller.scrollIntoViewIfNeeded();
+      for (const left of [400, 100]) {
+        await scroller.evaluate((e, left) => (e.scrollLeft = left), left);
+        await expect
+          .poll(() => scroller.evaluate((e) => e.scrollLeft))
+          .toBe(left);
+        const [hash, shown] = [await box(corner), await box(scroller)];
+        expect(await onTop(hash), `# on top at ${left} px`).toBe(true);
+        expect(
+          await onTop({ ...hash, middle: shown.middle }),
+          `a rule number on top at ${left} px`,
+        ).toBe(true);
+      }
       await expectNoPageScroll(page);
+    });
+
+    test("a cell the cursor moves to is never left under the columns that stay put", async ({
+      page,
+    }) => {
+      const { grid } = await openGrid(page, wideTable("1.2.0"));
+      const scroller = grid.root.locator(".dg-scroll");
+      await scroller.scrollIntoViewIfNeeded();
+      // On a phone the numbers stay put, so the rule names pass under them;
+      // on a desktop the names stay too, so the first input column does.
+      const target = phone(page) ? 0 : 1;
+      await grid.cell(0, target + 1).click();
+      await scroller.evaluate((e) => (e.scrollLeft = 100));
+      await expect.poll(() => scroller.evaluate((e) => e.scrollLeft)).toBe(100);
+      await page.keyboard.press("ArrowLeft");
+      await expect(grid.cell(0, target)).toBeFocused();
+      const stays = phone(page)
+        ? grid.root.locator('.dg-row[aria-rowindex="2"] > .dg-mark-cell')
+        : grid.cell(0, 0);
+      expect(
+        (await box(grid.cell(0, target))).x,
+        "the cell starts after the columns that stay put",
+      ).toBeGreaterThanOrEqual((await box(stays)).right - 0.5);
     });
 
     test("Try an input sits beside the grid on a desktop and under it on a phone", async ({
@@ -375,6 +432,48 @@ for (const size of SIZES)
       expect(await clippedText(grid.root, ".dg-toolbar")).toEqual([]);
       const { target } = await density(page);
       await expectTargets(grid.root, target, "the grid");
+    });
+
+    test("the column dialog lines up each type's radio beside its name", async ({
+      page,
+    }) => {
+      const { grid } = await openGrid(page);
+      await grid.root.getByRole("button", { name: "Add input column" }).click();
+      const dialog = page.getByRole("dialog", { name: "Add input column" });
+      await expect(dialog).toBeVisible();
+      const font = (locator: Locator) =>
+        locator.evaluate((e) => {
+          const s = getComputedStyle(e);
+          return `${s.fontSize} ${s.fontWeight} ${s.color}`;
+        });
+      expect(await font(dialog.locator("legend")), "Type and Name").toBe(
+        await font(dialog.locator(".dg-column-label")),
+      );
+      const name = await box(dialog.getByLabel("Name"));
+      const radios = await boxes(dialog.getByRole("radio"));
+      const names = await boxes(
+        dialog.locator(".dg-column-type > span:not(.dg-column-why)"),
+      );
+      expect(radios).toHaveLength(6);
+      expect(names).toHaveLength(6);
+      expectAligned(
+        [name.x, ...radios.map((radio) => radio.x)],
+        "the radios' left edge",
+      );
+      radios.forEach((radio, index) => {
+        expect(radio.width, "a radio's width").toBeLessThanOrEqual(20);
+        expect(
+          names[index].x - radio.right,
+          "a type's name beside its radio and icon",
+        ).toBeLessThanOrEqual(40);
+        expect(names[index].height, "a type's name on one line").toBeLessThan(
+          24,
+        );
+      });
+      const { row } = await density(page);
+      for (const choice of await boxes(dialog.locator(".dg-column-type")))
+        expect(choice.height, "a type's row").toBeGreaterThanOrEqual(row - 0.5);
+      expect(await clippedText(dialog, "")).toEqual([]);
     });
   });
 
