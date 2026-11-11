@@ -184,6 +184,12 @@ let sequence = 0;
         min-height: 0;
         height: 100%;
       }
+      /* Its text box fills the field to the border, as in the parameter
+         form, so a tap anywhere in the field opens the choices. */
+      :host([data-control]) .choice-field input {
+        min-height: var(--select-height, var(--control-md));
+        margin-block: -1px;
+      }
       .choice-field:focus-within {
         outline: 2px solid var(--focus);
         outline-offset: 2px;

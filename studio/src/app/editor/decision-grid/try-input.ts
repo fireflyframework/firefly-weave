@@ -38,10 +38,12 @@ import { BUSY, UNREACHABLE } from "./try-input-service";
     :host {
       display: block;
       --dg-row: var(--control-sm);
+      --dg-field: var(--control-md);
     }
     @media (max-width: 767px), (pointer: coarse) {
       :host {
         --dg-row: var(--control-touch);
+        --dg-field: var(--control-touch);
       }
     }
     .dg-try {
@@ -98,6 +100,22 @@ import { BUSY, UNREACHABLE } from "./try-input-service";
       margin: 0;
       font: var(--type-caption);
       color: var(--danger-ink);
+    }
+    /* The input's fields follow the density (36 px with a fine
+       pointer, 44 px on touch and below 768 px), as the test input does; a
+       choice's text box and arrow sit on its field's border. */
+    :host ::ng-deep weave-task-form input:not([type="checkbox"]),
+    :host ::ng-deep weave-task-form select,
+    :host ::ng-deep weave-task-form button {
+      min-height: var(--dg-field);
+    }
+    :host ::ng-deep weave-task-form .choice-field button {
+      width: var(--dg-field);
+      min-width: var(--dg-field);
+      margin-block: -1px;
+    }
+    :host ::ng-deep weave-task-form .choice-field input {
+      margin-block: -1px;
     }
   `,
   template: `
