@@ -19,7 +19,7 @@ SPDX-License-Identifier: Apache-2.0
 // operations and its check load with the test data tools once a workflow
 // opens, and the designer waits for them.
 import { expect, test, type Page } from "@playwright/test";
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
 import { repository } from "../python-path";
@@ -82,8 +82,13 @@ test("the first page of the production build holds no test data code", () => {
   expect(later.length).toBe(1);
 });
 
-/** The first page's gzip bytes on the base this branch started from: it must not grow. */
-const FIRST_PAGE_BUDGET = 242_190;
+/**
+ * The first page's bytes on main when this branch last merged it: it must not
+ * grow. Counted before compression, because every machine builds the same
+ * files while gzip counts depend on the zlib inside Node (Node 24's and the
+ * macOS system zlib differ by about 480 bytes on this page).
+ */
+const FIRST_PAGE_BUDGET = 807_656;
 /** The decision grid's chunk, at most (gzip). */
 const GRID_BUDGET = 61_440;
 const gzipped = (file: string) =>
@@ -94,7 +99,10 @@ test("the decision grid stays out of the first page and under its chunk budget",
   const first = [...index.matchAll(/(?:src|href)="([^"]+\.(?:js|css))"/g)].map(
     (match) => match[1],
   );
-  const total = first.reduce((sum, file) => sum + gzipped(file), 0);
+  const total = first.reduce(
+    (sum, file) => sum + statSync(join(BUILD, file)).size,
+    0,
+  );
   expect(total).toBeLessThanOrEqual(FIRST_PAGE_BUDGET);
   // The grid's own class names live only in its chunk.
   const grid = readdirSync(BUILD).filter(
