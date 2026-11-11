@@ -188,7 +188,8 @@ doubt is never handled.
   `errorOutput`); run summaries count `handled_errors` (omitted when 0), and
   run lists filter on `has_handled_errors`.
 - **Metrics:** `weave.step_errors`, by operation (`step.continue`,
-  `step.errorOutput`, `step.incident`).
+  `step.errorOutput`, `step.incident`). In [run metrics](../operations/metrics.md)
+  the run counts as succeeded and the failure counts against the step.
 - **No incident** and no alert.
 
 ## Try it in a debug session
