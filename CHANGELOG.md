@@ -18,73 +18,10 @@ SPDX-License-Identifier: Apache-2.0
 
 # Changelog
 
-## Unreleased
+## 0.1.0a17
 
-- Run metrics: **Operate › Metrics** in Studio shows runs started, success and
-  failure rates, p50 and p95 run duration and the oldest ready task for a
-  range (1 hour to 30 days) and optionally one workflow, with charts of
-  throughput, failure rate, durations, ready tasks by task type, outbox backlog
-  and worker utilization, a table of workflows with their steps, table views of
-  every chart and CSV export. Overview gains a line for the last hour under
-  each Load figure and a **Last 24 h** band. The platform keeps the figures
-  itself: the operations loop rolls finished runs and steps into 5-minute,
-  hourly and daily histograms and samples shared capacity every minute; test
-  runs never count. New reads `run_statistics.series`, `.workflows` and
-  `.steps` (`status.read`; `weave operations statistics`), errors
-  `WV-STATS-RANGE` and `WV-STATS-SERIES`, and the summary's optional
-  `runs_24h`. Migration `0038_operations_statistics`.
-- With **Try the new editor** on, **Execute step**, **Execute previous steps**
-  and **Execute workflow** simulate in Studio, on this computer, without a
-  platform: step details, the trigger's button, the editor bar and
-  **Ctrl+Enter** / **Cmd+Enter**. They use pinned output, the last results, the
-  test input (or a sample of the input fields) and saved AI turns; actions
-  nobody has run on stubs. The canvas plays the run back, finished steps show a
-  line such as "3 fields", the Output and Input panes show what each step
-  returned and received (Schema, Table and JSON), and a decision lists its paths
-  as taken, not taken or not checked. Last results stay on this computer under
-  your account and are marked out of date when the step changes. The Studio
-  host serves `POST /studio/local/debug/execute` and step-through sessions under
-  `/studio/local/debug/sessions`, behind its session and CSRF checks.
-- The run log replaces the simulation panel in the new editor: it lists what
-  ran, opens each step, marks results out of date, asks for a signal or a
-  decision the test data doesn't answer, and steps through breakpoints set with
-  **F9**. **L** shows or hides it; **I** and **O** open an entry's data; **?**
-  in step details lists the keys.
-- Test answers for signals and human tasks: a payload (and when it arrives), a
-  decision and its data, or letting the step time out or expire.
-- Executing no longer publishes a workflow's own actions first; their
-  documents go to the Studio host instead.
-- A simulated run whose deadline passes now fails at the step that waited, and
-  a call to another workflow without test data stops for test data.
-- Workers declare per release whether they report failures that applied
-  nothing: the first claim that sends `worker: {release, transaction_aware}`
-  fixes the answer for that release, and a claim naming another release than
-  the one the worker registered with, or changing the answer, is refused
-  (`409 WV-WORKER-RELEASE`). Leases of tasks that belong to a workflow
-  transaction carry `transaction` (its ID, the operation key of the step, the
-  phase and how the step is undone). Workflows with a `transaction` step still
-  cannot be published. Migration `0037_language_transactions` adds the
-  storage transactions use and the `transaction_reconciler` role, granted to
-  the local owner and to no existing account.
-- Studio keeps test data for each workflow: the trigger's test input and
-  pinned output on steps. Step details offer **Pin output**, **Edit output**
-  (a JSON editor), **Unpin** with Undo and **Generate sample**; the Input pane
-  shows values beside each field; formula previews read pinned output; tiles
-  and the Output pane mark pinned output that may be out of date, with **Keep
-  pinned**. **P** pins or unpins in step details and on the canvas. Pinned
-  output follows copy and paste, renames and deletions, and the simulation
-  starts from it. **Save to file** adds `<name>.testdata.json`, asking first
-  about data recorded from runs.
-- Platform drafts save themselves and keep their canvas and test data on the
-  platform (`studio_documents.read`, `.save` and `.delete`). Test data recorded
-  from runs needs `run.read` in each environment it came from, and secret
-  values are refused with document pointers only. Migration
-  `0036_editor_studio_documents`.
-- The desktop app keeps local drafts and their test data in a private store,
-  so they survive quitting.
-- Studio keeps everything it stores on this computer under account, local or
-  preference prefixes, and deletes a platform's keys when you sign out of it
-  or remove it. Remembered run-form values from earlier versions are removed.
+### Workflow language
+
 - The workflow language gains **transactions**. A `transaction` step groups
   steps that change other systems, and each of them says how it is undone:
   `confirm` and `cancel` (reserve, then confirm), `compensate` (an action or a
@@ -98,8 +35,8 @@ SPDX-License-Identifier: Apache-2.0
   undo and hold rules again. Undo steps read
   `/participant/operationKey`, `/participant/outcome`, `/transaction/id` and
   `/transaction/businessKey`. Transactions compile to the `flow.transaction`
-  feature, which this platform does not run yet: it refuses to publish, import or
-  activate a workflow with a transaction (`WV-IR-UNSUPPORTED`), and workflows
+  feature, which this platform does not offer yet: it refuses to publish, import
+  or activate a workflow with a transaction (`WV-IR-UNSUPPORTED`), and workflows
   without one compile to the same bytes as before. Also new: actions may declare
   `definiteFailures` (codes that mean nothing was applied) and
   `transactionAware`; a worker failure may report `effect: none`, and
@@ -112,6 +49,43 @@ SPDX-License-Identifier: Apache-2.0
   the server: an earlier CLI or SDK can't read this server's manifest, while
   this CLI or SDK still reads an earlier server's (see
   [language manifest compatibility](docs/operations/upgrades.md#language-manifest-compatibility)).
+- Simulations and debug sessions run workflow calls. A waiting **Call a
+  workflow** step takes a mock for its whole result under `node:CALL_ID` (or
+  `node:notify[2]` for one iteration): the called workflow's output, or the
+  `{status, runId, output, error}` envelope with `onFailure: continue`. Without
+  a mock, a request whose new `workflows` field gives the called version's
+  artifact runs that workflow in a frame with its own mocks, and its outcome
+  reaches the caller as in a real run; a detached call's frame runs too, or is
+  listed as `not_simulated`. The debugger view adds `frames` and
+  `selected_frame`, boundaries inside a called workflow carry `frame`, and all
+  three are omitted when no call ran. `next` steps into called workflows, a
+  breakpoint such as `notify/record` stops inside one, the new `step_out`
+  command returns to the caller, and `signal` and `human_decision` take a
+  `frame`. Server sessions accept `"resolve_workflows": true` to load published
+  versions (with `catalog.read`), and `weave workflow simulate` takes
+  `--workflow REF=ARTIFACT.json` and prints one line per called workflow. New
+  codes: `WV-DEBUG-WORKFLOW` and `WV-DEBUG-FRAME`. A waiting call without a mock
+  or its workflow still answers `WV-DEBUG-MISSING_MOCK`, now with a hint.
+  Upgrade the SDK together with the server to read debug views with frames.
+
+### Runs, incidents, and workers
+
+- Workers declare per release whether they report failures that applied
+  nothing: the first claim that sends `worker: {release, transaction_aware}`
+  fixes the answer for that release, and a claim naming another release than
+  the one the worker registered with, or changing the answer, is refused
+  (`409 WV-WORKER-RELEASE`). Leases of tasks that belong to a workflow
+  transaction carry `transaction` (its ID, the operation key of the step, the
+  phase and how the step is undone). The runtime that runs transactions is in
+  place: it confirms or cancels reservations, undoes finished steps after a
+  failure, and keeps a run open until its transaction is settled. This platform
+  does not offer `flow.transaction` yet, so workflows with a `transaction` step
+  still cannot be published. Migration `0037_language_transactions` adds the
+  storage transactions use and the `transaction_reconciler` role, granted to
+  the local owner and to no existing account.
+
+### Operations
+
 - Operations work out of the box on the local Docker platform, and every
   infrastructure change can go through a reviewed **change request**. `weave
   platform up` starts a local registry, admits the sleep fixture worker
@@ -135,6 +109,22 @@ SPDX-License-Identifier: Apache-2.0
   principal it created, as it is now. Migrations
   `0034_operations_change_requests` and `0035_principal_idempotency` add empty
   tables; see the upgrade notes for the approval change and the runner upgrade.
+- Run metrics: **Operate › Metrics** in Studio shows runs started, success and
+  failure rates, p50 and p95 run duration and the oldest ready task for a
+  range (1 hour to 30 days) and optionally one workflow, with charts of
+  throughput, failure rate, durations, ready tasks by task type, outbox backlog
+  and worker utilization, a table of workflows with their steps, table views of
+  every chart and CSV export. Overview gains a line for the last hour under
+  each Load figure and a **Last 24 h** band. The platform keeps the figures
+  itself: the operations loop rolls finished runs and steps into 5-minute,
+  hourly and daily histograms and samples shared capacity every minute; test
+  runs never count. New reads `run_statistics.series`, `.workflows` and
+  `.steps` (`status.read`; `weave operations statistics`), errors
+  `WV-STATS-RANGE` and `WV-STATS-SERIES`, and the summary's optional
+  `runs_24h`. Migration `0038_operations_statistics`.
+
+### AI and connections
+
 - Weave AI runs on a local Ollama model. It works on a keyless connection such as
   `ollama-local`, sending no credential, and `weave platform ai enable` turns it
   on with the tested model unless Weave AI is already set up. Each request is
@@ -173,24 +163,6 @@ SPDX-License-Identifier: Apache-2.0
   most 512 tokens, the instructions ask for a brief answer, Ollama endpoints get
   a frequency penalty, and an answer that starts repeating itself is stopped
   early with `WV-LUMI-OUTPUT` and advice to use a larger model or less history.
-- Simulations and debug sessions run workflow calls. A waiting **Call a
-  workflow** step takes a mock for its whole result under `node:CALL_ID` (or
-  `node:notify[2]` for one iteration): the called workflow's output, or the
-  `{status, runId, output, error}` envelope with `onFailure: continue`. Without
-  a mock, a request whose new `workflows` field gives the called version's
-  artifact runs that workflow in a frame with its own mocks, and its outcome
-  reaches the caller as in a real run; a detached call's frame runs too, or is
-  listed as `not_simulated`. The debugger view adds `frames` and
-  `selected_frame`, boundaries inside a called workflow carry `frame`, and all
-  three are omitted when no call ran. `next` steps into called workflows, a
-  breakpoint such as `notify/record` stops inside one, the new `step_out`
-  command returns to the caller, and `signal` and `human_decision` take a
-  `frame`. Server sessions accept `"resolve_workflows": true` to load published
-  versions (with `catalog.read`), and `weave workflow simulate` takes
-  `--workflow REF=ARTIFACT.json` and prints one line per called workflow. New
-  codes: `WV-DEBUG-WORKFLOW` and `WV-DEBUG-FRAME`. A waiting call without a mock
-  or its workflow still answers `WV-DEBUG-MISSING_MOCK`, now with a hint.
-  Upgrade the SDK together with the server to read debug views with frames.
 - The AI task in step details takes its model connection first. **Model** lists
   the approved models of every AI connection you may use, grouped by connection;
   choosing one writes the step's own AI settings, the `ai` connection slot and
@@ -210,9 +182,84 @@ SPDX-License-Identifier: Apache-2.0
   result instead. When an endpoint refuses a native response format, the worker
   asks once more with the format in the prompt; that refused request counts as
   one of the step's model calls.
+
+### Studio, desktop app, and CLI
+
+- Studio keeps test data for each workflow: the trigger's test input and
+  pinned output on steps. Step details offer **Pin output**, **Edit output**
+  (a JSON editor), **Unpin** with Undo and **Generate sample**; the Input pane
+  shows values beside each field; formula previews read pinned output; tiles
+  and the Output pane mark pinned output that may be out of date, with **Keep
+  pinned**. **P** pins or unpins in step details and on the canvas. Pinned
+  output follows copy and paste, renames and deletions, and the simulation
+  starts from it. **Save to file** adds `<name>.testdata.json`, asking first
+  about data recorded from runs.
+- Platform drafts save themselves and keep their canvas and test data on the
+  platform (`studio_documents.read`, `.save` and `.delete`). Test data recorded
+  from runs needs `run.read` in each environment it came from, and secret
+  values are refused with document pointers only. Migration
+  `0036_editor_studio_documents`.
+- The desktop app keeps local drafts and their test data in a private store,
+  so they survive quitting.
+- Studio keeps everything it stores on this computer under account, local or
+  preference prefixes, and deletes a platform's keys when you sign out of it
+  or remove it. Remembered run-form values from earlier versions are removed.
+- With **Try the new editor** on, **Execute step**, **Execute previous steps**
+  and **Execute workflow** simulate in Studio, on this computer, without a
+  platform: step details, the trigger's button, the editor bar and
+  **Ctrl+Enter** / **Cmd+Enter**. They use pinned output, the last results, the
+  test input (or a sample of the input fields) and saved AI turns; actions
+  nobody has run on stubs. The canvas plays the run back, finished steps show a
+  line such as "3 fields", the Output and Input panes show what each step
+  returned and received (Schema, Table and JSON), and a decision lists its paths
+  as taken, not taken or not checked. Last results stay on this computer under
+  your account and are marked out of date when the step changes. The Studio
+  host serves `POST /studio/local/debug/execute` and step-through sessions under
+  `/studio/local/debug/sessions`, behind its session and CSRF checks.
+- The run log replaces the simulation panel in the new editor: it lists what
+  ran, opens each step, marks results out of date, asks for a signal or a
+  decision the test data doesn't answer, and steps through breakpoints set with
+  **F9**. **L** shows or hides it; **I** and **O** open an entry's data; **?**
+  in step details lists the keys.
+- Test answers for signals and human tasks: a payload (and when it arrives), a
+  decision and its data, or letting the step time out or expire.
+- Executing no longer publishes a workflow's own actions first; their
+  documents go to the Studio host instead.
+- A simulated run whose deadline passes now fails at the step that waited, and
+  a call to another workflow without test data stops for test data.
 - Recorded AI turns in Studio test data follow a published schema,
   `urn:firefly-weave:schema:studio-ai-turns:v1`, and a simulated AI task replays
   its saved final turn, with no usage, unless the step is pinned.
+
+### Development and testing
+
+- `make check` allows its unit and contract stage 60 minutes, for about 8,700
+  tests.
+- The release acceptance profile builds the operations runner and the sleep
+  fixture worker from the prepared release inputs, as `weave platform up` does,
+  and removes only the images its own platform built, by ID. The workflow call
+  simulation, Compose operations and metrics journey steps now run, and the
+  grants journey covers the operations added in this release.
+- The Agentic worker's test that a pre-provider timeout never settles after its
+  authority ends starts the short lease when execution starts and counts expiry
+  from the observed capacity retry, so slow machines no longer time it out.
+
+### Versions and schema
+
+- Bump the Python package and browser Studio bundle to `0.1.0a17` and the
+  desktop product to `0.1.0-alpha.17`; the native internal installer counter is
+  `0.1.17`.
+- Pin the Agentic and Files 0.1.9 packages to core 0.1.0a17. The Agentic worker
+  also adds the AI changes above; the Files worker has no other change.
+- Schema revision becomes `0038_operations_statistics`, with five new
+  migrations: `0034_operations_change_requests`, `0035_principal_idempotency`,
+  `0036_editor_studio_documents`, `0037_language_transactions` and
+  `0038_operations_statistics`. One role is added, `transaction_reconciler`,
+  which new local installations grant to the local owner and no existing
+  account gains. See
+  [upgrade a platform safely](docs/operations/upgrades.md#what-changes-in-alpha17)
+  for the upgrade times, the behavior changes to check, and what to do before a
+  rollback.
 
 ## 0.1.0a16
 
