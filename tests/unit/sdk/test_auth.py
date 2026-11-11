@@ -1180,6 +1180,10 @@ async def test_abandoning_an_attempt_never_touches_a_newer_one(tmp_path):
     assert store.load(settings.binding) == newer
 
 
+# The real sleep, kept before any test replaces the module's, so a fake wait still yields to the loop.
+REAL_SLEEP = asyncio.sleep
+
+
 class FakeClock:
     """Wall clock the session reads, advanced only by the session's own waits."""
 
@@ -1192,6 +1196,7 @@ class FakeClock:
     async def sleep(self, delay):
         self.waits.append(delay)
         self.now += delay
+        await REAL_SLEEP(0)
 
 
 def rotating_provider(store, settings, clock, posts):
@@ -1244,8 +1249,8 @@ async def test_refresh_token_is_not_rotated_while_fresh_and_its_access_token_val
 
 @pytest.mark.parametrize(
     ("obtained_offset", "expected_wait"),
-    [(0.0, 2.0), (-1.5, 0.5), (3600.0, 2.0)],
-    ids=["just-obtained", "partly-aged", "clock-moved-back"],
+    [(0.0, 2.0), (-1.5, 0.5), (3600.0, 2.0), (None, 0.0)],
+    ids=["just-obtained", "partly-aged", "clock-moved-back", "record-without-obtained-time"],
 )
 async def test_expired_fresh_refresh_token_waits_out_the_rotation_spacing(
     tmp_path, monkeypatch, obtained_offset, expected_wait
@@ -1266,7 +1271,8 @@ async def test_expired_fresh_refresh_token_waits_out_the_rotation_spacing(
             access_token="expired-access",
             refresh_token="fresh-refresh",
             expires_at=started - 1,
-            obtained_at=started + obtained_offset,
+            # Records written before the obtained time was kept have none, and read as obtained long ago.
+            **({} if obtained_offset is None else {"obtained_at": started + obtained_offset}),
             scopes=("openid",),
         ),
     )
@@ -1274,7 +1280,7 @@ async def test_expired_fresh_refresh_token_waits_out_the_rotation_spacing(
     session = auth.OAuthSession(settings, store, transport_factory=lambda: httpx.MockTransport(receive))
     assert await session.get_access_token(settings.target) == "new-access"
     # The wait is bounded by the spacing even when the stored time lies in the future.
-    assert clock.waits == [pytest.approx(expected_wait)]
+    assert clock.waits == ([pytest.approx(expected_wait)] if expected_wait else [])
     assert posts == [pytest.approx(started + expected_wait)]
     rotated = store.load(settings.binding)
     # The rotated token records when it was obtained, so the next rotation is spaced too.

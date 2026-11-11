@@ -594,7 +594,9 @@ change, so that a late answer never overwrites newer state:
   answer, or a failed save, the fence remains and the next process asks for a
   new sign-in; old tokens are never restored. A renewal that provably never
   reached the provider keeps the previous sign-in and fails with
-  `WV-AUTH-OFFLINE`. A wider scope or a missing rotation is rejected.
+  `WV-AUTH-OFFLINE`. A wider scope or a missing rotation is rejected. A
+  refresh token is never presented within 2 seconds of being obtained; until
+  then the client uses the still-valid access token, or waits out the rest.
 - **Sign-out** saves a token-free signed-out record and removes the local
   record under the lock. A failed removal is an error. Revocation cannot shorten
   an access token that was already issued, or undo its effects.
@@ -608,11 +610,12 @@ power loss depend on your operating system. Tokens and verifiers never appear
 in `repr`, CLI JSON, lock files, or errors.
 
 **Provider note.** The bundled local environment uses Keycloak, whose
-stale-refresh check compares whole-second timestamps. This is an observation
-about that local provider, not a requirement to deploy Keycloak: the client
-fence stops cooperating processes from reusing an old record regardless of
-the provider. A rotated token alone does not prove stronger replay protection
-on the provider side. See [identity and secrets](../operations/identity-and-secrets.md)
+stale-refresh check compares whole-second timestamps. The client spaces
+rotations so that this check refuses every replaced refresh token. This is an
+observation about that local provider, not a requirement to deploy Keycloak:
+the client fence stops cooperating processes from reusing an old record
+regardless of the provider. A rotated token alone does not prove stronger
+replay protection on the provider side. See [identity and secrets](../operations/identity-and-secrets.md)
 for compatible OIDC settings.
 
 ## Next steps

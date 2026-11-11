@@ -48,7 +48,9 @@ PROMPTS = frozenset({"login", "select_account"})
 # Keycloak refuses a replaced refresh token only when it was issued in an earlier whole second
 # than the newest token of its chain, so tokens issued within one second stay replayable until a
 # later rotation. Never presenting a refresh token sooner than this after it was obtained keeps
-# every rotation in a later second; two seconds leave room for clock-rate drift.
+# every rotation in a later second; two seconds leave room for clock-rate drift. The spacing is
+# measured on the wall clock, because records outlive processes; a forward step of that clock can
+# skip it, which is accepted.
 ROTATION_SPACING_SECONDS = 2.0
 
 
