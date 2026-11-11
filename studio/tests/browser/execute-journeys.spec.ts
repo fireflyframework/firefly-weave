@@ -21,6 +21,7 @@ SPDX-License-Identifier: Apache-2.0
 import { expect, test, type Page } from "@playwright/test";
 import { CanvasPage, openNewWorkflow } from "./canvas-po";
 import {
+  breakAt,
   executions,
   moreWays,
   openExecuteWorkflow,
@@ -182,8 +183,7 @@ test.describe("every way to execute on one workflow", () => {
     );
     await details.close();
     // 6. A breakpoint: Execute workflow pauses before rows; Continue finishes.
-    await new CanvasPage(page).tileBody("rows").click();
-    await page.keyboard.press("F9");
+    await breakAt(page, new CanvasPage(page).tileBody("rows"));
     await executeInBar(page).click();
     await expect(log.locator(".run-log-status")).toHaveText(
       "Paused before rows",
