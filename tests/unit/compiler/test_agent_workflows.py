@@ -279,7 +279,8 @@ def test_a_tool_runs_on_a_slot_of_its_actions_connector():
     ids=["pattern", "duplicate", "reserved"],
 )
 def test_tool_names_are_checked_at_their_field(tools, path):
-    assert ("WV-COMP-AGENT_TOOL_NAME", "error", path) in errors(workflow(agent(tools=tools)))
+    # The misnamed tool is set aside before the definition is validated, so its name is the only finding.
+    assert errors(workflow(agent(tools=tools))) == [("WV-COMP-AGENT_TOOL_NAME", "error", path)]
 
 
 def test_a_tool_set_aside_for_its_name_keeps_the_others_checked():
@@ -532,12 +533,24 @@ def test_a_secret_behind_a_local_schema_reference_is_refused():
     assert ("WV-COMP-AI_SECRET_INPUT", "error", "/spec/steps/0/context") in errors(document)
 
 
-def test_a_secret_behind_a_bundled_schema_reference_is_refused():
-    document = with_input(workflow(agent(context={"ref": "/input/creds"})), creds={"$ref": "creds.schema.json"})
+@pytest.mark.parametrize("pointer", ["/input/creds", "/input"], ids=["field", "whole-input"])
+def test_a_secret_behind_a_bundled_schema_reference_is_refused(pointer):
+    document = with_input(workflow(agent(context={"ref": pointer})), creds={"$ref": "creds.schema.json"})
 
     found = errors(document, catalog(schema_bundle={"creds.schema.json": CREDS}))
 
     assert ("WV-COMP-AI_SECRET_INPUT", "error", "/spec/steps/0/context") in found
+
+
+def test_a_secret_two_local_references_away_is_refused():
+    # The value read holds a reference whose schema holds another: both are followed inside the input's document.
+    document = with_input(workflow(agent(context={"ref": "/input/account"})), account={"$ref": "#/$defs/Account"})
+    document["spec"]["inputSchema"]["$defs"] = {
+        "Account": {"type": "object", "properties": {"creds": {"$ref": "#/$defs/Creds"}}},
+        "Creds": CREDS,
+    }
+
+    assert ("WV-COMP-AI_SECRET_INPUT", "error", "/spec/steps/0/context") in errors(document)
 
 
 def test_a_field_whose_reference_holds_no_secret_may_reach_the_model():
