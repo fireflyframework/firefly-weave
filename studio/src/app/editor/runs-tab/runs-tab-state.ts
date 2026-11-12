@@ -161,6 +161,7 @@ export class RunsTabState {
   private started = false;
   /** The platform refused: nothing is read until Refresh or another scope. */
   private refused = false;
+  private loadingMore: Promise<void> | null = null;
 
   constructor(
     private readonly host: RunsTabHost,
@@ -207,8 +208,14 @@ export class RunsTabState {
     this.state.set("loading");
     void this.lister.refresh();
   }
-  /** Show older runs: the next page, up to 500 runs. */
-  async more(): Promise<void> {
+  /** Show older runs: the next page, up to 500 runs; one read at a time. */
+  more(): Promise<void> {
+    this.loadingMore ??= this.loadMore().finally(() => {
+      this.loadingMore = null;
+    });
+    return this.loadingMore;
+  }
+  private async loadMore(): Promise<void> {
     this.sync();
     const cursor = this.cursor;
     if (!cursor || this.items().length >= MAX_LISTED_RUNS) return;

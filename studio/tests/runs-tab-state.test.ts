@@ -484,6 +484,26 @@ describe("the list", () => {
     expect(platform.count(LIST)).toBe(2);
     expect(state.state()).toBe("ready");
   });
+
+  it("Show older runs reads each page once, however often it's pressed", async () => {
+    const data = structuredClone(runViewsFixture);
+    const base = summaryOf(data, fixtureIds.succeeded);
+    data.runs = Array.from({ length: 120 }, (_, index) => ({
+      summary: {
+        ...base,
+        id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+        started_at: new Date(
+          Date.parse("2026-10-07T11:00:00Z") - index * 60_000,
+        ).toISOString(),
+      },
+    }));
+    const { state, platform } = await started(data);
+    await Promise.all([state.more(), state.more()]);
+    expect(platform.count(LIST)).toBe(2);
+    expect(state.items()).toHaveLength(100);
+    await state.more();
+    expect(state.items()).toHaveLength(120);
+  });
 });
 
 describe("the chosen run", () => {
