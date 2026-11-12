@@ -36,10 +36,12 @@ _control_slots = threading.BoundedSemaphore(CONTROL_SLOTS)
 _debug_slots = threading.BoundedSemaphore(DEBUG_EXECUTION_SLOTS)
 _inventory_slots = threading.BoundedSemaphore(INVENTORY_SLOTS)
 
-# How long a request waits for a slot that another request is about to free before it is refused for capacity. A
-# claim poll holds a slot for its whole request, so two of them in flight used to refuse an operator's command at
-# once. The wait is no longer than a project change waits for the project's operation lock.
+# A request that finds every slot of its kind busy waits this long for a request that is ending to hand it one, so a
+# short request such as a claim poll holding a slot does not refuse an operator's command outright. The wait is no
+# longer than a project change waits for the project's operation lock.
 REQUEST_SLOT_WAIT_SECONDS = 0.25
+# The requests waiting for each kind of slot, longest first. While any of them waits, a freed slot is handed to the
+# first one and never returned to its semaphore, so a request that arrives later cannot take it ahead of them.
 _waiting: dict[threading.BoundedSemaphore, deque[tuple[asyncio.AbstractEventLoop, asyncio.Future[None]]]] = {}
 _waiting_lock = threading.Lock()
 
@@ -48,60 +50,70 @@ def _capacity_unavailable() -> CatalogError:
     return CatalogError(429, "WV-OPERATION-CAPACITY", "Pure execution capacity unavailable")
 
 
-def _wake(slots: threading.BoundedSemaphore) -> None:
-    """Tell the request that has waited longest for ``slots`` that one is free; callable from any thread."""
-    with _waiting_lock:
-        queue = _waiting.get(slots)
-        while queue:
+def _free(slots: threading.BoundedSemaphore) -> None:
+    """Hand a freed slot to the request that has waited longest for it, or return it when none waits; any thread."""
+    try:
+        current: asyncio.AbstractEventLoop | None = asyncio.get_running_loop()
+    except RuntimeError:
+        current = None
+    while True:
+        with _waiting_lock:
+            queue = _waiting.get(slots)
+            if not queue:
+                slots.release()
+                return
             loop, woken = queue.popleft()
-            try:
-                loop.call_soon_threadsafe(_resolve, slots, woken)
-            except RuntimeError:  # Its event loop has closed, so nobody waits there any more.
-                continue
+            if not queue:
+                del _waiting[slots]
+        if loop is current:
+            _hand_over(slots, woken)
             return
+        try:
+            loop.call_soon_threadsafe(_hand_over, slots, woken)
+        except RuntimeError:  # Its event loop has closed, so nobody waits there any more.
+            continue
+        return
 
 
-def _resolve(slots: threading.BoundedSemaphore, woken: asyncio.Future[None]) -> None:
+def _hand_over(slots: threading.BoundedSemaphore, woken: asyncio.Future[None]) -> None:
+    """Give the slot to a waiting request on its own event loop, or to the next one if this request stopped waiting."""
     if woken.done():
-        # That request stopped waiting: the free slot is owed to the next one.
-        _wake(slots)
+        _free(slots)
     else:
         woken.set_result(None)
 
 
 async def _admitted(slots: threading.BoundedSemaphore) -> bool:
-    """Take one of ``slots``, waiting at most REQUEST_SLOT_WAIT_SECONDS for a request that is ending to free one."""
-    if slots.acquire(blocking=False):
-        return True
+    """Take one of ``slots``: at once if one is free and nobody waits, else when a finishing request hands one over.
+
+    Waiting requests get freed slots in the order they arrived; one that gets none within REQUEST_SLOT_WAIT_SECONDS is
+    refused.
+    """
     loop = asyncio.get_running_loop()
-    deadline = loop.time() + REQUEST_SLOT_WAIT_SECONDS
-    while True:
-        woken: asyncio.Future[None] = loop.create_future()
-        entry = (loop, woken)
+    woken: asyncio.Future[None] = loop.create_future()
+    entry = (loop, woken)
+    with _waiting_lock:
+        if slots not in _waiting and slots.acquire(blocking=False):
+            return True
+        _waiting.setdefault(slots, deque()).append(entry)
+    try:
+        async with asyncio.timeout(REQUEST_SLOT_WAIT_SECONDS):
+            await woken
+        return True
+    except TimeoutError:
+        # A slot handed over just as the wait ran out belongs to this request; refusing would lose it.
+        return woken.done() and not woken.cancelled()
+    except BaseException:
+        if woken.done() and not woken.cancelled():
+            # Handed a slot, then cancelled before it could use it: the slot goes to the next waiting request.
+            _free(slots)
+        raise
+    finally:
         with _waiting_lock:
-            _waiting.setdefault(slots, deque()).append(entry)
-        try:
-            # A slot freed before this request was listed woke nobody, so look again once listed.
-            if slots.acquire(blocking=False):
-                return True
-            remaining = deadline - loop.time()
-            if remaining <= 0:
-                return False
-            try:
-                await asyncio.wait_for(woken, remaining)
-            except TimeoutError:
-                return slots.acquire(blocking=False)
-        except BaseException:
-            if woken.done() and not woken.cancelled():
-                # Woken, then cancelled before it took the slot: the wake-up belongs to the next waiting request.
-                _wake(slots)
-            raise
-        finally:
-            with _waiting_lock:
-                queue = _waiting.get(slots)
-                if queue is not None and entry in queue:
-                    queue.remove(entry)
-                if queue is not None and not queue:
+            queue = _waiting.get(slots)
+            if queue is not None and entry in queue:
+                queue.remove(entry)
+                if not queue:
                     del _waiting[slots]
 
 
@@ -136,8 +148,7 @@ class _Lease:
     def release(self) -> None:
         if not self.owned and not self.running and not self.released:
             self.released = True
-            self.slots.release()
-            _wake(self.slots)
+            _free(self.slots)
 
 
 _request_lease: ContextVar[_Lease | None] = ContextVar("weave_request_execution", default=None)

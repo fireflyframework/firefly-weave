@@ -334,6 +334,8 @@ class SlotWatch:
 
         self.refused = asyncio.Event()
         watch = self
+        # A wait far longer than the test, so a slow host never turns the expected admission into a refusal.
+        monkeypatch.setattr(execution, "REQUEST_SLOT_WAIT_SECONDS", 30, raising=False)
 
         class Watched(threading.BoundedSemaphore):
             def acquire(self, blocking=True, timeout=None):

@@ -220,9 +220,11 @@ authorize further ordinary execution. Serialized byte limits are separate from
 process memory and database disk usage.
 
 **Request execution.** Each API process works on at most two requests that
-change something and four that read or stop something (`GET` requests, health
-and readiness probes included, and paths that end in `/cancel`, `/disable`, or
-`/revoke`) at a time. A request that finds every slot of its kind busy waits up
+change something and four that read or stop something at a time. Reads and
+stops are `GET`, `HEAD`, and `OPTIONS` requests (health and readiness probes
+included), paths that end in `/cancel`, `/disable`, or `/revoke`, and
+`/operations/compatibility` requests; debug requests always count as changes.
+A request that finds every slot of its kind busy waits, in arrival order, up
 to 250 ms for one to free, then answers 429 `WV-OPERATION-CAPACITY` with
 `Retry-After: 1`. These limits have no setting.
 
