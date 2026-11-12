@@ -122,11 +122,11 @@ SPDX-License-Identifier: Apache-2.0
 - When Weave AI proposes a change to an existing AI agent step, it keeps every
   safeguard the proposal leaves out, also when the proposal renames the step or
   a tool: a tool's fixed arguments, approval and person, the review's expiry and
-  distinct reviewer, and the step's limits, memory and error handling. A
-  safeguard Weave AI changes on purpose, such as a looser approval, shows in the
-  proposal you review before you apply it. Weave AI can also ask that a
-  different person than the run's starter approves an agent's data-changing
-  calls (`distinctReviewer`).
+  distinct reviewer, and the step's limits, memory and error handling. Weave AI
+  never loosens a safeguard; a change it proposes that would loosen one is not
+  applied and the answer says so. Weave AI can also ask that a different person
+  than the run's starter approves an agent's data-changing calls
+  (`distinctReviewer`).
 
 ## 0.1.0a17
 

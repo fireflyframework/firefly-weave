@@ -270,6 +270,25 @@ def test_an_existing_agent_is_edited_from_a_schema_that_never_tells_weave_ai_to_
     assert sent_tokens(shaped, "Rename the support step") <= budget == 15360
 
 
+def test_an_agent_only_an_attached_draft_has_is_edited_from_the_open_schema():
+    from firefly_weave.contracts.schema_export import export_schemas
+
+    attached = {"kind": "draft", "id": "d", "data": {"document": agent_draft(), "revision": 3}}
+    shaped = shape(
+        "standard",
+        input_budget("standard", 16384, 1024),
+        message="Rename the support step",
+        history=[],
+        resources=[RUN, attached],
+        draft=("yaml", draft(5)),
+        selected_step=None,
+        schemas={"workflow": export_schemas()["workflow"]},
+    )
+
+    step = shaped.context["authoringSchemas"]["workflow"]["$defs"]["AgentStep"]
+    assert "additionalProperties" not in step and "limits" not in step["properties"]
+
+
 def test_a_new_agent_is_written_from_the_closed_compact_schema():
     shaped, _ = request_for("standard", yaml.safe_load(draft(5)))
 
