@@ -589,13 +589,13 @@ def _run_create(state: dict[str, Any], provider: str, command: list[str], env: d
         raise local.PlatformError(f"Creating the cluster was interrupted. {left}") from None
 
 
-def _create(state: dict[str, Any], directory: Path, provider: str, cluster: str, context: str) -> None:
+def _create(state: dict[str, Any], directory: Path, tool: Path, provider: str, cluster: str, context: str) -> None:
     if provider == "kind":
         with _private_file(directory, KIND_CONFIG) as config:
             _run_create(
                 state,
                 provider,
-                [str(tools.tool(directory, "kind")), "create", "cluster", "--name", cluster]
+                [str(tool), "create", "cluster", "--name", cluster]
                 + ["--image", tools.KIND_NODE_IMAGE, "--config", str(config)],
                 _tool_environment(context, KIND_EXPERIMENTAL_DOCKER_NETWORK=cluster_network(provider, cluster)),
             )
@@ -607,16 +607,15 @@ def _create(state: dict[str, Any], directory: Path, provider: str, cluster: str,
         _run_create(
             state,
             provider,
-            [str(tools.tool(directory, "k3d")), "cluster", "create", cluster, "--image", tools.K3S_IMAGE]
+            [str(tool), "cluster", "create", cluster, "--image", tools.K3S_IMAGE]
             + ["--servers", "1", "--agents", "0", "--api-port", f"127.0.0.1:{free_port()}", *disabled]
             + ["--registry-config", str(registries)],
             _tool_environment(context, DOCKER_HOST=host),
         )
 
 
-def _wait_ready(state: dict[str, Any], directory: Path, provider: str, cluster: str, context: str) -> None:
+def _wait_ready(state: dict[str, Any], kubectl: Path, provider: str, cluster: str, context: str) -> None:
     """Wait from this computer, through the context the tool wrote, until every node is Ready, with a deadline."""
-    kubectl = str(tools.tool(directory, "kubectl"))
     deadline = clock() + READY_SECONDS
     while True:
         wait = max(1, min(60, int(deadline - clock())))
@@ -624,7 +623,7 @@ def _wait_ready(state: dict[str, Any], directory: Path, provider: str, cluster: 
             local._run(
                 state,
                 "cluster-ready",
-                [kubectl, "--context", f"{provider}-{cluster}", "wait", "--for=condition=Ready", "node", "--all"]
+                [str(kubectl), "--context", f"{provider}-{cluster}", "wait", "--for=condition=Ready", "node", "--all"]
                 + [f"--timeout={wait}s"],
                 env=_tool_environment(context),
                 timeout=wait + 30,
@@ -687,11 +686,14 @@ def create_cluster(
             "network of its own. Nothing was changed."
         )
     _check_disk(state, context)
+    # Fetch and verify every tool first: a download or checksum failure must never come after the cluster exists,
+    # where the cleanup below would delete the cluster this call just made.
+    tool, kubectl = tools.tool(directory, provider), tools.tool(directory, "kubectl")
     # A failed or interrupted create deletes nothing and says how to remove what the tool left; only a cluster this
     # call created is deleted here.
-    _create(state, directory, provider, cluster, context)
+    _create(state, directory, tool, provider, cluster, context)
     try:
-        _wait_ready(state, directory, provider, cluster, context)
+        _wait_ready(state, kubectl, provider, cluster, context)
     except BaseException as error:
         # Never leave a half-ready cluster on the shared Docker VM.
         reason = (

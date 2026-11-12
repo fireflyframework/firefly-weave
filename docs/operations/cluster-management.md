@@ -430,8 +430,8 @@ The command:
 - uses only a Docker context on this computer's Unix socket, never a remote or
   shared engine, and `delete` follows the same rule;
 - downloads only the chosen provider's pinned tool (kind or k3d) and kubectl
-  into the installation directory, and checks each one's SHA-256 before it
-  runs it;
+  into the installation directory, and checks each one's SHA-256, before it
+  creates anything;
 - creates the cluster on a Docker network of its own (`weave-kind-NAME` or
   `k3d-NAME`) and refuses when a network of that name already exists, so the
   platform never shares a network with another cluster;

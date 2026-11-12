@@ -255,6 +255,22 @@ def test_create_refuses_a_cluster_whose_network_already_exists(world, provider, 
     assert not calls(commands, "create") and not calls(commands, "delete")
 
 
+@pytest.mark.parametrize("provider", ["kind", "k3d"])
+def test_every_tool_is_fetched_before_the_cluster_is_created(world, monkeypatch, provider):
+    """A download or checksum failure after the cluster exists would delete the cluster this run just made."""
+    directory, commands, _ = world
+
+    def tool(path, name):
+        if name == "kubectl":
+            raise PlatformError("kubectl couldn't be downloaded; nothing was kept. Check the network, then try again.")
+        return tools._path(path, name)
+
+    monkeypatch.setattr(clusters.tools, "tool", tool)
+    result = create(directory, provider)
+    assert result.exit_code != 0 and "kubectl couldn't be downloaded; nothing was kept." in result.output
+    assert not calls(commands, "create") and not calls(commands, "delete")
+
+
 REMOTE = (
     "Docker context colima-weave-tests doesn't use a local Unix socket; test clusters run only on this computer's "
     "Docker."
