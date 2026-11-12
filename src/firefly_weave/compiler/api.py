@@ -18,7 +18,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import threading
+from collections import OrderedDict
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
 from typing import Literal, cast
@@ -32,6 +35,7 @@ from firefly_weave.compiler.ir import ArtifactEnvelope, require_supported_ir
 from firefly_weave.compiler.lowering import DEFAULT_ARTIFACT_LIMITS, ArtifactLimits, ConstructionBudget, lower
 from firefly_weave.compiler.parser import ParseFailure, parse_source
 from firefly_weave.compiler.schema_profile import DEFAULT_CONTRACT_LIMITS, SchemaLimits
+from firefly_weave.contracts import language_features
 from firefly_weave.contracts.diagnostics import Diagnostic, SourceRange
 from firefly_weave.contracts.limits import Limits
 from firefly_weave.contracts.values import JsonObject, JsonValue
@@ -325,6 +329,15 @@ def validate_authoring(
     )
 
 
+# Verified artifacts kept for import_artifact, least recently used first. One artifact may hold up to 32 MiB, so the
+# kept ones are bounded by their bytes as well as by their number.
+IMPORTED_ARTIFACTS = 64
+IMPORTED_BYTES = 64 * 1024 * 1024
+type _ImportKey = tuple[str, bytes, ArtifactLimits, frozenset[str]]
+_imported: OrderedDict[_ImportKey, CompiledArtifact] = OrderedDict()
+_imported_lock = threading.Lock()
+
+
 def import_artifact(
     source: str | bytes | JsonObject,
     *,
@@ -337,7 +350,60 @@ def import_artifact(
     (``ir_unsupported``) before strict validation. Hashes provide integrity, not provenance. Publication must
     recompile trusted source. Source hashes/maps/diagnostics are an untrusted author envelope, outside executable
     identity.
+
+    A verified artifact is kept for the process and returned again, unchecked, only for the same content under the
+    same limits and language features (the advertised ones at the time of the call when ``features`` is omitted).
+    One change to a run reads its stored artifact in several checks while it holds the project's operation lock;
+    verifying it each time kept that lock long enough for another change to the project to be refused. A refused
+    artifact is never kept, so it is checked, and refused, every time.
     """
+    key = _import_key(source, limits, features)
+    if key is not None:
+        with _imported_lock:
+            if (kept := _imported.get(key)) is not None:
+                _imported.move_to_end(key)
+                return kept
+    artifact = _verified_artifact(source, limits, features)
+    if key is not None:
+        with _imported_lock:
+            _imported[key] = artifact
+            _imported.move_to_end(key)
+            while len(_imported) > IMPORTED_ARTIFACTS or (
+                sum(len(kept.to_bytes()) for kept in _imported.values()) > IMPORTED_BYTES
+            ):
+                _imported.popitem(last=False)
+    return artifact
+
+
+def _import_key(
+    source: str | bytes | JsonObject, limits: ArtifactLimits, features: Collection[str] | None
+) -> _ImportKey | None:
+    """What an import's outcome depends on: the content's SHA-256, its form, the limits and the language features.
+
+    None for a value that is not plain JSON (a key that is not a string, a tuple, an unserializable value): it has no
+    single text, so it is verified without being kept.
+    """
+    if isinstance(source, str | bytes):
+        form = type(source).__name__
+        content = source.encode("utf-8", "surrogatepass") if isinstance(source, str) else source
+    else:
+        try:
+            text = json.dumps(source, sort_keys=True, separators=(",", ":"), allow_nan=False)
+            if json.loads(text) != source:
+                return None
+        except (TypeError, ValueError, RecursionError):
+            return None
+        form, content = "object", text.encode()
+    try:
+        listed = frozenset(language_features.ADVERTISED_FEATURES if features is None else features)
+    except TypeError:
+        return None
+    return form, hashlib.sha256(content).digest(), limits, listed
+
+
+def _verified_artifact(
+    source: str | bytes | JsonObject, limits: ArtifactLimits, features: Collection[str] | None
+) -> CompiledArtifact:
     value = parse_source(
         source, format="object" if isinstance(source, dict) else "json", limits=limits.value_limits()
     ).value
