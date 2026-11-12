@@ -293,6 +293,27 @@ def test_an_agent_tool_pinned_to_an_ai_task_is_refused_at_activation(task):
     assert (refused.value.status, refused.value.code) == (422, "WV-ACTIVATION-AI-RESERVED")
 
 
+@pytest.mark.parametrize("where", ["tool", "step"])
+def test_a_pinned_document_activation_cannot_read_is_refused_rather_than_assumed_safe(where):
+    ir = agent_ir()
+    reserved()(ir)
+    agent = next(node for node in ir.graph.nodes if isinstance(node, AgentNode))
+    # A digest the IR carries no document for: what it runs can't be checked, so it may be the model turn.
+    unknown = "sha256:" + "1" * 64
+    if where == "tool":
+        tool = AgentToolIR.model_construct(name="lookup", target="action", dependency=unknown)
+        nodes = [agent.model_copy(update={"tools": [tool]}) if node is agent else node for node in ir.graph.nodes]
+    else:
+        nodes = [
+            *ir.graph.nodes,
+            ActionNode.model_construct(id="act", dependency=unknown, connection="ai", llm_profile=None),
+        ]
+
+    with pytest.raises(CatalogError) as refused:
+        reserved()(with_nodes(ir, nodes))
+    assert (refused.value.status, refused.value.code) == (422, "WV-ACTIVATION-AI-RESERVED")
+
+
 # Activation: real definition, connection and authorization services over an in-memory environment.
 
 

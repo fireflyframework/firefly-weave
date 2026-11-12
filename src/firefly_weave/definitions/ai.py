@@ -70,6 +70,9 @@ def validate_ai_reserved(ir: WorkflowIR) -> None:
 
     def spec_of(dependency: object) -> JsonObject:
         """The pinned document's spec; a person's tool pins none, and a workflow's spec runs no task itself."""
+        if isinstance(dependency, str) and dependency not in documents:
+            # What a pin without its document runs can't be checked, so it may be the model turn.
+            raise CatalogError(422, "WV-ACTIVATION-AI-RESERVED", "Only an AI agent step runs the platform's model turn")
         spec = documents.get(dependency, {}).get("spec") if isinstance(dependency, str) else None
         return spec if isinstance(spec, dict) else {}
 
