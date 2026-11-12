@@ -25,15 +25,16 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def script(name):
-    spec = importlib.util.spec_from_file_location(name, ROOT / "scripts" / f"{name}.py")
+@pytest.fixture
+def journeys(monkeypatch):
+    """The acceptance journeys script, registered in sys.modules only for the test that loads it."""
+    spec = importlib.util.spec_from_file_location("acceptance_journeys", ROOT / "scripts/acceptance_journeys.py")
     module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
+    monkeypatch.setitem(sys.modules, "acceptance_journeys", module)
     spec.loader.exec_module(module)
     return module
 
 
-journeys = script("acceptance_journeys")
 BASE = """
 version = 1
 
@@ -52,18 +53,18 @@ kind_node = "kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a26593
 """
 
 
-def load(tmp_path, text):
+def load(journeys, tmp_path, text):
     path = tmp_path / "versions.toml"
     path.write_text(text)
     return journeys.load_versions(path)
 
 
-def test_a_file_without_a_cluster_table_still_loads(tmp_path):
-    assert "cluster" not in load(tmp_path, BASE)
+def test_a_file_without_a_cluster_table_still_loads(journeys, tmp_path):
+    assert "cluster" not in load(journeys, tmp_path, BASE)
 
 
-def test_a_cluster_table_of_tools_and_pinned_images_loads(tmp_path):
-    cluster = load(tmp_path, BASE + CLUSTER)["cluster"]
+def test_a_cluster_table_of_tools_and_pinned_images_loads(journeys, tmp_path):
+    cluster = load(journeys, tmp_path, BASE + CLUSTER)["cluster"]
     assert cluster["tools"] == {"kind": "v0.33.0"}
     assert cluster["images"]["kind_node"].startswith("kindest/node:v1.37.0@sha256:")
 
@@ -76,11 +77,11 @@ def test_a_cluster_table_of_tools_and_pinned_images_loads(tmp_path):
         (CLUSTER + '\n[cluster.extra]\nname = "x"\n', "cluster"),
     ],
 )
-def test_a_cluster_table_is_checked_as_strictly_as_the_others(tmp_path, text, message):
+def test_a_cluster_table_is_checked_as_strictly_as_the_others(journeys, tmp_path, text, message):
     with pytest.raises(journeys.JourneysInvalid, match=message):
-        load(tmp_path, BASE + text)
+        load(journeys, tmp_path, BASE + text)
 
 
-def test_an_unknown_table_is_still_refused(tmp_path):
+def test_an_unknown_table_is_still_refused(journeys, tmp_path):
     with pytest.raises(journeys.JourneysInvalid, match="version = 1"):
-        load(tmp_path, BASE + '\n[clusters]\nkind = "v0.33.0"\n')
+        load(journeys, tmp_path, BASE + '\n[clusters]\nkind = "v0.33.0"\n')

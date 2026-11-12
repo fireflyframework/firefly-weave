@@ -16,10 +16,11 @@
 
 """kind, k3d and kubectl for local clusters, pinned per platform and kept only when their checksum matches.
 
-Weave fetches each tool over HTTPS on first use into ``<platform directory>/tools/<tool>-<version>``, readable only
-by its owner, so Docker is the only thing a developer installs and every run uses the same versions. A checksum the download doesn't match,
-a redirect away from HTTPS, or a file over the size cap keeps nothing. The versions match the clusters' Kubernetes
-minor version, and ``tests/acceptance/versions.toml`` mirrors them.
+Weave fetches each tool over HTTPS on first use into ``<platform directory>/tools/<tool>-<version>``, which only
+its owner can read and run. Docker is then the only thing a developer installs, and every run uses the same
+versions. A checksum the download doesn't match, a redirect away from HTTPS, or a file over the size cap keeps
+nothing. The versions match the clusters' Kubernetes minor version, and ``tests/acceptance/versions.toml`` mirrors
+them.
 """
 
 from __future__ import annotations
@@ -179,6 +180,8 @@ def tool(directory: Path, name: str, *, transport: httpx.BaseTransport | None = 
     if _verified(path, digest):
         return path
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    # mkdir leaves an existing folder's mode as it is.
+    os.chmod(path.parent, 0o700)
     label = f"{name} {pin.version}"
     try:
         with httpx.Client(timeout=60, follow_redirects=False, transport=transport) as client:

@@ -125,10 +125,10 @@ def test_every_pinned_file_names_an_https_url_and_a_checksum():
         assert re.fullmatch(r"[a-z0-9./-]+:v1\.37\.[0-9]+(-k3s1)?@sha256:[0-9a-f]{64}", image)
 
 
-def test_versions_toml_agrees_with_the_pinned_tools_and_images():
+def test_versions_toml_agrees_with_the_pinned_tools_and_images(monkeypatch):
     spec = importlib.util.spec_from_file_location("acceptance_journeys", ROOT / "scripts/acceptance_journeys.py")
     journeys = importlib.util.module_from_spec(spec)
-    sys.modules["acceptance_journeys"] = journeys
+    monkeypatch.setitem(sys.modules, "acceptance_journeys", journeys)
     spec.loader.exec_module(journeys)
     cluster = journeys.load_versions(ROOT / "tests/acceptance/versions.toml")["cluster"]
     assert cluster["tools"] == {name: pin.version for name, pin in tools.TOOLS.items()}
@@ -144,3 +144,12 @@ def test_the_runner_image_takes_kubectl_from_the_pinned_checksums():
         assert dockerfile.count(line) == 1, arch
     assert "COPY --from=kubectl --chmod=0755 /kubectl /usr/local/bin/kubectl" in dockerfile
     assert 'RUN ["/usr/local/bin/kubectl", "version", "--client"]' in dockerfile
+
+
+def test_an_existing_tools_folder_is_made_private(tmp_path, pinned):
+    transport, _ = pinned
+    (tmp_path / "tools").mkdir(mode=0o755)
+    (tmp_path / "tools").chmod(0o755)
+    tools.tool(tmp_path, "kubectl", transport=transport)
+    if os.name != "nt":
+        assert (tmp_path / "tools").stat().st_mode & 0o777 == 0o700
