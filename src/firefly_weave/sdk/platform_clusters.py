@@ -580,28 +580,58 @@ def _member(members: dict[str, tuple[str, str]], short: str) -> tuple[str, str] 
     return found[0] if len(found) == 1 else None
 
 
-def _join(connection: _Connection, key: str) -> None:
-    """Join the API's network namespace (the keycloak container) and the registry to the cluster network, then
-    allow only the cluster's own nodes and those two containers on it."""
-    found = connection.found
-    joined = {"keycloak": "weave-platform", "registry": "weave-registry"}
-    ids = {service: _platform_container(connection, service) for service in joined}
-    _, members = _network_view(connection)
-    for service, alias in joined.items():
-        if _member(members, ids[service]) is None:
-            local._run(
-                connection.state,
-                "cluster-network-join",
-                [*_docker(connection), "network", "connect", "--alias", alias, found.network, ids[service]],
-            )
-    subnet, members = _network_view(connection)
-    platform = {service: _member(members, ids[service]) for service in joined}
-    if any(item is None or not item[1] for item in platform.values()):
-        raise local.PlatformError("The platform's containers didn't join the cluster's network; nothing was changed.")
-    allowed = set(found.nodes) | {item[0] for item in platform.values() if item is not None}
-    if any(name not in allowed for name, _ in members.values()):
+def _only_ours(connection: _Connection, ids: dict[str, str], members: dict[str, tuple[str, str]]) -> None:
+    """Refuse a cluster network that holds any container but the cluster's nodes and the platform's own."""
+    platform = tuple(ids.values())
+    if any(name not in connection.found.nodes and not key.startswith(platform) for key, (name, _) in members.items()):
         raise local.PlatformError(OTHER_CONTAINERS)
+
+
+def _leave(connection: _Connection, containers: list[str], error: local.PlatformError) -> local.PlatformError:
+    """Take the platform's containers this call joined off the cluster network again; the error to raise, which
+    names any container that couldn't leave and the command that removes it."""
+    network, stayed = connection.found.network, []
+    for container in containers:
+        command = [*_docker(connection), "network", "disconnect", network, container]
+        try:
+            local._run(connection.state, "cluster-network-leave", command)
+        except local.PlatformError:
+            stayed.append(
+                f" {network} still holds the platform's container {container}; remove it with {' '.join(command)}."
+            )
+    return local.PlatformError(f"{error}{''.join(stayed)}") if stayed else error
+
+
+def _join(connection: _Connection, key: str) -> None:
+    """Join the API's network namespace (the keycloak container) and the registry to the cluster network, only while
+    it holds nothing but the cluster's own nodes and those two containers. The rule is checked before the join and
+    again after it; when the second check fails, the containers this call joined leave the network again."""
+    found = connection.found
+    services = {"keycloak": "weave-platform", "registry": "weave-registry"}
+    ids = {service: _platform_container(connection, service) for service in services}
+    subnet, members = _network_view(connection)
+    _only_ours(connection, ids, members)
     local._validate_subnet(subnet)
+    joined: list[str] = []
+    try:
+        for service, alias in services.items():
+            if _member(members, ids[service]) is None:
+                local._run(
+                    connection.state,
+                    "cluster-network-join",
+                    [*_docker(connection), "network", "connect", "--alias", alias, found.network, ids[service]],
+                )
+                joined.append(ids[service])
+        subnet, members = _network_view(connection)
+        platform = {service: _member(members, ids[service]) for service in services}
+        if any(item is None or not item[1] for item in platform.values()):
+            raise local.PlatformError(
+                "The platform's containers didn't join the cluster's network; nothing was changed."
+            )
+        _only_ours(connection, ids, members)
+        local._validate_subnet(subnet)
+    except local.PlatformError as error:
+        raise _leave(connection, joined, error) from None
     api, registry = (item[1] for item in platform.values() if item is not None)
     value = receipt(Path(connection.state["directory"]))
     entry = value["clusters"].get(key)

@@ -534,6 +534,7 @@ def world(platform, monkeypatch):
         commands.answer(["ps", "--quiet", f"label=com.docker.compose.service={service}"], short + "\n")
     commands.answer(["network", "inspect", "weave-kind-weave-test"], cluster.network)
     commands.answer(["network", "connect"], lambda call: cluster.joined.add(call.argv[-1]) or "")
+    commands.answer(["network", "disconnect"], lambda call: cluster.joined.discard(call.argv[-1]) or "")
     commands.answer(["exec", "mkdir"], "")
     commands.answer(["exec", "-i", "cp", "/dev/stdin"], "")
     commands.answer(["tag", RUNNER_ID], "")
@@ -707,13 +708,63 @@ def test_the_clusters_private_origins_are_recorded_before_the_objects_that_carry
     assert "cluster-apply-shared" not in [call.name for call in commands.calls[:at]]
 
 
+def network_changes(commands, since=0):
+    """Each docker network connect or disconnect: (verb, container)."""
+    return [
+        (call.argv[4], call.argv[-1])
+        for call in commands.calls[since:]
+        if call.argv[3:5] in (["network", "connect"], ["network", "disconnect"])
+    ]
+
+
 def test_only_the_clusters_nodes_and_the_platforms_containers_may_share_its_network(world):
+    """The rule holds as a state, not only as a refusal: the platform's keycloak (whose network namespace the API
+    shares) and registry never join a network that holds another container."""
     _, commands, _, cluster = world
     cluster.extra = ["someone-else"]
     with pytest.raises(PlatformError) as refused:
         connect(world)
     assert str(refused.value) == clusters.OTHER_CONTAINERS
+    assert network_changes(commands) == []
     assert not [call for call in commands.calls if "apply" in call.argv]
+
+
+def test_a_container_that_appears_during_the_join_makes_the_platform_leave_what_this_call_joined(world):
+    _, commands, _, cluster = world
+    # keycloak is on the network from an earlier connect; only the registry joins now.
+    cluster.joined.add(KEYCLOAK)
+
+    def join(call):
+        cluster.joined.add(call.argv[-1])
+        cluster.extra = ["someone-else"]
+        return ""
+
+    commands.answer(["network", "connect"], join)
+    with pytest.raises(PlatformError) as refused:
+        connect(world)
+    assert str(refused.value) == clusters.OTHER_CONTAINERS
+    assert network_changes(commands) == [("connect", REGISTRY), ("disconnect", REGISTRY)]
+    assert cluster.joined == {KEYCLOAK}
+    assert not [call for call in commands.calls if "apply" in call.argv]
+
+
+def test_a_container_that_cant_leave_the_network_is_named_with_the_command_that_removes_it(world):
+    _, commands, _, cluster = world
+
+    def join(call):
+        cluster.joined.add(call.argv[-1])
+        cluster.extra = ["someone-else"]
+        return ""
+
+    commands.answer(["network", "connect"], join)
+    commands.answer(["network", "disconnect", KEYCLOAK], PlatformError("Docker refused."))
+    with pytest.raises(PlatformError) as refused:
+        connect(world)
+    assert str(refused.value) == (
+        f"{clusters.OTHER_CONTAINERS} weave-kind-weave-test still holds the platform's container {KEYCLOAK}; remove "
+        f"it with docker --context colima-weave-tests network disconnect weave-kind-weave-test {KEYCLOAK}."
+    )
+    assert cluster.joined == {KEYCLOAK}
 
 
 def test_a_namespace_of_another_installation_is_refused_before_anything_is_applied_to_it(world):
