@@ -27,7 +27,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 from uuid import NAMESPACE_URL, UUID, uuid5
 
-from firefly_weave.contracts.instance_keys import instance_view
+from firefly_weave.contracts.instance_keys import instance_view, node_of
 from firefly_weave.contracts.transactions import TRANSACTION_STATE_ORDER, split_phase
 from firefly_weave.contracts.values import JsonObject
 from firefly_weave.operations.facts import task_fact_update
@@ -52,25 +52,41 @@ def spends_reserve(event: RuntimeEvent, result: Transition) -> bool:
     transactions first, a transaction's own deadlines, results of confirms, cancels and undos, and results of steps
     still in flight while their transaction goes back. A transition that ends the run is a stop already.
     """
-    from firefly_weave.runtime.transactions import split_deadline
-
     state = result.state
     if state.status in {"succeeded", "failed", "cancelled", "timed_out"} or state.unavailable:
         return False
     if event.type in {"cancelled", "timed_out"}:
         return state.ending is not None
+    return settling(event, result) and only_settlement(result)
+
+
+def settlement_ends_the_run(event: RuntimeEvent, result: Transition) -> bool:
+    """Whether settlement work ended the run: the last cancel or undo of a run that goes back, or the confirm that
+    finishes its last transaction. Ending a run is a stop, so it spends the reserve through the stop's own context and
+    a run at a full quota still ends; a cancel or a timeout opens that context where it is accepted."""
+    state = result.state
+    if state.status not in {"succeeded", "failed", "cancelled", "timed_out"} or state.unavailable:
+        return False
+    return event.type not in {"cancelled", "timed_out"} and settling(event, result) and only_settlement(result)
+
+
+def settling(event: RuntimeEvent, result: Transition) -> bool:
+    """Whether an event is a result of settlement work: a confirm, cancel or undo, a transaction's own deadline, or a
+    step still in flight while its transaction goes back."""
+    from firefly_weave.runtime.transactions import split_deadline
+
     name = event.data.get("node_id")
     if not isinstance(name, str):
         return False
     try:
-        settling = split_phase(name) is not None or split_deadline(name) is not None
+        if split_phase(name) is not None or split_deadline(name) is not None:
+            return True
     except ValueError:
         return False
-    settling = settling or any(
+    return any(
         record.rollback and any(item.key == name for item in record.participants)
-        for record in state.transactions.values()
+        for record in result.state.transactions.values()
     )
-    return settling and only_settlement(result)
 
 
 def ignored_after_person(event: RuntimeEvent, result: Transition) -> bool:
@@ -101,6 +117,8 @@ def only_settlement(result: Transition) -> bool:
     state = result.state
     owned = {item.key for record in state.transactions.values() for item in record.participants}
     owned |= {f"@join:{key}" for key in state.transactions}
+    # The transaction's body is its first branch, at the transaction's own instance; an error path is forward work.
+    owned |= {f"@branch:{node_of(key)}:0{key[len(node_of(key)) :]}" for key in state.transactions}
     for command in result.commands:
         if isinstance(command, (TaskIntent, CallIntent)) and split_phase(command.node_id) is None:
             return False

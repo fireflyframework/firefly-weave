@@ -18,7 +18,7 @@
 
 from transaction_support import Run, add, compiled, hold, submit, transaction
 
-from firefly_weave.runtime.settlement import spends_reserve
+from firefly_weave.runtime.settlement import settlement_ends_the_run, spends_reserve
 
 
 def flow() -> Run:
@@ -84,3 +84,34 @@ def test_an_undo_that_only_moves_the_rollback_on_spends_the_reserve():
     assert spends_reserve(*last(run))
     run.done("add#undo", {})
     assert spends_reserve(*last(run))
+
+
+def test_settlement_work_whose_result_ends_the_run_is_a_stop():
+    # The last cancel of a run that goes back ends it, as a stop does: it spends the reserve through the stop's own
+    # context, so a run at a full quota still ends.
+    run = flow()
+    run.send("cancelled", reason="stop")
+    run.done("add", {"id": "a-1"})
+    run.done("add#undo", {})
+    assert not settlement_ends_the_run(*last(run))
+    run.done("hold#cancel", {})
+    assert run.state.status == "cancelled" and settlement_ends_the_run(*last(run))
+    assert not spends_reserve(*last(run))
+
+
+def test_forward_work_that_ends_the_run_is_not_settlement_work():
+    after = {"id": "after", "kind": "transform", "value": {"ref": "/steps/move/output"}}
+    run = Run(compiled([transaction([hold(), add(), submit()]), after]))
+    run.start()
+    run.done("hold", {"holdId": "h-1"})
+    run.done("add", {"id": "a-1"})
+    run.done("submit", {"orderId": "o-1"})
+    run.done("hold#confirm", {})
+    assert run.state.status == "succeeded" and not settlement_ends_the_run(*last(run))
+    alone = Run(compiled([transaction([hold(), add(), submit()])]))
+    alone.start()
+    alone.done("hold", {"holdId": "h-1"})
+    alone.done("add", {"id": "a-1"})
+    alone.done("submit", {"orderId": "o-1"})
+    alone.done("hold#confirm", {})
+    assert alone.state.status == "succeeded" and settlement_ends_the_run(*last(alone))
