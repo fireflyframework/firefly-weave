@@ -118,7 +118,9 @@ SPDX-License-Identifier: Apache-2.0
   with the code the model read, `rejected` or `expired` with the review), and
   the final answer. Arguments, outputs and the answer are classified by the
   tool's and the step's schemas. A value marked secret is left out with its
-  reason, and a tool name the model wrote is shown escaped.
+  reason, and a tool name the model wrote is shown escaped. Values past a
+  page's 8 MiB are left out with `resource_limit`, so an activation of any size
+  can be read.
 - When Weave AI proposes a change to an existing AI agent step, it keeps every
   safeguard the proposal leaves out, also when the proposal renames the step or
   a tool: a tool's fixed arguments, approval and person, the review's expiry and
