@@ -416,7 +416,11 @@ def untitled(schema: JsonValue) -> JsonValue:
 _AGENT_FIELDS: Final = ("id", "kind", "uses", "profile", "connection", "instructions", "prompt", "context")
 _ASSIGNMENT: Final[JsonObject] = {
     "type": "object",
-    "properties": {"assignment": {"$ref": "#/$defs/ResourceName"}},
+    "properties": {
+        "assignment": {"$ref": "#/$defs/ResourceName"},
+        # True when the person who started the run must not answer the review.
+        "distinctReviewer": {"type": "boolean", "default": False},
+    },
     "required": ["assignment"],
     "additionalProperties": False,
 }
@@ -472,7 +476,7 @@ def runnable_workflow_schema(schema: JsonValue, features: Collection[str] = ADVE
     definitions = cast(JsonObject, result["$defs"])
     if isinstance(definitions.get("AgentStep"), dict):
         definitions["AgentStep"] = compact_agent(cast(JsonObject, definitions["AgentStep"]))
-        # Who reviews a tool's calls, the one part of a review a first agent needs; its expiry keeps its default.
+        # Who reviews a tool's calls and whether the run's starter may; the review's expiry keeps its default.
         definitions["AgentReview"] = _ASSIGNMENT
     step = definitions.get("Step")
     if isinstance(step, dict) and isinstance(step.get("oneOf"), list):

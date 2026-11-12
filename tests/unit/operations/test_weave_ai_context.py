@@ -210,6 +210,20 @@ def test_weave_ai_writes_agents_from_a_compact_schema_the_compiler_accepts():
     assert set(tool["properties"]) <= set(workflow["$defs"]["AgentTool"]["properties"])
 
 
+def test_weave_ai_can_ask_for_a_different_reviewer_and_by_default_does_not():
+    from firefly_weave.contracts.definitions import AgentReview
+    from firefly_weave.contracts.schema_export import export_schemas
+
+    workflow = export_schemas()["workflow"]
+    review = runnable_workflow_schema(workflow)["$defs"]["AgentReview"]
+
+    # Who reviews, and whether the person who started the run may answer; the review's expiry keeps its default.
+    assert set(review["properties"]) == {"assignment", "distinctReviewer"} and review["required"] == ["assignment"]
+    assert review["properties"]["distinctReviewer"] == {"type": "boolean", "default": False}
+    assert set(review["properties"]) <= set(workflow["$defs"]["AgentReview"]["properties"])
+    assert AgentReview.model_validate({"assignment": "support"}).distinct_reviewer is False
+
+
 def test_a_definition_reached_through_a_property_named_like_a_keyword_is_kept():
     # "default" is a property name here, not the keyword, so the definition under it is still in use.
     schema = {
