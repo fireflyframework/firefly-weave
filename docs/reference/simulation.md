@@ -247,7 +247,8 @@ implementation.
 | `cancel` | `skip_undo` (optional) | Queue a cancel of the simulated run; its open transactions are undone first |
 
 `signal`, `human_decision`, `advance_time`, and `cancel` return the current
-view without advancing the graph. Follow them with `next` or `continue`. The CLI's `--help`
+view without advancing the graph. Follow them with `next` or `continue`. The
+CLI's `--help`
 lists every command except `human_decision`, which works the same way.
 
 **Mock keys.** Use `action:EXACT_REFERENCE`, such as
@@ -566,7 +567,9 @@ come:
   transaction is in doubt with `WV-TXN-SETTLE-TIMEOUT`;
 - a transaction whose step that can't be undone is pending stays `deciding`,
   and a cancel or a failure waits for that step;
-- a reservation's hold runs out, and the transaction is cancelled.
+- a reservation's hold runs out while the body waits, such as at a wait step,
+  and the transaction is cancelled. With a step still pending, the rollback
+  waits for it, as in the first point.
 
 **Resolve a transaction in doubt.** The `resolve` command applies a person's
 resolution. It changes only the session: it needs the session's own access, not
