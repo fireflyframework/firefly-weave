@@ -18,7 +18,7 @@
 """Bounded mock facts around the shared resumable reducer; no server dependencies."""
 
 import json
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import cast
@@ -45,6 +45,7 @@ from firefly_weave.contracts.instance_keys import InvalidInstanceKey, node_of, s
 from firefly_weave.contracts.transactions import PHASE_SEGMENTS, split_phase
 from firefly_weave.contracts.values import JsonObject, JsonValue
 from firefly_weave.operations.debug.models import (
+    MAX_PENDING_KEYS,
     Boundary,
     CalledWorkflow,
     DebugCommand,
@@ -234,6 +235,7 @@ class Simulator:
         limits: DebugLimits = _DEFAULT_LIMITS,
         workflows: Mapping[str, CalledWorkflow] | None = None,
         errors: Mapping[str, ScriptedError] | None = None,
+        pending: Collection[str] | None = None,
     ) -> None:
         self.limits = limits
         self.artifact = import_artifact(json.loads(artifact.to_bytes()))
@@ -245,6 +247,8 @@ class Simulator:
         validate(self.ir, self.ir.schemas[self.ir.input_schema], input)
         self._validate_mocks(self._prepared, mocks)
         self._validate_errors(self._prepared, mocks, dict(errors or {}))
+        unanswered = sorted(set(pending or ()))
+        self._validate_pending(self._prepared, mocks, dict(errors or {}), unanswered)
         called = self._called_workflows(dict(workflows or {}))
         self.data = DebugState(
             artifact=json.loads(self.artifact.to_bytes()),
@@ -256,6 +260,7 @@ class Simulator:
                 for reference, item in called.items()
             },
             errors=dict(errors or {}),
+            pending_keys=unanswered,
         )
         self._workflows = {"": _Workflow("", self.artifact, self._prepared, mocks), **called}
         self.data.pending.append(self._event("started", started_data(self._prepared, SESSION_RUN_ID)))
@@ -380,6 +385,30 @@ class Simulator:
                 raise DebugError("WV-DEBUG-MOCK-OUTPUT")
 
     @staticmethod
+    def _validate_pending(
+        prepared: PreparedWorkflow,
+        mocks: Mapping[str, JsonValue],
+        errors: Mapping[str, ScriptedError],
+        pending: Sequence[str],
+    ) -> None:
+        """Results that never arrive name tasks, phases and waiting calls like mocks do, never one with a mock or a
+        failure too, and at most ``MAX_PENDING_KEYS`` of them, however they were merged."""
+        if len(pending) > MAX_PENDING_KEYS:
+            raise DebugError("WV-DEBUG-LIMIT")
+        for key in pending:
+            if key in mocks or key in errors:
+                raise DebugError("WV-DEBUG-MOCK-CONFLICT")
+            targets = _key_targets(prepared, key)
+            answered = [
+                target
+                for target in targets
+                if isinstance(target, (_ActionTarget, PhaseTarget))
+                or (isinstance(target, CallWorkflowNode) and target.mode == "wait")
+            ]
+            if not answered or len(answered) != len(targets):
+                raise DebugError("WV-DEBUG-MOCK-KEY")
+
+    @staticmethod
     def _candidates(instance: str, fallbacks: Sequence[str]) -> list[str]:
         """The keys that may answer ``instance``, most specific first: the instance, its step, then the caller's
         fallbacks. A confirm, cancel or undo is answered at its own phase keys, never at its step's."""
@@ -452,6 +481,7 @@ class Simulator:
         result._unchecked = result._unchecked_bytes = 0
         result._validate_mocks(result._prepared, data.mocks)
         result._validate_errors(result._prepared, data.mocks, data.errors)
+        result._validate_pending(result._prepared, data.mocks, data.errors, data.pending_keys)
         called = result._called_workflows(dict(data.workflows))
         if any(frame.state is not None and frame.workflow not in called for frame in data.frames):
             raise DebugError("WV-DEBUG-WORKFLOW")
@@ -809,6 +839,9 @@ class Simulator:
                     if answer.kind == "error":
                         run.pending.append(self._failure(called, command.node_id, cast(ScriptedError, answer.value)))
                         continue
+                    if answer.kind == "pending":
+                        # Its result never arrives in this session: the step stays in flight.
+                        continue
                     if answer.kind == "none" and _accepts_empty(called.prepared, command.node_id):
                         # A confirm, cancel or undo with nothing to say completes with an empty result.
                         answer = Answer("mock", None, {})
@@ -844,6 +877,9 @@ class Simulator:
             answer = self._answer(key, command.node_id, ())
             if answer.kind == "error":
                 run.pending.append(self._failure(called, command.node_id, cast(ScriptedError, answer.value)))
+                return True
+            if answer.kind == "pending":
+                # The called run started and never ends in this session.
                 return True
             if answer.kind == "mock":
                 value = cast(JsonValue, answer.value)

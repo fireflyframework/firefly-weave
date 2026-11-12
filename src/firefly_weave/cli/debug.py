@@ -99,6 +99,7 @@ def simulate(
             now=request.now,
             workflows=workflows,
             errors={**request.errors, **scripted},
+            pending=request.pending,
         )
         if commands is None:
             view = simulator.continue_until_breakpoint()
