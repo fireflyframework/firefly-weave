@@ -56,8 +56,6 @@ class ResolvedTool:
     # The pinned action's or callee workflow's digest; none for a person.
     dependency: str | None
     connection: str | None
-    # Catalog references the activation pins for this tool.
-    pins: tuple[str, ...]
 
 
 class AgentAnalysis(Protocol):
@@ -146,7 +144,6 @@ class _ActionTool:
             side_effect=cast(SideEffect, spec["sideEffect"]),
             dependency=resource.digest,
             connection=cast(str | None, tool.get("connection")),
-            pins=(reference,),
         )
 
 
@@ -184,7 +181,6 @@ class _WorkflowTool:
             side_effect=None,
             dependency=resource.digest,
             connection=None,
-            pins=(reference,),
         )
 
 
@@ -210,7 +206,6 @@ class _HumanTool:
             side_effect=None,
             dependency=None,
             connection=None,
-            pins=(),
         )
 
 
