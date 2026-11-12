@@ -661,12 +661,15 @@ def _hardening(spec: dict[str, Any]) -> dict[str, Any]:
     for key in ("hostNetwork", "hostPID", "hostIPC", "serviceAccountName"):
         fields[f"spec.template.spec.{key}"] = spec.get(key)
     for volume in spec.get("volumes") or []:
-        # Each volume's kind of source and what it names; the server's defaults inside a source are left out.
+        # Each volume's kind of source, what it names, its storage medium and file mode; the server fills in neither
+        # when it's set, so a live worker still compares equal, and the other defaults inside a source are left out.
         source = sorted(key for key in volume if key != "name")
         settings = volume.get(source[0]) if len(source) == 1 and isinstance(volume.get(source[0]), dict) else {}
         fields[f"spec.template.spec.volumes[{volume.get('name')}]"] = {
             "source": ",".join(source),
             "reference": settings.get("secretName") or settings.get("name"),
+            "medium": settings.get("medium"),
+            "defaultMode": settings.get("defaultMode"),
         }
     for group in ("initContainers", "containers"):
         for container in spec.get(group) or []:

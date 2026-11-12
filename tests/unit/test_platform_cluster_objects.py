@@ -428,6 +428,7 @@ def test_a_volume_added_or_changed_on_a_live_worker_is_reported():
     secrets["hostPath"] = {"path": "/var/run"}
     assert objects.worker_drift(live, target()) == [
         "spec.template.spec.volumes[host]",
+        "spec.template.spec.volumes[secrets].medium",
         "spec.template.spec.volumes[secrets].source",
     ]
 
@@ -435,3 +436,17 @@ def test_a_volume_added_or_changed_on_a_live_worker_is_reported():
 def test_both_namespaces_deny_ingress_by_default():
     for namespace in ("weave-system", "weave-workers"):
         assert policies(rendered(), namespace)["weave-deny-ingress"] == {"podSelector": {}, "policyTypes": ["Ingress"]}
+
+
+def test_secrets_moved_off_memory_are_reported():
+    live = stored(objects.worker_deployment(target()))
+    secrets = next(volume for volume in live["spec"]["template"]["spec"]["volumes"] if volume["name"] == "secrets")
+    del secrets["emptyDir"]["medium"]
+    assert objects.worker_drift(live, target()) == ["spec.template.spec.volumes[secrets].medium"]
+
+
+def test_a_widened_secret_volume_mode_is_reported():
+    live = stored(objects.worker_deployment(target()))
+    identity = next(volume for volume in live["spec"]["template"]["spec"]["volumes"] if volume["name"] == "identity")
+    identity["secret"]["defaultMode"] = 0o444
+    assert objects.worker_drift(live, target()) == ["spec.template.spec.volumes[identity].defaultMode"]
