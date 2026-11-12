@@ -82,6 +82,8 @@ UNCLASSIFIED: Final = SafeProjection(
     available=False, omissions=[Omission(path="", reason="classification_unavailable")]
 )
 NOT_FOUND: Final = "No AI agent activation at this key"
+# The code a call still running when its run timed out fails with, when its step fact records none.
+TIMED_OUT: Final = "TIMEOUT"
 
 
 @dataclass(frozen=True)
@@ -257,6 +259,9 @@ class _Context:
         if fact is not None:
             if fact.status == "failed":
                 return made("failed", fact, error=_error(fact.error_code))
+            if fact.status == "timed_out":
+                # Still running when its run timed out: the call failed, with the timeout's code.
+                return made("failed", fact, error=_error(fact.error_code or TIMED_OUT))
             if fact.status == "succeeded":
                 result = self.result(turn, index, name)
                 status: CallStatus = "succeeded"
@@ -273,10 +278,19 @@ class _Context:
                     output = _classified(self.outputs[name], schemas, _bundle(self.ir))
                 return made(status, fact, error=error, output=output)
             return made("running" if fact.status not in TERMINAL and self.active else "cancelled", fact)
+        if self.queued(name):
+            # Accepted, or approved after its review, and waiting for room: it has no key of its own yet.
+            return made("queued", None)
         if review_fact is not None:
             return made("review" if review_fact.status not in TERMINAL and self.active else "cancelled", review_fact)
         status, code = self.unsent(turn, index, name)
         return made(status, None, error=_error(code))
+
+    def queued(self, name: str) -> bool:
+        """Whether the running agent holds the call at ``name`` until there is room among its parallel calls."""
+        return self.state is not None and any(
+            record.key == name and record.status == "queued" for record in self.state.calls
+        )
 
     def result(self, turn: int, index: int, name: str) -> RecordedResult | None:
         """The result the model read for a call: from the agent's state while it runs, else from the next turn."""
@@ -292,11 +306,7 @@ class _Context:
         return following.results.get(call_id(turn, index)) if following is not None else None
 
     def unsent(self, turn: int, index: int, name: str) -> tuple[CallStatus, str | None]:
-        """A call with no key of its own: queued, refused with the code the model read, or never run."""
-        if self.state is not None:
-            record = next((item for item in self.state.calls if item.key == name), None)
-            if record is not None and record.status == "queued":
-                return "queued", None
+        """A call with no key of its own that isn't waiting: refused with the code the model read, or never run."""
         found = self.result(turn, index, name)
         if found is not None and found.is_error and found.error in REFUSALS:
             return "refused", found.error

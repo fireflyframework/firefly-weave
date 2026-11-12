@@ -43,7 +43,7 @@ from agent_fixtures import (  # noqa: E402
 from test_agent_workflows import catalog, order_action  # noqa: E402
 
 from firefly_weave.compiler.ir import WorkflowIR  # noqa: E402
-from firefly_weave.contracts.agent_log import shown_name  # noqa: E402
+from firefly_weave.contracts.agent_log import AgentError, shown_name  # noqa: E402
 from firefly_weave.contracts.agent_turns import TurnOutput  # noqa: E402
 from firefly_weave.operations.agent_log import RecordedResult, StepRecord, TurnRecord, assemble  # noqa: E402
 from firefly_weave.operations.facts import FactRepository  # noqa: E402
@@ -110,6 +110,7 @@ class CapturedFacts(FactRepository):
                 status="failed", ended_at=values["at"].isoformat(), error_code=values["code"]
             )
             return
+        projected = set()
         for row in json.loads(values["steps"]):
             key = row["instance_key"] or row["node_id"]
             known = self.facts.get(key)
@@ -121,6 +122,12 @@ class CapturedFacts(FactRepository):
                 if known["status"] == row["status"]:
                     row["ended_at"] = known["ended_at"] or row["ended_at"]
             self.facts[key] = row
+            projected.add(key)
+        if values["terminal"]:
+            # A run that ended closes every open step the event didn't project, with the run's ending.
+            for key, row in self.facts.items():
+                if key not in projected and row["status"] in {"scheduled", "running", "waiting"}:
+                    row.update(status=values["closed"], ended_at=values["at"].isoformat())
 
     def claim(self, key: str, at) -> None:
         """A worker claimed the task at ``key``: the fact is running from ``at``."""
@@ -475,3 +482,36 @@ def test_turn_one_counts_the_run_memory_it_loaded():
 
     assert (run.log("support").memory.loaded, run.log("again").memory.loaded) == (0, 2)
     assert run.log("again").memory.scope == "run"
+
+
+def test_an_approved_call_waiting_for_room_is_queued():
+    run = Recorded(answering(workflow(agent(tools=[LOOKUP, CANCEL], limits={"parallelToolCalls": 1}))))
+    run.send("started", NOW, admission_policy="classified-v1")
+    run.complete(
+        "support#1", NOW + SECONDS, calls(1, ("lookup_order", {"id": "A-17"}), ("cancel_order", {"id": "A-9"}))
+    )
+    # The lookup holds the one slot, so the approved cancel goes back to wait for room; it has no key of its own yet.
+    run.review("support#1.2.review", NOW + 2 * SECONDS, "approve")
+
+    log = run.log()
+
+    lookup, cancel = log.turns[0].calls
+    assert (lookup.status, cancel.status, cancel.review.decision) == ("running", "queued", "approve")
+    assert (cancel.started_at, cancel.ended_at, cancel.error) == (None, None, None)
+    assert log.status == "running"
+
+
+def test_a_call_still_running_when_the_run_timed_out_failed_with_timeout():
+    run = Recorded()
+    run.send("started", NOW, admission_policy="classified-v1")
+    run.complete("support#1", NOW + SECONDS, calls(1, ("lookup_order", {"id": "A-17"})))
+    run.facts.claim("support#1.1", NOW + 2 * SECONDS)
+    due = NOW + 5 * SECONDS
+    run.send("timed_out", due, deadline=due.isoformat())
+
+    log = run.log()
+
+    [call] = log.turns[0].calls
+    assert (call.status, call.error) == ("failed", AgentError(code="TIMEOUT"))
+    assert (call.started_at, call.ended_at, call.output) == (NOW + 2 * SECONDS, due, None)
+    assert (log.status, log.ended_at) == ("timed_out", due)

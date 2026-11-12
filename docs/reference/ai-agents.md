@@ -163,11 +163,11 @@ reference.
 | `queued` | Accepted; waits for room among the parallel calls. |
 | `review` | Waits for a person's review. |
 | `running` | Sent to its target. |
-| `succeeded`, `failed` | How the target answered, as the model read it; `error.code` names a failure. |
+| `succeeded`, `failed` | How the target answered, as the model read it; `error.code` names a failure. A call still running when the run timed out is `failed` with `TIMEOUT`. |
 | `refused` | The platform refused the call and nothing ran: `UNKNOWN_TOOL`, `INVALID_ARGUMENTS`, `REPEATED_CALL` or `TOOL_BUDGET_EXHAUSTED`. |
 | `rejected`, `expired` | The review said no, or nobody answered in time; `review` holds the decision and comment. |
 | `not_run` | The agent stopped before the call could run. |
-| `cancelled` | The call was sent, then closed when the agent or the run ended. |
+| `cancelled` | The call was sent, then closed when the agent ended or the run was cancelled. |
 
 Values follow the run views' rules. `arguments` are classified by the parameters the model saw, `output` by the
 tool's output schema and `final` by the step's result schema. A value that can't be shown is left out with its
