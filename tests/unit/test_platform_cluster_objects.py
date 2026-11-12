@@ -400,3 +400,38 @@ def test_every_object_is_labeled_as_managed_by_the_platform():
         assert labels["firefly.weave/cluster"] == "kind-weave-test"
     for doc in objects.target_objects(target()):
         assert doc["metadata"]["labels"]["firefly.weave/target"] == "11111111-2222-3333-4444-555555555555"
+
+
+def stored(document):
+    """A Deployment the way the API server stores it: the defaults it fills in, beyond what was applied."""
+    live = json.loads(json.dumps(document))
+    pod = live["spec"]["template"]["spec"]
+    pod |= {"dnsPolicy": "ClusterFirst", "restartPolicy": "Always", "schedulerName": "default-scheduler"}
+    for container in [*pod.get("initContainers", []), *pod["containers"]]:
+        container |= {"terminationMessagePath": "/dev/termination-log", "terminationMessagePolicy": "File"}
+        for item in container.get("env", []):
+            if "valueFrom" in item:
+                item["valueFrom"]["fieldRef"].setdefault("apiVersion", "v1")
+    return live
+
+
+def test_a_live_worker_as_the_server_stores_it_reports_no_drift():
+    assert objects.worker_drift(stored(objects.worker_deployment(target())), target()) == []
+
+
+def test_a_volume_added_or_changed_on_a_live_worker_is_reported():
+    live = stored(objects.worker_deployment(target()))
+    volumes = live["spec"]["template"]["spec"]["volumes"]
+    volumes.append({"name": "host", "hostPath": {"path": "/"}})
+    secrets = next(volume for volume in volumes if volume["name"] == "secrets")
+    secrets.pop("emptyDir")
+    secrets["hostPath"] = {"path": "/var/run"}
+    assert objects.worker_drift(live, target()) == [
+        "spec.template.spec.volumes[host]",
+        "spec.template.spec.volumes[secrets].source",
+    ]
+
+
+def test_both_namespaces_deny_ingress_by_default():
+    for namespace in ("weave-system", "weave-workers"):
+        assert policies(rendered(), namespace)["weave-deny-ingress"] == {"podSelector": {}, "policyTypes": ["Ingress"]}

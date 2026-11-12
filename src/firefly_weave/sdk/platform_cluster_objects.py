@@ -182,7 +182,8 @@ def _account(name: str, namespace: str, labels: dict[str, str]) -> dict[str, Any
 
 def _policies(network: ClusterNetwork, namespace: str, labels: dict[str, str]) -> list[dict[str, Any]]:
     """Every pod may reach the cluster and the outside, but not the platform or the registry; Weave's runners and
-    workers may reach the platform's API and Keycloak. Nodes pull through the registry, which no pod can reach."""
+    workers may reach the platform's API and Keycloak. Nodes pull through the registry, which no pod can reach. No
+    pod accepts connections: none of Weave's pods serves anything."""
     api, registry = f"{network.api_address}/32", f"{network.registry_address}/32"
     egress = {
         "podSelector": {},
@@ -206,7 +207,11 @@ def _policies(network: ClusterNetwork, namespace: str, labels: dict[str, str]) -
             "metadata": _metadata(name, labels, namespace),
             "spec": spec,
         }
-        for name, spec in (("weave-egress", egress), ("weave-platform-access", access))
+        for name, spec in (
+            ("weave-deny-ingress", {"podSelector": {}, "policyTypes": ["Ingress"]}),
+            ("weave-egress", egress),
+            ("weave-platform-access", access),
+        )
     ]
 
 
@@ -377,7 +382,8 @@ def _env(name: str, value: str) -> dict[str, Any]:
 
 
 def _field(name: str, path: str) -> dict[str, Any]:
-    return {"name": name, "valueFrom": {"fieldRef": {"fieldPath": path}}}
+    # With the apiVersion the server stores, so a live worker compares equal to what was rendered.
+    return {"name": name, "valueFrom": {"fieldRef": {"apiVersion": "v1", "fieldPath": path}}}
 
 
 def _identity_pod(image: str, secret: str, *, main: dict[str, Any], volumes: list[dict[str, Any]]) -> dict[str, Any]:
@@ -654,6 +660,14 @@ def _hardening(spec: dict[str, Any]) -> dict[str, Any]:
     }
     for key in ("hostNetwork", "hostPID", "hostIPC", "serviceAccountName"):
         fields[f"spec.template.spec.{key}"] = spec.get(key)
+    for volume in spec.get("volumes") or []:
+        # Each volume's kind of source and what it names; the server's defaults inside a source are left out.
+        source = sorted(key for key in volume if key != "name")
+        settings = volume.get(source[0]) if len(source) == 1 and isinstance(volume.get(source[0]), dict) else {}
+        fields[f"spec.template.spec.volumes[{volume.get('name')}]"] = {
+            "source": ",".join(source),
+            "reference": settings.get("secretName") or settings.get("name"),
+        }
     for group in ("initContainers", "containers"):
         for container in spec.get(group) or []:
             fields[f"spec.template.spec.{group}[{container.get('name')}]"] = {
