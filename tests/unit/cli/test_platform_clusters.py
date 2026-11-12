@@ -1315,6 +1315,58 @@ def test_disconnect_deletes_nothing_in_a_namespace_another_installation_took(wor
     assert clusters.receipt(directory)["clusters"] == {}
 
 
+def test_disconnect_keeps_every_object_of_a_weave_system_another_installation_owns(world):
+    """Another installation's weave-system keeps its objects and the cluster-wide ones; this target's workers
+    namespace, which is still this installation's, loses only this target's objects."""
+    directory, commands, _, cluster = world
+    connect(world)
+    commands.answer([KUBECTL, "get", "namespace", "weave-system", "-o", "json"], FOREIGN)
+    before = len(commands.calls)
+    result = disconnect(world)
+    removed = deleted(commands, before)
+    assert not [item for item in removed if item[1] in {"weave-system", None}]
+    assert ("Deployment", "weave-workers", "weave-worker") in removed
+    assert result["disabled"] is True and cluster.count("deployment_runners.revoke") == 1
+    assert clusters.receipt(directory)["clusters"] == {}
+
+
+def test_disconnecting_a_cluster_whose_nodes_are_gone_frees_the_target_without_reaching_it(world):
+    """A deleted cluster has nothing left to delete: the platform still revokes, disables, deletes the clients, leaves
+    the network kind left behind, and frees the pair."""
+    directory, commands, _, cluster = world
+    connected = connect(world)
+    commands.answer(["ps", "--filter", "label=io.x-k8s.kind.cluster=weave-test"], "")
+    before, calls = len(commands.calls), len(cluster.api_calls)
+    result = disconnect(world)
+    assert result == {"target_id": connected["target_id"], "disabled": True, "removed": []}
+    assert not [call for call in commands.calls[before:] if call.argv[0] == KUBECTL]
+    names = [name for name, _ in cluster.api_calls[calls:]]
+    assert {"deployment_runners.revoke", "deployment_targets.update"} <= set(names)
+    assert cluster.deleted_clients == [["weave-cluster-runner-1", "weave-cluster-worker-1"]]
+    assert network_changes(commands, before) == [("disconnect", KEYCLOAK), ("disconnect", REGISTRY)]
+    assert cluster.removed_origins == ["kind-weave-test"]
+    assert clusters.receipt(directory)["clusters"] == {}
+
+
+def test_disconnect_revokes_the_runner_and_disables_the_target_before_it_deletes_anything_in_the_cluster(world):
+    """The platform stops trusting the runner before its objects go, so it never acts on a half-deleted target."""
+    _, commands, _, cluster = world
+    connect(world)
+    original, asked = cluster.invoke, {}
+
+    async def invoke(operation, **kwargs):
+        # How many commands had run when the platform was asked.
+        asked[operation] = len(commands.calls)
+        return await original(operation, **kwargs)
+
+    cluster.invoke = invoke
+    before = len(commands.calls)
+    disconnect(world)
+    (delete,) = [index for index, call in enumerate(commands.calls) if call.name == "cluster-disconnect"]
+    assert before <= asked["deployment_runners.revoke"] <= delete
+    assert asked["deployment_targets.update"] <= delete
+
+
 def test_disconnecting_a_namespace_without_a_target_changes_nothing(world):
     directory, commands, _, cluster = world
     connect(world)
