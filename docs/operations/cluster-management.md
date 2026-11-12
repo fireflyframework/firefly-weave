@@ -432,8 +432,9 @@ The command:
 - downloads only the chosen provider's pinned tool (kind or k3d) and kubectl
   into the installation directory, and checks each one's SHA-256 before it
   runs it;
-- creates the cluster on a Docker network of its own, so the platform never
-  shares a network with another cluster;
+- creates the cluster on a Docker network of its own (`weave-kind-NAME` or
+  `k3d-NAME`) and refuses when a network of that name already exists, so the
+  platform never shares a network with another cluster;
 - refuses when Docker has less than 6 GiB free, and refuses a cluster name that
   already exists on the Docker context;
 - waits up to 180 s for the nodes to be Ready, and deletes the cluster again if

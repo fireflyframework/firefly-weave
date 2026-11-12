@@ -528,6 +528,17 @@ def _exists(state: dict[str, Any], provider: str, cluster: str, context: str) ->
     return bool(found.strip())
 
 
+def _network_exists(state: dict[str, Any], context: str, network: str) -> bool:
+    """Whether a Docker network of exactly this name is on the context."""
+    listed = local._run(
+        state,
+        "cluster-network",
+        ["docker", "--context", context, "network", "ls", "--filter", f"name=^{network}$", "--format", "{{.Name}}"],
+        env=_tool_environment(context),
+    )
+    return network in listed.decode(errors="replace").split()
+
+
 def _check_disk(state: dict[str, Any], context: str) -> None:
     """Measure Docker's free disk with an image the VM already holds, and keep 6 GiB for the cluster."""
     output = local._run(
@@ -648,12 +659,8 @@ def _delete(state: dict[str, Any], directory: Path, provider: str, cluster: str,
     )
     # kind leaves the network it made for this cluster behind; remove it when it's still there.
     network = cluster_network(provider, cluster)
-    docker = ["docker", "--context", context, "network"]
-    listed = local._run(
-        state, "cluster-network", [*docker, "ls", "--filter", f"name=^{network}$", "--format", "{{.Name}}"], env=env
-    )
-    if network in listed.decode(errors="replace").split():
-        local._run(state, "cluster-network-delete", [*docker, "rm", network], env=env)
+    if _network_exists(state, context, network):
+        local._run(state, "cluster-network-delete", ["docker", "--context", context, "network", "rm", network], env=env)
 
 
 def create_cluster(
@@ -671,6 +678,13 @@ def create_cluster(
     if _exists(state, provider, cluster, context):
         raise local.PlatformError(
             f"A cluster named {cluster} already exists on context {context}; nothing was changed."
+        )
+    # kind and k3d join a network that already has the name they'd give the cluster's own.
+    network = cluster_network(provider, cluster)
+    if _network_exists(state, context, network):
+        raise local.PlatformError(
+            f"A Docker network named {network} already exists on context {context}, so the cluster wouldn't get a "
+            "network of its own. Nothing was changed."
         )
     _check_disk(state, context)
     # A failed or interrupted create deletes nothing and says how to remove what the tool left; only a cluster this

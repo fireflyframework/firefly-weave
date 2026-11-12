@@ -241,6 +241,20 @@ def test_the_tools_keep_the_docker_configuration_but_no_other_docker_setting(wor
     assert call.env["DOCKER_CONFIG"] == "/Users/me/.docker-weave" and "DOCKER_HOST" not in call.env
 
 
+@pytest.mark.parametrize(("provider", "network"), [("kind", f"weave-kind-{NAME}"), ("k3d", f"k3d-{NAME}")])
+def test_create_refuses_a_cluster_whose_network_already_exists(world, provider, network):
+    """kind and k3d join an existing network of that name, so the cluster wouldn't get a network of its own."""
+    directory, commands, _ = world
+    commands.answer(["docker", "network", "ls"], f"{network}\n")
+    result = create(directory, provider)
+    assert result.exit_code != 0
+    assert (
+        f"A Docker network named {network} already exists on context colima-weave-tests, so the cluster wouldn't get "
+        "a network of its own. Nothing was changed."
+    ) in result.output
+    assert not calls(commands, "create") and not calls(commands, "delete")
+
+
 REMOTE = (
     "Docker context colima-weave-tests doesn't use a local Unix socket; test clusters run only on this computer's "
     "Docker."
