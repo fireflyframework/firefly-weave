@@ -41,6 +41,10 @@ DRAFT_TEST_MAX_LIFETIME_SECONDS: Final = 3600
 type ToolName = Annotated[UnicodeString, Field(pattern=r"^[A-Za-z][A-Za-z0-9_-]{0,63}$")]
 type StepTestStatus = Literal["running", "waiting", "succeeded", "failed", "timed_out", "cancelled"]
 type StepTestCalls = Literal["enabled", "disabled"]
+# Why a step test's output was left out, as run views say it.
+type OmissionReason = Literal[
+    "classified_secret", "classification_unavailable", "uncertain_derived", "confidential_text", "resource_limit"
+]
 
 
 def _absent(value: object) -> bool:
@@ -118,6 +122,8 @@ class StepTestView(ContractModel):
     side_effect: SideEffect
     pending: list[StepTestPending] = Field(default_factory=list)
     output: JsonData = None
+    # Set when the output was left out, which tells an omitted output from a null one.
+    omitted: OmissionReason | None = Field(default=None, exclude_if=_absent)
     error: StepTestError | None = None
     attempts: int = Field(ge=0)
     started_at: AwareDatetime
@@ -128,6 +134,8 @@ class StepTestView(ContractModel):
     def pending_while_waiting(self) -> Self:
         if (self.status == "waiting") != bool(self.pending):
             raise ValueError("pending lists items exactly while the step test is waiting")
+        if self.omitted is not None and self.output is not None:
+            raise ValueError("An omitted output holds no value")
         return self
 
 
