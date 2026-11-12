@@ -18,6 +18,7 @@
 """The statistics migration freezes the histogram edges the rollup and the reads share; they must match the module."""
 
 import importlib.util
+import re
 from pathlib import Path
 
 from firefly_weave.operations.statistics_histogram import BUCKETS, THRESHOLDS_US
@@ -40,9 +41,27 @@ def test_the_frozen_bucket_edges_equal_the_histogram_module():
     assert "{" + ",".join(["0"] * BUCKETS) + "}" == frozen.EMPTY
 
 
-def test_the_migration_is_the_schema_head_and_counts_nothing_toward_usage():
+def followed() -> dict[str, str | None]:
+    """Each migration's revision and the revision it follows, read from the files."""
+    links: dict[str, str | None] = {}
+    for path in PATH.parent.glob("0*.py"):
+        text = path.read_text()
+        revision = re.search(r'^revision = "([^"]+)"$', text, re.MULTILINE)
+        down = re.search(r'^down_revision = (?:"([^"]+)"|None)$', text, re.MULTILINE)
+        assert revision is not None and down is not None, path.name
+        links[revision.group(1)] = down.group(1)
+    return links
+
+
+def test_the_migration_leads_to_the_schema_head_and_counts_nothing_toward_usage():
     frozen = migration()
-    assert frozen.revision == SCHEMA_VERSION
+    links = followed()
+    assert set(links) - set(links.values()) == {SCHEMA_VERSION}
+    chain, cursor = set(), SCHEMA_VERSION
+    while cursor is not None:
+        chain.add(cursor)
+        cursor = links[cursor]
+    assert frozen.revision in chain
     source = PATH.read_text()
     assert "weave_usage_charge" not in source and "operation_usage" not in source
     assert source.count("FOREIGN KEY") == 3 and source.count("ON DELETE CASCADE") == 3

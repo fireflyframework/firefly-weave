@@ -78,6 +78,8 @@ class CredentialRecord(BaseModel):
     access_token: SecretStr | None = Field(default=None, repr=False)
     refresh_token: SecretStr | None = Field(default=None, repr=False)
     expires_at: float = 0
+    # Wall-clock time the tokens were obtained; 0 for records written before it was kept.
+    obtained_at: float = 0
     scopes: tuple[str, ...] = ()
 
 

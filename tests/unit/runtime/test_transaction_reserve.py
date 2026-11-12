@@ -1,0 +1,117 @@
+# Copyright 2026 Firefly Software Foundation.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# Author: Firefly Software Foundation
+# SPDX-License-Identifier: Apache-2.0
+
+"""Which transitions are settlement work, and so spend the run's control reserve instead of waiting for quota."""
+
+from transaction_support import Run, add, compiled, hold, submit, transaction
+
+from firefly_weave.runtime.settlement import settlement_ends_the_run, spends_reserve
+
+
+def flow() -> Run:
+    run = Run(compiled([transaction([hold(), add(), add("add2"), submit()])], timeout=300))
+    run.start()
+    run.done("hold", {"holdId": "h-1"})
+    return run
+
+
+def last(run: Run):
+    return run.events[-1], run.transitions[-1]
+
+
+def test_forward_work_waits_for_quota():
+    run = flow()
+    assert not spends_reserve(*last(run))
+    run.done("add", {"id": "a-1"})
+    assert not spends_reserve(*last(run))
+
+
+def test_a_cancel_that_undoes_first_and_the_undo_results_spend_the_reserve():
+    run = flow()
+    run.send("cancelled", reason="stop")
+    assert spends_reserve(*last(run))
+    # add was in flight while the transaction went back: its result is settlement work.
+    run.done("add", {"id": "a-1"})
+    assert spends_reserve(*last(run))
+    run.done("add#undo", {})
+    assert spends_reserve(*last(run))
+
+
+def test_a_transaction_deadline_spends_the_reserve_and_a_stop_is_already_terminal_control():
+    run = flow()
+    run.fire("move#hold")
+    assert spends_reserve(*last(run))
+    run = flow()
+    run.send("cancelled", reason="stop", skip_undo=True)
+    assert run.state.status == "cancelled" and not spends_reserve(*last(run))
+
+
+def test_a_confirm_whose_result_runs_the_next_steps_waits_for_quota_like_forward_work():
+    after = {
+        "id": "after",
+        "kind": "action",
+        "uses": "reports.lookup@1.0.0",
+        "with": {"object": {"reference": {"ref": "/input/moveId"}}},
+    }
+    shown = {"id": "shown", "kind": "transform", "value": {"ref": "/steps/move/output"}}
+    for successor in (after, shown):
+        run = Run(compiled([transaction([hold(), add(), submit()]), successor, {**after, "id": "later"}]))
+        run.start()
+        run.done("hold", {"holdId": "h-1"})
+        run.done("add", {"id": "a-1"})
+        run.done("submit", {"orderId": "o-1"})
+        run.done("hold#confirm", {})
+        assert run.txn().status == "completed" and run.state.status == "waiting"
+        assert not spends_reserve(*last(run)), successor["id"]
+
+
+def test_an_undo_that_only_moves_the_rollback_on_spends_the_reserve():
+    run = flow()
+    run.failed("add", "UNAVAILABLE", effect="unknown")
+    assert spends_reserve(*last(run))
+    run.done("add#undo", {})
+    assert spends_reserve(*last(run))
+
+
+def test_settlement_work_whose_result_ends_the_run_is_a_stop():
+    # The last cancel of a run that goes back ends it, as a stop does: it spends the reserve through the stop's own
+    # context, so a run at a full quota still ends.
+    run = flow()
+    run.send("cancelled", reason="stop")
+    run.done("add", {"id": "a-1"})
+    run.done("add#undo", {})
+    assert not settlement_ends_the_run(*last(run))
+    run.done("hold#cancel", {})
+    assert run.state.status == "cancelled" and settlement_ends_the_run(*last(run))
+    assert not spends_reserve(*last(run))
+
+
+def test_forward_work_that_ends_the_run_is_not_settlement_work():
+    after = {"id": "after", "kind": "transform", "value": {"ref": "/steps/move/output"}}
+    run = Run(compiled([transaction([hold(), add(), submit()]), after]))
+    run.start()
+    run.done("hold", {"holdId": "h-1"})
+    run.done("add", {"id": "a-1"})
+    run.done("submit", {"orderId": "o-1"})
+    run.done("hold#confirm", {})
+    assert run.state.status == "succeeded" and not settlement_ends_the_run(*last(run))
+    alone = Run(compiled([transaction([hold(), add(), submit()])]))
+    alone.start()
+    alone.done("hold", {"holdId": "h-1"})
+    alone.done("add", {"id": "a-1"})
+    alone.done("submit", {"orderId": "o-1"})
+    alone.done("hold#confirm", {})
+    assert alone.state.status == "succeeded" and settlement_ends_the_run(*last(alone))

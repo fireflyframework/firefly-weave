@@ -227,6 +227,19 @@ workflow that uses a loop or a call (`WV-IR-UNSUPPORTED`). A platform runs a con
 contain `[`, `#`, or `~`, which keeps
 [instance keys](reference/compiler.md#instance-keys) unambiguous.
 
+**Step error handling.** Actions, AI tasks, transforms, decision tables, human
+tasks, signals, transactions, and waiting calls accept `onError: stop |
+continue | errorOutput` and, with `errorOutput` only, an `errorPath` block
+(`{steps, output}`). Both fields are omitted when absent, so existing documents
+keep their bytes. They need the language feature `flow.onError`. A handled
+failure is recorded as the step's error object `{code, message, outcome,
+attempts, instanceKey, childRunId?}` (exported as `step-error.schema.json`) at
+`/steps/<id>/error`; history records it as a `step_failed` event and a step
+change with `status: failed` and `error`; IR edges gain the kind `error` and
+joins the mode `error`. Incidents gain the resolution
+`accept_reconciled_failure` (Confirm it had no effect). See
+[Handle step errors](guides/handle-step-errors.md).
+
 Branches may contain zero steps, but each must declare its `output`. The compiler,
 not the shape check, enforces unique step IDs, unique signal names, branch scope,
 output compatibility, and concurrency budgets.
@@ -343,11 +356,14 @@ The compiler checks every path through the transaction before it publishes:
 The full list, with warnings for waits that can outlast reservations and for
 steps after the point of no return, is in the
 [compiler reference](reference/compiler.md#troubleshooting). Transactions need
-the language feature `flow.transaction`. This version compiles and checks them,
-and a workflow that calls a workflow to undo a step pins that workflow at
-activation like any call; the platform does not run transactions yet, so it
-refuses to publish, import, or activate a workflow that has one
-(`WV-IR-UNSUPPORTED`). The full example is
+the language feature `flow.transaction`, which this platform lists, and a
+workflow that calls a workflow to undo a step pins that workflow at activation
+like any call. A platform that does not list the feature refuses to publish,
+import, or activate a workflow that has one (`WV-IR-UNSUPPORTED`). At run time,
+Weave confirms reservations once the transaction goes ahead, undoes what went
+through in reverse order when it doesn't, and stops behind a high-priority
+incident when it can't tell what happened; see
+[Undo steps together with a transaction](guides/transactions.md). The full example is
 [move-between-systems](../examples/language/move-between-systems.workflow.yaml).
 
 **Human tasks** need an environment assignment binding at activation, and
@@ -567,7 +583,7 @@ backend is absent. The `integration` and `e2e` pytest markers are registered.
 | `null` is rejected for an optional field | Optional fields may be omitted but not set to null | Remove the field |
 | A step's `retry` or `timeoutSeconds` is rejected | Retry and per-attempt timeout belong to the action definition | Move them to the action; use `spec.timeoutSeconds` for a workflow-wide timeout |
 | `WV-COMP-UNSUPPORTED_FEATURE` | The document uses a construct whose language feature this compiler does not compile; the message names the feature | Upgrade the CLI or SDK that compiles it, or replace the construct with steps this compiler supports |
-| `WV-IR-UNSUPPORTED` when publishing a workflow with a `transaction` step | This platform compiles transactions but does not run them yet; `result.missing_features` is `["flow.transaction"]` | Keep the workflow as a draft and validate it; publish it on a platform that lists `flow.transaction` |
+| `WV-IR-UNSUPPORTED` when publishing a workflow with a `transaction` step | The platform does not list `flow.transaction` (an earlier version); `result.missing_features` is `["flow.transaction"]` | Publish it on a platform that lists `flow.transaction` |
 | `WV-COMP-TXN_UNDECLARED` | A step inside a transaction changes data and does not say how it is undone | Add `confirm` and `cancel`, `compensate`, or `irreversible: true`; Studio offers the three choices |
 | `WV-IR-UNSUPPORTED` when publishing a workflow with `callWorkflow` | The platform you publish to is older and does not list `flow.callWorkflow` in its language manifest; `result.missing_features` is `["flow.callWorkflow"]` | Upgrade that platform, or keep the workflow as a draft until it lists the feature; the called workflow itself publishes normally |
 | `WV-CALL-START` or `WV-CALL-DEPTH` on a run | A waiting call could not start its child: the pinned activation or its version was retired, the calling run's principal no longer holds `run.start`, the input no longer fits the called version, or the chain of calls is deeper than 8 | Fix the cause, then resolve the incident with `retry_safe` to try a new child, `accept_reconciled_result` with the call's output, or `terminate` |

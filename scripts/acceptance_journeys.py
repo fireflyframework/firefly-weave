@@ -74,6 +74,7 @@ CAPABILITIES = (
     "workflow-call-runtime",
     "workflow-call-simulation",
     "workflow-call-fast-path",
+    "workflow-transaction-runtime",
     "language-docs",
     "step-error-handling",
     # AI

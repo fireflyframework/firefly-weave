@@ -24,6 +24,7 @@ import re
 import time
 from collections.abc import Callable, Iterable, Iterator
 from decimal import Decimal
+from functools import cache
 from typing import Any, cast
 
 import regex
@@ -606,6 +607,18 @@ def validate_payload(
     return _payload(schema, value, bundle, limits)
 
 
+@cache
+def _contract_schema_texts() -> dict[str, str]:
+    # The built-in models never change while the process runs, so their schemas are generated once. They are kept
+    # as JSON text, so every reader gets an object of its own.
+    return {name: json.dumps(schema) for name, schema in export_schemas().items()}
+
+
+def contract_schema(name: str) -> JsonObject:
+    """A built-in contract's exported JSON Schema, as an object no other caller shares."""
+    return cast(JsonObject, json.loads(_contract_schema_texts()[name]))
+
+
 def validate_contract_payload(
     name: str, value: JsonValue, *, limits: SchemaLimits = DEFAULT_CONTRACT_LIMITS
 ) -> tuple[Diagnostic, ...]:
@@ -613,7 +626,7 @@ def validate_contract_payload(
     models = contract_models()
     if name not in models:
         raise ValueError("Unknown built-in contract")
-    schema = export_schemas()[name]
+    schema = contract_schema(name)
     issues = _payload(schema, value, {}, limits, trusted=True)
     if issues:
         return issues

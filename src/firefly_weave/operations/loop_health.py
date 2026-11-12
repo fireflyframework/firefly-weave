@@ -257,3 +257,39 @@ def track(health: LoopHealth, task: "asyncio.Task[None]", *names: str) -> None:
             health.running(name, False)
 
     task.add_done_callback(ended)
+
+
+class LoopStopTimeout(RuntimeError):
+    """A background loop's task was still running when its stop bound ran out."""
+
+
+def raise_if_cancelled(error: BaseException | None = None) -> None:
+    """Raise CancelledError, instead of ``error``, while this task has a cancellation request it has not honored.
+
+    A cancelled statement makes SQLAlchemy close its connection gracefully; a second cancellation (a budget's timeout
+    or shutdown) can interrupt that close, and the rollback that follows fails with "connection is closed". That error
+    replaces the CancelledError, so a loop that treats it as a failed cycle, or a scan that records it as a failed item
+    and goes on, would keep running after close() cancelled it. Raising CancelledError lets each enclosing timeout tell
+    its own expiry from an outside cancellation again. Loops also call it before they sleep, with no error, to catch a
+    cancellation that a cycle's own handler took for a failure.
+    """
+    task = asyncio.current_task()
+    if task is not None and task.cancelling():
+        raise asyncio.CancelledError() from error
+
+
+async def stop_task(task: "asyncio.Task[None] | None", name: str, seconds: float) -> None:
+    """Cancel a loop's task and wait at most ``seconds`` for it to end; the caller's own cancellation still applies.
+
+    A task still running then is logged and raised as LoopStopTimeout, so shutdown goes on to its next owner instead
+    of waiting forever. A task that ended with its own failure raises that failure, as awaiting it would.
+    """
+    if task is None:
+        return
+    task.cancel()
+    finished, _ = await asyncio.wait({task}, timeout=seconds)
+    if not finished:
+        logging.getLogger(__name__).error("%s did not stop within %g s of its cancellation", name, seconds)
+        raise LoopStopTimeout(f"{name} did not stop within {seconds:g} s")
+    if not task.cancelled():
+        task.result()

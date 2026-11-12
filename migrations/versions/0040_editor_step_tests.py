@@ -29,7 +29,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "0040_editor_step_tests"
-down_revision = "0038_operations_statistics"
+down_revision = "0039_transactions_reserve"
 
 SCOPE_COLUMNS = "tenant_id uuid NOT NULL,project_id uuid NOT NULL,environment_id uuid NOT NULL"
 SCOPE_KEY = "tenant_id,project_id,environment_id"

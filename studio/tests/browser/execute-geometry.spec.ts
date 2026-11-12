@@ -20,6 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 // the Input pane's empty state, at desktop and narrow sizes and on touch.
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import {
+  breakAt,
   EXECUTE_ASKING,
   EXECUTE_CHAIN,
   EXECUTE_ROUTED,
@@ -230,8 +231,10 @@ for (const size of SIZES)
     test("run log rows, icons and controls line up", async ({ page }) => {
       await openExecuteWorkflow(page, EXECUTE_CHAIN);
       const { row, touch } = await density(page);
-      await page.locator('[data-step="third"] .tile-body').first().click();
-      await page.keyboard.press("F9");
+      await breakAt(
+        page,
+        page.locator('[data-step="third"] .tile-body').first(),
+      );
       await executeWorkflowIn(page);
       const log = page.locator("weave-run-log");
       await expect(log.locator(".run-log-status")).toHaveText(
