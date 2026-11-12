@@ -17,6 +17,7 @@
 """Local lifecycle ownership, retained state, and credential boundaries."""
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -420,3 +421,17 @@ def test_api_port_check_still_rejects_live_listener():
         listener.listen()
         with pytest.raises(platform.PlatformError, match="already occupied"):
             platform._check_api_port(listener.getsockname()[1])
+
+
+def test_a_platform_command_reads_its_stdin_and_never_logs_it(tmp_path):
+    """Secrets reach kubectl only on stdin: the private log keeps the command's output, never what went in."""
+    directory = tmp_path / "platform"
+    directory.mkdir(mode=0o700)
+    # Larger than a pipe buffer, so the runner must keep writing while the command reads.
+    secret = "canary-" + "s" * 200_000
+    code = "import sys; data = sys.stdin.read(); print(len(data), data[:7])"
+    state = {"directory": str(directory), "source": str(tmp_path)}
+    output = platform._run(state, "stdin-check", [sys.executable, "-c", code], stdin=secret.encode())
+    assert output.decode().split() == [str(len(secret)), "canary-"]
+    (log,) = directory.glob("stdin-check-*.log")
+    assert "sss" not in log.read_text()

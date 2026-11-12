@@ -517,8 +517,15 @@ def _compose_env(state: dict[str, Any]) -> dict[str, str]:
 
 
 def _run(
-    state: dict[str, Any], name: str, command: list[str], *, env: dict[str, str] | None = None, timeout: float = 300
+    state: dict[str, Any],
+    name: str,
+    command: list[str],
+    *,
+    env: dict[str, str] | None = None,
+    timeout: float = 300,
+    stdin: bytes | None = None,
 ) -> bytes:
+    """Run one platform command with a private log of its output; ``stdin`` goes to the command, never to the log."""
     path = Path(state["directory"]) / (name + "-" + uuid4().hex[:8] + ".log")
     try:
         return run_command(
@@ -528,6 +535,7 @@ def _run(
             timeout=timeout,
             limit=8 * 1024 * 1024,
             log_path=path,
+            stdin=stdin,
         )
     except Exception:
         if path.is_file() and b"all predefined address pools have been fully subnetted" in read_file(
