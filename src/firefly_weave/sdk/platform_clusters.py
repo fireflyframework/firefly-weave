@@ -812,18 +812,24 @@ def _taken(sentence: str, provider: str, cluster: str, namespace: str) -> str:
     return sentence.format(provider=provider, cluster=cluster, namespace=namespace)
 
 
-def _owned(state: dict[str, Any], kube: list[str], namespace: str) -> bool:
-    """Whether a namespace is this installation's or no installation's (absent or unlabeled); read-only."""
+def _owner(state: dict[str, Any], kube: list[str], namespace: str) -> tuple[bool, Any]:
+    """Whether a namespace exists, and its installation label (None when it has none); read-only."""
     existing = local._run(
         state, "cluster-namespace", [*kube, "get", "namespace", namespace, "--ignore-not-found", "-o", "json"]
     )
     if not existing.strip():
-        return True
+        return False, None
     try:
         labels = strict_json(existing)["metadata"].get("labels") or {}
+        return True, labels.get("firefly.weave/installation")
     except (ValueError, TypeError, KeyError, AttributeError, DeploymentError):
         raise local.PlatformError("kubectl didn't describe the namespace; nothing was changed.") from None
-    return labels.get("firefly.weave/installation") in {None, state["id"]}
+
+
+def _owned(state: dict[str, Any], kube: list[str], namespace: str) -> bool:
+    """Whether a namespace is this installation's or no installation's (absent or unlabeled); read-only."""
+    exists, owner = _owner(state, kube, namespace)
+    return not exists or owner in (None, state["id"])
 
 
 def _check_namespace(state: dict[str, Any], kube: list[str], namespace: str, refusal: str | None = None) -> None:
@@ -1374,16 +1380,17 @@ def _target_parts(namespace: str, *, own_system: bool, own_namespace: bool) -> l
     return parts
 
 
-def _shared_parts() -> list[dict[str, Any]]:
-    """The cluster's shared objects, which go with its last target; weave-system itself last."""
+def _shared_parts(*, namespace: bool) -> list[dict[str, Any]]:
+    """The cluster's shared objects, which go with its last target; weave-system itself last, and only with
+    `namespace`: deleting it deletes everything in it."""
     system = SYSTEM_NAMESPACE
-    return [
+    parts = [
         _part("discovery.k8s.io/v1", "EndpointSlice", "weave-api-platform", system),
         _part("v1", "Service", objects.API_SERVICE, system),
         _part("v1", "ConfigMap", objects.ORIGINS, system),
         *(_part("networking.k8s.io/v1", "NetworkPolicy", name, system) for name in _POLICIES),
-        _part("v1", "Namespace", system),
     ]
+    return [*parts, _part("v1", "Namespace", system)] if namespace else parts
 
 
 async def _retire(client: Any, target: dict[str, Any]) -> bool:
@@ -1469,11 +1476,14 @@ def disconnect(
                 )
             _check_api_port(state, provider, cluster, nodes, key, server)
             connection.kube = [*kubectl(directory, path, key), "--request-timeout=20s"]
-            own_system = _owned(state, connection.kube, SYSTEM_NAMESPACE)
+            system_exists, system_owner = _owner(state, connection.kube, SYSTEM_NAMESPACE)
+            own_system = not system_exists or system_owner in (None, state["id"])
             own_namespace = _owned(state, connection.kube, namespace)
             parts = _target_parts(namespace, own_system=own_system, own_namespace=own_namespace)
             if last and own_system:
-                parts += _shared_parts()
+                # weave-system itself goes only when it carries this installation's label: an unlabeled one may hold
+                # objects that aren't Weave's, and deleting the namespace would take them too.
+                parts += _shared_parts(namespace=system_owner == state["id"])
 
         notice(f"target: revoking the runner and disabling {target['target_name']}")
 

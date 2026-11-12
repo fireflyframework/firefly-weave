@@ -859,6 +859,8 @@ def test_a_reconnect_that_finds_another_container_takes_the_platform_off_the_net
 
 
 FOREIGN = json.dumps({"metadata": {"labels": {"firefly.weave/installation": "b" * 24}}})
+# A namespace as connect leaves it: labeled with this installation's ID.
+OWN = json.dumps({"metadata": {"labels": {"firefly.weave/installation": "a" * 24}}})
 DISCONNECT_ADVICE = (
     "Disconnect it with weave platform cluster disconnect --provider kind --name weave-test --namespace weave-workers, "
     "then connect again."
@@ -1273,6 +1275,7 @@ def test_disconnecting_one_of_two_targets_removes_only_its_own_objects_and_ident
 def test_disconnecting_the_last_target_removes_the_shared_parts_but_never_the_workers_namespace(world):
     directory, commands, _, cluster = world
     connect(world)
+    commands.answer([KUBECTL, "get", "namespace", "weave-system", "-o", "json"], OWN)
     before = len(commands.calls)
     disconnect(world)
     removed = set(deleted(commands, before))
@@ -1282,6 +1285,25 @@ def test_disconnecting_the_last_target_removes_the_shared_parts_but_never_the_wo
     assert not [call for call in commands.calls[before:] if "delete" in call.argv and "weave-workers" in call.argv]
     assert network_changes(commands, before) == [("disconnect", KEYCLOAK), ("disconnect", REGISTRY)]
     assert cluster.removed_origins == ["kind-weave-test"]
+    assert clusters.receipt(directory)["clusters"] == {}
+
+
+@pytest.mark.parametrize("labels", [{}, {"app.kubernetes.io/name": "someone-else"}])
+def test_the_last_disconnect_keeps_a_weave_system_without_this_installations_label(world, labels):
+    """An unlabeled weave-system may hold another tool's objects: this installation's shared objects go by name, and
+    the namespace, which would take everything in it, stays."""
+    directory, commands, _, _ = world
+    connect(world)
+    unlabeled = json.dumps({"metadata": {"name": "weave-system", "labels": labels}})
+    commands.answer([KUBECTL, "get", "namespace", "weave-system", "-o", "json"], unlabeled)
+    before = len(commands.calls)
+    result = disconnect(world)
+    removed = deleted(commands, before)
+    assert ("Namespace", None, "weave-system") not in removed
+    assert {("Service", "weave-system", "weave-api"), ("EndpointSlice", "weave-system", "weave-api-platform")} <= set(
+        removed
+    )
+    assert "Namespace/weave-system" not in result["removed"]
     assert clusters.receipt(directory)["clusters"] == {}
 
 

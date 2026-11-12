@@ -544,7 +544,9 @@ clients, and frees its identity pair for the next connect. It also frees a
 target that a stopped connect left pending. When it's the cluster's last
 target, disconnect also removes the shared objects in `weave-system`, the
 cluster's private origins, and the platform's connections to the cluster's
-network.
+network. It deletes the `weave-system` namespace itself only when the namespace
+carries this installation's `firefly.weave/installation` label; one without
+that label may hold objects that aren't Weave's, so it stays.
 
 Disconnect never deletes the workers namespace, and it deletes nothing in a
 namespace that another Weave installation now owns. Each step is safe to
