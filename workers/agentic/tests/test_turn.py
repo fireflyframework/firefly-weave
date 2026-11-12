@@ -210,6 +210,8 @@ async def test_a_text_answer_in_tool_mode_is_formatted_through_the_final_result_
     assert output["result"] == {"orderId": "A-17", "status": "shipped"} and output["usage"]["requests"] == 2
     second = seen[1][1]
     assert second.function_tools == [] and [tool.name for tool in second.output_tools] == ["final_result"]
+    # The formatting request carries the instructions, and with them the data notice, itself.
+    assert seen[1][0][-1].instructions == INSTRUCTIONS and second.instructions == INSTRUCTIONS
 
 
 async def test_tool_calls_given_with_a_final_answer_come_first():
@@ -253,6 +255,17 @@ async def test_a_native_structured_final_costs_one_more_request():
     assert second.model_request_parameters.output_mode == "native" and second.function_tools == []
     assert second.model_request_parameters.output_object.json_schema["properties"]["result"] == ORDER
     assert isinstance(seen[1][0][-2], ModelResponse) and isinstance(seen[1][0][-1], ModelRequest)
+    assert seen[1][0][-1].instructions == INSTRUCTIONS and second.instructions == INSTRUCTIONS
+
+
+async def test_an_answer_to_a_formatting_prompt_ollama_cut_is_not_used():
+    model, _ = scripted(
+        respond(TextPart("Order A-17 has shipped.")),
+        respond(TextPart('{"result": {"orderId": "A-17", "status": "shipped"}}'), input_tokens=4),
+    )
+    with pytest.raises(ConnectorFailure) as failed:
+        await run(turn(schema=ORDER), model, output_mode="native", context_tokens=8192, ollama=True)
+    assert (failed.value.code, failed.value.outcome) == ("LLM_CONTEXT_LIMIT", "failed")
 
 
 async def test_a_native_final_that_calls_tools_costs_one_request():

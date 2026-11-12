@@ -264,7 +264,10 @@ async def run_turn(
                 if final:
                     result = _formatted(ModelResponse(parts=final), "tool")
                 else:
-                    follow = [*messages, response, ModelRequest(parts=[UserPromptPart(FORMAT_REQUEST)])]
+                    # The formatting request carries the instructions itself: the data notice in them never depends
+                    # on the library finding the latest instructions in the history.
+                    asked = ModelRequest(parts=[UserPromptPart(FORMAT_REQUEST)], instructions=turn.instructions)
+                    follow = [*messages, response, asked]
                     formatted = await model_request(
                         model,
                         follow,
@@ -272,6 +275,10 @@ async def run_turn(
                         model_request_parameters=_formatting(turn, output_mode),
                     )
                     responses.append(formatted)
+                    # It resends the whole transcript, so Ollama can cut it too.
+                    counted = formatted.usage.input_tokens
+                    if ollama and context_tokens is not None and cut(counted, sent, estimate, context_tokens):
+                        raise ConnectorFailure("LLM_CONTEXT_LIMIT", "failed")
                     if formatted.finish_reason == "length":
                         raise ConnectorFailure("LLM_LIMIT", "failed")
                     result = _formatted(formatted, output_mode)
