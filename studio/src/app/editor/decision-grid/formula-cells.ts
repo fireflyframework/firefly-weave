@@ -22,6 +22,8 @@ import { escapeSegment } from "../../forms/core/json";
 import type { Schema, ScopeEntry } from "../../forms/core/scope";
 import { completeAt, type CompletionList } from "../formula/complete";
 import { parseFormula } from "../formula/grammar";
+import { highlightSpans } from "../formula/spans";
+import { tokenize } from "../formula/tokens";
 import type { Expression } from "../ndv/registry";
 import {
   COLUMN_TYPE_LABELS,
@@ -154,4 +156,35 @@ export function splitIntoCells(
     cells[at] = part;
   }
   return composeWhen(cells);
+}
+
+/** A part of a formula as the grid colors it: names in text color, the rest by kind. */
+export interface FormulaPart {
+  text: string;
+  kind: "keyword" | "string" | "number" | null;
+}
+
+/** A formula's text in parts: operators and and/or, strings, numbers, and the rest. */
+export function formulaParts(text: string): FormulaPart[] {
+  const parts: FormulaPart[] = [];
+  const push = (part: FormulaPart) => {
+    const last = parts.at(-1);
+    if (last && last.kind === null && part.kind === null)
+      last.text += part.text;
+    else if (part.text) parts.push(part);
+  };
+  let at = 0;
+  for (const span of highlightSpans(tokenize(text))) {
+    const kind =
+      span.kind === "operator" || span.kind === "keyword"
+        ? "keyword"
+        : span.kind === "string" || span.kind === "number"
+          ? span.kind
+          : null;
+    push({ text: text.slice(at, span.from), kind: null });
+    push({ text: text.slice(span.from, span.to), kind });
+    at = span.to;
+  }
+  push({ text: text.slice(at), kind: null });
+  return parts;
 }

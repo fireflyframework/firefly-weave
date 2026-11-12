@@ -17,6 +17,7 @@ SPDX-License-Identifier: Apache-2.0
 */
 import { describe, expect, it } from "vitest";
 import {
+  formulaParts,
   splitIntoCells,
   tableCompletions,
   tableFormula,
@@ -97,5 +98,32 @@ describe("formulas in the decision grid", () => {
         columns,
       ),
     ).toBeNull();
+  });
+});
+
+describe("a formula's colors in the grid", () => {
+  it("colors operators and and/or as keywords, strings and numbers apart, and names as text", () => {
+    const parts = formulaParts(
+      'input.amount > 5000 or input.tier == "platinum"',
+    );
+    expect(parts.map((part) => part.text).join("")).toBe(
+      'input.amount > 5000 or input.tier == "platinum"',
+    );
+    expect(
+      parts.filter((part) => part.kind).map((part) => [part.text, part.kind]),
+    ).toEqual([
+      [">", "keyword"],
+      ["5000", "number"],
+      ["or", "keyword"],
+      ["==", "keyword"],
+      ['"platinum"', "string"],
+    ]);
+  });
+  it("keeps a text that doesn't read as one plain part", () => {
+    expect(formulaParts("input.amount >")).toEqual([
+      { text: "input.amount ", kind: null },
+      { text: ">", kind: "keyword" },
+    ]);
+    expect(formulaParts("")).toEqual([]);
   });
 });
