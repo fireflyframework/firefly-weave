@@ -373,10 +373,12 @@ its intent. The plan names the members it removes, by one rule: stopped
 containers first, then the highest container numbers (Compose) or unready pods,
 then the most recently started (Kubernetes). Those workers are the ones that
 finish their tasks first. The Compose runner stops and removes exactly those
-containers before it scales, so Compose never chooses. A scale-down whose
-observation does not list every member answers `WV-PLAN-STALE`; observe again.
-Only runners that register adapter version 2 take scale-downs: today, Compose
-runners.
+containers before it scales, so Compose never chooses. The Kubernetes runner
+gives those pods the lowest `controller.kubernetes.io/pod-deletion-cost` before
+it lowers the replicas, so the ReplicaSet removes them first; the receipt warns
+if one of them is still there afterwards. A scale-down whose observation does
+not list every member answers `WV-PLAN-STALE`; observe again. Only runners that
+register adapter version 2 take scale-downs: Compose and Kubernetes runners.
 
 ### A second approver
 
@@ -407,6 +409,41 @@ weave operations change-requests apply "$CHANGE_ID" --request reviewed-digest.js
 `expected_deployment_revision`, `intent`, `components`, optional `desired`
 values, `drain` (`mode` and `timeout_seconds`, 60–600), `title` and `reason`.
 `decline` and `cancel` take a `reason`.
+
+## Create a local test cluster
+
+To try a Kubernetes target on this computer, create a single-node kind or k3d
+cluster with the local platform's own tools. Run the command in the folder where
+you ran `weave platform up`:
+
+```sh
+# Create a kind cluster on the platform's Docker context, without connecting it yet.
+weave platform cluster create --provider kind --name weave-test --no-connect
+```
+
+Expected: `Created kind cluster weave-test: kubeconfig context kind-weave-test,
+Docker network weave-kind-weave-test.` Add `--output json` for one JSON line
+with `cluster`, `context`, and `network`.
+
+The command:
+
+- downloads the pinned kind, k3d, and kubectl into the installation directory
+  and checks each one's SHA-256 before it runs it;
+- creates the cluster on a Docker network of its own, so the platform never
+  shares a network with another cluster;
+- refuses when Docker has less than 6 GiB free, and refuses a cluster name that
+  already exists on the Docker context;
+- waits up to 180 s for the nodes to be Ready, and deletes the cluster again if
+  they aren't.
+
+Use `--provider k3d` for a k3s cluster. kind and k3d add the cluster's context
+to your kubeconfig and make it current, as they always do. Delete the cluster
+when you're done:
+
+```sh
+# Delete the test cluster and the Docker network it got.
+weave platform cluster delete --provider kind --name weave-test
+```
 
 ## Current bounds
 

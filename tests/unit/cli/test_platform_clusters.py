@@ -113,8 +113,8 @@ def test_refuses_a_context_that_is_not_kind_name_or_k3d_name(platform, tmp_path)
     with pytest.raises(PlatformError) as refused:
         check(directory, config)
     assert str(refused.value) == (
-        "No kind-weave-test context in your kubeconfig. Create the cluster with python scripts/operations-cluster.py "
-        "up --provider kind --name weave-test --no-connect, or pass --kubeconfig."
+        "No kind-weave-test context in your kubeconfig. Create the cluster with weave platform cluster create "
+        "--provider kind --name weave-test, or pass --kubeconfig."
     )
     assert commands.calls == []
 
@@ -194,7 +194,7 @@ def test_refuses_a_cluster_network_shared_with_another_cluster(platform):
         check(directory, config)
     assert str(refused.value) == (
         "The cluster's Docker network also holds another cluster's nodes. Create the cluster with "
-        "scripts/operations-cluster.py, which gives each cluster its own network."
+        "weave platform cluster create, which gives each cluster its own network."
     )
 
 

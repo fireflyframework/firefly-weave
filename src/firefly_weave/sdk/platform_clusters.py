@@ -28,6 +28,11 @@ import ipaddress
 import json
 import os
 import re
+import socket
+import tempfile
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -62,7 +67,7 @@ OPERATIONS_OFF = (
 )
 SHARED_NETWORK = (
     "The cluster's Docker network also holds another cluster's nodes. Create the cluster with "
-    "scripts/operations-cluster.py, which gives each cluster its own network."
+    "weave platform cluster create, which gives each cluster its own network."
 )
 MALFORMED = (
     "The saved cluster settings (clusters.json) are malformed or not private. Keep the file for inspection; "
@@ -190,8 +195,8 @@ def _server(paths: list[Path], context: str, provider: str, cluster: str) -> tup
     view = _merged(paths)
     if context not in view["contexts"]:
         raise local.PlatformError(
-            f"No {context} context in your kubeconfig. Create the cluster with python scripts/operations-cluster.py "
-            f"up --provider {provider} --name {cluster} --no-connect, or pass --kubeconfig."
+            f"No {context} context in your kubeconfig. Create the cluster with weave platform cluster create "
+            f"--provider {provider} --name {cluster}, or pass --kubeconfig."
         )
     path, entry = view["contexts"][context]
     raw = entry.get("context")
@@ -280,7 +285,7 @@ def preflight(directory: Path, provider: str, cluster: str, namespace: str, *, k
     if len(networks) != 1:
         raise local.PlatformError(
             "The cluster's nodes are on more than one Docker network. Create the cluster with "
-            "scripts/operations-cluster.py, which gives each cluster its own network."
+            "weave platform cluster create, which gives each cluster its own network."
         )
     (network,) = networks
     # The context's server must be this cluster's API: kind's control plane and k3d's load balancer publish 6443.
@@ -417,3 +422,262 @@ def free_pair(value: dict[str, Any]) -> int:
         f"This installation already connects {PAIRS} cluster targets. Disconnect one with weave platform cluster "
         "disconnect, then connect again."
     )
+
+
+# Local test clusters
+
+MIN_FREE_GIB = 6
+READY_SECONDS = 180
+GIB = 1024**3
+# kind's node image reads registry hosts from this folder, where connect writes the platform's mirror.
+KIND_CONFIG = """kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+containerdConfigPatches:
+- |-
+  [plugins."io.containerd.grpc.v1.cri".registry]
+    config_path = "/etc/containerd/certs.d"
+nodes:
+- role: control-plane
+"""
+# k3s reads its mirrors from this file; connect fills it in.
+K3D_REGISTRIES = "mirrors: {}\n"
+K3S_DISABLED = ("traefik", "servicelb", "metrics-server", "local-storage")
+# Replaced in tests.
+sleep = time.sleep
+clock = time.monotonic
+
+
+class _NotReady(Exception):
+    """The new cluster's nodes didn't become Ready in time."""
+
+
+def free_port() -> int:
+    """A free TCP port on this computer's loopback, for k3d's API server."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        return int(probe.getsockname()[1])
+
+
+def cluster_network(provider: str, cluster: str) -> str:
+    """The Docker network a cluster made here gets: its own, never shared with another cluster."""
+    return f"weave-kind-{cluster}" if provider == "kind" else f"k3d-{cluster}"
+
+
+def _tool_environment(context: str, **extra: str) -> dict[str, str]:
+    """The tools' environment: this context for every Docker call, and no other inherited Docker setting except the
+    folder that holds the contexts (DOCKER_CONFIG)."""
+    env = local._environment()
+    if "DOCKER_CONFIG" in os.environ:
+        env["DOCKER_CONFIG"] = os.environ["DOCKER_CONFIG"]
+    env["DOCKER_CONTEXT"] = context
+    env.update(extra)
+    return env
+
+
+def _lifecycle(directory: Path, context: str | None) -> tuple[dict[str, Any], str]:
+    """The folder that keeps the tools and private logs, and the Docker context: the installation's unless given."""
+    if not directory.is_dir():
+        # weave platform setup refuses a folder that exists, so this never makes the installation's folder.
+        raise local.PlatformError("Run weave platform up first, or pass --directory with an existing folder.")
+    if context is None:
+        try:
+            context = str(strict_json(read_file(directory / "platform.json", 65536, private=True))["context"])
+        except (OSError, ValueError, KeyError, TypeError, DeploymentError):
+            raise local.PlatformError(
+                "Run weave platform up first, or pass --context with the platform's Docker context."
+            ) from None
+    return {"directory": str(directory), "source": str(directory)}, context
+
+
+def _docker_host(state: dict[str, Any], context: str) -> str:
+    """k3d talks to the Docker API directly, so it gets the context's endpoint."""
+    described = strict_json(
+        local._run(state, "cluster-context", ["docker", "context", "inspect", context], env=_tool_environment(context))
+    )
+    try:
+        return str(described[0]["Endpoints"]["docker"]["Host"])
+    except (KeyError, IndexError, TypeError):
+        raise local.PlatformError(
+            f"Docker context {context} has no Docker endpoint k3d can use; nothing was changed."
+        ) from None
+
+
+def _exists(state: dict[str, Any], provider: str, cluster: str, context: str) -> bool:
+    """Whether a cluster of this name already has node containers on the context, running or not."""
+    found = local._run(
+        state,
+        "cluster-exists",
+        ["docker", "--context", context, "ps", "--all", "--filter", f"label={NODE_LABELS[provider]}={cluster}"]
+        + ["--format", "{{.Names}}"],
+        env=_tool_environment(context),
+    )
+    return bool(found.strip())
+
+
+def _check_disk(state: dict[str, Any], context: str) -> None:
+    """Measure Docker's free disk with an image the VM already holds, and keep 6 GiB for the cluster."""
+    output = local._run(
+        state,
+        "cluster-disk",
+        ["docker", "--context", context, "run", "--rm", "--network", "none", "--entrypoint", "df"]
+        + [platform_operations.REGISTRY_IMAGE, "-Pk", "/"],
+        env=_tool_environment(context),
+        timeout=120,
+    )
+    try:
+        free = int(output.decode().splitlines()[-1].split()[3]) * 1024 / GIB
+    except (IndexError, ValueError):
+        raise local.PlatformError("Docker didn't report its free disk space; nothing was created.") from None
+    if free < MIN_FREE_GIB:
+        raise local.PlatformError(
+            f"Docker has {int(free)} GiB free; a cluster needs {MIN_FREE_GIB} GiB. Free space without pruning other "
+            "projects' images, or use another context."
+        )
+
+
+@contextmanager
+def _private_file(directory: Path, text: str) -> Iterator[Path]:
+    """A configuration file only its owner can read, removed after the command that reads it."""
+    descriptor, name = tempfile.mkstemp(dir=directory, prefix=".cluster-", suffix=".yaml")
+    path = Path(name)
+    try:
+        with os.fdopen(descriptor, "w") as handle:
+            handle.write(text)
+        yield path
+    finally:
+        path.unlink(missing_ok=True)
+
+
+def _create(state: dict[str, Any], directory: Path, provider: str, cluster: str, context: str) -> None:
+    if provider == "kind":
+        with _private_file(directory, KIND_CONFIG) as config:
+            local._run(
+                state,
+                "cluster-create",
+                [str(tools.tool(directory, "kind")), "create", "cluster", "--name", cluster]
+                + ["--image", tools.KIND_NODE_IMAGE, "--config", str(config)],
+                env=_tool_environment(context, KIND_EXPERIMENTAL_DOCKER_NETWORK=cluster_network(provider, cluster)),
+                timeout=600,
+            )
+        return
+    disabled = [item for service in K3S_DISABLED for item in ("--k3s-arg", f"--disable={service}@server:0")]
+    host = _docker_host(state, context)
+    with _private_file(directory, K3D_REGISTRIES) as registries:
+        local._run(
+            state,
+            "cluster-create",
+            [str(tools.tool(directory, "k3d")), "cluster", "create", cluster, "--image", tools.K3S_IMAGE]
+            + ["--servers", "1", "--agents", "0", "--api-port", f"127.0.0.1:{free_port()}", *disabled]
+            + ["--registry-config", str(registries)],
+            env=_tool_environment(context, DOCKER_HOST=host),
+            timeout=600,
+        )
+
+
+def _wait_ready(state: dict[str, Any], directory: Path, provider: str, cluster: str, context: str) -> None:
+    """Wait from this computer, through the context the tool wrote, until every node is Ready, with a deadline."""
+    kubectl = str(tools.tool(directory, "kubectl"))
+    deadline = clock() + READY_SECONDS
+    while True:
+        wait = max(1, min(60, int(deadline - clock())))
+        try:
+            local._run(
+                state,
+                "cluster-ready",
+                [kubectl, "--context", f"{provider}-{cluster}", "wait", "--for=condition=Ready", "node", "--all"]
+                + [f"--timeout={wait}s"],
+                env=_tool_environment(context),
+                timeout=wait + 30,
+            )
+            return
+        except local.PlatformError:
+            # The API may not answer yet; try again until the deadline.
+            if clock() >= deadline:
+                raise _NotReady() from None
+        sleep(5)
+
+
+def _delete(state: dict[str, Any], directory: Path, provider: str, cluster: str, context: str) -> None:
+    if provider == "k3d":
+        # k3d removes the cluster's network with it.
+        env = _tool_environment(context, DOCKER_HOST=_docker_host(state, context))
+        local._run(
+            state,
+            "cluster-delete",
+            [str(tools.tool(directory, "k3d")), "cluster", "delete", cluster],
+            env=env,
+            timeout=300,
+        )
+        return
+    env = _tool_environment(context)
+    local._run(
+        state,
+        "cluster-delete",
+        [str(tools.tool(directory, "kind")), "delete", "cluster", "--name", cluster],
+        env=env,
+        timeout=300,
+    )
+    # kind leaves the network it made for this cluster behind; remove it when it's still there.
+    network = cluster_network(provider, cluster)
+    docker = ["docker", "--context", context, "network"]
+    listed = local._run(
+        state, "cluster-network", [*docker, "ls", "--filter", f"name=^{network}$", "--format", "{{.Name}}"], env=env
+    )
+    if network in listed.decode(errors="replace").split():
+        local._run(state, "cluster-network-delete", [*docker, "rm", network], env=env)
+
+
+def create_cluster(
+    directory: Path, provider: str, cluster: str, *, context: str | None = None, connect: bool = True
+) -> dict[str, str]:
+    """Create a single-node kind or k3d test cluster on its own network, from the pinned tools, and wait until its
+    nodes are Ready. A cluster of that name already on the context is refused, and only a cluster this call
+    created is deleted when its nodes don't become Ready."""
+    if provider not in PROVIDERS or cluster_name_problem(cluster):
+        raise local.PlatformError(NAME_PROBLEM)
+    if connect:
+        # TODO(T-g8fz7adl1o8): connect the new cluster once weave platform cluster connect exists.
+        raise local.PlatformError("Connecting a new cluster isn't available yet; create it with --no-connect.")
+    state, context = _lifecycle(directory, context)
+    if _exists(state, provider, cluster, context):
+        raise local.PlatformError(
+            f"A cluster named {cluster} already exists on context {context}; nothing was changed."
+        )
+    _check_disk(state, context)
+    # kind and k3d remove what a failed create made; only a cluster this call created is deleted here.
+    _create(state, directory, provider, cluster, context)
+    try:
+        _wait_ready(state, directory, provider, cluster, context)
+    except BaseException as error:
+        # Never leave a half-ready cluster on the shared Docker VM.
+        reason = (
+            f"The cluster's nodes weren't Ready within {READY_SECONDS} s"
+            if isinstance(error, _NotReady)
+            else "The readiness wait was interrupted"
+        )
+        try:
+            _delete(state, directory, provider, cluster, context)
+        except Exception:
+            raise local.PlatformError(
+                f"{reason}, and deleting the cluster failed; run weave platform cluster delete with the same "
+                "provider and name to remove it."
+            ) from None
+        if isinstance(error, _NotReady):
+            raise local.PlatformError(f"{reason}; the cluster was deleted.") from None
+        raise
+    return {"cluster": cluster, "context": f"{provider}-{cluster}", "network": cluster_network(provider, cluster)}
+
+
+def delete_cluster(directory: Path, provider: str, cluster: str, *, context: str | None = None) -> dict[str, Any]:
+    """Delete a test cluster; a cluster that still has connected targets is refused until they're disconnected."""
+    if provider not in PROVIDERS or cluster_name_problem(cluster):
+        raise local.PlatformError(NAME_PROBLEM)
+    state, context = _lifecycle(directory, context)
+    connected = receipt(directory)["clusters"].get(f"{provider}-{cluster}", {}).get("targets", {})
+    if connected:
+        # TODO(T-g8fz7adl1o8): disconnect each target once weave platform cluster disconnect exists.
+        raise local.PlatformError(
+            "This cluster still has connected targets; disconnect them first. Nothing was deleted."
+        )
+    _delete(state, directory, provider, cluster, context)
+    return {"cluster": cluster, "disconnected": [], "deleted": True}

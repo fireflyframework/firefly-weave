@@ -105,6 +105,63 @@ def doctor(source: Path, context: str | None, output: str) -> None:
     _call(lambda: lifecycle.doctor(source, context), output, render)
 
 
+@platform.group()
+def cluster() -> None:
+    """Create, delete and connect local kind and k3d test clusters (development only).
+
+    A cluster gets its own Docker network and the pinned kind, k3d, and kubectl,
+    downloaded into the installation directory and verified on first use.
+    """
+
+
+@cluster.command("create")
+@click.option("--provider", required=True, help="kind or k3d.")
+@click.option("--name", "name", required=True, help="Cluster name: 1 to 32 lowercase letters, digits and hyphens.")
+@click.option("--no-connect", is_flag=True, help="Create the cluster without connecting it to this platform.")
+@click.option("--context", help="Docker context; default: the local platform's.")
+@click.option("--output", type=click.Choice(["text", "json"]), default="text")
+@click.pass_obj
+def cluster_create(
+    directory: Path, provider: str, name: str, no_connect: bool, context: str | None, output: str
+) -> None:
+    """Create a single-node test cluster and wait until its nodes are Ready.
+
+    Refuses a name that already exists on the Docker context, and refuses when
+    Docker has less than 6 GiB free. Deletes only a cluster it created.
+    """
+    from firefly_weave.sdk import platform_clusters
+
+    def render(value: dict[str, Any]) -> None:
+        provider_name = value["context"].split("-", 1)[0]
+        click.echo(
+            f"Created {provider_name} cluster {value['cluster']}: kubeconfig context {value['context']}, "
+            f"Docker network {value['network']}."
+        )
+
+    _call(
+        lambda: platform_clusters.create_cluster(directory, provider, name, context=context, connect=not no_connect),
+        output,
+        render,
+    )
+
+
+@cluster.command("delete")
+@click.option("--provider", required=True, help="kind or k3d.")
+@click.option("--name", "name", required=True, help="The cluster's name.")
+@click.option("--context", help="Docker context; default: the local platform's.")
+@click.option("--output", type=click.Choice(["text", "json"]), default="text")
+@click.pass_obj
+def cluster_delete(directory: Path, provider: str, name: str, context: str | None, output: str) -> None:
+    """Delete a test cluster that has no connected targets."""
+    from firefly_weave.sdk import platform_clusters
+
+    _call(
+        lambda: platform_clusters.delete_cluster(directory, provider, name, context=context),
+        output,
+        lambda value: click.echo(f"Deleted cluster {value['cluster']}."),
+    )
+
+
 @platform.command()
 @click.option("--source", type=click.Path(path_type=Path), default=Path("."), show_default=True)
 @click.option("--context", help="Named local Docker context; default: current context.")
