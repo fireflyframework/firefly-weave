@@ -570,6 +570,31 @@ async def _keycloak_clients(
         return subjects
 
 
+async def _delete_keycloak_clients(
+    state: dict[str, Any], client_ids: list[str], transport: httpx.AsyncBaseTransport | None
+) -> None:
+    """Delete these cluster clients, so a disconnected target's secrets sign in nowhere; a client already gone is
+    fine. Only cluster client IDs are accepted: the platform's own clients are never deleted here."""
+    import httpx
+
+    if not set(client_ids) <= set(CLUSTER_CLIENTS):
+        raise local.PlatformError("Only cluster clients can be deleted; nothing was changed.")
+    keycloak = f"http://localhost:{state['ports']['keycloak']}"
+    admin = local._env_file(Path(state["directory"]) / "identity.env").get("WEAVE_KC_ADMIN_SECRET", "")
+    clients = keycloak + "/admin/realms/weave/clients"
+    async with httpx.AsyncClient(timeout=10, trust_env=False, follow_redirects=False, transport=transport) as client:
+        token = await local._keycloak_admin(client, keycloak, admin)
+        for client_id in client_ids:
+            status, found = await local._keycloak(client, "GET", clients, token=token, params={"clientId": client_id})
+            records = [item for item in found or [] if isinstance(item, dict) and item.get("clientId") == client_id]
+            if status != 200 or len(records) > 1:
+                raise local.PlatformError("The local Keycloak clients could not be read.")
+            for record in records:
+                status, _ = await local._keycloak(client, "DELETE", f"{clients}/{record['id']}", token=token)
+                if status not in (204, 404):
+                    raise local.PlatformError("The local Keycloak refused to delete a cluster client.")
+
+
 # The operations principals: (role, principal kind, client ID).
 PRINCIPALS = (("worker", "worker", WORKER_CLIENT), ("runner", "application", RUNNER_CLIENT))
 

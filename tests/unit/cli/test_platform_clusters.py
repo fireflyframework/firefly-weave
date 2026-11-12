@@ -450,6 +450,10 @@ class Cluster:
         self.keycloak_at = []
         self.origins = []
         self.registered_after = None
+        self.runner_id = uuid4()
+        # Keycloak client IDs each disconnect deleted, and the clusters whose private origins it removed.
+        self.deleted_clients = []
+        self.removed_origins = []
 
     def network(self, call):
         containers = {key: {"Name": name, "IPv4Address": "172.30.0.2/16"} for key, name in self.nodes.items()}
@@ -489,7 +493,18 @@ class Cluster:
             self.registered_after = [call.name for call in self.commands.calls]
         if operation == "deployment_runners.list":
             fresh = datetime.now(UTC) + timedelta(seconds=60)
-            return SimpleNamespace(items=[SimpleNamespace(revoked=False, expires_at=fresh)] if self.online else [])
+            runner = SimpleNamespace(id=self.runner_id, revoked=False, expires_at=fresh)
+            return SimpleNamespace(items=[runner] if self.online else [])
+        if operation == "deployment_targets.read":
+            capabilities = ["observe", "update", "scale_workers", "restart_workers"]
+            runner_principal = uuid4()
+            return SimpleNamespace(
+                id=kwargs["identifier"],
+                revision=4,
+                disabled=False,
+                runner_principal_id=runner_principal,
+                capabilities=capabilities,
+            )
         if operation == "deployment_jobs.read":
             observation = uuid4() if self.job_state == "succeeded" else None
             return SimpleNamespace(state=self.job_state, observation_id=observation)
@@ -536,6 +551,16 @@ def world(platform, monkeypatch):
     monkeypatch.setattr(clusters.platform_operations, "_api", api)
     monkeypatch.setattr(clusters.platform_operations, "_keycloak_clients", keycloak)
     monkeypatch.setattr(clusters.platform_origins, "set_cluster_entries", origins)
+
+    async def delete_clients(state, client_ids, transport):
+        cluster.deleted_clients.append(list(client_ids))
+
+    def remove_origins(state, name):
+        cluster.removed_origins.append(name)
+        return True
+
+    monkeypatch.setattr(clusters.platform_operations, "_delete_keycloak_clients", delete_clients, raising=False)
+    monkeypatch.setattr(clusters.platform_origins, "remove_cluster_entries", remove_origins)
     monkeypatch.setattr(clusters, "sleep", lambda seconds: None)
     monkeypatch.setattr(clusters, "clock", lambda: next(ticks))
     monkeypatch.setattr(clusters, "wait_async", no_wait)
@@ -560,6 +585,7 @@ def world(platform, monkeypatch):
     commands.answer([KUBECTL, "create", "secret", "generic"], cluster.create_secret)
     commands.answer([KUBECTL, "label", "secret"], "")
     commands.answer([KUBECTL, "delete", "pod"], "")
+    commands.answer([KUBECTL, "delete", "--ignore-not-found", "-f", "-"], "")
     commands.answer([KUBECTL, "create", "-f", "-"], cluster.create)
     for name in PROBES:
         commands.answer([KUBECTL, "get", "pod", name], cluster.pod)
@@ -1169,3 +1195,131 @@ def test_refresh_that_finds_a_target_namespace_taken_says_to_disconnect_it(world
         "kind-weave-test: not refreshed. Namespace weave-workers belongs to another Weave installation. "
         + DISCONNECT_ADVICE
     )
+
+
+# Disconnect
+
+
+def deleted(commands, since=0):
+    """Every object a kubectl delete named: (Kind, namespace or None, name)."""
+    return [
+        (item["kind"], item["metadata"].get("namespace"), item["metadata"]["name"])
+        for call in commands.calls[since:]
+        if call.name == "cluster-disconnect"
+        for item in json.loads(call.stdin)["items"]
+    ]
+
+
+def disconnect(case, namespace="weave-workers", notice=None):
+    directory, _, config, _ = case
+    lines = [] if notice is None else notice
+    return clusters.disconnect(directory, "kind", "weave-test", namespace, kubeconfig=config, notice=lines.append)
+
+
+def connect_team_b(case):
+    directory, commands, config, _ = case
+    commands.answer([KUBECTL, "get", "namespace", "team-b", "-o", "jsonpath={.metadata.uid}"], UID)
+    return clusters.connect(directory, "kind", "weave-test", "team-b", kubeconfig=config, notice=lambda line: None)
+
+
+def test_disconnecting_one_of_two_targets_removes_only_its_own_objects_and_identities(world):
+    directory, commands, _, cluster = world
+    connect(world)
+    before = len(commands.calls)
+    connected = connect_team_b(world)
+    # What the cluster holds for team-b: every object connect applied or created for it (its probe pods are gone).
+    made = {
+        (item["kind"], item["metadata"].get("namespace"), item["metadata"]["name"])
+        for call in commands.calls[before:]
+        if "apply" in call.argv or call.argv[-3:] == ["create", "-f", "-"]
+        for item in json.loads(call.stdin).get("items", [json.loads(call.stdin)])
+        if item["kind"] != "Pod"
+        if "team-b" in (item["metadata"].get("namespace"), item["metadata"]["name"])
+        or item["metadata"]["name"].endswith("-team-b")
+    }
+    calls = len(cluster.api_calls)
+    before = len(commands.calls)
+    result = disconnect(world, "team-b")
+    assert result == {
+        "target_id": connected["target_id"],
+        "disabled": True,
+        "removed": sorted(f"{kind}/{name}" for kind, _, name in deleted(commands, before)),
+    }
+    names = [name for name, _ in cluster.api_calls[calls:]]
+    assert names[:4] == [
+        "deployment_runners.list",
+        "deployment_runners.revoke",
+        "deployment_targets.read",
+        "deployment_targets.update",
+    ]
+    (update,) = [kwargs for name, kwargs in cluster.api_calls[calls:] if name == "deployment_targets.update"]
+    assert update["body"].disabled is True and update["revision"] == 4
+    statuses = [kwargs["body"].active for name, kwargs in cluster.api_calls[calls:] if name == "principals.status"]
+    assert statuses == [False, False]
+    assert cluster.deleted_clients == [["weave-cluster-runner-2", "weave-cluster-worker-2"]]
+    removed = set(deleted(commands, before))
+    # Every object of team-b goes, but never its namespace or the default account Kubernetes keeps in it.
+    assert removed | {("Namespace", None, "team-b"), ("ServiceAccount", "team-b", "default")} >= made
+    assert ("Namespace", None, "team-b") not in removed
+    assert ("Secret", "weave-system", "weave-runner-identity-team-b") in removed
+    assert ("Secret", "team-b", "weave-worker-identity") in removed
+    assert not [item for item in removed if "weave-workers" in (item[1], item[2]) or item[2].endswith("-weave-workers")]
+    assert ("Service", "weave-system", "weave-api") not in removed
+    assert network_changes(commands, before) == [] and cluster.removed_origins == []
+    saved = clusters.receipt(directory)["clusters"]["kind-weave-test"]
+    assert set(saved["targets"]) == {"weave-workers"}
+
+
+def test_disconnecting_the_last_target_removes_the_shared_parts_but_never_the_workers_namespace(world):
+    directory, commands, _, cluster = world
+    connect(world)
+    before = len(commands.calls)
+    disconnect(world)
+    removed = set(deleted(commands, before))
+    assert {("Namespace", None, "weave-system"), ("Service", "weave-system", "weave-api")} <= removed
+    assert ("EndpointSlice", "weave-system", "weave-api-platform") in removed
+    assert ("Namespace", None, "weave-workers") not in removed
+    assert not [call for call in commands.calls[before:] if "delete" in call.argv and "weave-workers" in call.argv]
+    assert network_changes(commands, before) == [("disconnect", KEYCLOAK), ("disconnect", REGISTRY)]
+    assert cluster.removed_origins == ["kind-weave-test"]
+    assert clusters.receipt(directory)["clusters"] == {}
+
+
+def test_disconnect_frees_a_pending_target_with_its_keycloak_clients_and_principals(world):
+    """A connect that stopped after the identities stage left a pending target: no platform target to disable, but
+    clients and principals that a later connect of another namespace must not inherit."""
+    directory, commands, _, cluster = world
+    cluster.exits["weave-probe-unlabeled"] = 1
+    with pytest.raises(PlatformError):
+        connect(world)
+    calls = len(cluster.api_calls)
+    result = disconnect(world)
+    assert result["target_id"] is None and result["disabled"] is False
+    names = [name for name, _ in cluster.api_calls[calls:]]
+    assert names == ["principals.status", "principals.status"]
+    assert cluster.deleted_clients == [["weave-cluster-runner-1", "weave-cluster-worker-1"]]
+    assert clusters.receipt(directory)["clusters"] == {}
+
+
+def test_disconnect_deletes_nothing_in_a_namespace_another_installation_took(world):
+    """The refusal for a taken namespace says to disconnect it: that frees the target here and leaves the other
+    installation's objects in the namespace alone."""
+    directory, commands, _, cluster = world
+    connect(world)
+    cluster.namespace = FOREIGN
+    before = len(commands.calls)
+    disconnect(world)
+    removed = deleted(commands, before)
+    assert ("Deployment", "weave-system", "weave-runner-weave-workers") in removed
+    assert not [item for item in removed if "weave-workers" in (item[1], item[2])]
+    assert clusters.receipt(directory)["clusters"] == {}
+
+
+def test_disconnecting_a_namespace_without_a_target_changes_nothing(world):
+    directory, commands, _, cluster = world
+    connect(world)
+    before, calls = len(commands.calls), len(cluster.api_calls)
+    with pytest.raises(PlatformError) as refused:
+        disconnect(world, "team-b")
+    assert str(refused.value) == "kind-weave-test has no target in namespace team-b; nothing was changed."
+    assert commands.calls[before:] == [] and cluster.api_calls[calls:] == []

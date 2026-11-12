@@ -798,22 +798,27 @@ def _taken(sentence: str, provider: str, cluster: str, namespace: str) -> str:
     return sentence.format(provider=provider, cluster=cluster, namespace=namespace)
 
 
-def _check_namespace(state: dict[str, Any], kube: list[str], namespace: str, refusal: str | None = None) -> None:
-    """Refuse a namespace another installation owns, before anything changes: weave-system, which every target of
-    the cluster shares, or a workers namespace, with `refusal` when the caller has a more precise sentence."""
+def _owned(state: dict[str, Any], kube: list[str], namespace: str) -> bool:
+    """Whether a namespace is this installation's or no installation's (absent or unlabeled); read-only."""
     existing = local._run(
         state, "cluster-namespace", [*kube, "get", "namespace", namespace, "--ignore-not-found", "-o", "json"]
     )
-    if existing.strip():
-        try:
-            labels = strict_json(existing)["metadata"].get("labels") or {}
-        except (ValueError, TypeError, KeyError, AttributeError, DeploymentError):
-            raise local.PlatformError("kubectl didn't describe the namespace; nothing was changed.") from None
-        owner = labels.get("firefly.weave/installation")
-        if owner is not None and owner != state["id"]:
-            if namespace == SYSTEM_NAMESPACE:
-                raise local.PlatformError(FOREIGN_SYSTEM)
-            raise local.PlatformError(refusal or FOREIGN_NAMESPACE.format(namespace=namespace))
+    if not existing.strip():
+        return True
+    try:
+        labels = strict_json(existing)["metadata"].get("labels") or {}
+    except (ValueError, TypeError, KeyError, AttributeError, DeploymentError):
+        raise local.PlatformError("kubectl didn't describe the namespace; nothing was changed.") from None
+    return labels.get("firefly.weave/installation") in {None, state["id"]}
+
+
+def _check_namespace(state: dict[str, Any], kube: list[str], namespace: str, refusal: str | None = None) -> None:
+    """Refuse a namespace another installation owns, before anything changes: weave-system, which every target of
+    the cluster shares, or a workers namespace, with `refusal` when the caller has a more precise sentence."""
+    if not _owned(state, kube, namespace):
+        if namespace == SYSTEM_NAMESPACE:
+            raise local.PlatformError(FOREIGN_SYSTEM)
+        raise local.PlatformError(refusal or FOREIGN_NAMESPACE.format(namespace=namespace))
 
 
 def _uid(connection: _Connection, namespace: str) -> str:
@@ -1231,6 +1236,18 @@ def connect(
 # Refresh
 
 
+def _recorded_nodes(state: dict[str, Any], entry: dict[str, Any]) -> list[str]:
+    """A recorded cluster's node containers on the platform's Docker context, running or not; none once it's gone."""
+    label = f"label={NODE_LABELS[entry['provider']]}={entry['cluster']}"
+    return _lines(
+        local._run(
+            state,
+            "cluster-nodes",
+            ["docker", "--context", state["context"], "ps", "--all", "--filter", label, "--format", "{{.Names}}"],
+        )
+    )
+
+
 def _refresh_cluster(
     directory: Path,
     state: dict[str, Any],
@@ -1240,14 +1257,7 @@ def _refresh_cluster(
     notice: Callable[[str], None],
 ) -> str:
     provider, cluster = entry["provider"], entry["cluster"]
-    nodes = _lines(
-        local._run(
-            state,
-            "cluster-nodes",
-            ["docker", "--context", state["context"], "ps", "--all", "--filter"]
-            + [f"label={NODE_LABELS[provider]}={cluster}", "--format", "{{.Names}}"],
-        )
-    )
+    nodes = _recorded_nodes(state, entry)
     if not nodes:
         return "missing"
     notice(f"{key}: following the platform's addresses")
@@ -1306,6 +1316,183 @@ def refresh(directory: Path, notice: Callable[[str], None]) -> list[dict[str, st
     except local.PlatformError as error:
         notice(f"clusters: not refreshed. {error}")
         return [{"name": name, "state": "unreachable"} for name in names]
+
+
+# Disconnect
+
+NO_TARGET = "{key} has no target in namespace {namespace}; nothing was changed."
+_RBAC = "rbac.authorization.k8s.io/v1"
+_POLICIES = ("weave-deny-ingress", "weave-egress", "weave-platform-access")
+
+
+def _part(api: str, kind: str, name: str, namespace: str | None = None) -> dict[str, Any]:
+    """An object to delete, by kind and name only."""
+    metadata = {"name": name} if namespace is None else {"name": name, "namespace": namespace}
+    return {"apiVersion": api, "kind": kind, "metadata": metadata}
+
+
+def _target_parts(namespace: str, *, own_system: bool, own_namespace: bool) -> list[dict[str, Any]]:
+    """What connect made for one target, by name: its runner's objects in weave-system and cluster-wide while
+    weave-system is this installation's, and everything in the workers namespace but the namespace and its default
+    account while that namespace is. A namespace another installation took keeps every object in it."""
+    runner, system = f"weave-runner-{namespace}", SYSTEM_NAMESPACE
+    parts = []
+    if own_system:
+        parts += [
+            _part("apps/v1", "Deployment", runner, system),
+            _part("v1", "Secret", _runner_secret(namespace), system),
+            _part("v1", "ConfigMap", f"weave-runner-config-{namespace}", system),
+            _part("v1", "ConfigMap", f"weave-runner-kubeconfig-{namespace}", system),
+            _part("v1", "ServiceAccount", runner, system),
+            _part(_RBAC, "ClusterRoleBinding", runner),
+            _part(_RBAC, "ClusterRole", runner),
+        ]
+    if own_namespace:
+        parts += [
+            _part("apps/v1", "Deployment", objects.WORKER, namespace),
+            _part("v1", "Secret", objects.WORKER_IDENTITY, namespace),
+            _part("v1", "ConfigMap", objects.WORKER_CONFIG, namespace),
+            _part("v1", "ConfigMap", objects.ORIGINS, namespace),
+            _part(_RBAC, "RoleBinding", "weave-runner", namespace),
+            _part(_RBAC, "Role", "weave-runner", namespace),
+            *(_part("networking.k8s.io/v1", "NetworkPolicy", name, namespace) for name in _POLICIES),
+        ]
+    return parts
+
+
+def _shared_parts() -> list[dict[str, Any]]:
+    """The cluster's shared objects, which go with its last target; weave-system itself last."""
+    system = SYSTEM_NAMESPACE
+    return [
+        _part("discovery.k8s.io/v1", "EndpointSlice", "weave-api-platform", system),
+        _part("v1", "Service", objects.API_SERVICE, system),
+        _part("v1", "ConfigMap", objects.ORIGINS, system),
+        *(_part("networking.k8s.io/v1", "NetworkPolicy", name, system) for name in _POLICIES),
+        _part("v1", "Namespace", system),
+    ]
+
+
+async def _retire(client: Any, target: dict[str, Any]) -> bool:
+    """Revoke the target's runners, disable the target and deactivate its principals; a pending target has only
+    principals. True when a target was disabled. Each call is safe to repeat."""
+    from firefly_weave.contracts.deployments import TargetUpdate
+    from firefly_weave.sdk.members import MembersClient
+
+    disabled = False
+    if "target_id" in target:
+        identifier = UUID(target["target_id"])
+        runners = await client.invoke("deployment_runners.list", query={"target_id": str(identifier)})
+        for runner in runners.items:
+            if not runner.revoked:
+                await client.invoke("deployment_runners.revoke", identifier=runner.id)
+        current = await client.invoke("deployment_targets.read", identifier=identifier)
+        if not current.disabled:
+            update = TargetUpdate(
+                runner_principal_id=current.runner_principal_id, capabilities=current.capabilities, disabled=True
+            )
+            await client.invoke(
+                "deployment_targets.update", identifier=identifier, body=update, revision=current.revision
+            )
+        disabled = True
+    members = MembersClient(client)
+    for role in ("runner", "worker"):
+        principal = target.get(role + "_principal_id")
+        if principal is not None:
+            await members.set_active(UUID(principal), False)
+    return disabled
+
+
+def _leave_network(connection: _Connection, notice: Callable[[str], None]) -> None:
+    """Take the platform's containers off a cluster network that has no target left; a network already gone holds
+    nothing. A container that can't leave is named in a notice with the command that removes it."""
+    ids = {service: _platform_container(connection, service) for service in ("keycloak", "registry")}
+    try:
+        _, members = _network_view(connection)
+    except local.PlatformError:
+        return
+    stayed = str(_leave(connection, _present(ids, members), local.PlatformError("")))
+    if stayed:
+        notice(f"network:{stayed}")
+
+
+def disconnect(
+    directory: Path,
+    provider: str,
+    cluster: str,
+    namespace: str,
+    *,
+    kubeconfig: Path | None,
+    notice: Callable[[str], None],
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> dict[str, Any]:
+    """Disconnect one target: revoke its runner, disable its target and deactivate its principals, delete its objects
+    in the cluster and its Keycloak clients, then free its pair. The cluster's last target also takes the shared
+    objects, the cluster's private origins and the platform's network connections. A pending target (a connect that
+    stopped) is freed the same way. The workers namespace is never deleted, and a namespace another installation
+    took keeps every object in it. Each step is safe to repeat, so a rerun finishes a disconnect that stopped."""
+    _names(provider, cluster, namespace)
+    key = f"{provider}-{cluster}"
+    with local._exclusive(directory, LOCK, BUSY):
+        value = receipt(directory)
+        entry = value["clusters"].get(key)
+        target = entry["targets"].get(namespace) if entry is not None else None
+        if entry is None or target is None:
+            raise local.PlatformError(NO_TARGET.format(key=key, namespace=namespace))
+        state = local._state(directory)
+        operations = platform_operations.receipt(directory) or {}
+        last = set(entry["targets"]) == {namespace}
+        nodes = _recorded_nodes(state, entry)
+        found = Preflight(provider, cluster, namespace, key, Path(), state["context"], entry["network"], nodes)
+        connection = _Connection(found, state, operations, [])
+        parts: list[dict[str, Any]] = []
+        if nodes:
+            # Reach the cluster before anything changes, as preflight does; a cluster that's gone has nothing left.
+            path, server = _server(_candidates(kubeconfig), key, provider, cluster)
+            if not _local(server):
+                raise local.PlatformError(
+                    f"{key} points at a server that isn't this computer. Weave connects only local kind and k3d "
+                    "clusters."
+                )
+            _check_api_port(state, provider, cluster, nodes, key, server)
+            connection.kube = [*kubectl(directory, path, key), "--request-timeout=20s"]
+            own_system = _owned(state, connection.kube, SYSTEM_NAMESPACE)
+            own_namespace = _owned(state, connection.kube, namespace)
+            parts = _target_parts(namespace, own_system=own_system, own_namespace=own_namespace)
+            if last and own_system:
+                parts += _shared_parts()
+
+        notice(f"target: revoking the runner and disabling {target['target_name']}")
+
+        async def retire(client: WeaveClient) -> bool:
+            return await _retire(client, target)
+
+        disabled = asyncio.run(platform_operations._api(state, operations, retire, transport))
+        if parts:
+            notice(f"objects: deleting {len(parts)} objects of {target['target_name']}")
+            document = json.dumps({"apiVersion": "v1", "kind": "List", "items": parts}).encode()
+            local._run(
+                state,
+                "cluster-disconnect",
+                [*connection.kube, "delete", "--ignore-not-found", "--wait=false", "-f", "-"],
+                stdin=document,
+                timeout=120,
+            )
+        notice("identities: deleting the target's Keycloak clients")
+        client_ids = list(platform_operations.cluster_clients(target["pair"]))
+        asyncio.run(platform_operations._delete_keycloak_clients(state, client_ids, transport))
+        if last:
+            notice(f"network: taking the platform off {entry['network']}")
+            _leave_network(connection, notice)
+            platform_origins.remove_cluster_entries(state, key)
+            del value["clusters"][key]
+        else:
+            del entry["targets"][namespace]
+        save(directory, value)
+        return {
+            "target_id": target.get("target_id"),
+            "disabled": disabled,
+            "removed": sorted(f"{part['kind']}/{part['metadata']['name']}" for part in parts),
+        }
 
 
 # Local test clusters

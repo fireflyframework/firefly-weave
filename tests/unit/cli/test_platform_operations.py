@@ -364,6 +364,31 @@ async def test_keycloak_clients_are_made_for_exactly_the_ids_given_and_a_second_
     assert methods == ["POST", "PUT"] and made["weave-cluster-runner-3"]["secret"] == "second"
 
 
+async def test_deleting_cluster_clients_removes_exactly_those_and_never_a_platform_client(owned):
+    """Disconnect deletes its pair's clients, one already gone is fine, and the platform's own can't be named."""
+    _, state, _ = owned
+    present = {"weave-cluster-runner-2": "id-runner-2"}
+    deleted: list[str] = []
+
+    def keycloak(request):
+        path = request.url.path
+        if path.endswith("/token"):
+            return httpx.Response(200, json={"access_token": "admin-token"})
+        if request.method == "GET":
+            wanted = request.url.params["clientId"]
+            return httpx.Response(200, json=[{"id": present[wanted], "clientId": wanted}] if wanted in present else [])
+        deleted.append(path.rsplit("/", 1)[1])
+        return httpx.Response(204)
+
+    transport = httpx.MockTransport(keycloak)
+    pair = ["weave-cluster-runner-2", "weave-cluster-worker-2"]
+    await platform_operations._delete_keycloak_clients(state, pair, transport)
+    assert deleted == ["id-runner-2"]
+    with pytest.raises(platform.PlatformError, match="Only cluster clients"):
+        await platform_operations._delete_keycloak_clients(state, ["weave-cluster-runner-2", "weave-worker"], transport)
+    assert deleted == ["id-runner-2"]
+
+
 def test_the_host_account_may_register_the_target_before_it_does(operations):
     case = operations
     enable(case)
