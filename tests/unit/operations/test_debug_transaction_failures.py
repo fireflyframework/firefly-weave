@@ -180,3 +180,22 @@ def test_pending_keys_are_stored_sorted_bounded_and_restored():
             many, mocks={}, input={**INPUT, "items": [1]}, now=NOW, pending=[f"node:add[{i}]" for i in range(1001)]
         )
     assert raised.value.code == "WV-DEBUG-LIMIT"
+
+
+def restored_with_pending(keys):
+    """The code a stored session with ``keys`` as its pending keys is refused with."""
+    flow = compiled([transaction([hold(), add(), add("add2"), submit()])])
+    stored = json.loads(pending_run(flow, ["node:submit", "node:add2"]).serialize())
+    stored["pending_keys"] = keys
+    with pytest.raises(DebugError) as raised:
+        Simulator.restore(json.dumps(stored))
+    return raised.value.code
+
+
+def test_restoring_more_pending_keys_than_the_bound_answers_the_limit_code():
+    assert restored_with_pending([f"node:k{index:04}" for index in range(1001)]) == "WV-DEBUG-LIMIT"
+
+
+def test_restoring_repeated_or_unsorted_pending_keys_is_refused():
+    assert restored_with_pending(["node:submit", "node:submit"]) == "WV-DEBUG-MOCK-KEY"
+    assert restored_with_pending(["node:submit", "node:add2"]) == "WV-DEBUG-MOCK-KEY"

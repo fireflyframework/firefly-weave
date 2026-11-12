@@ -24,6 +24,8 @@ from datetime import datetime, timedelta
 from typing import cast
 from uuid import NAMESPACE_URL, UUID, uuid5
 
+from pydantic import ValidationError
+
 from firefly_weave.compiler.api import CompiledArtifact, import_artifact
 from firefly_weave.compiler.calls import call_output_schema
 from firefly_weave.compiler.canonical import canonical_bytes, canonical_digest
@@ -484,7 +486,15 @@ class Simulator:
     def restore(cls, serialized: str, *, limits: DebugLimits = _DEFAULT_LIMITS) -> "Simulator":
         if len(serialized.encode()) > limits.session_bytes:
             raise DebugError("WV-DEBUG-LIMIT")
-        data = DebugState.model_validate_json(serialized)
+        try:
+            data = DebugState.model_validate_json(serialized)
+        except ValidationError as error:
+            if any(item["loc"] == ("pending_keys",) and item["type"] == "too_long" for item in error.errors()):
+                raise DebugError("WV-DEBUG-LIMIT") from None
+            raise
+        if data.pending_keys != sorted(set(data.pending_keys)):
+            # A session stores its pending keys once each and sorted; any other list was not stored by one.
+            raise DebugError("WV-DEBUG-MOCK-KEY")
         result = cls.__new__(cls)
         result.limits = limits
         result.artifact = import_artifact(data.artifact)
@@ -1078,7 +1088,7 @@ class Simulator:
             event = self._event("incident_opened", data | {"code": "WV-CALL-INTERRUPTED"})
         elif refused is not None and settling:
             # The child ran and its output was refused: the step failed and may have applied.
-            failed = failure_data(frame.call_node, 0, refused, "unknown", 1)
+            failed = failure_data(frame.call_node, frame.generation, refused, "unknown", frame.generation + 1)
             event = self._event("step_failed", failed | {"effect": "unknown"})
         elif refused is not None:
             event = self._event("incident_opened", data | {"code": refused})
@@ -1268,7 +1278,7 @@ class Simulator:
 
         def queue() -> None:
             d = self.data
-            if (d.cursor.result.state if d.cursor else d.state).status in TERMINAL:
+            if d.diagnostics or (d.cursor.result.state if d.cursor else d.state).status in TERMINAL:
                 raise DebugError("WV-DEBUG-STATE")
             data: JsonObject = {"reason": "Cancelled in the simulation"}
             if skip_undo:
@@ -1307,7 +1317,7 @@ class Simulator:
             return self.advance_time(command.seconds)
         if command.kind == "resolve" and command.incident_key is not None and command.resolution is not None:
             return self.resolve(command.incident_key, command.resolution, command.payload, frame=command.frame)
-        if command.kind == "cancel":
+        if command.kind == "cancel" and command.frame is None:
             return self.cancel(command.skip_undo)
         if command.kind == "breakpoints" and command.node_ids is not None:
             self.set_breakpoints(set(command.node_ids))

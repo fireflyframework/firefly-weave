@@ -194,3 +194,20 @@ def test_a_called_workflow_in_doubt_holds_its_caller_until_the_settle_deadline()
     view = simulator.continue_until_breakpoint()
     assert view.variables["transactions"]["move"]["status"] == "in_doubt"
     assert [i["code"] for i in view.variables["incidents"].values()] == ["WV-TXN-SETTLE-TIMEOUT"]
+
+
+def test_a_called_undo_without_its_workflow_completes_with_an_empty_result():
+    # The fixture's undo workflow accepts an empty output, and the session has no artifact to run it.
+    flow = compiled([transaction([hold(), reverse_by_call(), submit()])])
+    simulator = Simulator(
+        flow,
+        mocks={"node:hold": {"holdId": "h-1"}},
+        input=dict(INPUT),
+        now=NOW,
+        errors={"node:add": UNAVAILABLE},
+    )
+    view = simulator.continue_until_breakpoint()
+    [undone] = [e for e in view.events if e.type == "call_completed" and e.data["node_id"] == "add#undo"]
+    assert (undone.data["status"], undone.data["output"]) == ("succeeded", {})
+    assert not simulator.data.frames
+    assert view.variables["transactions"]["move"]["status"] == "compensated"

@@ -39,7 +39,12 @@ from simulation_support import (  # noqa: E402
 )
 from transaction_support import INPUT, add, compiled, hold, notify, reverse_by_call, submit, transaction  # noqa: E402
 
-from firefly_weave.operations.debug.models import CalledWorkflow, DebugError, ScriptedError  # noqa: E402
+from firefly_weave.operations.debug.models import (  # noqa: E402
+    CalledWorkflow,
+    DebugCommand,
+    DebugError,
+    ScriptedError,
+)
 from firefly_weave.operations.debug.simulator import Simulator  # noqa: E402
 
 UNAVAILABLE = ScriptedError(code="UNAVAILABLE")
@@ -392,3 +397,78 @@ def test_a_retried_called_undo_whose_run_failed_starts_a_new_run_of_it():
     starts = [b for b in view.boundaries if b.frame == "add#undo" and b.event_type == "started"]
     assert len(starts) == 2
     assert list(view.variables["incidents"]) == ["add#undo:1"]
+
+
+def test_a_retried_called_undo_whose_output_is_refused_opens_the_next_generation(monkeypatch):
+    import firefly_weave.operations.debug.simulator as simulator_module
+
+    undo, artifact = callee(
+        "reverse-target-addition",
+        [{"id": "done", "kind": "transform", "value": {"literal": {"undone": True}}}],
+        output={"ref": "/steps/done/output"},
+        output_schema=UNDONE_OUTPUT,
+    )
+    flow = compiled([transaction([hold(), reverse_by_call(), submit()])], snapshot=snapshot_with(undo))
+    errors = {"node:add": UNAVAILABLE, "node:add#undo": ScriptedError(code="UNAVAILABLE", attempts=3)}
+    simulator = in_doubt(flow, errors, workflows={"reverse-target-addition@1.0.0": called(artifact)})
+    # A called run classifies its own output against the same schema, so a refusal needs a forged policy.
+    monkeypatch.setattr(simulator_module, "screened", lambda schema, output, bundle: "WV-SCHEMA-SECRET_VALUE")
+    simulator.resolve("add#undo:3", "retry_safe")
+    view = simulator.continue_until_breakpoint()
+    refused = [e.data for e in view.events if e.type == "step_failed" and e.data["node_id"] == "add#undo"][-1]
+    assert (refused["code"], refused["generation"], refused["attempts"]) == ("WV-SCHEMA-SECRET_VALUE", 4, 5)
+    assert list(view.variables["incidents"]) == ["add#undo:4"]
+
+
+def test_cancelling_a_session_that_ended_with_a_diagnostic_is_refused():
+    simulator = session(compiled([move()]), mocks={"node:hold": {"holdId": "h-1"}})
+    view = simulator.continue_until_breakpoint()
+    assert [diagnostic.code for diagnostic in view.diagnostics] == ["WV-DEBUG-MISSING_MOCK"]
+    before = simulator.serialize()
+    with pytest.raises(DebugError) as raised:
+        simulator.cancel()
+    assert raised.value.code == "WV-DEBUG-STATE"
+    assert simulator.serialize() == before
+
+
+def test_a_cancel_command_naming_a_frame_is_refused():
+    simulator = stopped_at_add()
+    before = simulator.serialize()
+    with pytest.raises(DebugError) as raised:
+        simulator.command(DebugCommand(kind="cancel", frame="inside"))
+    assert raised.value.code == "WV-DEBUG-COMMAND"
+    assert simulator.serialize() == before
+
+
+def test_retrying_an_action_after_the_point_of_no_return_completes_it():
+    flow = compiled([transaction([hold(), add(), submit(), notify()])])
+    mocks = {**{k: v for k, v in MOCKS.items() if k != "node:notify"}, "action:notify.send-message@1.0.0": {}}
+    simulator = in_doubt(flow, {"node:notify": ScriptedError(code="UNAVAILABLE", attempts=4)}, mocks=mocks)
+    assert list(simulator.inspect().variables["incidents"]) == ["notify:4"]
+    simulator.resolve("notify:4", "retry_safe")
+    view = simulator.continue_until_breakpoint()
+    [retried] = [e for e in view.events if e.type == "task_completed" and e.data["node_id"] == "notify"]
+    assert (retried.data["generation"], retried.data["output"]) == (5, {})
+    assert (record(view)["status"], view.status) == ("completed", "succeeded")
+
+
+def test_retrying_a_called_step_after_the_point_of_no_return_runs_it_again():
+    done, artifact = callee("reverse-target-addition", [{"id": "only", "kind": "transform", "value": {"literal": 1}}])
+    after = {
+        "id": "after",
+        "kind": "callWorkflow",
+        "uses": "reverse-target-addition@1.0.0",
+        "with": {"object": {"reference": {"ref": "/input/moveId"}, "addOperation": {"literal": "after"}}},
+        "irreversible": True,
+    }
+    flow = compiled([transaction([hold(), add(), submit(), after])], snapshot=snapshot_with(done))
+    workflows = {"reverse-target-addition@1.0.0": called(artifact)}
+    simulator = in_doubt(flow, {"node:after": ScriptedError(code="UNAVAILABLE", attempts=2)}, workflows=workflows)
+    assert list(simulator.inspect().variables["incidents"]) == ["after:2"]
+    simulator.resolve("after:2", "retry_safe")
+    view = simulator.continue_until_breakpoint()
+    [frame] = [frame for frame in simulator.data.frames if frame.key == "after"]
+    assert frame.state is not None and frame.state.status == "succeeded"
+    [completed] = [e for e in view.events if e.type == "call_completed" and e.data["node_id"] == "after"]
+    assert (completed.data["generation"], completed.data["status"]) == (3, "succeeded")
+    assert (record(view)["status"], view.status) == ("completed", "succeeded")
