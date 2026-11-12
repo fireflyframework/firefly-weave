@@ -239,14 +239,15 @@ def wire_json(value: JsonValue) -> str:
 
 
 # Rule 1's count follows how byte-level BPE tokenizers (Qwen's, measured) split text. Printable ASCII and its
-# whitespace are cut into pieces by `` ?[A-Za-z]+| ?[0-9]| ?[^A-Za-z0-9\s]+|\s`` (a single leading space joins the
-# piece after it): a digit, a mark and a whitespace character count one each, and a word counts 0.4 per letter (0.7
-# per letter in a run of two or more capitals), rounded up and at least one, or one per letter when it is longer than
-# 12 letters or switches from lowercase to uppercase more than once. Every other character counts its UTF-8 bytes and
-# ends the word before it. Summed, that is: the UTF-8 bytes, less the letters and the joined spaces, plus each word's
-# count, which is how it is computed (in linear time, with no backtracking).
+# whitespace are cut into pieces by `` ?[A-Za-z]+|[0-9]| ?[^A-Za-z0-9\s]+|\s`` (a single leading space joins a word
+# or a run of marks after it, never a digit): a digit, a mark and a whitespace character count one each; a word of up
+# to 3 letters counts one per letter; a longer word counts 0.4 per letter (0.7 per letter in a run of two or more
+# capitals), rounded up, or one per letter when it is longer than 12 letters or switches from lowercase to uppercase
+# more than once. Every other character counts its UTF-8 bytes and ends the word before it. Summed, that is: the UTF-8
+# bytes, less the letters and the joined spaces, plus each word's count, which is how it is computed (in linear time,
+# with no backtracking).
 _WORD = re.compile(r"[A-Za-z]+")
-_JOINED_SPACE = re.compile(r" (?=[!-~])")
+_JOINED_SPACE = re.compile(r" (?=[A-Za-z!-/:-@\[-`{-~])")
 _CASE_SWITCH = re.compile(r"[a-z][A-Z]")
 _CAPITALS = re.compile(r"[A-Z]{2,}")
 _LETTERS = bytes(range(ord("A"), ord("Z") + 1)) + bytes(range(ord("a"), ord("z") + 1))
@@ -254,7 +255,7 @@ _LETTERS = bytes(range(ord("A"), ord("Z") + 1)) + bytes(range(ord("a"), ord("z")
 
 @lru_cache(maxsize=4096)
 def _word_tokens(word: str) -> int:
-    if len(word) > 12 or len(_CASE_SWITCH.findall(word)) > 1:
+    if len(word) <= 3 or len(word) > 12 or len(_CASE_SWITCH.findall(word)) > 1:
         return len(word)
     capitals = sum(len(run) for run in _CAPITALS.findall(word))
     return max(1, -(-((len(word) - capitals) * 4 + capitals * 7) // 10))

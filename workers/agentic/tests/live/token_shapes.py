@@ -146,4 +146,15 @@ def shapes() -> dict[str, str]:
         "latin_accents": "Café crème brûlée à la française, naïve façade, São Paulo, Zürich. " * 25,
         "cyrillic_greek": "Заказ отправлен. Η παραγγελία εστάλη. " * 30,
     }
+    # The shapes the Code reviewer found below the first count: a space never joins a digit, and short words take a
+    # token per letter.
+    spaced = random.Random(5)
+    texts |= {
+        "space_single_digits": " ".join(str(spaced.randint(0, 9)) for _ in range(500)),
+        "space_numbers": " ".join(str(spaced.randint(0, 99999)) for _ in range(250)),
+        "short_random_words": " ".join(
+            "".join(spaced.choice("abcdefghijklmnopqrstuvwxyz") for _ in range(spaced.randint(2, 4)))
+            for _ in range(500)
+        ),
+    }
     return texts
