@@ -201,6 +201,13 @@ class AgentUsage(ContractModel):
     output_tokens: int = Field(default=0, ge=0, alias="outputTokens")
 
 
+class AgentFailure(ContractModel):
+    """How an agent failed, kept while a call it may have applied waits for a person: the code and the step error."""
+
+    code: str = Field(min_length=1, max_length=128)
+    error: JsonObjectData
+
+
 class AgentState(ContractModel):
     """One running AI agent activation. Everything a turn input is built from is here or in the pinned IR."""
 
@@ -225,6 +232,9 @@ class AgentState(ContractModel):
     forced: bool = False
     # One forced final turn granted after the budget stopped the agent.
     granted: bool = False
+    # The agent failed while calls that change data and are never retried were running: each holds its own incident,
+    # and this failure reaches the step's onError setting once a person has settled them all.
+    failure: AgentFailure | None = Field(default=None, exclude_if=lambda v: v is None)
 
 
 class RunState(ContractModel):

@@ -122,6 +122,7 @@ from firefly_weave.runtime.control import (
     loop_suffix,
 )
 from firefly_weave.runtime.models import (
+    AgentFailure,
     AgentState,
     BranchState,
     CallIntent,
@@ -1753,7 +1754,8 @@ def _advance_owned(
                 current_state.memories.get(name, []), effects.memory_append, node.memory.window
             )
         if effects.complete is not None:
-            guard(node.path, "agent_output", effects.complete)
+            if not agent_guard(node, key, key, "agent_output", effects.complete, prior):
+                return
             complete(node, key, effects.complete)
             close_agent(key)
             queue.append(successor(key))
@@ -1769,27 +1771,100 @@ def _advance_owned(
         error: JsonObject | None = None,
         keep_state: bool = False,
     ) -> None:
-        """An agent failed for good: its onError setting takes the failure, unless a call that changes data and is
-        never retried may have applied (it is still running); then, or without a setting, its key holds the incident.
-        Whatever the agent still has open ends with it; a budget stop keeps the state for one more granted turn."""
+        """An agent failed for good. A call that changes data and is never retried, still running, may have applied: it
+        keeps its key and its task under its own WV-TASK-AMBIGUOUS incident, whatever the settings, and the failure
+        waits in the agent's state until a person has settled each such call (``held_call_ended``). Otherwise the
+        onError setting takes the failure, or, without one, the agent's key holds the incident. Whatever else the agent
+        has open ends with it; a budget stop keeps the state for one more granted turn."""
         tools = {tool.name: tool for tool in node.tools}
-        uncertain = state is not None and any(
-            call.status == "running"
-            and TOOL_TARGETS[tools[call.name].target].side_effect(ir, tools[call.name]) == "non_idempotent"
-            for call in state.calls
-        )
-        if node.on_error is not None and not uncertain:
-            close_agent(key)
-            fail_step(node, key, error or step_error(code, "failed", state.turn if state is not None else 1, key))
+        # A call whose key already ended, such as the one whose failure ends the agent, holds nothing in doubt.
+        effects = {
+            call.key: TOOL_TARGETS[tools[call.name].target].side_effect(ir, tools[call.name])
+            for call in (state.calls if state is not None else [])
+            if call.status == "running" and call.key in current_state.active
+        }
+        held = {name for name, effect in effects.items() if effect == "non_idempotent"}
+        # The agent is the step's one attempt; anything that changes data and was still running may have applied.
+        outcome: StepOutcome = "unknown" if any(effect != "read_only" for effect in effects.values()) else "failed"
+        failure = error or step_error(code, outcome, 1, key)
+        if keep_state:
+            if node.on_error is not None and not held:
+                close_agent(key)
+                fail_step(node, key, failure)
+                return
+            incident(key, code)
             return
-        if not keep_state:
-            close_agent(key, keep=True)
+        if held and state is not None:
+            close_agent(key, keep=True, held=held)
+            current_state.agents[key] = state.model_copy(update={"failure": AgentFailure(code=code, error=failure)})
+            for name in sorted(held):
+                incident(name, "WV-TASK-AMBIGUOUS")
+            return
+        if node.on_error is not None:
+            close_agent(key)
+            fail_step(node, key, failure)
+            return
         # The agent's own key holds the incident, as an action's key does; Operate resolves it there.
+        close_agent(key, keep=True)
         incident(key, code)
 
-    def close_agent(key: str, *, keep: bool = False) -> None:
-        """End an agent: settle every turn, tool and review it still has open, and drop its state."""
-        for name in [name for name in current_state.active if name.startswith(key + "#")]:
+    def held_call_ended(
+        node: AgentNode, reference: AgentKeyRef, identifier: str, state: AgentState, completion: RuntimeEvent
+    ) -> None:
+        """A call the failed agent held in doubt ended: by its own result, a person's reconciled one, or a failure
+        confirmed to have changed nothing. Once no such call is left, the agent's failure goes where it would have."""
+        assert state.failure is not None
+        key = reference.key.agent
+        if (
+            reference.key.review
+            or reference.tool is None
+            or completion.type not in {"task_completed", "step_failed"}
+            or not any(call.key == identifier and call.status == "running" for call in state.calls)
+        ):
+            raise KernelError("WV-RUNTIME-EVENT")
+        current_state.active.remove(identifier)
+        current_state.waits.pop(identifier, None)
+        if completion.type == "step_failed":
+            error = tool_failure(reference, identifier, completion)[1]
+            result.steps.append(StepChange(node_id=identifier, status="failed", output=None, error=error))
+        else:
+            result.steps.append(
+                StepChange(node_id=identifier, status="completed", output=completion.data.get("output"))
+            )
+        calls = [call.model_copy(update={"status": "done"}) if call.key == identifier else call for call in state.calls]
+        current_state.agents[key] = state.model_copy(update={"calls": calls})
+        if any(call.status == "running" and call.key in current_state.active for call in calls):
+            return
+        if node.on_error is not None:
+            close_agent(key)
+            fail_step(node, key, state.failure.error)
+            return
+        close_agent(key, keep=True)
+        incident(key, state.failure.code)
+
+    def agent_guard(
+        node: AgentNode, key: str, identifier: str, purpose: str, value: JsonValue, state: AgentState | None
+    ) -> bool:
+        """Whether a turn's answer or the agent's output fits its guard. One that breaks it, in an agent with an
+        onError setting, fails the agent there; without a setting the run keeps its incident at the agent's key."""
+        try:
+            guard(node.path, purpose, value)
+        except KernelError as broken:
+            code = str(broken)
+            if code not in HANDLED_KERNEL_CODES or node.on_error is None:
+                raise
+            error = step_error(code, "failed", 1, identifier)
+            if identifier != key:
+                # The turn ran, but its answer is refused: its own record says so.
+                result.steps.append(StepChange(node_id=identifier, status="failed", output=None, error=error))
+            agent_failed(node, key, code, state, error=error)
+            return False
+        return True
+
+    def close_agent(key: str, *, keep: bool = False, held: set[str] | frozenset[str] = frozenset()) -> None:
+        """End an agent: settle every turn, tool and review it still has open, except the calls it holds in doubt,
+        and drop its state."""
+        for name in [name for name in current_state.active if name.startswith(key + "#") and name not in held]:
             current_state.active.remove(name)
             current_state.waits.pop(name, None)
             result.commands.append(ControlCommand(kind="settle", node_id=name))
@@ -1807,6 +1882,9 @@ def _advance_owned(
             raise KernelError("WV-RUNTIME-EVENT")
         # A failure while the agent decides belongs to the agent's own key.
         current = agent
+        if state.failure is not None:
+            held_call_ended(node, reference, identifier, state, completion)
+            return
         if reference.key.call is None and completion.type != "step_failed":
             if (
                 completion.type != "task_completed"
@@ -1815,8 +1893,9 @@ def _advance_owned(
             ):
                 raise KernelError("WV-RUNTIME-EVENT")
             value = completion.data["output"]
-            guard(node.path, "agent_turn_output", value)
             current_state.active.remove(identifier)
+            if not agent_guard(node, agent, identifier, "agent_turn_output", value, state):
+                return
             result.steps.append(StepChange(node_id=identifier, status="completed", output=value))
             effects = turn_completed(
                 ir, node, agent, state, TurnOutput.model_validate(value), current_state.agent_tokens

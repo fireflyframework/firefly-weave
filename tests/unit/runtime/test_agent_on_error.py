@@ -19,12 +19,19 @@
 from datetime import timedelta
 from uuid import uuid4
 
-from agent_fixtures import CANCEL, LOOKUP, NOW, Run, agent, tool_calls, workflow
+from agent_fixtures import CANCEL, LOOKUP, NOW, Run, agent, final, tool_calls, workflow
 
 from firefly_weave.compiler.ir import WorkflowIR
 from firefly_weave.runtime.kernel import error_policy
 from firefly_weave.runtime.models import ControlCommand, HumanTaskIntent
 
+REFUND = {
+    "name": "refund_order",
+    "description": "Refund an order.",
+    "action": "orders-refund@1.0.0",
+    "connection": "orders",
+    "fixed": {"object": {"region": {"literal": "eu"}}},
+}
 FALLBACK = {"steps": [{"id": "why", "kind": "transform", "value": {"ref": "/steps/support/error/code"}}]}
 
 
@@ -43,6 +50,34 @@ def incidents(run: Run) -> set[tuple[str, str]]:
     return {(item.node_id, item.code) for item in run.state.incidents.values()}
 
 
+def approve(run: Run, result) -> None:
+    for review in [command for command in result.commands if isinstance(command, HumanTaskIntent)]:
+        run.send(
+            "human_completed",
+            node_id=review.node_id,
+            task_id=str(uuid4()),
+            actor_id=str(uuid4()),
+            output={"decision": "approve", "data": {}},
+            input_digest=review.context["inputDigest"],
+        )
+
+
+def cancel_in_flight(run: Run):
+    """The model looks an order up and cancels it; the cancel is approved and runs when the lookup fails for good."""
+    run.send("started")
+    approve(
+        run, run.answer("support#1", tool_calls(("lookup_order", {"id": "A-17"}), ("cancel_order", {"id": "A-17"})))
+    )
+    assert set(run.state.active) == {"support", "support#1.1", "support#1.2"}
+    return run.send(
+        "step_failed", node_id="support#1.1", generation=1, code="TIMEOUT", outcome="not_started", attempts=1
+    )
+
+
+def settled(result) -> set[str]:
+    return {c.node_id for c in result.commands if isinstance(c, ControlCommand) and c.kind == "settle"}
+
+
 def out_of_turns(run: Run):
     run.send("started")
     run.answer("support#1", tool_calls(("lookup_order", {"id": "A-17"})))
@@ -58,6 +93,11 @@ def test_an_agent_that_runs_out_of_turns_continues_with_a_null_output():
     assert (run.state.status, run.state.output) == ("succeeded", "WV-AGENT-ITERATIONS")
     assert run.state.steps["support"]["output"] is None
     assert run.state.steps["support"]["error"]["instanceKey"] == "support"
+    # The agent itself is the one attempt, whatever turn it stopped on; only a read-only lookup ran.
+    assert {k: run.state.steps["support"]["error"][k] for k in ("outcome", "attempts")} == {
+        "outcome": "failed",
+        "attempts": 1,
+    }
     assert run.state.agents == {} and run.state.incidents == {}
 
 
@@ -109,21 +149,82 @@ def test_the_agents_timeout_continues_when_nothing_that_changes_data_is_in_fligh
 def test_an_ambiguous_changing_tool_keeps_its_incident_whatever_the_setting():
     run = handled("continue", tools=(LOOKUP, CANCEL))
     run.send("started")
-    asked = run.answer("support#1", tool_calls(("cancel_order", {"id": "A-17"})))
-    [review] = [command for command in asked.commands if isinstance(command, HumanTaskIntent)]
-    run.send(
-        "human_completed",
-        node_id=review.node_id,
-        task_id=str(uuid4()),
-        actor_id=str(uuid4()),
-        output={"decision": "approve", "data": {}},
-        input_digest=review.context["inputDigest"],
-    )
+    approve(run, run.answer("support#1", tool_calls(("cancel_order", {"id": "A-17"}))))
     assert set(run.state.active) == {"support", "support#1.1"}
     run.at = NOW + timedelta(seconds=900)
 
-    # The deadline fires while the approved cancel may have happened: the agent's setting doesn't take that.
-    run.send("wait_elapsed", node_id="support", deadline=run.at.isoformat())
+    # The deadline fires while the approved cancel may have happened: the cancel keeps its own key and incident.
+    result = run.send("wait_elapsed", node_id="support", deadline=run.at.isoformat())
 
-    assert incidents(run) == {("support", "WV-AGENT-TIMEOUT")} and run.state.status == "suspended"
+    assert incidents(run) == {("support#1.1", "WV-TASK-AMBIGUOUS")} and run.state.status == "suspended"
+    assert "support#1.1" in run.state.active and "support#1.1" not in settled(result)
     assert "error" not in run.state.steps.get("support", {})
+
+
+def test_a_changing_call_in_flight_when_the_agent_fails_opens_its_own_ambiguous_incident():
+    run = handled("continue", tools=(LOOKUP, CANCEL), onToolError="incident")
+
+    result = cancel_in_flight(run)
+
+    assert incidents(run) == {("support#1.2", "WV-TASK-AMBIGUOUS")} and run.state.status == "suspended"
+    assert "support#1.2" in run.state.active and settled(result) == set()
+    assert "error" not in run.state.steps.get("support", {})
+
+
+def test_once_a_person_settles_the_call_the_agents_failure_reaches_its_setting():
+    run = handled("continue", tools=(LOOKUP, CANCEL), onToolError="incident")
+    cancel_in_flight(run)
+
+    run.send(
+        "incident_resolved",
+        incident_key="support#1.2:0",
+        node_id="support#1.2",
+        kind="accept_reconciled_result",
+        output={"status": "cancelled"},
+    )
+
+    assert (run.state.status, run.state.output) == ("succeeded", "WV-AGENT-TOOL-FAILED")
+    error = run.state.steps["support"]["error"]
+    assert (error["outcome"], error["attempts"], error["instanceKey"]) == ("unknown", 1, "support")
+    assert run.state.agents == {} and run.state.active == [] and run.state.incidents == {}
+
+
+def test_a_changing_call_that_failed_for_good_lets_the_setting_take_the_agents_failure():
+    run = handled("continue", tools=(LOOKUP, CANCEL), onToolError="incident")
+    run.send("started")
+    approve(run, run.answer("support#1", tool_calls(("cancel_order", {"id": "A-17"}))))
+
+    # The cancel itself failed with nothing applied: no call is left in doubt.
+    run.send("step_failed", node_id="support#1.1", generation=1, code="REFUSED", outcome="failed", attempts=1)
+
+    assert (run.state.status, run.state.output) == ("succeeded", "WV-AGENT-TOOL-FAILED")
+    assert run.state.steps["support"]["error"]["outcome"] == "failed"
+
+
+def test_the_agents_error_is_unknown_when_a_cancelled_call_may_have_changed_data():
+    run = handled("continue", tools=(LOOKUP, REFUND))
+    run.send("started")
+    approve(run, run.answer("support#1", tool_calls(("refund_order", {"id": "A-17"}))))
+    run.at = NOW + timedelta(seconds=900)
+
+    # A refund can be repeated safely, so it doesn't hold the run; but it was running and is cancelled now.
+    result = run.send("wait_elapsed", node_id="support", deadline=run.at.isoformat())
+
+    assert (run.state.status, run.state.output) == ("succeeded", "WV-AGENT-TIMEOUT")
+    assert run.state.steps["support"]["error"]["outcome"] == "unknown" and settled(result) == {"support#1.1"}
+
+
+def test_a_final_answer_that_breaks_the_output_schema_reaches_the_agents_setting():
+    profile = {"provider": "openai-chat", "model": "qwen3:4b", "options": {"max_tokens": 1024}}
+    document = workflow(
+        agent(tools=[LOOKUP], onError="continue"), profile={**profile, "outputSchema": {"type": "string"}}
+    )
+    document["spec"]["output"] = {"ref": "/steps/support/error/code"}
+    run = Run(document)
+    run.send("started")
+
+    run.answer("support#1", final(result=17))
+
+    assert (run.state.status, run.state.output) == ("succeeded", "WV-SCHEMA-INVALID_INSTANCE")
+    assert run.state.steps["support"]["error"]["instanceKey"] == "support#1"
+    assert run.state.agents == {} and run.state.incidents == {}

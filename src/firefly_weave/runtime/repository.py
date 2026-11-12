@@ -359,6 +359,7 @@ class RuntimeRepository:
             from firefly_weave.runtime.agents import parse_agent_key
             from firefly_weave.runtime.settlement import project_transactions, settle_work
 
+            await self.hold_agent_calls(view.id, result, event.timestamp)
             for command in result.commands:
                 if isinstance(command, ControlCommand) and command.kind == "settle":
                     reviewed = parse_agent_key(command.node_id)
@@ -556,6 +557,26 @@ class RuntimeRepository:
             .first()
         )
         return (dict(run), dict(task)) if task else None
+
+    async def hold_agent_calls(self, run_id: UUID, result: Transition, at: datetime) -> None:
+        """A failed agent's call that may have changed data waits for a person at its own WV-TASK-AMBIGUOUS incident:
+        its attempt stops, and its task waits at the incident as one that recovery found in doubt does."""
+        from firefly_weave.runtime.agents import parse_agent_key
+        from firefly_weave.workers.control import revoke_attempts
+
+        for item in result.state.incidents.values():
+            key = parse_agent_key(item.node_id)
+            if item.code != "WV-TASK-AMBIGUOUS" or key is None or key.call is None or key.review:
+                continue
+            tasks = await self.rows(
+                f"SELECT * FROM task_intents WHERE {SCOPE} AND run_id=:run AND node_id=:node "
+                "AND status IN ('ready','leased','retry_pending') FOR UPDATE",
+                run=run_id,
+                node=item.node_id,
+            )
+            await revoke_attempts(self.tx, run_id, tasks, control_failure=True)
+            for task in tasks:
+                await self.task_status(task["id"], "incident", at=at)
 
     async def task_status(self, identifier: UUID, status: str, *, at: datetime | None = None) -> None:
         await self.execute(
