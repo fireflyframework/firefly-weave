@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
-from urllib.parse import unquote, urlsplit
+from urllib.parse import urlsplit
 from uuid import UUID
 
 import httpx
@@ -376,10 +376,11 @@ class StudioService:
         if name == "kind":
             return value in ("canvas", "test-data")
         if name == "key":
-            # An agent step or one of its activations; loop indexes arrive percent-encoded ("support%5B2%5D").
+            # An agent step or one of its activations. The host route decodes the path once ("support[2]") and the
+            # bridge refuses a "%" before matching, so a key is never decoded here.
             try:
-                agent_log_key(unquote(value, errors="strict"))
-            except (ValueError, UnicodeDecodeError):
+                agent_log_key(value)
+            except ValueError:
                 return False
             return True
         try:

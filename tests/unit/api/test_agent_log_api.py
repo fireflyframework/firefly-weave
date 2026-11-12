@@ -23,6 +23,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
+import httpx
 import pytest
 from starlette.requests import Request
 
@@ -293,7 +294,7 @@ async def test_the_route_refuses_a_query_outside_its_contract(query):
     assert service.calls == []
 
 
-def test_the_bridge_forwards_agent_log(tmp_path):
+def studio(tmp_path, upstream):
     from starlette.testclient import TestClient
 
     from firefly_weave.studio.host import make_studio_app
@@ -310,14 +311,47 @@ def test_the_bridge_forwards_agent_log(tmp_path):
         environment_id=str(SCOPE.environment_id),
     )
     options = StudioOptions(
-        origin="http://127.0.0.1:8766", assets=assets, pairing_code="code", profile=profile, token_provider=lambda: "t"
+        origin="http://127.0.0.1:8766",
+        assets=assets,
+        pairing_code="code",
+        profile=profile,
+        token_provider=lambda: "t",
+        transport=httpx.MockTransport(upstream),
     )
-    environment = f"/api/v1/tenants/{SCOPE.tenant_id}/projects/{SCOPE.project_id}/environments/{SCOPE.environment_id}"
-    with TestClient(make_studio_app(options), base_url=options.origin) as browser:
-        studio = browser.app.state.studio
-        assert studio.check_scope(f"{environment}/runs/{RUN}/agents/support/log", "GET") == 200
-        assert studio.check_scope(f"{environment}/runs/{RUN}/agents/support%5B2%5D/log", "GET") == 200
-        # Only reads cross the bridge, and only for keys that name an agent step or an activation.
-        assert studio.check_scope(f"{environment}/runs/{RUN}/agents/support/log", "POST") != 200
-        for key in ("support%231.1", "..%2F..%2Fadmin", "support%5B01%5D", "%ff"):
-            assert studio.check_scope(f"{environment}/runs/{RUN}/agents/{key}/log", "GET") == 404, key
+    browser = TestClient(make_studio_app(options), base_url=options.origin)
+    return browser, options.origin
+
+
+ENVIRONMENT = f"/api/v1/tenants/{SCOPE.tenant_id}/projects/{SCOPE.project_id}/environments/{SCOPE.environment_id}"
+
+
+def test_the_bridge_admits_only_agent_log_reads_of_an_agent_key(tmp_path):
+    async def upstream(request):
+        raise AssertionError("Nothing is forwarded")
+
+    browser, _ = studio(tmp_path, upstream)
+    with browser:
+        bridge = browser.app.state.studio
+        assert bridge.check_scope(f"{ENVIRONMENT}/runs/{RUN}/agents/support/log", "GET") == 200
+        assert bridge.check_scope(f"{ENVIRONMENT}/runs/{RUN}/agents/support[2]/log", "GET") == 200
+        assert bridge.check_scope(f"{ENVIRONMENT}/runs/{RUN}/agents/support/log", "POST") != 200
+        for key in ("support#1.1", "support[01]", "support%5B2%5D", "..%2F..%2Fadmin", "%ff"):
+            assert bridge.check_scope(f"{ENVIRONMENT}/runs/{RUN}/agents/{key}/log", "GET") == 404, key
+
+
+def test_studio_forwards_an_activations_log_by_its_decoded_key(tmp_path):
+    seen = []
+
+    async def upstream(request):
+        seen.append((request.method, request.url.path, request.url.query))
+        return httpx.Response(200, json={"items": [], "next_cursor": None})
+
+    browser, origin = studio(tmp_path, upstream)
+    with browser:
+        paired = browser.post("/studio/session", json={"code": "code"}, headers={"Origin": origin})
+        assert paired.status_code == 200
+        # A browser encodes the brackets; the host route decodes the path once, before the bridge matches it.
+        response = browser.get(f"/studio/api{ENVIRONMENT}/runs/{RUN}/agents/support%5B2%5D/log?limit=5")
+
+        assert (response.status_code, response.json()) == (200, {"items": [], "next_cursor": None})
+        assert seen == [("GET", f"{ENVIRONMENT}/runs/{RUN}/agents/support[2]/log", b"limit=5")]
