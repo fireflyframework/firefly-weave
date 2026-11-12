@@ -32,8 +32,9 @@ from firefly_weave.access.authorization import AccessDenied, AuthorizationServic
 from firefly_weave.access.models import Grant, Principal
 from firefly_weave.ai_policy import AIPolicy, PolicyEndpoint, from_pairs, render
 from firefly_weave.compiler.api import compile_source
+from firefly_weave.compiler.canonical import canonical_digest
 from firefly_weave.compiler.catalog import CatalogSnapshot
-from firefly_weave.compiler.ir import ActionNode, AgentNode, TransformNode, WorkflowIR
+from firefly_weave.compiler.ir import ActionNode, AgentNode, AgentToolIR, TransformNode, WorkflowIR
 from firefly_weave.connections.registry import ConnectorRegistry
 from firefly_weave.connections.secrets import ScopedSecrets, SecretGrant
 from firefly_weave.connections.service import ConnectionService
@@ -263,6 +264,32 @@ def test_an_agent_whose_turn_action_isnt_the_platforms_is_refused_at_activation(
 
     with pytest.raises(CatalogError) as refused:
         reserved()(with_nodes(ir, nodes))
+    assert (refused.value.status, refused.value.code) == (422, "WV-ACTIVATION-AI-RESERVED")
+
+
+@pytest.mark.parametrize("task", ["turn", "generate"])
+def test_an_agent_tool_pinned_to_an_ai_task_is_refused_at_activation(task):
+    ir = agent_ir()
+    agent = next(node for node in ir.graph.nodes if isinstance(node, AgentNode))
+    generate = next(
+        dependency
+        for dependency in WorkflowIR.model_validate(compiled(ai_workflow()).executable).dependencies
+        if dependency.kind == "Action"
+    )
+    ir = ir.model_copy(update={"dependencies": [*ir.dependencies, generate]})
+    # A model must never start another model through a tool: that call would skip the agent's token cap.
+    tool = AgentToolIR.model_construct(
+        name="ask_model", target="action", dependency=agent.dependency if task == "turn" else generate.digest
+    )
+    lookup = AgentToolIR.model_construct(name="lookup", target="human", dependency=None)
+
+    def with_tools(*tools):
+        armed = agent.model_copy(update={"tools": list(tools)})
+        return with_nodes(ir, [armed if node is agent else node for node in ir.graph.nodes])
+
+    reserved()(with_tools(lookup))
+    with pytest.raises(CatalogError) as refused:
+        reserved()(with_tools(lookup, tool))
     assert (refused.value.status, refused.value.code) == (422, "WV-ACTIVATION-AI-RESERVED")
 
 
@@ -785,6 +812,48 @@ async def test_activation_without_ai_steps_never_reads_the_policy(env):
     activation = await activate(env, version=version, slots={})
     assert "policy" not in env.trace and "validate" not in env.trace
     assert [row["id"] for row in env.activations] == [activation.id]
+
+
+def stray_turn_version(env):
+    """A stored workflow whose only step is an action step pinned to the platform's turn action, rehashed.
+
+    The compiler refuses such a step, so the version is forged after compilation: activation is the last line.
+    """
+    document = agent_workflow()
+    value = json.loads(compiled(document).to_bytes())
+    nodes = value["executable"]["graph"]["nodes"]
+    agent = next(node for node in nodes if node["kind"] == "agent")
+    stray = {key: agent[key] for key in ("id", "path", "scope", "connection", "dependency")}
+    stray.update(kind="action", **{"with": {"object": {"prompt": agent["prompt"]}}})
+    nodes[nodes.index(agent)] = stray
+    # Without the agent the graph uses no language feature, so it is the version that AI tasks compile to.
+    del value["executable"]["features"]
+    value["executable"]["irVersion"] = "weave/ir-v1alpha3"
+    value["digest"] = canonical_digest(value["executable"])
+    identifier = uuid4()
+    env.versions[identifier] = {
+        "id": identifier,
+        "kind": "Workflow",
+        "name": document["metadata"]["name"],
+        "version": document["metadata"]["version"],
+        "digest": value["digest"],
+        "document": document,
+        "artifact": value,
+        "retired": False,
+    }
+    return identifier, value["digest"]
+
+
+async def test_activation_refuses_an_action_step_that_runs_the_turn_task_even_without_a_policy(env):
+    use_policy(env, None)
+    version = stray_turn_version(env)
+
+    with pytest.raises(CatalogError) as refused:
+        await activate(env, version=version, slots={"ai": env.ai.id})
+
+    assert (refused.value.status, refused.value.code) == (422, "WV-ACTIVATION-AI-RESERVED")
+    assert "insert" not in env.trace and not inserts(env) and not env.activations and not env.bound
+    assert not env.audits and not env.events and not env.saved
 
 
 def write_policy(path, models, *, url=ENDPOINT, credential="required"):

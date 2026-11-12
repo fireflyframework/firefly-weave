@@ -45,6 +45,12 @@ type Approval = Literal["auto", "required"]
 AI_TASK_TYPES: Final = frozenset({GENERATE_TASK_TYPE, TURN_TASK_TYPE})
 
 
+def runs_model_task(spec: JsonObject) -> bool:
+    """Whether a pinned Action runs a model task, which no tool may run."""
+    implementation = spec.get("implementation")
+    return isinstance(implementation, dict) and implementation.get("taskType") in AI_TASK_TYPES
+
+
 @dataclass(frozen=True)
 class ResolvedTool:
     target: ToolTargetKind
@@ -138,9 +144,8 @@ class _ActionTool:
         if resource is None:
             return None
         spec = cast(JsonObject, resource.definition.value["spec"])
-        implementation = cast(JsonObject, spec["implementation"])
         input_schema = cast(JsonObject, spec["inputSchema"])
-        if implementation.get("taskType") in AI_TASK_TYPES or input_schema.get("type") != "object":
+        if runs_model_task(spec) or input_schema.get("type") != "object":
             analysis.issue("AGENT_TOOL_TARGET", location)
             return None
         analysis.connection(tool, spec, path + "/connection")

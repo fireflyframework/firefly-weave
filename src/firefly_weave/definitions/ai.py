@@ -25,6 +25,7 @@ from collections.abc import Mapping, Sequence
 from firefly_weave.ai_policy import AIPolicy
 from firefly_weave.compiler.ir import ActionNode, AgentNode, Node, WorkflowIR
 from firefly_weave.contracts.connectors import BoundConnection
+from firefly_weave.contracts.values import JsonObject
 from firefly_weave.definitions.models import CatalogError
 
 
@@ -55,21 +56,28 @@ def validate_ai_bindings(
 
 
 def validate_ai_reserved(ir: WorkflowIR) -> None:
-    """Refuse an IR that runs the model turn task anywhere but as an AI agent's own model, on the platform's turn action.
+    """Refuse an IR that runs the model turn task anywhere but as an AI agent's model, on the platform's turn action.
 
     An agent step supplies what keeps a turn safe (the run's token cap, the data notice, the reviewed transcript); any
-    other step would leave that to its author. This holds with or without an AI policy.
+    other step would leave that to its author. No agent tool runs a model task either, so a model never starts another
+    model outside that cap. This holds with or without an AI policy.
     """
+    from firefly_weave.compiler.agent_tools import runs_model_task
     from firefly_weave.compiler.agents import runs_turn_task, turn_action_digest
 
     platform = turn_action_digest()
     documents = {dependency.digest: dependency.document for dependency in ir.dependencies}
+
+    def spec_of(dependency: object) -> JsonObject:
+        """The pinned document's spec; a person's tool pins none, and a workflow's spec runs no task itself."""
+        spec = documents.get(dependency, {}).get("spec") if isinstance(dependency, str) else None
+        return spec if isinstance(spec, dict) else {}
+
     for node in ir.graph.nodes:
         dependency = getattr(node, "dependency", None)
         if isinstance(node, AgentNode):
-            reserved = dependency != platform
+            reserved = dependency != platform or any(runs_model_task(spec_of(tool.dependency)) for tool in node.tools)
         else:
-            spec = documents.get(dependency, {}).get("spec") if isinstance(dependency, str) else None
-            reserved = isinstance(spec, dict) and runs_turn_task(spec)
+            reserved = runs_turn_task(spec_of(dependency))
         if reserved:
             raise CatalogError(422, "WV-ACTIVATION-AI-RESERVED", "Only an AI agent step runs the platform's model turn")
