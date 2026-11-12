@@ -35,7 +35,12 @@ NOW = "2026-11-12T00:00:00Z"
 
 def test_a_scripted_failure_reports_its_effect_and_omits_it_when_unset():
     scripted = ScriptedError.model_validate({"code": "UNAVAILABLE", "effect": "none"})
-    assert scripted.model_dump(mode="json") == {"code": "UNAVAILABLE", "outcome": "failed", "attempts": 1, "effect": "none"}
+    assert scripted.model_dump(mode="json") == {
+        "code": "UNAVAILABLE",
+        "outcome": "failed",
+        "attempts": 1,
+        "effect": "none",
+    }
     assert "effect" not in ScriptedError(code="UNAVAILABLE").model_dump(mode="json")
 
 
