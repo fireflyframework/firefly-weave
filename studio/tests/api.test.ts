@@ -341,6 +341,38 @@ describe("capacity rejections", () => {
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 });
+describe("Retry-After on a refusal", () => {
+  const refused = (headers: Record<string, string>) =>
+    new Response(
+      JSON.stringify({ code: "WV-PAGE-LIMIT", message: "Too large" }),
+      {
+        status: 429,
+        headers: { "Content-Type": "application/json", ...headers },
+      },
+    );
+  const reject = async (headers: Record<string, string>) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(refused(headers)));
+    const client = new StudioApi();
+    client.session.csrfToken = "csrf";
+    return client.request("/studio/api/runs").catch((error: unknown) => error);
+  };
+  it("reaches the caller in seconds, and not at all when missing or malformed", async () => {
+    const error = await reject({ "Retry-After": "7" });
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error).toMatchObject({ status: 429, retryAfter: 7 });
+    for (const headers of [
+      {},
+      { "Retry-After": "soon" },
+      { "Retry-After": "" },
+      { "Retry-After": "-3" },
+      { "Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT" },
+    ]) {
+      const error = await reject(headers);
+      expect(error).toBeInstanceOf(ApiError);
+      expect((error as ApiError).retryAfter).toBeUndefined();
+    }
+  });
+});
 describe("cancellable requests", () => {
   it("stops a request when its caller cancels it", async () => {
     vi.stubGlobal(
