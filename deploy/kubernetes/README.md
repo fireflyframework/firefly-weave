@@ -35,7 +35,7 @@ receives only its six API/identity/effect settings.
 | --- | --- | --- |
 | [migrate.yaml](migrate.yaml) | One explicit, nonretrying migration Job | `__WEAVE_SERVER_IMAGE__`, unique `__WEAVE_MIGRATION_JOB__`, `weave-migration` Secret |
 | [api.yaml](api.yaml) | One API Deployment and ClusterIP Service | `__WEAVE_SERVER_IMAGE__`, `weave-api-runtime` Secret |
-| [worker.yaml](worker.yaml) | Optional remote worker Deployment with zero replicas | `__WEAVE_WORKER_IMAGE__`, admitted release/current grants and `weave-worker-runtime` Secret |
+| [worker.yaml](worker.yaml) | Optional remote worker Deployment with zero replicas | `__WEAVE_WORKER_IMAGE__`, `__WEAVE_WORKER_CONFIGURATION__` (the configuration your runner's policy binds the worker component to), admitted release/current grants and `weave-worker-runtime` Secret |
 
 The image placeholders require actual registry digest references. Do not apply
 the unrendered directory. Apply the migration, API and optional worker separately
