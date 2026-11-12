@@ -67,6 +67,7 @@ from firefly_weave.operations.debug.transactions import (
     due_deadline,
     phase_target,
     phase_targets,
+    scripted_effect,
     started_data,
     step_instance,
 )
@@ -191,6 +192,12 @@ def _key_targets(prepared: PreparedWorkflow, key: str) -> list[_Target]:
                 targets.append(_ActionTarget(definition, node))
     targets.extend(p for p in phase_targets(prepared) if p.kind == "action" and p.reference == reference)
     return targets
+
+
+def _undone(target: _Target) -> bool:
+    """Whether a target is a step a transaction takes part in, whose failure says what it may have applied."""
+    node = target.node if isinstance(target, _ActionTarget) else target
+    return isinstance(node, (ActionNode, CallWorkflowNode)) and node.txn is not None
 
 
 def _accepts_empty(prepared: PreparedWorkflow, instance: str) -> bool:
@@ -342,9 +349,14 @@ class Simulator:
     def _validate_errors(
         prepared: PreparedWorkflow, mocks: Mapping[str, JsonValue], errors: Mapping[str, ScriptedError]
     ) -> None:
-        """Scripted failures name steps like mocks do: any action or phase, a waiting call, or a step that handles
-        failures."""
-        for key in errors:
+        """Scripted failures name steps like mocks do: any action or phase, a waiting call, a step that handles
+        failures, or a step that changes nothing inside a transaction (its transaction handles the failure).
+
+        An ``effect`` only means something for a step a transaction would undo, and nothing applied can't come with
+        an unknown outcome, as a completion refuses it.
+        """
+        owners = prepared.transactions.owners if prepared.transactions is not None else {}
+        for key, failure in errors.items():
             if key in mocks:
                 raise DebugError("WV-DEBUG-MOCK-CONFLICT")
             targets = _key_targets(prepared, key)
@@ -353,14 +365,19 @@ class Simulator:
                 scripted = isinstance(node, (_ActionTarget, PhaseTarget)) or (
                     isinstance(node, CallWorkflowNode) and node.mode == "wait"
                 )
+                pure = isinstance(node, (TransformNode, DecisionTableNode))
                 handles = (
                     isinstance(node, (TransformNode, DecisionTableNode, SignalNode, HumanTaskNode))
                     and node.on_error is not None
-                )
+                ) or (pure and cast(IRNode, node).id in owners)
                 if not (scripted or handles):
                     raise DebugError("WV-DEBUG-MOCK-KEY")
             elif not any(isinstance(target, (_ActionTarget, PhaseTarget)) for target in targets):
                 raise DebugError("WV-DEBUG-MOCK-KEY")
+            if failure.effect is not None and not any(_undone(target) for target in targets):
+                raise DebugError("WV-DEBUG-MOCK-KEY")
+            if failure.effect == "none" and failure.outcome == "unknown":
+                raise DebugError("WV-DEBUG-MOCK-OUTPUT")
 
     @staticmethod
     def _candidates(instance: str, fallbacks: Sequence[str]) -> list[str]:
@@ -401,14 +418,16 @@ class Simulator:
         ir = called.ir
         node = called.prepared.nodes[node_of(instance)]
         side_effect = "idempotent"
+        spec: JsonObject | None = None
         if isinstance(node, ActionNode):
             dependency = next(d for d in ir.dependencies if d.digest == node.dependency and d.kind == "Action")
-            side_effect = cast(str, cast(JsonObject, dependency.document["spec"])["sideEffect"])
+            spec = cast(JsonObject, dependency.document["spec"])
+            side_effect = cast(str, spec["sideEffect"])
         data = failure_data(instance, failure.attempts, failure.code, failure.outcome, failure.attempts)
         if in_transaction(shapes(ir), instance):
-            # As recovery does: the transaction decides, and only a step that never started is known to have
-            # applied nothing (a session cannot tell whether a release would vouch for a definite failure).
-            data["effect"] = "none" if failure.outcome == "not_started" else "unknown"
+            # The transaction decides. A session answers as a transaction-aware release: the effect it was given,
+            # else nothing applied for a step that never started or a code its action declares definite.
+            data["effect"] = scripted_effect(spec if split_phase(instance) is None else None, failure)
             return self._event("step_failed", data)
         policy = error_policy(ir, instance)
         verdict = final_failure(policy, side_effect, failure.outcome)

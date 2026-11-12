@@ -17,14 +17,16 @@
 """Pure facts a simulation needs to run transactions: which keys answer a confirm, cancel or undo, and what each
 of them returns. Nothing here starts a run, calls a worker or reads a database."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Final, Literal, cast
+from typing import Any, Final, Literal, cast
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from firefly_weave.compiler.ir import ActionNode, CallWorkflowNode, IRNode
 from firefly_weave.contracts.instance_keys import InvalidInstanceKey, split_instance
 from firefly_weave.contracts.transactions import PHASE_SEGMENTS, UndoPhase, split_phase
 from firefly_weave.contracts.values import JsonObject, JsonValue
+from firefly_weave.operations.debug.models import ScriptedError
 from firefly_weave.runtime.control import enclosing_loops
 from firefly_weave.runtime.kernel import PreparedWorkflow
 from firefly_weave.runtime.models import Deadline, RunState
@@ -39,6 +41,18 @@ def started_data(prepared: PreparedWorkflow, run_id: UUID) -> JsonObject:
     """The data a simulated run starts with: its run ID when it has a transaction (the kernel needs it there for
     operation keys), nothing otherwise, so sessions without transactions keep their bytes."""
     return {"run_id": str(run_id)} if prepared.transactions is not None else {}
+
+
+def scripted_effect(action_spec: Mapping[str, Any] | None, failure: ScriptedError) -> Literal["none", "unknown"]:
+    """What a scripted failure says it applied, as a transaction-aware release would report it: the effect given,
+    else nothing for a step that never started or a code its action declares definite, else maybe something."""
+    if failure.effect is not None:
+        return failure.effect
+    if failure.outcome == "not_started":
+        return "none"
+    if action_spec is not None and failure.code in action_spec.get("definiteFailures", []):
+        return "none"
+    return "unknown"
 
 
 def due_deadline(state: RunState, deadline: Deadline) -> bool:
