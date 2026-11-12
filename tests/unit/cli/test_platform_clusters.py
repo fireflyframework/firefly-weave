@@ -1403,6 +1403,39 @@ def test_disconnect_revokes_the_runner_and_disables_the_target_before_it_deletes
     assert asked["deployment_targets.update"] <= delete
 
 
+@pytest.mark.parametrize("silent", ["no published port", "no context", "no API"])
+def test_deleting_a_cluster_that_doesnt_answer_still_frees_its_targets_and_deletes_it(world, monkeypatch, silent):
+    """The cluster goes with every object in it, so delete never reaches it: stopped nodes publish no ports, the
+    default kubeconfig may lack the context, and the API may not answer. The platform's side is still undone."""
+    directory, commands, config, cluster = world
+    connect(world)
+    monkeypatch.setenv("KUBECONFIG", str(config))
+    if silent == "no published port":
+        commands.answer(["inspect", PORTS, "weave-test-control-plane"], "{}\n")
+    elif silent == "no context":
+        monkeypatch.setenv("KUBECONFIG", str(config.parent / "another-kubeconfig"))
+    else:
+        commands.answer([KUBECTL, "get", "namespace", "-o", "json"], PlatformError("Stage cluster-namespace failed."))
+    kind = "/opt/weave-tools/kind-v0.33.0"
+    monkeypatch.setattr(clusters.tools, "tool", lambda path, name: Path(KUBECTL if name == "kubectl" else kind))
+    socket = json.dumps([{"Endpoints": {"docker": {"Host": "unix:///Users/me/.colima/weave-tests/docker.sock"}}}])
+    commands.answer(["docker", "context", "inspect", "colima-weave-tests"], socket)
+    commands.answer([kind, "delete", "cluster", "--name", "weave-test"], "")
+    commands.answer(["network", "ls"], "")
+    before = len(commands.calls)
+    result = clusters.delete_cluster(directory, "kind", "weave-test", context="colima-weave-tests")
+    assert result == {"cluster": "weave-test", "disconnected": ["kind-weave-test"], "deleted": True}
+    assert not [call for call in commands.calls[before:] if call.argv[0] == KUBECTL]
+    assert (cluster.count("deployment_runners.revoke"), cluster.count("deployment_targets.update")) == (1, 1)
+    assert cluster.deleted_clients == [["weave-cluster-runner-1", "weave-cluster-worker-1"]]
+    assert network_changes(commands, before) == [("disconnect", KEYCLOAK), ("disconnect", REGISTRY)]
+    assert cluster.removed_origins == ["kind-weave-test"]
+    assert clusters.receipt(directory)["clusters"] == {}
+    (deleted_at,) = [index for index, call in enumerate(commands.calls) if call.argv[:3] == [kind, "delete", "cluster"]]
+    left = [index for index, call in enumerate(commands.calls) if call.argv[3:5] == ["network", "disconnect"]]
+    assert deleted_at > max(left)
+
+
 def test_disconnecting_a_namespace_without_a_target_changes_nothing(world):
     directory, commands, _, cluster = world
     connect(world)

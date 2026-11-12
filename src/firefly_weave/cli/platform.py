@@ -179,9 +179,10 @@ def cluster_create(
 def cluster_delete(directory: Path, provider: str, name: str, context: str | None, output: str) -> None:
     """Delete any kind or k3d cluster with this name, even one Weave didn't create.
 
-    Disconnects each of the cluster's connected targets first; when one can't
-    be disconnected, the cluster stays. Refuses a Docker context that isn't on
-    this computer's Unix socket.
+    Disconnects each of the cluster's connected targets first, on the
+    platform's side only, since the cluster's objects go with it; when one
+    can't be disconnected, the cluster stays. Refuses a Docker context that
+    isn't on this computer's Unix socket.
     """
     from firefly_weave.sdk import platform_clusters
 

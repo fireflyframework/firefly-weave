@@ -516,7 +516,9 @@ def test_delete_disconnects_each_connected_target_before_deleting_the_cluster(wo
     receipt_with_target(directory)
     asked = []
 
-    def disconnect(path, provider, name, namespace, *, kubeconfig, notice):
+    def disconnect(path, provider, name, namespace, *, kubeconfig, notice, in_cluster=True):
+        # The cluster goes with every object in it, so disconnect never reaches it.
+        assert in_cluster is False
         asked.append((namespace, len(commands.calls)))
         return {"target_id": None, "disabled": True, "removed": []}
 
@@ -537,7 +539,7 @@ def test_a_target_that_fails_to_disconnect_keeps_the_cluster(world, monkeypatch)
     directory, commands, _ = world
     receipt_with_target(directory)
 
-    def disconnect(path, provider, name, namespace, *, kubeconfig, notice):
+    def disconnect(path, provider, name, namespace, *, kubeconfig, notice, in_cluster=True):
         raise PlatformError("The local Keycloak service is unavailable. Check platform status, then retry.")
 
     monkeypatch.setattr(clusters, "disconnect", disconnect)

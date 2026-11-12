@@ -459,7 +459,10 @@ weave platform cluster delete --provider kind --name weave-test
 ```
 
 `delete` first disconnects each of the cluster's targets, as `weave platform
-cluster disconnect` does, and keeps the cluster when one can't be disconnected.
+cluster disconnect` does, but only on the platform's side: the cluster's objects
+go with the cluster, so `delete` never reaches it, and a stopped cluster or one
+whose API doesn't answer is still deleted. It keeps the cluster when a target
+can't be disconnected, for example when the platform's API isn't running.
 `delete --name` deletes any kind or k3d cluster with that name on the Docker
 context, even one that Weave didn't create, so check the name before you run it.
 It also removes the cluster's own network when no other container uses it,

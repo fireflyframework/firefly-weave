@@ -1445,12 +1445,16 @@ def disconnect(
     kubeconfig: Path | None,
     notice: Callable[[str], None],
     transport: httpx.AsyncBaseTransport | None = None,
+    in_cluster: bool = True,
 ) -> dict[str, Any]:
     """Disconnect one target: revoke its runner, disable its target and deactivate its principals, delete its objects
     in the cluster and its Keycloak clients, then free its pair. The cluster's last target also takes the shared
     objects, the cluster's private origins and the platform's network connections. A pending target (a connect that
     stopped) is freed the same way. The workers namespace is never deleted, and a namespace another installation
-    took keeps every object in it. Each step is safe to repeat, so a rerun finishes a disconnect that stopped."""
+    took keeps every object in it. Each step is safe to repeat, so a rerun finishes a disconnect that stopped.
+
+    Without `in_cluster`, for a cluster about to be deleted with every object in it, the cluster isn't reached at all:
+    stopped nodes, a missing context or an API that doesn't answer can't keep the platform's side from being undone."""
     _names(provider, cluster, namespace)
     key = f"{provider}-{cluster}"
     with local._exclusive(directory, LOCK, BUSY):
@@ -1462,7 +1466,7 @@ def disconnect(
         state = local._state(directory)
         operations = platform_operations.receipt(directory) or {}
         last = set(entry["targets"]) == {namespace}
-        nodes = _recorded_nodes(state, entry)
+        nodes = _recorded_nodes(state, entry) if in_cluster else []
         found = Preflight(provider, cluster, namespace, key, Path(), state["context"], entry["network"], nodes)
         connection = _Connection(found, state, operations, [])
         parts: list[dict[str, Any]] = []
@@ -1989,7 +1993,8 @@ def delete_cluster(
     notice: Callable[[str], None] = lambda line: None,
 ) -> dict[str, Any]:
     """Delete a test cluster after disconnecting each of its targets; when a target can't be disconnected, the
-    cluster stays."""
+    cluster stays. Disconnect doesn't reach the cluster, which goes with every object in it, so a cluster that is
+    stopped or doesn't answer is still deleted."""
     if provider not in PROVIDERS or cluster_name_problem(cluster):
         raise local.PlatformError(NAME_PROBLEM)
     directory, state, context = _lifecycle(directory, context)
@@ -1997,7 +2002,7 @@ def delete_cluster(
     disconnected = []
     for namespace, target in sorted(targets.items()):
         try:
-            disconnect(directory, provider, cluster, namespace, kubeconfig=None, notice=notice)
+            disconnect(directory, provider, cluster, namespace, kubeconfig=None, notice=notice, in_cluster=False)
         except local.PlatformError as error:
             raise local.PlatformError(f"{error} The cluster was not deleted.") from None
         disconnected.append(target["target_name"])
