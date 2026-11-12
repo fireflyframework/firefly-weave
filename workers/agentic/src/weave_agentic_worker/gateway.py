@@ -113,7 +113,7 @@ LOOP_CHECK_EVERY = 64
 # INSTRUCTIONS and the reply format counted at most 488 tokens on llama3.2:3b, qwen3:4b and qwen2.5:1.5b (measured);
 # the API leaves this reserve for them (GATEWAY_RESERVE_TOKENS in its Weave AI context).
 RESERVE_TOKENS = 640
-# Weave AI's guide (version 2) counted at most 498 tokens on the same models; the API counts it as this reserve too.
+# Weave AI's guide (version 3) counted at most 498 tokens on the same models; the API counts it as this reserve too.
 # Only that exact text, recognized by its digest, is counted so; any other guide is estimated like the rest.
 GUIDE_SHA256 = "deaa930e8879c898064a536681be3f1484b5303e6e65220c50332b70620aef6b"
 GUIDE_TOKENS = 512
