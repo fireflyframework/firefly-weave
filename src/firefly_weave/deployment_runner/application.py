@@ -37,7 +37,7 @@ from firefly_weave.contracts.deployments import (
     RunnerRegistration,
 )
 from firefly_weave.deployment_runner.policy import DestinationPolicy
-from firefly_weave.deployment_runner.runtime import InfrastructureAdapter, OperationsRunner
+from firefly_weave.deployment_runner.runtime import LOG, InfrastructureAdapter, OperationsRunner
 from firefly_weave.sdk.client import AsyncTokenProvider, WeaveClient
 from firefly_weave.sdk.token_relay import start_relay
 from firefly_weave.sdk.worker_auth import ClientCredentialsTokenProvider, _read_mount, private_transport
@@ -136,11 +136,15 @@ def _beat(path: Path | None) -> None:
     """Touch the heartbeat file (0600) after the platform answered; a liveness probe restarts a silent runner."""
     if path is None:
         return
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     try:
-        os.utime(descriptor)
-    finally:
-        os.close(descriptor)
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        try:
+            os.utime(descriptor)
+        finally:
+            os.close(descriptor)
+    except OSError as error:
+        # Never stop the runner over it: a stale heartbeat makes the liveness probe restart it instead.
+        LOG.warning("The runner couldn't record its heartbeat: %s", error.strerror or type(error).__name__)
 
 
 async def serve(config: RunnerConfiguration, *, once: bool = False) -> None:

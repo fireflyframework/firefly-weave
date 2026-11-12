@@ -238,7 +238,13 @@ class OperationsRunner:
                 validate_lease(refreshed, self.policy)
                 lease = refreshed
                 if self.on_contact is not None:
-                    self.on_contact()
+                    try:
+                        self.on_contact()
+                    except OSError as error:
+                        # A heartbeat that can't be written never fails the job; the liveness probe notices.
+                        LOG.warning(
+                            "The runner couldn't record its heartbeat: %s", error.strerror or type(error).__name__
+                        )
 
         async def before_write() -> None:
             nonlocal effects_started

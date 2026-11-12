@@ -588,3 +588,30 @@ async def test_a_scale_down_without_permission_to_patch_pods_fails_before_any_ch
     assert [item.state for item in client.reports] == ["running", "failed"]
     assert terminal.receipt.code == "precondition_failed" and not terminal.receipt.external_effects_may_continue
     assert cluster.writes == [] and cluster.dry_pod_patches == 1
+
+
+async def test_a_heartbeat_that_cannot_be_written_never_fails_a_job(caplog):
+    import logging
+
+    lease, policy = fixture()
+    client, adapter = Client(lease), Adapter(lease)
+
+    def contact():
+        raise PermissionError(13, "Permission denied")
+
+    with caplog.at_level(logging.WARNING):
+        await OperationsRunner(client, policy, adapter, on_contact=contact).execute(lease)
+    assert client.reports[-1].state == "succeeded" and client.renewals >= 1
+    assert any("heartbeat" in record.getMessage() for record in caplog.records)
+
+
+async def test_the_runner_keeps_claiming_when_its_heartbeat_cannot_be_written(monkeypatch, tmp_path, caplog):
+    import logging
+
+    from firefly_weave.deployment_runner.application import serve
+
+    served(monkeypatch)
+    monkeypatch.setenv("WEAVE_RUNNER_HEARTBEAT_FILE", str(tmp_path / "missing" / "heartbeat"))
+    with caplog.at_level(logging.WARNING):
+        await serve(runner_configuration("https://weave.example"), once=True)
+    assert any("heartbeat" in record.getMessage() for record in caplog.records)
