@@ -976,6 +976,28 @@ def test_refresh_applies_only_to_the_cluster_that_publishes_the_contexts_port(wo
     assert clusters.receipt(directory)["clusters"]["kind-weave-test"]["api_address"] == "172.30.0.5"
 
 
+def test_a_busy_cluster_lock_reads_unreachable_and_never_fails_up(world):
+    directory, commands, _, _ = world
+    connect(world)
+    lines = []
+    before = len(commands.calls)
+    with clusters.local._exclusive(directory, clusters.LOCK, clusters.BUSY):
+        result = clusters.refresh(directory, lines.append)
+    assert result == [{"name": "kind-weave-test", "state": "unreachable"}]
+    assert lines == [f"clusters: not refreshed. {clusters.BUSY}"]
+    assert commands.calls[before:] == []
+
+
+def test_a_malformed_cluster_receipt_never_fails_up(world):
+    directory, commands, _, _ = world
+    (directory / "clusters.json").write_text("{not json")
+    os.chmod(directory / "clusters.json", 0o600)
+    lines = []
+    assert clusters.refresh(directory, lines.append) == []
+    assert lines == [f"clusters: not refreshed. {clusters.MALFORMED}"]
+    assert commands.calls == []
+
+
 def test_refresh_never_applies_over_another_installations_weave_system(world, monkeypatch):
     directory, commands, config, cluster = world
     connect(world)

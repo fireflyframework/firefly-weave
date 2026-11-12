@@ -1236,21 +1236,32 @@ def _refresh_cluster(
 def refresh(directory: Path, notice: Callable[[str], None]) -> list[dict[str, str]]:
     """After up, point each connected cluster at the platform's current addresses: the network joins and the registry
     alias, then the EndpointSlice and the policies when an address moved. A cluster that's gone reads missing, and
-    one that can't be refreshed reads unreachable with the reason in a notice; neither fails up."""
-    if not receipt(directory)["clusters"]:
+    one that can't be refreshed reads unreachable with the reason in a notice; neither fails up. When the receipt
+    can't be read, nothing is refreshed; when another cluster command holds the lock, every cluster reads
+    unreachable."""
+    try:
+        names = sorted(receipt(directory)["clusters"])
+    except local.PlatformError as error:
+        notice(f"clusters: not refreshed. {error}")
         return []
-    with local._exclusive(directory, LOCK, BUSY):
-        state = local._state(directory)
-        operations = platform_operations.receipt(directory) or {}
-        found = []
-        for key, entry in sorted(receipt(directory)["clusters"].items()):
-            try:
-                outcome = _refresh_cluster(directory, state, operations, key, entry, notice)
-            except local.PlatformError as error:
-                notice(f"{key}: not refreshed. {error}")
-                outcome = "unreachable"
-            found.append({"name": key, "state": outcome})
-        return found
+    if not names:
+        return []
+    try:
+        with local._exclusive(directory, LOCK, BUSY):
+            state = local._state(directory)
+            operations = platform_operations.receipt(directory) or {}
+            found = []
+            for key, entry in sorted(receipt(directory)["clusters"].items()):
+                try:
+                    outcome = _refresh_cluster(directory, state, operations, key, entry, notice)
+                except local.PlatformError as error:
+                    notice(f"{key}: not refreshed. {error}")
+                    outcome = "unreachable"
+                found.append({"name": key, "state": outcome})
+            return found
+    except local.PlatformError as error:
+        notice(f"clusters: not refreshed. {error}")
+        return [{"name": name, "state": "unreachable"} for name in names]
 
 
 # Local test clusters
