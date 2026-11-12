@@ -283,6 +283,10 @@ def preflight(directory: Path, provider: str, cluster: str, namespace: str, *, k
         raise local.PlatformError(OPERATIONS_OFF)
     state = local._state(directory)
     context = f"{provider}-{cluster}"
+    saved = receipt(directory)
+    if namespace not in saved["clusters"].get(context, {}).get("targets", {}):
+        # A new target needs an identity pair: refuse a ninth here, read-only. The identities stage takes the pair.
+        free_pair(saved)
     path, server = _server(_candidates(kubeconfig), context, provider, cluster)
     if not _local(server):
         raise local.PlatformError(

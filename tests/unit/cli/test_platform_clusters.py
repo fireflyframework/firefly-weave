@@ -800,6 +800,23 @@ def test_another_installations_weave_system_is_refused_before_anything_changes(w
     assert cluster.count("deployment_targets.create") == 0
 
 
+def test_a_ninth_target_is_refused_before_the_cluster_changes(world):
+    directory, commands, _, _ = world
+    targets = {
+        f"ns-{pair}": {**CONNECTED, "pair": pair, "target_name": f"kind-weave-test.ns-{pair}"} for pair in range(1, 9)
+    }
+    clusters.save(directory, {"format": clusters.FORMAT, "clusters": {"kind-weave-test": record(targets)}})
+    with pytest.raises(PlatformError) as refused:
+        connect(world)
+    assert str(refused.value).startswith("This installation already connects 8 cluster targets.")
+    assert network_changes(commands) == []
+    changes = ("cluster-apply", "cluster-mirror", "cluster-runner", "cluster-secret", "cluster-probe")
+    assert [call.name for call in commands.calls if call.name.startswith(changes)] == []
+    # A namespace that already holds one of the eight pairs connects again.
+    commands.answer([KUBECTL, "get", "namespace", "ns-3", "-o", "jsonpath={.metadata.uid}"], UID)
+    clusters.connect(directory, "kind", "weave-test", "ns-3", kubeconfig=world[2], notice=lambda line: None)
+
+
 def test_a_silent_runner_names_its_log_and_keeps_the_registered_target(world):
     directory, _, _, cluster = world
     cluster.online = False
