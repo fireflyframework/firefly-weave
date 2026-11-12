@@ -28,6 +28,7 @@ import ipaddress
 import json
 import os
 import re
+import secrets
 import socket
 import tempfile
 import time
@@ -78,22 +79,39 @@ MALFORMED = (
 _CLUSTER_KEYS = frozenset(
     {"provider", "cluster", "context", "docker_context", "network", "subnet", "api_address", "registry_address"}
 )
-_TARGET_KEYS = frozenset(
-    {"target_id", "target_name", "pair", "state", "runner_principal_id", "worker_principal_id", "connected_at"}
+# A target's IDs on the platform: the target, its principals and deployment, and what each grant covers.
+_TARGET_IDS = frozenset(
+    {"target_id", "runner_principal_id", "worker_principal_id", "deployment_id", "runner_granted", "worker_granted"}
 )
+# Set once each principal is linked to its client's service account.
+_TARGET_FLAGS = frozenset({"runner_linked", "worker_linked"})
+_TARGET_KEYS = _TARGET_IDS | _TARGET_FLAGS | {"target_name", "pair", "generation", "state", "connected_at"}
+# Every target names its pair and the generation its idempotency keys carry, from the moment it takes the pair.
+_TARGET_REQUIRED = frozenset({"target_name", "pair", "generation", "state"})
 # The receipt's string values and their bounds: IDs are UUIDs, times RFC 3339, names target names.
 _ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 _TIME = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]{8,15}(Z|[+-][0-9]{2}:[0-9]{2})")
+_GENERATION = re.compile(r"[0-9a-f]{32}")
 
 
 def _target_values(target: dict[str, Any]) -> bool:
-    """Whether a receipt target's string values have their types and bounds (its pair is checked apart)."""
+    """Whether a receipt target has its keys, types and bounds (its pair is checked apart)."""
+    if not _TARGET_REQUIRED <= set(target) <= _TARGET_KEYS:
+        return False
+    if target["state"] == "connected" and not {"target_id", "connected_at"} <= set(target):
+        return False
     for key, value in target.items():
         if key == "pair":
             continue
+        if key in _TARGET_FLAGS:
+            if value is not True:
+                return False
+            continue
         if not isinstance(value, str):
             return False
-        if key in {"target_id", "runner_principal_id", "worker_principal_id"} and not _ID.fullmatch(value):
+        if key in _TARGET_IDS and not _ID.fullmatch(value):
+            return False
+        if key == "generation" and not _GENERATION.fullmatch(value):
             return False
         if key == "connected_at" and (len(value) > 40 or not _TIME.fullmatch(value)):
             return False
@@ -377,12 +395,7 @@ def _checked(value: Any) -> dict[str, Any]:
         if any(not isinstance(entry[name], str) or len(entry[name]) > 256 for name in _CLUSTER_KEYS):
             raise ValueError("Unknown cluster field")
         for namespace, target in entry["targets"].items():
-            if (
-                namespace_problem(namespace)
-                or not isinstance(target, dict)
-                or not set(target) <= _TARGET_KEYS
-                or not _target_values(target)
-            ):
+            if namespace_problem(namespace) or not isinstance(target, dict) or not _target_values(target):
                 raise ValueError("Unknown target entry")
             pair = target.get("pair")
             if type(pair) is not int or not 1 <= pair <= PAIRS:
@@ -424,6 +437,25 @@ def free_pair(value: dict[str, Any]) -> int:
         f"This installation already connects {PAIRS} cluster targets. Disconnect one with weave platform cluster "
         "disconnect, then connect again."
     )
+
+
+def reserve(value: dict[str, Any], key: str, namespace: str) -> dict[str, Any]:
+    """The namespace's entry in the cluster `key`, taking the lowest free pair as pending when it has none.
+
+    A rerun after a stopped connect (a failed probe) finds the same pair and generation, so its Keycloak clients and
+    principals are found again rather than made twice; a pair freed by disconnect and taken again gets a new
+    generation, so it never answers with the revoked principals."""
+    entry = value["clusters"][key]
+    targets = entry["targets"]
+    if namespace not in targets:
+        targets[namespace] = {
+            "target_name": target_name(entry["provider"], entry["cluster"], namespace),
+            "pair": free_pair(value),
+            "generation": secrets.token_hex(16),
+            "state": "pending",
+        }
+    found: dict[str, Any] = targets[namespace]
+    return found
 
 
 # Local test clusters

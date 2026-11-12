@@ -300,6 +300,23 @@ def test_follows_kubectls_merged_view_of_several_files(platform, tmp_path, monke
     assert commands.calls == []
 
 
+CONNECTED = {
+    "target_id": "11111111-2222-3333-4444-555555555555",
+    "target_name": "kind-weave-test",
+    "pair": 1,
+    "generation": "0123456789abcdef0123456789abcdef",
+    "state": "connected",
+    "runner_principal_id": "21111111-2222-3333-4444-555555555555",
+    "worker_principal_id": "31111111-2222-3333-4444-555555555555",
+    "runner_linked": True,
+    "worker_linked": True,
+    "deployment_id": "41111111-2222-3333-4444-555555555555",
+    "runner_granted": "11111111-2222-3333-4444-555555555555",
+    "worker_granted": "51111111-2222-3333-4444-555555555555",
+    "connected_at": "2026-11-12T10:00:00Z",
+}
+
+
 @pytest.mark.parametrize(
     "change",
     [
@@ -309,21 +326,59 @@ def test_follows_kubectls_merged_view_of_several_files(platform, tmp_path, monke
         {"state": "lost"},
         {"target_name": "k" * 101},
         {"target_name": ""},
+        {"generation": "G" * 32},
+        {"generation": "0" * 31},
+        {"runner_linked": "yes"},
+        {"worker_linked": False},
+        {"deployment_id": "deployment"},
+        {"worker_granted": 3},
+        {"generation": None},
+        {"state": "pending", "connected_at": None},
+        {"state": None},
+        {"connected_at": None},
     ],
 )
 def test_the_receipt_refuses_target_values_of_the_wrong_type(platform, change):
     directory, _, _ = platform
-    target = {
-        "target_id": "11111111-2222-3333-4444-555555555555",
-        "target_name": "kind-weave-test",
-        "pair": 1,
-        "state": "connected",
-        "connected_at": "2026-11-12T10:00:00Z",
-        **change,
-    }
+    clusters.save(
+        directory, {"format": clusters.FORMAT, "clusters": {"kind-weave-test": record({"weave-workers": CONNECTED})}}
+    )
+    target = {key: item for key, item in {**CONNECTED, **change}.items() if item is not None}
+    if change == {"state": "pending", "connected_at": None}:
+        # A pending target holds what the stages recorded so far; it must still say which pair and generation.
+        del target["generation"]
     value = {"format": clusters.FORMAT, "clusters": {"kind-weave-test": record({"weave-workers": target})}}
     with pytest.raises(PlatformError, match="clusters.json"):
         clusters.save(directory, value)
+
+
+def test_a_rerun_reuses_the_namespaces_pending_pair_and_its_generation(platform):
+    """A connect that stopped after taking a pair (a failed probe) finds it again, so the rerun makes no second
+    Keycloak client or principal: their idempotency keys carry the same generation."""
+    directory, _, _ = platform
+    value = {"format": clusters.FORMAT, "clusters": {"kind-weave-test": record({})}}
+    first = clusters.reserve(value, "kind-weave-test", "weave-workers")
+    assert first == {
+        "target_name": "kind-weave-test",
+        "pair": 1,
+        "generation": first["generation"],
+        "state": "pending",
+    }
+    clusters.save(directory, value)
+    again = clusters.receipt(directory)
+    assert clusters.reserve(again, "kind-weave-test", "weave-workers") == first
+    other = clusters.reserve(again, "kind-weave-test", "team-b")
+    assert (other["pair"], other["target_name"]) == (2, "kind-weave-test.team-b")
+    assert other["generation"] != first["generation"]
+
+
+def test_a_freed_pair_taken_again_gets_a_new_generation(platform):
+    """A pair freed by disconnect and taken by the next connect gets new principals, never the revoked ones."""
+    value = {"format": clusters.FORMAT, "clusters": {"kind-weave-test": record({})}}
+    first = clusters.reserve(value, "kind-weave-test", "weave-workers")
+    del value["clusters"]["kind-weave-test"]["targets"]["weave-workers"]
+    second = clusters.reserve(value, "kind-weave-test", "team-b")
+    assert second["pair"] == first["pair"] and second["generation"] != first["generation"]
 
 
 def test_the_receipt_refuses_a_context_that_is_not_its_provider_and_cluster(platform):

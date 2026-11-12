@@ -436,7 +436,9 @@ def test_delete_refuses_a_cluster_that_still_has_connected_targets(world):
         "target_id": "0f8fad5b-d9cb-469f-a165-70867728950e",
         "target_name": f"kind-{NAME}",
         "pair": 1,
+        "generation": "0123456789abcdef0123456789abcdef",
         "state": "connected",
+        "connected_at": "2026-11-12T10:00:00Z",
     }
     record = {
         "provider": "kind",
