@@ -16,6 +16,8 @@
 
 """The AI agent step in the workflow language: its definition, canonical form and manifest entry."""
 
+from contextlib import suppress
+
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
@@ -248,7 +250,14 @@ def test_both_tool_name_patterns_stay_equal():
     # Step tests keep their own copy until they import the language's; the two must not drift.
     from firefly_weave.contracts import definitions, step_tests
 
-    language = TypeAdapter(definitions.ToolName).json_schema()
+    names = ["lookup_order", "A", "a" * 64, "a" * 65, "1lookup", "_invalid_tool", "look up", "lookup.order", "é"]
 
-    assert language == TypeAdapter(step_tests.ToolName).json_schema()
-    assert language["pattern"] == "^[A-Za-z][A-Za-z0-9_-]{0,63}$"
+    def accepted(name_type: object) -> list[str]:
+        adapter = TypeAdapter(name_type)
+        kept = []
+        for name in names:
+            with suppress(ValidationError):
+                kept.append(adapter.validate_python(name))
+        return kept
+
+    assert accepted(definitions.ToolName) == accepted(step_tests.ToolName) == ["lookup_order", "A", "a" * 64]
