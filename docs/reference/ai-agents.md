@@ -131,8 +131,8 @@ Activation checks an agent like an AI task: its connection must use the profile'
 agent whose turn action isn't the platform's, an agent tool whose action runs a model task, and an undo action of a
 transaction step (`confirm`, `cancel` or `compensate`) that runs a model task (`WV-ACTIVATION-AI-RESERVED`). An undo
 runs with none of an agent's guards, so the compiler refuses that undo action too (`WV-COMP-AGENT_ACTION` at its
-`uses`).
-
+`uses`). A workflow version that pins a document it doesn't carry is refused with the same code, as what that runs
+can't be checked.
 
 ## Agent log
 

@@ -342,6 +342,7 @@ def test_a_pinned_document_activation_cannot_read_is_refused_rather_than_assumed
     with pytest.raises(CatalogError) as refused:
         reserved()(with_nodes(ir, nodes))
     assert (refused.value.status, refused.value.code) == (422, "WV-ACTIVATION-AI-RESERVED")
+    assert str(refused.value) == "The workflow pins a document it doesn't carry, so what that runs can't be checked"
 
 
 @pytest.mark.parametrize("task", ["turn", "generate"])
