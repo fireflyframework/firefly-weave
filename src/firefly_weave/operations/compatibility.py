@@ -48,6 +48,7 @@ from firefly_weave.contracts.providers import ProviderSource, ProviderSourceRequ
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.operations.compatibility_catalog import classify_requirement
 from firefly_weave.operations.execution import execute_pure, inventory_execution
+from firefly_weave.operations.loop_health import raise_if_cancelled
 from firefly_weave.operations.telemetry import TelemetryService
 from firefly_weave.persistence.migrations import check_schema
 from firefly_weave.persistence.uow import UnitOfWork
@@ -215,7 +216,9 @@ class CompatibilityService:
                     if time.monotonic() >= self._next_scan and not self._scan_lock.locked():
                         try:
                             await self.scan()
-                        except Exception:
+                        except Exception as error:
+                            # A rescan cancelled by close() still runs its callback; its failure must not hide that.
+                            raise_if_cancelled(error)
                             logging.getLogger(__name__).error("Compatibility refresh failed")
                         self._next_scan = time.monotonic() + INVENTORY_RESCAN_SECONDS
 

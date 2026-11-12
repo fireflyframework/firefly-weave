@@ -26,7 +26,7 @@ import asyncio
 import logging
 import time
 from collections.abc import AsyncIterator, Callable
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager
 from contextvars import Context
 from datetime import datetime
 from typing import Literal
@@ -39,7 +39,14 @@ from firefly_weave.access.scheduler import _SchedulerScope, next_scope, tenant_p
 from firefly_weave.operations import statistics
 from firefly_weave.operations.execution import ReservedSlots
 from firefly_weave.operations.facts import FactRepository
-from firefly_weave.operations.loop_health import OPERATIONS_SECONDS, LoopHealth, track, utc_now
+from firefly_weave.operations.loop_health import (
+    OPERATIONS_SECONDS,
+    LoopHealth,
+    raise_if_cancelled,
+    stop_task,
+    track,
+    utc_now,
+)
 from firefly_weave.persistence.migrations import check_schema
 from firefly_weave.persistence.uow import Transaction, UnitOfWork
 from firefly_weave.runtime.scheduler import failure_cause
@@ -122,6 +129,7 @@ class OperationsLoop:
             except asyncio.CancelledError:
                 raise
             except Exception as error:
+                raise_if_cancelled(error)
                 logging.getLogger(__name__).error(
                     "Operations traversal failed (%s); retrying on the next cycle", failure_cause(error)
                 )
@@ -131,6 +139,7 @@ class OperationsLoop:
                 self.health.succeeded("operations_loop", complete_until=self.complete_until)
             else:
                 self.health.failed("operations_loop")
+            raise_if_cancelled()
             await asyncio.sleep(OPERATIONS_SECONDS)
 
     async def cycle(self) -> bool:
@@ -152,6 +161,7 @@ class OperationsLoop:
                     if until is not None:
                         covered.append(until)
                 except Exception as error:
+                    raise_if_cancelled(error)
                     logging.getLogger(__name__).error(
                         "Operations environment quantum failed (%s); traversal will continue", failure_cause(error)
                     )
@@ -234,17 +244,22 @@ class OperationsLoop:
         """An ordinary scoped transaction, verified as scheduler work and limited to the remaining budget."""
         if self.monotonic() >= deadline_monotonic:
             raise QuantumIncomplete()
-        async with self.uow.open(authority.scope, mutation=mutation, admission=admission) as tx:
-            await authority.verify(tx)
-            remaining = deadline_monotonic - self.monotonic()
-            if remaining <= 0:
-                raise QuantumIncomplete()
-            limit = f"{max(1, min(1000, int(remaining * 1000)))}ms"
-            await tx.session.execute(
-                text("SELECT set_config('statement_timeout',:limit,true),set_config('lock_timeout',:limit,true)"),
-                {"limit": limit},
-            )
-            yield tx
+        try:
+            async with self.uow.open(authority.scope, mutation=mutation, admission=admission) as tx:
+                await authority.verify(tx)
+                remaining = deadline_monotonic - self.monotonic()
+                if remaining <= 0:
+                    raise QuantumIncomplete()
+                limit = f"{max(1, min(1000, int(remaining * 1000)))}ms"
+                await tx.session.execute(
+                    text("SELECT set_config('statement_timeout',:limit,true),set_config('lock_timeout',:limit,true)"),
+                    {"limit": limit},
+                )
+                yield tx
+        except Exception as error:
+            # Every unit's failure passes here first, so a cancellation its rollback error hid is honored at once.
+            raise_if_cancelled(error)
+            raise
 
     async def revalidate(self, authority: _SchedulerScope, deadline_monotonic: float) -> bool:
         """Refresh due cached listing decisions in one environment; True when this quantum completed without failure.
@@ -316,13 +331,12 @@ class OperationsLoop:
         return completed
 
     async def close(self) -> None:
-        if self.task is not None:
-            self.task.cancel()
-            with suppress(asyncio.CancelledError):
-                await self.task
-            self.task = None
-        self.health.running("operations_loop", False)
-        # Cancellation completes before the engine it uses is disposed.
-        if self.engine is not None:
-            await self.engine.dispose()
-            self.engine = None
+        task, self.task = self.task, None
+        try:
+            # Cancellation completes, or its bound runs out, before the engine it uses is disposed.
+            await stop_task(task, "operations_loop", self.settings.shutdown_timeout_seconds)
+        finally:
+            self.health.running("operations_loop", False)
+            if self.engine is not None:
+                await self.engine.dispose()
+                self.engine = None

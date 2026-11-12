@@ -17,7 +17,6 @@
 
 import asyncio
 import logging
-from contextlib import suppress
 from contextvars import Context
 
 from sqlalchemy import text
@@ -26,7 +25,13 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from firefly_weave.access.scheduler import next_scope
 from firefly_weave.email.source import EmailSourceService
 from firefly_weave.operations.execution import ReservedSlots
-from firefly_weave.operations.loop_health import TRAVERSAL_SECONDS, LoopHealth, track
+from firefly_weave.operations.loop_health import (
+    TRAVERSAL_SECONDS,
+    LoopHealth,
+    raise_if_cancelled,
+    stop_task,
+    track,
+)
 from firefly_weave.persistence.migrations import check_schema
 from firefly_weave.persistence.uow import UnitOfWork
 from firefly_weave.providers.dispatcher import ProviderDispatcher
@@ -106,22 +111,23 @@ class ProviderLoop:
             self.health.started("provider_loop")
             try:
                 healthy = await self.cycle()
-            except Exception:
+            except Exception as error:
+                raise_if_cancelled(error)
                 logging.getLogger(__name__).error("Provider traversal failed; retained intents remain retryable")
                 healthy = False
             if healthy:
                 self.health.succeeded("provider_loop")
             else:
                 self.health.failed("provider_loop")
+            raise_if_cancelled()
             await asyncio.sleep(TRAVERSAL_SECONDS)
 
     async def close(self) -> None:
-        if self.task is not None:
-            self.task.cancel()
-            with suppress(asyncio.CancelledError):
-                await self.task
-            self.task = None
-        self.health.running("provider_loop", False)
-        if self.engine is not None:
-            await self.engine.dispose()
-            self.engine = None
+        task, self.task = self.task, None
+        try:
+            await stop_task(task, "provider_loop", self.settings.shutdown_timeout_seconds)
+        finally:
+            self.health.running("provider_loop", False)
+            if self.engine is not None:
+                await self.engine.dispose()
+                self.engine = None

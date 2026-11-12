@@ -19,7 +19,6 @@
 import asyncio
 import logging
 from collections.abc import Callable
-from contextlib import suppress
 from contextvars import Context
 
 from sqlalchemy import text
@@ -28,7 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from firefly_weave.access.scheduler import next_scope, tenant_page
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.operations.execution import ReservedSlots
-from firefly_weave.operations.loop_health import LoopHealth, track
+from firefly_weave.operations.loop_health import LoopHealth, raise_if_cancelled, stop_task, track
 from firefly_weave.persistence.migrations import check_schema
 from firefly_weave.persistence.uow import UnitOfWork
 from firefly_weave.runtime.recovery import RecoveryService
@@ -170,6 +169,7 @@ class RecoveryLoop:
             try:
                 recovered = await self.cycle()
             except Exception as error:
+                raise_if_cancelled(error)
                 logging.getLogger(__name__).error(
                     "Recovery catalog scan failed (%s); retrying on next poll", failure_cause(error)
                 )
@@ -179,16 +179,16 @@ class RecoveryLoop:
                 self.health.succeeded("recovery_loop")
             else:
                 self.health.failed("recovery_loop")
+            raise_if_cancelled()
             await asyncio.sleep(self.settings.scheduler_poll_seconds)
 
     async def close(self) -> None:
-        if self.task is not None:
-            self.task.cancel()
-            with suppress(asyncio.CancelledError):
-                await self.task
-            self.task = None
-        for name in ("recovery_loop", "schedules"):
-            self.health.running(name, False)
-        if self.engine is not None:
-            await self.engine.dispose()
-            self.engine = None
+        task, self.task = self.task, None
+        try:
+            await stop_task(task, "recovery_loop", self.settings.shutdown_timeout_seconds)
+        finally:
+            for name in ("recovery_loop", "schedules"):
+                self.health.running(name, False)
+            if self.engine is not None:
+                await self.engine.dispose()
+                self.engine = None

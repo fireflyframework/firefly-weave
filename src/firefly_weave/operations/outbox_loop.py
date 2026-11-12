@@ -17,7 +17,6 @@
 
 import asyncio
 import logging
-from contextlib import suppress
 from contextvars import Context
 
 from sqlalchemy import text
@@ -25,7 +24,13 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from firefly_weave.access.scheduler import next_scope
 from firefly_weave.operations.event_delivery import OutboxDispatcher, release, reserve
-from firefly_weave.operations.loop_health import TRAVERSAL_SECONDS, LoopHealth, track
+from firefly_weave.operations.loop_health import (
+    TRAVERSAL_SECONDS,
+    LoopHealth,
+    raise_if_cancelled,
+    stop_task,
+    track,
+)
 from firefly_weave.persistence.migrations import check_schema
 from firefly_weave.persistence.uow import UnitOfWork
 from firefly_weave.settings import Settings
@@ -137,7 +142,8 @@ class OutboxLoop:
             self.health.started("outbox_loop")
             try:
                 healthy = await self.cycle()
-            except Exception:
+            except Exception as error:
+                raise_if_cancelled(error)
                 logging.getLogger(__name__).error("Outbox traversal failed; retrying bounded turn")
                 healthy = False
             if healthy is None:
@@ -147,19 +153,19 @@ class OutboxLoop:
                 self.health.succeeded("outbox_loop")
             else:
                 self.health.failed("outbox_loop")
+            raise_if_cancelled()
             await asyncio.sleep(TRAVERSAL_SECONDS)
 
     async def close(self) -> None:
-        if self.task is not None:
-            self.task.cancel()
-            with suppress(asyncio.CancelledError):
-                await self.task
-            self.task = None
-        self.health.running("outbox_loop", False)
-        for task in tuple(self.turns):
-            task.cancel()
-        if self.turns:
-            await asyncio.gather(*self.turns, return_exceptions=True)
-        if self.engine is not None:
-            await self.engine.dispose()
-            self.engine = None
+        task, self.task = self.task, None
+        try:
+            await stop_task(task, "outbox_loop", self.settings.shutdown_timeout_seconds)
+        finally:
+            self.health.running("outbox_loop", False)
+            for turn in tuple(self.turns):
+                turn.cancel()
+            if self.turns:
+                await asyncio.gather(*self.turns, return_exceptions=True)
+            if self.engine is not None:
+                await self.engine.dispose()
+                self.engine = None
