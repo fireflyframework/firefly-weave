@@ -23,7 +23,14 @@ import random
 from pathlib import Path
 
 import pytest
-from firefly_weave.contracts.agent_turns import DATA_NOTICES, TurnInput, TurnOutput, turn_fits, turn_tokens
+from firefly_weave.contracts.agent_turns import (
+    DATA_NOTICES,
+    TurnInput,
+    TurnOutput,
+    final_tool,
+    turn_fits,
+    turn_tokens,
+)
 from firefly_weave.contracts.connectors import ConnectorFailure
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import (
@@ -201,6 +208,24 @@ async def test_a_structured_final_uses_the_final_result_tool():
     assert [tool.name for tool in info.output_tools] == ["final_result"]
     assert info.allow_text_output is False
     assert info.output_tools[0].parameters_json_schema["properties"]["result"]["required"] == ["orderId", "status"]
+
+
+async def test_the_final_tool_sent_is_the_one_the_count_reads():
+    # Ten properties refer to ten others, so the provider schema carries ten copied definitions.
+    big = {"type": "object", "properties": {f"field_{k}": {"type": "string"} for k in range(6)}}
+    properties = {f"p{i}": big for i in range(10)} | {f"q{i}": {"$ref": f"#/properties/p{i}"} for i in range(10)}
+    schema = {"type": "object", "properties": properties}
+    model, seen = scripted(respond(ToolCallPart("final_result", {"result": {}}, "f1")))
+    sent_turn = turn(schema=schema)
+    await run(sent_turn, model, output_mode="tool")
+    sent = seen[0][1].output_tools[0]
+    counted = final_tool(sent_turn.profile)
+    assert (sent.name, sent.description, sent.parameters_json_schema) == (
+        counted["name"],
+        counted["description"],
+        counted["parameters"],
+    )
+    assert len(sent.parameters_json_schema["$defs"]) == 10
 
 
 async def test_a_text_answer_in_tool_mode_is_formatted_through_the_final_result_tool():

@@ -24,7 +24,7 @@ from __future__ import annotations
 import random
 from typing import Any
 
-from firefly_weave.contracts.agent_turns import wire_json
+from firefly_weave.contracts.agent_turns import provider_schema, wire_json
 
 
 def orders(rng: random.Random, count: int) -> list[dict[str, Any]]:
@@ -157,4 +157,8 @@ def shapes() -> dict[str, str]:
             for _ in range(500)
         ),
     }
+    # A result schema whose properties refer to others, as the final tool sends it, the copied targets included.
+    record = {"type": "object", "properties": {f"field_{k}": {"type": "string", "maxLength": 40} for k in range(8)}}
+    referring = {f"p{i}": record for i in range(10)} | {f"q{i}": {"$ref": f"#/properties/p{i}"} for i in range(10)}
+    texts["schema_many_refs"] = wire_json(provider_schema({"type": "object", "properties": referring}))
     return texts

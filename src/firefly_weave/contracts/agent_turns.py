@@ -27,14 +27,16 @@ versioned by ``TURN_RULES`` so a recorded run replays with the rules it ran unde
 import json
 import re
 from collections.abc import Mapping
+from copy import deepcopy
 from functools import lru_cache
 from types import MappingProxyType
-from typing import Annotated, Final, Literal, Self, cast
+from typing import Annotated, Any, Final, Literal, Self, cast
 
 from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from firefly_weave.ai_policy import Provider
 from firefly_weave.compiler.catalog import TaskCapability
+from firefly_weave.compiler.schema_profile import SCHEMA_ARRAYS, SCHEMA_MAPS, SCHEMA_SINGLE
 from firefly_weave.contracts.agentic import CONNECTOR_REFERENCE, PROVIDERS, input_schema, output_schema
 from firefly_weave.contracts.definitions import ContractModel, OmissionOnly
 from firefly_weave.contracts.llm import LLMProfile
@@ -275,8 +277,50 @@ def text_tokens(text: str, rules: int) -> int:
     return len(encoded) - letters - len(_JOINED_SPACE.findall(text)) + words
 
 
-def _final_tool(profile: LLMProfile) -> JsonObject:
-    parameters = _object({"result": cast(JsonValue, profile.output_schema)}, ["result"])
+def provider_schema(source: dict[str, Any]) -> dict[str, Any]:
+    """The result schema as a model receives it: wrapped as ``{"result": ...}``, with every local reference's target
+    copied into root ``$defs`` (some provider SDKs accept only those). The worker sends it, and the count reads it."""
+    definitions: dict[str, Any] = {}
+    references: dict[str, str] = {}
+    pending: list[dict[str, Any]] = []
+    root = deepcopy(source)
+    pending.append(root)
+    while pending:
+        node = pending.pop()
+        reference = node.get("$ref")
+        if isinstance(reference, str):
+            if reference not in references:
+                target: Any = source
+                for part in reference[1:].split("/")[1:]:
+                    key = part.replace("~1", "/").replace("~0", "~")
+                    target = target[int(key)] if isinstance(target, list) else target[key]
+                name = f"weave_{len(references)}"
+                references[reference] = name
+                definitions[name] = deepcopy(target)
+                if isinstance(definitions[name], dict):
+                    pending.append(definitions[name])
+            node["$ref"] = "#/$defs/" + references[reference]
+        # Unreferenced definitions need not travel to the provider.
+        node.pop("$defs", None)
+        for key, value in node.items():
+            if key in SCHEMA_SINGLE and isinstance(value, dict):
+                pending.append(value)
+            elif key in SCHEMA_MAPS and isinstance(value, dict):
+                pending.extend(child for child in value.values() if isinstance(child, dict))
+            elif key in SCHEMA_ARRAYS and isinstance(value, list):
+                pending.extend(child for child in value if isinstance(child, dict))
+    return {
+        "type": "object",
+        "properties": {"result": root},
+        "required": ["result"],
+        "additionalProperties": False,
+        "$defs": definitions,
+    }
+
+
+def final_tool(profile: LLMProfile) -> JsonObject:
+    """The tool a structured final answer is given through, exactly as the worker sends it."""
+    parameters = cast(JsonObject, provider_schema(profile.output_schema))
     return {"name": FINAL_RESULT_TOOL, "description": FINAL_RESULT_DESCRIPTION, "parameters": parameters}
 
 
@@ -297,7 +341,7 @@ def turn_tokens(turn: TurnInput) -> int:
         else:
             total += text_tokens(wire_json(message.content), rules)
     tools: list[JsonValue] = [tool.model_dump(mode="json") for tool in turn.tools] if turn.tools_enabled else []
-    tools.append(_final_tool(turn.profile))
+    tools.append(final_tool(turn.profile))
     return total + sum(template["tool"] + text_tokens(wire_json(tool), rules) for tool in tools)
 
 

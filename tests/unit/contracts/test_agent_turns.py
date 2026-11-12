@@ -36,6 +36,7 @@ from firefly_weave.contracts.agent_turns import (
     TurnInput,
     TurnOutput,
     call_id,
+    final_tool,
     text_tokens,
     turn_fits,
     turn_input_schema,
@@ -210,6 +211,29 @@ def test_space_separated_digits_in_a_tool_result_do_not_fit_a_small_context():
     )
     parsed = TurnInput.model_validate(value)
     assert text_tokens(wire_json(payload), 1) >= 2 * 4200 and not turn_fits(parsed)
+
+
+def test_the_final_tool_is_counted_as_sent_with_its_references_copied():
+    # Each q<i> refers to the property p<i>; the provider schema copies every referenced target into $defs.
+    big = {"type": "object", "properties": {f"field_{k}": {"type": "string", "maxLength": 40} for k in range(8)}}
+    properties = {f"p{i}": big for i in range(10)} | {f"q{i}": {"$ref": f"#/properties/p{i}"} for i in range(10)}
+    schema = {"type": "object", "properties": properties}
+    parsed = TurnInput.model_validate(turn_input(profile={**PROFILE, "outputSchema": schema}, toolsEnabled=False))
+    sent = final_tool(parsed.profile)
+    assert sent["name"] == "final_result" and len(sent["parameters"]["$defs"]) == 10
+    reference = sent["parameters"]["properties"]["result"]["properties"]["q3"]["$ref"]
+    assert reference.startswith("#/$defs/") and sent["parameters"]["$defs"][reference.removeprefix("#/$defs/")] == big
+    # Every part counts at least its text plus its template share, the final tool as sent included.
+    floor = TEMPLATE_TOKENS["turn"] + text_tokens(parsed.instructions, 1) + TEMPLATE_TOKENS["tool"]
+    floor += text_tokens(wire_json(sent), 1) + 4 * TEMPLATE_TOKENS["message"]
+    assert turn_tokens(parsed) > floor
+
+
+def test_a_32_kib_compact_record_result_counts_between_the_model_and_the_window():
+    records = SHAPES["shapes"]["orders_32k"]["text"]
+    assert len(records.encode()) == 32_975
+    # 15,031 is what qwen3:4b counted for it; 27,000 leaves a 32,768 context room for the rest of a turn.
+    assert 15_031 <= text_tokens(records, 1) <= 27_000
 
 
 def test_every_whitespace_character_counts():

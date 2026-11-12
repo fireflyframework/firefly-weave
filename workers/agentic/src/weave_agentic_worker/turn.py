@@ -35,7 +35,6 @@ from typing import Any, Literal, cast
 from firefly_weave.compiler.expressions import measure_value
 from firefly_weave.compiler.schemas import validate_payload
 from firefly_weave.contracts.agent_turns import (
-    FINAL_RESULT_DESCRIPTION,
     FINAL_RESULT_TOOL,
     MAX_CALLED_NAME,
     MAX_TURN_TEXT,
@@ -47,6 +46,8 @@ from firefly_weave.contracts.agent_turns import (
     TurnOutput,
     UserMessage,
     call_id,
+    final_tool,
+    provider_schema,
     turn_fits,
     turn_tokens,
     wire_json,
@@ -75,7 +76,6 @@ from weave_agentic_worker.errors import classify
 from weave_agentic_worker.execution import (
     cut,
     private_framework_logging,
-    provider_schema,
     text_result,
     without_thinking,
 )
@@ -170,10 +170,12 @@ def _parameters(turn: TurnInput, output_mode: str, structured: bool) -> ModelReq
 
 
 def _final_tool(turn: TurnInput) -> ToolDefinition:
+    """The contract's final tool, the one the count reads."""
+    sent = final_tool(turn.profile)
     return ToolDefinition(
-        name=FINAL_RESULT_TOOL,
-        description=FINAL_RESULT_DESCRIPTION,
-        parameters_json_schema=provider_schema(turn.profile.output_schema),
+        name=cast(str, sent["name"]),
+        description=cast(str, sent["description"]),
+        parameters_json_schema=cast(dict[str, Any], sent["parameters"]),
         strict=False,
     )
 
