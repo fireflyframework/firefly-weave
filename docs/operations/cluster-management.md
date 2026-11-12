@@ -454,6 +454,8 @@ weave platform cluster delete --provider kind --name weave-test
 
 `delete --name` deletes any kind or k3d cluster with that name on the Docker
 context, even one that Weave didn't create, so check the name before you run it.
+It also removes the cluster's own network when no other container uses it,
+including one an interrupted create left behind.
 
 ## Current bounds
 

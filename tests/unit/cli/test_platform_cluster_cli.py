@@ -271,7 +271,8 @@ def test_create_refuses_a_cluster_whose_network_already_exists(world, provider, 
     assert result.exit_code != 0
     assert (
         f"A Docker network named {network} already exists on context colima-weave-tests, so the cluster wouldn't get "
-        "a network of its own. Nothing was changed."
+        "a network of its own. Nothing was changed. If an earlier create left it behind, run weave platform cluster "
+        "delete with the same provider and name to remove it; otherwise choose another name."
     ) in result.output
     assert not calls(commands, "create") and not calls(commands, "delete")
 
@@ -446,15 +447,22 @@ def test_delete_refuses_a_cluster_that_still_has_connected_targets(world):
     assert not calls(commands, "delete")
 
 
-def test_deleting_a_kind_cluster_also_removes_its_own_network(world):
-    """kind leaves the network it made for KIND_EXPERIMENTAL_DOCKER_NETWORK behind; k3d removes its own."""
+@pytest.mark.parametrize(("provider", "network"), [("kind", f"weave-kind-{NAME}"), ("k3d", f"k3d-{NAME}")])
+def test_delete_removes_the_clusters_own_network_when_nothing_else_uses_it(world, provider, network):
+    """kind always leaves its network behind, and k3d does when a create was interrupted or timed out before its
+    nodes existed; a network another container still uses stays."""
     directory, commands, _ = world
-    commands.answer(["docker", "network", "ls"], f"weave-kind-{NAME}\n")
+    commands.answer(["docker", "network", "ls"], f"{network}\n")
     commands.answer(["docker", "network", "rm"], "")
-    assert invoke(directory, "delete").exit_code == 0
+    assert invoke(directory, "delete", provider).exit_code == 0
     (removed,) = calls(commands, "network", "rm")
-    assert removed.argv == ["docker", "--context", "colima-weave-tests", "network", "rm", f"weave-kind-{NAME}"]
+    assert removed.argv == ["docker", "--context", "colima-weave-tests", "network", "rm", network]
+    assert "DOCKER_HOST" not in removed.env
+    commands.calls.clear()
+    commands.answer(["docker", "ps", "--all", f"network={network}"], "another-project-db\n")
+    assert invoke(directory, "delete", provider).exit_code == 0
+    assert not calls(commands, "network", "rm")
     commands.calls.clear()
     commands.answer(["docker", "network", "ls"], "")
-    assert invoke(directory, "delete").exit_code == 0
+    assert invoke(directory, "delete", provider).exit_code == 0
     assert not calls(commands, "network", "rm")

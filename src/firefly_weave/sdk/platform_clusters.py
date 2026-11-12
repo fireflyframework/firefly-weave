@@ -638,28 +638,38 @@ def _wait_ready(state: dict[str, Any], kubectl: Path, provider: str, cluster: st
 
 def _delete(state: dict[str, Any], directory: Path, provider: str, cluster: str, context: str) -> None:
     if provider == "k3d":
-        # k3d removes the cluster's network with it.
-        env = _tool_environment(context, DOCKER_HOST=state["endpoint"])
         local._run(
             state,
             "cluster-delete",
             [str(tools.tool(directory, "k3d")), "cluster", "delete", cluster],
-            env=env,
+            env=_tool_environment(context, DOCKER_HOST=state["endpoint"]),
             timeout=300,
         )
-        return
-    env = _tool_environment(context)
-    local._run(
-        state,
-        "cluster-delete",
-        [str(tools.tool(directory, "kind")), "delete", "cluster", "--name", cluster],
-        env=env,
-        timeout=300,
-    )
-    # kind leaves the network it made for this cluster behind; remove it when it's still there.
+    else:
+        local._run(
+            state,
+            "cluster-delete",
+            [str(tools.tool(directory, "kind")), "delete", "cluster", "--name", cluster],
+            env=_tool_environment(context),
+            timeout=300,
+        )
+    # kind always leaves the network it made for this cluster behind, and k3d does when a create was interrupted or
+    # timed out after it made the network and before its nodes; remove it unless another container still uses it.
     network = cluster_network(provider, cluster)
-    if _network_exists(state, context, network):
-        local._run(state, "cluster-network-delete", ["docker", "--context", context, "network", "rm", network], env=env)
+    if _network_exists(state, context, network) and not _lines(
+        local._run(
+            state,
+            "cluster-network-users",
+            ["docker", "--context", context, "ps", "--all", "--filter", f"network={network}", "--format", "{{.Names}}"],
+            env=_tool_environment(context),
+        )
+    ):
+        local._run(
+            state,
+            "cluster-network-delete",
+            ["docker", "--context", context, "network", "rm", network],
+            env=_tool_environment(context),
+        )
 
 
 def create_cluster(
@@ -683,7 +693,8 @@ def create_cluster(
     if _network_exists(state, context, network):
         raise local.PlatformError(
             f"A Docker network named {network} already exists on context {context}, so the cluster wouldn't get a "
-            "network of its own. Nothing was changed."
+            "network of its own. Nothing was changed. If an earlier create left it behind, run weave platform cluster "
+            "delete with the same provider and name to remove it; otherwise choose another name."
         )
     _check_disk(state, context)
     # Fetch and verify every tool first: a download or checksum failure must never come after the cluster exists,
