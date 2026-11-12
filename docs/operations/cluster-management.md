@@ -427,8 +427,9 @@ with `cluster`, `context`, and `network`.
 
 The command:
 
-- downloads the pinned kind, k3d, and kubectl into the installation directory
-  and checks each one's SHA-256 before it runs it;
+- downloads only the chosen provider's pinned tool (kind or k3d) and kubectl
+  into the installation directory, and checks each one's SHA-256 before it
+  runs it;
 - creates the cluster on a Docker network of its own, so the platform never
   shares a network with another cluster;
 - refuses when Docker has less than 6 GiB free, and refuses a cluster name that
@@ -447,6 +448,9 @@ when you're done:
 # Delete the test cluster and the Docker network it got.
 weave platform cluster delete --provider kind --name weave-test
 ```
+
+`delete --name` deletes any kind or k3d cluster with that name on the Docker
+context, even one that Weave didn't create, so check the name before you run it.
 
 ## Current bounds
 

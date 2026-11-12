@@ -377,13 +377,15 @@ initial steps in one `up` command.
 | `ai disable [--remove-model-data]` | Stop the AI services and remove their settings; the connection, release and definitions stay |
 | `ai models refresh`, `ai models pull NAME [--yes]` | Read the served models again and update the context size, or pull a model into the local Ollama |
 | `ai models approve --provider openai-chat --model NAME`, `ai models remove --provider openai-chat --model NAME` | Approve one more model, or withdraw one model's approval; give `--served` instead of `--model` to approve every served model again. The worker and the AI gateway apply the change without a restart |
+| `cluster create --provider PROVIDER --name NAME --no-connect [--context NAME]` | Development only: create a single-node test cluster on a Docker network of its own and wait until its nodes are Ready. `PROVIDER` is `kind` or `k3d`. Refuses a name that already exists on the Docker context and less than 6 GiB of free Docker disk; a failed or interrupted create deletes nothing. Connecting the cluster isn't available yet, so `--no-connect` is required. See [create a local test cluster](../operations/cluster-management.md#create-a-local-test-cluster) |
+| `cluster delete --provider PROVIDER --name NAME [--context NAME]` | Development only: delete the kind or k3d cluster with that name on the Docker context, even one Weave didn't create, and the network Weave made for a kind cluster. Refuses a cluster that still has connected targets |
 | `token` | Refresh the verified host token in its private file and print only the path |
 | `stop` | Stop the Docker API and dependencies; for host mode, stop the foreground API first. Data is kept |
 
 Every command except `start` accepts `--output json`. Setup shows a spinner
 only in an interactive terminal; set `WEAVE_NO_ANIMATION=1` for plain progress
 messages. Redirected output has no animation, and JSON output has no progress
-messages. This family has no reset or delete command.
+messages. No command resets or deletes the installation itself.
 
 **Status and sign-in.** `status` also reports `sign_in`, the
 `weave auth setup http://127.0.0.1:PORT` command for this platform,

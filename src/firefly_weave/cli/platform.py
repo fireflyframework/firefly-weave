@@ -107,10 +107,11 @@ def doctor(source: Path, context: str | None, output: str) -> None:
 
 @platform.group()
 def cluster() -> None:
-    """Create, delete and connect local kind and k3d test clusters (development only).
+    """Create and delete local kind and k3d test clusters (development only).
 
-    A cluster gets its own Docker network and the pinned kind, k3d, and kubectl,
-    downloaded into the installation directory and verified on first use.
+    A cluster gets its own Docker network. The chosen provider's pinned tool
+    and kubectl are downloaded into the installation directory and verified
+    on first use.
     """
 
 
