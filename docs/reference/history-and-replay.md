@@ -155,6 +155,16 @@ outcome that does not match its call evidence makes the report `inconsistent`
 (`WV-REPLAY-CALL` or `WV-REPLAY-CALL-ISSUANCE`); missing call evidence makes it
 `incomplete` (`WV-REPLAY-CALL-PROVENANCE`).
 
+## AI agent runs in a history
+
+An [AI agent](ai-agents.md)'s turns, tool calls and reviews appear at their own instance
+keys (`support#1`, `support#1.1`, `support#1.1.review`). Replay checks a turn's answer
+against the turn's pinned output schema and a tool's result against the schema of the
+tool its task or call evidence names. Each turn task's evidence records the digest of
+the input the model was given (`input_digest`); a transcript that replay rebuilds
+differently makes the report `inconsistent` with `WV-REPLAY-AGENT-INPUT`. Replay never
+calls a model or a tool.
+
 ## Handled step failures in a history
 
 A step whose On error setting handles a failure records a `step_failed` event
