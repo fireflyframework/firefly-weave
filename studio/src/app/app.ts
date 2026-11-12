@@ -153,6 +153,7 @@ import {
   isAiWorkflow,
 } from "./editor/ndv/kinds/ai-task-setup";
 import type { CanvasRun } from "./editor/canvas/run-state";
+import type { RunViewPort } from "./editor/runs-tab/run-port";
 import type { Json, KindContext } from "./editor/ndv/registry";
 import { StartRunDialog, type StartRunRequest } from "./run/start-run-dialog";
 import type { SuggestedChange } from "./designer/diagnostics-list";
@@ -404,6 +405,8 @@ const nextPatch = (version: string) => {
 const resourceName = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
 /** "/workflows/:id/designer": a workflow open in the designer. */
 const designerPath = /^\/workflows\/([^/]+)\/designer\/?$/;
+const classicEditorViews = ["Designer", "Source", "Outline"];
+const nextEditorViews = [...classicEditorViews, "Runs"];
 const versionedName =
   /^[A-Za-z0-9][A-Za-z0-9_.-]*@(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:[-+][0-9A-Za-z.+-]*)?$/;
 const placeholderAction = "your-action@1.0.0";
@@ -502,6 +505,11 @@ export class App implements CanvasHost {
   private restoringHistory = false;
   /** Set while Studio steps back to close a run: that popstate needs no reload. */
   private closingRun = false;
+  /**
+   * The query of the designer address Studio opened or went back to
+   * ("?tab=runs&run=…"), read before the workflow is restored.
+   */
+  designerLink = "";
   private injector = inject(Injector);
   dialogs = inject(DialogService);
   crypto = crypto;
@@ -1428,6 +1436,7 @@ export class App implements CanvasHost {
           1500,
         );
         // A reload or a link to a workflow brings it back first.
+        this.designerLink = location.search;
         if (designer) await this.restoreWorkflow(designer[1]);
         await this.verifyPlatform(true);
         void this.approvalPoller.refresh();
@@ -2981,9 +2990,9 @@ export class App implements CanvasHost {
         },
       );
     // With the new editor, Execute workflow (simulated on this computer)
-    // takes the classic simulation's place.
+    // takes the classic simulation's place; the Runs tab executes nothing.
     if (this.editorNext && this.execution) {
-      if (narrow)
+      if (narrow && this.tab !== "Runs")
         items.push({
           label: "Execute workflow",
           run: () => this.executeWorkflow(),
@@ -3028,9 +3037,12 @@ export class App implements CanvasHost {
     else this.showInspector = true;
     if (this.showInspector) this.revealSelected();
   }
-  /** Simulating: the workflow can't change until the simulation stops. */
+  /**
+   * Simulating, or reading the workflow's runs: the workflow can't change
+   * until the simulation stops or another view is chosen.
+   */
   get editingLocked() {
-    return !!this.simulationSession;
+    return !!this.simulationSession || this.tab === "Runs";
   }
   /**
    * Deletes a step (the focused one for Delete and Backspace, otherwise the
@@ -3954,8 +3966,12 @@ export class App implements CanvasHost {
     session: unknown;
     run: CanvasRun | null;
   } = { nodes: null, session: null, run: null };
-  /** Today's simulation as the canvas draws it; null when none is open. */
+  /**
+   * The run the canvas draws: on the Runs tab the chosen run, otherwise
+   * today's simulation; null when there is none.
+   */
   canvasRun(): CanvasRun | null {
+    if (this.tab === "Runs") return this.runView()?.canvas() ?? null;
     const session = this.simulationSession;
     // With the new editor, the canvas plays back Execute's simulated run.
     if (!session && this.editorNext) return this.playback();
@@ -4479,13 +4495,24 @@ export class App implements CanvasHost {
   saveShortcut() {
     void this.runCommand(this.profile ? "save" : "export");
   }
-  readonly editorViews = ["Designer", "Source", "Outline"];
+  /** The workflow's views; the new editor adds the workflow's runs. */
+  get editorViews() {
+    return this.editorNext ? nextEditorViews : classicEditorViews;
+  }
+  /**
+   * The run open in the Runs tab. The tab's own chunk sets it; the shell
+   * only draws it and forgets it when the tab closes.
+   */
+  readonly runView = signal<RunViewPort | null>(null);
   /** Shows another view; leaving Source asks about text typed there. False when it stays. */
   async selectTab(tab: string): Promise<boolean> {
     if (tab !== this.tab) {
       if (!this.leaveInspector()) return false;
       if (this.tab === "Source" && !(await this.settleSource())) return false;
       void this.flushAutosave();
+      // Leaving the Runs tab forgets the run and its data.
+      this.runView()?.close();
+      this.runView.set(null);
     }
     this.tab = tab;
     if (tab === "Designer") this.outlineNotice = false;
@@ -7329,6 +7356,9 @@ export class App implements CanvasHost {
    * catalog can't be read, asks before executing with what's on this computer.
    */
   async executeIn(target: ExecuteTarget): Promise<ExecuteOutcome> {
+    // The Runs tab reads runs that happened: nothing executes there.
+    if (this.tab === "Runs")
+      return { kind: "failed", message: "Go back to editing to execute." };
     const service = this.execution;
     if (!service)
       return { kind: "failed", message: "Studio is still loading Execute." };
@@ -7374,6 +7404,7 @@ export class App implements CanvasHost {
    * still to come), so test data that keeps them waiting starts none.
    */
   executeWorkflow(): void {
+    if (this.tab === "Runs") return;
     const stepThrough = this.breakpoints().size > 0;
     if (stepThrough) void this.startSession();
     else void this.executeIn({ mode: "workflow" });
@@ -10745,6 +10776,7 @@ export class App implements CanvasHost {
     this.platformMenuOpen = false;
     const designer = designerPath.exec(location.pathname);
     if (designer) {
+      this.designerLink = location.search;
       // Back to the workflow that is open, or to another kept one.
       if (designer[1] === this.draftId) {
         this.view = "designer";

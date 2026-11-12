@@ -228,7 +228,7 @@ import type { App } from "../app";
               h.busy === "validate" ? "Validating…" : "Validate"
             }}</span>
           </button>
-          @if (h.editorNext && h.execution) {
+          @if (h.editorNext && h.execution && h.tab !== "Runs") {
             <button
               type="button"
               class="primary execute-workflow"
@@ -563,6 +563,8 @@ import type { App } from "../app";
               <p>No steps yet. Insert a step from the palette.</p>
             }
           </div>
+        } @else if (h.tab === "Runs") {
+          <!-- The workflow's runs: the list, and the chosen run on a read-only canvas. -->
         } @else if (h.editorNext) {
           @defer (on immediate) {
             <weave-canvas-view [host]="h" />
