@@ -236,12 +236,14 @@ def up(provider: str, name: str, context: str, directory: Path, *, connect: bool
         try:
             delete(provider, name, context, directory)
         except Exception:
-            if isinstance(error, NotReady):
-                raise Refused(
-                    f"The cluster's nodes weren't Ready within {READY_SECONDS} s, and deleting the cluster failed; "
-                    "run down with the same arguments to remove it."
-                ) from None
-            raise
+            reason = (
+                f"The cluster's nodes weren't Ready within {READY_SECONDS} s"
+                if isinstance(error, NotReady)
+                else "The readiness wait was interrupted"
+            )
+            raise Refused(
+                f"{reason}, and deleting the cluster failed; run down with the same arguments to remove it."
+            ) from None
         if isinstance(error, NotReady):
             raise Refused(
                 f"The cluster's nodes weren't Ready within {READY_SECONDS} s; the cluster was deleted."

@@ -307,3 +307,24 @@ def test_a_context_without_a_docker_endpoint_is_refused_in_one_sentence(script, 
     code, _, err = up(script, capsys, directory, "k3d")
     assert code == 1 and not recorder.find("create")
     assert err.strip() == "Docker context colima-weave-tests has no Docker endpoint k3d can use; nothing was changed."
+
+
+def test_an_interrupted_wait_with_a_failed_delete_says_to_run_down(script, world, capsys):
+    recorder, directory = world
+    original = recorder.__call__
+
+    def interrupted(argv, **kwargs):
+        if "nodes" in argv:
+            raise KeyboardInterrupt()
+        if "delete" in argv:
+            recorder.calls.append((list(argv), dict(kwargs.get("env") or {})))
+            raise DeploymentError("delete failed")
+        return original(argv, **kwargs)
+
+    script.run = interrupted
+    code, out, err = up(script, capsys, directory)
+    assert code == 1 and out == ""
+    assert err.strip() == (
+        "The readiness wait was interrupted, and deleting the cluster failed; run down with the same arguments to "
+        "remove it."
+    )
