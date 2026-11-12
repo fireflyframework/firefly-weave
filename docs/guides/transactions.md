@@ -101,7 +101,7 @@ but a person's decision moves it. Check the other systems first, then choose:
 
 | Decision | Kind | When |
 | --- | --- | --- |
-| **Retry the undo** (or the confirm) | `retry_safe` | The cause is fixed. The same step runs again with the same operation key and a fresh time limit, and undoing resumes where it stopped |
+| **Retry the undo** (or the confirm) | `retry_safe` | The cause is fixed. An action runs again with the same operation key and a fresh time limit, and undoing resumes where it stopped. An undo or confirm that calls a workflow starts a new child run instead, whose steps get new operation keys, so that workflow must receive `/participant/operationKey` in its `with` and refuse a duplicate by it |
 | **Mark as reconciled** | `accept_reconciled_result` with a reconciliation record | You fixed things by hand. Say how the transaction ended (`compensated` or `completed`) and what happened to each stuck step; with `completed`, give the block's output, which later steps read |
 | **It happened** | `accept_reconciled_result` with the step's output | The order went through. Weave confirms the reservations and runs the steps after it |
 | **It didn't happen** | `accept_reconciled_failure` | The order never went through. Weave undoes the steps before it, even when the step has an On error setting |

@@ -170,8 +170,11 @@ when recovery creates a new generation.
     | A step hangs past its time limit | Nothing; Weave treats its outcome as unknown and undoes it, so the undo must cope with a step that did or didn't apply |
     | A confirm arrives after the reservation expired | Fail with a code the action lists in `definiteFailures`, or report `effect: none`; the transaction is then in doubt for a person |
 
-  A person may later retry a stuck confirm, cancel or undo: it runs again with
-  the same operation key, as the next generation of the same task.
+  A person may later retry a stuck confirm, cancel or undo. An action runs again
+  with the same operation key, as the next generation of the same task. One that
+  calls a workflow starts a new child run, whose steps get new operation keys:
+  pass `/participant/operationKey` to that workflow in its `with`, and make it
+  refuse a duplicate by that key.
 
 **Example.** The target records a customer, and the worker crashes before Weave
 accepts the completion. Recovery issues generation 2 of the same task. Its
