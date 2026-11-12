@@ -360,12 +360,10 @@ def preflight(directory: Path, provider: str, cluster: str, namespace: str, *, k
         if any(value not in {"", cluster if label == provider else ""} for label, value in mine.items()):
             raise local.PlatformError(SHARED_NETWORK)
     # The API server answers; the developer's own access, read-only.
-    local._run(
-        state,
-        "cluster-preflight",
-        [*kubectl(directory, path, context), "--request-timeout=20s", "get", "--raw", "/readyz"],
-        timeout=30,
-    )
+    kube = [*kubectl(directory, path, context), "--request-timeout=20s"]
+    local._run(state, "cluster-preflight", [*kube, "get", "--raw", "/readyz"], timeout=30)
+    for owned in (SYSTEM_NAMESPACE, namespace):
+        _check_namespace(state, kube, owned)
     return Preflight(provider, cluster, namespace, context, path, state["context"], network, nodes)
 
 
@@ -496,6 +494,10 @@ _UID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}
 _PULL_FAILURES = frozenset({"ErrImagePull", "ImagePullBackOff", "InvalidImageName", "ErrImageNeverPull"})
 NOTHING_REGISTERED = "Nothing was registered."
 FOREIGN_NAMESPACE = "Namespace {namespace} belongs to another Weave installation. Choose another namespace."
+FOREIGN_SYSTEM = (
+    f"Namespace {SYSTEM_NAMESPACE} belongs to another Weave installation, which connects this cluster. Create another "
+    "cluster with weave platform cluster create."
+)
 PROBE_PULL = (
     "A test pod couldn't pull the worker image through the platform registry. Create the cluster with weave platform "
     "cluster create, which sets up the registry mirror. Nothing was registered."
@@ -742,21 +744,22 @@ def _apply(connection: _Connection, name: str, items: list[dict[str, Any]]) -> N
     )
 
 
-def _check_namespace(connection: _Connection, namespace: str) -> None:
-    """Refuse a namespace another installation owns, before anything is applied to it."""
+def _check_namespace(state: dict[str, Any], kube: list[str], namespace: str) -> None:
+    """Refuse a namespace another installation owns, before anything changes: weave-system, which every target of
+    the cluster shares, or a workers namespace."""
     existing = local._run(
-        connection.state,
-        "cluster-namespace",
-        [*connection.kube, "get", "namespace", namespace, "--ignore-not-found", "-o", "json"],
+        state, "cluster-namespace", [*kube, "get", "namespace", namespace, "--ignore-not-found", "-o", "json"]
     )
     if existing.strip():
         try:
             labels = strict_json(existing)["metadata"].get("labels") or {}
         except (ValueError, TypeError, KeyError, AttributeError, DeploymentError):
-            raise local.PlatformError("kubectl didn't describe the namespace; nothing was registered.") from None
+            raise local.PlatformError("kubectl didn't describe the namespace; nothing was changed.") from None
         owner = labels.get("firefly.weave/installation")
-        if owner is not None and owner != connection.state["id"]:
-            raise local.PlatformError(FOREIGN_NAMESPACE.format(namespace=namespace))
+        if owner is not None and owner != state["id"]:
+            raise local.PlatformError(
+                FOREIGN_SYSTEM if namespace == SYSTEM_NAMESPACE else FOREIGN_NAMESPACE.format(namespace=namespace)
+            )
 
 
 def _uid(connection: _Connection, namespace: str) -> str:
@@ -1050,7 +1053,6 @@ def connect(
         notice(f"namespace: applying {namespace}")
         value = receipt(directory)
         known = value["clusters"][key]["targets"].get(namespace, {})
-        _check_namespace(connection, namespace)
         _apply(
             connection,
             "cluster-apply-namespace",
@@ -1168,6 +1170,8 @@ def _refresh_cluster(
     if not _local(server):
         raise local.PlatformError(f"{key} points at a server that isn't this computer; it was not refreshed.")
     connection.kube = [*kubectl(directory, path, key), "--request-timeout=20s"]
+    for owned in (objects.SYSTEM_NAMESPACE, *entry["targets"]):
+        _check_namespace(state, connection.kube, owned)
     _apply(connection, "cluster-refresh-shared", objects.shared_objects(network))
     for namespace, target in sorted(entry["targets"].items()):
         objects_of = objects.namespace_objects(_draft(connection, namespace, target, ""))

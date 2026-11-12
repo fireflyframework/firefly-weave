@@ -81,6 +81,8 @@ def platform(tmp_path, monkeypatch):
     commands.answer(["inspect", "weave-test-control-plane"], '{"weave-kind-weave-test":{"IPAddress":"172.30.0.2"}}\n')
     commands.answer(["ps", "--filter", "network=weave-kind-weave-test"], "weave-test-control-plane\tweave-test\t\n")
     commands.answer(["inspect", PORTS, "weave-test-control-plane"], published(43123))
+    # Neither weave-system nor the workers namespace exists yet.
+    commands.answer([KUBECTL, "get", "namespace", "-o", "json"], "")
     monkeypatch.delenv("KUBECONFIG", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     return directory, commands, kubeconfig(tmp_path / "kubeconfig")
@@ -767,15 +769,35 @@ def test_a_container_that_cant_leave_the_network_is_named_with_the_command_that_
     assert cluster.joined == {KEYCLOAK}
 
 
-def test_a_namespace_of_another_installation_is_refused_before_anything_is_applied_to_it(world):
+FOREIGN = json.dumps({"metadata": {"labels": {"firefly.weave/installation": "b" * 24}}})
+
+
+def test_a_namespace_of_another_installation_is_refused_before_anything_changes(world):
     _, commands, _, cluster = world
-    cluster.namespace = json.dumps({"metadata": {"labels": {"firefly.weave/installation": "b" * 24}}})
+    cluster.namespace = FOREIGN
     with pytest.raises(PlatformError) as refused:
         connect(world)
     assert (
         str(refused.value) == "Namespace weave-workers belongs to another Weave installation. Choose another namespace."
     )
-    assert "cluster-apply-namespace" not in [call.name for call in commands.calls]
+    assert not [call for call in commands.calls if "apply" in call.argv]
+    assert network_changes(commands) == []
+
+
+def test_another_installations_weave_system_is_refused_before_anything_changes(world):
+    """weave-system carries its installation's label like the workers namespace: the shared apply (with
+    --force-conflicts) must never overwrite another installation's EndpointSlice and policies."""
+    _, commands, _, cluster = world
+    commands.answer([KUBECTL, "get", "namespace", "weave-system", "-o", "json"], FOREIGN)
+    with pytest.raises(PlatformError) as refused:
+        connect(world)
+    assert str(refused.value) == (
+        "Namespace weave-system belongs to another Weave installation, which connects this cluster. Create another "
+        "cluster with weave platform cluster create."
+    )
+    assert not [call for call in commands.calls if "apply" in call.argv]
+    assert network_changes(commands) == []
+    assert cluster.count("deployment_targets.create") == 0
 
 
 def test_a_silent_runner_names_its_log_and_keeps_the_registered_target(world):
@@ -833,3 +855,17 @@ def test_a_cluster_that_cant_be_refreshed_reads_unreachable_and_says_why(world, 
     lines = []
     assert clusters.refresh(directory, lines.append) == [{"name": "kind-weave-test", "state": "unreachable"}]
     assert lines[-1].startswith("kind-weave-test: not refreshed. No kind-weave-test context in your kubeconfig.")
+
+
+def test_refresh_never_applies_over_another_installations_weave_system(world, monkeypatch):
+    directory, commands, config, cluster = world
+    connect(world)
+    monkeypatch.setenv("KUBECONFIG", str(config))
+    commands.answer([KUBECTL, "get", "namespace", "weave-system", "-o", "json"], FOREIGN)
+    cluster.joined.discard(KEYCLOAK)
+    cluster.addresses[KEYCLOAK] = "172.30.0.7"
+    lines = []
+    before = len(commands.calls)
+    assert clusters.refresh(directory, lines.append) == [{"name": "kind-weave-test", "state": "unreachable"}]
+    assert applied(commands, before) == []
+    assert lines[-1].startswith("kind-weave-test: not refreshed. Namespace weave-system belongs to another Weave")
