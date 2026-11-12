@@ -612,6 +612,29 @@ def test_swapping_names_while_upgrading_the_action_and_its_connector_keeps_the_c
     )
 
 
+def test_a_name_match_with_two_differently_guarded_tools_of_its_new_target_takes_the_strictest():
+    draft = guarded()
+    tools = draft["spec"]["steps"][0]["tools"]
+    tools.append(
+        {**copy.deepcopy(tools[1]), "name": "cancel_us_order", "fixed": {"object": {"region": {"literal": "us"}}}}
+    )
+    edited = copy.deepcopy(draft)
+    lookup = edited["spec"]["steps"][0]["tools"][0]
+    for name in ("fixed", "approval"):
+        del lookup[name]
+    lookup["action"] = CANCEL["action"]
+
+    tool = step_of(proposed(edited, drafts=[draft]))["tools"][0]
+
+    # Its own target's first tool decides the fixed arguments; the strictest approval and review win.
+    assert (tool["name"], tool["approval"], tool["fixed"], tool["review"]) == (
+        "lookup_order",
+        "required",
+        CANCEL["fixed"],
+        REVIEW,
+    )
+
+
 def test_a_read_tools_name_pointed_at_a_changing_action_takes_the_changing_tools_safeguards():
     draft = guarded()
     edited = stripped()
@@ -698,6 +721,26 @@ def test_memory_narrowed_to_the_run_keeps_the_drafts_key():
     assert answer.answer.splitlines()[2:] == [
         "Kept the draft's memory.key of agent support: only the editor can loosen a safeguard."
     ]
+
+
+@pytest.mark.parametrize("written", [None, 604800], ids=["left-out", "longer"])
+def test_a_conversations_memory_lifetime_keeps_the_drafts(written):
+    draft = guarded()
+    draft["spec"]["steps"][0]["memory"] = {
+        "scope": "conversation",
+        "key": {"ref": "/input/message"},
+        "window": 12,
+        "ttlSeconds": 3600,
+    }
+    edited = copy.deepcopy(draft)
+    memory = edited["spec"]["steps"][0]["memory"]
+    del memory["ttlSeconds"]
+    if written is not None:
+        memory["ttlSeconds"] = written
+
+    answer = answered(edited, drafts=[draft])
+
+    assert step_of(answer.proposals[0])["memory"]["ttlSeconds"] == 3600
 
 
 def test_memory_narrowed_to_the_step_keeps_the_proposals_scope_and_the_lower_window():
