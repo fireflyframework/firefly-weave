@@ -173,3 +173,7 @@ async def test_confirming_no_effect_is_refused_while_recovery_still_decides_an_i
         client, operation_headers, env_url, incident, kind="accept_reconciled_failure", evidence_reference="ticket 42"
     )
     assert response.status_code == 409 and response.json()["code"] == "WV-RUNTIME-RECONCILIATION_REQUIRED"
+    assert (
+        response.json()["message"]
+        == "Only the unknown outcome of a step that changes data can be confirmed as not happened"
+    )

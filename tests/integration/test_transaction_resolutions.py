@@ -279,6 +279,8 @@ async def test_it_didnt_happen_is_refused_for_any_other_incident(platform, recon
     with pytest.raises(CatalogError) as refused:
         await resolve(platform, incident, "accept_reconciled_failure", actor=reconciler, evidence_reference="T")
     assert (refused.value.status, refused.value.code) == (409, "WV-RUNTIME-RECONCILIATION_REQUIRED")
+    # The transaction's own refusal, not the step error one with the same status and code: the in-doubt check is first.
+    assert str(refused.value) == "Only the step that can't be undone can be said not to have happened"
 
 
 async def test_force_end_needs_the_reconcile_capability_and_marks_the_run(platform, reconciler):
