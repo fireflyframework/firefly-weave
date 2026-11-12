@@ -326,3 +326,90 @@ def test_recovery_revalidates_metadata_after_acquiring_actual_lock(owned, monkey
         platform._load(directory)
     assert (directory / "platform.json").read_bytes() == changed
     assert (directory / PENDING).exists()
+
+
+CLUSTER_SUBNET = "172.30.0.0/16"
+
+
+def cluster_records(subnet):
+    """What a connected cluster's pods may reach over plain HTTP: the API and Keycloak through the cluster network,
+    and the worker's own loopback sign-in relay."""
+    service = "http://weave-api.weave-system.svc"
+    return [
+        {"origin": service + ":8000", "purpose": "platform-api", "networks": [subnet], "credentials": "bridge"},
+        {"origin": service + ":8000", "purpose": "runner", "networks": [subnet], "credentials": "bridge"},
+        {"origin": service + ":8080", "purpose": "worker-auth", "networks": [subnet], "credentials": "bridge"},
+        {
+            "origin": "http://127.0.0.1:8080",
+            "purpose": "worker-auth",
+            "networks": list(LOOPBACK),
+            "credentials": "loopback",
+        },
+    ]
+
+
+def test_a_clusters_private_origins_are_recorded_with_their_own_consent(owned):
+    """Each cluster's entries are its consent record; its pods read them from the cluster, so the platform's own
+    policy file is unchanged, and two clusters never clash over the same in-cluster origin."""
+    directory, _, _ = owned
+    platform_origins.set_ai_entries(platform._load(directory), ENTRIES)
+    before = json.loads((directory / "platform.json").read_text())["private_origins"]
+    policy = (directory / "private-origins.json").read_bytes()
+    assert platform_origins.set_cluster_entries(platform._load(directory), "kind-weave-test", CLUSTER_SUBNET) is True
+    saved = json.loads((directory / "platform.json").read_text())["private_origins"]
+    section = saved["clusters"]["kind-weave-test"]
+    assert section["consent"] == "weave platform cluster connect" and section["consented_at"].endswith("Z")
+    canonical = [json.dumps(record, sort_keys=True) for record in section["entries"]]
+    assert sorted(canonical) == sorted(json.dumps(record, sort_keys=True) for record in cluster_records(CLUSTER_SUBNET))
+    assert {key: item for key, item in saved.items() if key != "clusters"} == before
+    assert (directory / "private-origins.json").read_bytes() == policy
+    assert platform_origins.set_cluster_entries(platform._load(directory), "kind-weave-test", CLUSTER_SUBNET) is False
+    assert platform_origins.set_cluster_entries(platform._load(directory), "k3d-other", "172.31.0.0/16") is True
+    assert set(platform._load(directory)["private_origins"]["clusters"]) == {"kind-weave-test", "k3d-other"}
+
+
+def test_removing_a_clusters_origins_keeps_the_others_and_ai_keeps_them(owned):
+    directory, _, _ = owned
+    platform_origins.set_ai_entries(platform._load(directory), ENTRIES)
+    platform_origins.set_cluster_entries(platform._load(directory), "kind-weave-test", CLUSTER_SUBNET)
+    platform_origins.set_cluster_entries(platform._load(directory), "k3d-other", "172.31.0.0/16")
+    assert platform_origins.remove_cluster_entries(platform._load(directory), "kind-weave-test") is True
+    assert set(platform._load(directory)["private_origins"]["clusters"]) == {"k3d-other"}
+    assert platform_origins.remove_cluster_entries(platform._load(directory), "kind-weave-test") is False
+    # Disabling AI leaves a cluster's consent in place: the cluster still uses it.
+    assert platform_origins.remove_ai_entries(platform._load(directory)) is True
+    assert set(platform._load(directory)["private_origins"]) == {"clusters", "file_sha256"}
+    assert platform_origins.remove_cluster_entries(platform._load(directory), "k3d-other") is True
+    assert "private_origins" not in json.loads((directory / "platform.json").read_text())
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        lambda section: section["entries"][0].update(networks=["10.0.0.0/8"]),
+        lambda section: section["entries"][0].update(origin="http://intruder:8000"),
+        lambda section: section["entries"].pop(),
+        lambda section: section.update(consent="weave platform up"),
+        lambda section: section.update(extra=True),
+        # The right shape on a public network: only a private cluster subnet is accepted.
+        lambda section: [
+            entry.update(networks=["8.8.0.0/16"]) for entry in section["entries"] if entry["credentials"] == "bridge"
+        ],
+    ],
+)
+def test_tampered_cluster_consent_stops_every_command(owned, tamper):
+    directory, _, _ = owned
+    platform_origins.set_cluster_entries(platform._load(directory), "kind-weave-test", CLUSTER_SUBNET)
+    saved = json.loads((directory / "platform.json").read_text())
+    tamper(saved["private_origins"]["clusters"]["kind-weave-test"])
+    platform._write(directory / "platform.json", saved, replace=True)
+    with pytest.raises(platform.PlatformError, match="metadata is invalid"):
+        platform._load(directory)
+
+
+@pytest.mark.parametrize("name", ["minikube-weave-test", "kind-", "kind-Weave", "k3d-" + "a" * 33])
+def test_only_kind_and_k3d_cluster_names_take_origins(owned, name):
+    directory, _, _ = owned
+    with pytest.raises(ValueError):
+        platform_origins.set_cluster_entries(platform._load(directory), name, CLUSTER_SUBNET)
+    assert "private_origins" not in json.loads((directory / "platform.json").read_text())

@@ -218,8 +218,13 @@ def _policies(network: ClusterNetwork, namespace: str, labels: dict[str, str]) -
 
 def origin_entries(network: ClusterNetwork) -> list[private_origins.PrivateOrigin]:
     """The cluster's private-origin entries: the API and Keycloak over the cluster network, and the relay."""
+    return subnet_entries(network.subnet)
+
+
+def subnet_entries(cluster_subnet: str) -> list[private_origins.PrivateOrigin]:
+    """The private-origin entries of a cluster on this Docker subnet; they depend on nothing else."""
     entry = private_origins.PrivateOrigin
-    subnet = (network.subnet,)
+    subnet = (cluster_subnet,)
     return [
         entry(origin=API_URL, purpose="platform-api", networks=subnet, credentials="bridge"),
         entry(origin=API_URL, purpose="runner", networks=subnet, credentials="bridge"),
