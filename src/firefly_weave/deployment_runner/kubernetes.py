@@ -23,14 +23,16 @@ import json
 import re
 from collections.abc import Awaitable, Callable
 from decimal import Decimal
-from typing import Any
+from typing import Any, NamedTuple
 
 from firefly_weave.contracts.deployments import (
     ComponentSpec,
     DeploymentPlan,
+    MemberSelectionError,
     ObservationReport,
     ObservedMember,
     ObservedResource,
+    scale_down_members,
 )
 from firefly_weave.deployment_runner.command import run_command
 from firefly_weave.deployment_runner.policy import ComponentBinding, DestinationPolicy
@@ -38,6 +40,17 @@ from firefly_weave.deployment_runner.runtime import RunnerPolicyError, observed_
 
 TARGET_LABEL = "firefly.weave/target"
 CONFIGURATION_ANNOTATION = "firefly.weave/configuration"
+# The ReplicaSet controller removes the pods with the lowest deletion cost first when it scales down. The lowest
+# value it accepts puts each reviewed pod ahead of every unmarked one (cost 0).
+DELETION_COST = "controller.kubernetes.io/pod-deletion-cost"
+LOWEST_COST = "-2147483648"
+SCALE_WAIT_SECONDS = 90
+# Pods that carry a deletion cost, by name only: names are DNS labels, so no annotation text enters the runner.
+_COSTED_PODS = (
+    "{range .items[?(@.metadata.annotations.controller\\.kubernetes\\.io/pod-deletion-cost)]}"
+    '{.metadata.name}{"\\n"}{end}'
+)
+_POD_NAME = re.compile(r"[a-z0-9](?:[-a-z0-9.]{0,251}[a-z0-9])?")
 # Kubernetes label syntax, so a selector built from a deployment never carries selector operators of its own.
 _LABEL_KEY = re.compile(r"(?:[a-z0-9](?:[-a-z0-9.]{0,251}[a-z0-9])?/)?[A-Za-z0-9](?:[-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?")
 _LABEL_VALUE = re.compile(r"(?:[A-Za-z0-9](?:[-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?)?")
@@ -103,6 +116,20 @@ def _selector(selector: object) -> str | None:
         else:
             return None
     return ",".join(requirements) or None
+
+
+def _pointer(key: str) -> str:
+    """An annotation's JSON Pointer under the pod's metadata."""
+    return "/metadata/annotations/" + key.replace("~", "~0").replace("/", "~1")
+
+
+class _Pod(NamedTuple):
+    """A live pod a scale-down removes or keeps: its name, its ReplicaSet's template hash, and whether it already
+    carries a deletion cost."""
+
+    name: str
+    template: str
+    costed: bool
 
 
 def _quantity(value: Any) -> Decimal:
@@ -189,6 +216,13 @@ class KubernetesAdapter:
         cannot express, a failed or unreadable listing, a malformed pod, or more than 100 live pods leaves them
         out (unknown) rather than reporting part of them.
         """
+        listed = await self._listing(value, binding)
+        return None if listed is None else [member for member, _ in listed]
+
+    async def _listing(
+        self, value: dict[str, Any], binding: ComponentBinding
+    ) -> list[tuple[ObservedMember, str]] | None:
+        """Each live pod as a member with its ReplicaSet's template hash, or None when they cannot all be listed."""
         selector = _selector(value.get("spec", {}).get("selector"))
         if selector is None or binding.container is None:
             return None
@@ -199,20 +233,21 @@ class KubernetesAdapter:
             text = raw.decode()
             if text and not text.endswith("\n"):
                 raise ValueError("Incomplete pod listing")
-            members = []
+            pods = []
             for line in text.split("\n")[:-1]:
-                member = self._member(line.split("\t"), value["metadata"]["name"])
-                if member is not None:
-                    members.append(member)
-                if len(members) > 100:
+                pod = self._member(line.split("\t"), value["metadata"]["name"])
+                if pod is not None:
+                    pods.append(pod)
+                if len(pods) > 100:
                     return None
-            return sorted(members, key=lambda member: member.host)
+            return sorted(pods, key=lambda item: item[0].host)
         except Exception:
             # Placement stays unknown; cancellation is not an Exception and still propagates.
             return None
 
-    def _member(self, fields: list[str], deployment: str) -> ObservedMember | None:
-        """A live pod of this deployment, None for any other pod, or an error for an unreadable one."""
+    def _member(self, fields: list[str], deployment: str) -> tuple[ObservedMember, str] | None:
+        """A live pod of this deployment with its template hash, None for any other pod, or an error for an
+        unreadable one."""
         if len(fields) != len(_POD_FIELDS):
             raise ValueError("Unexpected pod fields")
         name, namespace, deleting, template, api, kind, owner, phase, ready, restarts, started, node = fields
@@ -228,7 +263,7 @@ class KubernetesAdapter:
         # A Ready status of Unknown (for example on a lost node) is not ready.
         if ready not in {"", "True", "False", "Unknown"} or not re.fullmatch(r"[0-9]{0,10}", restarts):
             raise ValueError("Unexpected pod status")
-        return ObservedMember(
+        member = ObservedMember(
             host=name,
             ordinal=None,
             state=phase.lower() if phase else "unknown",
@@ -237,6 +272,7 @@ class KubernetesAdapter:
             restarts=int(restarts or "0"),
             node=node or None,
         )
+        return member, template
 
     def _fact(
         self, value: dict[str, Any], binding: ComponentBinding, members: list[ObservedMember] | None
@@ -285,6 +321,72 @@ class KubernetesAdapter:
         return ObservationReport(
             resources=resources, complete=True, settled=all(item.state in {"ready", "stopped"} for item in resources)
         )
+
+    async def _victims(
+        self, value: dict[str, Any], binding: ComponentBinding, component: ComponentSpec
+    ) -> tuple[list[_Pod], list[_Pod]]:
+        """The pods a scale-down to `component.replicas` removes, by the shared rule, and the live pods it keeps.
+
+        The rule runs on the state the plan was made from (the step's expected version), so it names the reviewed
+        pods. Members that cannot all be listed, members of more than one ReplicaSet, or members that aren't the
+        deployment's current pods refuse the change before anything is written.
+        """
+        listed = await self._listing(value, binding)
+        metadata, status = value["metadata"], value.get("status", {})
+        if (
+            not listed
+            or len({template for _, template in listed}) != 1
+            or status.get("observedGeneration", -1) < metadata.get("generation", 0)
+            or status.get("updatedReplicas") != len(listed)
+        ):
+            raise RunnerPolicyError()
+        members = [member for member, _ in listed]
+        try:
+            hosts = scale_down_members("kubernetes", self._fact(value, binding, members), component.replicas)
+        except MemberSelectionError:
+            raise RunnerPolicyError() from None
+        costed = await self._costed(value)
+        pods = {member.host: _Pod(member.host, template, member.host in costed) for member, template in listed}
+        return [pods[host] for host in hosts], [pods[host] for host in sorted(pods) if host not in hosts]
+
+    async def _costed(self, value: dict[str, Any]) -> set[str]:
+        """Names of the deployment's pods that carry a deletion cost; anything unreadable refuses the change."""
+        selector = _selector(value["spec"].get("selector"))
+        if selector is None:
+            raise RunnerPolicyError()
+        raw = await self._run("get", "pods", "--selector=" + selector, "-o=jsonpath=" + _COSTED_PODS)
+        try:
+            text = raw.decode()
+        except UnicodeDecodeError:
+            raise RunnerPolicyError() from None
+        names = text.split("\n")
+        if names.pop() != "" or len(names) > 1000 or not all(_POD_NAME.fullmatch(name) for name in names):
+            raise RunnerPolicyError()
+        return set(names)
+
+    async def _mark(self, binding: ComponentBinding, victims: list[_Pod], kept: list[_Pod]) -> None:
+        """Clear an earlier cost from each pod the scale-down keeps, then give each victim the lowest cost.
+
+        Each patch first tests the pod's template hash and configuration, so a pod replaced since the listing is
+        never marked: a ReplicaSet never reuses a pod name.
+        """
+        changes = [(pod, {"op": "remove", "path": _pointer(DELETION_COST)}) for pod in kept if pod.costed]
+        changes += [(pod, {"op": "add", "path": _pointer(DELETION_COST), "value": LOWEST_COST}) for pod in victims]
+        for pod, change in changes:
+            patch = [
+                {"op": "test", "path": "/metadata/labels/pod-template-hash", "value": pod.template},
+                {"op": "test", "path": _pointer(CONFIGURATION_ANNOTATION), "value": binding.configuration},
+                change,
+            ]
+            await self._run(
+                "patch",
+                "pods",
+                pod.name,
+                "--type=json",
+                "--patch-file=/dev/stdin",
+                "-o=name",
+                stdin=json.dumps(patch, separators=(",", ":")).encode(),
+            )
 
     async def _singleton_policy(self, binding: ComponentBinding) -> None:
         if binding.kind != "api":
@@ -376,21 +478,28 @@ class KubernetesAdapter:
                 )
             else:
                 patch.append({"op": "test", "path": base + "/image", "value": component.image})
-            prepared.append((binding, component, json.dumps(patch, separators=(",", ":")).encode()))
+            # Any step that lowers a worker removes the reviewed pods, chosen now from the planned state.
+            lowered: tuple[list[_Pod], list[_Pod]] = ([], [])
+            if component.kind == "worker" and self._fact(value, binding, None).replicas > component.replicas:
+                lowered = await self._victims(value, binding, component)
+            prepared.append((binding, component, json.dumps(patch, separators=(",", ":")).encode(), lowered))
         # Validate all components before the first effect; each actual write still has server-side preconditions.
-        for binding, component, patch_bytes in prepared:
+        for binding, component, patch_bytes, _ in prepared:
             predicted = await self._patch(binding, patch_bytes, dry=True)
             self._desired(predicted, binding, component, resources=plan.intent == "update")
-        for binding, component, patch_bytes in prepared:
+        for binding, component, patch_bytes, (victims, kept) in prepared:
             await self._identity()
             await self._singleton_policy(binding)
             await before_write()
+            # Marked after the renewal and before the replicas drop. A victim that survives anyway is reported in
+            # the final observation, where the platform warns that a removed worker is still there.
+            await self._mark(binding, victims, kept)
             applied = await self._patch(binding, patch_bytes, dry=False)
             self._desired(applied, binding, component, resources=plan.intent == "update")
-        async with asyncio.timeout(90):
+        async with asyncio.timeout(SCALE_WAIT_SECONDS):
             while True:
                 result = await self.observe()
-                for binding, component, _ in prepared:
+                for binding, component, _, _ in prepared:
                     self._desired(
                         await self._deployment(binding), binding, component, resources=plan.intent == "update"
                     )

@@ -102,13 +102,18 @@ def fixture(kind="worker", action="update"):
     return policy, plan, resource
 
 
-def pod(name, *, template="7d9f8c6b5", owner=None, namespace="owned", labels=None, deleting=None, **status):
+def pod(name, *, template="7d9f8c6b5", owner=None, namespace="owned", labels=None, deleting=None, cost=None, **status):
     """A pod as `kubectl get pods -o json` returns it, owned by the engine deployment's ReplicaSet."""
     return {
         "metadata": {
             "name": name,
             "namespace": namespace,
             "labels": {"app": "engine", "pod-template-hash": template} if labels is None else labels,
+            # Pods copy the template's annotations, so every pod of a managed worker carries its configuration.
+            "annotations": {
+                "firefly.weave/configuration": "production",
+                **({DELETION_COST: cost} if cost is not None else {}),
+            },
             "ownerReferences": [
                 owner
                 or {
@@ -152,6 +157,39 @@ POD_FIELDS = (
     '{"\\t"}{.status.containerStatuses[?(@.name=="main")].state.running.startedAt}'
     '{"\\t"}{.spec.nodeName}{"\\n"}{end}'
 )
+
+
+# The second, names-only listing of a scale-down: pods that carry a deletion cost, never the annotation's text.
+COSTED_PODS = (
+    "{range .items[?(@.metadata.annotations.controller\\.kubernetes\\.io/pod-deletion-cost)]}"
+    '{.metadata.name}{"\\n"}{end}'
+)
+DELETION_COST = "controller.kubernetes.io/pod-deletion-cost"
+
+
+def started(at):
+    """The main container's status, running since `at`."""
+    return [{"name": "main", "restartCount": 0, "state": {"running": {"startedAt": at}}}]
+
+
+def apply_json_patch(document, operations):
+    """RFC 6902 `test`, `add` and `remove` on a copy of `document`, as the API server applies them."""
+    result = copy.deepcopy(document)
+    for edit in operations:
+        current = result
+        parts = edit["path"].strip("/").split("/")
+        for raw in parts[:-1]:
+            part = raw.replace("~1", "/").replace("~0", "~")
+            current = current[int(part)] if isinstance(current, list) else current[part]
+        key = parts[-1].replace("~1", "/").replace("~0", "~")
+        if edit["op"] == "test":
+            if current.get(key) != edit["value"]:
+                raise RunnerPolicyError()
+        elif edit["op"] == "remove":
+            del current[key]
+        else:
+            current[key] = edit["value"]
+    return result
 
 
 FIELD = re.compile(r"\{(\.[^{}]+)\}")
@@ -204,6 +242,11 @@ class Server:
         self.namespace_uid = policy.external_identity
         self.fail_dry = False
         self.pods = [pod("engine-7d9f8c6b5-x2kq4")]
+        self.pod_patches = []
+        # When set, a write settles at once the way the deployment and ReplicaSet controllers would: the lowest
+        # deletion cost goes first, or, with `keep_victims`, the controller ignores the costs and removes others.
+        self.controller = False
+        self.keep_victims = False
 
     async def command(self, argv, **kwargs):
         self.calls.append((argv, kwargs))
@@ -219,6 +262,12 @@ class Server:
             return json.dumps({"metadata": {"name": self.policy.boundary, "uid": self.namespace_uid}}).encode()
         if "horizontalpodautoscalers.autoscaling" in argv:
             return b'{"items":[]}'
+        if argv[6:8] == ["patch", "pods"]:
+            assert argv[9:] == ["--type=json", "--patch-file=/dev/stdin", "-o=name"]
+            return self.patch_pod(argv[8], json.loads(kwargs["stdin"]))
+        if argv[6:] == ["get", "pods", "--selector=app=engine", "-o=jsonpath=" + COSTED_PODS]:
+            costed = [item for item in self.pods if DELETION_COST in item["metadata"]["annotations"]]
+            return "".join(item["metadata"]["name"] + "\n" for item in costed).encode()
         if "pods" in argv:
             assert argv[6:] == ["get", "pods", "--selector=app=engine", "-o=jsonpath=" + POD_FIELDS]
             return render(self.pods)
@@ -250,7 +299,31 @@ class Server:
         if not dry:
             result["metadata"]["resourceVersion"] = "9"
             self.resource = result
+            if self.controller:
+                self.settle()
         return json.dumps(result).encode()
+
+    def patch_pod(self, name, operations):
+        found = [index for index, item in enumerate(self.pods) if item["metadata"]["name"] == name]
+        assert len(found) == 1, f"no pod {name}"
+        self.events.append("cost:" + name)
+        self.pod_patches.append((name, operations))
+        self.pods[found[0]] = apply_json_patch(self.pods[found[0]], operations)
+        return f"pod/{name}\n".encode()
+
+    def settle(self):
+        desired = self.resource["spec"]["replicas"]
+        if len(self.pods) > desired:
+            order = sorted(self.pods, key=lambda item: int(item["metadata"]["annotations"].get(DELETION_COST, "0")))
+            if self.keep_victims:
+                order.reverse()
+            removed = {item["metadata"]["name"] for item in order[: len(self.pods) - desired]}
+            self.pods = [item for item in self.pods if item["metadata"]["name"] not in removed]
+        while len(self.pods) < desired:
+            self.pods.append(pod(f"engine-7d9f8c6b5-new{len(self.pods)}", containers=started("2026-11-11T11:00:00Z")))
+        self.resource["status"].update(
+            replicas=desired, readyReplicas=desired, updatedReplicas=desired, availableReplicas=desired
+        )
 
     async def before_write(self):
         self.events.append("renew")
@@ -732,3 +805,116 @@ async def test_api_components_list_no_pods():
     server = Server(policy, resource)
     result = await KubernetesAdapter(policy, command=server.command).observe()
     assert result.resources[0].members == [] and not any("pods" in argv for argv, _ in server.calls)
+
+
+def scaled(current, desired, *, action="scale_workers"):
+    """A worker at `current` replicas, a plan to `desired`, and a server whose controller settles each write."""
+    policy, plan, resource = fixture(action=action)
+    component = plan.steps[0].component.model_copy(update={"replicas": desired})
+    plan = plan.model_copy(update={"steps": [plan.steps[0].model_copy(update={"component": component})]})
+    resource["spec"]["replicas"] = current
+    resource["status"].update(
+        replicas=current, readyReplicas=current, updatedReplicas=current, availableReplicas=current
+    )
+    server = Server(policy, resource)
+    server.controller = True
+    return policy, plan, server
+
+
+def three_pods(**early):
+    """Two ready pods started 10:00 and 10:05, and one not ready."""
+    return [
+        pod("engine-7d9f8c6b5-early", containers=started("2026-11-11T10:00:00Z"), **early),
+        pod("engine-7d9f8c6b5-late", containers=started("2026-11-11T10:05:00Z")),
+        pod("engine-7d9f8c6b5-stuck", ready="False", containers=started("2026-11-11T09:00:00Z")),
+    ]
+
+
+COST_PATH = "/metadata/annotations/controller.kubernetes.io~1pod-deletion-cost"
+LOWEST = {"op": "add", "path": COST_PATH, "value": "-2147483648"}
+SAME_POD = [
+    {"op": "test", "path": "/metadata/labels/pod-template-hash", "value": "7d9f8c6b5"},
+    {"op": "test", "path": "/metadata/annotations/firefly.weave~1configuration", "value": "production"},
+]
+
+
+@pytest.mark.parametrize("action", ["scale_workers", "update"])
+async def test_a_scale_down_marks_the_reviewed_pods_before_it_lowers_the_replicas(action):
+    policy, plan, server = scaled(3, 1, action=action)
+    server.pods = three_pods()
+    result = await KubernetesAdapter(policy, command=server.command).apply(plan, server.before_write)
+    # The shared rule: the pod that isn't ready, then the most recently started; marked after renewal, before the write.
+    assert server.events == ["dry", "renew", "cost:engine-7d9f8c6b5-stuck", "cost:engine-7d9f8c6b5-late", "write"]
+    assert server.pod_patches == [
+        ("engine-7d9f8c6b5-stuck", [*SAME_POD, LOWEST]),
+        ("engine-7d9f8c6b5-late", [*SAME_POD, LOWEST]),
+    ]
+    assert [member.host for member in result.resources[0].members] == ["engine-7d9f8c6b5-early"]
+
+
+async def test_a_scale_down_clears_an_earlier_deletion_cost_from_the_pods_it_keeps():
+    policy, plan, server = scaled(3, 1)
+    # An earlier scale-down marked this pod, and it survived.
+    server.pods = three_pods(cost="-2147483648")
+    result = await KubernetesAdapter(policy, command=server.command).apply(plan, server.before_write)
+    assert server.events == [
+        "dry",
+        "renew",
+        "cost:engine-7d9f8c6b5-early",
+        "cost:engine-7d9f8c6b5-stuck",
+        "cost:engine-7d9f8c6b5-late",
+        "write",
+    ]
+    assert server.pod_patches[0] == (
+        "engine-7d9f8c6b5-early",
+        [*SAME_POD, {"op": "remove", "path": COST_PATH}],
+    )
+    assert [member.host for member in result.resources[0].members] == ["engine-7d9f8c6b5-early"]
+
+
+async def test_nothing_is_marked_when_the_dry_run_fails():
+    policy, plan, server = scaled(3, 1)
+    server.pods = three_pods()
+    server.fail_dry = True
+    with pytest.raises(RunnerPolicyError):
+        await KubernetesAdapter(policy, command=server.command).apply(plan, server.before_write)
+    assert server.events == ["dry"]
+    assert server.pod_patches == [] and len(server.pods) == 3
+
+
+async def test_a_victim_that_is_not_a_live_pod_of_the_current_replicaset_refuses_before_any_write():
+    policy, plan, server = scaled(3, 1)
+    # The members changed since the plan: a pod of an earlier ReplicaSet is back, not ready, so it would be chosen.
+    server.pods = [
+        *three_pods()[:2],
+        pod("engine-5c4b3a2-stale", template="5c4b3a2", ready="False", containers=started("2026-11-11T09:00:00Z")),
+    ]
+    with pytest.raises(RunnerPolicyError):
+        await KubernetesAdapter(policy, command=server.command).apply(plan, server.before_write)
+    assert server.events == [] and server.pod_patches == []
+
+
+async def test_unknown_members_refuse_a_scale_down():
+    policy, plan, server = scaled(101, 100)
+    server.pods = [pod(f"engine-7d9f8c6b5-{index:05d}") for index in range(101)]
+    with pytest.raises(RunnerPolicyError):
+        await KubernetesAdapter(policy, command=server.command).apply(plan, server.before_write)
+    assert server.events == [] and server.pod_patches == []
+
+
+async def test_a_scale_up_marks_nothing():
+    policy, plan, server = scaled(1, 3)
+    result = await KubernetesAdapter(policy, command=server.command).apply(plan, server.before_write)
+    assert server.events == ["dry", "renew", "write"]
+    assert not any(COSTED_PODS in " ".join(argv) for argv, _ in server.calls)
+    assert len(result.resources[0].members) == 3
+
+
+async def test_a_victim_that_survives_is_reported_not_raised():
+    policy, plan, server = scaled(2, 1)
+    server.pods = three_pods()[:2]
+    server.keep_victims = True
+    result = await KubernetesAdapter(policy, command=server.command).apply(plan, server.before_write)
+    # Deletion cost is best effort; the platform compares the final members with the reviewed ones and warns.
+    assert server.pod_patches == [("engine-7d9f8c6b5-late", [*SAME_POD, LOWEST])]
+    assert [member.host for member in result.resources[0].members] == ["engine-7d9f8c6b5-late"]

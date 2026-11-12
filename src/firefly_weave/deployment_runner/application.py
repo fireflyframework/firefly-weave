@@ -101,7 +101,7 @@ class MountedToken:
 
 # Adapters that remove exactly the members a scale-down plan names (`scale_down_members`); only their runners
 # register adapter version 2, which the platform requires before it hands them a scale-down.
-REVIEWED_MEMBER_ADAPTERS = frozenset({"docker-compose"})
+REVIEWED_MEMBER_ADAPTERS = frozenset({"docker-compose", "kubernetes"})
 
 
 def runner_registration(destination: Any) -> RunnerRegistration:

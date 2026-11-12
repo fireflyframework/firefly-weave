@@ -297,10 +297,10 @@ def test_a_restart_of_anything_but_a_worker_is_refused():
 
 
 @pytest.mark.parametrize(
-    ("adapter", "version"), [("docker-compose", "2"), ("kubernetes", "1"), ("azure-container-apps", "1")]
+    ("adapter", "version"), [("docker-compose", "2"), ("kubernetes", "2"), ("azure-container-apps", "1")]
 )
 def test_only_an_adapter_that_removes_the_reviewed_members_registers_version_2(adapter, version):
-    """Version 2 promises the scale-down rule: Compose removes exactly the reviewed members; the others do not yet."""
+    """Version 2 promises the scale-down rule: Compose and Kubernetes remove exactly the reviewed members."""
     from types import SimpleNamespace
     from uuid import uuid4
 
