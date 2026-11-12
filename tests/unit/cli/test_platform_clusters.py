@@ -31,6 +31,11 @@ ROOT = Path(__file__).resolve().parents[3]
 NAMES = json.loads((ROOT / "tests/fixtures/kubernetes/target-names.json").read_text())
 KUBECTL = "/opt/weave-tools/kubectl-v1.37.2"
 CANARY = "canary-kubeconfig-secret-4f1b"
+PORTS = "{{json .NetworkSettings.Ports}}"
+
+
+def published(port):
+    return json.dumps({"6443/tcp": [{"HostIp": "127.0.0.1", "HostPort": str(port)}]}) + "\n"
 
 
 def kubeconfig(path, *, context="kind-weave-test", server="https://127.0.0.1:43123"):
@@ -72,6 +77,7 @@ def platform(tmp_path, monkeypatch):
     commands.answer(["ps", "--filter", "label=io.x-k8s.kind.cluster=weave-test"], "weave-test-control-plane\n")
     commands.answer(["inspect", "weave-test-control-plane"], '{"weave-kind-weave-test":{"IPAddress":"172.30.0.2"}}\n')
     commands.answer(["ps", "--filter", "network=weave-kind-weave-test"], "weave-test-control-plane\tweave-test\t\n")
+    commands.answer(["inspect", PORTS, "weave-test-control-plane"], published(43123))
     monkeypatch.delenv("KUBECONFIG", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     return directory, commands, kubeconfig(tmp_path / "kubeconfig")
@@ -130,7 +136,8 @@ def test_refuses_a_server_that_is_not_on_this_computer(platform, tmp_path, serve
     "server", ["https://127.0.0.1:43123", "https://[::1]:6443", "https://localhost:6443", "https://0.0.0.0:6550"]
 )
 def test_accepts_a_server_on_this_computer(platform, tmp_path, server):
-    directory, _, _ = platform
+    directory, commands, _ = platform
+    commands.answer(["inspect", PORTS, "weave-test-control-plane"], published(server.rsplit(":", 1)[1]))
     found = check(directory, kubeconfig(tmp_path / "local", server=server))
     assert (found.context, found.network, found.nodes, found.docker_context) == (
         "kind-weave-test",
@@ -239,3 +246,102 @@ def test_a_ninth_target_is_refused_and_names_disconnect():
         "This installation already connects 8 cluster targets. Disconnect one with weave platform cluster "
         "disconnect, then connect again."
     )
+
+
+def test_refuses_a_context_whose_server_is_not_the_nodes_api_port(platform):
+    """Same name, other cluster: kind-weave-test points at 127.0.0.1:43123, but the cluster on the platform's
+    Docker context publishes its API on 127.0.0.1:50000 (the context was overwritten by a cluster on another VM)."""
+    directory, commands, config = platform
+    commands.answer(
+        ["inspect", PORTS, "weave-test-control-plane"], '{"6443/tcp":[{"HostIp":"127.0.0.1","HostPort":"50000"}]}\n'
+    )
+    with pytest.raises(PlatformError):
+        check(directory, config)
+    assert not commands.argv("/opt/weave-tools/kubectl-v1.37.2"), "nothing reaches a cluster it didn't verify"
+
+
+def test_reads_a_k3d_clusters_api_port_from_its_load_balancer(platform, tmp_path):
+    directory, commands, _ = platform
+    commands.answer(
+        ["ps", "--filter", "label=k3d.cluster=weave-test"], "k3d-weave-test-server-0\nk3d-weave-test-serverlb\n"
+    )
+    commands.answer(
+        ["inspect", "k3d-weave-test-server-0", "k3d-weave-test-serverlb"],
+        '{"k3d-weave-test":{}}\n{"k3d-weave-test":{}}\n',
+    )
+    commands.answer(["ps", "--filter", "network=k3d-weave-test"], "k3d-weave-test-server-0\t\tweave-test\n")
+    commands.answer(["inspect", PORTS, "k3d-weave-test-serverlb"], published(6550))
+    config = kubeconfig(tmp_path / "k3d", context="k3d-weave-test", server="https://0.0.0.0:6550")
+    assert check(directory, config, provider="k3d").network == "k3d-weave-test"
+
+
+def test_refuses_a_cluster_reached_through_a_proxy(platform, tmp_path):
+    directory, commands, _ = platform
+    config = kubeconfig(tmp_path / "proxied")
+    config.write_text(config.read_text().replace("    server:", "    proxy-url: http://127.0.0.1:3128\n    server:"))
+    with pytest.raises(PlatformError, match="proxy-url"):
+        check(directory, config)
+    assert commands.calls == []
+
+
+def test_follows_kubectls_merged_view_of_several_files(platform, tmp_path, monkeypatch):
+    """The first file that defines a context owns it, as kubectl merges them: a later file never stands in for it,
+    and a context whose cluster or user lives in another file is refused rather than passed as one file."""
+    directory, commands, _ = platform
+    partial = tmp_path / "partial"
+    partial.write_text(
+        "apiVersion: v1\nkind: Config\ncontexts:\n- name: kind-weave-test\n"
+        "  context: {cluster: kind-weave-test, user: kind-weave-test}\n"
+    )
+    complete = kubeconfig(tmp_path / "complete")
+    monkeypatch.setenv("KUBECONFIG", os.pathsep.join([str(partial), str(complete)]))
+    with pytest.raises(PlatformError, match="split across several kubeconfig files"):
+        check(directory, None)
+    assert commands.calls == []
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"target_id": 7},
+        {"target_id": "x" * 65},
+        {"connected_at": ["2026-11-12"]},
+        {"state": "lost"},
+        {"target_name": "k" * 101},
+    ],
+)
+def test_the_receipt_refuses_target_values_of_the_wrong_type(platform, change):
+    directory, _, _ = platform
+    target = {
+        "target_id": "11111111-2222-3333-4444-555555555555",
+        "target_name": "kind-weave-test",
+        "pair": 1,
+        "state": "connected",
+        "connected_at": "2026-11-12T10:00:00Z",
+        **change,
+    }
+    value = {"format": clusters.FORMAT, "clusters": {"kind-weave-test": record({"weave-workers": target})}}
+    with pytest.raises(PlatformError, match="clusters.json"):
+        clusters.save(directory, value)
+
+
+def test_the_receipt_refuses_a_context_that_is_not_its_provider_and_cluster(platform):
+    directory, _, _ = platform
+    value = {"format": clusters.FORMAT, "clusters": {"kind-weave-test": record({}, cluster="other")}}
+    with pytest.raises(PlatformError, match="clusters.json"):
+        clusters.save(directory, value)
+    clusters.save(directory, {"format": clusters.FORMAT, "clusters": {"kind-weave-test": record({})}})
+
+
+def record(targets, *, cluster="weave-test"):
+    return {
+        "provider": "kind",
+        "cluster": cluster,
+        "context": "kind-weave-test",
+        "docker_context": "colima-weave-tests",
+        "network": "weave-kind-weave-test",
+        "subnet": "172.30.0.0/16",
+        "api_address": "172.30.0.5",
+        "registry_address": "172.30.0.6",
+        "targets": targets,
+    }

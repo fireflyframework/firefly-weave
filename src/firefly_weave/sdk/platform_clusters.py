@@ -74,6 +74,25 @@ _CLUSTER_KEYS = frozenset(
 _TARGET_KEYS = frozenset(
     {"target_id", "target_name", "pair", "state", "runner_principal_id", "worker_principal_id", "connected_at"}
 )
+# The receipt's string values and their bounds: IDs are UUIDs, times RFC 3339, names target names.
+_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+_TIME = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]{8,15}(Z|[+-][0-9]{2}:[0-9]{2})")
+
+
+def _target_values(target: dict[str, Any]) -> bool:
+    """Whether a receipt target's string values have their types and bounds (its pair is checked apart)."""
+    for key, value in target.items():
+        if key == "pair":
+            continue
+        if not isinstance(value, str):
+            return False
+        if key in {"target_id", "runner_principal_id", "worker_principal_id"} and not _ID.fullmatch(value):
+            return False
+        if key == "connected_at" and (len(value) > 40 or not _TIME.fullmatch(value)):
+            return False
+        if (key == "target_name" and len(value) > 100) or (key == "state" and value not in {"pending", "connected"}):
+            return False
+    return True
 
 
 # Names
@@ -152,26 +171,47 @@ def _document(path: Path) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else {}
 
 
-def _named(items: Any, name: str) -> dict[str, Any] | None:
-    found = [item for item in items or [] if isinstance(item, dict) and item.get("name") == name]
-    return found[0] if found else None
+def _merged(paths: list[Path]) -> dict[str, dict[str, tuple[Path, dict[str, Any]]]]:
+    """kubectl's merged view of several kubeconfig files: the first file that defines a name owns it."""
+    view: dict[str, dict[str, tuple[Path, dict[str, Any]]]] = {"contexts": {}, "clusters": {}, "users": {}}
+    for path in paths:
+        document = _document(path) or {}
+        for section, found in view.items():
+            for item in document.get(section) or []:
+                if isinstance(item, dict) and isinstance(item.get("name"), str):
+                    found.setdefault(item["name"], (path, item))
+    return view
 
 
 def _server(paths: list[Path], context: str, provider: str, cluster: str) -> tuple[Path, str]:
-    """The file that defines the context, and the server its cluster entry names in that same file."""
-    for path in paths:
-        document = _document(path)
-        entry = _named(document.get("contexts") if document else None, context)
-        if document is None or entry is None:
-            continue
-        cluster_entry = _named(document.get("clusters"), str((entry.get("context") or {}).get("cluster")))
-        server = (cluster_entry or {}).get("cluster", {}).get("server")
-        if isinstance(server, str):
-            return path, server
-    raise local.PlatformError(
-        f"No {context} context in your kubeconfig. Create the cluster with python scripts/operations-cluster.py up "
-        f"--provider {provider} --name {cluster} --no-connect, or pass --kubeconfig."
-    )
+    """The file that holds the whole context (its cluster and user too), and the server it names."""
+    view = _merged(paths)
+    if context not in view["contexts"]:
+        raise local.PlatformError(
+            f"No {context} context in your kubeconfig. Create the cluster with python scripts/operations-cluster.py "
+            f"up --provider {provider} --name {cluster} --no-connect, or pass --kubeconfig."
+        )
+    path, entry = view["contexts"][context]
+    raw = entry.get("context")
+    spec: dict[str, Any] = raw if isinstance(raw, dict) else {}
+    cluster_found = view["clusters"].get(str(spec.get("cluster")))
+    user_found = view["users"].get(str(spec.get("user")))
+    if cluster_found is None or user_found is None or cluster_found[0] != path or user_found[0] != path:
+        raise local.PlatformError(
+            f"{context} is split across several kubeconfig files. Pass --kubeconfig with the file {provider} wrote, "
+            "which holds the whole context."
+        )
+    found = cluster_found[1].get("cluster")
+    settings: dict[str, Any] = found if isinstance(found, dict) else {}
+    if "proxy-url" in settings:
+        raise local.PlatformError(
+            f"{context} reaches its server through a proxy (proxy-url), so Weave can't tell it's this computer's "
+            "cluster. Remove proxy-url from that cluster entry, or connect another cluster."
+        )
+    server = settings.get("server")
+    if not isinstance(server, str):
+        raise local.PlatformError(f"{context} names no API server in your kubeconfig; nothing was changed.")
+    return path, server
 
 
 def _local(server: str) -> bool:
@@ -241,6 +281,30 @@ def preflight(directory: Path, provider: str, cluster: str, namespace: str, *, k
             "scripts/operations-cluster.py, which gives each cluster its own network."
         )
     (network,) = networks
+    # The context's server must be this cluster's API: kind's control plane and k3d's load balancer publish 6443.
+    api = f"{cluster}-control-plane" if provider == "kind" else f"k3d-{cluster}-serverlb"
+    ports: Any = {}
+    if api in nodes:
+        try:
+            ports = json.loads(
+                local._run(
+                    state, "cluster-api-port", [*docker, "inspect", "--format", "{{json .NetworkSettings.Ports}}", api]
+                )
+            )
+        except (ValueError, TypeError):
+            ports = {}
+    bindings = ports.get("6443/tcp") if isinstance(ports, dict) else None
+    published = sorted({str(item.get("HostPort")) for item in bindings or [] if isinstance(item, dict)})
+    try:
+        port = urlsplit(server).port or 443
+    except ValueError:
+        port = 0
+    if str(port) not in published:
+        raise local.PlatformError(
+            f"{context} points at port {port}, but the {provider} cluster {cluster} on Docker context "
+            f"{state['context']} publishes its API on {', '.join(published) or 'no port'}. Point the context at that "
+            "cluster, or use another cluster name."
+        )
     members = local._run(
         state,
         "cluster-network-members",
@@ -294,12 +358,22 @@ def _checked(value: Any) -> dict[str, Any]:
     for key, entry in value["clusters"].items():
         if not isinstance(entry, dict) or set(entry) != _CLUSTER_KEYS | {"targets"}:
             raise ValueError("Unknown cluster entry")
-        if entry["provider"] not in PROVIDERS or cluster_name_problem(entry["cluster"]) or key != entry["context"]:
+        if (
+            entry["provider"] not in PROVIDERS
+            or cluster_name_problem(entry["cluster"])
+            or key != entry["context"]
+            or entry["context"] != f"{entry['provider']}-{entry['cluster']}"
+        ):
             raise ValueError("Unknown cluster")
         if any(not isinstance(entry[name], str) or len(entry[name]) > 256 for name in _CLUSTER_KEYS):
             raise ValueError("Unknown cluster field")
         for namespace, target in entry["targets"].items():
-            if namespace_problem(namespace) or not isinstance(target, dict) or not set(target) <= _TARGET_KEYS:
+            if (
+                namespace_problem(namespace)
+                or not isinstance(target, dict)
+                or not set(target) <= _TARGET_KEYS
+                or not _target_values(target)
+            ):
                 raise ValueError("Unknown target entry")
             pair = target.get("pair")
             if type(pair) is not int or not 1 <= pair <= PAIRS:
