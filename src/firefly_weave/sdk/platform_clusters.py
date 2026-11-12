@@ -990,11 +990,23 @@ async def _register(
         save_entry()
 
 
-def _silent(connection: _Connection, namespace: str) -> str:
+def _log_hint(connection: _Connection, namespace: str) -> str:
     return (
-        f"The runner didn't make contact within {CONTACT_SECONDS} s. Read its log with kubectl --context "
-        f"{connection.found.context} --namespace {objects.SYSTEM_NAMESPACE} logs deployment/weave-runner-{namespace}. "
-        "The target is registered; run connect again to retry."
+        f"--context {connection.found.context} --namespace {objects.SYSTEM_NAMESPACE} logs "
+        f"deployment/weave-runner-{namespace}. The target is registered; run connect again to retry."
+    )
+
+
+def _silent(connection: _Connection, namespace: str) -> str:
+    return f"The runner didn't make contact within {CONTACT_SECONDS} s. Read its log with kubectl " + _log_hint(
+        connection, namespace
+    )
+
+
+def _unfinished(connection: _Connection, namespace: str, state: str) -> str:
+    return (
+        f"The runner's first observation job ended in state {state}. Read the runner's log with kubectl "
+        + _log_hint(connection, namespace)
     )
 
 
@@ -1016,7 +1028,9 @@ async def _ready(client: Any, connection: _Connection, entry: dict[str, Any], na
             observation = await client.invoke("deployment_observations.read", identifier=current.observation_id)
             if observation.complete:
                 return str(observation.observed_at.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"))
-        if current.state in {"failed", "cancelled", "reconciliation_required"} or clock() >= deadline:
+        if current.state in {"failed", "cancelled", "reconciliation_required"}:
+            raise local.PlatformError(_unfinished(connection, namespace, current.state))
+        if clock() >= deadline:
             raise local.PlatformError(_silent(connection, namespace))
         await wait_async(2)
 

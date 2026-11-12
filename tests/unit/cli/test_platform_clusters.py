@@ -443,6 +443,7 @@ class Cluster:
         self.worker_secret = False
         self.worker_deployment = False
         self.online = True
+        self.job_state = "succeeded"
         self.api_calls = []
         self.keycloak = []
         # How many commands had run when each Keycloak call came.
@@ -490,7 +491,8 @@ class Cluster:
             fresh = datetime.now(UTC) + timedelta(seconds=60)
             return SimpleNamespace(items=[SimpleNamespace(revoked=False, expires_at=fresh)] if self.online else [])
         if operation == "deployment_jobs.read":
-            return SimpleNamespace(state="succeeded", observation_id=uuid4())
+            observation = uuid4() if self.job_state == "succeeded" else None
+            return SimpleNamespace(state=self.job_state, observation_id=observation)
         if operation == "deployment_observations.read":
             return SimpleNamespace(complete=True, observed_at=datetime(2026, 11, 12, 10, 0, 5, tzinfo=UTC))
         return SimpleNamespace(id=uuid4())
@@ -913,6 +915,22 @@ def test_a_silent_runner_names_its_log_and_keeps_the_registered_target(world):
         "--namespace weave-system logs deployment/weave-runner-weave-workers. The target is registered; run connect "
         "again to retry."
     )
+    target = clusters.receipt(directory)["clusters"]["kind-weave-test"]["targets"]["weave-workers"]
+    assert target["state"] == "pending" and "target_id" in target
+
+
+@pytest.mark.parametrize("state", ["failed", "cancelled", "reconciliation_required"])
+def test_an_observation_job_that_ends_unfinished_is_named_by_its_state(world, state):
+    directory, _, _, cluster = world
+    cluster.job_state = state
+    with pytest.raises(PlatformError) as refused:
+        connect(world)
+    assert str(refused.value) == (
+        f"The runner's first observation job ended in state {state}. Read the runner's log with kubectl --context "
+        "kind-weave-test --namespace weave-system logs deployment/weave-runner-weave-workers. The target is "
+        "registered; run connect again to retry."
+    )
+    assert cluster.count("deployment_jobs.read") == 1
     target = clusters.receipt(directory)["clusters"]["kind-weave-test"]["targets"]["weave-workers"]
     assert target["state"] == "pending" and "target_id" in target
 
