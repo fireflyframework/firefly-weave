@@ -1829,17 +1829,20 @@ def _advance_owned(
         current_state.active.remove(identifier)
         current_state.waits.pop(identifier, None)
         # The call may have been held twice: by recovery before the agent failed, then by the agent's own failure once
-        # that resolution let the deferred failure run. One resolution settles the call, so both incidents close.
-        for name in [name for name, item in current_state.incidents.items() if item.node_id == identifier]:
-            current_state.incidents.pop(name)
+        # that resolution let the deferred failure run. The resolution closed its own incident; the agent's hold, always
+        # at generation 0, closes here, since one resolution settles the call.
+        current_state.incidents.pop(f"{identifier}:0", None)
         current_state = current_state.model_copy(
             update={
                 "incident": current_state.incidents[min(current_state.incidents)].code
                 if current_state.incidents
                 else None,
-                # Without an incident left, the barrier its hold raised is gone again, as lift() leaves it.
+                # Without an incident left, the barrier its hold raised is gone again, as lift() leaves it; a manual
+                # pause keeps it until the run is resumed.
                 "status": "waiting"
-                if current_state.status == "suspended" and not current_state.incidents
+                if current_state.status == "suspended"
+                and not current_state.incidents
+                and not current_state.manual_paused
                 else current_state.status,
             }
         )
