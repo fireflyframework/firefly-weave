@@ -464,7 +464,9 @@ The API origin, and a machine-token endpoint's origin, are added to
 HTTP origin. `--connector-version-id` skips the lookup. `--request FILE` sends a
 raw `ConnectionRequest` instead, and cannot be combined with the guided flags;
 use it for `client_secret_basic` machine tokens. `weave connections test ID`
-checks a saved revision's configuration without sending a request to the API.
+checks a saved revision's configuration, then sends one `HEAD` request to the API
+address with the connection's sign-in; see
+[Connection tests](http-profiles.md#connection-tests) for what its answer means.
 
 An `http://` API address works too, with or without credentials. The command
 creates the connection and prints one line on standard error after the JSON

@@ -294,6 +294,34 @@ def test_endpoint_origin_is_only_a_validated_origin_string(endpoint, expected):
     assert modules()[0].endpoint_origin(endpoint) == expected
 
 
+@pytest.mark.parametrize(
+    "adapter, connector", [("weave-http-v2", "weave-http@2.0.0"), ("weave-http", "weave-http@1.0.0")]
+)
+async def test_an_http_connections_item_names_its_origin_and_nothing_else(catalog, adapter, connector):
+    base = "https://user:pw-canary@api.acme.test:8443/v1?x=query-canary"
+    catalog.records[100] = catalog.records[100].model_copy(
+        update={
+            "adapter": adapter,
+            "connector": connector,
+            "config": {"baseUrl": base, "auth": {"kind": "none"}},
+            "secret_refs": {},
+        }
+    )
+    page = await listing(catalog, limit=1)
+    item = page.items[0]
+    assert item.endpoint_origin == "https://api.acme.test:8443"
+    assert item.enabled is True and item.provider is None
+    assert "canary" not in page.model_dump_json()
+
+
+async def test_an_http_connection_without_a_usable_base_url_names_no_origin(catalog):
+    catalog.records[100] = catalog.records[100].model_copy(
+        update={"adapter": "weave-http-v2", "connector": "weave-http@2.0.0", "config": {"auth": {"kind": "none"}}}
+    )
+    page = await listing(catalog, limit=1)
+    assert "endpoint_origin" not in page.items[0].model_dump()
+
+
 async def test_invalid_stored_endpoint_is_omitted_and_disabled(catalog):
     catalog.records[100] = catalog.records[100].model_copy(
         update={"config": {"provider": "openai-chat", "endpoint": "https://user:private-canary@model.example/v1"}}
