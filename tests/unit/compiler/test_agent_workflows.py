@@ -22,6 +22,7 @@ from typing import cast
 import pytest
 
 from firefly_weave.compiler.agent_tools import TOOL_RESOLVERS, default_approval, model_parameters
+from firefly_weave.compiler.agents import reads_secret
 from firefly_weave.compiler.analyzer import analyze
 from firefly_weave.compiler.catalog import CatalogSnapshot
 from firefly_weave.compiler.ir import ToolTargetKind
@@ -510,8 +511,19 @@ def test_a_tool_review_on_the_tool_is_enough():
             },
             "/spec/steps/0/tools/0/fixed",
         ),
+        (
+            # An object whose key is "literal" still builds its value from the expression it holds.
+            {
+                "context": {
+                    "object": {
+                        "literal": {"op": {"name": "concat", "args": [{"literal": "k"}, {"ref": "/input/apiKey"}]}}
+                    }
+                }
+            },
+            "/spec/steps/0/context",
+        ),
     ],
-    ids=["instructions", "prompt", "context", "fixed", "operator", "fixed-operator"],
+    ids=["instructions", "prompt", "context", "fixed", "operator", "fixed-operator", "object-key-named-literal"],
 )
 def test_secret_inputs_are_refused_in_every_agent_text_position(change, path):
     assert ("WV-COMP-AI_SECRET_INPUT", "error", path) in errors(workflow(agent(**change)))
@@ -551,6 +563,73 @@ def test_a_secret_two_local_references_away_is_refused():
     }
 
     assert ("WV-COMP-AI_SECRET_INPUT", "error", "/spec/steps/0/context") in errors(document)
+
+
+def joined(pointer):
+    # Joining text keeps the secret out of the result's type, so only the path the expression reads can find it.
+    return {"op": {"name": "concat", "args": [{"literal": "k"}, {"ref": pointer}]}}
+
+
+@pytest.mark.parametrize(
+    ("fields", "pointer"),
+    [
+        ({"creds": {"$ref": "#/$defs/Creds"}}, "/input/creds/token"),
+        ({"creds": {"$ref": "creds.schema.json"}}, "/input/creds/token"),
+        ({"keys": {"type": "array", "items": {"type": "string", "x-secret": True}}}, "/input/keys/0"),
+        ({"login": {"anyOf": [ADDRESS, CREDS]}}, "/input/login/token"),
+    ],
+    ids=["local-reference", "bundled-reference", "array-items", "any-of-branch"],
+)
+def test_a_secret_field_read_through_its_schema_is_refused(fields, pointer):
+    document = with_input(workflow(agent(context=joined(pointer))), **fields)
+    document["spec"]["inputSchema"]["$defs"] = {"Creds": CREDS}
+
+    found = errors(document, catalog(schema_bundle={"creds.schema.json": CREDS}))
+
+    assert ("WV-COMP-AI_SECRET_INPUT", "error", "/spec/steps/0/context") in found
+
+
+class InputOnly:
+    """The one analysis seam the secret check reads: where a pointer lands in the workflow input's schema."""
+
+    bundle: dict = {}
+
+    def reference_documents(self, segments, visible):
+        return [(INPUT, segments[1:])] if segments[:1] == ("input",) else [(INPUT, ())] if not segments else []
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        {"object": {"note": "not an expression"}},
+        {"op": {"name": "concat", "args": [{"literal": "k"}, {"ref": "/input/region", "literal": "x"}]}},
+        {"op": {"name": "concat", "args": [{"literal": "k"}, {"ref": "input/region"}]}},
+    ],
+    ids=["value-outside-the-grammar", "node-with-two-tags", "pointer-that-does-not-parse"],
+)
+def test_an_expression_the_check_cannot_read_counts_as_reading_every_secret(expression):
+    # The schema refuses these before the agent checks run; the check still fails closed if one gets through.
+    assert reads_secret(InputOnly(), expression, {}) is True
+
+
+def test_an_expression_that_reads_no_secret_passes_the_check():
+    expression = {
+        "object": {"literal": {"op": {"name": "concat", "args": [{"literal": "k"}, {"ref": "/input/region"}]}}}
+    }
+
+    assert reads_secret(InputOnly(), expression, {}) is False
+
+
+def test_a_secret_read_from_a_loop_item_is_refused():
+    loop = {
+        "id": "each",
+        "kind": "forEach",
+        "items": {"ref": "/input/accounts"},
+        "body": {"steps": [agent(context=joined("/item/token"))], "output": {"literal": None}},
+    }
+    document = with_input(workflow(loop), accounts={"type": "array", "items": CREDS})
+
+    assert ("WV-COMP-AI_SECRET_INPUT", "error", "/spec/steps/0/body/steps/0/context") in errors(document)
 
 
 def test_a_field_whose_reference_holds_no_secret_may_reach_the_model():

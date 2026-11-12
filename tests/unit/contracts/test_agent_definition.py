@@ -253,7 +253,18 @@ def test_every_tool_name_check_accepts_the_same_names():
     from firefly_weave.contracts import definitions, step_tests
     from firefly_weave.contracts.agent_turns import turn_input_schema
 
-    names = ["lookup_order", "A", "a" * 64, "a" * 65, "1lookup", "_invalid_tool", "look up", "lookup.order", "é"]
+    names = [
+        "lookup_order",
+        "lookup-order",
+        "A",
+        "a" * 64,
+        "a" * 65,
+        "1lookup",
+        "_invalid_tool",
+        "look up",
+        "lookup.order",
+        "é",
+    ]
 
     def accepted(name_type: object) -> list[str]:
         adapter = TypeAdapter(name_type)
@@ -272,7 +283,7 @@ def test_every_tool_name_check_accepts_the_same_names():
     def turn_accepts(name: str) -> bool:
         return not validate_payload(tool_schema, {"name": name, "description": "Look up.", "parameters": {}}, {})
 
-    expected = ["lookup_order", "A", "a" * 64]
+    expected = ["lookup_order", "lookup-order", "A", "a" * 64]
     assert accepted(definitions.ToolName) == accepted(step_tests.ToolName) == expected
     assert [name for name in names if compiler_accepts(name)] == expected
     assert [name for name in names if turn_accepts(name)] == expected

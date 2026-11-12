@@ -194,7 +194,7 @@ def reads_secret(checks: AgentChecks, expression: JsonObject, visible: dict[str,
         try:
             segments = pointer_segments(pointer)
         except ExpressionFailure:
-            continue
+            segments = ()
         for document, path in checks.reference_documents(segments, visible):
             if _secret_at(document, path, checks.bundle):
                 return True
@@ -202,16 +202,30 @@ def reads_secret(checks: AgentChecks, expression: JsonObject, visible: dict[str,
 
 
 def _references(expression: JsonValue) -> Iterator[str]:
+    """Every pointer an expression reads, walked by its grammar: each node is one ``{tag: value}``.
+
+    An object's keys are data, never tags, so only its values are walked; a literal holds data and stops the walk.
+    A node outside the grammar may read anything, so it counts as reading the whole context (the pointer ``""``).
+    """
     pending = [expression]
     while pending:
         node = pending.pop()
-        if isinstance(node, list):
-            pending.extend(node)
-        elif isinstance(node, dict):
-            if isinstance(node.get("ref"), str):
-                yield cast(str, node["ref"])
-            elif "literal" not in node:
-                pending.extend(node.values())
+        if not isinstance(node, dict) or len(node) != 1:
+            yield ""
+            continue
+        tag, value = next(iter(node.items()))
+        if tag == "literal":
+            continue
+        if tag == "ref" and isinstance(value, str):
+            yield value
+        elif tag == "object" and isinstance(value, dict):
+            pending.extend(value.values())
+        elif tag == "array" and isinstance(value, list):
+            pending.extend(value)
+        elif tag == "op" and isinstance(value, dict) and isinstance(value.get("args"), list):
+            pending.extend(cast(list[JsonValue], value["args"]))
+        else:
+            yield ""
 
 
 def _marked(node: JsonObject) -> bool:
