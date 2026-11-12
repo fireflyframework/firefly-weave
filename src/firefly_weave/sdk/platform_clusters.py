@@ -474,11 +474,13 @@ def _tool_environment(context: str, **extra: str) -> dict[str, str]:
     return env
 
 
-def _lifecycle(directory: Path, context: str | None) -> tuple[dict[str, Any], str]:
-    """The folder that keeps the tools and private logs, and the Docker context: the installation's unless given."""
+def _lifecycle(directory: Path, context: str | None) -> tuple[Path, dict[str, Any], str]:
+    """The private folder that keeps the tools and logs, and the Docker context: the installation's unless given."""
     if not directory.is_dir():
         # weave platform setup refuses a folder that exists, so this never makes the installation's folder.
         raise local.PlatformError("Run weave platform up first, or pass --directory with an existing folder.")
+    # Like every platform command, only a folder that is yours alone, never through a symlink.
+    directory = local._private_directory(directory)
     if context is None:
         try:
             context = str(strict_json(read_file(directory / "platform.json", 65536, private=True))["context"])
@@ -486,7 +488,7 @@ def _lifecycle(directory: Path, context: str | None) -> tuple[dict[str, Any], st
             raise local.PlatformError(
                 "Run weave platform up first, or pass --context with the platform's Docker context."
             ) from None
-    return {"directory": str(directory), "source": str(directory)}, context
+    return directory, {"directory": str(directory), "source": str(directory)}, context
 
 
 def _docker_host(state: dict[str, Any], context: str) -> str:
@@ -638,7 +640,7 @@ def create_cluster(
     if connect:
         # TODO(T-g8fz7adl1o8): connect the new cluster once weave platform cluster connect exists.
         raise local.PlatformError("Connecting a new cluster isn't available yet; create it with --no-connect.")
-    state, context = _lifecycle(directory, context)
+    directory, state, context = _lifecycle(directory, context)
     if _exists(state, provider, cluster, context):
         raise local.PlatformError(
             f"A cluster named {cluster} already exists on context {context}; nothing was changed."
@@ -672,7 +674,7 @@ def delete_cluster(directory: Path, provider: str, cluster: str, *, context: str
     """Delete a test cluster; a cluster that still has connected targets is refused until they're disconnected."""
     if provider not in PROVIDERS or cluster_name_problem(cluster):
         raise local.PlatformError(NAME_PROBLEM)
-    state, context = _lifecycle(directory, context)
+    directory, state, context = _lifecycle(directory, context)
     connected = receipt(directory)["clusters"].get(f"{provider}-{cluster}", {}).get("targets", {})
     if connected:
         # TODO(T-g8fz7adl1o8): disconnect each target once weave platform cluster disconnect exists.

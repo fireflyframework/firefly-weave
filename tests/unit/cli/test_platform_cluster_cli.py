@@ -292,7 +292,7 @@ def test_the_docker_context_comes_from_the_installation_or_must_be_given(world, 
     assert result.exit_code == 0, result.output
     assert calls(commands, "create")[0].env["DOCKER_CONTEXT"] == "colima-weave-tests"
     elsewhere = tmp_path / "elsewhere"
-    elsewhere.mkdir()
+    elsewhere.mkdir(mode=0o700)
     result = CliRunner().invoke(
         cli,
         [
@@ -318,6 +318,16 @@ def test_create_never_makes_the_installation_folder(world, tmp_path):
     result = create(missing)
     assert result.exit_code != 0 and "weave platform up" in result.output
     assert not missing.exists() and commands.calls == []
+
+
+def test_an_installation_folder_that_others_can_open_is_refused_before_any_command(world):
+    """Like every platform command, create and delete keep their tools and logs only in a folder that is yours alone."""
+    directory, commands, _ = world
+    directory.chmod(0o755)
+    for result in (create(directory), invoke(directory, "delete")):
+        assert result.exit_code != 0
+        assert "The installation directory must belong to you with permissions 0700." in result.output
+    assert commands.calls == []
 
 
 def test_deleting_a_kind_cluster_also_removes_its_own_network(world):
