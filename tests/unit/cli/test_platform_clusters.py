@@ -1577,24 +1577,44 @@ def test_list_check_compares_only_the_worker_deployments_hardening(world, change
     assert applied(commands, before) == [] and not [call for call in commands.calls[before:] if "create" in call.argv]
 
 
-def test_deleting_a_drifted_worker_and_connecting_again_repairs_it(world):
-    """Connect creates the worker only when it's missing, so a changed one is repaired by deleting it first: it comes
-    back as rendered, at 0 replicas."""
+REPAIR = (
+    "kubectl --context kind-weave-test --namespace weave-workers delete deployment/weave-worker "
+    "secret/weave-worker-identity"
+)
+
+
+def test_the_guides_worker_repair_brings_the_worker_back_with_a_new_secret(world):
+    """Connect creates the worker and its secret only when they're missing, so the repair deletes both: a drifted
+    worker may have sent its secret elsewhere. The worker comes back as rendered, at 0 replicas, and its client gets a
+    new secret, which voids the old one."""
     directory, commands, config, cluster = world
+
+    def drift():
+        return clusters.clusters(directory, check=True, kubeconfig=config)["clusters"][0]["targets"][0]["drift"]
+
     connect(world)
     commands.answer([KUBECTL, "get", "deployment", "weave-runner-weave-workers", "-o"], "2026-11-12T10:00:00.000000Z")
     commands.answer([KUBECTL, "diff"], "")
     cluster.worker["spec"]["replicas"] = 3
     cluster.worker["spec"]["template"]["spec"]["hostAliases"] = [{"ip": "203.0.113.7", "hostnames": ["weave-api"]}]
     connect(world)
-    assert clusters.clusters(directory, check=True, kubeconfig=config)["clusters"][0]["targets"][0]["drift"] == [
-        "Deployment/weave-worker"
-    ]
-    cluster.worker = None
+    assert drift() == ["Deployment/weave-worker"]
+    cluster.worker, cluster.worker_secret = None, False
+    asked, before = len(cluster.keycloak), len(commands.calls)
     connect(world)
-    assert clusters.clusters(directory, check=True, kubeconfig=config)["clusters"][0]["targets"][0]["drift"] == []
+    assert drift() == []
     assert cluster.worker["spec"]["replicas"] == 0
     assert "hostAliases" not in cluster.worker["spec"]["template"]["spec"]
+    # The worker's client gets a new secret before the runner's routine rotation, and the Secret holds that one.
+    assert [sorted(named) for named in cluster.keycloak[asked:]] == [
+        ["weave-cluster-worker-1"],
+        ["weave-cluster-runner-1"],
+    ]
+    issued = cluster.keycloak[asked]["weave-cluster-worker-1"]
+    (written,) = [call for call in commands.calls[before:] if {"generic", "weave-worker-identity"} <= set(call.argv)]
+    assert written.stdin == issued != cluster.keycloak[0]["weave-cluster-worker-1"]
+    # And the guide's repair deletes exactly these two.
+    assert REPAIR in (ROOT / "docs/operations/cluster-management.md").read_text()
 
 
 def test_list_check_names_a_deleted_workers_namespace_as_drift(world):

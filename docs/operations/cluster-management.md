@@ -537,18 +537,24 @@ the platform built, which `connect` pushes to the platform registry; when Docker
 no longer holds that image, `--check` says so, and `list` without `--check`
 still works.
 
-Connect creates the worker Deployment only when it's missing, so a changed one
-stays drifted after `connect`. To repair it, delete it, then connect again:
+Connect creates the worker Deployment and its sign-in secret only when they're
+missing, so a changed worker stays drifted after `connect`. To repair it, delete
+both, connect again, and check:
 
 ```sh
-# Delete the drifted worker Deployment of the weave-workers namespace, then connect again to recreate it.
-kubectl --context kind-weave-test --namespace weave-workers delete deployment weave-worker
+# Delete the drifted worker and its sign-in secret in weave-workers, connect again, then check.
+kubectl --context kind-weave-test --namespace weave-workers delete deployment/weave-worker secret/weave-worker-identity
 weave platform cluster connect --provider kind --name weave-test
+weave platform cluster list --check
 ```
 
-Deleting it stops the namespace's workers. Connect recreates it as it first did,
-at 0 replicas, so they stay stopped until a reviewed change request scales them
-again; see [Request a change](#request-a-change).
+This also replaces the workers' sign-in secret, since a drifted worker may have
+sent it elsewhere. Tokens already issued with the old secret stay valid until
+they expire. Deleting the Deployment stops the namespace's workers. Connect
+recreates it as it first did, at 0 replicas, so they stay stopped until a
+reviewed change request scales them again; see
+[Request a change](#request-a-change). Connect skips the Deployment when someone
+recreated it in the meantime, so only `list --check` confirms the repair.
 
 ## After weave platform up
 
