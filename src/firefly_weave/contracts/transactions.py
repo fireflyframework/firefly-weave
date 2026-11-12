@@ -29,9 +29,10 @@ digit-first segments belong to AI agent turns.
 
 from collections.abc import Iterable, Mapping, Sequence
 from types import MappingProxyType
-from typing import Any, Final, Literal, get_args
+from typing import Any, Final, Literal, Protocol, get_args
 
-from firefly_weave.contracts.instance_keys import InvalidInstanceKey, split_instance
+from firefly_weave.contracts.instance_keys import InvalidInstanceKey, instance_view, split_instance
+from firefly_weave.contracts.values import JsonObject
 
 type TransactionState = Literal[
     "open",
@@ -196,3 +197,41 @@ def dispatch_effect(calls: bool, action_digests: Iterable[str], dependencies: Se
         if dependency.get("kind") == "Action"
     }
     return "none" if all(effects.get(digest) == "read_only" for digest in digests) else "unknown"
+
+
+class Participant(Protocol):
+    """What a view of one step of a transaction reads from its record."""
+
+    @property
+    def key(self) -> str: ...
+
+    @property
+    def mode(self) -> UndoMode: ...
+
+    @property
+    def status(self) -> ParticipantStatus: ...
+
+    @property
+    def effect(self) -> Effect: ...
+
+    @property
+    def attempts(self) -> int: ...
+
+
+def participants_view(participants: Iterable[Participant]) -> list[JsonObject]:
+    """Keys, modes, statuses and attempts of each participant; never a value. Platform runs and simulated runs
+    share this view."""
+    views: list[JsonObject] = []
+    for item in participants:
+        identity = instance_view(item.key)
+        view: JsonObject = {
+            "node_id": identity.node_id,
+            "instance_key": item.key,
+            "mode": item.mode,
+            "status": item.status,
+            "effect": item.effect,
+        }
+        if item.attempts:
+            view["attempts"] = item.attempts
+        views.append(view)
+    return views

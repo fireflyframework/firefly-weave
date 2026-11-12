@@ -28,7 +28,12 @@ from typing import TYPE_CHECKING, Any
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from firefly_weave.contracts.instance_keys import instance_view, node_of
-from firefly_weave.contracts.transactions import TRANSACTION_STATE_ORDER, dispatch_effect, split_phase
+from firefly_weave.contracts.transactions import (
+    TRANSACTION_STATE_ORDER,
+    dispatch_effect,
+    participants_view,
+    split_phase,
+)
 from firefly_weave.contracts.values import JsonObject
 from firefly_weave.operations.facts import task_fact_update
 from firefly_weave.runtime.models import ControlCommand, RuntimeEvent, TransactionRecord, Transition
@@ -258,24 +263,6 @@ def worst(transactions: Mapping[str, TransactionRecord]) -> str | None:
     return next((state for state in TRANSACTION_STATE_ORDER if state in states), None)
 
 
-def participants_view(record: TransactionRecord) -> list[JsonObject]:
-    """Keys, modes, statuses and attempts of each participant; never a value."""
-    views: list[JsonObject] = []
-    for item in record.participants:
-        identity = instance_view(item.key)
-        view: JsonObject = {
-            "node_id": identity.node_id,
-            "instance_key": item.key,
-            "mode": item.mode,
-            "status": item.status,
-            "effect": item.effect,
-        }
-        if item.attempts:
-            view["attempts"] = item.attempts
-        views.append(view)
-    return views
-
-
 # Statuses that show a transaction is going back.
 _GOING_BACK = frozenset({"undoing", "undo_stuck", "cancelling", "cancel_stuck", "undone", "cancelled"})
 # Phases of the participant statuses whose work is not finished.
@@ -401,7 +388,7 @@ def event_facts(
     from firefly_weave.contracts.platform_events import TransactionEventFacts
 
     code = re.compile(r"^[A-Z][A-Z0-9_-]{0,63}$")
-    views = participants_view(record)
+    views = participants_view(record.participants)
     waiting = set(pending(record.status, views)) if record.status not in {"completed", "reconciled"} else set()
     if record.rollback:
         waiting |= {item.key for item in record.participants if item.status in {"done", "unknown"}}
@@ -531,7 +518,7 @@ async def project_transactions(
             state=record.status,
             business_key=None if record.business_key_withheld else record.business_key,
             cause=None if record.cause is None else record.cause.model_dump_json(),
-            participants=json.dumps(participants_view(record)),
+            participants=json.dumps(participants_view(record.participants)),
             revision=record.revision,
             opened=record.opened_at,
             decided=decided,
