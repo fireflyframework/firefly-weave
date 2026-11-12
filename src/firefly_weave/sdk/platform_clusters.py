@@ -604,8 +604,8 @@ def _only_ours(connection: _Connection, ids: dict[str, str], members: dict[str, 
 
 
 def _leave(connection: _Connection, containers: list[str], error: local.PlatformError) -> local.PlatformError:
-    """Take the platform's containers this call joined off the cluster network again; the error to raise, which
-    names any container that couldn't leave and the command that removes it."""
+    """Take these platform containers off the cluster network; the error to raise, which names any container that
+    couldn't leave and the command that removes it."""
     network, stayed = connection.found.network, []
     for container in containers:
         command = [*_docker(connection), "network", "disconnect", network, container]
@@ -621,13 +621,18 @@ def _leave(connection: _Connection, containers: list[str], error: local.Platform
 def _join(connection: _Connection) -> dict[str, Any]:
     """Join the API's network namespace (the keycloak container) and the registry to the cluster network, only while
     it holds nothing but the cluster's own nodes and those two containers. The rule is checked before the join and
-    again after it; when the second check fails, the containers this call joined leave the network again. Returns
-    the cluster's record at the platform's addresses there, which the caller saves once its objects carry them."""
+    again after it. When the first check fails, the platform's containers an earlier connect joined leave the network;
+    when the second fails, the containers this call joined leave it again. Returns the cluster's record at the
+    platform's addresses there, which the caller saves once its objects carry them."""
     found = connection.found
     services = {"keycloak": "weave-platform", "registry": "weave-registry"}
     ids = {service: _platform_container(connection, service) for service in services}
     subnet, members = _network_view(connection)
-    _only_ours(connection, ids, members)
+    try:
+        _only_ours(connection, ids, members)
+    except local.PlatformError as error:
+        present = [ids[service] for service in services if any(key.startswith(ids[service]) for key in members)]
+        raise _leave(connection, present, error) from None
     local._validate_subnet(subnet)
     joined: list[str] = []
     try:

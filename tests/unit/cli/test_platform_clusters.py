@@ -802,6 +802,35 @@ def test_a_container_that_cant_leave_the_network_is_named_with_the_command_that_
     assert cluster.joined == {KEYCLOAK}
 
 
+def test_a_refresh_that_finds_another_container_takes_the_platform_off_the_network(world):
+    """A container that joined the cluster network after connect makes refresh refuse, and the platform's keycloak
+    (whose network namespace the API shares) and registry, which that earlier connect joined, leave the network."""
+    directory, commands, _, cluster = world
+    connect(world)
+    assert {KEYCLOAK, REGISTRY} <= cluster.joined
+    cluster.extra = ["someone-else"]
+    lines = []
+    before = len(commands.calls)
+    assert clusters.refresh(directory, lines.append) == [{"name": "kind-weave-test", "state": "unreachable"}]
+    assert lines[-1] == f"kind-weave-test: not refreshed. {clusters.OTHER_CONTAINERS}"
+    assert network_changes(commands, before) == [("disconnect", KEYCLOAK), ("disconnect", REGISTRY)]
+    assert cluster.joined == set()
+    assert applied(commands, before) == []
+
+
+def test_a_reconnect_that_finds_another_container_takes_the_platform_off_the_network(world):
+    _, commands, _, cluster = world
+    connect(world)
+    cluster.extra = ["someone-else"]
+    before = len(commands.calls)
+    with pytest.raises(PlatformError) as refused:
+        connect(world)
+    assert str(refused.value) == clusters.OTHER_CONTAINERS
+    assert network_changes(commands, before) == [("disconnect", KEYCLOAK), ("disconnect", REGISTRY)]
+    assert cluster.joined == set()
+    assert applied(commands, before) == []
+
+
 FOREIGN = json.dumps({"metadata": {"labels": {"firefly.weave/installation": "b" * 24}}})
 
 
