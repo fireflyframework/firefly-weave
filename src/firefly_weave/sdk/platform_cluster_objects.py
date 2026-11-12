@@ -37,6 +37,7 @@ from firefly_weave import private_origins
 from firefly_weave.contracts.deployments import DeploymentCapability
 from firefly_weave.deployment_runner.application import RunnerConfiguration
 from firefly_weave.deployment_runner.policy import ComponentBinding, DestinationPolicy
+from firefly_weave.sdk.platform_operations import cluster_clients
 
 SYSTEM_NAMESPACE = "weave-system"
 API_SERVICE = "weave-api"
@@ -608,7 +609,7 @@ def target_objects(target: ClusterTarget) -> list[dict[str, Any]]:
     subject = [{"kind": "ServiceAccount", "name": runner, "namespace": SYSTEM_NAMESPACE}]
     runner_config = {
         "runner.json": _runner_configuration(target),
-        "oauth.json": _oauth(f"weave-cluster-runner-{target.pair}"),
+        "oauth.json": _oauth(cluster_clients(target.pair)[0]),
     }
     kubeconfig = {"config": _kubeconfig(namespace)}
     origins = {"private-origins.json": _origins_text(target.network)}
@@ -618,7 +619,7 @@ def target_objects(target: ClusterTarget) -> list[dict[str, Any]]:
         _account("default", namespace, labels),
         *_policies(target.network, namespace, labels),
         _config_map(ORIGINS, namespace, labels, origins),
-        _config_map(WORKER_CONFIG, namespace, labels, {"oauth.json": _oauth(f"weave-cluster-worker-{target.pair}")}),
+        _config_map(WORKER_CONFIG, namespace, labels, {"oauth.json": _oauth(cluster_clients(target.pair)[1])}),
         _account(runner, SYSTEM_NAMESPACE, labels),
         {
             "apiVersion": "rbac.authorization.k8s.io/v1",

@@ -66,7 +66,18 @@ REGISTRY = "registry"
 TASK_TYPE = "example-sleep@1.0.0"
 WORKER_CLIENT = "weave-operations-worker"
 RUNNER_CLIENT = "weave-operations-runner"
-CLIENTS = {WORKER_CLIENT: "application", RUNNER_CLIENT: "application"}
+# Each connected cluster target signs in with one runner and one worker client of a fixed pair. The API's client
+# allowlist is exact, so up lists every pair once instead of recreating the API on each connect.
+CLUSTER_PAIRS = 8
+
+
+def cluster_clients(pair: int) -> tuple[str, str]:
+    """The runner and the worker client ID of a cluster target's identity pair (1 to CLUSTER_PAIRS)."""
+    return f"weave-cluster-runner-{pair}", f"weave-cluster-worker-{pair}"
+
+
+CLUSTER_CLIENTS = {name: "application" for pair in range(1, CLUSTER_PAIRS + 1) for name in cluster_clients(pair)}
+CLIENTS = {WORKER_CLIENT: "application", RUNNER_CLIENT: "application", **CLUSTER_CLIENTS}
 # Workers get this long to finish their tasks when stopped, by Compose and by platform stop alike.
 WORKER_STOP_SECONDS = 240
 STOP_GRACE = f"{WORKER_STOP_SECONDS}s"
@@ -185,7 +196,8 @@ def unavailable() -> dict[str, Any]:
 
 
 def prepare_provider(state: dict[str, Any]) -> bool:
-    """Let the API accept the two operations clients; True when runtime.env changed (the API is recreated)."""
+    """Let the API accept the operations clients and every cluster pair; True when runtime.env changed (the API is
+    recreated)."""
     path = Path(state["directory"]) / "runtime.env"
     runtime = local._env_file(path)
     providers = json.loads(runtime["WEAVE_OIDC_PROVIDERS"])
@@ -492,9 +504,10 @@ def _publish_secrets(state: dict[str, Any], value: dict[str, Any]) -> dict[str, 
 
 
 async def _keycloak_clients(
-    state: dict[str, Any], secrets_by_name: dict[str, bytes], transport: httpx.AsyncBaseTransport | None
+    state: dict[str, Any], secrets_by_client: dict[str, bytes], transport: httpx.AsyncBaseTransport | None
 ) -> dict[str, str]:
-    """Create or update the two confidential clients from weave-worker's mappers; their service-account subjects."""
+    """Create or update each named confidential client with its secret and weave-worker's mappers; their
+    service-account subjects by client ID. An existing client keeps everything but gets the new secret."""
     import httpx
 
     keycloak = f"http://localhost:{state['ports']['keycloak']}"
@@ -515,13 +528,13 @@ async def _keycloak_clients(
             raise local.PlatformError("The local Keycloak worker client could not be read; nothing was changed.")
         mappers = [{k: v for k, v in item.items() if k != "id"} for item in template["protocolMappers"]]
         subjects = {}
-        for client_id, name in ((WORKER_CLIENT, "worker-client-secret"), (RUNNER_CLIENT, "runner-client-secret")):
+        for client_id, secret in secrets_by_client.items():
             representation = {
                 "clientId": client_id,
                 "enabled": True,
                 "protocol": "openid-connect",
                 "publicClient": False,
-                "secret": secrets_by_name[name].decode(),
+                "secret": secret.decode(),
                 "serviceAccountsEnabled": True,
                 "directAccessGrantsEnabled": False,
                 "standardFlowEnabled": False,
@@ -557,27 +570,40 @@ async def _keycloak_clients(
         return subjects
 
 
+# The operations principals: (role, principal kind, client ID).
+PRINCIPALS = (("worker", "worker", WORKER_CLIENT), ("runner", "application", RUNNER_CLIENT))
+
+
 async def _principals(
-    client: WeaveClient, state: dict[str, Any], value: dict[str, Any], save: Callable[[], None]
+    client: WeaveClient,
+    state: dict[str, Any],
+    value: dict[str, Any],
+    save: Callable[[], None],
+    *,
+    roles: tuple[tuple[str, str, str], ...],
+    subjects: dict[str, str],
+    key: str,
 ) -> None:
-    """The worker and runner principals, each linked to its client's service account."""
+    """One principal per (role, kind, client ID), each linked to its client's service account. `value` records
+    `<role>_principal_id` and `<role>_linked`; the key `<key>-<role>-principal` makes a resumed create answer the
+    principal the lost response named."""
     from firefly_weave.contracts.members import PrincipalCreateRequest, PrincipalIdentityRequest
     from firefly_weave.sdk.members import MembersClient
 
     members = MembersClient(client)
     issuer = f"http://localhost:{state['ports']['keycloak']}/realms/weave"
-    for role, kind, client_id in (("worker", "worker", WORKER_CLIENT), ("runner", "application", RUNNER_CLIENT)):
+    for role, kind, client_id in roles:
         if value.get(role + "_principal_id") is None:
             # A repeated key answers the principal the lost response named, so a resumed setup makes no second one.
             created = await members.create_principal(
                 PrincipalCreateRequest(kind=kind),  # type: ignore[arg-type]
-                idempotency_key=f"weave-platform-operations-{state['id']}-{role}-principal",
+                idempotency_key=f"{key}-{role}-principal",
             )
             value[role + "_principal_id"] = str(created.id)
             save()
         if not value.get(role + "_linked"):
             request = PrincipalIdentityRequest(
-                provider_id=local._PROVIDER_ID, issuer=issuer, subject=value["subjects"][client_id]
+                provider_id=local._PROVIDER_ID, issuer=issuer, subject=subjects[client_id]
             )
             await members.link_identity(UUID(value[role + "_principal_id"]), request)
             value[role + "_linked"] = True
@@ -623,12 +649,12 @@ def target_request(state: dict[str, Any], value: dict[str, Any]) -> dict[str, An
     }
 
 
-async def _target(client: WeaveClient, state: dict[str, Any], value: dict[str, Any], save: Callable[[], None]) -> None:
-    from firefly_weave.contracts.deployments import DeploymentRequest, TargetRequest
+async def _host_planner(
+    client: WeaveClient, state: dict[str, Any], value: dict[str, Any], save: Callable[[], None]
+) -> None:
     from firefly_weave.contracts.members import MemberGrantRequest
     from firefly_weave.sdk.members import MembersClient
 
-    key = "weave-platform-operations-" + state["id"]
     if not value.get("host_planner"):
         # The host account administers the demo tenant but plans no deployments; registering local-docker and its
         # deployment needs target.manage, so it grants itself the planner role here (audited like any grant).
@@ -644,36 +670,54 @@ async def _target(client: WeaveClient, state: dict[str, Any], value: dict[str, A
         )
         value["host_planner"] = True
         save()
+
+
+def deployment_request(name: str, component: str, value: dict[str, Any]) -> dict[str, Any]:
+    """A managed deployment of one fixture worker component at 0 replicas; the target is added when known."""
+    return {
+        "name": name,
+        "ownership": "managed",
+        "components": [
+            {
+                "name": component,
+                "kind": "worker",
+                "image": value["worker_image"],
+                "configuration": "local",
+                "replicas": 0,
+                "worker_release_id": value["release_id"],
+            }
+        ],
+    }
+
+
+async def _target(
+    client: WeaveClient,
+    value: dict[str, Any],
+    save: Callable[[], None],
+    *,
+    scope: dict[str, str],
+    request: dict[str, Any],
+    deployment: dict[str, Any],
+    key: str,
+) -> None:
+    """Register the target, its deployment and the runner's grant on that target only; `value` records
+    `target_id`, `deployment_id` and `runner_granted`, and the keys `<key>-target` and `<key>-deployment` make a
+    resumed registration answer what a lost response created."""
+    from firefly_weave.contracts.deployments import DeploymentRequest, TargetRequest
+    from firefly_weave.contracts.members import MemberGrantRequest
+    from firefly_weave.sdk.members import MembersClient
+
     if value.get("target_id") is None:
-        request = TargetRequest.model_validate_json(json.dumps(target_request(state, value)))
-        created = await client.invoke("deployment_targets.create", body=request, idempotency_key=key + "-target")
+        target = TargetRequest.model_validate_json(json.dumps(request))
+        created = await client.invoke("deployment_targets.create", body=target, idempotency_key=key + "-target")
         value["target_id"] = str(created.id)
         save()
     if value.get("deployment_id") is None:
-        deployment = DeploymentRequest.model_validate_json(
-            json.dumps(
-                {
-                    "target_id": value["target_id"],
-                    "name": DEPLOYMENT,
-                    "ownership": "managed",
-                    "components": [
-                        {
-                            "name": COMPONENT,
-                            "kind": "worker",
-                            "image": value["worker_image"],
-                            "configuration": "local",
-                            "replicas": 0,
-                            "worker_release_id": value["release_id"],
-                        }
-                    ],
-                }
-            )
-        )
-        created = await client.invoke("deployments.create", body=deployment, idempotency_key=key + "-deployment")
+        managed = DeploymentRequest.model_validate_json(json.dumps({"target_id": value["target_id"], **deployment}))
+        created = await client.invoke("deployments.create", body=managed, idempotency_key=key + "-deployment")
         value["deployment_id"] = str(created.id)
         save()
     if value.get("runner_granted") != value["target_id"]:
-        scope = value["scope"]
         await MembersClient(client).grant(
             MemberGrantRequest(
                 principal_id=UUID(value["runner_principal_id"]),
@@ -896,9 +940,15 @@ def enable(
                     transport,
                 )
             )
-            value["subjects"] = asyncio.run(_keycloak_clients(state, found, transport))
+            named = {WORKER_CLIENT: found["worker-client-secret"], RUNNER_CLIENT: found["runner-client-secret"]}
+            value["subjects"] = asyncio.run(_keycloak_clients(state, named, transport))
             advance()
-            asyncio.run(_api(state, value, lambda client: _principals(client, state, value, save), transport))
+            key = "weave-platform-operations-" + state["id"]
+
+            async def principals(client: WeaveClient) -> None:
+                await _principals(client, state, value, save, roles=PRINCIPALS, subjects=value["subjects"], key=key)
+
+            asyncio.run(_api(state, value, principals, transport))
             advance("identities")
 
             stage = "release"
@@ -918,7 +968,20 @@ def enable(
             advance("origins")
 
             stage = "target"
-            asyncio.run(_api(state, value, lambda client: _target(client, state, value, save), transport))
+
+            async def register(client: WeaveClient) -> None:
+                await _host_planner(client, state, value, save)
+                await _target(
+                    client,
+                    value,
+                    save,
+                    scope=value["scope"],
+                    request=target_request(state, value),
+                    deployment=deployment_request(DEPLOYMENT, COMPONENT, value),
+                    key=key,
+                )
+
+            asyncio.run(_api(state, value, register, transport))
             advance("target")
 
             stage = "runner"

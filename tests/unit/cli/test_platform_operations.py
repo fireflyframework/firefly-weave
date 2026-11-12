@@ -22,6 +22,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
+import httpx
 import pytest
 from ai_platform_support import OWNER, SCOPE, SERVER_IMAGE, SUBNET, owned_fixture  # noqa: F401
 
@@ -33,6 +34,9 @@ RUNNER_IMAGE_ID = "sha256:" + "2" * 64
 PUSHED = "sha256:" + "3" * 64
 SUBJECTS = {"weave-operations-worker": str(uuid4()), "weave-operations-runner": str(uuid4())}
 HOST = str(uuid4())
+CLUSTER_CLIENTS = {
+    f"weave-cluster-{role}-{pair}": "application" for pair in range(1, 9) for role in ("runner", "worker")
+}
 MANIFEST = json.loads((Path(__file__).resolve().parents[2] / "fixtures/operations-worker/manifest.json").read_text())
 
 
@@ -293,21 +297,71 @@ def test_the_provider_accepts_the_operations_clients_once(owned):
         "weave-cli": "human",
         "weave-operations-worker": "application",
         "weave-operations-runner": "application",
+        **CLUSTER_CLIENTS,
     }
     assert platform_operations.prepare_provider(state) is False
     assert platform_docker.environment(state, {})["WEAVE_OIDC_PROVIDERS"]
 
 
-def test_the_api_environment_accepts_exactly_the_operations_clients(owned):
+def test_up_registers_the_cluster_client_pairs_once(owned):
+    """An installation from before cluster connections lists the two operations clients only: the first up of this
+    version adds the eight runner and eight worker clients once, so the API is recreated once, never per connect."""
+    directory, state, _ = owned
+    path = directory / "runtime.env"
+    before = '"weave-cli": "human"'
+    after = before + ', "weave-operations-worker": "application", "weave-operations-runner": "application"'
+    path.write_text(path.read_text().replace(before, after))
+    assert platform_operations.prepare_provider(state) is True
+    clients = json.loads(platform._env_file(path)["WEAVE_OIDC_PROVIDERS"])[0]["clients"]
+    assert {name: kind for name, kind in clients.items() if name.startswith("weave-cluster-")} == CLUSTER_CLIENTS
+    assert platform_operations.prepare_provider(state) is False
+
+
+@pytest.mark.parametrize("intruder", ["intruder", "weave-cluster-runner-9", "weave-cluster-worker-0"])
+def test_the_api_environment_accepts_exactly_the_operations_and_cluster_clients(owned, intruder):
     directory, state, _ = owned
     path = directory / "runtime.env"
     text = path.read_text()
-    path.write_text(text.replace('"weave-cli": "human"', '"weave-cli": "human", "intruder": "application"'))
+    path.write_text(text.replace('"weave-cli": "human"', f'"weave-cli": "human", "{intruder}": "application"'))
     with pytest.raises(platform.PlatformError, match="identity configuration"):
         platform_docker.environment(state, {})
     path.write_text(text)
     platform_operations.prepare_provider(state)
-    platform_docker.environment(state, {})
+    clients = json.loads(platform_docker.environment(state, {})["WEAVE_OIDC_PROVIDERS"])[0]["clients"]
+    assert {"weave-cluster-runner-8", "weave-cluster-worker-8"} <= set(clients)
+
+
+async def test_keycloak_clients_are_made_for_exactly_the_ids_given_and_a_second_secret_updates_them(owned):
+    """A cluster target uses the same client setup with its own pair: only the IDs it passes, with its secret."""
+    _, state, _ = owned
+    subject = str(uuid4())
+    made: dict[str, dict] = {}
+    methods: list[str] = []
+
+    def keycloak(request):
+        path = request.url.path
+        if path.endswith("/token"):
+            return httpx.Response(200, json={"access_token": "admin-token"})
+        if path.endswith("/service-account-user"):
+            return httpx.Response(200, json={"id": subject})
+        if path.endswith("/clients") and request.method == "GET":
+            wanted = request.url.params["clientId"]
+            if wanted == "weave-worker":
+                mapper = {"id": "mapper-1", "name": "sub", "protocolMapper": "oidc-sub-mapper"}
+                return httpx.Response(200, json=[{"id": "template", "clientId": wanted, "protocolMappers": [mapper]}])
+            return httpx.Response(200, json=[made[wanted]] if wanted in made else [])
+        body = json.loads(request.content)
+        methods.append(request.method)
+        made[body["clientId"]] = {**body, "id": "id-" + body["clientId"]}
+        return httpx.Response(201 if request.method == "POST" else 204)
+
+    transport = httpx.MockTransport(keycloak)
+    found = await platform_operations._keycloak_clients(state, {"weave-cluster-runner-3": b"first"}, transport)
+    assert found == {"weave-cluster-runner-3": subject} and list(made) == ["weave-cluster-runner-3"]
+    assert made["weave-cluster-runner-3"]["secret"] == "first"
+    assert made["weave-cluster-runner-3"]["protocolMappers"] == [{"name": "sub", "protocolMapper": "oidc-sub-mapper"}]
+    await platform_operations._keycloak_clients(state, {"weave-cluster-runner-3": b"second"}, transport)
+    assert methods == ["POST", "PUT"] and made["weave-cluster-runner-3"]["secret"] == "second"
 
 
 def test_the_host_account_may_register_the_target_before_it_does(operations):

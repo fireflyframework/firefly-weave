@@ -48,7 +48,7 @@ from firefly_weave.sdk.platform_cluster_objects import SYSTEM_NAMESPACE
 
 PROVIDERS = ("kind", "k3d")
 DEFAULT_NAMESPACE = "weave-workers"
-PAIRS = 8
+PAIRS = platform_operations.CLUSTER_PAIRS
 RECEIPT = "clusters.json"
 FORMAT = "weave/local-clusters-v1"
 # The label each tool puts on a cluster's node containers.
