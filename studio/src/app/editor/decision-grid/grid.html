@@ -90,7 +90,11 @@ SPDX-License-Identifier: Apache-2.0
       </p>
     }
     <div class="dg-box" [style.--dg-min-rows]="minRows()">
-      <div class="dg-scroll">
+      <div
+        class="dg-scroll"
+        [class.is-scrolled-x]="scrolledSideways()"
+        (scroll)="scrolled($event)"
+      >
         <div
           class="dg-grid"
           role="grid"
@@ -108,14 +112,14 @@ SPDX-License-Identifier: Apache-2.0
               <span
                 class="dg-group"
                 [style.grid-column]="'span ' + view.inputs.length"
-                >Inputs</span
+                ><span class="dg-group-label">Inputs</span></span
               >
             }
             @if (view.results.length) {
               <span
                 class="dg-group dg-group-results"
                 [style.grid-column]="'span ' + view.results.length"
-                >Results</span
+                ><span class="dg-group-label">Results</span></span
               >
             }
           </div>
@@ -184,7 +188,10 @@ SPDX-License-Identifier: Apache-2.0
                 role="rowheader"
                 aria-colindex="1"
               >
-                @if (!isOtherwise(r)) {
+                @if (isOtherwise(r)) {
+                  <!-- An empty number slot keeps the mark in line. -->
+                  <span class="dg-number is-blank" aria-hidden="true"></span>
+                } @else {
                   <span class="dg-number">{{ r + 1 }}</span>
                 }
                 @if (mark(r); as m) {
@@ -226,6 +233,11 @@ SPDX-License-Identifier: Apache-2.0
                   [class.is-cursor]="isCursor(r, c)"
                   [class.is-editing]="
                     editing && editing.row === r && editing.col === c
+                  "
+                  [style.min-height.px]="
+                    editing && editing.row === r && editing.col === c
+                      ? editing.height
+                      : null
                   "
                   (click)="cursor.set({ row: r, col: c })"
                   (dblclick)="startEdit(r, c)"

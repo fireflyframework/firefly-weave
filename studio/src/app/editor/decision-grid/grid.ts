@@ -185,9 +185,13 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
     Array.from({ length: this.rowCount() }, (_, index) => index),
   );
   readonly cursor = signal<GridCellAt>({ row: 0, col: 0 });
+  /** The cell being edited; it keeps the height it had, so its row doesn't move. */
   readonly editing = signal<
-    (GridCellAt & { text: string; original: string }) | null
+    | (GridCellAt & { text: string; original: string; height: number | null })
+    | null
   >(null);
+  /** True while the grid is scrolled sideways: the pinned columns show their edge. */
+  readonly scrolledSideways = signal(false);
   /** Cell text that doesn't read, kept in its cell with its message and never written. */
   readonly flagged = signal<
     ReadonlyMap<string, { text: string; message: string }>
@@ -353,7 +357,7 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
    * Sets the drawn minimums: the grid box holds its header, its first five
    * body rows (all of them when fewer) and its footer; the problems list
    * holds its head and its first three problems. The table bar drops its
-   * divider when its items can't share one line.
+   * divider when the table's name starts a new line.
    */
   private measure() {
     const root = this.element.nativeElement;
@@ -394,15 +398,12 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
     const back = bar?.querySelector<HTMLElement>(".dg-back");
     const ident = bar?.querySelector<HTMLElement>(".dg-ident");
     if (bar && back && ident) {
-      const publish = bar.querySelector<HTMLElement>(".dg-publish");
-      // Back, the divider, the name, the spacer (no width, one gap) and
-      // Publish table; the divider counts even while hidden, so hiding it
-      // never lets the line fit again.
-      const items = [back.offsetWidth, 1, ident.scrollWidth, 0];
-      if (publish) items.push(publish.offsetWidth);
+      // The name follows Back on its line while Back, the divider and the
+      // name fit with their gaps; Publish table may wrap on its own. The
+      // divider counts even while hidden, so hiding it never lets the name
+      // fit again.
       const gap = parseFloat(getComputedStyle(bar).columnGap) || 0;
-      const needed =
-        items.reduce((sum, width) => sum + width, 0) + gap * (items.length - 1);
+      const needed = back.offsetWidth + 1 + ident.scrollWidth + 2 * gap;
       bar.classList.toggle("is-wrapped", needed > bar.clientWidth);
     }
   }
@@ -792,7 +793,16 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
     const shown = this.text(row, col);
     const original = shown === "-" ? "" : shown;
     this.cursor.set({ row, col });
-    this.editing.set({ row, col, text: typed ?? original, original });
+    const cell = this.element.nativeElement.querySelector<HTMLElement>(
+      `[data-cell="${row}:${col}"]`,
+    );
+    this.editing.set({
+      row,
+      col,
+      text: typed ?? original,
+      original,
+      height: cell?.offsetHeight ?? null,
+    });
     // Drawn now, so the keys typed next go into the field.
     this.changes.detectChanges();
     const field =
@@ -802,6 +812,11 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
     field?.focus();
     if (typed === undefined) field?.select();
     else field?.setSelectionRange(typed.length, typed.length);
+  }
+  scrolled(event: Event) {
+    const sideways = (event.target as HTMLElement).scrollLeft > 0;
+    if (sideways !== this.scrolledSideways())
+      this.scrolledSideways.set(sideways);
   }
   editInput(event: Event) {
     const editing = this.editing();

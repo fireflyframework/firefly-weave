@@ -100,7 +100,7 @@ SPDX-License-Identifier: Apache-2.0
   height: 20px;
   background: var(--line);
 }
-/* When the bar's items can't share a line, the divider goes. */
+/* When the table's name starts a new line, the divider goes. */
 .dg-bar.is-wrapped .dg-divider {
   display: none;
 }
@@ -270,6 +270,13 @@ button.dg-publish {
 .dg-group-results {
   border-left: 2px solid var(--border);
 }
+/* A group's label stays whole while the grid scrolls sideways: it stops
+   at the pinned columns' edge, inside its own span. */
+.dg-group-label {
+  position: sticky;
+  left: calc(var(--dg-mark) + var(--dg-name) + var(--space-3));
+  white-space: nowrap;
+}
 .dg-th,
 .dg-td {
   box-sizing: border-box;
@@ -346,6 +353,13 @@ button.dg-publish {
   .dg-name-cell:focus-within .dg-cell-text {
     padding-right: calc(var(--dg-menu) + var(--space-1) - var(--space-3));
   }
+  /* A wrapping rule name keeps the menu's room all the time, so it never
+     wraps again when the menu shows. */
+  @media (min-width: 768px) {
+    .dg-row:not(.dg-otherwise) .dg-td.dg-name-cell .dg-cell-text {
+      padding-right: calc(var(--dg-menu) + var(--space-1) - var(--space-3));
+    }
+  }
 }
 .dg-th:is(:hover, :focus-within, .is-cursor-col) .dg-th-menu,
 .dg-row:is(:hover, .is-cursor-row) .dg-rule-menu,
@@ -410,6 +424,22 @@ button.dg-publish {
 .dg-th.dg-name-cell {
   z-index: 4;
 }
+/* Scrolled sideways, the pinned columns end at the line that splits
+   Inputs from Results, so the cells sliding under them read as cut. */
+.dg-scroll.is-scrolled-x :is(.dg-group-start, .dg-name-cell)::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: -1px;
+  right: -1px;
+  z-index: 2;
+  width: 2px;
+  background: var(--border);
+  pointer-events: none;
+}
+.dg-scroll.is-scrolled-x .dg-group-start::before {
+  right: 0;
+}
 .dg-first-result {
   border-left: 2px solid var(--border);
 }
@@ -421,6 +451,23 @@ button.dg-publish {
 .dg-name-cell .dg-cell-text {
   flex: 1;
 }
+/* From 768 px a rule's name wraps like a formula: two lines at most, the
+   row growing, then an ellipsis (its tooltip has it whole). The padding
+   holds a one-line name in the row's height. The phone layout keeps one
+   line. */
+@media (min-width: 768px) {
+  .dg-td.dg-name-cell {
+    white-space: normal;
+    padding-block: calc((var(--dg-row) - 21px) / 2);
+  }
+  .dg-td.dg-name-cell .dg-cell-text {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    overflow-wrap: anywhere;
+  }
+}
 .dg-td.is-empty .dg-cell-text {
   color: var(--subtle);
 }
@@ -428,6 +475,9 @@ button.dg-publish {
   min-width: 1em;
   font: var(--type-caption);
   color: var(--muted);
+}
+.dg-number.is-blank {
+  visibility: hidden;
 }
 .dg-mark {
   display: inline-flex;
@@ -719,6 +769,7 @@ button.dg-tool[disabled] {
   padding-block: calc((var(--dg-bar) - 20px) / 2);
 }
 .dg-problems code {
+  white-space: nowrap;
   padding: 1px 6px;
   border-radius: var(--radius-xs);
   background: var(--hover);
@@ -790,5 +841,8 @@ button.dg-tool[disabled] {
   .dg-group-start {
     position: static;
     z-index: auto;
+  }
+  .dg-group-label {
+    left: calc(var(--dg-mark) + var(--space-3));
   }
 }

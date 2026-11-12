@@ -107,6 +107,14 @@ const after = (locator: Locator, property: string) =>
     property,
   );
 
+/** A style of an element's ::before, where the pinned edge is drawn. */
+const before = (locator: Locator, property: string) =>
+  locator.evaluate(
+    (element, name) =>
+      getComputedStyle(element, "::before").getPropertyValue(name),
+    property,
+  );
+
 /** A rule's row: its # cell and every cell it draws (row 0 is rule 1). */
 const row = (grid: DecisionGridPage, index: number) =>
   grid.root.locator(`.dg-row[aria-rowindex="${index + 2}"]`);
@@ -802,6 +810,12 @@ test.describe("Table view at 1440x900", () => {
         "data-mark",
         "no-match",
       );
+    // Its check sits where the rules' marks sit.
+    const [rule, otherwise] = [
+      await box(row(grid, 0).locator(".dg-mark")),
+      await box(other.locator(".dg-mark")),
+    ];
+    expectAligned([rule.x, otherwise.x], "the marks' left edges", 0.5);
     // A rule matches again: Otherwise goes back to its own color.
     await panes.type({ amount: "500" });
     await expect(other.locator(".dg-mark")).toHaveCount(0);
@@ -1088,30 +1102,179 @@ for (const size of [
       ).toBeLessThanOrEqual(1);
     });
 
-    test("the table bar's divider shows only while its items share one line", async ({
+    test("the table bar's divider shows until the table's name starts a new line", async ({
       page,
     }) => {
       const { grid, panes } = await openDraftGrid(page);
       const bar = grid.root.locator(".dg-bar");
       const divider = bar.locator(".dg-divider");
-      const oneLine = async () => {
-        const [back, ident, publish] = [
+      const expectDivider = async () => {
+        await expect(divider).toBeVisible();
+        const [back, line, ident] = [
           await box(bar.locator(".dg-back")),
+          await box(divider),
           await box(bar.locator(".dg-ident")),
-          await box(bar.locator(".dg-publish")),
         ];
-        return ident.y < back.bottom && publish.y < back.bottom;
+        expect(line.width, "the divider's width").toBeCloseTo(1, 0);
+        expect(line.height, "the divider's height").toBeCloseTo(20, 0);
+        expect(line.x, "after Back").toBeGreaterThanOrEqual(back.right);
+        expect(line.right, "before the name").toBeLessThanOrEqual(ident.x);
       };
-      // The Data pane folded: one line, with the divider.
-      expect(await oneLine(), "folded").toBe(true);
-      await expect(divider).toBeVisible();
-      // The Data pane open: at 768 the bar wraps and the divider goes.
+      await expectDivider();
+      // Beside the Data pane Publish table may take a line of its own; the
+      // name still follows Back, so the divider stays.
       await panes.show("Output");
       await expect(panes.output).toBeVisible();
-      const shared = await oneLine();
-      if (size.width === 768)
-        expect(shared, "beside the Data pane").toBe(false);
-      if (shared) await expect(divider).toBeVisible();
-      else await expect(divider).toBeHidden();
+      await expectDivider();
+      if (size.width === 768) {
+        const [back, publish] = [
+          await box(bar.locator(".dg-back")),
+          await box(bar.locator(".dg-publish")),
+        ];
+        expect(publish.y, "Publish table on its own line").toBeGreaterThan(
+          back.bottom,
+        );
+      }
+      // Too narrow for Back and the name: the name starts a line, and the
+      // divider goes.
+      await grid.root.evaluate((e) => (e.style.width = "280px"));
+      await expect(divider).toBeHidden();
+      const [back, ident] = [
+        await box(bar.locator(".dg-back")),
+        await box(bar.locator(".dg-ident")),
+      ];
+      expect(ident.y, "the name on a new line").toBeGreaterThan(back.bottom);
+    });
+
+    test("scrolled sideways, the pinned columns end at a line and the group labels stay whole", async ({
+      page,
+    }) => {
+      test.skip(size.width !== 768, "The grid scrolls sideways at 768.");
+      const { grid, panes } = await openDraftGrid(page);
+      await panes.show("Output");
+      await expect(panes.output).toBeVisible();
+      const border = await tokenColor(page, "--border");
+      const scroller = grid.root.locator(".dg-scroll");
+      const pinned = [
+        grid.root.locator(".dg-group-start"),
+        grid.root.locator(".dg-th.dg-name-cell"),
+        grid.cell(0, 0),
+        grid.cell(3, 0),
+      ];
+      // Not scrolled: no edge.
+      for (const cell of pinned)
+        expect(await before(cell, "content"), "no edge yet").toBe("none");
+      const room = await scroller.evaluate(
+        (e) => e.scrollWidth - e.clientWidth,
+      );
+      expect(
+        room,
+        "the grid scrolls sideways beside the Data pane",
+      ).toBeGreaterThan(0);
+      // Scrolled part way: amount slides under the pinned columns.
+      await scroller.evaluate((e) => (e.scrollLeft = 60));
+      // The line runs down the pinned edge, from the group row to Otherwise.
+      const name = await box(grid.cell(0, 0));
+      for (const cell of pinned) {
+        await expect
+          .poll(() => before(cell, "background-color"), { message: "the edge" })
+          .toBe(border);
+        const edge = await cell.evaluate((e) => {
+          const r = e.getBoundingClientRect();
+          const s = getComputedStyle(e, "::before");
+          return { right: r.right, width: parseFloat(s.width) };
+        });
+        expect(edge.width, "a 2 px line").toBe(2);
+        expectAligned([edge.right, name.right], "the pinned edge", 0.5);
+      }
+      // Each group label in view reads whole, right of the pinned edge.
+      const expectLabels = async (names: string[]) => {
+        const shown = grid.root
+          .locator(".dg-group-label")
+          .filter({ hasText: new RegExp(`^(${names.join("|")})$`) });
+        await expect(shown).toHaveText(names);
+        for (const label of await shown.all()) {
+          const at = await box(label);
+          expect(at.x, "right of the pinned edge").toBeGreaterThanOrEqual(
+            name.right,
+          );
+          expect(
+            await label.evaluate((e) => e.scrollWidth <= e.clientWidth),
+          ).toBe(true);
+        }
+      };
+      await expectLabels(["Inputs", "Results"]);
+      // Scrolled to the end: the edge stays, and Results still reads whole.
+      await scroller.evaluate((e) => (e.scrollLeft = e.scrollWidth));
+      expect(await before(grid.cell(0, 0), "background-color")).toBe(border);
+      await expectLabels(["Results"]);
+      // Back at the start, the edge goes.
+      await scroller.evaluate((e) => (e.scrollLeft = 0));
+      await expect.poll(() => before(grid.cell(0, 0), "content")).toBe("none");
+    });
+
+    test("a long rule name wraps to two lines, the row grows, and hovering or editing moves nothing", async ({
+      page,
+    }) => {
+      test.skip(size.width !== 768, "Rule name is 128 px wide at 768.");
+      const { grid } = await openDraftGrid(page);
+      const text = (index: number) =>
+        grid.cell(index, 0).locator(".dg-cell-text");
+      // No sample name ends in an ellipsis.
+      for (const index of [0, 1, 2])
+        expect(
+          await text(index).evaluate(
+            (e) =>
+              e.scrollHeight <= e.clientHeight + 1 &&
+              e.scrollWidth <= e.clientWidth + 1,
+          ),
+          `rule ${index + 1}'s name in full`,
+        ).toBe(true);
+      // large-or-platinum: two lines, in full, in a taller row.
+      await expect(text(2)).toHaveText("large-or-platinum");
+      const two = await box(text(2));
+      expect(two.height, "two lines").toBeCloseTo(40, 0);
+      const tall = await box(row(grid, 2).locator(".dg-mark-cell"));
+      expect(tall.height, "the row grows").toBeGreaterThanOrEqual(55.5);
+      // Hovering shows the rule menu without moving the name.
+      await row(grid, 2).locator(".dg-mark-cell").hover();
+      await grid.cell(2, 0).hover();
+      expect(await box(text(2))).toEqual(two);
+      // Editing it keeps the row's height.
+      await grid.cell(2, 0).dblclick();
+      await expect(grid.root.locator(".dg-cell-input")).toBeFocused();
+      expect(
+        (await box(row(grid, 2).locator(".dg-mark-cell"))).height,
+        "the row while editing",
+      ).toBeCloseTo(tall.height, 0);
+      await page.keyboard.press("Escape");
+      // A name longer than two lines stops at two, with its tooltip.
+      const long =
+        "a-rule-name-far-too-long-to-show-on-two-lines-of-this-column";
+      await grid.edit(1, 0, long);
+      await expect(text(1)).toHaveAttribute("title", long);
+      expect((await box(text(1))).height, "two lines at most").toBeCloseTo(
+        40,
+        0,
+      );
+      expect(
+        await text(1).evaluate((e) => e.scrollHeight > e.clientHeight),
+        "the rest is cut",
+      ).toBe(true);
+    });
+
+    test("a problem's code stays one chip", async ({ page }) => {
+      const { grid, panes } = await openDraftGrid(page);
+      await panes.show("Output");
+      await expect(panes.output).toBeVisible();
+      await grid.edit(0, 1, ">> 1000");
+      const chips = grid.problems().locator("code");
+      await expect(chips.first()).toBeVisible();
+      for (const chip of await chips.all())
+        expect(
+          await chip.evaluate((e) => e.getClientRects().length),
+          `"${await chip.innerText()}" on one line`,
+        ).toBe(1);
+      await expect(chips).toContainText(["> 1000"]);
     });
   });
