@@ -21,7 +21,9 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import time
 from collections.abc import Awaitable, Callable
+from datetime import UTC
 from decimal import Decimal
 from typing import Any, NamedTuple
 
@@ -45,6 +47,10 @@ CONFIGURATION_ANNOTATION = "firefly.weave/configuration"
 DELETION_COST = "controller.kubernetes.io/pod-deletion-cost"
 LOWEST_COST = "-2147483648"
 SCALE_WAIT_SECONDS = 90
+# A restart changes this pod-template annotation to the plan's creation time, so the deployment replaces every pod.
+RESTARTED_AT = "firefly.weave/restarted-at"
+# The workers' 240 s termination grace plus the 90 s a scale gets, within the runner's 600 s job budget.
+RESTART_WAIT_SECONDS = 330
 # Pods that carry a deletion cost, by name only: names are DNS labels, so no annotation text enters the runner.
 _COSTED_PODS = (
     "{range .items[?(@.metadata.annotations.controller\\.kubernetes\\.io/pod-deletion-cost)]}"
@@ -150,10 +156,17 @@ def _quantity(value: Any) -> Decimal:
 
 
 class KubernetesAdapter:
-    def __init__(self, policy: DestinationPolicy, *, command: Callable[..., Awaitable[bytes]] = run_command) -> None:
+    def __init__(
+        self,
+        policy: DestinationPolicy,
+        *,
+        command: Callable[..., Awaitable[bytes]] = run_command,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
         if policy.adapter != "kubernetes":
             raise RunnerPolicyError()
-        self.policy, self.command = policy, command
+        self.policy, self.command, self.sleep, self.clock = policy, command, sleep, clock
 
     async def _run(self, *args: str, stdin: bytes | None = None) -> bytes:
         return await self.command(
@@ -406,13 +419,16 @@ class KubernetesAdapter:
         if (
             plan.target_id != self.policy.target_id
             or plan.adapter != "kubernetes"
-            or plan.intent not in {"update", "scale_workers"}
+            or plan.intent not in {"update", "scale_workers", "restart_workers"}
             or plan.intent not in self.policy.capabilities
         ):
             raise RunnerPolicyError()
         await self._identity()
         bindings = {item.name: item for item in self.policy.components}
         prepared = []
+        # RFC 3339 in UTC; a plan's creation time is unique to it, so each restart changes the template.
+        restarted = plan.created_at.astimezone(UTC).isoformat().replace("+00:00", "Z")
+        replaced: set[str] = set()
         for step in plan.steps:
             component = step.component
             binding = bindings.get(component.name)
@@ -422,7 +438,7 @@ class KubernetesAdapter:
                 or binding.configuration != component.configuration
                 or step.action != plan.intent
                 or not self.policy.allows_image(component.image)
-                or (step.action == "scale_workers" and component.kind != "worker")
+                or (step.action in {"scale_workers", "restart_workers"} and component.kind != "worker")
             ):
                 raise RunnerPolicyError()
             await self._singleton_policy(binding)
@@ -439,13 +455,17 @@ class KubernetesAdapter:
                     component.kind == "api"
                     and (spec.get("strategy", {}).get("type") != "Recreate" or spec.get("replicas", 1) != 1)
                 )
-                or (step.action == "scale_workers" and container.get("image") != component.image)
+                or (step.action != "update" and container.get("image") != component.image)
+                or (step.action == "restart_workers" and spec.get("replicas", 1) != component.replicas)
             ):
                 raise RunnerPolicyError()
+            base = f"/spec/template/spec/containers/{index}"
             patch: list[dict[str, Any]] = [
                 {"op": "test", "path": "/metadata/uid", "value": value["metadata"]["uid"]},
                 {"op": "test", "path": "/metadata/resourceVersion", "value": step.expected_version},
             ]
+            if step.action == "restart_workers":
+                patch.append({"op": "test", "path": base + "/image", "value": component.image})
             if "labels" not in value["metadata"]:
                 patch.append({"op": "add", "path": "/metadata/labels", "value": {}})
             patch.extend(
@@ -458,7 +478,6 @@ class KubernetesAdapter:
                     {"op": "add", "path": "/spec/replicas", "value": component.replicas},
                 ]
             )
-            base = f"/spec/template/spec/containers/{index}"
             if step.action == "update":
                 amounts = {"cpu": f"{component.cpu_millis}m", "memory": f"{component.memory_mib}Mi"}
                 resources = container.get("resources", {})
@@ -476,17 +495,36 @@ class KubernetesAdapter:
                         },
                     ]
                 )
+            elif step.action == "restart_workers":
+                # The template always has annotations here: it carries the configuration checked above.
+                patch.append(
+                    {
+                        "op": "add",
+                        "path": "/spec/template/metadata/annotations/firefly.weave~1restarted-at",
+                        "value": restarted,
+                    }
+                )
+                # Success needs every pod replaced, so the pods before the write must all be known.
+                listed = await self._members(value, binding)
+                if listed is None:
+                    raise RunnerPolicyError()
+                replaced |= {member.host for member in listed}
             else:
                 patch.append({"op": "test", "path": base + "/image", "value": component.image})
-            # Any step that lowers a worker removes the reviewed pods, chosen now from the planned state.
+            # Any other step that lowers a worker removes the reviewed pods, chosen now from the planned state.
             lowered: tuple[list[_Pod], list[_Pod]] = ([], [])
-            if component.kind == "worker" and self._fact(value, binding, None).replicas > component.replicas:
+            if (
+                step.action != "restart_workers"
+                and component.kind == "worker"
+                and self._fact(value, binding, None).replicas > component.replicas
+            ):
                 lowered = await self._victims(value, binding, component)
             prepared.append((binding, component, json.dumps(patch, separators=(",", ":")).encode(), lowered))
         # Validate all components before the first effect; each actual write still has server-side preconditions.
+        stamp = restarted if plan.intent == "restart_workers" else None
         for binding, component, patch_bytes, _ in prepared:
             predicted = await self._patch(binding, patch_bytes, dry=True)
-            self._desired(predicted, binding, component, resources=plan.intent == "update")
+            self._desired(predicted, binding, component, resources=plan.intent == "update", restarted=stamp)
         for binding, component, patch_bytes, (victims, kept) in prepared:
             await self._identity()
             await self._singleton_policy(binding)
@@ -495,33 +533,57 @@ class KubernetesAdapter:
             # the final observation, where the platform warns that a removed worker is still there.
             await self._mark(binding, victims, kept)
             applied = await self._patch(binding, patch_bytes, dry=False)
-            self._desired(applied, binding, component, resources=plan.intent == "update")
-        async with asyncio.timeout(SCALE_WAIT_SECONDS):
-            while True:
-                result = await self.observe()
-                for binding, component, _, _ in prepared:
-                    self._desired(
-                        await self._deployment(binding), binding, component, resources=plan.intent == "update"
-                    )
-                facts = {item.name: item for item in result.resources}
-                if all(
-                    step.component.name in facts
-                    and facts[step.component.name].image == step.component.image
-                    and facts[step.component.name].replicas == step.component.replicas
-                    and facts[step.component.name].ready_replicas == step.component.replicas
-                    and facts[step.component.name].ownership == "managed"
-                    and facts[step.component.name].state in {"ready", "stopped"}
-                    for step in plan.steps
-                ):
-                    return result
-                await asyncio.sleep(1)
+            self._desired(applied, binding, component, resources=plan.intent == "update", restarted=stamp)
+        deadline = self.clock() + (RESTART_WAIT_SECONDS if plan.intent == "restart_workers" else SCALE_WAIT_SECONDS)
+        while True:
+            result = await self.observe()
+            for binding, component, _, _ in prepared:
+                self._desired(
+                    await self._deployment(binding),
+                    binding,
+                    component,
+                    resources=plan.intent == "update",
+                    restarted=stamp,
+                )
+            facts = {item.name: item for item in result.resources}
+            if all(
+                step.component.name in facts
+                and facts[step.component.name].image == step.component.image
+                and facts[step.component.name].replicas == step.component.replicas
+                and facts[step.component.name].ready_replicas == step.component.replicas
+                and facts[step.component.name].ownership == "managed"
+                and facts[step.component.name].state in {"ready", "stopped"}
+                and (plan.intent != "restart_workers" or self._replaced(facts[step.component.name], replaced))
+                for step in plan.steps
+            ):
+                return result
+            if self.clock() >= deadline:
+                raise TimeoutError()
+            await self.sleep(1)
+
+    @staticmethod
+    def _replaced(fact: ObservedResource, before: set[str]) -> bool:
+        """Whether a restart replaced every pod: all members known, new since the write, and ready."""
+        return (
+            len(fact.members) == fact.replicas
+            and all(member.ready for member in fact.members)
+            and not {member.host for member in fact.members} & before
+        )
 
     def _desired(
-        self, value: dict[str, Any], binding: ComponentBinding, component: ComponentSpec, *, resources: bool
+        self,
+        value: dict[str, Any],
+        binding: ComponentBinding,
+        component: ComponentSpec,
+        *,
+        resources: bool,
+        restarted: str | None = None,
     ) -> None:
         _, container = self._container(value, binding)
+        template = value.get("spec", {}).get("template", {}).get("metadata", {}).get("annotations", {})
         if (
-            (binding.kind == "api" and value.get("spec", {}).get("strategy", {}).get("type") != "Recreate")
+            (restarted is not None and template.get(RESTARTED_AT) != restarted)
+            or (binding.kind == "api" and value.get("spec", {}).get("strategy", {}).get("type") != "Recreate")
             or container.get("image") != component.image
             or value.get("spec", {}).get("replicas") != component.replicas
             or value.get("metadata", {}).get("labels", {}).get(TARGET_LABEL) != str(self.policy.target_id)

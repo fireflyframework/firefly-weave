@@ -192,6 +192,13 @@ def apply_json_patch(document, operations):
     return result
 
 
+RESTARTED_AT = "firefly.weave/restarted-at"
+
+
+def annotations(resource):
+    return resource["spec"]["template"].get("metadata", {}).get("annotations", {})
+
+
 FIELD = re.compile(r"\{(\.[^{}]+)\}")
 
 
@@ -247,6 +254,10 @@ class Server:
         # deletion cost goes first, or, with `keep_victims`, the controller ignores the costs and removes others.
         self.controller = False
         self.keep_victims = False
+        # A restart replaces every pod after this many pod listings; `never_replace` keeps the old pods forever.
+        self.restart_delay = 0
+        self.never_replace = False
+        self.replacement = None
 
     async def command(self, argv, **kwargs):
         self.calls.append((argv, kwargs))
@@ -270,6 +281,11 @@ class Server:
             return "".join(item["metadata"]["name"] + "\n" for item in costed).encode()
         if "pods" in argv:
             assert argv[6:] == ["get", "pods", "--selector=app=engine", "-o=jsonpath=" + POD_FIELDS]
+            if self.replacement is not None:
+                if self.restart_delay == 0:
+                    self.pods, self.replacement = self.replacement, None
+                else:
+                    self.restart_delay -= 1
             return render(self.pods)
         assert "deployments.apps" in argv and "engine" in argv
         if "get" in argv:
@@ -297,10 +313,16 @@ class Server:
             else:
                 current[key] = edit["value"]
         if not dry:
+            restarted = annotations(self.resource).get(RESTARTED_AT) != annotations(result).get(RESTARTED_AT)
             result["metadata"]["resourceVersion"] = "9"
             self.resource = result
             if self.controller:
                 self.settle()
+            if restarted and not self.never_replace:
+                self.replacement = [
+                    pod(f"engine-7d9f8c6b5-restarted{index}", containers=started("2026-11-11T10:01:00Z"))
+                    for index in range(result["spec"]["replicas"])
+                ]
         return json.dumps(result).encode()
 
     def patch_pod(self, name, operations):
@@ -918,3 +940,106 @@ async def test_a_victim_that_survives_is_reported_not_raised():
     # Deletion cost is best effort; the platform compares the final members with the reviewed ones and warns.
     assert server.pod_patches == [("engine-7d9f8c6b5-late", [*SAME_POD, LOWEST])]
     assert [member.host for member in result.resources[0].members] == ["engine-7d9f8c6b5-late"]
+
+
+class Clock:
+    """A fake monotonic clock that `sleep` advances, so waits take no real time."""
+
+    def __init__(self):
+        self.now, self.sleeps = 0.0, []
+
+    def __call__(self):
+        return self.now
+
+    async def sleep(self, seconds):
+        self.sleeps.append(seconds)
+        self.now += seconds
+
+
+def restart(replicas=2):
+    """A worker at `replicas` and a reviewed restart of it, created at 10:00 UTC."""
+    policy, plan, resource = fixture(action="restart_workers")
+    policy = DestinationPolicy.model_validate(
+        {**policy.model_dump(), "capabilities": ["observe", "scale_workers", "restart_workers"]}
+    )
+    component = plan.steps[0].component.model_copy(update={"replicas": replicas})
+    created = datetime(2026, 11, 11, 10, 0, tzinfo=UTC)
+    plan = plan.model_copy(
+        update={
+            "steps": [plan.steps[0].model_copy(update={"component": component})],
+            "created_at": created,
+            "expires_at": created + timedelta(minutes=10),
+        }
+    )
+    resource["spec"]["replicas"] = replicas
+    resource["status"].update(
+        replicas=replicas, readyReplicas=replicas, updatedReplicas=replicas, availableReplicas=replicas
+    )
+    server = Server(policy, resource)
+    server.pods = three_pods()[:replicas]
+    clock = Clock()
+    return policy, plan, server, clock
+
+
+async def test_a_restart_sets_the_restart_time_on_the_pod_template_and_keeps_the_image_and_replicas():
+    policy, plan, server, clock = restart()
+    adapter = KubernetesAdapter(policy, command=server.command, sleep=clock.sleep, clock=clock)
+    await adapter.apply(plan, server.before_write)
+    image = plan.steps[0].component.image
+    patches = [json.loads(kw["stdin"]) for argv, kw in server.calls if argv[6:8] == ["patch", "deployments.apps"]]
+    assert (
+        patches[0]
+        == patches[1]
+        == [
+            {"op": "test", "path": "/metadata/uid", "value": "deployment-uid"},
+            {"op": "test", "path": "/metadata/resourceVersion", "value": "8"},
+            {"op": "test", "path": "/spec/template/spec/containers/0/image", "value": image},
+            {"op": "add", "path": "/metadata/labels/firefly.weave~1target", "value": str(policy.target_id)},
+            {"op": "add", "path": "/spec/replicas", "value": 2},
+            {
+                "op": "add",
+                "path": "/spec/template/metadata/annotations/firefly.weave~1restarted-at",
+                "value": "2026-11-11T10:00:00Z",
+            },
+        ]
+    )
+    assert server.events == ["dry", "renew", "write"]
+
+
+async def test_a_restart_waits_until_every_pod_is_new_and_ready():
+    policy, plan, server, clock = restart()
+    server.restart_delay = 2
+    adapter = KubernetesAdapter(policy, command=server.command, sleep=clock.sleep, clock=clock)
+    result = await adapter.apply(plan, server.before_write)
+    # Two polls still see the old pods; the third sees only new, ready ones with the same image.
+    assert clock.sleeps == [1, 1]
+    assert [member.host for member in result.resources[0].members] == [
+        "engine-7d9f8c6b5-restarted0",
+        "engine-7d9f8c6b5-restarted1",
+    ]
+    assert all(member.ready for member in result.resources[0].members)
+    assert result.resources[0].image == plan.steps[0].component.image
+
+
+async def test_a_restart_that_never_replaces_a_pod_fails_after_its_wait():
+    policy, plan, server, clock = restart()
+    server.never_replace = True
+    adapter = KubernetesAdapter(policy, command=server.command, sleep=clock.sleep, clock=clock)
+    with pytest.raises(TimeoutError):
+        await adapter.apply(plan, server.before_write)
+    # A restart without drain waits for the workers' 240 s grace plus 90 s, longer than a scale.
+    assert 330 <= clock.now <= 331
+
+
+@pytest.mark.parametrize("change", ["image", "replicas"])
+async def test_a_restart_refuses_a_changed_image_or_replica_count(change):
+    policy, plan, server, clock = restart()
+    container = server.resource["spec"]["template"]["spec"]["containers"][0]
+    if change == "image":
+        container["image"] = "registry.example/engine@sha256:" + "c" * 64
+    else:
+        server.resource["spec"]["replicas"] = 3
+    adapter = KubernetesAdapter(policy, command=server.command, sleep=clock.sleep, clock=clock)
+    with pytest.raises(RunnerPolicyError):
+        await adapter.apply(plan, server.before_write)
+    assert server.events == []
