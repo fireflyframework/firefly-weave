@@ -434,7 +434,10 @@ The command:
 - refuses when Docker has less than 6 GiB free, and refuses a cluster name that
   already exists on the Docker context;
 - waits up to 180 s for the nodes to be Ready, and deletes the cluster again if
-  they aren't.
+  they aren't;
+- deletes nothing when kind or k3d fails, times out, or is interrupted, and
+  says to run `weave platform cluster delete` with the same provider and name
+  to remove any nodes the tool left behind.
 
 Use `--provider k3d` for a k3s cluster. kind and k3d add the cluster's context
 to your kubeconfig and make it current, as they always do. Delete the cluster

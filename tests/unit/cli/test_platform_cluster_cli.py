@@ -172,12 +172,34 @@ def test_a_failed_wait_deletes_the_cluster_this_run_created(world):
         assert call.argv[1:3] == ["--context", f"kind-{NAME}"]
 
 
-def test_a_failed_create_never_deletes_a_cluster(world):
-    """kind and k3d remove what a failed create made; the command deletes only a cluster it created."""
+@pytest.mark.parametrize(
+    ("failure", "reason"),
+    [
+        (
+            PlatformError(
+                "Stage cluster-create failed. Inspect the private cluster-create-*.log file in the installation "
+                "directory."
+            ),
+            "Stage cluster-create failed. Inspect the private cluster-create-*.log file in the installation directory.",
+        ),
+        (KeyboardInterrupt(), "Creating the cluster was interrupted."),
+    ],
+    ids=["failed", "interrupted"],
+)
+def test_a_failed_or_interrupted_create_deletes_nothing_and_says_to_run_delete(world, failure, reason):
+    """kind and k3d run in their own session and are killed outright on a timeout or an interrupt, so they can't
+    remove the nodes they made; the command deletes only a cluster it created, so it says how to remove them."""
     directory, commands, _ = world
-    commands.answer(["create"], PlatformError('node(s) already exist for a cluster with the name "weave-o4-abc123"'))
-    assert create(directory).exit_code != 0
+    commands.answer(["create"], failure)
+    result = create(directory)
+    assert result.exit_code != 0
+    assert reason in result.output
+    assert (
+        "Nothing was deleted; run weave platform cluster delete with the same provider and name to remove any nodes "
+        "kind left behind."
+    ) in result.output
     assert calls(commands, "create") and not calls(commands, "delete")
+    assert not list(directory.glob(".cluster-*")), "the configuration file is removed after an interrupt too"
 
 
 @pytest.mark.parametrize(("provider", "label"), [("kind", "io.x-k8s.kind.cluster"), ("k3d", "k3d.cluster")])

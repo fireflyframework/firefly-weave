@@ -550,29 +550,43 @@ def _private_file(directory: Path, text: str) -> Iterator[Path]:
         path.unlink(missing_ok=True)
 
 
+def _run_create(state: dict[str, Any], provider: str, command: list[str], env: dict[str, str]) -> None:
+    """Run kind's or k3d's create. The tool runs in a session of its own and is killed outright on a timeout or an
+    interrupt, so it can't remove the nodes it made. A failed create deletes nothing, since this call may not have
+    made the cluster of that name, and says how to remove what the tool left."""
+    left = (
+        "Nothing was deleted; run weave platform cluster delete with the same provider and name to remove any nodes "
+        f"{provider} left behind."
+    )
+    try:
+        local._run(state, "cluster-create", command, env=env, timeout=600)
+    except local.PlatformError as error:
+        raise local.PlatformError(f"{error} {left}") from None
+    except KeyboardInterrupt:
+        raise local.PlatformError(f"Creating the cluster was interrupted. {left}") from None
+
+
 def _create(state: dict[str, Any], directory: Path, provider: str, cluster: str, context: str) -> None:
     if provider == "kind":
         with _private_file(directory, KIND_CONFIG) as config:
-            local._run(
+            _run_create(
                 state,
-                "cluster-create",
+                provider,
                 [str(tools.tool(directory, "kind")), "create", "cluster", "--name", cluster]
                 + ["--image", tools.KIND_NODE_IMAGE, "--config", str(config)],
-                env=_tool_environment(context, KIND_EXPERIMENTAL_DOCKER_NETWORK=cluster_network(provider, cluster)),
-                timeout=600,
+                _tool_environment(context, KIND_EXPERIMENTAL_DOCKER_NETWORK=cluster_network(provider, cluster)),
             )
         return
     disabled = [item for service in K3S_DISABLED for item in ("--k3s-arg", f"--disable={service}@server:0")]
     host = _docker_host(state, context)
     with _private_file(directory, K3D_REGISTRIES) as registries:
-        local._run(
+        _run_create(
             state,
-            "cluster-create",
+            provider,
             [str(tools.tool(directory, "k3d")), "cluster", "create", cluster, "--image", tools.K3S_IMAGE]
             + ["--servers", "1", "--agents", "0", "--api-port", f"127.0.0.1:{free_port()}", *disabled]
             + ["--registry-config", str(registries)],
-            env=_tool_environment(context, DOCKER_HOST=host),
-            timeout=600,
+            _tool_environment(context, DOCKER_HOST=host),
         )
 
 
@@ -634,7 +648,7 @@ def create_cluster(
 ) -> dict[str, str]:
     """Create a single-node kind or k3d test cluster on its own network, from the pinned tools, and wait until its
     nodes are Ready. A cluster of that name already on the context is refused, and only a cluster this call
-    created is deleted when its nodes don't become Ready."""
+    created is deleted when its nodes don't become Ready; a failed or interrupted create deletes nothing."""
     if provider not in PROVIDERS or cluster_name_problem(cluster):
         raise local.PlatformError(NAME_PROBLEM)
     if connect:
@@ -646,7 +660,8 @@ def create_cluster(
             f"A cluster named {cluster} already exists on context {context}; nothing was changed."
         )
     _check_disk(state, context)
-    # kind and k3d remove what a failed create made; only a cluster this call created is deleted here.
+    # A failed or interrupted create deletes nothing and says how to remove what the tool left; only a cluster this
+    # call created is deleted here.
     _create(state, directory, provider, cluster, context)
     try:
         _wait_ready(state, directory, provider, cluster, context)
