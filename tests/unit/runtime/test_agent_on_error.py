@@ -19,6 +19,7 @@
 from datetime import timedelta
 from uuid import uuid4
 
+import pytest
 from agent_fixtures import CANCEL, LOOKUP, NOW, Run, agent, final, tool_calls, workflow
 
 from firefly_weave.compiler.ir import WorkflowIR
@@ -187,6 +188,68 @@ def test_once_a_person_settles_the_call_the_agents_failure_reaches_its_setting()
     error = run.state.steps["support"]["error"]
     assert (error["outcome"], error["attempts"], error["instanceKey"]) == ("unknown", 1, "support")
     assert run.state.agents == {} and run.state.active == [] and run.state.incidents == {}
+
+
+def cancels_running(run: Run, *orders: str) -> None:
+    run.send("started")
+    approve(run, run.answer("support#1", tool_calls(*(("cancel_order", {"id": order}) for order in orders))))
+
+
+def agent_deadline(run: Run):
+    run.at = NOW + timedelta(seconds=900)
+    return run.send("wait_elapsed", node_id="support", deadline=run.at.isoformat())
+
+
+@pytest.mark.parametrize(
+    ("setting", "left", "status"),
+    [("continue", set(), "succeeded"), (None, {("support", "WV-AGENT-TIMEOUT")}, "suspended")],
+    ids=["on-error", "without-a-setting"],
+)
+def test_a_call_recovery_holds_in_doubt_is_settled_once_after_the_agents_deadline(setting, left, status):
+    run = handled(setting, tools=(LOOKUP, CANCEL)) if setting else Run(workflow(agent(tools=[LOOKUP, CANCEL])))
+    cancels_running(run, "A-17")
+    # The cancel's worker died: recovery holds the call in doubt, and the agent's deadline passes behind it.
+    run.send("incident_opened", node_id="support#1.1", generation=1, code="WV-TASK-AMBIGUOUS")
+    agent_deadline(run)
+
+    run.send(
+        "incident_resolved",
+        incident_key="support#1.1:1",
+        node_id="support#1.1",
+        generation=1,
+        kind="accept_reconciled_result",
+        output={"status": "cancelled"},
+    )
+
+    assert incidents(run) == left and run.state.status == status
+
+
+def test_an_agent_holding_two_calls_waits_until_a_person_settles_both():
+    run = handled("continue", tools=(LOOKUP, CANCEL))
+    cancels_running(run, "A-17", "A-18")
+    agent_deadline(run)
+    assert incidents(run) == {("support#1.1", "WV-TASK-AMBIGUOUS"), ("support#1.2", "WV-TASK-AMBIGUOUS")}
+
+    run.send(
+        "incident_resolved",
+        incident_key="support#1.1:0",
+        node_id="support#1.1",
+        kind="accept_reconciled_result",
+        output={"status": "cancelled"},
+    )
+
+    assert incidents(run) == {("support#1.2", "WV-TASK-AMBIGUOUS")} and "error" not in run.state.steps.get(
+        "support", {}
+    )
+    run.send(
+        "incident_resolved",
+        incident_key="support#1.2:0",
+        node_id="support#1.2",
+        kind="accept_reconciled_failure",
+        reason="Checked by hand",
+        evidence_reference="ticket-17",
+    )
+    assert (run.state.status, run.state.output) == ("succeeded", "WV-AGENT-TIMEOUT")
 
 
 def test_a_changing_call_that_failed_for_good_lets_the_setting_take_the_agents_failure():

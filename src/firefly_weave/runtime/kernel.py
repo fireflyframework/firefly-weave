@@ -1811,8 +1811,10 @@ def _advance_owned(
     def held_call_ended(
         node: AgentNode, reference: AgentKeyRef, identifier: str, state: AgentState, completion: RuntimeEvent
     ) -> None:
-        """A call the failed agent held in doubt ended: by its own result, a person's reconciled one, or a failure
-        confirmed to have changed nothing. Once no such call is left, the agent's failure goes where it would have."""
+        """A call the failed agent held in doubt ended through a person's resolution: a reconciled result, or a failure
+        confirmed to have changed nothing (the revoked lease fences the worker's own result). Once no such call is left,
+        the agent's failure goes where it would have."""
+        nonlocal current_state
         assert state.failure is not None
         key = reference.key.agent
         if (
@@ -1824,6 +1826,21 @@ def _advance_owned(
             raise KernelError("WV-RUNTIME-EVENT")
         current_state.active.remove(identifier)
         current_state.waits.pop(identifier, None)
+        # The call may have been held twice: by recovery before the agent failed, then by the agent's own failure once
+        # that resolution let the deferred failure run. One resolution settles the call, so both incidents close.
+        for name in [name for name, item in current_state.incidents.items() if item.node_id == identifier]:
+            current_state.incidents.pop(name)
+        current_state = current_state.model_copy(
+            update={
+                "incident": current_state.incidents[min(current_state.incidents)].code
+                if current_state.incidents
+                else None,
+                # Without an incident left, the barrier its hold raised is gone again, as lift() leaves it.
+                "status": "waiting"
+                if current_state.status == "suspended" and not current_state.incidents
+                else current_state.status,
+            }
+        )
         if completion.type == "step_failed":
             error = tool_failure(reference, identifier, completion)[1]
             result.steps.append(StepChange(node_id=identifier, status="failed", output=None, error=error))
