@@ -90,7 +90,9 @@ def _target_values(target: dict[str, Any]) -> bool:
             return False
         if key == "connected_at" and (len(value) > 40 or not _TIME.fullmatch(value)):
             return False
-        if (key == "target_name" and len(value) > 100) or (key == "state" and value not in {"pending", "connected"}):
+        if (key == "target_name" and not 1 <= len(value) <= 100) or (
+            key == "state" and value not in {"pending", "connected"}
+        ):
             return False
     return True
 

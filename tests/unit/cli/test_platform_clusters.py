@@ -308,6 +308,7 @@ def test_follows_kubectls_merged_view_of_several_files(platform, tmp_path, monke
         {"connected_at": ["2026-11-12"]},
         {"state": "lost"},
         {"target_name": "k" * 101},
+        {"target_name": ""},
     ],
 )
 def test_the_receipt_refuses_target_values_of_the_wrong_type(platform, change):
