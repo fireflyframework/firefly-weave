@@ -30,7 +30,7 @@ from firefly_weave.sdk import platform_clusters as clusters
 from firefly_weave.sdk.platform import PlatformError
 
 GIB = 1024**3
-NAME = "weave-o4-abc123"
+NAME = "weave-test-abc123"
 ENDPOINT = "unix:///Users/me/.colima/weave-tests/docker.sock"
 
 
@@ -60,7 +60,7 @@ def world(tmp_path, monkeypatch):
     commands.answer(["docker", "run", "df"], df(8))
     commands.answer(["docker", "ps", "--all"], "")
     commands.answer(["create"], created)
-    commands.answer(["wait", "--for=condition=Ready"], "node/weave-o4-abc123-control-plane condition met\n")
+    commands.answer(["wait", "--for=condition=Ready"], "node/weave-test-abc123-control-plane condition met\n")
     commands.answer(["delete"], "")
     commands.answer(["docker", "network", "ls"], "")
     clock = {"now": 0.0}
