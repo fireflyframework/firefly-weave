@@ -34,6 +34,8 @@ from agent_fixtures import (
     workflow,
 )
 
+from firefly_weave.compiler.ir import WorkflowIR
+from firefly_weave.runtime.kernel import duration_steps
 from firefly_weave.runtime.models import ControlCommand, Deadline, Transition
 
 
@@ -90,6 +92,12 @@ def test_the_agents_deadline_is_armed_at_its_own_key():
 
     [deadline] = [command for command in started.commands if isinstance(command, Deadline)]
     assert (deadline.node_id, deadline.deadline) == ("support", NOW + timedelta(seconds=900))
+
+
+def test_an_agents_deadlines_elapse_at_its_keys_and_the_run_goes_on():
+    # The deadline service sends wait_elapsed only for steps whose deadlines continue the run; any other deadline
+    # times the whole run out. An agent's own deadline and its reviews' deadlines continue it.
+    assert "support" in duration_steps(WorkflowIR.model_validate(Run().flow.executable))
 
 
 def deadline_passed(run: Run) -> Transition:
