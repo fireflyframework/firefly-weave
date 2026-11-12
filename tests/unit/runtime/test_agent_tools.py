@@ -99,6 +99,18 @@ def test_a_fixed_value_always_wins_over_the_models():
     assert check_call(ir, node, "lookup_order", {"id": "A-17"}, {"region": "eu"}) == {"id": "A-17", "region": "eu"}
 
 
+def test_a_fixed_value_wins_even_where_the_parameters_allow_other_fields():
+    # This action's input takes fields it doesn't name, so the model may send region; the fixed value still wins.
+    open_input = {"type": "object", "properties": {"id": {"type": "string"}, "region": {"type": "string"}}}
+    action = order_action("orders-open", "get", input_schema={**open_input, "required": ["id"]})
+    lookup = {**LOOKUP, "action": "orders-open@1.0.0"}
+    ir, node = ir_with(lookup, extra=(action,))
+
+    merged = check_call(ir, node, "lookup_order", {"id": "A-17", "region": "us"}, {"region": "eu"})
+
+    assert merged == {"id": "A-17", "region": "eu"}
+
+
 def test_the_merged_input_is_checked_against_the_actions_own_schema():
     ir, node = ir_with(LOOKUP)
 
