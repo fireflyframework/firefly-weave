@@ -53,19 +53,18 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
+      # The installers this job signs come from a clean install of the lockfiles, never from a cache
+      # another run wrote.
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
         with:
           version: '0.11.19'
           python-version: '3.12.13'
+          enable-cache: false
       - name: Verify exact release source without credentials
         run: uv run --no-project python desktop/scripts/notarize_macos.py --verify-source
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24.15.0'
-          cache: npm
-          cache-dependency-path: |
-            studio/package-lock.json
-            desktop/package-lock.json
       - uses: dtolnay/rust-toolchain@d86e0fa8f147d6539442c26a61ebba8becc19489 # 1.96.0
         with:
           components: rustfmt,clippy
