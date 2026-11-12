@@ -17,10 +17,14 @@
 """Private ephemeral assistant: current caller reads and explicit connection delegation."""
 
 import asyncio
+import contextlib
+import copy
 import json
-from typing import cast
+from collections.abc import Sequence
+from typing import Final, cast
 from uuid import UUID
 
+import yaml
 from pyfly.container import service
 from sqlalchemy import text
 
@@ -46,12 +50,13 @@ from firefly_weave.contracts.lumi import (
     LumiCheckedProposal,
     LumiConfiguration,
     LumiConfigurationRequest,
+    LumiProposal,
     LumiReply,
     LumiStatus,
 )
 from firefly_weave.contracts.run_views import RunStepQuery, RunSummary, StepFact
 from firefly_weave.contracts.schema_export import export_schemas
-from firefly_weave.contracts.values import JsonValue
+from firefly_weave.contracts.values import JsonObject, JsonValue
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.deployments.service import DeploymentService
 from firefly_weave.operations.ai_policy import APIAIPolicy
@@ -80,10 +85,136 @@ PROPOSAL_KINDS = {
 }
 
 
-def check_proposals(reply: LumiReply) -> LumiAnswer:
-    """The reply with each proposal's error count from the platform's own authoring check (no catalog needed)."""
+# An AI agent's guards. Weave AI may set one in a proposal, which can tighten it, but a guard the proposal leaves out
+# keeps the draft's value: the compact schema small models write from doesn't show them all, and an edit must never
+# loosen a guard by omission. Loosening one is done in the editor. Whole guards are carried over when left out;
+# settings are also completed key by key, as are a tool's fixed arguments.
+STEP_GUARDS: Final = ("onError", "errorPath")
+STEP_SETTINGS: Final = ("limits", "memory", "review")
+TOOL_GUARDS: Final = ("approval", "human")
+TOOL_SETTINGS: Final = ("review",)
+MAX_PROPOSAL_CHARACTERS: Final = 100000
+
+
+def _agents(document: JsonValue) -> dict[str, JsonObject]:
+    """The agent steps of a workflow document by id, wherever they sit in its steps."""
+    found: dict[str, JsonObject] = {}
+    pending: list[JsonValue] = [document]
+    while pending:
+        node = pending.pop()
+        if isinstance(node, dict):
+            identifier = node.get("id")
+            if node.get("kind") == "agent" and isinstance(identifier, str):
+                found.setdefault(identifier, node)
+            pending.extend(reversed(list(node.values())))
+        elif isinstance(node, list):
+            pending.extend(reversed(node))
+    return found
+
+
+def _keep(edited: JsonObject, kept: JsonObject, whole: Sequence[str], settings: Sequence[str]) -> bool:
+    """Carry the draft's guards the edit leaves out into it; whether anything was carried."""
+    changed = False
+    for name in (*whole, *settings):
+        if name not in edited and name in kept:
+            edited[name] = copy.deepcopy(kept[name])
+            changed = True
+    for name in settings:
+        value, previous = edited.get(name), kept.get(name)
+        if isinstance(value, dict) and isinstance(previous, dict):
+            for key, setting in previous.items():
+                if key not in value:
+                    value[key] = copy.deepcopy(setting)
+                    changed = True
+    return changed
+
+
+def _keep_fixed(edited: JsonObject, kept: JsonObject) -> bool:
+    """A tool's fixed arguments the edit leaves out stay fixed, so the model never gains an argument by omission."""
+    if "fixed" not in kept:
+        return False
+    if "fixed" not in edited:
+        edited["fixed"] = copy.deepcopy(kept["fixed"])
+        return True
+    value, previous = edited["fixed"], kept["fixed"]
+    if not (isinstance(value, dict) and isinstance(previous, dict)):
+        return False
+    arguments, fixed = value.get("object"), previous.get("object")
+    if not (isinstance(arguments, dict) and isinstance(fixed, dict)):
+        return False
+    missing = {key: copy.deepcopy(argument) for key, argument in fixed.items() if key not in arguments}
+    arguments.update(missing)
+    return bool(missing)
+
+
+def keep_agent_guards(document: JsonValue, drafts: Sequence[JsonValue]) -> bool:
+    """Give each agent a proposal edits the guards it left out, from the draft that holds that agent; in place.
+
+    An agent is matched by its step id in the drafts of the same workflow name (any draft when none has that name),
+    each tool by its name. A new agent, a new tool and a removed one are left as written. Whether anything changed.
+    """
+    if not isinstance(document, dict):
+        return False
+
+    def name_of(value: JsonValue) -> object:
+        metadata = value.get("metadata") if isinstance(value, dict) else None
+        return metadata.get("name") if isinstance(metadata, dict) else None
+
+    same = [draft for draft in drafts if name_of(draft) == name_of(document)]
+    previous: dict[str, JsonObject] = {}
+    for draft in same or drafts:
+        for identifier, step in _agents(draft).items():
+            previous.setdefault(identifier, step)
+    changed = False
+    for identifier, step in _agents(document).items():
+        kept = previous.get(identifier)
+        if kept is None:
+            continue
+        changed |= _keep(step, kept, STEP_GUARDS, STEP_SETTINGS)
+        old_tools = kept.get("tools")
+        tools = {
+            tool["name"]: tool
+            for tool in (old_tools if isinstance(old_tools, list) else [])
+            if isinstance(tool, dict) and isinstance(tool.get("name"), str)
+        }
+        new_tools = step.get("tools")
+        for tool in new_tools if isinstance(new_tools, list) else []:
+            old = tools.get(tool.get("name")) if isinstance(tool, dict) and isinstance(tool.get("name"), str) else None
+            if isinstance(tool, dict) and old is not None:
+                changed |= _keep(tool, old, TOOL_GUARDS, TOOL_SETTINGS)
+                changed |= _keep_fixed(tool, old)
+    return changed
+
+
+def _guarded(proposal: LumiProposal, drafts: Sequence[JsonValue]) -> LumiProposal | None:
+    """The proposal with every guard it left out of an existing agent carried over; None when it no longer fits."""
+    if not drafts or proposal.kind != "workflow":
+        return proposal
+    try:
+        document = parse_source(proposal.source, format=proposal.format).value
+    except Exception:
+        return proposal
+    if not keep_agent_guards(document, drafts):
+        return proposal
+    source = (
+        json.dumps(document, ensure_ascii=False)
+        if proposal.format == "json"
+        else yaml.safe_dump(document, sort_keys=False, allow_unicode=True)
+    )
+    # A proposal that can't carry its guards within the size limit is withheld rather than shown loosened.
+    return proposal.model_copy(update={"source": source}) if len(source) <= MAX_PROPOSAL_CHARACTERS else None
+
+
+def check_proposals(reply: LumiReply, drafts: Sequence[JsonValue] = ()) -> LumiAnswer:
+    """The reply with each proposal's error count from the platform's own authoring check (no catalog needed).
+
+    ``drafts`` are the workflow documents the question carried: an agent a proposal edits keeps their guards first.
+    """
     checked = []
-    for proposal in reply.proposals:
+    for given in reply.proposals:
+        proposal = _guarded(given, drafts)
+        if proposal is None:
+            continue
         result = validate_authoring(proposal.source, format=proposal.format)
         errors = sum(1 for item in result.diagnostics if item.severity == "error")
         try:
@@ -94,6 +225,20 @@ def check_proposals(reply: LumiReply) -> LumiAnswer:
             errors = 1
         checked.append(LumiCheckedProposal(**proposal.model_dump(), diagnostics=errors))
     return LumiAnswer.model_validate({"answer": reply.answer, "proposals": checked, "followUps": reply.follow_ups})
+
+
+def _drafts(request: LumiAskRequest, resources: Sequence[JsonValue]) -> list[JsonValue]:
+    """The workflow documents a question carried: its inline draft, then each attached draft."""
+    found: list[JsonValue] = []
+    if request.draft is not None:
+        # A draft that doesn't parse has no agent to keep guards for.
+        with contextlib.suppress(Exception):
+            found.append(parse_source(request.draft.source, format=request.draft.format).value)
+    for resource in resources:
+        data = resource.get("data") if isinstance(resource, dict) and resource.get("kind") == "draft" else None
+        if isinstance(data, dict) and "document" in data:
+            found.append(data["document"])
+    return found
 
 
 def _answer_limit(config: LumiConfiguration, profile: Profile) -> LumiConfiguration:
@@ -338,10 +483,10 @@ class LumiService:
                     if current is None or current.revision != config.revision or not current.enabled:
                         raise CatalogError(409, "WV-LUMI-REVISION", "Weave AI configuration changed; reply discarded")
                 # Recheck attachment permissions and simulation ownership before releasing output.
-                await self._attachments(actor, scope, request, context)
+                resources = await self._attachments(actor, scope, request, context)
                 if request.explanation_only:
                     reply = reply.model_copy(update={"proposals": []})
-                return await asyncio.to_thread(check_proposals, reply)
+                return await asyncio.to_thread(check_proposals, reply, _drafts(request, resources))
         except TimeoutError:
             raise CatalogError(504, "WV-LUMI-TIMEOUT", "Weave AI did not respond in time") from None
         except SecretUnavailable:

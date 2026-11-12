@@ -224,6 +224,78 @@ def test_weave_ai_can_ask_for_a_different_reviewer_and_by_default_does_not():
     assert AgentReview.model_validate({"assignment": "support"}).distinct_reviewer is False
 
 
+def agent_draft():
+    """A draft whose agent has settings the compact schema leaves out: fixed arguments, a forced review and limits."""
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).parents[1] / "compiler"))
+    from test_agent_workflows import LOOKUP, agent, workflow
+
+    tool = {**LOOKUP, "approval": "required", "review": {"assignment": "support-leads", "expirySeconds": 3600}}
+    return workflow(agent(tools=[tool], limits={"maxIterations": 4, "maxTotalTokens": 20000}, onError="continue"))
+
+
+def request_for(profile, document, tokens=16384):
+    from firefly_weave.contracts.schema_export import export_schemas
+
+    budget = input_budget(profile, tokens, 1024)
+    shaped = shape(
+        profile,
+        budget,
+        message="Rename the support step",
+        history=HISTORY,
+        resources=[RUN],
+        draft=("yaml", yaml.safe_dump(document)),
+        selected_step=None,
+        schemas={"workflow": export_schemas()["workflow"]},
+    )
+    return shaped, budget
+
+
+def test_an_existing_agent_is_edited_from_a_schema_that_never_tells_weave_ai_to_drop_its_settings():
+    import jsonschema
+
+    document = agent_draft()
+    shaped, budget = request_for("standard", document)
+
+    sent = shaped.context["authoringSchemas"]["workflow"]
+    step = sent["$defs"]["AgentStep"]
+    tool, review = step["properties"]["tools"]["items"], sent["$defs"]["AgentReview"]
+    # The compact shape stays within budget; it no longer forbids the fields it leaves out.
+    assert "limits" not in step["properties"]
+    assert all("additionalProperties" not in schema for schema in (step, tool, review))
+    # Change requests send the whole draft back: an edit that keeps the agent's settings fits what Weave AI was sent.
+    jsonschema.validate(document, sent)
+    assert sent_tokens(shaped, "Rename the support step") <= budget == 15360
+
+
+def test_a_new_agent_is_written_from_the_closed_compact_schema():
+    shaped, _ = request_for("standard", yaml.safe_load(draft(5)))
+
+    sent = shaped.context["authoringSchemas"]["workflow"]
+    step = sent["$defs"]["AgentStep"]
+    assert step["additionalProperties"] is False and "limits" not in step["properties"]
+    assert set(sent["$defs"]["AgentReview"]["properties"]) == {"assignment", "distinctReviewer"}
+
+
+def test_the_full_profile_sends_the_whole_agent_schema():
+    import jsonschema
+
+    document = agent_draft()
+    shaped, _ = request_for("full", document, tokens=131072)
+
+    sent = shaped.context["authoringSchemas"]["workflow"]
+    step, tool = sent["$defs"]["AgentStep"], sent["$defs"]["AgentTool"]
+    assert {"limits", "memory", "onError", "errorPath"} <= set(step["properties"])
+    assert {"fixed", "approval", "human", "review"} <= set(tool["properties"])
+    assert {"expirySeconds", "distinctReviewer"} <= set(sent["$defs"]["AgentReview"]["properties"])
+    jsonschema.validate(document, sent)
+    # A new agent gets the whole schema too: the full profile has room for it.
+    new, _ = request_for("full", yaml.safe_load(draft(5)), tokens=131072)
+    assert "AgentTool" in new.context["authoringSchemas"]["workflow"]["$defs"]
+
+
 def test_a_definition_reached_through_a_property_named_like_a_keyword_is_kept():
     # "default" is a property name here, not the keyword, so the definition under it is still in use.
     schema = {

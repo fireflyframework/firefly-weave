@@ -412,6 +412,7 @@ def untitled(schema: JsonValue) -> JsonValue:
     return result
 
 
+type AgentSchema = Literal["compact", "open", "whole"]
 # The agent kind as Weave AI sees it: what a first agent needs, in a few hundred tokens instead of four thousand.
 _AGENT_FIELDS: Final = ("id", "kind", "uses", "profile", "connection", "instructions", "prompt", "context")
 _ASSIGNMENT: Final[JsonObject] = {
@@ -457,11 +458,15 @@ def compact_agent(definition: JsonObject) -> JsonObject:
     }
 
 
-def runnable_workflow_schema(schema: JsonValue, features: Collection[str] = ADVERTISED_FEATURES) -> JsonValue:
+def runnable_workflow_schema(
+    schema: JsonValue, features: Collection[str] = ADVERTISED_FEATURES, *, agent: AgentSchema = "compact"
+) -> JsonValue:
     """The workflow schema without the step kinds a platform running ``features`` can't run.
 
     Weave AI must never write a step the platform would refuse, so a kind behind an unadvertised feature leaves the
-    ``Step`` union, and so do the definitions only it used.
+    ``Step`` union, and so do the definitions only it used. ``agent`` says how the agent kind is shown: ``compact``
+    for a new agent, ``open`` (compact, but no longer forbidding the fields it leaves out) for a draft that already
+    has one, so an edit is never told to drop its fixed arguments, forced reviews or limits, and ``whole``.
     """
     if not isinstance(schema, dict) or not isinstance(schema.get("$defs"), dict):
         return schema
@@ -470,14 +475,20 @@ def runnable_workflow_schema(schema: JsonValue, features: Collection[str] = ADVE
         for entry in STEP_KINDS
         if entry.feature is not None and entry.feature not in features
     }
-    if not hidden and not (isinstance(schema["$defs"], dict) and "AgentStep" in schema["$defs"]):
+    compact = agent != "whole" and isinstance(cast(JsonObject, schema["$defs"]).get("AgentStep"), dict)
+    if not hidden and not compact:
         return schema
     result = copy.deepcopy(schema)
     definitions = cast(JsonObject, result["$defs"])
-    if isinstance(definitions.get("AgentStep"), dict):
-        definitions["AgentStep"] = compact_agent(cast(JsonObject, definitions["AgentStep"]))
+    if compact:
+        step_schema = compact_agent(cast(JsonObject, definitions["AgentStep"]))
         # Who reviews a tool's calls and whether the run's starter may; the review's expiry keeps its default.
-        definitions["AgentReview"] = _ASSIGNMENT
+        review = copy.deepcopy(_ASSIGNMENT)
+        if agent == "open":
+            tool = cast(JsonObject, cast(JsonObject, cast(JsonObject, step_schema["properties"])["tools"])["items"])
+            for closed in (step_schema, tool, review):
+                closed.pop("additionalProperties", None)
+        definitions["AgentStep"], definitions["AgentReview"] = step_schema, review
     step = definitions.get("Step")
     if isinstance(step, dict) and isinstance(step.get("oneOf"), list):
         step["oneOf"] = [
@@ -502,6 +513,33 @@ def runnable_workflow_schema(schema: JsonValue, features: Collection[str] = ADVE
             pending.extend(schema_children(node))
     result["$defs"] = {name: value for name, value in definitions.items() if name in reached}
     return result
+
+
+def _has_agent(document: JsonValue) -> bool:
+    """Whether a workflow document holds an AI agent step anywhere in its steps."""
+    pending: list[JsonValue] = [document]
+    while pending:
+        node = pending.pop()
+        if isinstance(node, dict):
+            if node.get("kind") == "agent":
+                return True
+            pending.extend(node.values())
+        elif isinstance(node, list):
+            pending.extend(node)
+    return False
+
+
+def _drafts_an_agent(draft: tuple[str, str] | None, resources: Sequence[JsonValue]) -> bool:
+    """Whether the draft, inline or attached, already has an agent step that an edit must keep whole."""
+    if draft is not None and _has_agent(_parsed(*draft)):
+        return True
+    return any(
+        isinstance(resource, dict)
+        and resource.get("kind") == "draft"
+        and isinstance(resource.get("data"), dict)
+        and _has_agent(cast(JsonObject, resource["data"]).get("document"))
+        for resource in resources
+    )
 
 
 def shape(
@@ -530,7 +568,11 @@ def shape(
             context["guide"] = GUIDE
         wanted = {name: schemas[name] for name in SCHEMAS[profile] if name in schemas}
         if "workflow" in wanted:
-            wanted["workflow"] = runnable_workflow_schema(wanted["workflow"])
+            # The full profile has room for the whole agent schema; standard edits an existing agent from an open one.
+            agent: AgentSchema = (
+                "whole" if profile == "full" else "open" if _drafts_an_agent(draft, resources) else "compact"
+            )
+            wanted["workflow"] = runnable_workflow_schema(wanted["workflow"], agent=agent)
         if profile == "standard":
             # A standard context sends the workflow schema whole; its titles repeat the property names.
             wanted = {name: untitled(value) for name, value in wanted.items()}
