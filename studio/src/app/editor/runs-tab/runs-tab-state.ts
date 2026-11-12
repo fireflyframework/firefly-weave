@@ -155,6 +155,10 @@ export class RunsTabState {
   private seen: { scope: string; workflow: string };
   private readonly versions = new Map<string, Promise<Workflow | null>>();
   private destroyed = false;
+  /** start() ran: the list is wanted. */
+  private started = false;
+  /** The platform refused: nothing is read until Refresh or another scope. */
+  private refused = false;
 
   constructor(
     private readonly host: RunsTabHost,
@@ -167,7 +171,9 @@ export class RunsTabState {
   /** Starts listing: at once, then every 5 s while the page is visible. */
   start(): void {
     if (this.destroyed) return;
+    this.started = true;
     if (!this.host.canRead()) return this.refuse();
+    this.refused = false;
     this.lister.start();
     const chosen = this.chosen();
     if (chosen?.following) this.follower?.start(false);
@@ -182,6 +188,11 @@ export class RunsTabState {
   async refresh(): Promise<void> {
     if (this.destroyed) return;
     if (!this.host.canRead()) return this.refuse();
+    if (this.refused) {
+      // Asked again after a refusal: list on the interval once more.
+      this.refused = false;
+      this.lister.start(false);
+    }
     const chosen = this.chosen();
     const follow =
       chosen?.stopped && chosen.record ? this.follow(chosen.id) : null;
@@ -331,6 +342,11 @@ export class RunsTabState {
     this.seen = now;
     this.versions.clear();
     this.forget(this.destroyed ? this.state() : "idle");
+    // Another account or environment may read runs: ask it at once.
+    if (this.refused && this.started && !this.destroyed) {
+      this.refused = false;
+      this.lister.start();
+    }
   }
 
   // --- the list ---------------------------------------------------------------
@@ -342,7 +358,9 @@ export class RunsTabState {
       return false;
     }
     const ticket = this.listTicket();
-    if (!this.items().length) this.state.set("loading");
+    // Only a first read shows loading: an access or error screen stays put.
+    if (!this.items().length && this.state() === "idle")
+      this.state.set("loading");
     let page;
     try {
       page = await listRunSummaries(
@@ -451,8 +469,9 @@ export class RunsTabState {
         if (!answer.next_cursor) break;
         cursor = answer.next_cursor;
       }
-    } catch {
-      // Without step facts the run's state still draws the overlay.
+    } catch (error) {
+      // A refusal counts; other failures leave the run's state to draw it.
+      if (problem(error).status === 403) throw error;
       return { record, facts: null, limited: false };
     }
     return { record, facts, limited };
@@ -575,6 +594,10 @@ export class RunsTabState {
 
   /** No run.read here, or the platform refused: nothing read before is kept. */
   private refuse() {
+    // Asking again on the interval would only be refused again.
+    this.refused = true;
+    this.lister.stop();
+    this.clearRetry();
     this.forget("access");
   }
   private forget(state: RunsTabStatus) {

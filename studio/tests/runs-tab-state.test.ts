@@ -405,6 +405,65 @@ describe("the list", () => {
     expect(state.rows()).toEqual([]);
     expect(state.chosen()).toBeNull();
   });
+
+  it("a refused list stays refused until Refresh or another account or environment", async () => {
+    const { platform, env, state, host } = await started();
+    platform.fail = (path) =>
+      path.includes(LIST)
+        ? {
+            status: 403,
+            body: { code: "WV-FORBIDDEN", message: "Access denied" },
+          }
+        : null;
+    await env.advance(5000);
+    expect(state.state()).toBe("access");
+    const asked = platform.count(LIST);
+    // The access screen doesn't flip to loading, and Studio stops asking.
+    platform.hold = (path) => path.includes(LIST);
+    await env.advance(10_000);
+    expect(state.state()).toBe("access");
+    await env.advance(120_000);
+    expect(platform.count(LIST)).toBe(asked);
+    // Refresh asks again, and keeps asking once it is allowed.
+    platform.hold = null;
+    platform.fail = null;
+    await state.refresh();
+    expect(platform.count(LIST)).toBe(asked + 1);
+    expect(state.state()).toBe("ready");
+    await env.advance(5000);
+    expect(platform.count(LIST)).toBe(asked + 2);
+    // Refused again; another environment asks again on its own.
+    platform.fail = (path) =>
+      path.includes(LIST)
+        ? {
+            status: 403,
+            body: { code: "WV-FORBIDDEN", message: "Access denied" },
+          }
+        : null;
+    await env.advance(5000);
+    expect(state.state()).toBe("access");
+    platform.fail = null;
+    host.setScope("account-a|env-2");
+    state.sync();
+    await settle();
+    expect(platform.count(LIST)).toBe(asked + 4);
+    expect(state.state()).toBe("ready");
+  });
+
+  it("a failed first load keeps saying so while it tries again", async () => {
+    const { platform, env, state } = setup();
+    platform.fail = (path) =>
+      path.includes(LIST)
+        ? { status: 500, body: { code: "WV-INTERNAL", message: "It broke." } }
+        : null;
+    state.start();
+    await env.advance(0);
+    expect(state.state()).toBe("error");
+    platform.hold = (path) => path.includes(LIST);
+    await env.advance(10_000);
+    expect(platform.count(LIST)).toBe(2);
+    expect(state.state()).toBe("error");
+  });
 });
 
 describe("the chosen run", () => {
@@ -593,6 +652,33 @@ describe("the chosen run", () => {
     const reads = platform.count(new RegExp(`/runs/${running.id}$`));
     await env.advance(60_000);
     expect(platform.count(new RegExp(`/runs/${running.id}$`))).toBe(reads);
+  });
+
+  it("a refused read of the run's steps keeps nothing", async () => {
+    const { platform, state } = await started();
+    platform.fail = (path) =>
+      path.includes(`/runs/${fixtureIds.failed}/steps`)
+        ? {
+            status: 403,
+            body: { code: "WV-FORBIDDEN", message: "Access denied" },
+          }
+        : null;
+    await state.choose(fixtureIds.failed);
+    expect(state.state()).toBe("access");
+    expect(state.chosen()).toBeNull();
+    expect(state.rows()).toEqual([]);
+  });
+
+  it("other failures to read the steps still draw the run from its state", async () => {
+    const { platform, state } = await started();
+    platform.fail = (path) =>
+      path.includes(`/runs/${fixtureIds.failed}/steps`)
+        ? { status: 500, body: { code: "WV-INTERNAL", message: "It broke." } }
+        : null;
+    await state.choose(fixtureIds.failed);
+    expect(state.state()).toBe("ready");
+    expect(state.chosen()?.record?.id).toBe(fixtureIds.failed);
+    expect(state.chosen()?.overlay?.canvas.done).toEqual(["fetch"]);
   });
 
   it("reads at most 2,000 step instances", async () => {
