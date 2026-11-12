@@ -156,17 +156,27 @@ async def test_a_record_that_stays_in_doubt_at_a_later_revision_emits_no_second_
     run = await platform.start(activation)
     await platform.complete(await platform.lease("hold"))
     first = await platform.lease("add")
-    second = await platform.lease("add2")
+    await platform.lease("add2")
     await platform.fail(first, "UNAVAILABLE")
     await platform.scan()
     # add2 is still in flight: the rollback waits for it until its own deadline plus the margin, then is in doubt.
+    # Its lease ended at its deadline, so the same scan's recovery then settles it as unknown, which changes the
+    # record again but not its state.
     await asyncio.sleep(61)
     await platform.scan()
     record = await platform.record(run.id)
     assert record["state"] == "in_doubt"
-    # add2's worker went silent: recovery settles it as unknown, which changes the record but not its state.
-    await platform.expire(second)
-    await platform.scan()
-    later = await platform.record(run.id)
-    assert later["state"] == "in_doubt" and later["revision"] > record["revision"]
+    rows = await platform.query(
+        "SELECT type,transition FROM run_events WHERE run_id=:run ORDER BY sequence DESC LIMIT 2", run=run.id
+    )
+    [(latest, latest_record), (doubted, doubted_record)] = [
+        (row["type"], row["transition"]["state"]["transactions"]["move"]) for row in rows
+    ]
+    assert (doubted, doubted_record["status"], latest, latest_record["status"]) == (
+        "wait_elapsed",
+        "in_doubt",
+        "step_failed",
+        "in_doubt",
+    )
+    assert record["revision"] == latest_record["revision"] > doubted_record["revision"]
     assert [event["payload"]["type"] for event in await events(platform, run.id)] == ["transaction.in_doubt"]
