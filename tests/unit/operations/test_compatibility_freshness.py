@@ -110,8 +110,11 @@ async def test_periodic_inventory_scan_retries_failure_without_overlapping(monke
     import asyncio
 
     import firefly_weave.operations.compatibility as module
+    from firefly_weave.settings import Settings
 
-    service = CompatibilityService(None, None, None, None, None)
+    service = CompatibilityService(
+        Settings(database_url="postgresql+asyncpg://app@localhost/test"), None, None, None, None
+    )
     completed = asyncio.Event()
     calls = 0
 

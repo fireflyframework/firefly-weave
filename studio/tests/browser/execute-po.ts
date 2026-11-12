@@ -60,6 +60,16 @@ export async function openExecuteWorkflow(
   return { details, calls };
 }
 
+/**
+ * Sets a breakpoint as a person does: selects the step, sees it selected, then
+ * presses F9 (pressed sooner, F9 marks the step selected before).
+ */
+export async function breakAt(page: Page, tile: Locator) {
+  await tile.click();
+  await expect(tile).toHaveAttribute("aria-pressed", "true");
+  await page.keyboard.press("F9");
+}
+
 export const executeButton = (dialog: Locator): Locator =>
   dialog.locator(".sd-execute > button").first();
 export const moreWays = (dialog: Locator): Locator =>

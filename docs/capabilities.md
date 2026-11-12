@@ -51,13 +51,21 @@ permissions, and real delivery still need checking in your deployment.
 ## Which release this page describes
 
 Weave is an alpha workflow and integration platform. This documentation targets
-**`0.1.0a16`**, with PyFly 26.9.15 and database schema revision
-`0033_language_workflow_calls`. Alpha16 adds loops over items and calls between
-workflows, Studio's Operate area with its Overview, Runs, Incidents, Workers and
-Clusters pages, the new editor's canvas, step details, **Add a step** and
-formulas (off by default), and AI tasks on a local Ollama model set up from
-**Settings › AI models**; it adds three migrations, described in the
-[upgrade procedure](operations/upgrades.md#what-changes-in-alpha16). Alpha15
+**`0.1.0a17`**, with PyFly 26.9.15 and database schema revision
+`0038_operations_statistics`. Alpha17 adds run metrics under **Operate ›
+Metrics**, reviewed change requests for every infrastructure change, Operations
+that work out of the box on the local Docker platform, transactions in the
+workflow language (compiled and checked, but not offered by the platform yet),
+simulated calls between workflows, test data and **Execute step** in the new
+editor, platform drafts that save themselves, and Weave AI on a local Ollama
+model with requests sized to the model's context; it adds five migrations and
+the `transaction_reconciler` role, described in the
+[upgrade procedure](operations/upgrades.md#what-changes-in-alpha17). Alpha16
+moved to schema revision `0033_language_workflow_calls` and adds loops over
+items and calls between workflows, Studio's Operate area with its Overview,
+Runs, Incidents, Workers and Clusters pages, the new editor's canvas, step
+details, **Add a step** and formulas (off by default), and AI tasks on a local
+Ollama model set up from **Settings › AI models**. Alpha15
 kept schema revision `0030_worker_presence` and adds text templates
 (`concat` and `join`), development-only private origins for the Docker
 development platform, plain-HTTP no-code connections with a "Not encrypted"
@@ -169,7 +177,7 @@ is retained as evidence; it is not counted as a successful model run.
 | [WhatsApp Cloud API](connectors/whatsapp.md) | Implemented | Wire fixtures, status history, and owned PostgreSQL; composed provider gate passed | Not run | Account policies, templates, and live delivery need separate verification |
 | [Telegram webhook text](connectors/telegram.md) | Implemented | Local TLS fixtures and owned PostgreSQL; composed provider gate passed | Not run | Source-local deduplication; bot and group permissions are provider prerequisites |
 | [Operational limits](operations/configuration.md), [telemetry](operations/observability.md), [retention](operations/retention.md), and [compatibility](operations/upgrades.md) | Implemented | Policy, accounting, contention, telemetry, retention, and upgrade suites | Not applicable | Logical accounting is separate from physical storage; compatibility checks gate readiness |
-| [Container deployment Operations](operations/cluster-management.md) | New in alpha12: scoped targets, observations, immutable reviewed plans and outbound runners | Local Compose lifecycle, adapter policy tests, authorization and reconciliation scenarios | Azure alpha12: complete three-application observation and reviewed same-image Weave AI adoption; preserved configuration and verified all historical replicas | Azure target and runner policies keep `scale_workers` disabled; active-revision observations do not prove historical replicas have stopped |
+| [Container deployment Operations](operations/cluster-management.md) | New in alpha12: scoped targets, observations, immutable reviewed plans and outbound runners; alpha17 adds change requests that plan, wait for approval, drain the workers they remove, apply and follow the runner, and a runner on the local Docker platform | Local Compose lifecycle, adapter policy tests, authorization and reconciliation scenarios | Azure alpha12: complete three-application observation and reviewed same-image Weave AI adoption; preserved configuration and verified all historical replicas | Azure target and runner policies keep `scale_workers` disabled; active-revision observations do not prove historical replicas have stopped |
 | [Deployment](operations/deployment.md), [backup and restore](operations/backup-restore.md), and distribution | Implemented | Installed-package, container, process recovery, restore, and queue suites | Not applicable | Restore ownership, grants, schema compatibility, and external systems must be checked in each environment |
 | [AWS, Azure, and GCP deployment recipes](operations/cloud-deployment.md) | Reference guides and Kubernetes manifests | Source review and offline Kubernetes object-shape validation | A separate Azure Container Apps deployment has been exercised; these Kubernetes recipes and AWS/GCP remain unverified | Operator-provisioned infrastructure; database migrations, identity, networking, and recovery need acceptance in the target |
 | Slack and Salesforce | Deferred | Not run | Not run | Not part of this delivery |
@@ -179,8 +187,10 @@ is retained as evidence; it is not counted as a successful model run.
 - **BPMN.** Weave does not import or export BPMN files. Error boundary events
   are not part of the workflow language. **Loop over items** and **Call a
   workflow** cover repeated work and subprocesses, and **Transaction** declares
-  how each step is undone; this version compiles transactions but does not run
-  them yet (see [Steps](contracts.md#steps)).
+  how each step is undone. This version compiles and checks transactions and
+  includes the runtime that runs them, but the platform does not offer them
+  yet: it refuses to publish, import or activate a workflow with a transaction
+  (`WV-IR-UNSUPPORTED`; see [Transactions](contracts.md#transactions)).
   [Coming from BPM/BPMN](concepts.md#coming-from-bpmbpmn) lists the alternatives.
 - **Named enterprise adapters.** SAP and Oracle are not offered as executable
   named adapters. Reaching a system through a generic connector does not certify

@@ -20,6 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 // answer a signal or a person, and stepping through with breakpoints.
 import { expect, test, type Page } from "@playwright/test";
 import {
+  breakAt,
   executions,
   moreWays,
   openExecuteWorkflow,
@@ -169,8 +170,7 @@ test("Next steps one step, Continue runs to a breakpoint set with F9", async ({
   page,
 }) => {
   await openExecuteWorkflow(page, CHAIN);
-  await tileBody(page, "second").click();
-  await page.keyboard.press("F9");
+  await breakAt(page, tileBody(page, "second"));
   await executeInBar(page).click();
   const log = runLog(page);
   await expect(log.locator(".run-log-status")).toHaveText(
@@ -215,8 +215,7 @@ test("when the host keeps four run logs already, the toast closes them and start
       request.method() === "DELETE" &&
       new URL(request.url()).pathname === "/studio/local/debug/sessions",
   );
-  await tileBody(page, "second").click();
-  await page.keyboard.press("F9");
+  await breakAt(page, tileBody(page, "second"));
   await executeInBar(page).click();
   await page
     .getByRole("button", { name: "Close them and start again" })
@@ -249,8 +248,7 @@ test("a stale session revision shows the latest without losing the person's plac
   page,
 }) => {
   await openExecuteWorkflow(page, CHAIN);
-  await tileBody(page, "second").click();
-  await page.keyboard.press("F9");
+  await breakAt(page, tileBody(page, "second"));
   await executeInBar(page).click();
   const log = runLog(page);
   await expect(log.locator(".run-log-status")).toHaveText(
