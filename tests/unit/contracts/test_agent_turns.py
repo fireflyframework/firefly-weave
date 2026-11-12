@@ -307,7 +307,8 @@ def test_the_instructions_end_with_the_data_notice(instructions):
 
 
 def test_the_longest_author_part_with_the_notice_is_accepted():
-    TurnInput.model_validate(turn_input(instructions="x" * MAX_INSTRUCTIONS + "\n\n" + DATA_NOTICES[1]))
+    instructions = "x" * MAX_INSTRUCTIONS + "\n\n" + DATA_NOTICES[1]
+    assert TurnInput.model_validate(turn_input(instructions=instructions)).instructions == instructions
 
 
 def test_call_ids_are_the_kernels():
