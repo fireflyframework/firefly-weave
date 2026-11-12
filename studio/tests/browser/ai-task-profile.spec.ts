@@ -20,6 +20,7 @@ import { execFileSync } from "node:child_process";
 import { test, expect, type Page, type Route } from "@playwright/test";
 import { parse } from "yaml";
 import {
+  withClassicDesigner,
   allCapabilities,
   connected,
   newWorkflow,
@@ -28,6 +29,10 @@ import {
 } from "./support";
 import { DesignerPage } from "./designer-po";
 import { python } from "../python-path";
+
+test.beforeEach(async ({ page }) => {
+  await withClassicDesigner(page);
+});
 
 const schema = (module: string, name: string) =>
   JSON.parse(

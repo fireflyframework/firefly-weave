@@ -1061,10 +1061,10 @@ describe("reading and writing", () => {
       ).map((p) => p.message);
     };
     expect(rules(fresh("fail"), failForm().fields[1])).toEqual([
-      "Enter a value.",
+      "Write a message the run will report.",
     ]);
     expect(rules(fresh("signal"), signalForm().fields[0])).toEqual([
-      "Enter a value.",
+      "Choose a signal name; names are unique in a workflow.",
     ]);
     // The first message is the one a field shows.
     expect(

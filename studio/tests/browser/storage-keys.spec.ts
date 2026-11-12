@@ -39,10 +39,9 @@ test("every key Studio keeps on this computer is prefixed", async ({
   await details.dialog.getByRole("radio", { name: "JSON" }).first().click();
   await details.close();
   const keys = await page.evaluate(() => Object.keys(localStorage));
-  // The editor flag and the pane views at least; test data joins when step details keep it.
-  expect(keys).toEqual(
-    expect.arrayContaining(["ui:weave.editorNext", "ui:weave.ndv.views.v1"]),
-  );
+  // The pane views at least; test data joins when step details keep it. The
+  // editor choice is stored only once someone chooses.
+  expect(keys).toEqual(expect.arrayContaining(["ui:weave.ndv.views.v1"]));
   for (const key of keys) expect(key, key).toMatch(PREFIXED);
   const session = await page.evaluate(() => Object.keys(sessionStorage));
   for (const key of session) expect(key, key).toMatch(PREFIXED);

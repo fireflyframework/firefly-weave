@@ -18,16 +18,22 @@ SPDX-License-Identifier: Apache-2.0
 // The inspector: decision conditions as rule rows, a wider panel with folding
 // sections and a clear apply model, and one vocabulary for where a value
 // comes from.
-import { selectChoice } from "./support";
+import { withClassicDesigner, selectChoice } from "./support";
 import { test, expect, type Page } from "@playwright/test";
 import {
   closeSheet,
+  connected,
   insertStep,
   newWorkflow,
   offline,
   sourceText,
 } from "./support";
 import { DesignerPage } from "./designer-po";
+import { routeTables } from "./decision-grid-po";
+
+test.beforeEach(async ({ page }) => {
+  await withClassicDesigner(page);
+});
 
 const routed = `apiVersion: weave/v1alpha1
 kind: Workflow
@@ -349,4 +355,20 @@ test("from 768 to 1280 px the inspector is a column beside the canvas", async ({
       true,
     );
   }
+});
+
+test("the published table list loads after sign-in", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await connected(page, { identityDelay: 6_000 });
+  const routes = await routeTables(page);
+  await newWorkflow(page);
+  await insertStep(page, "Decision table");
+  const select = page.getByRole("combobox", { name: "Published table" });
+  await expect(
+    page.getByRole("button", { name: /^Platform: .* · Signed in\b/ }),
+  ).toBeVisible({ timeout: 15_000 });
+  await expect(
+    select.locator("option", { hasText: "payment-policy" }),
+  ).toHaveCount(1);
+  expect(routes.lists).toBeGreaterThan(0);
 });

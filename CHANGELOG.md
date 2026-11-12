@@ -20,27 +20,6 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
-- Steps can run for real in an environment. `POST {environment}/step-tests`
-  runs one step of a saved draft, an action or an AI task, as a test run of the
-  normal runtime, and only the person who started it can read or cancel it.
-  The server checks, before anything is written, the new `step_tester` role
-  (`step.test`), catalog read on the project, the environment's test policy,
-  `connection.bind` on each connection, the step's side effect (steps that
-  change data need `acknowledged_side_effect`, every time), the input and the
-  releases; a person runs at most 4 at once and starts 30 a minute per
-  environment. Test versions and activations never appear in a list, lookup or
-  compile catalog, expire with their run's timeout, and are purged once no run
-  uses them. Each environment's test policy (`GET`/`PUT
-  {environment}/test-policy`) is off until an administrator turns it on;
-  `weave platform up` turns it on in the local demo environment and gives the
-  local owner the role there. Migration `0040_editor_step_tests`.
-- Testing a `weave-http@2` connection now sends one `HEAD` request to its base
-  URL with the connection's sign-in, through the same egress rules as its
-  actions, and says why it failed (`reason`); bindable connection items name an
-  HTTP connection's origin.
-- A request can name the person it was made for in `X-Weave-Principal`; when
-  the token now belongs to someone else, the platform refuses it with 409
-  `WV-PRINCIPAL-CHANGED` before anything runs.
 - Workflow transactions run. A `transaction` step confirms its reservations
   once it goes ahead and undoes what went through, newest first, when a step
   fails, the run is canceled or it times out; the platform lists
@@ -95,6 +74,39 @@ SPDX-License-Identifier: Apache-2.0
 - Security: the Agentic worker updates dnspython to 2.9.0 (CVE-2026-114605),
   filelock to 4.2.1 (CVE-2026-112940) and pyasn1 to 0.6.5 (CVE-2026-119194 to
   CVE-2026-119197).
+- The new editor is now on by default; turn it off in Settings › Preferences to
+  use the classic designer.
+- Decision tables open in a spreadsheet grid that fills the step's Parameters
+  card, with a short cell language, keyboard editing and pasting from
+  spreadsheets. Try an input uses the step's Input and Output panes: as you
+  type test values in Input, the grid marks the rules that match and Output
+  shows the result, checked by Weave on the Studio host
+  (`POST /studio/local/decision/evaluate`), with no platform needed.
+- Table drafts are kept on this computer until you publish them with Publish
+  table; a workflow that uses one waits for it.
+- Published actions offer Change in a new version for retry, timeout and the
+  request.
+- Steps can run for real in an environment. `POST {environment}/step-tests`
+  runs one step of a saved draft, an action or an AI task, as a test run of the
+  normal runtime, and only the person who started it can read or cancel it.
+  The server checks, before anything is written, the new `step_tester` role
+  (`step.test`), catalog read on the project, the environment's test policy,
+  `connection.bind` on each connection, the step's side effect (steps that
+  change data need `acknowledged_side_effect`, every time), the input and the
+  releases; a person runs at most 4 at once and starts 30 a minute per
+  environment. Test versions and activations never appear in a list, lookup or
+  compile catalog, expire with their run's timeout, and are purged once no run
+  uses them. Each environment's test policy (`GET`/`PUT
+  {environment}/test-policy`) is off until an administrator turns it on;
+  `weave platform up` turns it on in the local demo environment and gives the
+  local owner the role there. Migration `0040_editor_step_tests`.
+- Testing a `weave-http@2` connection now sends one `HEAD` request to its base
+  URL with the connection's sign-in, through the same egress rules as its
+  actions, and says why it failed (`reason`); bindable connection items name an
+  HTTP connection's origin.
+- A request can name the person it was made for in `X-Weave-Principal`; when
+  the token now belongs to someone else, the platform refuses it with 409
+  `WV-PRINCIPAL-CHANGED` before anything runs.
 
 ## 0.1.0a17
 

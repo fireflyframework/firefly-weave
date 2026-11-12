@@ -28,6 +28,7 @@ export type KindRegistrationLoader = () => Promise<KindRegistrationModule>;
 export const kindRegistrations: readonly KindRegistrationLoader[] = [
   () => import("./builtin"),
   () => import("./llm"),
+  () => import("./decision-grid"),
 ];
 
 /**

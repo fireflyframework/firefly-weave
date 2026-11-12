@@ -19,6 +19,7 @@ import { execFileSync } from "node:child_process";
 import { test, expect, type Page } from "@playwright/test";
 import { parse } from "yaml";
 import {
+  withClassicDesigner,
   offline,
   sourceText,
   connected,
@@ -27,6 +28,10 @@ import {
 } from "./support";
 import { DesignerPage } from "./designer-po";
 import { python } from "../python-path";
+
+test.beforeEach(async ({ page }) => {
+  await withClassicDesigner(page);
+});
 
 const profileSchema = JSON.parse(
   execFileSync(

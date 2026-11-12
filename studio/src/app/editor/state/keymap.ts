@@ -234,6 +234,7 @@ export const KEYMAP: readonly KeymapRow[] = [
     commands: {
       canvas: "deleteSelection",
       outline: "deleteSelection",
+      decisionGrid: "clearCell",
       note: "deleteNote",
     },
   },

@@ -27,10 +27,13 @@ export const vendorPayment = resolve(
   "tests/fixtures/vendor-payment-approval.yaml",
 );
 
-/** Turns on "Try the new editor" for every page this test opens. */
+/**
+ * The new editor, as everyone gets it by default: removes any stored choice
+ * before every page this test opens, so the spec proves the default.
+ */
 export async function useNewEditor(page: Page) {
   await page.addInitScript(() =>
-    localStorage.setItem("ui:weave.editorNext", "true"),
+    localStorage.removeItem("ui:weave.editorNext"),
   );
 }
 

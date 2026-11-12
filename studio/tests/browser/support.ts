@@ -456,6 +456,15 @@ export async function routeTestDataCheck(page: Page) {
   });
 }
 
+/**
+ * This spec tests the classic designer, which the new editor replaces; it goes
+ * when the classic designer does.
+ */
+export async function withClassicDesigner(page: Page) {
+  await page.addInitScript(() =>
+    localStorage.setItem("ui:weave.editorNext", "false"),
+  );
+}
 export async function offline(page: Page) {
   await routeTestDataCheck(page);
   await page.route("**/studio/session", (r) =>

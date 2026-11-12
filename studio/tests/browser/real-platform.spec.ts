@@ -76,7 +76,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { DesignerPage } from "./designer-po";
 import { openYaml } from "./integrations-po";
-import { command, selectChoice } from "./support";
+import { command, selectChoice, withClassicDesigner } from "./support";
 import {
   acme,
   acmeControl,
@@ -208,6 +208,8 @@ test("5-6: silent refresh after expiry, then an ended session keeps local work",
 }) => {
   test.setTimeout(360_000);
   const { person } = setup();
+  // Local authoring here draws a step with the classic designer's palette.
+  await withClassicDesigner(page);
   const s = await session(page);
   const name = uniqueName("e2e-expiry");
   await pair(page, s.host!, "05-pairing");
@@ -390,6 +392,9 @@ test("10: quick integration from Studio runs against the real platform", async (
     "Set WEAVE_E2E_ACME_ORIGIN to the Acme fixture origin this platform approved; scripts/acceptance.py does.",
   );
   const { person } = setup();
+  // The API action builder, the inspector and the canvas here are the classic
+  // designer's.
+  await withClassicDesigner(page);
   const s = await session(page);
   const suffix = randomBytes(3).toString("hex");
   const name = `e2e-integration-${suffix}`;

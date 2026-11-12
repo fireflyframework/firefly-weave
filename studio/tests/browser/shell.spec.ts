@@ -19,6 +19,7 @@ SPDX-License-Identifier: Apache-2.0
 // desktop shell, plain-language errors and navigation semantics.
 import { test, expect, Page } from "@playwright/test";
 import {
+  withClassicDesigner,
   allCapabilities,
   command,
   connected,
@@ -26,6 +27,10 @@ import {
   newWorkflow,
   offline,
 } from "./support";
+
+test.beforeEach(async ({ page }) => {
+  await withClassicDesigner(page);
+});
 
 const desktopShell = (page: Page) =>
   page.addInitScript(() => {

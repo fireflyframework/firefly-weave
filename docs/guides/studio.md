@@ -58,6 +58,7 @@ happens on the platform and keeps running after you close Studio.
 | Draw, import, or validate a workflow on your computer | Studio's local host; no account | [Install Studio](#install-the-alpha17-browser-application), then [work locally](#work-locally-without-signing-in) |
 | Learn the editor with a small example | Studio's local host | [Try it: draw your first workflow](#try-it-draw-your-first-workflow) |
 | Configure steps in the new editor's step details | Studio's local host | [Configure a step in step details](#configure-a-step-in-step-details) |
+| Edit decision tables in a grid and try inputs offline | Studio's local host | [Decision tables in the grid](#decision-tables-in-the-grid) |
 | Save and run workflows on your laptop | Studio plus a separate local Weave platform | [Start the platform](local-platform.md), then [connect Studio](#connect-to-a-platform) |
 | Work with your team's platform | Studio on your computer and the server address from your administrator | [Connect to a platform](#connect-to-a-platform) |
 | Call a REST API from a workflow without writing a connector | Connected Studio; an operator has prepared the built-in HTTP connector | [Call a REST API from a step](#call-a-rest-api-from-a-step) |
@@ -751,12 +752,13 @@ hold Ctrl or Command while you scroll to zoom.
 Start and End are fixed visual boundaries, including an empty Start → End flow;
 they are never added as synthetic execution steps.
 
-### Try the new canvas
+### The new canvas
 
-Studio has a new canvas that lays workflows out from left to right. Turn it on
-in **Settings → Preferences** with **Try the new editor**; Studio keeps the
-choice in this browser, and you can turn it off at any time. **Outline** and
-**Source** work the same with either canvas.
+Studio's canvas lays workflows out from left to right. It is part of the new
+editor, which is on by default. To use the classic designer instead, turn off
+**Use the new editor** in **Settings → Preferences**; Studio keeps the choice in
+this browser, and you can turn it on again at any time. **Outline** and **Source**
+work the same with either canvas.
 
 - **Trigger and End.** A workflow starts at its **Trigger** tile, which reads
   **Manual form · 3 fields** underneath (just **Manual form** when the workflow
@@ -935,9 +937,9 @@ toolbar also reverses a rename or a deletion.
 
 ### Configure a step in step details
 
-Step details are part of the new editor, which is off by default. Turn on **Try
-the new editor** in **Settings → Preferences**, then double-click a step on the
-canvas, or focus it and press Enter or Space, to open its details over the
+Step details are part of the new editor, which is on by default (turn off **Use
+the new editor** in **Settings → Preferences** for the classic designer).
+Double-click a step on the canvas, or focus it and press Enter or Space, to open its details over the
 canvas. A single click only selects the step. **Open** in a step's **More**
 menu, a step's problem badge, the location of a row in **Diagnostics** and Enter
 on a row of **Outline** open them too; a problem opens them on the field it
@@ -1116,6 +1118,79 @@ controls grow to touch size.
 | Ctrl+Z or Command-Z, with Shift to redo | Undo and redo |
 | Escape | One thing per press: close suggestions or a menu, cancel a drag or a rename, bring back the last formula that applied, leave a text box, then close step details |
 
+### Decision tables in the grid
+
+A **Decision table** step shows **Table**, with **Edit table** and **New table**
+under it, and one **Table input** row per required input of the table. **Edit
+table** opens the table in a grid inside step details. On a window 1280 pixels
+wide or wider, **Input**, **Parameters** and **Output** stay side by side:
+**Input** holds the values you try the table with, the grid fills
+**Parameters**, and **Output** shows the rule that matched and the result. On a
+narrower window, the grid has the **Data** pane beside it, with **Output** first.
+**Fold** in a pane's header folds it to a narrow rail, and selecting the rail
+opens it again; Studio remembers both the pane widths and the folds of this view
+apart from the step's. **Back to the step** returns to the step's fields.
+
+Above the grid, the table's name and version carry a **Draft** or **Published**
+pill, with one line on what that means: a draft is saved on this computer and
+test runs use it; a published version starts its next version with your first
+change.
+
+The grid has one row per rule, a column per input and per result, and an
+**Otherwise** row for when no rule matches. **When several rules match** chooses
+**First match**, **Exactly one** or **Collect all**. **Add rule**, **Add input
+column** and **Add result column**, in the grid's footer, grow the table; a
+column's menu, beside its name, renames it, changes its type or removes it. The
+columns stretch to fill the grid and keep their width while you edit. Each input
+cell holds a short test of that column:
+
+| Write | Means |
+| --- | --- |
+| `gold` or `"gold"` | equals that text |
+| `1000` | equals that number |
+| `> 1000`, `>= 1`, `< 5`, `<= 5` | compares a Number, Whole number or Date-time text |
+| `[10..20]`, `(1..2)` | a range, brackets including the end |
+| `ES, PT` | one of these |
+| `not(ES)` | none of these |
+| `!= 3` | anything but this |
+| `contains "a"`, `starts with "b"`, `ends with "c"` | text tests (`contains` also for a List of text) |
+| `present`, `missing` | the field is there, or isn't |
+| `-` or an empty cell | any value |
+| `= input.amount > 0 or exists(input.tier)` | a formula over the table's input, for the whole rule |
+
+Result cells hold a value of the column's type (`true`, `5000`, `"gold"`), or a
+formula after `=`, such as `= input.amount`. A rule the cells can't show stays one
+**ƒ** cell with its formula until you edit it, on up to two lines. A cell that
+doesn't read keeps your text, is underlined, and the problems under the grid say
+why, with the cell's place (such as "Rule 1 · amount") and **Go to cell**; so do
+duplicate rule names, a missing required result, rules that can never match
+under **First match**, and inputs that two rules of an **Exactly one** table both
+match (a warning). While a problem other than a warning remains, **Publish
+table** is off and says how many problems to fix.
+
+Keys: arrows move between cells, Tab and Shift+Tab along a row, Enter or F2
+edits, Enter keeps the edit and Escape cancels it, Delete clears a cell,
+Alt+Enter adds a rule below, Alt+↑ and Alt+↓ move a rule, Ctrl+D or Cmd+D
+duplicates it, and Ctrl+Z or Cmd+Z undoes the last change in the grid. Pasting
+cells copied from a spreadsheet fills a block from the selected cell.
+
+To try the table, type values in **Input**; it starts from the step's test data
+when the step has some, and **Use the step's test data** brings them back after
+you change them. As you type, each rule's row shows whether it matches (green
+when it does, red when two rules match under **Exactly one**), and **Output**
+shows the matched rule, what happened to the other rules and the result, as a
+table or as JSON. Selecting a matched rule moves the grid to it. A moment later
+Weave checks the same input on Studio's host, offline too: **Output** reads
+**Checked by Weave**, or says in words why the table gave no answer and what to
+do. While the table has a problem, **Output** says so instead of trying it. What
+you try isn't kept.
+
+Changing a published version starts its next patch version as a draft on this
+computer, and the step moves to it. **Publish table** publishes the draft; until
+then, **Publish…** stops with "Publish payment-policy@1.2.1 before publishing
+this workflow." Executing and checking test data use the draft, and Studio keeps a
+copy of each published version it reads so they also work offline.
+
 ### Choose where each value comes from
 
 Each field of an action's input offers three sources:
@@ -1232,7 +1307,7 @@ on the canvas show the same problems as a red border and a chip such as
 
 ### Execute steps and read the run log
 
-With **Try the new editor** on, you test a workflow by executing it. Executing
+In the new editor (on by default), you test a workflow by executing it. Executing
 is a simulation that the Studio host on this computer runs: it never calls a
 connector, a worker, a model or the platform's runtime, needs no platform
 account, and publishes nothing. When you are connected, the host reads the
@@ -1303,7 +1378,7 @@ then pauses before it, and the run log offers **Next**, **Continue** and
 
 ### Simulate a run
 
-This section describes the classic editor. With **Try the new editor** on,
+This section describes the classic editor. In the new editor (on by default),
 **Execute workflow** and the run log take the simulation's place.
 
 **Simulate** runs the compiled workflow step by step without calling real

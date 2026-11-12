@@ -40,6 +40,7 @@ export interface RuleTiming {
 }
 
 export function requiredMessage(spec: ParamSpec): string {
+  if (spec.requiredText) return spec.requiredText;
   switch (spec.type) {
     case "select":
     case "multiSelect":

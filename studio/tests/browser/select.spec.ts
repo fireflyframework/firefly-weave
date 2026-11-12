@@ -17,9 +17,19 @@ SPDX-License-Identifier: Apache-2.0
 */
 import { test, expect } from "@playwright/test";
 import { parse } from "yaml";
-import { offline, newWorkflow, sourceText, expectHitTarget } from "./support";
+import {
+  withClassicDesigner,
+  offline,
+  newWorkflow,
+  sourceText,
+  expectHitTarget,
+} from "./support";
 import { DesignerPage } from "./designer-po";
 import { expectInViewport } from "./ux-assertions";
+
+test.beforeEach(async ({ page }) => {
+  await withClassicDesigner(page);
+});
 
 for (const viewport of [
   { width: 1440, height: 900 },

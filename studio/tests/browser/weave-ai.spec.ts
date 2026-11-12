@@ -17,6 +17,7 @@ SPDX-License-Identifier: Apache-2.0
 */
 import { expect, test } from "@playwright/test";
 import {
+  withClassicDesigner,
   allCapabilities,
   command,
   connected,
@@ -24,6 +25,10 @@ import {
   sourceText,
 } from "./support";
 import { DesignerPage } from "./designer-po";
+
+test.beforeEach(async ({ page }) => {
+  await withClassicDesigner(page);
+});
 
 const proposal = `apiVersion: weave/v1alpha1
 kind: Workflow

@@ -19,7 +19,6 @@ import {
   canvasFile,
   canvasFromStored,
   emptyCanvas,
-  ownedRecipes,
   readCanvas,
   removeTrigger,
   type CanvasSidecar,
@@ -465,23 +464,6 @@ function stepIdentities(
   );
   return (id) => found.get(id);
 }
-/** The references every step of a workflow uses (actions, called workflows). */
-function allUses(workflow: { spec: { steps?: unknown } }): string[] {
-  const found: string[] = [];
-  const visit = (value: unknown) => {
-    if (Array.isArray(value)) return value.forEach(visit);
-    if (!value || typeof value !== "object") return;
-    const record = value as Record<string, unknown>;
-    if (
-      typeof record["uses"] === "string" &&
-      typeof record["kind"] === "string"
-    )
-      found.push(record["uses"]);
-    for (const item of Object.values(record)) visit(item);
-  };
-  visit(workflow.spec.steps);
-  return found;
-}
 /** No pinned steps (before the test data tools load). */
 const NO_PINS: ReadonlyMap<string, { stale: string | null }> = new Map();
 
@@ -772,7 +754,7 @@ export class App implements CanvasHost {
   /** The "Keyboard shortcuts" sheet. */
   shortcutsOpen = false;
   /**
-   * "Try the new editor" (Settings › Preferences), or `?editor=next` in the
+   * "Use the new editor" (Settings › Preferences), or `?editor=next` in the
    * address when Studio opened.
    */
   editorNext = editorNextEnabled();
@@ -3515,16 +3497,14 @@ export class App implements CanvasHost {
             )
             .then(conditions(source, format))
             .then(async (result) =>
-              // Its code loads only for a workflow that owns actions.
-              Object.keys(ownedRecipes(canvas)).length
-                ? (
-                    await import("./editor/ndv/owned/owned-pending")
-                  ).withOwnedPending(
-                    result,
-                    this.parseSource(source, format),
-                    canvas,
-                  )
-                : result,
+              // Owned actions publish first; drafts kept on this computer
+              // must be published before the workflow.
+              (await import("./editor/ndv/owned/draft-pending")).withPending(
+                result,
+                this.parseSource(source, format),
+                canvas,
+                this,
+              ),
             );
         },
       },
@@ -7255,11 +7235,7 @@ export class App implements CanvasHost {
           backend: studioBackend(),
           now: () => new Date(),
           // The schemas a check needs come with the tools.
-          inputs: async () =>
-            (await this.loadTools()).checkInputsOf(
-              this.model.definition,
-              this.catalogContracts,
-            ),
+          inputs: async () => (await this.loadTools()).checkInputsFor(this),
           // A platform draft saves its test data with the draft.
           changed: () => {
             if (this.profile) this.autosave.touch();
@@ -7282,13 +7258,9 @@ export class App implements CanvasHost {
               : null,
           place: () => this.executionPlace,
           connected: () => !!this.profile,
-          // The contracts of the actions this workflow uses, nothing else Studio cached.
-          definitions: () => {
-            const uses = new Set(allUses(this.model.definition));
-            return [...this.catalogContracts]
-              .filter(([reference]) => uses.has(reference))
-              .map(([, document]) => document) as { [key: string]: Json }[];
-          },
+          // The contracts of the actions this workflow uses, and the drafts
+          // and copies kept on this computer for its steps.
+          definitions: () => tools.studioDefinitions(this),
           testData: () =>
             this.testData?.data() ?? {
               schemaVersion: 1,
@@ -8611,7 +8583,7 @@ export class App implements CanvasHost {
     };
   }
   // ------------------------------------------------------- step details
-  /** What step details show (with "Try the new editor" on). */
+  /** What step details show (with "Use the new editor" on). */
   readonly stepDetails = inject(StepDetailsService);
   /**
    * Opens step details for a step, "$trigger" or "$end", after applying the
@@ -8782,7 +8754,7 @@ export class App implements CanvasHost {
     this.message = `Inserted ${inserted}, ${action.label}.`;
     return inserted;
   }
-  /** True while step details replace the inspector ("Try the new editor"). */
+  /** True while step details replace the inspector ("Use the new editor"). */
   stepDetailsOn(): boolean {
     return stepDetailsEnabled(this as StepDetailsHost);
   }

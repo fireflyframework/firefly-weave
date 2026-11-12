@@ -16,8 +16,17 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 import { test, expect } from "@playwright/test";
-import { offline, newWorkflow, insertStep } from "./support";
+import {
+  withClassicDesigner,
+  offline,
+  newWorkflow,
+  insertStep,
+} from "./support";
 import { DesignerPage } from "./designer-po";
+
+test.beforeEach(async ({ page }) => {
+  await withClassicDesigner(page);
+});
 
 test.use({ viewport: { width: 1440, height: 900 } });
 

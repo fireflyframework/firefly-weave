@@ -43,7 +43,13 @@ import {
 } from "./step-details-po";
 import { formulaBox, formulaText, setTestInput } from "./formula-po";
 import { box, density, expectAligned } from "./step-geometry";
-import { connected, newWorkflow, offline, sourceText } from "./support";
+import {
+  connected,
+  newWorkflow,
+  offline,
+  sourceText,
+  withClassicDesigner,
+} from "./support";
 
 test.skip(!hasPython, "Needs the repository's Python environment.");
 test.afterAll(() => stopLocalAuthoring());
@@ -646,6 +652,9 @@ test.describe("inserting from Add a step with the platform", () => {
 });
 
 test.describe("the step picker with the new editor off", () => {
+  test.beforeEach(async ({ page }) => {
+    await withClassicDesigner(page);
+  });
   for (const size of sizes)
     test.describe(`at ${size.tag}`, () => {
       test.use({ viewport: { width: size.width, height: size.height } });

@@ -124,6 +124,20 @@ import {
 } from "./pending-entries";
 import type { PreviewData } from "../formula/preview";
 import { LoopScopes } from "../formula/loops";
+import { SIGN_IN_TO_LIST, type TableCatalog } from "./table-catalog";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
+import type { ActionDraftEntry } from "../state/action-drafts";
+import { HttpActionClient } from "../../integrations/http-action-client";
+import type { StepTables } from "./registry";
+import { nextDraftVersion, type TableDocument } from "../state/table-drafts";
+import {
+  CONNECT_TO_PUBLISH,
+  ROLE_CANT_PUBLISH,
+  UNKNOWN_OUTCOME,
+  publishFailure,
+  publishTable,
+} from "../decision-grid/publish-table";
+import type { TableSpec } from "../decision-grid/rules-model";
 
 export type ControllerHost = Pick<
   StepDetailsHost,
@@ -135,6 +149,7 @@ export type ControllerHost = Pick<
   | "catalogContracts"
   | "decisionContracts"
   | "actionVersions"
+  | "cacheContract"
   | "label"
   | "editingLocked"
   | "profile"
@@ -680,13 +695,14 @@ export class StepDetailsController {
     return {
       workflow,
       features: this.features(),
-      actionContract: (uses) =>
-        (this.host.catalogContracts.get(uses) as Json | undefined) ?? null,
-      tableContract: (uses) =>
-        (this.host.decisionContracts.get(uses) as Json | undefined) ?? null,
+      actionContract: (uses) => this.actionContract(uses),
+      tableContract: (uses) => this.tableContract(uses),
       workflowContract: () => null,
       ownedAction: (uses) =>
         (owned[uses] as unknown as Json | undefined) ?? null,
+      actionDraft: (uses) =>
+        (this.actionDraft(uses)?.document as unknown as Json | undefined) ??
+        null,
     };
   }
   step(target: string): Step | null {
@@ -700,11 +716,27 @@ export class StepDetailsController {
     const step = this.step(target);
     return step ? (ndvRegistry.kind(step.kind) ?? null) : null;
   }
-  /** The recipe of the owned action this step calls, else the published action's spec (read-only). */
+  /** An action's document: published (as cached), or its draft on this computer. */
+  actionContract(uses: string): Json | null {
+    return (
+      (this.host.catalogContracts.get(uses) as Json | undefined) ??
+      (this.actionDraft(uses)?.document as unknown as Json | undefined) ??
+      null
+    );
+  }
+  /** The draft of a published action's next version this `uses` names, kept on this computer. */
+  actionDraft(uses: string): ActionDraftEntry | null {
+    const at = uses.lastIndexOf("@");
+    const draft = this.tables?.keptActions()?.draft(uses.slice(0, at));
+    return draft && `${draft.name}@${draft.version}` === uses ? draft : null;
+  }
+  /** The recipe of the owned action this step calls, else a draft's spec, else the published action's spec (read-only). */
   private actionOf(step: Step): Json | null {
     const uses = String(step["uses"] ?? "");
     const owned = ownedActionsOf(this.host.model.canvas)[uses];
     if (owned) return owned as unknown as Json;
+    const draft = this.actionDraft(uses);
+    if (draft) return draft.document.spec as Json;
     const document = this.host.catalogContracts.get(uses);
     return (document?.["spec"] as Json | undefined) ?? null;
   }
@@ -798,6 +830,350 @@ export class StepDetailsController {
   }
   /** Problems the host's builder found in the actions this workflow owns (set by the mount). */
   ownedProblems: () => ReadonlyMap<string, HostDiagnostic[]> = () => new Map();
+  /** The registered parameter component open in place of a step's form (the decision table grid). */
+  readonly parameterComponent = signal<{
+    target: string;
+    kind: string;
+    subNode?: string;
+  } | null>(null);
+  /** Keeps a changed action draft; a refusal is said, and the step details read it again. */
+  private keepActionDraft(draft: ActionDraftEntry, spec: Json) {
+    const tables = this.tables;
+    if (!tables) return;
+    const account = tables.account();
+    void tables.actions().then(async (actions) => {
+      if (tables.account() !== account) return;
+      try {
+        await actions.save(draft, {
+          ...draft.document,
+          spec: spec as ActionDraftEntry["document"]["spec"],
+        });
+      } catch (error) {
+        this.host.notify(
+          error instanceof Error ? error.message : String(error),
+          undefined,
+          "danger",
+        );
+      }
+      this.host.refreshView();
+    });
+  }
+  /**
+   * Change in a new version: the published action's next free patch version
+   * starts on this computer and the step moves to it in one undo step.
+   */
+  async startActionDraft(target: string): Promise<string | null> {
+    const step = this.step(target);
+    const tables = this.tables;
+    if (!step || !tables || this.readOnlyReason(target)) return null;
+    const uses = String(step["uses"] ?? "");
+    const document = this.host.catalogContracts.get(uses);
+    if (!document) return null;
+    const model = this.host.model;
+    const opened = model.opened;
+    const name = uses.slice(0, uses.lastIndexOf("@"));
+    const listed = publishedVersionsOf(this.host.actionVersions, name);
+    const actions = await tables.actions();
+    if (this.host.model !== model || model.opened !== opened) return null;
+    if (actions.draft(name)) {
+      this.host.notify(
+        `${name} ${actions.draft(name)!.version} is already a draft on this computer.`,
+      );
+      return null;
+    }
+    let entry: ActionDraftEntry;
+    try {
+      entry = await actions.startDraft(
+        document as unknown as ActionDraftEntry["document"],
+        listed,
+      );
+    } catch (error) {
+      this.host.notify(
+        error instanceof Error ? error.message : String(error),
+        undefined,
+        "danger",
+      );
+      return null;
+    }
+    if (this.host.model !== model || model.opened !== opened) return null;
+    const next = `${entry.name}@${entry.version}`;
+    this.commit(
+      target,
+      [{ scope: "step", path: ["uses"], value: next }],
+      `ndv:Start ${entry.name} ${entry.version}`,
+    );
+    return next;
+  }
+  /** Publish action: an action draft goes to the platform; the step keeps its `uses`, now published. */
+  async publishActionDraft(target: string): Promise<string | null> {
+    const step = this.step(target);
+    const tables = this.tables;
+    const host = this.host;
+    if (!step || !tables) return null;
+    if (!host.profile) return "Connect to a platform to publish this action.";
+    if (!host.can("definition.publish"))
+      return "Your role can't publish actions in this project.";
+    const uses = String(step["uses"] ?? "");
+    const draft = this.actionDraft(uses);
+    if (!draft) return `${uses} isn't a draft on this computer.`;
+    const key = this.publishKeys.get(uses) ?? crypto.randomUUID();
+    this.publishKeys.set(uses, key);
+    try {
+      await new HttpActionClient(host.api).publishAction(
+        stringifyYaml(draft.document),
+        key,
+      );
+    } catch (error) {
+      const failure = publishFailure(error);
+      if (failure.kind === "unknown")
+        return "Studio couldn't tell whether the action was published. Publish action again: it's safe to repeat.";
+      this.publishKeys.delete(uses);
+      if (failure.kind === "role")
+        return "Your role can't publish actions in this project.";
+      if (failure.kind === "taken")
+        return `${uses} was published by someone else. Change it in a new version again.`;
+      return failure.message;
+    }
+    this.publishKeys.delete(uses);
+    const actions = await tables.actions();
+    await actions.remove(draft.name);
+    host.cacheContract(
+      uses,
+      draft.document as unknown as Record<string, unknown>,
+    );
+    host.notify(`Published ${draft.name} ${draft.version}.`);
+    host.refreshView();
+    return null;
+  }
+  /**
+   * Edit action as YAML: the host checks the document first; the draft keeps
+   * it only when it loads as the same action. A sentence when it doesn't.
+   */
+  async saveActionDraft(target: string, yaml: string): Promise<string | null> {
+    const step = this.step(target);
+    const tables = this.tables;
+    const draft = step ? this.actionDraft(String(step["uses"] ?? "")) : null;
+    if (!draft || !tables)
+      return "This step's action isn't a draft on this computer.";
+    let checked: {
+      validationOk?: boolean;
+      diagnostics?: { message?: string; severity?: string }[];
+    };
+    try {
+      checked = await this.host.api.request("/studio/local/validate", "POST", {
+        source: yaml,
+        format: "yaml",
+      });
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+    if (checked.validationOk === false) {
+      const first = (checked.diagnostics ?? []).find(
+        (diagnostic) => diagnostic.severity === "error",
+      );
+      return first?.message ?? "Weave can't load this action.";
+    }
+    let document: ActionDraftEntry["document"];
+    try {
+      document = parseYaml(yaml) as ActionDraftEntry["document"];
+      const actions = await tables.actions();
+      await actions.save(draft, document);
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+    return null;
+  }
+  /** Tables whose next version is being started now. */
+  private readonly startingTables = new Set<string>();
+  /** Idempotency keys of table publishes whose answer never came, by `uses`. */
+  private readonly publishKeys = new Map<string, string>();
+  /** The step's decision table as step details read and keep it. */
+  private stepTables(
+    target: string,
+    model: ControllerHost["model"],
+    opened: number,
+  ): StepTables | undefined {
+    const tables = this.tables;
+    if (!tables) return undefined;
+    const current = () => this.host.model === model && model.opened === opened;
+    const startOne = async (
+      uses: string,
+      name: string,
+    ): Promise<{ uses: string } | { problem: string }> => {
+      const document = this.tableContract(uses);
+      if (!document || !current())
+        return { problem: `Read ${uses} first: connect to the platform.` };
+      const drafts = await tables.drafts();
+      const kept = drafts.draft(name);
+      if (kept)
+        return {
+          problem: `${name} ${kept.version} is already a draft on this computer. Choose it in Table to keep editing it.`,
+        };
+      const listed = (await tables.list().catch(() => []))
+        .filter(
+          (choice) =>
+            choice.where === "published" && choice.uses.startsWith(`${name}@`),
+        )
+        .map((choice) => choice.uses.slice(name.length + 1));
+      if (!current()) return { problem: "The workflow changed; try again." };
+      let entry;
+      try {
+        entry = await drafts.startDraft(
+          document as unknown as TableDocument,
+          listed,
+        );
+      } catch (error) {
+        return {
+          problem: error instanceof Error ? error.message : String(error),
+        };
+      }
+      if (!current()) return { problem: "The workflow changed; try again." };
+      const next = `${entry.name}@${entry.version}`;
+      this.commit(
+        target,
+        [{ scope: "step", path: ["uses"], value: next }],
+        `ndv:Start ${entry.name} ${entry.version}`,
+      );
+      return { uses: next };
+    };
+    return {
+      document: (uses) => this.tableContract(uses),
+      where: (uses) => tables.where(uses),
+      newTable: async () => {
+        const step = this.step(target);
+        if (!step || !current() || this.readOnlyReason()) return null;
+        const published = await tables.list().catch(() => []);
+        const drafts = await tables.drafts();
+        if (!current()) return null;
+        const workflow = String(model.definition.metadata?.name ?? "workflow");
+        const taken = new Set(
+          published.map((choice) =>
+            choice.uses.slice(0, choice.uses.lastIndexOf("@")),
+          ),
+        );
+        let entry;
+        try {
+          entry = await drafts.newDraft(workflow, target, taken);
+        } catch (error) {
+          this.host.notify(
+            error instanceof Error ? error.message : String(error),
+            undefined,
+            "danger",
+          );
+          return null;
+        }
+        if (!current()) return null;
+        const uses = `${entry.name}@${entry.version}`;
+        await this.commit(
+          target,
+          [{ scope: "step", path: ["uses"], value: uses }],
+          "ndv:New table",
+        );
+        return uses;
+      },
+      startDraft: async (uses) => {
+        const name = uses.slice(0, uses.lastIndexOf("@"));
+        // One start at a time per table: two would both pass the check below.
+        if (this.startingTables.has(name))
+          return { problem: `${name}'s next version is being started.` };
+        this.startingTables.add(name);
+        try {
+          return await startOne(uses, name);
+        } finally {
+          this.startingTables.delete(name);
+        }
+      },
+      publish: async (uses) => {
+        const host = this.host;
+        const at = uses.lastIndexOf("@");
+        const name = uses.slice(0, at);
+        const version = uses.slice(at + 1);
+        if (!host.profile) return { problem: CONNECT_TO_PUBLISH };
+        if (!host.can("definition.publish"))
+          return { problem: ROLE_CANT_PUBLISH };
+        const drafts = await tables.drafts();
+        const entry = drafts.draft(name);
+        if (!entry || entry.version !== version)
+          return { problem: `${uses} isn't a draft on this computer.` };
+        const api = host.api;
+        const key = this.publishKeys.get(uses) ?? crypto.randomUUID();
+        this.publishKeys.set(uses, key);
+        try {
+          await publishTable(api, entry.document, key);
+        } catch (error) {
+          const failure = publishFailure(error);
+          if (failure.kind === "unknown") return { problem: UNKNOWN_OUTCOME };
+          this.publishKeys.delete(uses);
+          if (failure.kind === "role") return { problem: ROLE_CANT_PUBLISH };
+          if (failure.kind === "refused") return { problem: failure.message };
+          // Published by someone else meanwhile: the changes start the next version.
+          const listed = (await tables.list().catch(() => []))
+            .filter(
+              (choice) =>
+                choice.where === "published" &&
+                choice.uses.startsWith(`${name}@`),
+            )
+            .map((choice) => choice.uses.slice(name.length + 1));
+          const next = nextDraftVersion(version, [...listed, version]);
+          await drafts.moveDraft(entry, next);
+          const moved = `${name}@${next}`;
+          if (current())
+            this.commit(
+              target,
+              [{ scope: "step", path: ["uses"], value: moved }],
+              `ndv:Start ${name} ${next}`,
+            );
+          return {
+            moved,
+            message: `${name} ${version} was published by someone else. Your changes start ${next}.`,
+          };
+        }
+        this.publishKeys.delete(uses);
+        await drafts.remove(name);
+        await drafts.copy(entry.document);
+        host.cacheDecisionContract(
+          uses,
+          entry.document as unknown as Record<string, unknown>,
+        );
+        tables.retry();
+        host.notify(`Published ${name} ${version}`);
+        return { published: true };
+      },
+      evaluate: (body) =>
+        this.host.api.request("/studio/local/decision/evaluate", "POST", body),
+      account: () => tables.account(),
+      save: async (uses, spec, account) => {
+        if (tables.account() !== account)
+          return "The account changed, so this change wasn't kept.";
+        const drafts = await tables.drafts();
+        if (tables.account() !== account)
+          return "The account changed, so this change wasn't kept.";
+        const name = uses.slice(0, uses.lastIndexOf("@"));
+        const entry = drafts.draft(name);
+        if (!entry || `${entry.name}@${entry.version}` !== uses)
+          return `${uses} isn't a draft on this computer.`;
+        try {
+          await drafts.save(entry, spec as unknown as TableSpec);
+          return null;
+        } catch (error) {
+          return error instanceof Error ? error.message : String(error);
+        }
+      },
+    };
+  }
+  /** The decision tables step details read themselves; null in a shell without one. */
+  tables: TableCatalog | null = null;
+  /** A table's document: a draft or copy on this computer, or what was read; reading starts when unknown. */
+  tableContract(uses: string): Json | null {
+    const tables = this.tables;
+    if (!tables)
+      return (
+        (this.host.decisionContracts.get(uses) as Json | undefined) ?? null
+      );
+    const known = tables.contract(uses);
+    if (!known && uses) void tables.load(uses);
+    return known;
+  }
   /** Changes when what decides an issue's timing changes: a field left, a step revealed, an entry held or dropped. */
   issueMarks(): number {
     return this.marks + this.pendingStore().version;
@@ -1096,8 +1472,23 @@ export class StepDetailsController {
     let recipe: OwnedRecipe | undefined;
     const step = this.step(target);
     const uses = String(step?.["uses"] ?? "");
+    const draft = this.actionDraft(uses);
+    let draftSpec: Json | null = null;
     for (const change of changes) {
-      if (change.scope === "action") {
+      if (
+        change.scope === "action" &&
+        draft &&
+        !ownedActionsOf(model.canvas)[uses]
+      ) {
+        // A published action's next version, kept on this computer.
+        const subject: FormSubject = {
+          step: null,
+          workflow: model.definition,
+          action: draftSpec ?? (draft.document.spec as Json),
+          roots: [],
+        };
+        draftSpec = applyChange(subject, change).action;
+      } else if (change.scope === "action") {
         recipe ??= ownedActionsOf(model.canvas)[uses];
         if (!recipe)
           throw new Error("This step's action isn't one this workflow owns.");
@@ -1128,6 +1519,7 @@ export class StepDetailsController {
       if (updated) model.update(target, JSON.stringify(updated));
       if (workflowEdits.length) model.updateWorkflow(next);
     }
+    if (draft && draftSpec) this.keepActionDraft(draft, draftSpec);
     if (recipe) {
       // The recipe lives in the canvas sidecar, which has a size cap; a refused edit leaves everything as it was.
       const next = withOwnedAction(model.canvas, uses, recipe);
@@ -1148,16 +1540,20 @@ export class StepDetailsController {
     return {
       actionOutput: (uses) =>
         (
-          this.host.catalogContracts.get(uses)?.["spec"] as
-            | Record<string, unknown>
-            | undefined
+          (this.actionContract(uses) as Record<string, unknown> | null)?.[
+            "spec"
+          ] as Record<string, unknown> | undefined
         )?.["outputSchema"],
-      decisionOutput: (uses) =>
-        (
-          this.host.decisionContracts.get(uses)?.["spec"] as
-            | Record<string, unknown>
-            | undefined
-        )?.["outputSchema"],
+      decisionOutput: (uses) => {
+        const contract = this.tableContract(uses);
+        return contract &&
+          typeof contract === "object" &&
+          !Array.isArray(contract)
+          ? (contract["spec"] as Record<string, unknown> | undefined)?.[
+              "outputSchema"
+            ]
+          : undefined;
+      },
     };
   }
 
@@ -1300,10 +1696,16 @@ export class StepDetailsController {
             const uses = `${String(row["name"])}@${String(row["version"])}`;
             return { uses, title: uses };
           }),
-        contract: async (uses) =>
-          (host.catalogContracts.get(uses) as Json | undefined) ?? null,
+        contract: async (uses) => this.actionContract(uses),
         workflows: async () => [],
+        tablesNote: () => (this.tables?.needsSignIn() ? SIGN_IN_TO_LIST : null),
         tables: async () => {
+          if (this.tables) {
+            const tables = this.tables;
+            const rows = await tables.list();
+            if (host.model !== model || model.opened !== opened) return [];
+            return rows.map(({ uses, title }) => ({ uses, title }));
+          }
           if (!host.profile || !host.can("catalog.read")) return [];
           const { profile, api } = host;
           const page = await api.page("decision-tables");
@@ -1349,6 +1751,16 @@ export class StepDetailsController {
       },
       openAddStep: () => undefined,
       openSubNode: () => undefined,
+      openParameterComponent: (kind, subNode) => {
+        if (host.model !== model || model.opened !== opened) return;
+        this.parameterComponent.set({ target, kind, subNode });
+      },
+      closeParameterComponent: () => {
+        if (this.parameterComponent()?.target === target)
+          this.parameterComponent.set(null);
+      },
+      notify: (text, action) => host.notify(text, action),
+      tables: this.stepTables(target, model, opened),
     };
     return ctx;
   }

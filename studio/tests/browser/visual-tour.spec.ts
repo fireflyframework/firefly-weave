@@ -27,7 +27,7 @@ SPDX-License-Identifier: Apache-2.0
 // no icon name without a drawing.
 // The platform and the local host are mocked; the local authoring endpoints
 // and the simulation artifact use the repository's real Python code.
-import { selectChoice } from "./support";
+import { selectChoice, withClassicDesigner } from "./support";
 import { test, expect, Locator, Page, Request, Route } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { copyFileSync, mkdirSync, writeFileSync } from "node:fs";
@@ -120,6 +120,20 @@ import {
   python,
   stopLocalAuthoring,
 } from "./local-authoring";
+import {
+  DecisionGridPage,
+  draftOrdersWorkflow,
+  keepTableDraft,
+  openPaymentGrid,
+  ordersWorkflow,
+  paymentPolicy,
+  routeTables,
+  TablePanes,
+  tablePlatform,
+  twelveRules,
+  withoutOtherwise,
+  type TableDocumentFixture,
+} from "./decision-grid-po";
 import { crossingOf } from "./woven-crossing";
 import {
   EXECUTE_ASKING,
@@ -167,6 +181,127 @@ const versionId = "11111111-1111-4111-8111-111111111111";
 /** Floating surfaces that cover the page on purpose while they are open. */
 const overlays =
   '[aria-modal="true"], .modal-backdrop, [role="dialog"], [role="menu"], [role="listbox"], .platform-menu, .inspector, .record-detail, .palette.popover-visible, .sim-panel, .toast, .canvas-v2 f-minimap, .canvas-v2 .selection-toolbar, .canvas-v2 .tile-toolbar, .add-step-panel, .formula-suggestions, .run-log';
+
+/** A workflow whose decision table step fills the table's inputs field by field. */
+const decisionFormWorkflow = yamlFile(
+  "orders.yaml",
+  `apiVersion: weave/v1alpha1
+kind: Workflow
+metadata: { name: orders, version: 1.0.0 }
+spec:
+  inputSchema:
+    type: object
+    required: [amount]
+    properties:
+      amount: { type: number }
+      tier: { type: string }
+  outputSchema: { type: object }
+  steps:
+    - id: score
+      kind: decisionTable
+      uses: payment-policy@1.2.0
+      with:
+        object:
+          amount: { ref: /input/amount }
+  output: { literal: {} }
+`,
+);
+const draftWorkflow = draftOrdersWorkflow;
+/** payment-policy 1.2.1, kept as a draft on this computer before Studio opens. */
+async function keepPaymentDraft(page: Page) {
+  await page.addInitScript(
+    (value) =>
+      localStorage.setItem("local:weave.tableDraft.payment-policy", value),
+    JSON.stringify({
+      kind: "draft",
+      name: "payment-policy",
+      version: "1.2.1",
+      base: "1.2.0",
+      document: paymentPolicy("1.2.1"),
+      savedAt: "2026-10-27T08:00:00.000Z",
+    }),
+  );
+}
+
+/** The draft grid, with the step's test data from the trigger in Input. */
+async function openTriedDraft(page: Page, values: Record<string, string>) {
+  await keepPaymentDraft(page);
+  const details = await openStepFixture(page, draftWorkflow);
+  await localAuthoring(page);
+  await setTestInput(page, details, values);
+  await details.open("score");
+  const grid = new DecisionGridPage(page);
+  await grid.open();
+  const panes = new TablePanes(page);
+  await panes.show("Output");
+  await expect(panes.checked).toBeVisible();
+  return { details, grid, panes };
+}
+/** A draft grid with no test data, offline, with the Studio host's check. */
+async function openTableDraft(page: Page, document?: TableDocumentFixture) {
+  await keepTableDraft(page, document);
+  const details = await openStepFixture(page, draftWorkflow);
+  await localAuthoring(page);
+  await details.open("score");
+  const grid = new DecisionGridPage(page);
+  await grid.open();
+  return { details, grid, panes: new TablePanes(page) };
+}
+/** Scenes the direction asks for at some sizes only. */
+const only = (size: { tag: string }, ...tags: string[]) =>
+  test.skip(!tags.includes(size.tag), `Shown at ${tags.join(" and ")}.`);
+
+/** payment-policy with a fourth rule for silver amounts from 1000 to 5000. */
+function withSilverRule(table: TableDocumentFixture): TableDocumentFixture {
+  const spec = table.spec as { rules: unknown[] };
+  const ref = (name: string) => ({ ref: `/input/${name}` });
+  return {
+    ...table,
+    spec: {
+      ...table.spec,
+      rules: [
+        ...spec.rules,
+        {
+          id: "silver-mid",
+          // A range cell, [1000..5000], then the tier.
+          when: {
+            op: {
+              name: "and",
+              args: [
+                {
+                  op: {
+                    name: "and",
+                    args: [
+                      {
+                        op: {
+                          name: "gte",
+                          args: [ref("amount"), { literal: 1000 }],
+                        },
+                      },
+                      {
+                        op: {
+                          name: "lte",
+                          args: [ref("amount"), { literal: 5000 }],
+                        },
+                      },
+                    ],
+                  },
+                },
+                {
+                  op: {
+                    name: "eq",
+                    args: [ref("tier"), { literal: "silver" }],
+                  },
+                },
+              ],
+            },
+          },
+          output: { literal: { approve: true, limit: 2500 } },
+        },
+      ],
+    },
+  };
+}
 
 test.describe.configure({ mode: "parallel" });
 test.afterAll(() => stopLocalAuthoring());
@@ -285,7 +420,7 @@ function auditPage(overlays: string): Audit {
     .map((e) => [e, e.scrollTop, e.scrollLeft] as const);
   // Containers that scroll sideways by design.
   const sideways =
-    ".table-scroll, pre, code, textarea, .canvas, f-flow, f-canvas, .run-graph, .source-editor, .hb-yaml, .hb-preview";
+    ".table-scroll, pre, code, textarea, .canvas, f-flow, f-canvas, .run-graph, .source-editor, .hb-yaml, .hb-preview, .dg-scroll";
   const scrollers = [...document.querySelectorAll<HTMLElement>("body *")]
     .filter((e) => {
       const s = style(e);
@@ -1988,6 +2123,293 @@ const scenes: Record<string, Scene> = {
     await expect(input).toContainText("No input data yet");
     await shot("160-execute-input-empty", { tabs: 0 });
   },
+  async "decision-table-form"({ page, shot }) {
+    const details = await openStepFixture(
+      page,
+      decisionFormWorkflow,
+      async (p) => {
+        const result = await connected(p);
+        await withLanguageFeatures(p);
+        return result;
+      },
+    );
+    await routeTables(page, [paymentPolicy("1.2.0")]);
+    await details.open("score");
+    await expect(
+      details.field("table").getByRole("button", { name: "Edit table" }),
+    ).not.toHaveAttribute("aria-disabled");
+    await expect(details.field("input.amount")).toBeVisible();
+    await shot("161-decision-table-form", { tabs: 0, end: ".sd-panes" });
+  },
+  async "decision-grid"({ page, shot }) {
+    // A published table with a fourth rule; rule 3, a formula, matches and
+    // Output shows the result as JSON.
+    const details = await openStepFixture(page, ordersWorkflow, async (p) => {
+      const result = await connected(p);
+      await withLanguageFeatures(p);
+      return result;
+    });
+    await localAuthoring(page);
+    await routeTables(page, [withSilverRule(paymentPolicy("1.2.0"))]);
+    await details.open("score");
+    const grid = new DecisionGridPage(page);
+    await grid.open();
+    await expect(grid.cell(4, 0)).toBeVisible();
+    const panes = new TablePanes(page);
+    await panes.show("Input");
+    await panes.type({ amount: "6000", tier: "silver" });
+    await panes.show("Output");
+    await panes.output.getByRole("radio", { name: "JSON" }).click();
+    await expect(panes.checked).toBeVisible();
+    await panes.show("Parameters");
+    await grid.cell(3, 2).click();
+    await shot("162-decision-grid", { tabs: 0, end: ".sd-panes" });
+  },
+  async "decision-grid-cell-edit"({ page, shot }) {
+    const { grid } = await openPaymentGrid(page);
+    await grid.cell(1, 1).click();
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("ControlOrMeta+a");
+    await page.keyboard.type("<= 900");
+    await expect(grid.root.locator(".dg-cell-input")).toBeFocused();
+    await shot("163-decision-grid-cell-edit", { tabs: 0, end: ".sd-panes" });
+  },
+  async "decision-grid-try-input"({ page, shot }) {
+    // A draft, the step's test data in Input, rule 1 matched in Output, and
+    // the cursor on rule 2's amount.
+    const { grid, panes } = await openTriedDraft(page, {
+      Amount: "2000",
+      "Tier (optional)": "gold",
+    });
+    await expect(panes.cards.first()).toContainText("Rule 1 · big-gold");
+    await panes.show("Parameters");
+    await grid.cell(1, 1).click();
+    await shot("164-decision-grid-try-input", { tabs: 0, end: ".sd-panes" });
+  },
+  async "decision-grid-publish"({ page, shot }) {
+    await tablePlatform(page);
+    const details = await openStepFixture(page, ordersWorkflow, async () => {
+      // Connected by the platform above.
+    });
+    await details.open("score");
+    const grid = new DecisionGridPage(page);
+    await grid.open();
+    await grid.edit(1, 1, "<= 900");
+    const publish = grid.root.getByRole("button", { name: "Publish table" });
+    await expect(publish).toBeVisible();
+    // On a phone the sheet has scrolled to the cell: show the command.
+    await publish.scrollIntoViewIfNeeded();
+    await shot("165-decision-grid-publish", { tabs: 0, end: ".sd-panes" });
+    await grid.back();
+    await details.close();
+    await command(page, "Publish…");
+    await expect(
+      page
+        .getByText(
+          "Publish payment-policy@1.2.1 before publishing this workflow.",
+        )
+        .first(),
+    ).toBeVisible();
+    await shot("166-decision-publish-blocked", { tabs: 0 });
+  },
+  async "decision-grid-problems"({ page, shot }) {
+    const { grid } = await openTriedDraft(page, {
+      Amount: "2000",
+      "Tier (optional)": "gold",
+    });
+    await new TablePanes(page).show("Parameters");
+    await grid.edit(0, 1, ">> 1000");
+    await grid.edit(1, 0, "big-gold");
+    await expect(grid.root.locator(".dg-problems")).toContainText(
+      ">> isn't a test",
+    );
+    await shot("167-decision-grid-problems", { tabs: 0, end: ".sd-panes" });
+  },
+  async "decision-grid-column-dialog"({ page, shot }) {
+    const { grid } = await openPaymentGrid(page);
+    await grid.root.getByRole("button", { name: "Add input column" }).click();
+    const dialog = page.getByRole("dialog", { name: "Add input column" });
+    await dialog.getByLabel("Name").fill("region");
+    await dialog.getByRole("radio", { name: "Text", exact: true }).check();
+    await expect(
+      dialog.getByRole("button", { name: "Add column" }),
+    ).toBeEnabled();
+    await shot("168-decision-grid-column-dialog", { tabs: 2 });
+  },
+  async "decision-grid-exactly-one"({ page, shot }) {
+    const { grid, panes } = await openTriedDraft(page, {
+      Amount: "6000",
+      "Tier (optional)": "gold",
+    });
+    await panes.show("Parameters");
+    await grid.policy("Exactly one");
+    await panes.show("Output");
+    await expect(panes.output.locator(".dg-callout")).toContainText(
+      "Two rules matched but the policy allows exactly one (rules 1 and 3).",
+    );
+    await expect(panes.checked).toBeVisible();
+    await panes.show("Parameters");
+    await page.evaluate(() => (document.activeElement as HTMLElement).blur());
+    await shot("169-decision-grid-exactly-one", { tabs: 0, end: ".sd-panes" });
+  },
+  async "decision-grid-input-edited"({ page, shot, size }) {
+    only(size, "1440x900");
+    const { panes } = await openTriedDraft(page, {
+      Amount: "2000",
+      "Tier (optional)": "gold",
+    });
+    await panes.show("Input");
+    await panes.type({ amount: "2500" });
+    await expect(panes.input.locator(".pill")).toHaveText("Edited");
+    await expect(
+      panes.input.getByRole("button", { name: "Use the step's test data" }),
+    ).toBeVisible();
+    await expect(panes.checked).toBeVisible();
+    await shot("172-decision-grid-input-edited", { tabs: 0 });
+  },
+  async "decision-grid-otherwise"({ page, shot, size }) {
+    only(size, "1440x900");
+    const { grid, panes } = await openTriedDraft(page, {
+      Amount: "3000",
+      "Tier (optional)": "silver",
+    });
+    await expect(panes.cards.first()).toContainText("Otherwise");
+    await expect(panes.count).toHaveText("No rule matched");
+    await expect(grid.root.locator(".dg-otherwise .dg-mark")).toHaveAttribute(
+      "data-mark",
+      "match",
+    );
+    await shot("173-decision-grid-otherwise", { tabs: 0 });
+  },
+  async "decision-grid-no-otherwise"({ page, shot, size }) {
+    only(size, "1440x900");
+    const { grid, panes } = await openTableDraft(
+      page,
+      withoutOtherwise("1.2.1"),
+    );
+    await panes.type({ amount: "3000", tier: "silver" });
+    await expect(panes.output.locator(".dg-callout")).toContainText(
+      "No rule matched and there's no Otherwise result.",
+    );
+    await expect(grid.cell(3, 3)).toHaveText("No result");
+    await expect(panes.checked).toBeVisible();
+    await shot("174-decision-grid-no-otherwise", { tabs: 0 });
+  },
+  async "decision-grid-input-unfit"({ page, shot, size }) {
+    only(size, "1440x900");
+    const { grid, panes } = await openTableDraft(page);
+    await panes.type({ tier: "gold" });
+    await expect(panes.output.locator(".dg-callout")).toContainText(
+      "The input doesn't fit the table's input fields.",
+    );
+    await expect(panes.input.locator("p.error")).toHaveText([
+      "Enter a number.",
+    ]);
+    await expect(panes.checked).toBeVisible();
+    await expect(grid.root.locator(".dg-mark")).toHaveCount(0);
+    await shot("175-decision-grid-input-unfit", { tabs: 0 });
+  },
+  async "decision-grid-checking"({ page, shot, size }) {
+    only(size, "1440x900");
+    const { panes } = await openTableDraft(page);
+    // Weave's check is held while the shot is taken.
+    let release = () => {};
+    const held = new Promise<void>((done) => (release = done));
+    await page.route("**/studio/local/decision/evaluate", async (route) => {
+      await held;
+      await route.fallback();
+    });
+    await panes.type({ amount: "2000", tier: "gold" });
+    await expect(
+      panes.output.locator(".pill", { hasText: "Checking with Weave…" }),
+    ).toBeVisible();
+    await expect(panes.count).toHaveText("Rule 1 matched");
+    await shot("176-decision-grid-checking", { tabs: 0 });
+    release();
+  },
+  async "decision-grid-publishing"({ page, shot, size }) {
+    only(size, "1440x900");
+    await tablePlatform(page);
+    // The platform holds the table's publish while the first shot is taken.
+    let release = () => {};
+    const held = new Promise<void>((done) => (release = done));
+    await page.route("**/decision-tables", async (route) => {
+      if (route.request().method() === "POST") await held;
+      await route.fallback();
+    });
+    const details = await openStepFixture(page, ordersWorkflow, async () => {
+      // Connected by the platform above.
+    });
+    await details.open("score");
+    const grid = new DecisionGridPage(page);
+    await grid.open();
+    await grid.edit(1, 1, "<= 900");
+    await grid.root.getByRole("button", { name: "Publish table" }).click();
+    await expect(
+      grid.root.getByRole("button", { name: "Publishing…" }),
+    ).toBeVisible();
+    await shot("177-decision-grid-publishing", { tabs: 0 });
+    release();
+    await expect(
+      page.getByText("Published payment-policy 1.2.1", { exact: true }).first(),
+    ).toBeVisible();
+    await expect(grid.root.locator(".dg-bar .pill")).toHaveText("Published");
+    await shot("178-decision-grid-published", { tabs: 0 });
+  },
+  async "decision-grid-full"({ page, shot, size }) {
+    only(size, "1440x900", "768x1024");
+    const { grid } = await openTableDraft(page, twelveRules("1.2.1"));
+    const scroller = grid.root.locator(".dg-scroll");
+    await scroller.evaluate((e) => {
+      e.scrollTop = e.scrollHeight;
+      e.scrollLeft = e.scrollWidth;
+    });
+    await shot("180-decision-grid-full", { tabs: 0 });
+  },
+  async "decision-grid-input-tab"({ page, shot, size }) {
+    only(size, "768x1024");
+    const { panes } = await openTriedDraft(page, {
+      Amount: "2000",
+      "Tier (optional)": "gold",
+    });
+    await panes.show("Input");
+    await expect(panes.field("amount")).toHaveValue("2000");
+    await shot("182-decision-grid-input-tab", { tabs: 0 });
+  },
+  async "decision-grid-many-problems"({ page, shot, size }) {
+    only(size, "1440x900", "768x1024");
+    const { grid } = await openTableDraft(page, twelveRules("1.2.1"));
+    for (const row of [0, 1, 2, 3]) await grid.edit(row, 2, ">> x");
+    await expect(grid.problems().locator("li")).toHaveCount(4);
+    await shot("183-decision-grid-many-problems", { tabs: 0 });
+  },
+  async "action-change-in-new-version"({ page, shot }) {
+    const details = await openStepFixture(page, stepFixture, async (p) => {
+      const result = await connected(p, {
+        capabilities: [...allCapabilities, "compile"],
+      });
+      await withLanguageFeatures(p);
+      return result;
+    });
+    await details.open("lookup");
+    await details.tab("Settings").click();
+    const retry = details.field("retry");
+    await expect(retry).toContainText("Set by sql.lookup@1.0.0.");
+    const panel = { tabs: 0, end: ".sd-tabpanel:not([hidden])" };
+    await shot("170-action-settings-published", panel);
+    await retry
+      .getByRole("button", { name: "Change in a new version" })
+      .click();
+    await expect(retry).toContainText(
+      "Saved in sql.lookup 1.0.1 on this computer. Publish it before publishing this workflow.",
+    );
+    await expect(
+      details
+        .field("retry.maxAttempts")
+        .getByRole("textbox", { name: "Max tries" }),
+    ).toBeEditable();
+    await shot("171-action-change-in-new-version", panel);
+  },
   async "step-details-decision"({ page, shot }) {
     const details = await openStepFixture(page);
     await details.open("route-by-value");
@@ -2317,6 +2739,8 @@ ${paths}
   },
 
   async "workflows-local"({ page, shot }) {
+    // A scene of the classic designer, which the new editor replaces.
+    await withClassicDesigner(page);
     await hosted(page, {});
     await newWorkflow(page);
     await addStep(page, "transform");
@@ -2722,6 +3146,8 @@ ${paths}
     await shot("37-ai-connection-failed", { end: ".modal-panel" });
   },
   async "designer-lanes"({ page, shot }) {
+    // A scene of the classic designer, which the new editor replaces.
+    await withClassicDesigner(page);
     await offline(page);
     await page
       .getByLabel("Choose a workflow file")
@@ -2744,6 +3170,8 @@ ${paths}
   },
 
   async "inspector-fields"({ page, shot }) {
+    // A scene of the classic designer, which the new editor replaces.
+    await withClassicDesigner(page);
     await offline(page);
     await newWorkflow(page);
     const designer = new DesignerPage(page);
@@ -2767,6 +3195,8 @@ ${paths}
   },
 
   async "inspector-paths-settings"({ page, shot }) {
+    // A scene of the classic designer, which the new editor replaces.
+    await withClassicDesigner(page);
     await offline(page);
     await page
       .getByLabel("Choose a workflow file")
@@ -2797,6 +3227,8 @@ ${paths}
   },
 
   async "condition-operators"({ page, shot }) {
+    // A scene of the classic designer, which the new editor replaces.
+    await withClassicDesigner(page);
     await offline(page);
     await newWorkflow(page);
     const designer = new DesignerPage(page);
@@ -2833,6 +3265,8 @@ spec:
   },
 
   async "designer-canvas"({ page, shot }) {
+    // A scene of the classic designer, which the new editor replaces.
+    await withClassicDesigner(page);
     await offline(page);
     await newWorkflow(page);
     const designer = new DesignerPage(page);
@@ -2939,6 +3373,8 @@ spec:
   },
 
   async "human-task-inspector"({ page, shot }) {
+    // A scene of the classic designer, which the new editor replaces.
+    await withClassicDesigner(page);
     await offline(page);
     await newWorkflow(page);
     const designer = new DesignerPage(page);
@@ -2964,6 +3400,8 @@ spec:
   },
 
   async "designer-schema"({ page, shot }) {
+    // A scene of the classic designer, which the new editor replaces.
+    await withClassicDesigner(page);
     await offline(page);
     await newWorkflow(page);
     const designer = new DesignerPage(page);
@@ -2986,6 +3424,8 @@ spec:
   },
 
   async "designer-diagnostics"({ page, shot }) {
+    // A scene of the classic designer, which the new editor replaces.
+    await withClassicDesigner(page);
     await offline(page);
     await localProblems(page);
     await newWorkflow(page);
@@ -3006,6 +3446,8 @@ spec:
   },
 
   async "designer-action"({ page, shot }) {
+    // A scene of the classic designer, which the new editor replaces.
+    await withClassicDesigner(page);
     await connected(page);
     await newWorkflow(page);
     const designer = new DesignerPage(page);
@@ -3041,6 +3483,8 @@ spec:
   },
 
   async "designer-simulation"({ page, shot }) {
+    // A scene of the classic designer, which the new editor replaces.
+    await withClassicDesigner(page);
     const artifact = simulationArtifact();
     test.skip(!artifact, "Needs the repository's Python environment.");
     await connected(page, { capabilities: [...allCapabilities, "compile"] });
@@ -3120,6 +3564,8 @@ spec:
   },
 
   async "designer-activation"({ page, shot }) {
+    // A scene of the classic designer, which the new editor replaces.
+    await withClassicDesigner(page);
     const getPet = {
       apiVersion: "weave/v1alpha1",
       kind: "Action",
@@ -3385,6 +3831,8 @@ spec:
   },
 
   async "api-builder"({ page, shot }) {
+    // A scene of the classic designer, which the new editor replaces.
+    await withClassicDesigner(page);
     test.skip(!hasPython, "Needs the repository's Python environment.");
     await httpPlatform(page);
     await localAuthoring(page);
@@ -3436,6 +3884,8 @@ spec:
   },
 
   async "openapi-import"({ page, shot }) {
+    // A scene of the classic designer, which the new editor replaces.
+    await withClassicDesigner(page);
     test.skip(!hasPython, "Needs the repository's Python environment.");
     await httpPlatform(page);
     await localAuthoring(page);
@@ -4018,7 +4468,7 @@ spec:
     await open(page, "Settings");
     await page.getByRole("tab", { name: "Preferences" }).click();
     await expect(
-      page.getByRole("switch", { name: "Try the new editor" }),
+      page.getByRole("switch", { name: "Use the new editor" }),
     ).toBeVisible();
     await shot("34-settings-preferences", { end: ".page-content" });
   },

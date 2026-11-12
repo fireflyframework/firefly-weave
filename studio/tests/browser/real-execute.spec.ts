@@ -134,9 +134,6 @@ test("executing a draft with a published worker action reads the catalog and sta
   const { person, environment } = setup();
   const project = `/api/v1/tenants/${environment.tenant_id}/projects/${environment.project_id}`;
   const runs = `${project}/environments/${environment.environment_id}/run-summaries?limit=100`;
-  await page.addInitScript(() =>
-    localStorage.setItem("ui:weave.editorNext", "true"),
-  );
   const s = await session(page);
   const name = uniqueName("e2e-execute");
   await pair(page, s.host!, "ex-01-pairing");
