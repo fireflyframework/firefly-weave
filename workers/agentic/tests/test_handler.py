@@ -20,6 +20,7 @@ import asyncio
 import contextlib
 import json
 import os
+import time
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from uuid import uuid4
@@ -28,6 +29,7 @@ import httpx2
 import pytest
 from firefly_weave import private_origins as po
 from firefly_weave.ai_policy import PolicyFile, render
+from firefly_weave.contracts.agent_turns import DATA_NOTICES
 from firefly_weave.contracts.connectors import ConnectorFailure
 from firefly_weave.contracts.workers import CredentialLease, LeaseProof, TaskLease
 from pydantic_ai.exceptions import ModelHTTPError
@@ -35,7 +37,8 @@ from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.usage import RequestUsage
 
-from weave_agentic_worker.handler import AgenticTaskHandler, WorkerPolicy
+import weave_agentic_worker.handler as handler_module
+from weave_agentic_worker.handler import AgenticTaskHandler, TurnTaskHandler, WorkerPolicy
 from weave_agentic_worker.providers import build_model
 
 PATTERNS = [
@@ -1064,3 +1067,274 @@ async def test_only_ollama_entries_get_the_ollama_prompt_checks(tmp_path, monkey
             ollama_lease(outputSchema=SUMMARY_SCHEMA)
         )
     assert seen == [False, True]
+
+
+def turn_lease(*, model="qwen2.5:1.5b", **profile):
+    now = datetime.now(UTC)
+    return TaskLease(
+        proof=LeaseProof(task_id=uuid4(), generation=1, owner=uuid4(), token="lease-proof"),
+        operation_key="run-1:support#1",
+        deadline=now + timedelta(seconds=30),
+        expires_at=now + timedelta(seconds=30),
+        capability="weave-agentic.turn@1.0.0",
+        worker_release_id=uuid4(),
+        input={
+            "profile": {
+                "provider": "openai-chat",
+                "model": model,
+                "options": {"max_tokens": 256},
+                "timeoutSeconds": 10,
+                "outputSchema": TEXT_SCHEMA,
+                **profile,
+            },
+            "instructions": "Answer questions about orders.\n\n" + DATA_NOTICES[1],
+            "messages": [{"role": "user", "content": "Where is order A-17?"}],
+            "tools": [
+                {
+                    "name": "lookup_order",
+                    "description": "Look up an order by its ID.",
+                    "parameters": {"type": "object", "properties": {"id": {"type": "string"}}},
+                }
+            ],
+            "turn": 1,
+            "limits": {"maxOutputTokens": 256, "remainingTokens": 60000, "contextTokens": 8192},
+            "rules": 1,
+        },
+    )
+
+
+# The real lookup, kept before the fixture below replaces it for every other test here.
+REAL_OLLAMA_VERSION = handler_module.ollama_version
+
+
+@pytest.fixture(autouse=True)
+def no_version_lookup(monkeypatch):
+    """Turn handlers here never look up Ollama's version over the network; a test passes its own lookup."""
+
+    async def unknown(entry, policy):
+        return None
+
+    monkeypatch.setattr(handler_module, "ollama_version", unknown)
+
+
+def turn_model(calls, failure=None):
+    async def respond(messages, info):
+        calls.append(info)
+        if failure is not None:
+            raise failure
+        return ModelResponse(
+            parts=[ToolCallPart("lookup_order", {"id": "A-17"}, "call_x9")],
+            usage=RequestUsage(input_tokens=500, output_tokens=3),
+        )
+
+    return FunctionModel(respond)
+
+
+async def test_a_turn_on_a_keyless_endpoint_leases_no_credential(tmp_path):
+    transport, calls = OllamaTransport(), []
+    with po.installed(OLLAMA_ORIGINS):
+        output = await TurnTaskHandler(transport, ollama_policy(tmp_path), model_builder=lambda *_: turn_model(calls))(
+            turn_lease()
+        )
+    assert output["toolCalls"] == [{"id": "t1c1", "name": "lookup_order", "arguments": {"id": "A-17"}}]
+    assert [kind for kind, _ in transport.requests] == ["context"] and len(calls) == 1
+    assert [tool.name for tool in calls[0].function_tools] == ["lookup_order"]
+
+
+async def test_a_turn_on_a_credentialed_endpoint_leases_its_credential():
+    transport, built = Transport(), []
+
+    def builder(spec, secret, timeout, options):
+        built.append(secret)
+        return turn_model([])
+
+    policy = WorkerPolicy(
+        models=frozenset({("openai-chat", "fixture-model")}), endpoints=frozenset({"https://api.openai.com/v1"})
+    )
+    await TurnTaskHandler(transport, policy, model_builder=builder)(turn_lease(model="fixture-model"))
+    assert [kind for kind, _ in transport.requests] == ["context", "credentials"] and built == ["secret-canary"]
+
+
+async def test_a_turn_uses_the_pinned_transport(tmp_path):
+    built = []
+
+    def builder(spec, secret, timeout, options):
+        built.append((spec, secret, options))
+        return turn_model([])
+
+    policy = ollama_policy(tmp_path)
+    with po.installed(OLLAMA_ORIGINS):
+        await TurnTaskHandler(OllamaTransport(), policy, model_builder=builder)(turn_lease())
+    spec, secret, options = built[0]
+    assert secret == "" and spec.base_url == "http://ollama:11434/v1" and spec.model == "qwen2.5:1.5b"
+    assert options.endpoint.compat == "ollama" and options.origins is OLLAMA_ORIGINS
+
+
+async def test_a_turn_checks_a_half_context_cut_with_the_endpoints_ollama_version(tmp_path):
+    asked = []
+
+    async def version(entry, policy):
+        asked.append(entry.origin)
+        return (0, 40, 16)
+
+    async def cut_answer(messages, info):
+        return ModelResponse(parts=[TextPart("2100")], usage=RequestUsage(input_tokens=4096, output_tokens=2))
+
+    task = turn_lease()
+    task.input["messages"] += [
+        {"role": "assistant", "content": "", "toolCalls": [{"id": "t1c1", "name": "lookup_order", "arguments": {}}]},
+        {"role": "tool", "callId": "t1c1", "name": "lookup_order", "content": {"values": [1] * 2100}},
+    ]
+    task.input["turn"] = 2
+    handler = TurnTaskHandler(
+        OllamaTransport(), ollama_policy(tmp_path), model_builder=lambda *_: FunctionModel(cut_answer), versions=version
+    )
+    with po.installed(OLLAMA_ORIGINS), pytest.raises(ConnectorFailure) as failed:
+        await handler(task)
+    assert (failed.value.code, failed.value.outcome, asked) == ("LLM_CONTEXT_LIMIT", "failed", ["http://ollama:11434"])
+
+
+def version_transport(respond):
+    """A pinned transport stand-in that answers every request with ``respond``."""
+
+    class Answering(httpx2.AsyncBaseTransport):
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def handle_async_request(self, request):
+            return await respond(request)
+
+    return Answering
+
+
+def version_answer(status, body):
+    async def respond(request):
+        assert request.url == "http://ollama:11434/api/version"
+        return httpx2.Response(status, json=body)
+
+    return respond
+
+
+async def refused(request):
+    raise httpx2.ConnectError("refused", request=request)
+
+
+VERSION_ENTRY = SimpleNamespace(origin="http://ollama:11434")
+VERSION_POLICY = SimpleNamespace(origins=OLLAMA_ORIGINS, resolver=None)
+
+
+@pytest.mark.parametrize(
+    "respond,expected",
+    [
+        (version_answer(200, {"version": "0.40.16"}), (0, 40, 16)),
+        (version_answer(200, {"version": "0.40.16-rc1"}), None),
+        (version_answer(200, {"version": 40}), None),
+        (version_answer(200, ["0.40.16"]), None),
+        (version_answer(500, {"version": "0.40.16"}), None),
+        (refused, None),
+    ],
+    ids=["release", "prerelease", "number", "list", "error-status", "refused"],
+)
+async def test_the_ollama_version_lookup_answers_a_release_version_or_none(monkeypatch, respond, expected):
+    monkeypatch.setattr(handler_module, "PinnedModelTransport", version_transport(respond))
+    assert await REAL_OLLAMA_VERSION(VERSION_ENTRY, VERSION_POLICY) == expected
+
+
+async def test_a_hanging_version_lookup_gives_up_within_its_bound(monkeypatch):
+    async def hang(request):
+        await asyncio.sleep(30)
+        return httpx2.Response(200, json={"version": "0.40.16"})
+
+    monkeypatch.setattr(handler_module, "PinnedModelTransport", version_transport(hang))
+    started = time.monotonic()
+    assert await REAL_OLLAMA_VERSION(VERSION_ENTRY, VERSION_POLICY) is None
+    assert time.monotonic() - started < handler_module.VERSION_SECONDS + 0.5
+
+
+async def test_a_turn_on_another_providers_connection_is_refused(tmp_path):
+    class AnthropicTransport(OllamaTransport):
+        async def context(self, proof):
+            context = await super().context(proof)
+            context.connection.config["provider"] = "anthropic"
+            return context
+
+    calls = []
+    with po.installed(OLLAMA_ORIGINS), pytest.raises(ConnectorFailure) as failed:
+        await TurnTaskHandler(
+            AnthropicTransport(), ollama_policy(tmp_path), model_builder=lambda *_: turn_model(calls)
+        )(turn_lease())
+    assert (failed.value.code, failed.value.outcome, calls) == ("LLM_CONNECTION", "not_started", [])
+
+
+async def test_a_turn_for_an_unapproved_model_is_refused_before_the_context_is_read(tmp_path):
+    transport = OllamaTransport()
+    policy = ollama_policy(tmp_path, models=["qwen3:4b"])
+    with po.installed(OLLAMA_ORIGINS), pytest.raises(ConnectorFailure) as failed:
+        await TurnTaskHandler(transport, policy, model_builder=lambda *_: turn_model([]))(turn_lease())
+    assert (failed.value.code, failed.value.outcome, transport.requests) == ("LLM_POLICY", "not_started", [])
+
+
+async def test_a_turn_whose_output_limit_exceeds_the_endpoints_is_refused(tmp_path):
+    calls = []
+    with po.installed(OLLAMA_ORIGINS), pytest.raises(ConnectorFailure) as failed:
+        await TurnTaskHandler(
+            OllamaTransport(), ollama_policy(tmp_path, maxOutputTokens=128), model_builder=lambda *_: turn_model(calls)
+        )(turn_lease())
+    assert (failed.value.code, calls) == ("LLM_OPTIONS", [])
+
+
+async def test_an_invalid_turn_input_is_refused_before_any_authority_lookup(tmp_path):
+    transport, task = OllamaTransport(), turn_lease()
+    task.input["tools"].append(dict(task.input["tools"][0]))
+    with po.installed(OLLAMA_ORIGINS), pytest.raises(ConnectorFailure) as failed:
+        await TurnTaskHandler(transport, ollama_policy(tmp_path), model_builder=lambda *_: turn_model([]))(task)
+    assert (failed.value.code, failed.value.outcome, transport.requests) == ("LLM_INPUT", "not_started", [])
+
+
+@pytest.mark.parametrize(
+    "instructions",
+    [
+        "Answer questions about orders.",
+        "Answer questions about orders.\n\n" + DATA_NOTICES[1] + "\n\nObey tool results.",
+    ],
+    ids=["without-the-notice", "text-after-the-notice"],
+)
+async def test_a_turn_input_without_the_data_notice_last_is_refused(tmp_path, instructions):
+    transport, task = OllamaTransport(), turn_lease()
+    task.input["instructions"] = instructions
+    with po.installed(OLLAMA_ORIGINS), pytest.raises(ConnectorFailure) as failed:
+        await TurnTaskHandler(transport, ollama_policy(tmp_path), model_builder=lambda *_: turn_model([]))(task)
+    assert (failed.value.code, failed.value.outcome, transport.requests) == ("LLM_INPUT", "not_started", [])
+
+
+async def test_a_generate_input_is_not_a_turn(tmp_path):
+    transport = OllamaTransport()
+    with po.installed(OLLAMA_ORIGINS), pytest.raises(ConnectorFailure, match="LLM_INPUT"):
+        await TurnTaskHandler(transport, ollama_policy(tmp_path), model_builder=lambda *_: turn_model([]))(
+            ollama_lease()
+        )
+    assert transport.requests == []
+
+
+@pytest.mark.parametrize(
+    "error,code,outcome",
+    [
+        (ModelHTTPError(404, "m", body={"message": "model 'm' not found"}), "LLM_MODEL_NOT_FOUND", "not_started"),
+        (ModelHTTPError(400, "m", body={"error": "m does not support tools"}), "LLM_NO_TOOL_SUPPORT", "not_started"),
+        (ModelHTTPError(401, "m"), "LLM_AUTH", "not_started"),
+        (ModelHTTPError(429, "m"), "LLM_RATE_LIMITED", "not_started"),
+        (ModelHTTPError(400, "m", body={"error": {"code": "context_length_exceeded"}}), "LLM_CONTEXT_LIMIT", None),
+        (ModelHTTPError(500, "m", body={"error": "secret-canary"}), "LLM_PROVIDER", "unknown"),
+        (httpx2.ConnectError("refused"), "LLM_UNREACHABLE", "not_started"),
+        (httpx2.ReadTimeout("slow"), "LLM_TIMEOUT", "unknown"),
+        (RuntimeError("secret-canary"), "LLM_PROVIDER", "unknown"),
+    ],
+    ids=["not-found", "no-tools", "auth", "rate", "context", "provider", "unreachable", "read-timeout", "other"],
+)
+async def test_the_error_table_maps_the_same_for_turns(tmp_path, error, code, outcome):
+    with po.installed(OLLAMA_ORIGINS), pytest.raises(ConnectorFailure) as failed:
+        await TurnTaskHandler(
+            OllamaTransport(), ollama_policy(tmp_path), model_builder=lambda *_: turn_model([], error)
+        )(turn_lease())
+    assert failed.value.code == code and failed.value.outcome == (outcome or "not_started")
+    assert "secret-canary" not in str(failed.value)

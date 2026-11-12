@@ -23,6 +23,7 @@ import pytest
 
 from firefly_weave import __version__
 from firefly_weave.compiler.catalog import FrozenDocument
+from firefly_weave.contracts.agent_turns import turn_action_definition, turn_capability
 from firefly_weave.contracts.agentic import AGENTIC_DESCRIPTOR, action_definition, task_capability
 from firefly_weave.contracts.definitions import load_definition
 from firefly_weave.sdk import platform
@@ -120,29 +121,31 @@ def owned_fixture(tmp_path, monkeypatch):
     return directory, state, runner
 
 
-def catalog_output():
-    """What the Agentic worker image prints for --catalog."""
+def catalog_output(*, turns=True):
+    """What the Agentic worker image prints for --catalog; ``turns=False`` is an image from before AI agent turns."""
+    actions = (action_definition(), turn_action_definition()) if turns else (action_definition(),)
     definitions = [
-        load_definition(value).model_dump(by_alias=True)
-        for value in (AGENTIC_DESCRIPTOR.manifest.value, action_definition())
+        load_definition(value).model_dump(by_alias=True) for value in (AGENTIC_DESCRIPTOR.manifest.value, *actions)
     ]
+    tasks = (task_capability(), turn_capability()) if turns else (task_capability(),)
     return json.dumps(
         {
             "definitions": [
                 {"document": value, "digest": FrozenDocument.from_value(value).digest} for value in definitions
             ],
-            "tasks": [task_capability().model_dump(by_alias=True)],
+            "tasks": [task.model_dump(by_alias=True) for task in tasks],
             "adapters": ["weave-agentic-provider"],
             "schemas": {},
         }
     ).encode()
 
 
-def manifest_output():
+def manifest_output(*, turns=True):
     """What the Agentic worker image prints for --release-manifest."""
+    tasks = (task_capability(), turn_capability()) if turns else (task_capability(),)
     return json.dumps(
         {
-            "capabilities": [task_capability().model_dump(by_alias=True)],
-            "credential_capabilities": ["weave-agentic.generate@1.0.0"],
+            "capabilities": [task.model_dump(by_alias=True) for task in tasks],
+            "credential_capabilities": [f"{task.task_type}@{task.task_version}" for task in tasks],
         }
     ).encode()

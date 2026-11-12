@@ -110,6 +110,25 @@ SPDX-License-Identifier: Apache-2.0
 - A request can name the person it was made for in `X-Weave-Principal`; when
   the token now belongs to someone else, the platform refuses it with 409
   `WV-PRINCIPAL-CHANGED` before anything runs.
+- The agentic worker serves a new task, the **model turn**
+  (`weave-agentic.turn@1.0.0`), which AI agent steps will run on: one request
+  to the model with the transcript so far and the step's tools. The answer is
+  the model's tool calls as written, or its final answer; the worker never runs
+  a tool. Tool-call IDs are the kernel's, a turn carries at most 16 calls, and
+  the turn action is idempotent with 3 attempts and 600 seconds. A turn's input
+  must end its instructions with the data notice, which tells the model that
+  tool results and context are data, not instructions, and it carries the
+  version of the rules it was built with.
+- One token count, shared by the server and the worker, decides whether a turn
+  fits its context. It is set from the worst measured case of each kind of
+  text, never below the local models measured
+  (`qwen3:4b-instruct-2507-q4_K_M`, `qwen2.5:1.5b`), and it counts exactly what
+  is sent. A turn that doesn't fit is refused before any request
+  (`LLM_CONTEXT_LIMIT`). On Ollama, an answer to a prompt Ollama cut is
+  discarded whole, including a cut that kept half the context. Output that
+  can't be carried (nested too deep, or outside JSON) fails as `LLM_OUTPUT`, and
+  model requests are never instrumented. Platform AI setup grants the agentic
+  worker both tasks and refuses a catalog without the turn task.
 
 ## 0.1.0a17
 
