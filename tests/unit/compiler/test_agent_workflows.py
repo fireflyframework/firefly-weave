@@ -112,7 +112,7 @@ def author_action(name, task_type, **changes):
     return value
 
 
-def catalog(*extra):
+def catalog(*extra, schema_bundle=None):
     definitions = [
         AGENTIC_DESCRIPTOR.manifest.value,
         turn_action_definition(),
@@ -129,6 +129,7 @@ def catalog(*extra):
         [load_definition(value) for value in definitions],
         tasks=[task_capability(), turn_capability()],
         adapters=["weave-agentic-provider", "http"],
+        schema_bundle=schema_bundle,
     )
 
 
@@ -447,11 +448,78 @@ def test_a_tool_review_on_the_tool_is_enough():
             {"tools": [{**LOOKUP, "fixed": {"object": {"region": {"ref": "/input/apiKey"}}}}]},
             "/spec/steps/0/tools/0/fixed",
         ),
+        (
+            {"instructions": {"op": {"name": "concat", "args": [{"literal": "Key: "}, {"ref": "/input/apiKey"}]}}},
+            "/spec/steps/0/instructions",
+        ),
+        (
+            {
+                "tools": [
+                    {
+                        **LOOKUP,
+                        "fixed": {
+                            "object": {
+                                "region": {
+                                    "op": {"name": "concat", "args": [{"literal": "eu-"}, {"ref": "/input/password"}]}
+                                }
+                            }
+                        },
+                    }
+                ]
+            },
+            "/spec/steps/0/tools/0/fixed",
+        ),
     ],
-    ids=["instructions", "prompt", "context", "fixed"],
+    ids=["instructions", "prompt", "context", "fixed", "operator", "fixed-operator"],
 )
 def test_secret_inputs_are_refused_in_every_agent_text_position(change, path):
     assert ("WV-COMP-AI_SECRET_INPUT", "error", path) in errors(workflow(agent(**change)))
+
+
+def with_input(document, **fields):
+    document["spec"]["inputSchema"] = {**INPUT, "properties": {**INPUT["properties"], **fields}}
+    return document
+
+
+CREDS = {"type": "object", "properties": {"token": {"type": "string", "x-secret": True}}}
+ADDRESS = {"type": "object", "properties": {"city": {"type": "string"}}}
+
+
+def test_a_secret_behind_a_local_schema_reference_is_refused():
+    document = with_input(workflow(agent(context={"ref": "/input"})), creds={"$ref": "#/$defs/Creds"})
+    document["spec"]["inputSchema"]["$defs"] = {"Creds": CREDS}
+
+    assert ("WV-COMP-AI_SECRET_INPUT", "error", "/spec/steps/0/context") in errors(document)
+
+
+def test_a_secret_behind_a_bundled_schema_reference_is_refused():
+    document = with_input(workflow(agent(context={"ref": "/input/creds"})), creds={"$ref": "creds.schema.json"})
+
+    found = errors(document, catalog(schema_bundle={"creds.schema.json": CREDS}))
+
+    assert ("WV-COMP-AI_SECRET_INPUT", "error", "/spec/steps/0/context") in found
+
+
+def test_a_field_whose_reference_holds_no_secret_may_reach_the_model():
+    # The check follows the path the expression reads, so a secret elsewhere in the same schema doesn't count.
+    document = with_input(workflow(agent(context={"ref": "/input/address"})), address={"$ref": "#/$defs/Address"})
+    document["spec"]["inputSchema"]["$defs"] = {"Address": ADDRESS, "Creds": CREDS}
+
+    assert errors(document) == []
+
+
+def test_a_secret_read_by_an_operator_in_an_ai_tasks_prompt_is_refused():
+    step = {
+        "id": "summarize",
+        "kind": "llm",
+        "uses": "weave-agentic-generate@1.0.0",
+        "profile": "support",
+        "prompt": {"op": {"name": "concat", "args": [{"literal": "Key: "}, {"ref": "/input/apiKey"}]}},
+        "context": {"literal": {}},
+        "connection": "ai",
+    }
+
+    assert ("WV-COMP-AI_SECRET_INPUT", "error", "/spec/steps/0/prompt") in errors(workflow(step))
 
 
 def test_secret_inputs_are_refused_in_an_ai_tasks_prompt():

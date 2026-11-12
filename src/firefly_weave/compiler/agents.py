@@ -34,6 +34,7 @@ from firefly_weave.compiler.agent_tools import (
 )
 from firefly_weave.compiler.calls import workflow_steps
 from firefly_weave.compiler.catalog import FrozenDocument
+from firefly_weave.compiler.expressions import ExpressionFailure, pointer_segments
 from firefly_weave.compiler.ir import ToolTargetKind
 from firefly_weave.compiler.loops import LoopScope
 from firefly_weave.compiler.schema_profile import SchemaLimits
@@ -110,6 +111,10 @@ class AgentChecks(AgentAnalysis, Protocol):
 
     def guard(self, path: str, purpose: str, schema: JsonObject) -> None: ...
 
+    def reference_documents(
+        self, segments: tuple[str, ...], visible: dict[str, JsonObject]
+    ) -> list[tuple[JsonObject, tuple[str, ...]]]: ...
+
 
 @lru_cache(maxsize=1)
 def turn_action_digest() -> str:
@@ -143,24 +148,139 @@ def agent_output_schema(profile: JsonObject) -> JsonObject:
     return schema
 
 
-def carries_secret(schema: JsonValue, bundle: dict[str, JsonObject]) -> bool:
-    """Whether a schema marks anything secret (``x-secret`` or ``writeOnly``), in it or in a schema it references."""
-    pending: list[JsonValue] = [schema]
-    seen: set[str] = set()
+def carries_secret(schema: JsonValue, bundle: dict[str, JsonObject], document: JsonValue = None) -> bool:
+    """Whether a schema marks anything secret (``x-secret`` or ``writeOnly``), in it or in a schema it references.
+
+    ``document`` is the root a local ``#/...`` reference resolves against; a bundled reference brings its own document
+    and is read whole.
+    """
+    pending: list[tuple[JsonValue, JsonValue]] = [(schema, schema if document is None else document)]
+    seen: set[tuple[str, str]] = set()
+    while pending:
+        node, root = pending.pop()
+        if isinstance(node, list):
+            pending.extend((item, root) for item in node)
+        elif isinstance(node, dict):
+            if _marked(node):
+                return True
+            reference = node.get("$ref")
+            if isinstance(reference, str):
+                name, _, fragment = reference.partition("#")
+                key = (name or str(id(root)), fragment if not name else "")
+                if key not in seen:
+                    seen.add(key)
+                    if name:
+                        if name in bundle:
+                            pending.append((bundle[name], bundle[name]))
+                    else:
+                        pending.append((_fragment(root, fragment), root))
+            pending.extend((value, root) for value in node.values())
+    return False
+
+
+def reads_secret(checks: AgentChecks, expression: JsonObject, visible: dict[str, JsonObject]) -> bool:
+    """Whether an expression reads a value whose schema marks anything secret, through any operator.
+
+    Each reference is followed through the schema it reads: properties, items, combinators, local ``$defs`` and the
+    schema bundle. Where the path can't be followed exactly, every schema it may reach counts.
+    """
+    for pointer in _references(expression):
+        try:
+            segments = pointer_segments(pointer)
+        except ExpressionFailure:
+            continue
+        for document, path in checks.reference_documents(segments, visible):
+            if _secret_at(document, path, checks.bundle):
+                return True
+    return False
+
+
+def _references(expression: JsonValue) -> Iterator[str]:
+    pending = [expression]
     while pending:
         node = pending.pop()
         if isinstance(node, list):
             pending.extend(node)
         elif isinstance(node, dict):
-            if node.get("x-secret") is True or node.get("writeOnly") is True:
+            if isinstance(node.get("ref"), str):
+                yield cast(str, node["ref"])
+            elif "literal" not in node:
+                pending.extend(node.values())
+
+
+def _marked(node: JsonObject) -> bool:
+    return node.get("x-secret") is True or node.get("writeOnly") is True
+
+
+def _fragment(document: JsonValue, fragment: str) -> JsonValue:
+    """The schema a local reference names, or the whole document when the fragment doesn't resolve."""
+    try:
+        segments = pointer_segments(fragment) if fragment else ()
+    except ExpressionFailure:
+        return document
+    node = document
+    for segment in segments:
+        if isinstance(node, dict) and segment in node:
+            node = node[segment]
+        elif isinstance(node, list) and segment.isdigit() and int(segment) < len(node):
+            node = node[int(segment)]
+        else:
+            return document
+    return node
+
+
+_BRANCHES: Final = ("allOf", "anyOf", "oneOf")
+_CONDITIONS: Final = ("if", "then", "else", "not")
+
+
+def _secret_at(document: JsonObject, path: tuple[str, ...], bundle: dict[str, JsonObject]) -> bool:
+    """Whether the value at ``path`` in a document's values may be marked secret, or hold a value that is."""
+    pending: list[tuple[JsonValue, JsonValue, int]] = [(document, document, 0)]
+    seen: set[tuple[int, int]] = set()
+    while pending:
+        node, root, depth = pending.pop()
+        if not isinstance(node, dict) or (id(node), depth) in seen:
+            continue
+        seen.add((id(node), depth))
+        if _marked(node):
+            return True
+        if depth == len(path):
+            if carries_secret(node, bundle, root):
                 return True
-            reference = node.get("$ref")
-            if isinstance(reference, str):
-                name = reference.partition("#")[0]
-                if name and name in bundle and name not in seen:
-                    seen.add(name)
-                    pending.append(bundle[name])
-            pending.extend(node.values())
+            continue
+        reference = node.get("$ref")
+        if isinstance(reference, str):
+            name, _, fragment = reference.partition("#")
+            if not name:
+                pending.append((_fragment(root, fragment), root, depth))
+            elif name in bundle:
+                pending.append((_fragment(bundle[name], fragment), bundle[name], depth))
+        if isinstance(node.get("$dynamicRef"), str) and carries_secret(root, bundle):
+            return True
+        for keyword in _BRANCHES:
+            branches = node.get(keyword)
+            if isinstance(branches, list):
+                pending.extend((branch, root, depth) for branch in branches)
+        pending.extend((node[keyword], root, depth) for keyword in _CONDITIONS if keyword in node)
+        for keyword in ("dependentSchemas", "patternProperties"):
+            group = node.get(keyword)
+            if isinstance(group, dict):
+                step = 0 if keyword == "dependentSchemas" else 1
+                pending.extend((value, root, depth + step) for value in group.values())
+        segment = path[depth]
+        properties = node.get("properties")
+        if isinstance(properties, dict) and segment in properties:
+            pending.append((properties[segment], root, depth + 1))
+        else:
+            for keyword in ("additionalProperties", "unevaluatedProperties"):
+                pending.append((node.get(keyword), root, depth + 1))
+        if segment.isdigit():
+            prefix = node.get("prefixItems")
+            if isinstance(prefix, list) and int(segment) < len(prefix):
+                pending.append((prefix[int(segment)], root, depth + 1))
+            else:
+                pending.extend((node.get(keyword), root, depth + 1) for keyword in ("items", "unevaluatedItems"))
+            pending.append((node.get("contains"), root, depth + 1))
     return False
 
 
@@ -251,7 +371,7 @@ def analyze_agent(
     for name, target in (("instructions", text), ("prompt", text), ("context", None)):
         if name in step:
             inferred = checks.expression(cast(JsonObject, step[name]), f"{location}/{name}", visible, target)
-            secret_input(checks, inferred, f"{location}/{name}")
+            secret_input(checks, cast(JsonObject, step[name]), inferred, f"{location}/{name}", visible)
     resource = checks.resolve("Action", cast(str, step["uses"]), location + "/uses")
     if resource is not None:
         if resource.digest != turn_action_digest():
@@ -292,9 +412,11 @@ def analyze_agent(
     return output, {"tools": cast(JsonValue, compiled)}
 
 
-def secret_input(checks: AgentChecks, inferred: JsonObject, path: str) -> None:
-    """Refuse a value whose schema marks anything secret where an AI model would read it."""
-    if carries_secret(inferred, checks.bundle):
+def secret_input(
+    checks: AgentChecks, expression: JsonObject, inferred: JsonObject, path: str, visible: dict[str, JsonObject]
+) -> None:
+    """Refuse an expression that reads a value marked secret, or whose result is, where an AI model would read it."""
+    if carries_secret(inferred, checks.bundle) or reads_secret(checks, expression, visible):
         checks.issue("AI_SECRET_INPUT", path, message=MESSAGES["AI_SECRET_INPUT"])
 
 
@@ -353,7 +475,11 @@ def _fixed(
     for name, expression in fixed.items():
         location = pointer_child(path + "/fixed/object", name)
         inferred = checks.expression(cast(JsonObject, expression), location, visible)
-        secret = secret or carries_secret(inferred, checks.bundle)
+        secret = (
+            secret
+            or carries_secret(inferred, checks.bundle)
+            or reads_secret(checks, cast(JsonObject, expression), visible)
+        )
         if properties is None:
             continue
         field = properties.get(name)

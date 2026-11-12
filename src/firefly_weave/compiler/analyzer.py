@@ -758,6 +758,35 @@ class _Analyzer:
             context["transaction"] = TRANSACTION_SCHEMA
         return infer_expression(expression, context, limits=self.limits, schema_limits=self.schema_limits)
 
+    def reference_documents(
+        self, segments: tuple[str, ...], visible: dict[str, JsonObject]
+    ) -> list[tuple[JsonObject, tuple[str, ...]]]:
+        """The schema documents a reference reads, each with the path the reference follows inside it.
+
+        A step's output and the input are separate documents, so a local ``$ref`` in one resolves against its own
+        root. Step errors and the undo phase's platform values are left out: the platform fills them, never an input.
+        """
+        loops: list[tuple[JsonObject, tuple[str, ...]]] = (
+            [(self.loops[-1].item, ()), (loops_schema(self.loops), ())] if self.loops else []
+        )
+        if not segments:
+            return [(self.input_schema, ()), *((output, ()) for output in visible.values()), *loops]
+        root, rest = segments[0], segments[1:]
+        if root == "input":
+            return [(self.input_schema, rest)]
+        if root == "steps":
+            if not rest:
+                return [(output, ()) for output in visible.values()]
+            output = visible.get(rest[0])
+            if output is None or (len(rest) > 1 and rest[1] != "output"):
+                return []
+            return [(output, rest[2:])]
+        if root == "item" and self.loops:
+            return [(self.loops[-1].item, rest)]
+        if root == "loops" and self.loops:
+            return [(loops_schema(self.loops), rest)]
+        return []
+
     def binding(self, step: str, output: JsonObject) -> JsonObject:
         """What ``/steps/<step>`` holds after the step: its output, and the error object when it handles failures."""
         if self.error_policies.get(step, "stop") == "stop":
@@ -1019,9 +1048,9 @@ class _Analyzer:
                 prompt = self.expression(
                     cast(JsonObject, step["prompt"]), location + "/prompt", visible, {"type": "string", "minLength": 1}
                 )
-                secret_input(self, prompt, location + "/prompt")
+                secret_input(self, cast(JsonObject, step["prompt"]), prompt, location + "/prompt", visible)
                 context = self.expression(cast(JsonObject, step["context"]), location + "/context", visible)
-                secret_input(self, context, location + "/context")
+                secret_input(self, cast(JsonObject, step["context"]), context, location + "/context", visible)
                 resource = self.resolve("Action", cast(str, step["uses"]), location + "/uses")
                 action_spec = cast(JsonObject, resource.definition.value["spec"]) if resource else None
                 side_effect = action_spec.get("sideEffect") if action_spec else None
