@@ -24,9 +24,12 @@ task profile's, a called workflow's), a signal payload against ``payloadSchema``
 entry's result; the platform's studio documents refuse secrets and entries it can't classify.
 """
 
+import copy
 from collections.abc import Iterator
 from typing import Any, Literal, cast
 
+from firefly_weave.compiler.agent_tools import model_parameters, tool_target
+from firefly_weave.compiler.agents import agent_output_schema
 from firefly_weave.compiler.catalog import CatalogSnapshot
 from firefly_weave.compiler.llm import llm_output_schema
 from firefly_weave.compiler.schemas import _Failure, validate_payload
@@ -127,11 +130,94 @@ def output_target(workflow: JsonObject, step: JsonObject | None, catalog: Catalo
             return _NOTHING
         schema = _spec(_document(catalog, "Workflow", step.get("uses"))).get("outputSchema")
         return schema if isinstance(schema, dict) else UNRESOLVED
-    # An AI agent's output schema comes from its own step settings, published with that step kind.
     if kind == "agent":
-        return UNRESOLVED
+        profile = _profile(workflow, step)
+        return agent_output_schema(profile) if profile is not None else UNRESOLVED
     # Other kinds compute their output from their input: nothing to pin.
     return SCHEMA
+
+
+def _profile(workflow: JsonObject, step: JsonObject) -> JsonObject | None:
+    profiles = _spec(workflow).get("llmProfiles")
+    name = step.get("profile")
+    profile = profiles.get(name) if isinstance(profiles, dict) and isinstance(name, str) else None
+    if not isinstance(profile, dict) or not isinstance(profile.get("outputSchema"), dict):
+        return None
+    return profile
+
+
+def _embedded(schema: JsonObject, at: str) -> JsonObject:
+    """``schema`` placed at the pointer ``at`` of a larger schema: its local references follow it there."""
+    result = copy.deepcopy(schema)
+    pending: list[JsonValue] = [result]
+    while pending:
+        node = pending.pop()
+        if isinstance(node, list):
+            pending.extend(node)
+        elif isinstance(node, dict):
+            reference = node.get("$ref")
+            if isinstance(reference, str) and reference.startswith("#"):
+                node["$ref"] = "#" + at + reference[1:]
+            pending.extend(value for key, value in node.items() if key not in {"const", "enum", "default", "examples"})
+    return result
+
+
+def _tool_parameters(tool: JsonValue, catalog: CatalogSnapshot) -> JsonObject | None:
+    """What the model may send a tool: its target's input without the fixed fields; None when it can't be read."""
+    if not isinstance(tool, dict):
+        return None
+    target = tool_target(tool)
+    source: JsonValue = None
+    if target == "action":
+        source = _spec(_document(catalog, "Action", tool.get("action"))).get("inputSchema")
+    elif target == "workflow":
+        source = _spec(_document(catalog, "Workflow", tool.get("workflow"))).get("inputSchema")
+    elif target == "human" and isinstance(tool.get("human"), dict):
+        source = cast(JsonObject, tool["human"]).get("questionSchema")
+    if not isinstance(source, dict):
+        return None
+    fixed = tool.get("fixed")
+    names = (
+        cast(JsonObject, fixed["object"]) if isinstance(fixed, dict) and isinstance(fixed.get("object"), dict) else {}
+    )
+    return model_parameters(source, list(names))
+
+
+def agent_turns_target(workflow: JsonObject, step: JsonObject, catalog: CatalogSnapshot) -> JsonObject | None:
+    """The schema an AI agent's recorded turns fit: calls to its tools only, and a final that fits its result."""
+    profile = _profile(workflow, step)
+    tools = step.get("tools", [])
+    if profile is None or not isinstance(tools, list):
+        return None
+    calls: list[JsonValue] = []
+    base = "/properties/turns/items/anyOf/0/properties/toolCalls/items/anyOf"
+    for tool in tools:
+        parameters = _tool_parameters(tool, catalog)
+        if parameters is None:
+            return None
+        name = cast(JsonObject, tool)["name"]
+        calls.append(
+            {
+                "type": "object",
+                "required": ["name", "arguments"],
+                "properties": {
+                    "name": {"const": name},
+                    "arguments": _embedded(parameters, f"{base}/{len(calls)}/properties/arguments"),
+                },
+            }
+        )
+    final = _embedded(cast(JsonObject, profile["outputSchema"]), "/properties/turns/items/anyOf/1/properties/final")
+    call_turn: JsonObject = {
+        "type": "object",
+        "required": ["toolCalls"],
+        "properties": {"toolCalls": {"type": "array", "items": {"anyOf": calls} if calls else False}},
+    }
+    final_turn: JsonObject = {"type": "object", "required": ["final"], "properties": {"final": final}}
+    return {
+        "type": "object",
+        "required": ["turns"],
+        "properties": {"turns": {"type": "array", "items": {"anyOf": [call_turn, final_turn]}}},
+    }
 
 
 # The module's own callers keep the short names.
@@ -202,9 +288,14 @@ def _targets(
             else UNRESOLVED
         )
         yield f"/humans/{_escape(key)}", target, answer["data"]
-    # Recorded AI turns are checked against the agent's turn schema, which comes with the AI steps.
+    # An AI agent's recorded turns may call only its tools, with arguments that fit them, and end with an answer that
+    # fits its result fields. An AI task's recorded turns are not checked here.
     for key, turns in cast(dict[str, Any], document.get("aiTurns", {})).items():
-        yield f"/aiTurns/{_escape(key)}", UNRESOLVED, turns
+        step = _step(workflow, key)
+        recorded = (
+            agent_turns_target(workflow, step, catalog) if step is not None and step.get("kind") == "agent" else None
+        )
+        yield f"/aiTurns/{_escape(key)}", recorded or UNRESOLVED, turns
     for reference, callee in cast(dict[str, Any], document.get("workflows", {})).items():
         called = _document(catalog, "Workflow", reference)
         for key, mock in cast(dict[str, Any], callee["mocks"]).items():
