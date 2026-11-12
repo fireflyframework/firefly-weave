@@ -266,6 +266,18 @@ class Endpoint:
         return WorkerPolicy(source=PolicyFile(path, origins), origins=origins)
 
 
+async def local_version(entry: Any, policy: WorkerPolicy) -> tuple[int, ...] | None:
+    """Ollama's version on a plain transport, as the worker asks it through the pinned one."""
+    async with httpx2.AsyncClient(transport=httpx2.AsyncHTTPTransport(), trust_env=False, timeout=5) as client:
+        found = (await client.get(entry.origin + "/api/version")).json()["version"]
+    return tuple(int(part) for part in found.split("."))
+
+
+async def _unknown_version(entry: Any, policy: WorkerPolicy) -> tuple[int, ...] | None:
+    """A scripted model has no endpoint to ask."""
+    return None
+
+
 def local_model(spec: ModelSpec, secret: str, timeout: float, options: BuildOptions) -> ProviderModel:
     """The worker's provider client for the endpoint, on a plain transport that may reach this machine."""
     return build_model(spec, secret, timeout, options, transport=httpx2.AsyncHTTPTransport())
@@ -284,6 +296,7 @@ async def run_case(
             _Connection(endpoint.url.rstrip("/") + "/v1"),
             endpoint.policy(Path(scratch), origins),
             model_builder=model_builder,
+            versions=local_version if model_builder is local_model else _unknown_version,
         )
         now = datetime.now(UTC)
         lease = TaskLease(

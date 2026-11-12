@@ -220,6 +220,14 @@ def _sent(turn: TurnInput) -> str:
     return "".join(texts)
 
 
+def _keeps_half(version: tuple[int, ...] | None) -> bool:
+    """Whether an Ollama of this version keeps half the context when it cuts a prompt, by the gateway's rule."""
+    # The gateway imports the handler, which imports this module, so its constant is read when a turn runs.
+    from weave_agentic_worker.gateway import HALF_CUT_VERSION
+
+    return version is not None and version >= HALF_CUT_VERSION
+
+
 async def run_turn(
     turn: TurnInput,
     model: Model,
@@ -228,9 +236,11 @@ async def run_turn(
     context_tokens: int | None,
     output_mode: str,
     ollama: bool,
+    ollama_version: tuple[int, ...] | None = None,
 ) -> JsonValue:
     """One turn as a ``TurnOutput`` dump. ``context_tokens`` is the endpoint's context from the AI policy, if known;
-    ``ollama`` turns on the checks for endpoints that cut a long prompt silently.
+    ``ollama`` turns on the checks for endpoints that cut a long prompt silently, and ``ollama_version`` (when known)
+    says whether a cut keeps half the context, as Ollama 0.40 and later do.
 
     The turn is refused before any request exactly when the contract's ``turn_fits`` is false, the same count the
     kernel trims with, or when the endpoint's context is smaller than the turn's.
@@ -244,6 +254,7 @@ async def run_turn(
     if not turn_fits(turn) or (context_tokens is not None and context_tokens < turn.limits.context_tokens):
         raise ConnectorFailure("LLM_CONTEXT_LIMIT", "not_started")
     estimate, sent = turn_tokens(turn), _sent(turn)
+    half = ollama and _keeps_half(ollama_version)
     parameters = _parameters(turn, output_mode, structured)
     if (parameters.function_tools or parameters.output_tools) and not model.profile.get("supports_tools", True):
         raise ConnectorFailure("LLM_NO_TOOL_SUPPORT", "not_started")
@@ -255,7 +266,7 @@ async def run_turn(
                 model, messages, model_settings=request_settings, model_request_parameters=parameters, instrument=False
             )
             counted = response.usage.input_tokens
-            if ollama and context_tokens is not None and cut(counted, sent, estimate, context_tokens):
+            if ollama and context_tokens is not None and cut(counted, sent, estimate, context_tokens, half=half):
                 raise ConnectorFailure("LLM_CONTEXT_LIMIT", "failed")
             responses = [response]
             calls = [part for part in response.parts if isinstance(part, ToolCallPart)]
@@ -287,7 +298,11 @@ async def run_turn(
                     responses.append(formatted)
                     # It resends the whole transcript, so Ollama can cut it too.
                     counted = formatted.usage.input_tokens
-                    if ollama and context_tokens is not None and cut(counted, sent, estimate, context_tokens):
+                    if (
+                        ollama
+                        and context_tokens is not None
+                        and cut(counted, sent, estimate, context_tokens, half=half)
+                    ):
                         raise ConnectorFailure("LLM_CONTEXT_LIMIT", "failed")
                     if formatted.finish_reason == "length":
                         raise ConnectorFailure("LLM_LIMIT", "failed")

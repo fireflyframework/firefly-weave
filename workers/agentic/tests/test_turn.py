@@ -111,7 +111,9 @@ def scripted(*responses):
     return FunctionModel(answer), seen
 
 
-async def run(turn_input, model, *, output_mode="tool", context_tokens=None, ollama=False, settings=None):
+async def run(
+    turn_input, model, *, output_mode="tool", context_tokens=None, ollama=False, settings=None, ollama_version=None
+):
     output = await run_turn(
         turn_input,
         model,
@@ -119,6 +121,7 @@ async def run(turn_input, model, *, output_mode="tool", context_tokens=None, oll
         context_tokens=context_tokens,
         output_mode=output_mode,
         ollama=ollama,
+        ollama_version=ollama_version,
     )
     TurnOutput.model_validate(output)
     return output
@@ -396,6 +399,41 @@ async def test_a_cut_prompt_discards_the_whole_answer():
     with pytest.raises(ConnectorFailure) as failed:
         await run(turn(), model, context_tokens=8192, ollama=True)
     assert (failed.value.code, failed.value.outcome, len(seen)) == ("LLM_CONTEXT_LIMIT", "failed", 1)
+
+
+def half_context_turn():
+    """A turn counted above half of 8,192 that still fits it; Ollama 0.40 and later report about 4,096 when cutting."""
+    messages = [
+        {"role": "user", "content": "Sum the values."},
+        {"role": "assistant", "content": "", "toolCalls": [{"id": "t1c1", "name": "lookup_order", "arguments": {}}]},
+        {"role": "tool", "callId": "t1c1", "name": "lookup_order", "content": {"values": [1] * 2100}},
+    ]
+    return turn(messages, number=2)
+
+
+@pytest.mark.parametrize("version,cut", [((0, 40, 16), True), ((0, 40, 0), True), ((0, 39, 9), False), (None, False)])
+async def test_a_half_context_cut_is_caught_on_ollama_0_40_and_later(version, cut):
+    case = half_context_turn()
+    assert turn_fits(case) and turn_tokens(case) > 4096 + 16
+    model, _ = scripted(respond(TextPart("The sum is 2100."), input_tokens=4096))
+    if not cut:
+        output = await run(case, model, context_tokens=8192, ollama=True, ollama_version=version)
+        assert output["result"] == "The sum is 2100."
+        return
+    with pytest.raises(ConnectorFailure) as failed:
+        await run(case, model, context_tokens=8192, ollama=True, ollama_version=version)
+    assert (failed.value.code, failed.value.outcome) == ("LLM_CONTEXT_LIMIT", "failed")
+
+
+async def test_a_half_context_cut_of_a_formatting_request_is_caught():
+    case = half_context_turn().model_copy(update={"profile": turn(schema=ORDER).profile})
+    model, _ = scripted(
+        respond(TextPart("Order A-17 has shipped."), input_tokens=5200),
+        respond(TextPart('{"result": {"orderId": "A-17", "status": "shipped"}}'), input_tokens=4090),
+    )
+    with pytest.raises(ConnectorFailure) as failed:
+        await run(case, model, output_mode="native", context_tokens=8192, ollama=True, ollama_version=(0, 40, 16))
+    assert (failed.value.code, failed.value.outcome) == ("LLM_CONTEXT_LIMIT", "failed")
 
 
 async def test_a_policy_context_below_the_turns_is_refused_before_any_request():

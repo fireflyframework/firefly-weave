@@ -23,12 +23,14 @@ destination, the options, and a credential only when the policy entry requires o
 from __future__ import annotations
 
 import asyncio
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Protocol, cast
 
 import httpx
+import httpx2
 from firefly_weave.ai_policy import AIPolicy, PolicyEndpoint, PolicyFile, PolicyInvalid, from_pairs
 from firefly_weave.compiler.expressions import measure_value
 from firefly_weave.contracts.agent_turns import TurnInput
@@ -48,7 +50,7 @@ from fireflyframework_agentic.models import ModelFactory, ModelOptions, ModelSpe
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from pydantic_ai.models import Model
 
-from weave_agentic_worker.egress import Resolver
+from weave_agentic_worker.egress import PinnedModelTransport, Resolver, resolve
 from weave_agentic_worker.execution import private_framework_logging, run_model
 from weave_agentic_worker.providers import BuildOptions, ProviderModel, build_model
 from weave_agentic_worker.turn import run_turn
@@ -265,16 +267,28 @@ async def _generate(invocation: Invocation, prepared: Prepared) -> JsonValue:
     )
 
 
-async def _turn(turn: TurnInput, prepared: Prepared) -> JsonValue:
-    entry = prepared.entry
-    return await run_turn(
-        turn,
-        prepared.model,
-        prepared.settings,
-        context_tokens=entry.context_tokens,
-        output_mode=entry.output_mode,
-        ollama=entry.compat == "ollama",
-    )
+# How long a turn waits for Ollama's version before it checks without it; the gateway waits as long.
+VERSION_SECONDS = 2
+OllamaVersion = Callable[[PolicyEndpoint, "WorkerPolicy"], Awaitable[tuple[int, ...] | None]]
+
+
+async def ollama_version(entry: PolicyEndpoint, policy: WorkerPolicy) -> tuple[int, ...] | None:
+    """Ollama's version, asked through the endpoint's pinned transport as the gateway asks; None when it can't tell."""
+    try:
+        transport = PinnedModelTransport(entry, policy.origins, resolver=policy.resolver or resolve)
+        async with (
+            httpx2.AsyncClient(
+                transport=transport, trust_env=False, follow_redirects=False, timeout=VERSION_SECONDS
+            ) as client,
+            asyncio.timeout(VERSION_SECONDS),
+        ):
+            answer = await client.get(entry.origin + "/api/version")
+            found = answer.json().get("version") if answer.status_code == 200 else None
+    except Exception:
+        return None
+    if isinstance(found, str) and re.fullmatch(r"\d+\.\d+\.\d+", found):
+        return tuple(int(part) for part in found.split("."))
+    return None
 
 
 class AgenticTaskHandler(_ModelTaskHandler[Invocation]):
@@ -290,6 +304,25 @@ class TurnTaskHandler(_ModelTaskHandler[TurnInput]):
     """One AI agent turn: the model's tool calls as written, or its final answer."""
 
     def __init__(
-        self, transport: Transport, policy: WorkerPolicy, *, model_builder: ModelBuilder = build_model
+        self,
+        transport: Transport,
+        policy: WorkerPolicy,
+        *,
+        model_builder: ModelBuilder = build_model,
+        versions: OllamaVersion | None = None,
     ) -> None:
-        super().__init__(transport, policy, TurnInput.model_validate, _turn, model_builder=model_builder)
+        super().__init__(transport, policy, TurnInput.model_validate, self._turn, model_builder=model_builder)
+        self.versions = versions or ollama_version
+
+    async def _turn(self, turn: TurnInput, prepared: Prepared) -> JsonValue:
+        entry = prepared.entry
+        ollama = entry.compat == "ollama"
+        return await run_turn(
+            turn,
+            prepared.model,
+            prepared.settings,
+            context_tokens=entry.context_tokens,
+            output_mode=entry.output_mode,
+            ollama=ollama,
+            ollama_version=await self.versions(entry, self.policy) if ollama else None,
+        )

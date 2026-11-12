@@ -36,6 +36,7 @@ from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.usage import RequestUsage
 
+import weave_agentic_worker.handler as handler_module
 from weave_agentic_worker.handler import AgenticTaskHandler, TurnTaskHandler, WorkerPolicy
 from weave_agentic_worker.providers import build_model
 
@@ -1101,6 +1102,16 @@ def turn_lease(*, model="qwen2.5:1.5b", **profile):
     )
 
 
+@pytest.fixture(autouse=True)
+def no_version_lookup(monkeypatch):
+    """Turn handlers here never look up Ollama's version over the network; a test passes its own lookup."""
+
+    async def unknown(entry, policy):
+        return None
+
+    monkeypatch.setattr(handler_module, "ollama_version", unknown)
+
+
 def turn_model(calls, failure=None):
     async def respond(messages, info):
         calls.append(info)
@@ -1152,6 +1163,30 @@ async def test_a_turn_uses_the_pinned_transport(tmp_path):
     spec, secret, options = built[0]
     assert secret == "" and spec.base_url == "http://ollama:11434/v1" and spec.model == "qwen2.5:1.5b"
     assert options.endpoint.compat == "ollama" and options.origins is OLLAMA_ORIGINS
+
+
+async def test_a_turn_checks_a_half_context_cut_with_the_endpoints_ollama_version(tmp_path):
+    asked = []
+
+    async def version(entry, policy):
+        asked.append(entry.origin)
+        return (0, 40, 16)
+
+    async def cut_answer(messages, info):
+        return ModelResponse(parts=[TextPart("2100")], usage=RequestUsage(input_tokens=4096, output_tokens=2))
+
+    task = turn_lease()
+    task.input["messages"] += [
+        {"role": "assistant", "content": "", "toolCalls": [{"id": "t1c1", "name": "lookup_order", "arguments": {}}]},
+        {"role": "tool", "callId": "t1c1", "name": "lookup_order", "content": {"values": [1] * 2100}},
+    ]
+    task.input["turn"] = 2
+    handler = TurnTaskHandler(
+        OllamaTransport(), ollama_policy(tmp_path), model_builder=lambda *_: FunctionModel(cut_answer), versions=version
+    )
+    with po.installed(OLLAMA_ORIGINS), pytest.raises(ConnectorFailure) as failed:
+        await handler(task)
+    assert (failed.value.code, failed.value.outcome, asked) == ("LLM_CONTEXT_LIMIT", "failed", ["http://ollama:11434"])
 
 
 async def test_a_turn_on_another_providers_connection_is_refused(tmp_path):
