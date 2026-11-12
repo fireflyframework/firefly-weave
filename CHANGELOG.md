@@ -122,6 +122,15 @@ SPDX-License-Identifier: Apache-2.0
   `.steps` (`status.read`; `weave operations statistics`), errors
   `WV-STATS-RANGE` and `WV-STATS-SERIES`, and the summary's optional
   `runs_24h`. Migration `0038_operations_statistics`.
+- The server always finishes shutting down. Sometimes a cancellation reached a
+  background loop while one of its database statements was running. The
+  driver's error for the interrupted connection could then replace the
+  cancellation, the loop went on polling, and shutdown waited forever. This
+  showed up after a restart under load. Every background loop now stops at a
+  pending cancellation. This also covers the provider scan, recovery, and
+  compatibility refresh, which no longer count a shutdown as a provider
+  failure. Each close waits at most `shutdown_timeout_seconds` (10 seconds by
+  default), then reports the loop that did not stop.
 
 ### AI and connections
 

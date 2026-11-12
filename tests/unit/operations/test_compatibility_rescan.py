@@ -264,7 +264,9 @@ async def test_restricted_rescan_that_stays_restricted_logs_nothing(rescan, capl
 async def test_retry_after_counts_down_to_the_next_scheduled_rescan(monkeypatch):
     clock = [100.0]
     monkeypatch.setattr(module, "time", SimpleNamespace(monotonic=lambda: clock[0]))
-    service = module.CompatibilityService(None, None, None, None, None)
+    service = module.CompatibilityService(
+        Settings(database_url="postgresql+asyncpg://app@localhost/test"), None, None, None, None
+    )
     rescan_after = module.INVENTORY_RESCAN_SECONDS + module.INVENTORY_AGE_SECONDS
     assert service.retry_after_seconds() == int(rescan_after)
     await service.open()
