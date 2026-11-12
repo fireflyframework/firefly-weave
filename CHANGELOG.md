@@ -110,6 +110,22 @@ SPDX-License-Identifier: Apache-2.0
   worker runs only the generate task (`weave-agentic.generate`) sees AI as not
   ready, and Publish refuses with `422 WV-AI-WORKER-MISSING` until the worker is
   upgraded to a release that serves both tasks.
+- An AI agent's log shows what it did, turn by turn. `runs.agent_log`
+  (`GET …/runs/{identifier}/agents/{key}/log`, `run.read`; `weave runs
+  agent-log --key`, `read_agent_log()`) reads one activation, or a step's
+  activations in loop order, 20 to a page: each turn's tokens and time, the tool
+  calls the model asked for and how each ended (`succeeded`, `failed`, `refused`
+  with the code the model read, `rejected` or `expired` with the review), and
+  the final answer. Arguments, outputs and the answer are classified by the
+  tool's and the step's schemas. A value marked secret is left out with its
+  reason, and a tool name the model wrote is shown escaped.
+- When Weave AI proposes a change to an existing AI agent step, it keeps every
+  safeguard the proposal leaves out: a tool's fixed arguments, approval and
+  person, the review's expiry and distinct reviewer, and the step's limits,
+  memory and error handling. Weave AI can make a safeguard stricter but never
+  drops one; loosening one is done in the editor. Weave AI can also ask that a
+  different person than the run's starter approves an agent's data-changing
+  calls (`distinctReviewer`).
 
 ## 0.1.0a17
 
