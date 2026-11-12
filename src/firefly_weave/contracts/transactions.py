@@ -27,9 +27,9 @@ key ``"{run_id}:{phase key}"``: ``hold#confirm``, ``hold#cancel`` and ``add#undo
 digit-first segments belong to AI agent turns.
 """
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from types import MappingProxyType
-from typing import Final, Literal, get_args
+from typing import Any, Final, Literal, get_args
 
 from firefly_weave.contracts.instance_keys import InvalidInstanceKey, split_instance
 
@@ -179,3 +179,20 @@ def split_phase(key: str) -> tuple[str, UndoPhase] | None:
     if len(parsed.segments) != 1 or parsed.count is not None or parsed.segments[0] not in _PHASES:
         return None
     return key.rpartition("#")[0], _PHASES[parsed.segments[0]]
+
+
+def dispatch_effect(calls: bool, action_digests: Iterable[str], dependencies: Sequence[Mapping[str, Any]]) -> Effect:
+    """What a run may have applied from what it dispatched: ``none`` only with no call and no task of an action
+    that changes data (every task's action is ``read_only``), otherwise ``unknown``. Platform runs and simulated
+    runs share this rule."""
+    if calls:
+        return "unknown"
+    digests = list(action_digests)
+    if not digests:
+        return "none"
+    effects = {
+        dependency["digest"]: dependency["document"]["spec"].get("sideEffect")
+        for dependency in dependencies
+        if dependency.get("kind") == "Action"
+    }
+    return "none" if all(effects.get(digest) == "read_only" for digest in digests) else "unknown"

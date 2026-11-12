@@ -21,14 +21,14 @@ Everything here runs in the transaction that accepts a run's event, under that r
 """
 
 import json
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from firefly_weave.contracts.instance_keys import instance_view, node_of
-from firefly_weave.contracts.transactions import TRANSACTION_STATE_ORDER, split_phase
+from firefly_weave.contracts.transactions import TRANSACTION_STATE_ORDER, dispatch_effect, split_phase
 from firefly_weave.contracts.values import JsonObject
 from firefly_weave.operations.facts import task_fact_update
 from firefly_weave.runtime.models import ControlCommand, RuntimeEvent, TransactionRecord, Transition
@@ -250,23 +250,6 @@ async def child_effect(repository: RuntimeRepository, run_id: UUID, artifact: Ma
     )
     dependencies = (artifact.get("executable") or {}).get("dependencies") or []
     return dispatch_effect(False, [row["digest"] for row in digests], dependencies)
-
-
-def dispatch_effect(calls: bool, action_digests: Iterable[str], dependencies: Sequence[Mapping[str, Any]]) -> str:
-    """What a run may have applied from what it dispatched: ``none`` only with no call and no task of an action
-    that changes data (every task's action is ``read_only``), otherwise ``unknown``. Platform runs and simulated
-    runs share this rule."""
-    if calls:
-        return "unknown"
-    digests = list(action_digests)
-    if not digests:
-        return "none"
-    effects = {
-        dependency["digest"]: dependency["document"]["spec"].get("sideEffect")
-        for dependency in dependencies
-        if dependency.get("kind") == "Action"
-    }
-    return "none" if all(effects.get(digest) == "read_only" for digest in digests) else "unknown"
 
 
 def worst(transactions: Mapping[str, TransactionRecord]) -> str | None:

@@ -97,7 +97,7 @@ def test_other_keys_are_not_transaction_deadlines(text):
 
 
 def test_dispatch_effect_is_none_only_without_calls_and_changing_actions():
-    from firefly_weave.runtime.settlement import dispatch_effect
+    from firefly_weave.contracts.transactions import dispatch_effect
 
     dependencies = [
         {"digest": "read", "kind": "Action", "document": {"spec": {"sideEffect": "read_only"}}},
