@@ -55,6 +55,30 @@ def admin_secret(platform_dir: Path) -> str | None:
     return None
 
 
+REDACTED = "[redacted]"
+
+
+def run_secrets(private: Path) -> list[str]:
+    """The secrets the canary scan looks for: the run's canaries, each person's password and the identity provider's
+    admin secret, longest first, so a secret that holds another one is replaced whole."""
+    found: list[Any] = []
+    canaries = private / "canaries.json"
+    if canaries.is_file():
+        found += json.loads(canaries.read_text(encoding="utf-8")).values()
+    for person in sorted((private / "people").glob("*.json")):
+        found.append(json.loads(person.read_text(encoding="utf-8"))["password"])
+    found.append(admin_secret(private / ".local" / "platform"))
+    return sorted({value for value in found if isinstance(value, str) and value}, key=len, reverse=True)
+
+
+def redact(text: str, secrets: Iterable[str]) -> tuple[str, bool]:
+    """``text`` with each secret replaced by [redacted], and whether it held any."""
+    redacted = text
+    for value in secrets:
+        redacted = redacted.replace(value, REDACTED)
+    return redacted, redacted != text
+
+
 @dataclass(frozen=True)
 class Scan:
     files: int

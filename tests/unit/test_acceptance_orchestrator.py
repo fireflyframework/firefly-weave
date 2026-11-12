@@ -19,6 +19,7 @@
 import importlib.util
 import json
 import re
+import stat
 import subprocess
 import sys
 import time
@@ -746,3 +747,272 @@ def test_down_removes_the_workers_project_and_the_operations_images(tmp_path):
     assert removed == [[*plan.docker(), "image", "rm", "--force", runner, worker]]
     project_filters = [argv[-1] for argv in recorder.commands if "ps" in argv and "--quiet" in argv]
     assert "label=com.docker.compose.project=weave-local-" + "a" * 24 + "-workers" in project_filters
+
+
+CLUSTER = f"weave-acc-{RUN}"
+CONTEXT = "colima-weave-tests"
+CLUSTER_SUBNET = "172.19.0.0/16"
+SERVER_VERSIONS = {"kind": "v1.37.0", "k3d": "v1.37.1+k3s1"}
+WEAVE = [sys.executable, "-m", "firefly_weave.cli.main", "platform", "--directory"]
+
+
+def cluster_network(provider):
+    return f"weave-kind-{CLUSTER}" if provider == "kind" else f"k3d-{CLUSTER}"
+
+
+class ClusterRecorder:
+    """Answers the commands of prepare, up, collect and down as Docker, the weave CLI, kind, k3d and kubectl would,
+    and records each with its environment. An egress probe exits 1 (blocked) unless its network is in ``open``;
+    each runner's log prints ``logs``."""
+
+    def __init__(self, open_networks=(), logs="runner started\n"):
+        self.calls, self.open, self.logs = [], set(open_networks), logs
+
+    def run(self, argv, *, env=None, **kwargs):
+        argv = [str(part) for part in argv]
+        self.calls.append((argv, env))
+        tool = Path(argv[0]).name
+        code, stdout = 0, ""
+        if "--iidfile" in argv:
+            Path(argv[argv.index("--iidfile") + 1]).write_text("sha256:" + "1" * 64)
+        elif "{{.Server.Version}}" in argv:
+            stdout = "28.5.1\n"
+        elif argv[-3:] == ["compose", "version", "--short"]:
+            stdout = "2.39.4\n"
+        elif argv[-2:] == ["--format", "{{.Id}}"]:
+            stdout = "sha256:" + "2" * 64 + "\n"
+        elif acceptance.IMAGE_CONTENT_FORMAT in argv:
+            stdout = '["sha256:' + "3" * 64 + '"]{"User":"65532"}\n'
+        elif argv[:5] == WEAVE[:5] and argv[6:8] == ["cluster", "create"]:
+            provider, name = argv[argv.index("--provider") + 1], argv[argv.index("--name") + 1]
+            created = {"cluster": name, "context": f"{provider}-{name}", "network": cluster_network(provider)}
+            stdout = json.dumps(created) + "\n"
+        elif tool.startswith("kind-") and argv[1:] == ["version"]:
+            stdout = "kind v0.33.0 go1.25.4 linux/amd64\n"
+        elif tool.startswith("k3d-") and argv[1:] == ["version"]:
+            stdout = "k3d version v5.9.0\nk3s version v1.33.6-k3s1 (default)\n"
+        elif tool.startswith("kubectl-") and "version" in argv:
+            server = SERVER_VERSIONS[argv[argv.index("--context") + 1].split("-")[0]]
+            stdout = json.dumps({"clientVersion": {"gitVersion": "v1.37.2"}, "serverVersion": {"gitVersion": server}})
+        elif argv[3:5] == ["network", "inspect"]:
+            subnets = [{"Subnet": "fc00:f853:ccd:e793::/64"}, {"Subnet": CLUSTER_SUBNET}]
+            stdout = json.dumps([{"IPAM": {"Config": subnets}}])
+        elif "run" in argv and "--rm" in argv:
+            network = argv[argv.index("--network") + 1] if "--network" in argv else "bridge"
+            code = 0 if network in self.open else 1
+        elif argv[3:5] == ["ps", "--all"] and "--quiet" in argv:
+            stdout = "c0ffee\n"
+        elif tool.startswith("kubectl-") and "namespaces" in argv:
+            stdout = "weave-system weave-workers-o-j4"
+        elif tool.startswith("kubectl-") and "deployments" in argv:
+            stdout = "deployment.apps/weave-runner-weave-workers-o-j4\n"
+        elif tool.startswith("kubectl-") and "logs" in argv:
+            stdout = self.logs
+        elif tool.startswith("kubectl-") and ("get" in argv or "describe" in argv):
+            stdout = f"objects in {argv[argv.index('--namespace') + 1]}\n"
+        return subprocess.CompletedProcess(argv, code, stdout=stdout, stderr="")
+
+
+def cluster_plan(tmp_path, monkeypatch, profile="cluster", block_egress=False):
+    """A new run of ``profile`` whose prepare stage finds every tool and the Studio dependencies."""
+    checkout = tmp_path / "checkout"
+    (checkout / "studio/node_modules").mkdir(parents=True)
+    monkeypatch.setattr(acceptance, "ROOT", checkout)
+    monkeypatch.setattr(acceptance.shutil, "which", lambda tool: f"/usr/bin/{tool}")
+    plan = acceptance.Plan(tmp_path / RUN, RUN, profile, CONTEXT, block_egress, False, {"profile": profile})
+    plan.root.mkdir()
+    plan.private.mkdir(mode=0o700)
+    plan.evidence.mkdir(mode=0o700)
+    return plan
+
+
+def pinned_kubectl(plan):
+    """kubectl where weave platform cluster create fetches it, in the run's private cluster folder."""
+    from firefly_weave.sdk import platform_cluster_tools
+
+    path = platform_cluster_tools._path(plan.private / "cluster", "kubectl")
+    path.parent.mkdir(mode=0o700, exist_ok=True)
+    path.write_text("")
+
+
+def is_cluster_command(argv, plan):
+    """The weave cluster commands and the pinned kind, k3d and kubectl the run's private cluster folder holds."""
+    weave = argv[:5] == WEAVE[:5] and argv[6] == "cluster"
+    return weave or Path(argv[0]).parent == plan.private / "cluster" / "tools"
+
+
+@pytest.mark.parametrize(("profile", "provider", "node"), [("cluster", "kind", "kind_node"), ("k3d", "k3d", "k3s")])
+def test_the_cluster_profile_creates_its_cluster_without_connecting_it(tmp_path, monkeypatch, profile, provider, node):
+    plan = cluster_plan(tmp_path, monkeypatch, profile)
+    recorder = ClusterRecorder()
+    acceptance.prepare(plan, recorder)
+    commands = [argv for argv, _ in recorder.calls]
+    folder = str(plan.private / "cluster")
+    create = [*WEAVE, folder, "cluster", "create", "--provider", provider, "--name", CLUSTER, "--no-connect"]
+    create += ["--context", CONTEXT, "--output", "json"]
+    assert [argv for argv in commands if argv[6:8] == ["cluster", "create"]] == [create]
+    assert not any("connect" in argv for argv in commands)
+    # The folder that keeps the pinned tools and their logs is the run's own, private, and not the platform's.
+    assert stat.S_IMODE((plan.private / "cluster").stat().st_mode) == 0o700
+    assert not plan.platform_dir.exists()
+    node_image = acceptance.acceptance_journeys.load_versions(acceptance.VERSIONS)["cluster"]["images"][node]
+    assert plan.state["cluster"] == {
+        "provider": provider,
+        "name": CLUSTER,
+        "context": f"{provider}-{CLUSTER}",
+        "network": cluster_network(provider),
+        "subnet": CLUSTER_SUBNET,
+        "node_image": node_image,
+        "tool_version": "v0.33.0" if provider == "kind" else "v5.9.0",
+        "kubernetes_version": SERVER_VERSIONS[provider],
+    }
+    assert json.loads((plan.root / "run.json").read_text(encoding="utf-8"))["cluster"]["name"] == CLUSTER
+    assert node_image in [item["ref"] for item in plan.state["inventory"]]
+    # The system pods run before up can block egress: k3s pulls their images from the internet.
+    waits = [argv for argv in commands if "wait" in argv and "deployment/coredns" in argv]
+    assert len(waits) == 1 and commands.index(waits[0]) > commands.index(create)
+
+
+def cluster_state(provider="kind"):
+    return {
+        "provider": provider,
+        "name": CLUSTER,
+        "context": f"{provider}-{CLUSTER}",
+        "network": cluster_network(provider),
+        "subnet": CLUSTER_SUBNET,
+        "node_image": "kindest/node:v1.37.0@sha256:" + "a" * 64,
+        "tool_version": "v0.33.0",
+        "kubernetes_version": "v1.37.0",
+    }
+
+
+def test_down_deletes_the_cluster_before_the_platform(tmp_path, monkeypatch):
+    plan = cluster_plan(tmp_path, monkeypatch)
+    plan.state.update(cluster=cluster_state("k3d"))
+    (plan.private / "cluster").mkdir(mode=0o700)
+    plan.platform_dir.mkdir(parents=True)
+    (plan.platform_dir / "platform.json").write_text(json.dumps({"id": "b" * 24}))
+    recorder = ClusterRecorder()
+    acceptance.down(plan, recorder)
+    commands = [argv for argv, _ in recorder.calls]
+    delete = [*WEAVE, str(plan.private / "cluster"), "cluster", "delete", "--provider", "k3d", "--name", CLUSTER]
+    delete += ["--context", CONTEXT, "--output", "json"]
+    platform = [index for index, argv in enumerate(commands) if argv[3:5] == ["rm", "--force"]]
+    assert platform and commands.index(delete) < platform[0]
+    assert plan.state["resources_left"] == [] and not plan.private.exists()
+
+
+@pytest.mark.parametrize(
+    ("profile", "expected"),
+    [
+        ("cluster", {"kind": "v0.33.0", "k3d": None, "kubernetes": "v1.37.0"}),
+        ("k3d", {"kind": None, "k3d": "v5.9.0", "kubernetes": "v1.37.1+k3s1"}),
+    ],
+)
+def test_the_evidence_names_the_cluster_tool_and_kubernetes_versions(tmp_path, monkeypatch, profile, expected):
+    plan = cluster_plan(tmp_path, monkeypatch, profile)
+    acceptance.prepare(plan, ClusterRecorder())
+    # The summary reads the checkout's own versions and commit, and validates against the evidence schema.
+    monkeypatch.setattr(acceptance, "ROOT", ROOT)
+    environment = acceptance.summarize(plan, every_stage_passed(plan))["environment"]
+    assert {key: environment[key] for key in ("kind", "k3d", "kubernetes")} == expected
+
+
+def test_a_run_of_another_profile_makes_no_cluster(tmp_path, monkeypatch):
+    plan = cluster_plan(tmp_path, monkeypatch, "pr")
+    recorder = ClusterRecorder()
+    acceptance.prepare(plan, recorder)
+    assert "cluster" not in plan.state and not (plan.private / "cluster").exists()
+    assert not (plan.private / "kubeconfig").exists()
+    monkeypatch.setattr(acceptance, "ROOT", ROOT)
+    environment = acceptance.summarize(plan, every_stage_passed(plan))["environment"]
+    assert (environment["kind"], environment["k3d"], environment["kubernetes"]) == (None, None, None)
+    acceptance.down(plan, recorder)
+    assert not any(is_cluster_command(argv, plan) for argv, _ in recorder.calls)
+
+
+def test_a_long_run_id_is_refused_for_cluster_profiles(tmp_path, monkeypatch, capsys):
+    stub_stages(monkeypatch, lambda plan, recorder: None)
+    long = RUN + "0"
+    for profile in ("cluster", "k3d"):
+        argv = ["--profile", profile, "--root", str(tmp_path), "--run-id", long, "--docker-context", CONTEXT]
+        assert acceptance.main(argv) == 2
+        refusal = "Cluster profiles need a run ID of at most 22 characters, so the cluster name fits."
+        assert refusal in capsys.readouterr().err
+    assert not (tmp_path / long).exists()
+    # 22 characters make a 32-character cluster name; other profiles keep longer run IDs.
+    for profile, run_id in (("cluster", RUN), ("pr", long)):
+        argv = ["--profile", profile, "--root", str(tmp_path / profile), "--run-id", run_id]
+        assert acceptance.main([*argv, "--docker-context", CONTEXT, "--stages", "prepare"]) == 0
+
+
+@pytest.mark.parametrize("profile", ["cluster", "k3d"])
+def test_the_kubeconfig_stays_in_the_runs_private_folder(tmp_path, monkeypatch, profile):
+    monkeypatch.setenv("KUBECONFIG", str(tmp_path / "developer" / "config"))
+    monkeypatch.setenv("WEAVE_API_URL", "http://developer.invalid")
+    plan = cluster_plan(tmp_path, monkeypatch, profile)
+    recorder = ClusterRecorder()
+    acceptance.prepare(plan, recorder)
+    kubeconfig = plan.private / "kubeconfig"
+    assert stat.S_IMODE(kubeconfig.stat().st_mode) == 0o600
+    pinned_kubectl(plan)
+    acceptance.collect(plan, recorder)
+    acceptance.down(plan, recorder)
+    commands = [(argv, env) for argv, env in recorder.calls if is_cluster_command(argv, plan)]
+    kinds = {argv[7] if argv[:5] == WEAVE[:5] else Path(argv[0]).name.split("-")[0] for argv, _ in commands}
+    assert any("logs" in argv for argv, _ in commands)
+    assert kinds == {"create", "delete", "kubectl", "kind" if profile == "cluster" else "k3d"}
+    for argv, env in commands:
+        assert env is not None and env["KUBECONFIG"] == str(kubeconfig), argv
+        assert not [key for key in env if key.startswith("WEAVE_")], argv
+
+
+def test_blocked_egress_covers_the_cluster_network(tmp_path, monkeypatch):
+    monkeypatch.setattr(sys, "platform", "linux")
+    plan = cluster_plan(tmp_path, monkeypatch, block_egress=True)
+    plan.state.update(images={"python": "python:3.12-slim"}, cluster=cluster_state())
+    recorder = ClusterRecorder()
+    acceptance.up(plan, recorder)
+    rules = [argv for argv, _ in recorder.calls if argv[:3] == ["sudo", "-n", "iptables"]]
+    chain = ["sudo", "-n", "iptables", "-w", "-A", "WEAVE-ACCEPTANCE"]
+    own = [*chain, "-s", CLUSTER_SUBNET, "-d", CLUSTER_SUBNET, "-j", "RETURN"]
+    rest = [*chain, "-s", CLUSTER_SUBNET, "-j", "REJECT"]
+    private = [*chain, "-d", "10.0.0.0/8", "-j", "RETURN"]
+    # The cluster's nodes reach only their own network, where connect puts the platform API and the registry.
+    assert rules.index(own) < rules.index(rest) < rules.index(private)
+    probes = [argv for argv, _ in recorder.calls if "--rm" in argv]
+    assert [argv[argv.index("--network") + 1] for argv in probes if "--network" in argv] == [cluster_network("kind")]
+    # A node that still reaches a public address fails the stage.
+    plan = cluster_plan(tmp_path / "open", monkeypatch, block_egress=True)
+    plan.state.update(images={"python": "python:3.12-slim"}, cluster=cluster_state())
+    with pytest.raises(acceptance.StageFailed, match=cluster_network("kind")):
+        acceptance.up(plan, ClusterRecorder(open_networks={cluster_network("kind")}))
+
+
+def test_collect_keeps_the_clusters_objects_and_runner_logs_redacted(tmp_path, monkeypatch):
+    plan = cluster_plan(tmp_path, monkeypatch)
+    plan.state.update(cluster=cluster_state())
+    (plan.private / "cluster").mkdir(mode=0o700)
+    pinned_kubectl(plan)
+    (plan.private / "kubeconfig").write_text("")
+    canary = "wv-canary-" + "c" * 32
+    (plan.private / "canaries.json").write_text(json.dumps({"acme-api-key": canary}), encoding="utf-8")
+    recorder = ClusterRecorder(logs=f"refused a request that carried {canary}\n")
+    with pytest.raises(acceptance.StageFailed, match="redacted"):
+        acceptance.collect(plan, recorder)
+    folder = plan.evidence / "cluster"
+    assert sorted(path.name for path in folder.iterdir()) == [
+        "weave-runner-weave-workers-o-j4.log",
+        "weave-system.describe.txt",
+        "weave-system.get.txt",
+        "weave-workers-o-j4.describe.txt",
+        "weave-workers-o-j4.get.txt",
+    ]
+    log = (folder / "weave-runner-weave-workers-o-j4.log").read_text(encoding="utf-8")
+    assert canary not in log and "refused a request that carried [redacted]" in log
+    assert (folder / "weave-workers-o-j4.get.txt").read_text(encoding="utf-8") == "objects in weave-workers-o-j4\n"
+    gets = [argv[3:] for argv, _ in recorder.calls if "get" in argv and "wide" in argv]
+    objects = "all,networkpolicy,configmap,endpointslice"
+    assert ["--namespace", "weave-system", "get", objects, "--output", "wide"] in gets
+    # Output without a run secret passes.
+    acceptance.collect(plan, ClusterRecorder())

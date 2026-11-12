@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+import tomllib
 import urllib.request
 
 import pytest
@@ -79,9 +80,31 @@ def test_j0_01_version(run):
 
 @pytest.mark.journey_step("J0.2")
 def test_j0_02_doctor(run):
-    result = run.platform("doctor", "--source", str(run.source), "--context", run.context, "--output", "json")
+    arguments = ("doctor", "--source", str(run.source), "--context", run.context, "--output", "json")
+    if run.config.get("cluster"):
+        # The cluster profiles' tools are in the folder prepare made the cluster from (scripts/acceptance.py).
+        cluster = str(run.private / "cluster")
+        result = run.weave("platform", "--directory", cluster, *arguments, "--cluster")
+    else:
+        result = run.platform(*arguments)
     report = json.loads(run.require(result).stdout)
     assert report["ok"] is True and report["version"] == __version__ and report["context"] == run.context
+    run.check("J0.2/cluster-tools", lambda: _expect_cluster_tools(run, report))
+
+
+def _expect_cluster_tools(run, report):
+    """prepare made the cluster with the provider's tool and kubectl, both verified at the versions.toml pins; the
+    other provider's tool was never fetched."""
+    cluster = run.config.get("cluster")
+    assert cluster, f"The {run.profile} profile checks the cluster tools, but prepare made no cluster"
+    pins = tomllib.loads((run.source / "tests/acceptance/versions.toml").read_text(encoding="utf-8"))
+    tools = pins["cluster"]["tools"]
+    other = "k3d" if cluster["provider"] == "kind" else "kind"
+    assert report["cluster_tools"] == {
+        "kubectl": tools["kubectl"],
+        cluster["provider"]: tools[cluster["provider"]],
+        other: "not fetched",
+    }
 
 
 @pytest.mark.journey_step("J0.3")

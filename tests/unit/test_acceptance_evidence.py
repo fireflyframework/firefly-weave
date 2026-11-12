@@ -46,6 +46,7 @@ ENVIRONMENT = {
     "runner": "local",
     "docker": "28.0.0",
     "kind": None,
+    "k3d": None,
     "kubernetes": None,
     "ollama": None,
     "model": None,
