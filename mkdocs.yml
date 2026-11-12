@@ -158,6 +158,7 @@ nav:
       - Schema and expressions: reference/schema-profile.md
       - Compiler: reference/compiler.md
       - Decision tables: reference/decision-tables.md
+      - AI agents: reference/ai-agents.md
       - Simulation: reference/simulation.md
       - CLI: reference/cli.md
       - Native OpenAPI: reference/native-openapi.md
