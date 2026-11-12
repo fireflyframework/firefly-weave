@@ -618,9 +618,9 @@ def _present(ids: dict[str, str], members: dict[str, tuple[str, str]]) -> list[s
     return [short for short in ids.values() if any(key.startswith(short) for key in members)]
 
 
-def _leave(connection: _Connection, containers: list[str], error: local.PlatformError) -> local.PlatformError:
-    """Take these platform containers off the cluster network; the error to raise, which names any container that
-    couldn't leave and the command that removes it."""
+def _stayed(connection: _Connection, containers: list[str]) -> list[str]:
+    """Take these platform containers off the cluster network; a sentence for each one that couldn't leave, with the
+    command that removes it."""
     network, stayed = connection.found.network, []
     for container in containers:
         command = [*_docker(connection), "network", "disconnect", network, container]
@@ -628,9 +628,16 @@ def _leave(connection: _Connection, containers: list[str], error: local.Platform
             local._run(connection.state, "cluster-network-leave", command)
         except local.PlatformError:
             stayed.append(
-                f" {network} still holds the platform's container {container}; remove it with {' '.join(command)}."
+                f"{network} still holds the platform's container {container}; remove it with {' '.join(command)}."
             )
-    return local.PlatformError(f"{error}{''.join(stayed)}") if stayed else error
+    return stayed
+
+
+def _leave(connection: _Connection, containers: list[str], error: local.PlatformError) -> local.PlatformError:
+    """Take these platform containers off the cluster network; the error to raise, which names any container that
+    couldn't leave and the command that removes it."""
+    stayed = _stayed(connection, containers)
+    return local.PlatformError(" ".join([str(error), *stayed])) if stayed else error
 
 
 def _join(connection: _Connection) -> dict[str, Any]:
@@ -1417,9 +1424,9 @@ def _leave_network(connection: _Connection, notice: Callable[[str], None]) -> No
         _, members = _network_view(connection)
     except local.PlatformError:
         return
-    stayed = str(_leave(connection, _present(ids, members), local.PlatformError("")))
+    stayed = _stayed(connection, _present(ids, members))
     if stayed:
-        notice(f"network:{stayed}")
+        notice("network: " + " ".join(stayed))
 
 
 def disconnect(

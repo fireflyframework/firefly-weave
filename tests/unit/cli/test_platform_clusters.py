@@ -1285,6 +1285,20 @@ def test_disconnecting_the_last_target_removes_the_shared_parts_but_never_the_wo
     assert clusters.receipt(directory)["clusters"] == {}
 
 
+def test_a_container_that_cant_leave_at_the_last_disconnect_is_named_with_the_command_that_removes_it(world):
+    directory, commands, _, cluster = world
+    connect(world)
+    commands.answer(["network", "disconnect", KEYCLOAK], PlatformError("Docker refused."))
+    lines = []
+    disconnect(world, notice=lines)
+    assert lines[-1] == (
+        f"network: weave-kind-weave-test still holds the platform's container {KEYCLOAK}; remove it with "
+        f"docker --context colima-weave-tests network disconnect weave-kind-weave-test {KEYCLOAK}."
+    )
+    assert cluster.joined == {KEYCLOAK}
+    assert clusters.receipt(directory)["clusters"] == {}
+
+
 def test_disconnect_frees_a_pending_target_with_its_keycloak_clients_and_principals(world):
     """A connect that stopped after the identities stage left a pending target: no platform target to disable, but
     clients and principals that a later connect of another namespace must not inherit."""
