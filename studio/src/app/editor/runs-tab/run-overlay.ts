@@ -19,7 +19,11 @@ SPDX-License-Identifier: Apache-2.0
 // step ID, the canvas's run, and what changed in the draft since the version
 // the run used. Pure.
 import type { Workflow } from "../../model";
-import type { StepFact, StepStatus } from "../../operate/run-contracts";
+import {
+  terminalRunStatuses,
+  type StepFact,
+  type StepStatus,
+} from "../../operate/run-contracts";
 import type { CanvasRun } from "../canvas/run-state";
 import { allSteps, withChildIds } from "../ndv/step-walk";
 import { fingerprint } from "../state/fingerprints";
@@ -56,14 +60,18 @@ const FACT_STATES: Readonly<Partial<Record<StepStatus, RunStepState>>> = {
 /**
  * Each step the run reached, by static step ID: failed when any instance
  * failed, else running when any runs, else waiting when any waits, else
- * completed. Step facts add instances the run's state doesn't name.
+ * completed. Step facts add instances the run's state doesn't name. In a
+ * run that ended nothing runs or waits any more, whatever step facts read
+ * a moment earlier say.
  */
 export function stepStates(
   run: RunRecord,
   facts: readonly StepFact[] | null,
 ): Map<string, RunStepState> {
   const states = new Map<string, RunStepState>();
+  const over = terminalRunStatuses.includes(run.status);
   const mark = (id: string, state: RunStepState) => {
+    if (over && (state === "running" || state === "waiting")) return;
     const was = states.get(id);
     if (!was || RANK[state] > RANK[was]) states.set(id, state);
   };

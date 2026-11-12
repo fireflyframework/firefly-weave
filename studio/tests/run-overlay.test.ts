@@ -302,6 +302,21 @@ describe("the run over the draft", () => {
     );
     expect(going.states.get("send")).toBe("running");
   });
+
+  it("a run that ended runs nothing, whatever older step facts say", () => {
+    // Step facts read just before the run's state said it succeeded.
+    const done = overlayOf(
+      record({ status: "succeeded", steps: { fetch: {}, send: {} } }),
+      [fact("send", "running"), fact("approve", "waiting")],
+      versions,
+    );
+    expect(done.states.get("send")).toBe("completed");
+    expect(done.states.has("approve")).toBe(true);
+    expect(done.states.get("approve")).toBe("not-reached");
+    expect(done.canvas.current).toEqual([]);
+    expect(done.canvas.active).toEqual([]);
+    expect(done.canvas.done).toEqual(["fetch", "send"]);
+  });
 });
 
 describe("what changed since the run", () => {
