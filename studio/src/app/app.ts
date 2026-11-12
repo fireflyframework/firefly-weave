@@ -4510,9 +4510,7 @@ export class App implements CanvasHost {
       if (!this.leaveInspector()) return false;
       if (this.tab === "Source" && !(await this.settleSource())) return false;
       void this.flushAutosave();
-      // Leaving the Runs tab forgets the run and its data.
-      this.runView()?.close();
-      this.runView.set(null);
+      this.forgetRun();
     }
     this.tab = tab;
     if (tab === "Designer") this.outlineNotice = false;
@@ -4550,8 +4548,14 @@ export class App implements CanvasHost {
    */
   private openTab() {
     const narrow = this.windowWidth < 600;
+    this.forgetRun();
     this.tab = narrow ? "Outline" : "Designer";
     this.outlineNotice = narrow;
+  }
+  /** Leaving the Runs tab, however it happens, forgets the run and its data. */
+  private forgetRun() {
+    this.runView()?.close();
+    this.runView.set(null);
   }
   paneResize(event: PointerEvent, pane: "palette" | "inspector") {
     this.resizing = {
