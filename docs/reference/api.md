@@ -696,9 +696,11 @@ one activation's instance key:
   with `WV-NOT-FOUND`.
 - The values on one page (tool arguments, tool outputs and final answers) are
   limited to 8 MiB in total. Each turn's arguments and final answer come
-  before tool outputs, and the smallest come first; a value that doesn't fit
-  is left out with the omission `resource_limit`, and its turn still lists its
-  calls and tokens. A smaller `limit` leaves room for more values.
+  before tool outputs, and the smallest come first. A value that doesn't fit
+  in the room the shown values leave is left out with the omission
+  `resource_limit`, and its turn still lists its calls and tokens; a smaller
+  value after it can still be shown. A smaller `limit` leaves room for more
+  values.
 
 Each activation lists its turns with their tokens and times, and each turn
 lists the tool calls the model asked for. Arguments, outputs and the final

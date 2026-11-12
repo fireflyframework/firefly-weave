@@ -228,6 +228,29 @@ async def test_values_past_the_page_limit_are_left_out_and_the_page_still_reads(
     assert large not in log.model_dump_json()
 
 
+async def test_a_small_value_after_one_left_out_still_shows(agent):
+    """Only the values a page keeps count against its limit: the cancel's small output, read after a 9 MiB final
+    answer that is left out, still fits."""
+    await finish(agent)
+    large = "x" * (9 * 1024 * 1024)
+    await change(
+        agent,
+        "UPDATE step_instances SET output=jsonb_set(output,'{result}',to_jsonb(cast(:large AS text)))",
+        "support#3",
+        large=large,
+    )
+
+    [log] = (await read(agent, limit=1)).items
+
+    answer, cancel = log.turns[2], log.turns[0].calls[0]
+    assert answer.final.available is False and [(o.path, o.reason) for o in answer.final.omissions] == [
+        ("", "resource_limit")
+    ]
+    assert (answer.input_tokens, answer.output_tokens) == (120, 12)
+    assert cancel.output.available and cancel.output.value == {"status": "cancelled"}
+    assert log.turns[0].calls[0].arguments.value == {"id": "A-17"}
+
+
 async def test_a_turns_recorded_input_gives_its_tools_flag_memory_and_result_codes(agent):
     """Read in the database: whether tools were on (off on the forced final turn), how many remembered messages the
     first message carried, and each tool result's error mark, code (128 characters at most) and status."""

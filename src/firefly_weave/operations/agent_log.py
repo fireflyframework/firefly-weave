@@ -21,8 +21,9 @@ status, error codes), the outputs its turns, calls and reviews recorded, and wha
 input, and returns the log. Every read names the run. Outputs, turn inputs and agent state are read by their exact keys.
 Step facts are read by run and step and narrowed to the page's keys in the database, and a step's activations are sorted
 by their loop indexes there, so in a loop of many agents those two reads grow with the step's facts in the run; what a
-page returns stays bounded. The values on a page are limited to ``PAGE_BYTES``: turns before calls, the smallest first;
-a value that doesn't fit is left out with the ``resource_limit`` omission, and its turn keeps its shape.
+page returns stays bounded. The values a page keeps are limited to ``PAGE_BYTES``: turns before calls, the smallest
+first; a value that doesn't fit in the room left is left out with the ``resource_limit`` omission, and its turn keeps
+its shape.
 
 A call's tool is the one whose name the model wrote exactly, and everything about the tool goes through its target, so
 a new kind of tool needs no change here. A completed call's outcome is the result the model read: the next turn's input
@@ -471,6 +472,31 @@ def iteration(key: str) -> list[int]:
 
 
 _STEP_SCOPE = "f.tenant_id=:tenant AND f.project_id=:project AND f.environment_id=:environment AND f.run_id=:run"
+_OUTPUT_SCOPE = "s.tenant_id=:tenant AND s.project_id=:project AND s.environment_id=:environment AND s.run_id=:run"
+
+
+def _tier(key: str) -> int:
+    """The order a page reads a key's value in: a review (0), a turn (1), then a call (2)."""
+    parsed = parse_agent_key(key)
+    if parsed is not None and parsed.review:
+        return 0
+    return 1 if parsed is not None and parsed.call is None else 2
+
+
+def _fitting(sizes: Mapping[str, int], budget: int) -> set[str]:
+    """The keys whose values a page reads: every review, then turns, then calls, the smallest first and in byte order
+    of their keys (PostgreSQL's "C" collation), each while the values kept so far leave room for it."""
+    kept: set[str] = set()
+    total = 0
+    for key in sorted(sizes, key=lambda name: (_tier(name), sizes[name], name.encode())):
+        if _tier(key) == 0:
+            kept.add(key)
+        elif total + sizes[key] <= budget:
+            kept.add(key)
+            total += sizes[key]
+    return kept
+
+
 # An activation's loop indexes as numbers: "" (the step outside a loop) is {}, "support[1][3]" is {1,3}.
 _INDEXES = (
     "coalesce(string_to_array(nullif(btrim(substr(f.instance_key,length(f.node_id)+1),'[]'),''),'][')::numeric[],"
@@ -557,37 +583,49 @@ class AgentLogRepository:
     async def outputs(self, run_id: UUID, keys: list[str]) -> tuple[dict[str, JsonValue], dict[str, JsonValue]]:
         """The outputs the completed keys recorded, and the keys whose values the page's byte limit left out.
 
-        Reviews are small and always read. Turns come next, then calls, the smallest first, while the page's total
-        stays within ``PAGE_BYTES``; the rest stay in the database. A turn left out still gives its shape (its kind,
-        its calls' IDs and names, its usage), so its calls keep their rows; a call left out gives None.
+        Two reads: the sizes, then the outputs that fit and the shapes of the turns left out. Reviews are small and
+        always kept. Turns come next, then calls, the smallest first, and each is kept while the values already kept
+        leave room for it within ``PAGE_BYTES``, so a small value after a large one left out still fits. A turn left
+        out still gives its shape (its kind, its calls' IDs and names, its usage), so its calls keep their rows; a
+        call left out gives None.
         """
         if not keys:
             return {}, {}
-        rows = await self.rows(
-            "WITH sized AS (SELECT s.node_id,s.output,octet_length(s.output::text) AS bytes,"
-            "CASE WHEN s.node_id ~ '[.]review$' THEN 0 WHEN s.node_id ~ '#[0-9]+$' THEN 1 ELSE 2 END AS tier "
-            "FROM step_instances s WHERE s.tenant_id=:tenant AND s.project_id=:project "
-            "AND s.environment_id=:environment AND s.run_id=:run AND s.node_id=ANY(:keys) AND s.status='completed'),"
-            "ranked AS (SELECT node_id,output,tier,sum(CASE WHEN tier=0 THEN 0 ELSE bytes END) OVER "
-            '(ORDER BY tier,bytes,node_id COLLATE "C" ROWS UNBOUNDED PRECEDING) AS running FROM sized) '
-            "SELECT node_id,CASE WHEN running<=:budget THEN output END AS output,running>:budget AS withheld,"
-            "CASE WHEN running>:budget AND tier=1 THEN jsonb_strip_nulls(jsonb_build_object('kind',output->'kind',"
-            "'usage',output->'usage','droppedToolCalls',output->'droppedToolCalls','toolCalls',(SELECT "
-            "coalesce(jsonb_agg(jsonb_build_object('id',c->'id','name',c->'name') ORDER BY n),'[]'::jsonb) "
-            "FROM jsonb_array_elements(CASE WHEN jsonb_typeof(output->'toolCalls')='array' THEN output->'toolCalls' "
-            "ELSE '[]'::jsonb END) WITH ORDINALITY AS listed(c,n)))) END AS shape FROM ranked",
-            run=run_id,
-            keys=keys,
-            budget=PAGE_BYTES,
-        )
+        sizes = {
+            row["node_id"]: int(row["bytes"])
+            for row in await self.rows(
+                f"SELECT s.node_id,octet_length(s.output::text) AS bytes FROM step_instances s WHERE {_OUTPUT_SCOPE} "
+                "AND s.node_id=ANY(:keys) AND s.status='completed'",
+                run=run_id,
+                keys=keys,
+            )
+        }
+        kept = _fitting(sizes, PAGE_BYTES)
+        left = [key for key in sizes if key not in kept]
+        shaped = [key for key in left if _tier(key) == 1]
+        withheld: dict[str, JsonValue] = {key: None for key in left if _tier(key) == 2}
         values: dict[str, JsonValue] = {}
-        withheld: dict[str, JsonValue] = {}
+        if not kept and not shaped:
+            return values, withheld
+        rows = await self.rows(
+            "SELECT s.node_id,CASE WHEN s.node_id=ANY(:kept) THEN s.output END AS output,"
+            "CASE WHEN s.node_id=ANY(:shaped) THEN jsonb_strip_nulls(jsonb_build_object('kind',s.output->'kind',"
+            "'usage',s.output->'usage','droppedToolCalls',s.output->'droppedToolCalls','toolCalls',(SELECT "
+            "coalesce(jsonb_agg(jsonb_build_object('id',c->'id','name',c->'name') ORDER BY n),'[]'::jsonb) "
+            "FROM jsonb_array_elements(CASE WHEN jsonb_typeof(s.output->'toolCalls')='array' "
+            "THEN s.output->'toolCalls' ELSE '[]'::jsonb END) WITH ORDINALITY AS listed(c,n)))) END AS shape "
+            f"FROM step_instances s WHERE {_OUTPUT_SCOPE} AND s.node_id=ANY(:wanted) AND s.status='completed'",
+            run=run_id,
+            kept=sorted(kept),
+            shaped=shaped,
+            wanted=sorted(kept) + shaped,
+        )
         for row in rows:
-            if row["withheld"]:
+            if row["node_id"] in kept:
+                values[row["node_id"]] = row["output"]
+            else:
                 shape = row["shape"]
                 withheld[row["node_id"]] = json.loads(shape) if isinstance(shape, str) else shape
-            else:
-                values[row["node_id"]] = row["output"]
         return values, withheld
 
     async def turns(self, run_id: UUID, keys: list[str]) -> list[TurnRecord]:
