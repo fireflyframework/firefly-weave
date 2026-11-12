@@ -21,11 +21,13 @@ from datetime import timedelta
 from pathlib import Path
 from uuid import uuid4
 
+import pytest
 from agent_fixtures import CANCEL, LOOKUP, NOW, agent, compiled, node_of_ir, tool_calls, workflow
 from test_agent_workflows import catalog, order_action
 
 from firefly_weave.runtime.agent_tools import TOOL_TARGETS, Refused, canonical, check_call
 from firefly_weave.runtime.agents import ActivationValues, activate, turn_completed
+from firefly_weave.runtime.kernel import KernelError
 from firefly_weave.runtime.models import CallIntent, HumanTaskIntent, RuntimeEvent, TaskIntent
 
 NOTIFY = {
@@ -184,6 +186,24 @@ def test_a_failed_child_run_gives_the_model_an_error_result():
 
     assert failed == ({"error": "WV-NOTIFY", "retryable": False}, True)
     assert done == ({}, False)
+
+
+@pytest.mark.parametrize(
+    ("data", "code"),
+    [
+        ({"status": "succeeded", "output": "not an object"}, "WV-SCHEMA-"),
+        ({"status": "failed", "output": {"code": "WV-NOTIFY"}}, "WV-SCHEMA-"),
+        ({"status": "lost", "output": {}}, "WV-RUNTIME-EVENT"),
+    ],
+    ids=["output", "error", "status"],
+)
+def test_a_child_outcome_is_checked_as_a_call_steps_is(data, code):
+    # The call step's own rules check the child: a broken outcome is the platform's error, not the model's to read.
+    ir, node = ir_with(LOOKUP, NOTIFY)
+    completion = event("call_completed", child_run_id=str(uuid4()), **data)
+
+    with pytest.raises(KernelError, match=code):
+        TOOL_TARGETS["workflow"].result(ir, tool(node, "notify_customer"), completion, 1)
 
 
 def test_a_persons_answer_reaches_the_model():

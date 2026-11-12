@@ -25,20 +25,24 @@ sys.path.insert(0, str(Path(__file__).parents[1] / "compiler"))
 
 from test_agent_workflows import CANCEL, LOOKUP, agent, catalog, workflow  # noqa: E402
 
-from firefly_weave.compiler.api import compile_source  # noqa: E402
+from firefly_weave.compiler.api import CompiledArtifact, compile_source  # noqa: E402
 from firefly_weave.compiler.ir import AgentNode, WorkflowIR  # noqa: E402
 from firefly_weave.contracts.agent_turns import TurnOutput  # noqa: E402
 
-__all__ = ["CANCEL", "LOOKUP", "NOW", "agent", "compiled", "final", "node_of_ir", "tool_calls", "workflow"]
+__all__ = ["CANCEL", "LOOKUP", "NOW", "agent", "artifact", "compiled", "final", "node_of_ir", "tool_calls", "workflow"]
 
 NOW = datetime(2026, 11, 12, 9, 0, tzinfo=UTC)
 
 
-def compiled(document=None, snapshot=None) -> WorkflowIR:
+def artifact(document=None, snapshot=None) -> CompiledArtifact:
     result = compile_source(document or workflow(), format="object", catalog=snapshot or catalog())
     assert result.ok, result.to_bytes()
     assert result.artifact is not None
-    return WorkflowIR.model_validate(result.artifact.executable)
+    return result.artifact
+
+
+def compiled(document=None, snapshot=None) -> WorkflowIR:
+    return WorkflowIR.model_validate(artifact(document, snapshot).executable)
 
 
 def node_of_ir(ir: WorkflowIR, identifier: str = "support") -> AgentNode:

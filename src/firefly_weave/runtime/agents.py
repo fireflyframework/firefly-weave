@@ -56,6 +56,7 @@ from firefly_weave.contracts.values import JsonObject, JsonValue
 from firefly_weave.runtime.agent_tools import (
     REPEATED_CALL_LIMIT,
     RULE_PATTERNS,
+    TOOL_TARGETS,
     Refused,
     canonical,
     check_call,
@@ -246,7 +247,7 @@ def turn_completed(
             "tool_calls": count,
         }
     )
-    started = _start(node, state)
+    started = _start(ir, node, state)
     state = _with_calls(state, started)
     effects = _after_calls(ir, node, state, run_tokens + tokens)
     return AgentEffects(
@@ -266,7 +267,7 @@ def tool_resolved(
     results[key] = _tool_message(call_id(record.turn, record.index), transcript_name(record.name), content, is_error)
     calls = [call.model_copy(update={"status": "done"}) if call.key == key else call for call in state.calls]
     state = state.model_copy(update={"calls": calls, "results": results})
-    started = _start(node, state)
+    started = _start(ir, node, state)
     state = _with_calls(state, started)
     effects = _after_calls(ir, node, state, run_tokens)
     return AgentEffects(effects.state, effects.turn, [*started, *effects.calls], effects.complete, effects.failure)
@@ -349,11 +350,22 @@ def _complete(ir: WorkflowIR, node: AgentNode, state: AgentState, output: TurnOu
     return AgentEffects(None, complete=result, memory_append=remembered, tokens=tokens)
 
 
-def _start(node: AgentNode, state: AgentState) -> list[CallRecord]:
-    running = sum(call.status == "running" for call in state.calls)
-    room = node.limits.parallel_tool_calls - running
-    queued = [call for call in state.calls if call.status == "queued"]
-    return [call.model_copy(update={"status": "running"}) for call in queued[: max(0, room)]]
+def _start(ir: WorkflowIR, node: AgentNode, state: AgentState) -> list[CallRecord]:
+    """The queued calls that change: a call whose tool requires review waits for it, the others run while there is
+    room for parallel calls."""
+    tools = {tool.name: tool for tool in node.tools}
+    changed: list[CallRecord] = []
+    room = node.limits.parallel_tool_calls - sum(call.status == "running" for call in state.calls)
+    for call in state.calls:
+        if call.status != "queued":
+            continue
+        tool = tools[call.name]
+        if TOOL_TARGETS[tool.target].requires_review(ir, tool):
+            changed.append(call.model_copy(update={"status": "review"}))
+        elif room > 0:
+            room -= 1
+            changed.append(call.model_copy(update={"status": "running"}))
+    return changed
 
 
 def _with_calls(state: AgentState, started: list[CallRecord]) -> AgentState:

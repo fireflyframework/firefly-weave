@@ -32,6 +32,7 @@ from firefly_weave.compiler.decision_tables import DecisionFailure, evaluate_dec
 from firefly_weave.compiler.expressions import DEFAULT_LIMITS, ExpressionFailure, evaluate, measure_value, value_shape
 from firefly_weave.compiler.ir import (
     ActionNode,
+    AgentNode,
     BranchOutputNode,
     CallWorkflowNode,
     DecisionTableNode,
@@ -53,6 +54,7 @@ from firefly_weave.compiler.ir import (
     WorkflowIR,
 )
 from firefly_weave.compiler.schemas import validate_payload
+from firefly_weave.contracts.agent_turns import TurnOutput
 from firefly_weave.contracts.definitions import ActionDefinition, ContractModel, WorkerImplementation, load_definition
 from firefly_weave.contracts.instance_keys import InvalidInstanceKey, node_of
 from firefly_weave.contracts.limits import Limits
@@ -66,6 +68,17 @@ from firefly_weave.contracts.transactions import (
     split_phase,
 )
 from firefly_weave.contracts.values import JsonObject, JsonValue
+from firefly_weave.runtime.agent_tools import TOOL_TARGETS, AgentKeyRef, agent_key
+from firefly_weave.runtime.agents import (
+    ActivationValues,
+    AgentEffects,
+    UnsupportedRules,
+    activate,
+    append_memory,
+    tool_resolved,
+    turn_completed,
+    turn_key,
+)
 from firefly_weave.runtime.capacity import (
     ADMISSION_OUTPUT_BYTES,
     ADMISSION_REDUCTIONS,
@@ -349,29 +362,36 @@ def call_result(ir: WorkflowIR, node: CallWorkflowNode, data: JsonObject) -> tup
     in the envelope of a call that continues on failure; error objects carry a code and a message.
     """
     output_schema = cast(JsonObject, called_workflow(ir, node)[1]["outputSchema"])
+    return call_outcome(ir, output_schema, node.mode, node.on_failure, data)
+
+
+def call_outcome(
+    ir: WorkflowIR, output_schema: JsonObject, mode: str, on_failure: str | None, data: JsonObject
+) -> tuple[JsonValue, JsonObject | None]:
+    """``call_result`` for any waiting call: the callee's output schema and the call's settings, without a node."""
     value = data.get("output")
     if data.get("reconciled") is True:
         # An operator's reconciled result: the called workflow's output, or the whole envelope when it continues.
-        validate(ir, call_output_schema(node.mode, node.on_failure, output_schema), value)
+        validate(ir, call_output_schema(mode, on_failure, output_schema), value)
         return value, None
     status, child = data.get("status"), data.get("child_run_id")
     if not isinstance(child, str):
         raise KernelError("WV-RUNTIME-EVENT")
     if status == "succeeded":
         validate(ir, output_schema, value)
-        if node.on_failure != "continue":
+        if on_failure != "continue":
             return value, None
         envelope: JsonObject = {"status": status, "runId": child, "output": value}
     elif status in {"failed", "cancelled", "timed_out"}:
         validate(ir, CALL_ERROR_SCHEMA, value)
-        if node.on_failure != "continue":
+        if on_failure != "continue":
             if status != "failed":
                 raise KernelError("WV-RUNTIME-EVENT")
             return None, cast(JsonObject, value)
         envelope = {"status": status, "runId": child, "error": value}
     else:
         raise KernelError("WV-RUNTIME-EVENT")
-    validate(ir, call_output_schema(node.mode, node.on_failure, output_schema), envelope)
+    validate(ir, call_output_schema(mode, on_failure, output_schema), envelope)
     return envelope, None
 
 
@@ -705,6 +725,10 @@ def _advance_owned(
         """Delete an iteration's frame and every frame, join and loop that its body created."""
         within = iteration_suffix(loop_suffix(key), index)
         del current_state.branches[branch_key(node.id, "body", within)]
+        body = [*node.scope, node.id, "body"]
+        for name in [name for name in current_state.agents if loop_suffix(name).startswith(within)]:
+            if nodes[node_of(name)].scope[: len(body)] == body:
+                del current_state.agents[name]
         if node.id not in prepared.nested_blocks:
             return
         inner = [*node.scope, node.id, "body"]
@@ -737,6 +761,7 @@ def _advance_owned(
                 "waits": {},
                 "incidents": {},
                 "deferred_results": [],
+                "agents": {},
             }
         )
         for key, branch in current_state.branches.items():
@@ -1399,6 +1424,9 @@ def _advance_owned(
             current_state.active.remove(name)
             current_state.waits.pop(name, None)
             result.commands.append(ControlCommand(kind="settle", node_id=name))
+        # An agent whose work stopped has ended: its state goes with it.
+        for name in [name for name in current_state.agents if name not in current_state.active]:
+            del current_state.agents[name]
         queue[:] = [name for name in queue if owner_of(name) is not None]
         maybe_end()
 
@@ -1594,6 +1622,153 @@ def _advance_owned(
                 break
             accept(completion)
 
+    def start_agent(node: AgentNode, key: str) -> None:
+        """Activate an AI agent: evaluate its texts once, load its run memory, arm its deadline, send turn 1."""
+
+        def text(expression: object) -> str:
+            value = mapping(node, key, cast(JsonObject, cast(ContractModel, expression).model_dump(by_alias=True)))
+            validate(ir, {"type": "string", "minLength": 1}, value)
+            return cast(str, value)
+
+        context = (
+            mapping(node, key, cast(JsonObject, node.context.model_dump(by_alias=True)))
+            if node.context is not None
+            else None
+        )
+        fixed = {
+            tool.name: cast(JsonObject, mapping(node, key, cast(JsonObject, tool.fixed.model_dump(by_alias=True))))
+            for tool in node.tools
+            if tool.fixed is not None
+        }
+        values = ActivationValues(
+            instructions=text(node.instructions),
+            prompt=text(node.prompt),
+            context=context,
+            has_context=node.context is not None,
+            fixed=fixed,
+        )
+        memory = current_state.memories.get(cast(str, node.memory.key), []) if node.memory.scope == "run" else []
+        try:
+            effects = activate(ir, node, key, values, memory, current_state.agent_tokens, event.timestamp)
+        except UnsupportedRules:
+            raise KernelError("WV-RUNTIME-ACTIVATION") from None
+        current_state.active.append(key)
+        result.steps.append(StepChange(node_id=key, status="waiting"))
+        deadline = checked_deadline(event.timestamp, node.limits.timeout_seconds)
+        current_state.waits[key] = deadline
+        result.commands.append(Deadline(node_id=key, deadline=deadline))
+        agent_effects(node, key, effects)
+
+    def agent_effects(node: AgentNode, key: str, effects: AgentEffects) -> None:
+        """Apply one agent transition: its state, the turn and tool calls it sends, and how the step ends."""
+        nonlocal current_state
+        if effects.tokens:
+            current_state = current_state.model_copy(
+                update={"agent_tokens": current_state.agent_tokens + effects.tokens}
+            )
+        if effects.state is None:
+            current_state.agents.pop(key, None)
+        else:
+            current_state.agents[key] = effects.state
+        if effects.turn is not None and effects.state is not None:
+            dependency = next(d for d in ir.dependencies if d.digest == node.dependency and d.kind == "Action")
+            definition = load_definition(dependency.document)
+            assert isinstance(definition, ActionDefinition)
+            implementation = definition.spec.implementation
+            assert isinstance(implementation, WorkerImplementation)
+            name = turn_key(key, effects.state.turn)
+            current_state.active.append(name)
+            result.steps.append(StepChange(node_id=name, status="waiting"))
+            result.commands.append(
+                TaskIntent(
+                    node_id=name,
+                    action_digest=node.dependency,
+                    action_reference=dependency.reference,
+                    input=effects.turn.model_dump(mode="json", by_alias=True, exclude_none=True),
+                    connection_slot=node.connection,
+                    task_type=implementation.task_type,
+                    task_version=implementation.task_version,
+                    deadline=checked_deadline(event.timestamp, definition.spec.timeout_seconds),
+                )
+            )
+        tools = {tool.name: tool for tool in node.tools}
+        for call in effects.calls:
+            if call.status != "running":
+                continue
+            tool = tools[call.name]
+            target = TOOL_TARGETS[tool.target]
+            current_state.active.append(call.key)
+            result.steps.append(StepChange(node_id=call.key, status="waiting"))
+            result.commands.append(
+                target.intent(ir, node, tool, call.key, cast(JsonObject, call.input), event.timestamp)
+            )
+        if effects.memory_append is not None and node.memory.scope == "run":
+            name = cast(str, node.memory.key)
+            current_state.memories[name] = append_memory(
+                current_state.memories.get(name, []), effects.memory_append, node.memory.window
+            )
+        if effects.complete is not None:
+            guard(node.path, "agent_output", effects.complete)
+            complete(node, key, effects.complete)
+            close_agent(key)
+            queue.append(successor(key))
+        elif effects.failure is not None:
+            # The agent's own key holds the incident, as an action's key does; Operate resolves it there.
+            incident(key, effects.failure)
+
+    def close_agent(key: str, *, keep: bool = False) -> None:
+        """End an agent: settle every turn, tool and review it still has open, and drop its state."""
+        for name in [name for name in current_state.active if name.startswith(key + "#")]:
+            current_state.active.remove(name)
+            current_state.waits.pop(name, None)
+            result.commands.append(ControlCommand(kind="settle", node_id=name))
+        current_state.agents.pop(key, None)
+        current_state.waits.pop(key, None)
+        if not keep and key in current_state.active:
+            current_state.active.remove(key)
+
+    def agent_event(reference: AgentKeyRef, identifier: str, completion: RuntimeEvent) -> None:
+        """A turn or a tool call of an agent ended: the agent's pure loop decides what follows."""
+        nonlocal current
+        node, agent = reference.node, reference.key.agent
+        state = current_state.agents.get(agent)
+        if state is None:
+            raise KernelError("WV-RUNTIME-EVENT")
+        # A failure while the agent decides belongs to the agent's own key.
+        current = agent
+        if reference.key.call is None:
+            if (
+                completion.type != "task_completed"
+                or "output" not in completion.data
+                or reference.key.turn != state.turn
+            ):
+                raise KernelError("WV-RUNTIME-EVENT")
+            value = completion.data["output"]
+            guard(node.path, "agent_turn_output", value)
+            current_state.active.remove(identifier)
+            result.steps.append(StepChange(node_id=identifier, status="completed", output=value))
+            effects = turn_completed(
+                ir, node, agent, state, TurnOutput.model_validate(value), current_state.agent_tokens
+            )
+        elif not reference.key.review and reference.tool is not None and reference.target is not None:
+            content, is_error = reference.target.result(ir, reference.tool, completion, state.rules)
+            current_state.active.remove(identifier)
+            current_state.waits.pop(identifier, None)
+            result.steps.append(
+                StepChange(node_id=identifier, status="completed", output=completion.data.get("output"))
+            )
+            effects = tool_resolved(ir, node, state, identifier, content, is_error, current_state.agent_tokens)
+        else:
+            raise KernelError("WV-RUNTIME-EVENT")
+        agent_effects(node, agent, effects)
+
+    def agent_timeout(key: str, completion: RuntimeEvent) -> None:
+        due = current_state.waits.get(key)
+        if due is None or completion.data.get("deadline") != due.isoformat() or completion.timestamp < due:
+            raise KernelError("WV-RUNTIME-EARLY-WAKEUP")
+        close_agent(key, keep=True)
+        incident(key, "WV-AGENT-TIMEOUT")
+
     def accept(completion: RuntimeEvent) -> None:
         nonlocal current, current_state
         identifier = completion.data.get("node_id")
@@ -1615,6 +1790,15 @@ def _advance_owned(
             phase_result(identifier, completion)
             return
         node = nodes[node_of(identifier)]
+        if isinstance(node, AgentNode) and completion.type != "step_failed":
+            reference = agent_key(ir, identifier, current_state.agents)
+            if reference is not None:
+                agent_event(reference, identifier, completion)
+                return
+            if completion.type == "wait_elapsed" and "#" not in identifier:
+                agent_timeout(identifier, completion)
+                return
+            raise KernelError("WV-RUNTIME-EVENT")
         if completion.type == "step_failed":
             if handles(node, identifier, completion.data.get("effect", "unknown")):
                 error = reported_failure(node, identifier, completion)
@@ -2370,6 +2554,10 @@ def _advance_owned(
                     start_iterations(current)
                 else:
                     queue.append(node.join + suffix)
+            elif isinstance(node, AgentNode):
+                if current in current_state.active:
+                    raise KernelError("WV-RUNTIME-ACTIVATION")
+                start_agent(node, current)
             elif isinstance(node, (ActionNode, SignalNode, WaitNode, HumanTaskNode)):
                 if current in current_state.active:
                     raise KernelError("WV-RUNTIME-ACTIVATION")

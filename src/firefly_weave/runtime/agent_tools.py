@@ -32,16 +32,18 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from types import MappingProxyType
-from typing import Final, Protocol, cast
+from typing import TYPE_CHECKING, Final, Protocol, cast
 
-from firefly_weave.compiler.calls import CALL_ERROR_SCHEMA
 from firefly_weave.compiler.ir import AgentNode, AgentToolIR, Dependency, ToolTargetKind, WorkflowIR
 from firefly_weave.compiler.schemas import _Failure, payload_issues, validate_payload
 from firefly_weave.contracts.agent_turns import TOOL_RESULT_BYTES, wire_json
 from firefly_weave.contracts.values import JsonObject, JsonValue
 from firefly_weave.operations.redaction import classify
 from firefly_weave.redaction_patterns import REDACTED, scrub
-from firefly_weave.runtime.models import CallIntent, HumanTaskIntent, RuntimeEvent, TaskIntent
+from firefly_weave.runtime.models import AgentState, CallIntent, HumanTaskIntent, RuntimeEvent, TaskIntent
+
+if TYPE_CHECKING:
+    from firefly_weave.runtime.agents import AgentKey
 
 # The pattern set each version of the turn rules redacts tool results with; frozen with the rules.
 RULE_PATTERNS: Final[Mapping[int, int]] = MappingProxyType({1: 1})
@@ -129,6 +131,14 @@ def cut(content: JsonValue, size: int = TOOL_RESULT_BYTES) -> JsonValue:
 class ToolTarget(Protocol):
     target: ToolTargetKind
 
+    def requires_review(self, ir: WorkflowIR, tool: AgentToolIR) -> bool:
+        """Whether a call waits for a person's review before it runs, whatever the IR says (it fails closed)."""
+        ...
+
+    def callee(self, ir: WorkflowIR, tool: AgentToolIR) -> str | None:
+        """The digest of the workflow a call of this tool starts, for call delivery; None for any other target."""
+        ...
+
     def input_schema(self, ir: WorkflowIR, tool: AgentToolIR) -> JsonObject: ...
 
     def output_schema(self, ir: WorkflowIR, tool: AgentToolIR) -> JsonObject: ...
@@ -146,6 +156,13 @@ class ToolTarget(Protocol):
 
 class _ActionTarget:
     target: ToolTargetKind = "action"
+
+    def requires_review(self, ir: WorkflowIR, tool: AgentToolIR) -> bool:
+        # The pinned action's own side effect decides too, so an IR that says auto can't skip a changing call.
+        return tool.approval == "required" or _document(ir, "Action", tool).get("sideEffect") != "read_only"
+
+    def callee(self, ir: WorkflowIR, tool: AgentToolIR) -> str | None:
+        return None
 
     def input_schema(self, ir: WorkflowIR, tool: AgentToolIR) -> JsonObject:
         return cast(JsonObject, _document(ir, "Action", tool)["inputSchema"])
@@ -183,6 +200,12 @@ class _ActionTarget:
 class _WorkflowTarget:
     target: ToolTargetKind = "workflow"
 
+    def requires_review(self, ir: WorkflowIR, tool: AgentToolIR) -> bool:
+        return True
+
+    def callee(self, ir: WorkflowIR, tool: AgentToolIR) -> str | None:
+        return tool.dependency
+
     def input_schema(self, ir: WorkflowIR, tool: AgentToolIR) -> JsonObject:
         return cast(JsonObject, _document(ir, "Workflow", tool)["inputSchema"])
 
@@ -204,19 +227,28 @@ class _WorkflowTarget:
         )
 
     def result(self, ir: WorkflowIR, tool: AgentToolIR, completion: RuntimeEvent, rules: int) -> tuple[JsonValue, bool]:
-        data = completion.data
         if completion.type != "call_completed":
             return _failure(completion), True
-        status, output = data.get("status"), data.get("output")
-        if status == "succeeded" and not _breaks(self.output_schema(ir, tool), output, ir):
-            return _for_model(ir, self.output_schema(ir, tool), output, rules), False
-        if status in {"failed", "cancelled", "timed_out"} and not _breaks(CALL_ERROR_SCHEMA, output, ir):
-            return {"error": cast(JsonObject, output)["code"], "retryable": False}, True
-        return {"error": "INVALID_OUTPUT", "retryable": False}, True
+        from firefly_weave.runtime.kernel import call_outcome
+
+        # A call step's own rules check the child's outcome: the agent always waits and continues on failure, so
+        # every outcome is an envelope and none ends the caller.
+        envelope = cast(
+            JsonObject, call_outcome(ir, self.output_schema(ir, tool), "wait", "continue", completion.data)[0]
+        )
+        if envelope["status"] == "succeeded":
+            return _for_model(ir, self.output_schema(ir, tool), envelope["output"], rules), False
+        return {"error": cast(JsonObject, envelope["error"])["code"], "retryable": False}, True
 
 
 class _HumanTarget:
     target: ToolTargetKind = "human"
+
+    def requires_review(self, ir: WorkflowIR, tool: AgentToolIR) -> bool:
+        return tool.approval == "required"
+
+    def callee(self, ir: WorkflowIR, tool: AgentToolIR) -> str | None:
+        return None
 
     def input_schema(self, ir: WorkflowIR, tool: AgentToolIR) -> JsonObject:
         assert tool.human is not None
@@ -256,6 +288,39 @@ class _HumanTarget:
 TOOL_TARGETS: Final[Mapping[ToolTargetKind, ToolTarget]] = MappingProxyType(
     {"action": _ActionTarget(), "workflow": _WorkflowTarget(), "human": _HumanTarget()}
 )
+
+
+@dataclass(frozen=True)
+class AgentKeyRef:
+    """What an instance key names inside an AI agent: its turn, a tool call and its tool, or a call's review."""
+
+    key: AgentKey
+    node: AgentNode
+    tool: AgentToolIR | None
+    target: ToolTarget | None
+
+
+def agent_key(ir: WorkflowIR, key: str, states: Mapping[str, AgentState] | None = None) -> AgentKeyRef | None:
+    """The one place an instance key becomes an agent turn, tool call or review; None for any other key.
+
+    A call key's tool comes from the running agent's recorded call, so only ``states`` (the run's agents by key) can
+    name it; without them the key still resolves to its agent.
+    """
+    from firefly_weave.contracts.instance_keys import node_of
+    from firefly_weave.runtime.agents import parse_agent_key
+
+    parsed = parse_agent_key(key)
+    if parsed is None:
+        return None
+    node = next((item for item in ir.graph.nodes if item.id == node_of(key)), None)
+    if not isinstance(node, AgentNode):
+        return None
+    tool = None
+    state = states.get(parsed.agent) if states is not None else None
+    if parsed.call is not None and state is not None:
+        name = next((call.name for call in state.calls if call.turn == parsed.turn and call.index == parsed.call), None)
+        tool = next((item for item in node.tools if item.name == name), None)
+    return AgentKeyRef(parsed, node, tool, TOOL_TARGETS[tool.target] if tool is not None else None)
 
 
 def _breaks(schema: JsonObject, value: JsonValue, ir: WorkflowIR) -> bool:
