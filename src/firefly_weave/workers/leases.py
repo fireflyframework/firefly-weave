@@ -36,7 +36,7 @@ from firefly_weave.connections.secrets import ScopedSecrets
 from firefly_weave.connections.service import ConnectionService
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.connectors import ConnectorInvocation
-from firefly_weave.contracts.transactions import TRANSACTION_MESSAGES
+from firefly_weave.contracts.transactions import TRANSACTION_MESSAGES, split_phase
 from firefly_weave.contracts.values import JsonValue
 from firefly_weave.contracts.workers import (
     ClaimWorker,
@@ -211,6 +211,10 @@ class _TaskOperation:
                 expires = capped_extension(now, self.ttl, deadline)
                 # An undo, cancel or confirm retries on its transaction's policy instead of its action's own.
                 retry = payload.get("retry_policy") or action["retry"]
+                if settling and split_phase(task["node_id"]) is not None:
+                    # A confirm, cancel or undo is part of finishing or undoing a transaction: claiming it spends the
+                    # run's reserve, never quota. Its report spends it only when its transition writes nothing else.
+                    await repository.execute("SELECT weave_settle_begin(:id)", id=run["id"])
                 await repository.execute(
                     "INSERT INTO task_leases "
                     "VALUES(:tenant,:project,:environment,:task,:generation,:owner,:token,"

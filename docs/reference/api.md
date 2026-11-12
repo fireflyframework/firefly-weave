@@ -945,12 +945,36 @@ cannot undo an external call that is already in progress.
 
 A large run with a workflow transaction that is not settled yet is never ended
 this way, because its transaction could not be undone. Its cancellation is
-refused (HTTP 409, `WV-TXN-IN-DOUBT`). Its run timeout fires once and holds the
-run: the run is suspended behind the incident `WV-TXN-RUN-OVERSIZED` at key
+refused (HTTP 409, `WV-TXN-IN-DOUBT`). Its run timeout, or a transaction's own
+deadline (such as a reservation about to expire), fires once and holds the run:
+the run is suspended behind the incident `WV-TXN-RUN-OVERSIZED` at key
 `@transactions:0`, with origin `WV-RUNTIME-CAPACITY`. Forward work waits behind
 it, later changes to the run keep it, and a plain cancel stays refused. The
-transaction stays as it is until a person force cancels the run, which needs a
-stronger permission than `run.cancel`.
+transaction stays as it is until a reconciler ends it: a cancel with
+`"skip_undo": true`, or **Force end** (`terminate`) on that incident. Both need
+`transaction.reconcile` and end every open transaction `force_ended`.
+
+**Transactions.** `POST …/runs/{identifier}/cancel` takes an optional
+`"skip_undo": true` (needs `transaction.reconcile`): the run's open transactions
+end `force_ended` instead of being undone. Without it, a run with an open
+transaction answers HTTP 202 with `pending_undo: true` and ends once its
+transactions settle; undoing them spends the run's control reserve, so it
+finishes at a full byte quota. Only settlement spends it: a confirm whose result
+also starts the steps after its block, say, waits for quota like any forward
+work, and a resolution that ends the run is a stop. `GET …/runs/{identifier}/transactions`
+(`run.read`) pages a run's transactions oldest first as `RunTransactionView`
+(`instance_key`, `node_id`, `iteration`, `state`, `business_key`, `cause`,
+`opened_at`, `decided_at`, `ended_at`, `participants`, `incident_id`,
+`resolution`), never business values. Run summaries carry `transaction_state`
+(the worst state of the run's transactions) and `run-summaries` filters on up to
+ten `transaction_state` values. Incident views of `WV-TXN-*` codes carry
+`priority: "high"` and `transaction`. `POST …/activations/{identifier}/retire`
+refuses an activation a running transaction may still need to undo a step
+(HTTP 409 `WV-TXN-UNDO-PINNED`) unless it has `?force=true`, a `reason` in its
+body, and the caller holds `transaction.reconcile`. A transaction's
+`resolution` shows the resolver's reason, evidence reference and ID to anyone
+with `run.read`, as run history does; write justifications with that audience in
+mind.
 
 ## Operation inventory
 
@@ -1100,6 +1124,7 @@ operation in the [full API reference](api-explorer.md); to generate a client,
 | `runs.export` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/runs/{identifier}/export` | run.read |
 | `runs.replay` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/runs/{identifier}/replay` | run.read |
 | `runs.calls` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/runs/{identifier}/calls` | run.read |
+| `runs.transactions` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/runs/{identifier}/transactions` | run.read |
 | `run_summaries.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/run-summaries` | run.read |
 | `runs.steps` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/runs/{identifier}/steps` | run.read |
 | `runs.logs` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/runs/{identifier}/logs` | run.read |

@@ -201,10 +201,11 @@ def test_existing_examples_gain_no_new_keys():
             assert key not in spec, (path, key)
 
 
-def test_the_features_are_frozen_and_neither_is_advertised():
+def test_the_features_are_frozen_and_only_transactions_are_advertised():
     assert {"flow.transaction", "flow.eventTrigger"} <= set(LANGUAGE_FEATURES)
-    assert not {"flow.transaction", "flow.eventTrigger"} & set(ADVERTISED_FEATURES)
-    assert "transaction" not in supported_step_kinds()
+    assert "flow.transaction" in ADVERTISED_FEATURES and "flow.eventTrigger" not in ADVERTISED_FEATURES
+    assert "transaction" in supported_step_kinds()
+    assert "transaction" not in supported_step_kinds(["flow.callWorkflow", "flow.forEach"])
 
 
 def test_the_manifest_lists_the_transaction_block_the_undo_setting_and_the_trigger_field():
@@ -233,7 +234,26 @@ def test_the_manifest_lists_the_transaction_block_the_undo_setting_and_the_trigg
             },
             "only_inside": "transaction",
             "studio": "pending",
-        }
+        },
+        {
+            "name": "onError",
+            "feature": "flow.onError",
+            "kinds": [
+                "action",
+                "llm",
+                "transform",
+                "decisionTable",
+                "callWorkflow",
+                "humanTask",
+                "signal",
+                "transaction",
+            ],
+            "values": ["stop", "continue", "errorOutput"],
+            "path": "/onError",
+            "default": "stop",
+            "block": {"name": "errorPath", "path": "/errorPath", "label": "On error"},
+            "studio": "pending",
+        },
     ]
     trigger = next(entry for entry in manifest.workflow_fields if entry.name == "eventTrigger")
     assert (trigger.feature, trigger.studio) == ("flow.eventTrigger", "pending")

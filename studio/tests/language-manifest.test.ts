@@ -82,6 +82,16 @@ describe("shared step settings", () => {
         only_inside: "transaction",
         studio: "pending",
       },
+      {
+        name: "onError",
+        feature: "flow.onError",
+        kinds: ["action", "transform"],
+        values: ["stop", "continue", "errorOutput"],
+        path: "/onError",
+        default: "stop",
+        block: { name: "errorPath", path: "/errorPath", label: "On error" },
+        studio: "pending",
+      },
     ],
   };
   it("lists the fields of pending settings for the kinds that hold them", () => {
@@ -91,8 +101,14 @@ describe("shared step settings", () => {
       "holdSeconds",
       "compensate",
       "irreversible",
+      "onError",
+      "errorPath",
     ]);
-    expect(pendingStepFields(manifest, "transform")).toEqual([]);
+    expect(pendingStepFields(manifest, "transform")).toEqual([
+      "onError",
+      "errorPath",
+    ]);
+    expect(pendingStepFields(manifest, "wait")).toEqual([]);
   });
   it("reads a manifest from a platform without shared settings", () => {
     const { step_fields: _, ...older } = manifest;

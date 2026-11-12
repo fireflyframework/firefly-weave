@@ -104,6 +104,7 @@ class OperationsController:
                 actor=request.state.principal,
                 scope=scope,
                 context=request.state.audit_context,
+                skip_undo=body.skip_undo,
             )
         pending = getattr(result, "pending_undo", False)
         return JSONResponse(result.model_dump(mode="json"), status_code=202 if pending else 200)

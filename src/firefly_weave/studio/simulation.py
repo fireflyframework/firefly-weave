@@ -46,6 +46,8 @@ logger = logging.getLogger(__name__)
 def _branches(step: JsonObject) -> list[JsonObject]:
     """The step lists a container holds, each with its own ``steps`` and ``output``."""
     kind = step.get("kind")
+    # A step's error path is a block too; it comes after the step's own blocks.
+    path = [cast(JsonObject, step["errorPath"])] if isinstance(step.get("errorPath"), dict) else []
     if kind == "switch":
         return [*cast(list[JsonObject], step.get("cases") or []), cast(JsonObject, step.get("default") or {})]
     if kind == "parallel":
@@ -53,8 +55,8 @@ def _branches(step: JsonObject) -> list[JsonObject]:
     if kind == "forEach":
         return [cast(JsonObject, step.get("body") or {})]
     if kind == "transaction":
-        return [step]
-    return []
+        return [step, *path]
+    return path
 
 
 def steps_of(steps: object) -> Iterator[JsonObject]:
@@ -86,7 +88,11 @@ def _cut_inside(step: JsonObject, step_id: str) -> JsonObject | None:
         if cut is None:
             continue
         kept = copy.deepcopy(step)
-        for other, sibling in enumerate(_branches(kept)):
+        holders = _branches(kept)
+        for other, sibling in enumerate(holders):
+            if other != position and holders[position] is kept.get("errorPath") and sibling is kept:
+                # The target is in a transaction's error path, which runs only after its body: the body stays.
+                continue
             # The branch holding the target ends after it; its siblings run nothing. Conditions stay, so the
             # test data still decides which path a decision takes.
             sibling["steps"] = cast(JsonValue, cut if other == position else [])
@@ -401,49 +407,6 @@ def refuse_test_data(
         )
 
 
-def _refuse_null_calls(
-    document: JsonObject, request: SimulationRequest, callees: Mapping[str, JsonObject] | None = None
-) -> None:
-    """Refuses a null test output for a step that calls a workflow, by pointer: the run would read it as a failure."""
-    from firefly_weave.contracts.instance_keys import InvalidInstanceKey, node_of
-
-    def calls(workflow: JsonObject) -> set[str]:
-        spec = workflow.get("spec")
-        return {
-            cast(str, step.get("id"))
-            for step in steps_of(spec.get("steps") if isinstance(spec, dict) else None)
-            if step.get("kind") == "callWorkflow"
-        }
-
-    def nulls(workflow: JsonObject, mocks: Mapping[str, JsonValue], *prefix: str) -> list[tuple[str, str]]:
-        found: list[tuple[str, str]] = []
-        called = calls(workflow)
-        for key, value in mocks.items():
-            if value is not None or not key.startswith("node:"):
-                continue
-            try:
-                step = node_of(key.removeprefix("node:"))
-            except InvalidInstanceKey:
-                step = key.removeprefix("node:")
-            if step in called:
-                found.append((step, _pointer(*prefix, key)))
-        return found
-
-    found = nulls(document, request.mocks, "mocks")
-    for reference, callee in (callees or {}).items():
-        if reference in request.workflows:
-            found += nulls(callee, request.workflows[reference].mocks, "workflows", reference, "mocks")
-    if found:
-        steps = ", ".join(sorted({step for step, _ in found}))
-        raise SimulationRefused(
-            422,
-            "WV-STUDIO-REQUEST",
-            f"Test output for a step that calls a workflow can't be empty (null): {steps}. Give it an object, "
-            "or remove it",
-            [pointer for _, pointer in found],
-        )
-
-
 def _label(switch: JsonObject, branch: str) -> str:
     """A decision's path in plain words: "path 2" for its second case, "Otherwise" for its default."""
     if branch.startswith("case:") and branch[5:].isdigit():
@@ -591,7 +554,6 @@ def simulator_for(
     catalog, stubs = simulation_catalog(document, request.definitions, project, stub_unresolved=request.stubUnresolved)
     callees = _callees(request, catalog, stubs)
     refuse_test_data(whole, request, catalog, callees)
-    _refuse_null_calls(whole, request, callees)
     result = compile_source(document, format="object", catalog=catalog)
     summary = CompileSummary(
         ok=result.ok,

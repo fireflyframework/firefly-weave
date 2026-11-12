@@ -18,6 +18,63 @@ SPDX-License-Identifier: Apache-2.0
 
 # Changelog
 
+## Unreleased
+
+- Workflow transactions run. A `transaction` step confirms its reservations
+  once it goes ahead and undoes what went through, newest first, when a step
+  fails, the run is canceled or it times out; the platform lists
+  `flow.transaction`. When Weave can't tell what happened, the run stops behind
+  a high-priority in-doubt incident that carries the transaction, and only a
+  person's decision moves it: **Retry the undo** (the same operation key, a
+  fresh time limit), **Mark as reconciled** with a record of how it ended (and
+  the block's output when it completed), **It happened** or **It didn't happen**
+  (`accept_reconciled_failure`) for the step that can't be undone, or **Force
+  end**. Every decision but Retry needs the `transaction_reconciler` role, a
+  reason and evidence. A cancel can skip undoing (`skip_undo`, for
+  reconcilers), undoing finishes at a full byte quota, and retiring an
+  activation a running transaction may need is refused
+  (`WV-TXN-UNDO-PINNED`) unless forced. `runs.transactions` (`weave runs
+  transactions`, `run_transactions()`) lists a run's transactions, run
+  summaries carry and filter `transaction_state`, six `transaction.*` events
+  leave through the outbox (subscriptions now select up to 12 types), and
+  `weave.transactions` and `weave.transaction_phases` count them. Histories
+  with transactions export and replay. Debug sessions don't simulate
+  transactions yet. Weave AI's guide names the `transaction` step. Migration
+  `0039_transactions_reserve` changes only the catalog.
+- Steps can handle their own failures with the On error setting: `onError:
+  continue` goes on with a `null` output, and `onError: errorOutput` runs the
+  step's `errorPath`, whose output becomes the step's output. Actions, AI tasks,
+  transforms, decision tables, human tasks, signals, transactions and waiting
+  calls accept it; the platform lists `flow.onError`. A handled failure is read
+  at `/steps/<id>/error` as `{code, message, outcome, attempts, instanceKey,
+  childRunId?}`, opens no incident, records a `step_failed` event and a `failed`
+  step change, counts in run facts (`handled_errors`) and in
+  `weave.step_errors`, and exports and replays. Retries come first, and an
+  unknown outcome of an action that changes data and is never retried still
+  stops the run until a person resolves it, now also with Confirm it had no
+  effect (`accept_reconciled_failure`, evidence required). Debug sessions and
+  `weave workflow simulate --error KEY=CODE` make steps fail on purpose. The
+  compiler reports `WV-COMP-ERROR_PATH`, `WV-COMP-ERROR_PATH_OUTPUT`,
+  `WV-COMP-ERROR_REFERENCE`, `WV-COMP-ON_ERROR_AMBIGUOUS` and
+  `WV-COMP-CALL_MODE` for `onError`. No migration. See
+  [Handle step errors](docs/guides/handle-step-errors.md).
+- A call step that waits for a workflow whose output is `null` now gets that
+  `null` and goes on. Before, the platform read the `null` as a failed child
+  and failed while delivering the result, so the calling run never moved on,
+  and Studio stopped a simulated run at the call step and refused a `null`
+  test output for a call step with a 422. A result an operator accepts for a
+  call incident may be `null` too.
+- Weave clients no longer present a refresh token within two seconds of
+  obtaining it, so Keycloak's whole-second stale-token check refuses every
+  replaced refresh token. Credential records now keep when their tokens were
+  obtained; an earlier client cannot read such a record and reports
+  `WV-AUTH-STORE` until `weave auth login` signs in again.
+- Security: aiohttp is updated to 3.14.4 (CVE-2026-111064, CVE-2026-111066,
+  CVE-2026-123817) in the Teams extra and the Agentic worker.
+- Security: the Agentic worker updates dnspython to 2.9.0 (CVE-2026-114605),
+  filelock to 4.2.1 (CVE-2026-112940) and pyasn1 to 0.6.5 (CVE-2026-119194 to
+  CVE-2026-119197).
+
 ## 0.1.0a17
 
 ### Workflow language

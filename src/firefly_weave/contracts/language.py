@@ -38,6 +38,7 @@ from firefly_weave.contracts.definitions import (
 from firefly_weave.contracts.language_features import (
     ADVERTISED_FEATURES,
     DEFAULT_LOOP_MAX_ITEMS,
+    ERROR_KINDS,
     KIND_FEATURES,
     MAX_CALL_DEPTH,
     MAX_LOOP_DEPTH,
@@ -307,7 +308,7 @@ STEP_KINDS: Final[tuple[ManifestStepKind, ...]] = (
 )
 
 
-# Settings shared by several kinds. Step error handling adds "onError" here.
+# Settings shared by several kinds: how a step inside a transaction is undone, and what a step's failure does.
 STEP_FIELDS: Final[tuple[ManifestStepField, ...]] = (
     ManifestStepField(
         name="undo",
@@ -320,6 +321,16 @@ STEP_FIELDS: Final[tuple[ManifestStepField, ...]] = (
             "irreversible": ["/irreversible"],
         },
         only_inside="transaction",
+        studio="pending",
+    ),
+    ManifestStepField(
+        name="onError",
+        feature="flow.onError",
+        kinds=list(ERROR_KINDS),
+        values=["stop", "continue", "errorOutput"],
+        path="/onError",
+        default="stop",
+        block=ManifestBlock(name="errorPath", path="/errorPath", label="On error"),
         studio="pending",
     ),
 )

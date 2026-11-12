@@ -102,6 +102,8 @@ async def test_capabilities_list_the_language_features_and_ir_versions_this_plat
         == [
             "flow.callWorkflow",
             "flow.forEach",
+            "flow.onError",
+            "flow.transaction",
             "text.concat",
             "text.join",
         ]
