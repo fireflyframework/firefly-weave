@@ -179,6 +179,8 @@ def test_an_early_review_expiry_is_refused():
     result = run.send("wait_elapsed", node_id=REVIEW, deadline=(NOW + timedelta(seconds=300)).isoformat())
 
     assert tasks(result) == {} and run.state.agents["support"].calls[0].status == "review"
+    # The review stays open, still due at its own time.
+    assert run.state.waits[REVIEW] == NOW + timedelta(seconds=300)
 
 
 def test_a_read_only_tool_and_a_changing_tool_in_one_turn_wait_only_for_the_changing_one():
@@ -253,6 +255,7 @@ def test_a_repeated_or_raced_turn_answer_cant_change_the_call_under_review():
 
     assert ("support#1", "WV-RUNTIME-EVENT") in refused(run)
     assert run.state.agents["support"].calls == [stored] and stored.status == "review"
+    assert REVIEW in run.state.active and stored.digest == sha256(stored.input)
 
 
 def test_a_review_approved_for_one_input_cant_dispatch_another():
