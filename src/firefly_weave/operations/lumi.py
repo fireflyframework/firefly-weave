@@ -216,13 +216,15 @@ def _connectors(document: JsonValue) -> dict[str, JsonValue]:
 
 
 def _tool_target(tool: JsonObject, connectors: dict[str, JsonValue]) -> str | None:
-    """What a renamed tool keeps: its action, whatever its version, on its slot's connector (the slot when its document
-    declares none); its workflow; or who it asks. None when it names none."""
+    """What a renamed tool keeps: its action, whatever its version, on its slot's connector, whatever its version (the
+    slot when its document declares none); its workflow; or who it asks. None when it names none."""
     human = tool.get("human")
     if "action" in tool:
         action, slot = tool["action"], tool.get("connection")
         name = action.rpartition("@")[0] or action if isinstance(action, str) else action
         connection = connectors.get(slot, slot) if isinstance(slot, str) else slot
+        if isinstance(connection, str):
+            connection = connection.rpartition("@")[0] or connection
         target: list[JsonValue] = ["action", name, connection]
     elif "workflow" in tool:
         target = ["workflow", tool["workflow"]]

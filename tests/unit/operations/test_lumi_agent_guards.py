@@ -591,6 +591,27 @@ def test_swapping_two_tools_names_never_moves_a_read_tools_safeguards_onto_a_cha
     )
 
 
+def test_swapping_names_while_upgrading_the_action_and_its_connector_keeps_the_changing_tools_safeguards():
+    draft = guarded()
+    edited = copy.deepcopy(draft)
+    lookup, cancel = edited["spec"]["steps"][0]["tools"]
+    lookup["name"], cancel["name"] = cancel["name"], lookup["name"]
+    for tool in (lookup, cancel):
+        for name in ("fixed", "approval", "review"):
+            tool.pop(name, None)
+    cancel["action"] = "orders-cancel@1.1.0"
+    edited["spec"]["connections"]["orders"]["connector"] = "orders@1.1.0"
+
+    tool = cancel_tool(step_of(proposed(edited, drafts=[draft])))
+
+    assert (tool["name"], tool["approval"], tool["fixed"], tool["review"]) == (
+        "lookup_order",
+        "required",
+        CANCEL["fixed"],
+        REVIEW,
+    )
+
+
 def test_a_read_tools_name_pointed_at_a_changing_action_takes_the_changing_tools_safeguards():
     draft = guarded()
     edited = stripped()
