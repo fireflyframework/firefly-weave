@@ -1,0 +1,335 @@
+# Copyright 2026 Firefly Software Foundation.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# Author: Firefly Software Foundation
+# SPDX-License-Identifier: Apache-2.0
+
+"""The run-time half of AI agent tools: checking a model's call, and one target per kind of tool.
+
+The model's tool calls are untrusted text. The kernel checks each one here before anything runs: the name must be one
+of the step's tools exactly, the arguments must fit the parameters the model was shown, and the step's fixed values
+are merged last so they always win. The merged input must then fit the target's own input schema. A call that fails
+any check becomes a tool result the model reads on its next turn; nothing is dispatched.
+
+Each target turns an accepted call into a durable command and its completion back into what the model reads. Adding
+a kind of tool is adding one target here and one resolver in ``compiler/agent_tools.py``; nothing else compares tool
+targets.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from types import MappingProxyType
+from typing import Final, Protocol, cast
+
+from firefly_weave.compiler.calls import CALL_ERROR_SCHEMA
+from firefly_weave.compiler.ir import AgentNode, AgentToolIR, Dependency, ToolTargetKind, WorkflowIR
+from firefly_weave.compiler.schemas import _Failure, payload_issues, validate_payload
+from firefly_weave.contracts.agent_turns import TOOL_RESULT_BYTES, wire_json
+from firefly_weave.contracts.values import JsonObject, JsonValue
+from firefly_weave.operations.redaction import classify
+from firefly_weave.redaction_patterns import REDACTED, scrub
+from firefly_weave.runtime.models import CallIntent, HumanTaskIntent, RuntimeEvent, TaskIntent
+
+# The pattern set each version of the turn rules redacts tool results with; frozen with the rules.
+RULE_PATTERNS: Final[Mapping[int, int]] = MappingProxyType({1: 1})
+# The name a model-written tool name outside the provider pattern is sent back under (rule 1).
+INVALID_TOOL_NAME: Final = "_invalid_tool"
+# A third call of one tool with the same arguments in one activation is refused (rule 1).
+REPEATED_CALL_LIMIT: Final = 3
+_PROVIDER_NAME = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")
+
+
+def canonical(arguments: JsonValue) -> str:
+    """The canonical text of a call's arguments: sorted keys, compact, so equal arguments compare equal."""
+    return wire_json(arguments)
+
+
+def transcript_name(name: str) -> str:
+    """The name a model-written tool name is sent back to the provider under: as written when providers accept it."""
+    if 1 <= len(name) <= 64 and all(char in _PROVIDER_NAME for char in name):
+        return name
+    return INVALID_TOOL_NAME
+
+
+def tool_schema(ir: WorkflowIR, tool: AgentToolIR) -> JsonObject:
+    """The parameters the model sees for ``tool``, from the pinned schema table."""
+    return ir.schemas[tool.parameters_ref]
+
+
+@dataclass(frozen=True)
+class Refused:
+    """A call that dispatches nothing, and what the model reads instead."""
+
+    content: JsonObject
+
+
+def check_call(
+    ir: WorkflowIR, node: AgentNode, name: str, arguments: JsonValue, fixed: JsonObject
+) -> JsonObject | Refused:
+    """The merged input of an accepted call, or why it is refused.
+
+    Names compare byte for byte: no Unicode normalization and no case folding, so a look-alike name is unknown.
+    Issues name the JSON pointer and the keyword of each problem, never a value.
+    """
+    tool = next((item for item in node.tools if item.name == name), None)
+    if tool is None:
+        names: list[JsonValue] = [name for name in sorted(item.name for item in node.tools)]
+        return Refused({"error": "UNKNOWN_TOOL", "tools": names})
+    bundle = _bundle(ir)
+    if not isinstance(arguments, dict):
+        return _invalid([("", "type")])
+    issues = payload_issues(tool_schema(ir, tool), arguments, bundle)
+    if issues is None or issues:
+        return _invalid(issues or [("", "limits")])
+    merged = {key: value for key, value in arguments.items() if key not in fixed} | fixed
+    target_issues = payload_issues(TOOL_TARGETS[tool.target].input_schema(ir, tool), merged, bundle)
+    if target_issues is None or target_issues:
+        return _invalid(target_issues or [("", "limits")])
+    return merged
+
+
+def _invalid(issues: list[tuple[str, str]]) -> Refused:
+    found: list[JsonValue] = [{"path": path, "keyword": keyword} for path, keyword in issues]
+    return Refused({"error": "INVALID_ARGUMENTS", "issues": found})
+
+
+def redact(schema: JsonObject, value: JsonValue, bundle: dict[str, JsonObject], patterns: int) -> JsonValue:
+    """``value`` as a model may read it: fields its schema marks secret become ``[redacted]``, then secret-shaped text.
+
+    Classification is the platform's own (``operations.redaction.classify``). Where the schema can't be followed
+    field by field (references, combinators), the whole value is redacted: never too little.
+    """
+    return scrub(_redacted(schema, value, bundle), patterns)[0]
+
+
+def cut(content: JsonValue, size: int = TOOL_RESULT_BYTES) -> JsonValue:
+    """A tool result the model reads: whole when its text fits ``size`` bytes, else a marker with the first bytes."""
+    text = wire_json(content).encode()
+    if len(text) <= size:
+        return content
+    end = size
+    while end > 0 and (text[end] & 0xC0) == 0x80:
+        end -= 1
+    return {"truncated": True, "content": text[:end].decode()}
+
+
+class ToolTarget(Protocol):
+    target: ToolTargetKind
+
+    def input_schema(self, ir: WorkflowIR, tool: AgentToolIR) -> JsonObject: ...
+
+    def output_schema(self, ir: WorkflowIR, tool: AgentToolIR) -> JsonObject: ...
+
+    def intent(
+        self, ir: WorkflowIR, node: AgentNode, tool: AgentToolIR, key: str, value: JsonObject, now: datetime
+    ) -> TaskIntent | CallIntent | HumanTaskIntent:
+        """The durable command that runs one accepted call at its instance key."""
+        ...
+
+    def result(self, ir: WorkflowIR, tool: AgentToolIR, completion: RuntimeEvent, rules: int) -> tuple[JsonValue, bool]:
+        """What the model reads for a completed call, and whether it is an error."""
+        ...
+
+
+class _ActionTarget:
+    target: ToolTargetKind = "action"
+
+    def input_schema(self, ir: WorkflowIR, tool: AgentToolIR) -> JsonObject:
+        return cast(JsonObject, _document(ir, "Action", tool)["inputSchema"])
+
+    def output_schema(self, ir: WorkflowIR, tool: AgentToolIR) -> JsonObject:
+        return cast(JsonObject, _document(ir, "Action", tool)["outputSchema"])
+
+    def intent(
+        self, ir: WorkflowIR, node: AgentNode, tool: AgentToolIR, key: str, value: JsonObject, now: datetime
+    ) -> TaskIntent:
+        dependency = _dependency(ir, "Action", tool)
+        spec = cast(JsonObject, dependency.document["spec"])
+        implementation = cast(JsonObject, spec["implementation"])
+        worker = implementation.get("kind") == "worker"
+        return TaskIntent(
+            node_id=key,
+            action_digest=dependency.digest,
+            action_reference=dependency.reference,
+            input=value,
+            connection_slot=tool.connection,
+            task_type=cast(str, implementation["taskType"]) if worker else None,
+            task_version=cast(str, implementation["taskVersion"]) if worker else None,
+            deadline=now + timedelta(seconds=cast(int, spec["timeoutSeconds"])),
+        )
+
+    def result(self, ir: WorkflowIR, tool: AgentToolIR, completion: RuntimeEvent, rules: int) -> tuple[JsonValue, bool]:
+        if completion.type != "task_completed":
+            return _failure(completion), True
+        output = completion.data.get("output")
+        if _breaks(self.output_schema(ir, tool), output, ir):
+            return {"error": "INVALID_OUTPUT", "retryable": False}, True
+        return _for_model(ir, self.output_schema(ir, tool), output, rules), False
+
+
+class _WorkflowTarget:
+    target: ToolTargetKind = "workflow"
+
+    def input_schema(self, ir: WorkflowIR, tool: AgentToolIR) -> JsonObject:
+        return cast(JsonObject, _document(ir, "Workflow", tool)["inputSchema"])
+
+    def output_schema(self, ir: WorkflowIR, tool: AgentToolIR) -> JsonObject:
+        return cast(JsonObject, _document(ir, "Workflow", tool)["outputSchema"])
+
+    def intent(
+        self, ir: WorkflowIR, node: AgentNode, tool: AgentToolIR, key: str, value: JsonObject, now: datetime
+    ) -> CallIntent:
+        dependency = _dependency(ir, "Workflow", tool)
+        # The agent always waits for the child, and a child's failure is a result for the model, never the run's end.
+        return CallIntent(
+            node_id=key,
+            workflow_digest=dependency.digest,
+            workflow_reference=dependency.reference,
+            input=value,
+            mode="wait",
+            on_failure="continue",
+        )
+
+    def result(self, ir: WorkflowIR, tool: AgentToolIR, completion: RuntimeEvent, rules: int) -> tuple[JsonValue, bool]:
+        data = completion.data
+        if completion.type != "call_completed":
+            return _failure(completion), True
+        status, output = data.get("status"), data.get("output")
+        if status == "succeeded" and not _breaks(self.output_schema(ir, tool), output, ir):
+            return _for_model(ir, self.output_schema(ir, tool), output, rules), False
+        if status in {"failed", "cancelled", "timed_out"} and not _breaks(CALL_ERROR_SCHEMA, output, ir):
+            return {"error": cast(JsonObject, output)["code"], "retryable": False}, True
+        return {"error": "INVALID_OUTPUT", "retryable": False}, True
+
+
+class _HumanTarget:
+    target: ToolTargetKind = "human"
+
+    def input_schema(self, ir: WorkflowIR, tool: AgentToolIR) -> JsonObject:
+        assert tool.human is not None
+        return tool.human.question_schema
+
+    def output_schema(self, ir: WorkflowIR, tool: AgentToolIR) -> JsonObject:
+        assert tool.human is not None
+        return tool.human.form_schema
+
+    def intent(
+        self, ir: WorkflowIR, node: AgentNode, tool: AgentToolIR, key: str, value: JsonObject, now: datetime
+    ) -> HumanTaskIntent:
+        assert tool.human is not None
+        deadline = now + timedelta(seconds=node.limits.timeout_seconds)
+        # The model wrote the question: every surface shows it as plain text marked as written by AI.
+        return HumanTaskIntent(
+            node_id=key,
+            assignment=tool.human.assignment,
+            title=f"Answer {tool.name} for {node.id}"[:512],
+            context={"question": cast(JsonValue, value), "tool": tool.name, "aiWritten": True},
+            form_schema=tool.human.form_schema,
+            decisions=["submit"],
+            expires_at=deadline,
+        )
+
+    def result(self, ir: WorkflowIR, tool: AgentToolIR, completion: RuntimeEvent, rules: int) -> tuple[JsonValue, bool]:
+        if completion.type == "wait_elapsed":
+            return {"status": "expired"}, True
+        if completion.type != "human_completed":
+            return _failure(completion), True
+        answer = completion.data.get("data")
+        if _breaks(self.output_schema(ir, tool), answer, ir):
+            return {"error": "INVALID_OUTPUT", "retryable": False}, True
+        return {"answer": _for_model(ir, self.output_schema(ir, tool), answer, rules)}, False
+
+
+TOOL_TARGETS: Final[Mapping[ToolTargetKind, ToolTarget]] = MappingProxyType(
+    {"action": _ActionTarget(), "workflow": _WorkflowTarget(), "human": _HumanTarget()}
+)
+
+
+def _breaks(schema: JsonObject, value: JsonValue, ir: WorkflowIR) -> bool:
+    """Whether a target's output breaks its schema. A secret field may be there: it is redacted afterward."""
+    return bool(validate_payload(schema, value, _bundle(ir), credential_references=True))
+
+
+def _failure(completion: RuntimeEvent) -> JsonObject:
+    code = completion.data.get("code")
+    return {"error": code if isinstance(code, str) and code else "TOOL_FAILED", "retryable": False}
+
+
+def _for_model(ir: WorkflowIR, schema: JsonObject, value: JsonValue, rules: int) -> JsonValue:
+    return cut(redact(schema, value, _bundle(ir), RULE_PATTERNS[rules]))
+
+
+def _bundle(ir: WorkflowIR) -> dict[str, JsonObject]:
+    return {item.reference: item.document for item in ir.dependencies if item.kind == "Schema"}
+
+
+def _dependency(ir: WorkflowIR, kind: str, tool: AgentToolIR) -> Dependency:
+    # Tools resolve by the pinned digest, never by reference through a catalog.
+    return next(item for item in ir.dependencies if item.kind == kind and item.digest == tool.dependency)
+
+
+def _document(ir: WorkflowIR, kind: str, tool: AgentToolIR) -> JsonObject:
+    return cast(JsonObject, _dependency(ir, kind, tool).document["spec"])
+
+
+_FOLLOWED: Final = frozenset(
+    {
+        "type",
+        "properties",
+        "required",
+        "additionalProperties",
+        "items",
+        "description",
+        "title",
+        "minItems",
+        "maxItems",
+        "minLength",
+        "maxLength",
+        "minimum",
+        "maximum",
+        "enum",
+        "const",
+        "format",
+        "pattern",
+        "default",
+        "examples",
+        "minProperties",
+        "maxProperties",
+        "uniqueItems",
+        "exclusiveMinimum",
+        "exclusiveMaximum",
+        "multipleOf",
+    }
+)
+
+
+def _redacted(schema: JsonValue, value: JsonValue, bundle: dict[str, JsonObject]) -> JsonValue:
+    if not isinstance(schema, dict):
+        return value if schema is not False else REDACTED
+    try:
+        classify(schema, value, bundle)
+        return value
+    except (_Failure, RecursionError, ArithmeticError):
+        pass
+    if schema.get("x-secret") is True or schema.get("writeOnly") is True or not set(schema) <= _FOLLOWED:
+        return REDACTED
+    if isinstance(value, dict):
+        properties = cast(JsonObject, schema.get("properties", {}))
+        rest = schema.get("additionalProperties", True)
+        return {key: _redacted(properties.get(key, rest), item, bundle) for key, item in value.items()}
+    if isinstance(value, list) and isinstance(schema.get("items"), dict):
+        return [_redacted(schema["items"], item, bundle) for item in value]
+    return REDACTED
