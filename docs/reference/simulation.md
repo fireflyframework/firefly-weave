@@ -243,7 +243,7 @@ implementation.
 | `signal` | `name`, `payload`, `frame` (optional) | Validate the payload against the signal's schema and queue it at virtual now, in the called workflow `frame` names |
 | `human_decision` | `name`: the human task step ID; `payload`: `{"decision": ..., "data": {...}}`; `frame` (optional) | Validate the decision and form data, then queue the completion |
 | `advance_time` | `seconds`: whole number, zero or more | Move virtual time forward |
-| `resolve` | `incident_key`; `resolution`: `retry_safe`, `accept_reconciled_result`, `accept_reconciled_failure`, or `terminate`; `payload` (optional); `frame` (optional) | Apply a person's resolution of a transaction in doubt (see [Simulate transactions](#simulate-transactions)) |
+| `resolve` | `incident_key`; `resolution`: `retry_safe`, `accept_reconciled_result`, `accept_reconciled_failure`, or `terminate`; `payload` (with `accept_reconciled_result` only); `frame` (optional) | Apply a person's resolution of a transaction in doubt (see [Simulate transactions](#simulate-transactions)) |
 | `cancel` | `skip_undo` (optional) | Queue a cancel of the simulated run; its open transactions are undone first |
 
 `signal`, `human_decision`, `advance_time`, and `cancel` return the current
@@ -768,7 +768,7 @@ fingerprints.
 | What you see | Why | What to do |
 | --- | --- | --- |
 | `WV-DEBUG-REQUEST` from the CLI | The request file is not valid JSON, misses a field, or its input or mocks violate a schema | Check `artifact`, `mocks`, `input`, and a `now` with a time zone |
-| `WV-DEBUG-COMMAND` | The command file is not a JSON array, or a command lacks the field its kind needs, such as a `signal` without `name` | Check each command against the [command reference](#command-reference) |
+| `WV-DEBUG-COMMAND` | The command file is not a JSON array, or a command lacks the field its kind needs, such as a `signal` without `name`, or carries one it doesn't take: a `payload` on a `resolve` other than `accept_reconciled_result`, `skip_undo` on a command other than `cancel`, or `frame` on a `cancel` | Check each command against the [command reference](#command-reference) |
 | `WV-DEBUG-MISSING_MOCK`, status `failed` | An action has no mock (in Studio, **Skip this action** was selected) | Add a mock under one of the keys in the diagnostic's hint |
 | `WV-DEBUG-MISSING_MOCK` at a **Call a workflow** step | The step waits for another workflow, and the request has neither a mock for the call nor the called workflow's artifact | Add a `node:` mock for the call, or the artifact under `workflows` (`--workflow` in the CLI); see [Simulate workflow calls](#simulate-workflow-calls) |
 | `WV-DEBUG-MISSING_MOCK` at a confirm, cancel, or undo | The phase has no mock, and its output needs fields | Add a mock under one of the hint's keys, such as `node:add#undo`; see [Simulate transactions](#simulate-transactions) |
