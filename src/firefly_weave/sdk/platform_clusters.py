@@ -317,7 +317,8 @@ def preflight(directory: Path, provider: str, cluster: str, namespace: str, *, k
     state = local._state(directory)
     context = f"{provider}-{cluster}"
     saved = receipt(directory)
-    if namespace not in saved["clusters"].get(context, {}).get("targets", {}):
+    recorded = namespace in saved["clusters"].get(context, {}).get("targets", {})
+    if not recorded:
         # A new target needs an identity pair: refuse a ninth here, read-only. The identities stage takes the pair.
         free_pair(saved)
     path, server = _server(_candidates(kubeconfig), context, provider, cluster)
@@ -376,8 +377,8 @@ def preflight(directory: Path, provider: str, cluster: str, namespace: str, *, k
     # The API server answers; the developer's own access, read-only.
     kube = [*kubectl(directory, path, context), "--request-timeout=20s"]
     local._run(state, "cluster-preflight", [*kube, "get", "--raw", "/readyz"], timeout=30)
-    for owned in (SYSTEM_NAMESPACE, namespace):
-        _check_namespace(state, kube, owned)
+    _check_namespace(state, kube, SYSTEM_NAMESPACE)
+    _check_namespace(state, kube, namespace, _taken(TAKEN_TARGET, provider, cluster, namespace) if recorded else None)
     return Preflight(provider, cluster, namespace, context, path, state["context"], network, nodes)
 
 
@@ -508,6 +509,16 @@ _UID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}
 _PULL_FAILURES = frozenset({"ErrImagePull", "ImagePullBackOff", "InvalidImageName", "ErrImageNeverPull"})
 NOTHING_REGISTERED = "Nothing was registered."
 FOREIGN_NAMESPACE = "Namespace {namespace} belongs to another Weave installation. Choose another namespace."
+_DISCONNECT_ADVICE = (
+    "Disconnect it with weave platform cluster disconnect --provider {provider} --name {cluster} --namespace "
+    "{namespace}, then connect again."
+)
+# A namespace this installation connected (its receipt lists it) that another installation now owns.
+TAKEN_TARGET = (
+    "Namespace {namespace}, which this installation connected, now belongs to another Weave installation. "
+    + _DISCONNECT_ADVICE
+)
+TAKEN_ON_REFRESH = "Namespace {namespace} belongs to another Weave installation. " + _DISCONNECT_ADVICE
 FOREIGN_SYSTEM = (
     f"Namespace {SYSTEM_NAMESPACE} belongs to another Weave installation, which connects this cluster. Create another "
     "cluster with weave platform cluster create."
@@ -782,9 +793,14 @@ def _apply(connection: _Connection, name: str, items: list[dict[str, Any]]) -> N
     )
 
 
-def _check_namespace(state: dict[str, Any], kube: list[str], namespace: str) -> None:
+def _taken(sentence: str, provider: str, cluster: str, namespace: str) -> str:
+    """A refusal for a recorded target's namespace, with the disconnect command that frees it."""
+    return sentence.format(provider=provider, cluster=cluster, namespace=namespace)
+
+
+def _check_namespace(state: dict[str, Any], kube: list[str], namespace: str, refusal: str | None = None) -> None:
     """Refuse a namespace another installation owns, before anything changes: weave-system, which every target of
-    the cluster shares, or a workers namespace."""
+    the cluster shares, or a workers namespace, with `refusal` when the caller has a more precise sentence."""
     existing = local._run(
         state, "cluster-namespace", [*kube, "get", "namespace", namespace, "--ignore-not-found", "-o", "json"]
     )
@@ -795,9 +811,9 @@ def _check_namespace(state: dict[str, Any], kube: list[str], namespace: str) -> 
             raise local.PlatformError("kubectl didn't describe the namespace; nothing was changed.") from None
         owner = labels.get("firefly.weave/installation")
         if owner is not None and owner != state["id"]:
-            raise local.PlatformError(
-                FOREIGN_SYSTEM if namespace == SYSTEM_NAMESPACE else FOREIGN_NAMESPACE.format(namespace=namespace)
-            )
+            if namespace == SYSTEM_NAMESPACE:
+                raise local.PlatformError(FOREIGN_SYSTEM)
+            raise local.PlatformError(refusal or FOREIGN_NAMESPACE.format(namespace=namespace))
 
 
 def _uid(connection: _Connection, namespace: str) -> str:
@@ -1104,7 +1120,7 @@ def connect(
             # The cluster's other targets follow the platform's new addresses below: as in refresh, each namespace must
             # still be this installation's before anything is applied.
             for owned in sorted(others):
-                _check_namespace(state, kube, owned)
+                _check_namespace(state, kube, owned, _taken(TAKEN_TARGET, provider, cluster, owned))
         # The pods' plain-HTTP entries are consented to before the ConfigMaps that carry them are applied.
         platform_origins.set_cluster_entries(state, key, network.subnet)
 
@@ -1249,8 +1265,9 @@ def _refresh_cluster(
         raise local.PlatformError(f"{key} points at a server that isn't this computer; it was not refreshed.")
     _check_api_port(state, provider, cluster, nodes, key, server)
     connection.kube = [*kubectl(directory, path, key), "--request-timeout=20s"]
-    for owned in (objects.SYSTEM_NAMESPACE, *entry["targets"]):
-        _check_namespace(state, connection.kube, owned)
+    _check_namespace(state, connection.kube, objects.SYSTEM_NAMESPACE)
+    for owned in entry["targets"]:
+        _check_namespace(state, connection.kube, owned, _taken(TAKEN_ON_REFRESH, provider, cluster, owned))
     _apply(connection, "cluster-refresh-shared", objects.shared_objects(network))
     _follow(connection, entry["targets"], "cluster-refresh-namespace")
     # Only now do the cluster's objects carry the new addresses; a refresh that stopped before leaves them to the next.

@@ -833,6 +833,25 @@ def test_a_reconnect_that_finds_another_container_takes_the_platform_off_the_net
 
 
 FOREIGN = json.dumps({"metadata": {"labels": {"firefly.weave/installation": "b" * 24}}})
+DISCONNECT_ADVICE = (
+    "Disconnect it with weave platform cluster disconnect --provider kind --name weave-test --namespace weave-workers, "
+    "then connect again."
+)
+TAKEN_TARGET = (
+    "Namespace weave-workers, which this installation connected, now belongs to another Weave installation. "
+    + DISCONNECT_ADVICE
+)
+
+
+def test_reconnecting_a_namespace_another_installation_took_says_to_disconnect_it(world):
+    _, commands, _, cluster = world
+    connect(world)
+    cluster.namespace = FOREIGN
+    before = len(commands.calls)
+    with pytest.raises(PlatformError) as refused:
+        connect(world)
+    assert str(refused.value) == TAKEN_TARGET
+    assert applied(commands, before) == []
 
 
 def test_a_namespace_of_another_installation_is_refused_before_anything_changes(world):
@@ -1073,7 +1092,7 @@ def test_connect_never_repoints_another_target_whose_namespace_another_installat
     before = len(commands.calls)
     with pytest.raises(PlatformError) as refused:
         clusters.connect(directory, "kind", "weave-test", "team-b", kubeconfig=config, notice=lambda line: None)
-    assert str(refused.value) == clusters.FOREIGN_NAMESPACE.format(namespace="weave-workers")
+    assert str(refused.value) == TAKEN_TARGET
     assert applied(commands, before) == []
     saved = clusters.receipt(directory)["clusters"]["kind-weave-test"]
     assert saved["api_address"] == "172.30.0.5" and set(saved["targets"]) == {"weave-workers"}
@@ -1133,3 +1152,20 @@ def test_refresh_never_applies_over_another_installations_weave_system(world, mo
     assert clusters.refresh(directory, lines.append) == [{"name": "kind-weave-test", "state": "unreachable"}]
     assert applied(commands, before) == []
     assert lines[-1].startswith("kind-weave-test: not refreshed. Namespace weave-system belongs to another Weave")
+
+
+def test_refresh_that_finds_a_target_namespace_taken_says_to_disconnect_it(world, monkeypatch):
+    directory, commands, config, cluster = world
+    connect(world)
+    monkeypatch.setenv("KUBECONFIG", str(config))
+    cluster.namespace = FOREIGN
+    cluster.joined.discard(KEYCLOAK)
+    cluster.addresses[KEYCLOAK] = "172.30.0.7"
+    lines = []
+    before = len(commands.calls)
+    assert clusters.refresh(directory, lines.append) == [{"name": "kind-weave-test", "state": "unreachable"}]
+    assert applied(commands, before) == []
+    assert lines[-1] == (
+        "kind-weave-test: not refreshed. Namespace weave-workers belongs to another Weave installation. "
+        + DISCONNECT_ADVICE
+    )
