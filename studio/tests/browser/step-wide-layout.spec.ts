@@ -146,13 +146,17 @@ test.describe("at 1440x900", () => {
 test.describe("at 1024x768", () => {
   test.use({ viewport: { width: 1024, height: 768 } });
 
-  test("the Data pane sits beside the grid, with Output first", async ({
+  test("the Data pane starts folded, and opens beside the grid with Output first", async ({
     page,
   }) => {
     const details = await openGrid(page);
+    const rail = details.dialog.getByRole("button", { name: "Show data" });
+    expect(Math.abs((await box(rail)).width - 48)).toBeLessThanOrEqual(0.5);
+    await expect(
+      details.dialog.getByRole("tablist", { name: "Data" }),
+    ).toHaveCount(0);
+    await rail.click();
     const tabs = details.dialog.getByRole("tablist", { name: "Data" });
-    await expect(tabs).toBeVisible();
-    await expect(details.dialog.locator(".sd-rail")).toHaveCount(0);
     await expect(tabs.getByRole("tab", { name: "Output" })).toHaveAttribute(
       "aria-selected",
       "true",
@@ -161,7 +165,8 @@ test.describe("at 1024x768", () => {
     const strip = await box(tabs);
     const main = await box(details.dialog.locator(".sd-main"));
     expect(main.x + main.width).toBeLessThanOrEqual(pane.x + 0.5);
-    expect(Math.abs(strip.x - pane.x)).toBeLessThanOrEqual(24);
+    // The tab strip sits inset by --space-2 from the pane's edges.
+    expect(strip.x - pane.x).toBeCloseTo(8, 0);
     expect(pane.y).toBeGreaterThanOrEqual(strip.y + strip.height - 1);
     const panes = await box(details.dialog.locator(".sd-panes"));
     expect(pane.height).toBeGreaterThan(300);

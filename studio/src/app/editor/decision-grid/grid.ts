@@ -115,8 +115,6 @@ export interface GridCellAt {
   col: number;
 }
 
-/** Track minimums: #, Rule name, an input column, a result column. */
-const TRACKS = { mark: 48, name: 160, input: 140, result: 120 };
 export const POLICY_OPTIONS: SelectOption[] = [
   { value: "first", label: "First match" },
   { value: "unique", label: "Exactly one" },
@@ -304,14 +302,18 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
         );
       });
     });
-    // A column added, renamed or removed changes the input fields: Input
-    // starts them again from the values being tried, not the test data.
+    // A column added, renamed or removed changes the input fields: the
+    // values being tried follow it, and Input starts again from them.
+    const fieldsOf = (schema: unknown) =>
+      isRecord(schema) && isRecord(schema["properties"])
+        ? Object.keys(schema["properties"])
+        : [];
     let schema: unknown;
     effect(() => {
       const next = this.spec()?.inputSchema;
       untracked(() => {
         if (schema !== undefined && next !== schema)
-          this.table.initial.set({ ...this.table.value() });
+          this.table.reshape(fieldsOf(schema), fieldsOf(next));
         schema = next;
       });
     });
@@ -442,23 +444,16 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
   template(): string {
     const view = this.view();
     if (!view) return "";
-    const { mark, name, input, result } = TRACKS;
+    // The minimums are grid.css's: compact from 768 to 1099 px.
     return [
-      `${mark}px minmax(${name}px, 1.2fr)`,
-      ...view.inputs.map(() => `minmax(${input}px, 1.5fr)`),
-      ...view.results.map(() => `minmax(${result}px, 1fr)`),
+      "var(--dg-mark) minmax(var(--dg-name), 1.2fr)",
+      ...view.inputs.map(() => "minmax(var(--dg-input), 1.5fr)"),
+      ...view.results.map(() => "minmax(var(--dg-result), 1fr)"),
     ].join(" ");
   }
-  /** The tracks' minimums: below them the box scrolls sideways. */
-  minWidth(): number {
-    const view = this.view();
-    if (!view) return 0;
-    return (
-      TRACKS.mark +
-      TRACKS.name +
-      view.inputs.length * TRACKS.input +
-      view.results.length * TRACKS.result
-    );
+  /** Body rows the grid's box always shows, all of them when there are fewer than five. */
+  minRows(): number {
+    return Math.min(5, Math.max(1, this.rowCount()));
   }
   ruleCount(): string {
     const count = this.view()?.rows.length ?? 0;
@@ -570,9 +565,19 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
       .map((_, index) => index)
       .filter((index) => this.span(row, index) !== null);
   }
+  /** A cell's error, written or not (a duplicate rule name marks its name cell). */
   problemFor(row: number, col: number): string | null {
-    return this.flagged().get(this.key(row, col))?.message ?? null;
+    return this.cellErrors().get(this.key(row, col)) ?? null;
   }
+  private readonly cellErrors = computed(() => {
+    const errors = new Map<string, string>();
+    for (const problem of this.found())
+      if (problem.severity === "error" && problem.at) {
+        const key = this.key(problem.at.row, problem.at.col);
+        if (!errors.has(key)) errors.set(key, problem.message);
+      }
+    return errors;
+  });
 
   // ------------------------------------------------------------ publish
   readonly publishing = signal(false);
@@ -644,9 +649,18 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
       .map((text, index) => ({ text, code: index % 2 === 1 }))
       .filter((part) => part.text);
   }
+  /** "2 problems", "1 problem, 1 warning", "1 warning": errors are what Publish table counts. */
   problemCount(): string {
-    const count = this.problems().length;
-    return `${count} problem${count === 1 ? "" : "s"}`;
+    const errors = this.errorCount();
+    const warnings = this.found().length - errors;
+    const plural = (count: number, noun: string) =>
+      `${count} ${noun}${count === 1 ? "" : "s"}`;
+    return [
+      errors ? plural(errors, "problem") : "",
+      warnings ? plural(warnings, "warning") : "",
+    ]
+      .filter(Boolean)
+      .join(", ");
   }
   goTo(at: GridCellAt) {
     this.focusCell(at.row, at.col);

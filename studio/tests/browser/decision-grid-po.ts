@@ -91,6 +91,35 @@ export function paymentPolicy(version = "1.0.0"): TableDocumentFixture {
   };
 }
 
+/** payment-policy with twelve rules, one per tier, and Otherwise. */
+export function twelveRules(version: string): TableDocumentFixture {
+  const base = paymentPolicy(version);
+  return {
+    ...base,
+    spec: {
+      ...base.spec,
+      rules: Array.from({ length: 12 }, (_, i) => ({
+        id: `tier-${i + 1}`,
+        when: {
+          op: {
+            name: "eq",
+            args: [{ ref: "/input/tier" }, { literal: `t${i + 1}` }],
+          },
+        },
+        output: { literal: { approve: i % 2 === 0, limit: (i + 1) * 100 } },
+      })),
+    },
+  };
+}
+
+/** payment-policy with no Otherwise result. */
+export function withoutOtherwise(version: string): TableDocumentFixture {
+  const base = paymentPolicy(version);
+  const spec = { ...base.spec };
+  delete spec["defaultOutput"];
+  return { ...base, spec };
+}
+
 export interface TableRoutes {
   lists: number;
   exports: string[];
@@ -325,6 +354,10 @@ export class TablePanes {
           ? ".sd-output"
           : ".sd-main",
     );
+    if (await region.isVisible()) return;
+    // From 768 to 1099 px the Data pane starts folded to its rail.
+    const rail = this.page.getByRole("button", { name: "Show data" });
+    if (pane !== "Parameters" && (await rail.isVisible())) await rail.click();
     if (await region.isVisible()) return;
     await this.page
       .getByRole("tablist", { name: /^(Data|Step details panes)$/ })

@@ -93,6 +93,20 @@ export function clampWidths(
   return { input: Math.round(input), output: Math.round(output) };
 }
 
+/**
+ * The widest a side pane can be beside the other as drawn (its rail when
+ * folded): the bound for arrow keys, End and the separator's maximum alike.
+ */
+export function largest(
+  widths: PaneWidths,
+  side: keyof PaneWidths,
+  total: number,
+  profile: PaneProfile = FORM_PANES,
+): number {
+  const other = side === "input" ? widths.output : widths.input;
+  return Math.round(Math.max(MIN_SIDE, total - profile.minMain - other));
+}
+
 export function resized(
   widths: PaneWidths,
   side: keyof PaneWidths,
@@ -100,10 +114,9 @@ export function resized(
   total: number,
   profile: PaneProfile = FORM_PANES,
 ): PaneWidths {
-  const other = side === "input" ? widths.output : widths.input;
   const next = Math.max(
     MIN_SIDE,
-    Math.min(widths[side] + delta, total - profile.minMain - other),
+    Math.min(widths[side] + delta, largest(widths, side, total, profile)),
   );
   return { ...widths, [side]: Math.round(next) };
 }
@@ -115,15 +128,36 @@ export function toEdge(
   total: number,
   profile: PaneProfile = FORM_PANES,
 ): PaneWidths {
-  const other = side === "input" ? widths.output : widths.input;
-  return clampWidths(
-    {
-      ...widths,
-      [side]: edge === "min" ? MIN_SIDE : total - profile.minMain - other,
-    },
-    total,
-    profile,
+  return {
+    ...widths,
+    [side]: edge === "min" ? MIN_SIDE : largest(widths, side, total, profile),
+  };
+}
+
+/**
+ * The widths fitted beside Parameters' minimum again, as when a folded pane
+ * opens: `keep` stays as it is where it can, and the other side gives way.
+ */
+export function fitted(
+  widths: PaneWidths,
+  keep: keyof PaneWidths,
+  total: number,
+  profile: PaneProfile = FORM_PANES,
+): PaneWidths {
+  const other = keep === "input" ? "output" : "input";
+  const kept = Math.max(
+    MIN_SIDE,
+    Math.min(widths[keep], total - profile.minMain - MIN_SIDE),
   );
+  const rest = Math.max(
+    MIN_SIDE,
+    Math.min(widths[other], total - profile.minMain - kept),
+  );
+  return {
+    ...widths,
+    [keep]: Math.round(kept),
+    [other]: Math.round(rest),
+  } as PaneWidths;
 }
 
 /** What a profile's key holds: proportions, and in table view the folded panes. */
@@ -187,16 +221,18 @@ export function writeWidths(
   try {
     const round = (n: number) => Math.round((n / total) * 1000) / 1000;
     // Table view keeps its folds beside the widths.
-    const folded =
+    const kept =
       profile.key === TABLE_LAYOUT_KEY
-        ? readStored(profile.key, storage)?.["folded"]
-        : undefined;
+        ? readStored(profile.key, storage)
+        : null;
+    const folded = kept?.["folded"];
     storage.setItem(
       profile.key,
       JSON.stringify({
         input: round(widths.input),
         output: round(widths.output),
         ...(Array.isArray(folded) ? { folded } : {}),
+        ...(kept?.["dataOpen"] === true ? { dataOpen: true } : {}),
       }),
     );
     return true;
@@ -205,18 +241,27 @@ export function writeWidths(
   }
 }
 
-/** The side panes the person folded to rails in table view. */
+/**
+ * The side panes the person folded to rails in table view; `data` is the
+ * Data pane from 768 to 1099 px, folded until the person opens it.
+ */
 export interface PaneFolds {
   input: boolean;
   output: boolean;
+  data: boolean;
 }
 
 export function readFolds(
   storage: Pick<Storage, "getItem"> | null = defaultStorage(),
 ): PaneFolds {
-  const folded = readStored(TABLE_LAYOUT_KEY, storage)?.["folded"];
+  const stored = readStored(TABLE_LAYOUT_KEY, storage);
+  const folded = stored?.["folded"];
   const list = Array.isArray(folded) ? folded : [];
-  return { input: list.includes("input"), output: list.includes("output") };
+  return {
+    input: list.includes("input"),
+    output: list.includes("output"),
+    data: stored?.["dataOpen"] !== true,
+  };
 }
 
 export function writeFolds(
@@ -234,6 +279,7 @@ export function writeFolds(
           ? { input, output }
           : {}),
         folded: (["input", "output"] as const).filter((side) => folds[side]),
+        ...(folds.data ? {} : { dataOpen: true }),
       }),
     );
     return true;

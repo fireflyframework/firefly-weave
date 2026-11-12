@@ -100,8 +100,9 @@ for (const size of sizes)
       );
       // Clicking it anyway publishes nothing.
       await publish.dispatchEvent("click");
+      // One problem: the head's words count it as one.
       await expect(grid.problems()).toContainText(
-        "Publish table is off until they're fixed.",
+        "Publish table is off until it's fixed.",
       );
       expect(posts).toEqual([]);
     });

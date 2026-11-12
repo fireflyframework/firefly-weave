@@ -104,6 +104,34 @@ export class TableTry {
     const testData = this.testData();
     this.edited.set(!!testData && !same(value, testData));
   }
+  /**
+   * The table's input fields changed from `before` to `after`: the values
+   * keep only fields the table still has, a renamed field's value moves to
+   * its new name, and Input's fields start again from them.
+   */
+  reshape(before: readonly string[], after: readonly string[]) {
+    const removed = before.filter((name) => !after.includes(name));
+    const added = after.filter((name) => !before.includes(name));
+    const renamed =
+      removed.length === 1 && added.length === 1
+        ? { from: removed[0], to: added[0] }
+        : null;
+    const fit = (values: Record<string, unknown>) =>
+      Object.fromEntries(
+        Object.entries(values).flatMap(([name, value]): [string, unknown][] =>
+          renamed && name === renamed.from
+            ? [[renamed.to, value]]
+            : after.includes(name)
+              ? [[name, value]]
+              : [],
+        ),
+      );
+    const testData = this.testData();
+    if (testData) this.testData.set(fit(testData));
+    const value = fit(this.value());
+    this.initial.set({ ...value });
+    this.change(value);
+  }
   /** Use the step's test data: the fields start again from it. */
   useTestData() {
     this.start(this.testData());

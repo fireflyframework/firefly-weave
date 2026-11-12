@@ -23,11 +23,11 @@ SPDX-License-Identifier: Apache-2.0
    and 8 px. A label row's tools overflow it into the gaps around it without
    reaching the control below. What shows at rest ends on the right edge;
    tools that appear on hover sit inboard of it. */
-/* Density, for step details and for forms drawn outside it (workflow
-   settings). On desktop with a fine pointer the form follows the
-   reference's compact rhythm; below 768 px and for coarse pointers it keeps
-   44 px touch targets. */
-:is(.step-details, .sd-form-scope) {
+/* Density for forms drawn outside step details (workflow settings); step
+   details sets the same in step-details.css. On desktop with a fine pointer
+   the form follows the reference's compact rhythm; below 768 px and for
+   coarse pointers it keeps 44 px touch targets. */
+.sd-form-scope {
   --sd-control: var(--control-md); /* fields, selects and pickers */
   --sd-row: var(--control-sm); /* key-value and data rows, menu rows */
   --sd-target: var(--control-sm); /* icon buttons and small toggles */
@@ -36,7 +36,7 @@ SPDX-License-Identifier: Apache-2.0
   --sd-field-inner: var(--space-1);
 }
 @media (max-width: 767px), (pointer: coarse) {
-  :is(.step-details, .sd-form-scope) {
+  .sd-form-scope {
     --sd-control: var(--control-touch);
     --sd-row: var(--control-touch);
     --sd-target: var(--control-touch);

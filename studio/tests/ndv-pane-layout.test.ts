@@ -26,6 +26,8 @@ import {
   TABLE_PANES,
   clampWidths,
   defaultWidths,
+  fitted,
+  largest,
   readFolds,
   readWidths,
   resized,
@@ -162,11 +164,23 @@ describe("the table layout", () => {
   });
   it("remembers which panes the person folded, beside the widths", () => {
     const storage = store();
-    expect(readFolds(storage)).toEqual({ input: false, output: false });
-    expect(writeFolds({ input: true, output: false }, storage)).toBe(true);
+    expect(readFolds(storage)).toEqual({
+      input: false,
+      output: false,
+      data: true,
+    });
+    expect(
+      writeFolds({ input: true, output: false, data: true }, storage),
+    ).toBe(true);
     writeWidths({ input: 348, output: 348 }, 1392, storage, TABLE_PANES);
-    expect(readFolds(storage)).toEqual({ input: true, output: false });
-    writeFolds({ input: true, output: true }, storage);
+    expect(readFolds(storage)).toEqual({
+      input: true,
+      output: false,
+      data: true,
+    });
+    // The Data pane (768 to 1099 px) starts folded until the person opens it.
+    writeFolds({ input: true, output: true, data: false }, storage);
+    expect(readFolds(storage).data).toBe(false);
     expect(readWidths(1392, storage, TABLE_PANES)).toEqual({
       input: 348,
       output: 348,
@@ -179,7 +193,11 @@ describe("the table layout", () => {
     (raw) => {
       const storage = store();
       storage.setItem(TABLE_LAYOUT_KEY, raw);
-      expect(readFolds(storage)).toEqual({ input: false, output: false });
+      expect(readFolds(storage)).toEqual({
+        input: false,
+        output: false,
+        data: true,
+      });
       expect(readWidths(1392, storage, TABLE_PANES)).toEqual(tableWidths(1392));
     },
   );
@@ -192,8 +210,38 @@ describe("the table layout", () => {
         throw new Error("Denied");
       },
     };
-    expect(readFolds(denied)).toEqual({ input: false, output: false });
-    expect(writeFolds({ input: true, output: false }, denied)).toBe(false);
-    expect(writeFolds({ input: true, output: false }, null)).toBe(false);
+    expect(readFolds(denied)).toEqual({
+      input: false,
+      output: false,
+      data: true,
+    });
+    expect(writeFolds({ input: true, output: false, data: true }, denied)).toBe(
+      false,
+    );
+    expect(writeFolds({ input: true, output: false, data: true }, null)).toBe(
+      false,
+    );
+  });
+  it("gives arrow keys, End and the separator's maximum the same largest width", () => {
+    // Input folded to its rail: Output may grow up to the grid's minimum.
+    const drawn = { input: RAIL, output: 334 };
+    expect(largest(drawn, "output", 1392, TABLE_PANES)).toBe(704);
+    expect(toEdge(drawn, "output", "max", 1392, TABLE_PANES).output).toBe(704);
+    expect(resized(drawn, "output", 2000, 1392, TABLE_PANES).output).toBe(704);
+    expect(toEdge(drawn, "output", "min", 1392, TABLE_PANES).output).toBe(240);
+  });
+  it("fits the panes beside the grid again when a folded pane opens", () => {
+    // Output grew to 704 while Input was folded; Input opens at its width.
+    expect(
+      fitted({ input: 278, output: 704 }, "input", 1392, TABLE_PANES),
+    ).toEqual({ input: 278, output: 474 });
+    // Widths that already fit stay as they are.
+    expect(
+      fitted({ input: 278, output: 334 }, "input", 1392, TABLE_PANES),
+    ).toEqual({ input: 278, output: 334 });
+    // The kept side gives way too when the other can't go below 240 px.
+    expect(
+      fitted({ input: 600, output: 300 }, "input", 1392, TABLE_PANES),
+    ).toEqual({ input: 512, output: 240 });
   });
 });

@@ -29,6 +29,7 @@ import {
   openPaymentGrid,
   paymentPolicy,
   TablePanes,
+  twelveRules,
   type TableDocumentFixture,
 } from "./decision-grid-po";
 import { setTestInput } from "./formula-po";
@@ -95,6 +96,13 @@ const tokenFamily = (page: Page, token: string) =>
 const style = (locator: Locator, property: string) =>
   locator.evaluate(
     (element, name) => getComputedStyle(element).getPropertyValue(name),
+    property,
+  );
+/** A style of an element's ::after, where the cursor and a problem are drawn. */
+const after = (locator: Locator, property: string) =>
+  locator.evaluate(
+    (element, name) =>
+      getComputedStyle(element, "::after").getPropertyValue(name),
     property,
   );
 
@@ -164,6 +172,36 @@ async function expectTargets(scope: Locator, target: number, what: string) {
     expect(c.height, `${what} "${c.name}" height`).toBeGreaterThanOrEqual(
       target - 0.5,
     );
+  }
+}
+
+/** Twelve rules with four problems: the grid keeps five rows, the list scrolls. */
+async function expectProblemsBeside(grid: DecisionGridPage) {
+  const problems = grid.problems();
+  await expect(problems.locator("li")).toHaveCount(4);
+  const box_ = await box(grid.root.locator(".dg-box"));
+  expect(box_.height, "the grid box").toBeGreaterThanOrEqual(287.5);
+  const scroller = await box(grid.root.locator(".dg-scroll"));
+  const shown = (
+    await boxes(grid.root.locator(".dg-row:not(.dg-header) > .dg-mark-cell"))
+  ).filter(
+    (cell) => cell.y >= scroller.y + 63 && cell.bottom <= scroller.bottom + 0.5,
+  );
+  expect(shown.length, "body rows in view").toBeGreaterThanOrEqual(5);
+  const list = await box(problems);
+  expect(list.height, "the list: its head and three rows").toBeLessThanOrEqual(
+    40 * 4 + 2.5,
+  );
+  expect(
+    await problems.evaluate((e) => e.scrollHeight > e.clientHeight),
+    "the list scrolls",
+  ).toBe(true);
+  for (const item of await problems.locator("li").all()) {
+    const [line, go] = [
+      await box(item),
+      await box(item.getByRole("button", { name: "Go to cell" })),
+    ];
+    expect(go.y - line.y, "Go to cell on the first line").toBeLessThan(8);
   }
 }
 
@@ -384,7 +422,7 @@ for (const size of DESKTOP)
       // The cursor: one outlined cell, even while typing in Input, and its
       // row keeps the color of any other row.
       await expect(grid.root.locator(".dg-td.is-cursor")).toHaveCount(1);
-      const cursor = await style(grid.cell(1, 1), "box-shadow");
+      const cursor = await after(grid.cell(1, 1), "box-shadow");
       expect(cursor).toContain(focus);
       expect(cursor).toContain("0px 0px 0px 2px inset");
       const plain = await style(
@@ -467,6 +505,68 @@ for (const size of DESKTOP)
       await expect(publish).toHaveAccessibleDescription(
         "Fix the 2 problems to publish",
       );
+      // Off, it keeps an edge on the card (once its color has settled).
+      const edge = await tokenColor(page, "--border");
+      await expect.poll(() => style(publish, "border-top-color")).toBe(edge);
+      // A cell's problem is its underline only, not an invalid field's bar.
+      expect(await style(grid.cell(0, 1), "box-shadow")).toBe("none");
+      expect(await after(grid.cell(0, 1), "box-shadow")).toContain(
+        await tokenColor(page, "--danger"),
+      );
+      // A duplicate name marks its cell, and the mark shows inside the cursor.
+      const name = grid.cell(1, 0);
+      await expect(name).toHaveAttribute("aria-invalid", "true");
+      await expect(name).toHaveAccessibleDescription(/must be unique/);
+      await name.click();
+      await expect(name).toHaveClass(/is-cursor/);
+      const drawn = await after(name, "box-shadow");
+      expect(drawn).toContain(await tokenColor(page, "--focus"));
+      expect(drawn).toContain(await tokenColor(page, "--danger"));
+    });
+
+    test("the menus never paint over the cursor or the grid's lines", async ({
+      page,
+    }) => {
+      const { grid } = await openDraftGrid(page);
+      const focus = await tokenColor(page, "--focus");
+      const name = grid.cell(1, 0);
+      await name.click();
+      await expect(name).toHaveClass(/is-cursor/);
+      expect(await after(name, "box-shadow")).toContain(focus);
+      expect(await after(name, "z-index")).toBe("1");
+      for (const [toggle, cell] of [
+        [name.locator(".row-menu-toggle"), name],
+        [
+          grid.root
+            .locator(".dg-header > .dg-th")
+            .nth(2)
+            .locator(".row-menu-toggle"),
+          grid.root.locator(".dg-header > .dg-th").nth(2),
+        ],
+      ] as const) {
+        await grid.cell(1, 0).click();
+        await page.mouse.move(0, 0);
+        await expect
+          .poll(() => style(toggle, "background-color"), { message: "at rest" })
+          .toBe("rgba(0, 0, 0, 0)");
+        const [inner, outer] = [await box(toggle), await box(cell)];
+        expect(inner.y, "inside the cell's top").toBeGreaterThanOrEqual(
+          outer.y,
+        );
+        expect(inner.bottom, "clear of the cell's line").toBeLessThanOrEqual(
+          outer.bottom - 1,
+        );
+        expect(inner.right, "inside the cell").toBeLessThanOrEqual(outer.right);
+      }
+    });
+
+    test("the result view's segments keep their padding", async ({ page }) => {
+      const { panes } = await openDraftGrid(page);
+      for (const radio of await panes.output.getByRole("radio").all())
+        expect(
+          parseFloat(await style(radio, "padding-left")),
+          "segment padding",
+        ).toBeGreaterThanOrEqual(7.5);
     });
 
     test("with no test values, Input shows the fields and Output says there is no result yet", async ({
@@ -483,6 +583,13 @@ for (const size of DESKTOP)
         "Type a value in Input to see which rule matches.",
       );
       await expect(panes.result).toHaveCount(0);
+      await expect(panes.count).toHaveText("Not checked");
+      // The hints balance their last line.
+      for (const hint of [
+        panes.input.locator(".dg-try-hint"),
+        page.locator("#dg-policy-hint"),
+      ])
+        expect(await style(hint, "text-wrap-style")).toBe("pretty");
     });
   });
 
@@ -571,6 +678,27 @@ test.describe("Table view at 1440x900", () => {
     await expect(panes.result).toContainText("1000");
   });
 
+  test("a problems list never squeezes the grid below five rows", async ({
+    page,
+  }) => {
+    const { grid } = await openDraftGrid(page, twelveRules("1.2.1"));
+    for (const row of [0, 1, 2, 3]) await grid.edit(row, 2, ">> x");
+    await expectProblemsBeside(grid);
+  });
+
+  test("rows stay 36 px while a cell is edited, a one-line formula and Otherwise included", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1920, height: 1080 });
+    const { grid } = await openDraftGrid(page);
+    await grid.cell(1, 1).dblclick();
+    await expect(grid.root.locator(".dg-cell-input")).toBeFocused();
+    for (const cell of await boxes(
+      grid.root.locator(".dg-row:not(.dg-header) > .dg-mark-cell"),
+    ))
+      expect(cell.height, "a row while editing").toBeCloseTo(36, 0);
+  });
+
   test("widths set in table view stay apart from the step form's", async ({
     page,
   }) => {
@@ -604,6 +732,51 @@ test.describe("Table view at 1440x900", () => {
     expect(
       Math.abs((await box(dialog.locator(".sd-input"))).width - widened),
     ).toBeLessThanOrEqual(1);
+  });
+
+  test("a pane that opens again never squeezes the grid below 640 px", async ({
+    page,
+  }) => {
+    const { details } = await openDraftGrid(page);
+    const dialog = details.dialog;
+    await dialog.getByRole("button", { name: "Fold Input" }).click();
+    await expect(
+      dialog.getByRole("button", { name: "Show Input" }),
+    ).toBeVisible();
+    const resize = dialog.getByRole("separator", { name: "Resize Output" });
+    await resize.focus();
+    await page.keyboard.press("End");
+    // The separator's maximum is where End stops: Output beside the rail.
+    const total = await panesWidth(details);
+    const widest = String(Math.round(total - 640 - 48));
+    await expect(resize).toHaveAttribute("aria-valuenow", widest);
+    await expect(resize).toHaveAttribute("aria-valuemax", widest);
+    await dialog.getByRole("button", { name: "Show Input" }).click();
+    await expect(dialog.locator(".sd-input")).toBeVisible();
+    const [main, output, panes] = [
+      await box(dialog.locator(".sd-main")),
+      await box(dialog.locator(".sd-output")),
+      await box(dialog.locator(".sd-panes")),
+    ];
+    expect(main.width, "the grid's card").toBeGreaterThanOrEqual(639.5);
+    expect(output.right, "Output inside the panes").toBeLessThanOrEqual(
+      panes.right + 0.5,
+    );
+  });
+
+  test("the problems head counts what Publish table counts", async ({
+    page,
+  }) => {
+    const { grid } = await openDraftGrid(page);
+    await grid.edit(1, 1, "> 500");
+    await grid.policy("Exactly one");
+    await grid.edit(0, 1, ">> 1");
+    const head = grid.problems().locator(".dg-problems-head");
+    await expect(head).toContainText("1 problem, 1 warning");
+    await expect(head).toContainText("Publish table is off until it's fixed.");
+    await expect(
+      grid.root.getByRole("button", { name: "Publish table" }),
+    ).toHaveAccessibleDescription("Fix the problem to publish");
   });
 
   test("Fold folds a pane to its rail, and the choice is remembered", async ({
@@ -658,30 +831,103 @@ test.describe("Table view on touch at 1440x900", () => {
   });
 });
 
+test.describe("Table view at 1279x800", () => {
+  test.use({ viewport: { width: 1279, height: 800 } });
+
+  test("Parameters and the Data pane show, with Output selected, and the grid fills its card", async ({
+    page,
+  }) => {
+    const { details, grid, panes } = await openDraftGrid(page);
+    const dialog = details.dialog;
+    await expect(dialog.locator(".sd-rail")).toHaveCount(0);
+    await expect(dialog.locator(".sd-main")).toBeVisible();
+    await expect(
+      dialog
+        .getByRole("tablist", { name: "Data" })
+        .getByRole("tab", { name: "Output" }),
+    ).toHaveAttribute("aria-selected", "true");
+    await expect(panes.output).toBeVisible();
+    await expect(dialog.locator(".sd-input")).toBeHidden();
+    const content = await cardContent(details);
+    const grid_ = await box(grid.root.locator(".dg-box"));
+    expectAligned([grid_.x, content.left], "the grid's left edge", 1);
+    expectAligned([grid_.right, content.right], "the grid's right edge", 1);
+  });
+});
+
 for (const size of [
-  { tag: "1279x800", width: 1279, height: 800 },
+  { tag: "1024x768", width: 1024, height: 768 },
   { tag: "768x1024", width: 768, height: 1024 },
 ])
   test.describe(`Table view at ${size.tag}`, () => {
     test.use({ viewport: { width: size.width, height: size.height } });
 
-    test("Parameters and the Data pane show, with Output selected, and the grid fills its card", async ({
+    test("the Data pane starts folded, and the grid's compact columns fill the card", async ({
       page,
     }) => {
       const { details, grid, panes } = await openDraftGrid(page);
       const dialog = details.dialog;
-      await expect(dialog.locator(".sd-rail")).toHaveCount(0);
-      await expect(dialog.locator(".sd-main")).toBeVisible();
+      const rail = dialog.getByRole("button", { name: "Show data" });
+      await expect(rail).toBeVisible();
+      expect((await box(rail)).width).toBeCloseTo(48, 0);
+      await expect(dialog.locator(".sd-output")).toBeHidden();
+      await expect(dialog.getByRole("tablist", { name: "Data" })).toHaveCount(
+        0,
+      );
+      const content = await cardContent(details);
+      const grid_ = await box(grid.root.locator(".dg-box"));
+      expectAligned([grid_.x, content.left], "the grid's left edge", 1);
+      expectAligned([grid_.right, content.right], "the grid's right edge", 1);
+      const [mark, name, ...columns] = await boxes(
+        grid.root.locator(".dg-header > .dg-th"),
+      );
+      expect(mark.width).toBeCloseTo(48, 0);
+      expect(name.width, "Rule name").toBeGreaterThanOrEqual(127.5);
+      for (const input of columns.slice(0, 2))
+        expect(input.width, "an input column").toBeGreaterThanOrEqual(127.5);
+      for (const result of columns.slice(2))
+        expect(result.width, "a result column").toBeGreaterThanOrEqual(111.5);
+      if (size.width >= 1024)
+        expect(
+          await grid.root
+            .locator(".dg-scroll")
+            .evaluate((e) => e.scrollWidth - e.clientWidth),
+          "sideways room",
+        ).toBeLessThanOrEqual(0);
+      // The rail opens the Data pane at Output, and the choice is kept.
+      await rail.click();
       await expect(
         dialog
           .getByRole("tablist", { name: "Data" })
           .getByRole("tab", { name: "Output" }),
       ).toHaveAttribute("aria-selected", "true");
       await expect(panes.output).toBeVisible();
-      await expect(dialog.locator(".sd-input")).toBeHidden();
-      const content = await cardContent(details);
-      const grid_ = await box(grid.root.locator(".dg-box"));
-      expectAligned([grid_.x, content.left], "the grid's left edge", 1);
-      expectAligned([grid_.right, content.right], "the grid's right edge", 1);
+      await grid.back();
+      await grid.open();
+      await expect(panes.output).toBeVisible();
+      await expect(rail).toHaveCount(0);
+    });
+
+    test("the add-column commands stay together at the footer's right", async ({
+      page,
+    }) => {
+      const { grid } = await openDraftGrid(page);
+      const foot = await box(grid.root.locator(".dg-foot"));
+      const [input, result] = [
+        await box(grid.root.getByRole("button", { name: "Add input column" })),
+        await box(grid.root.getByRole("button", { name: "Add result column" })),
+      ];
+      expectAligned([input.y, result.y], "one row", 0.5);
+      expect(foot.right - result.right, "at the right").toBeLessThanOrEqual(
+        12.5,
+      );
+    });
+
+    test("a problems list never squeezes the grid below five rows", async ({
+      page,
+    }) => {
+      const { grid } = await openDraftGrid(page, twelveRules("1.2.1"));
+      for (const row of [0, 1, 2, 3]) await grid.edit(row, 2, ">> x");
+      await expectProblemsBeside(grid);
     });
   });

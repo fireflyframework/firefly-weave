@@ -46,9 +46,11 @@ weave-step-details {
   color: var(--text);
   font: var(--type-body);
 }
-/* Step details keeps its own density as well: params.css, which sets it for
-   forms, leaves the page while table view draws the grid in place of the
-   form, and the panes, their headers and Fold still need it. */
+/* Step details' density (--sd-control, --sd-target and the field rhythm).
+   It lives here, not in params.css: the form's stylesheet leaves the page
+   while table view draws the grid in its place, and the panes, their
+   headers and Fold still need it. Forms outside step details get the same
+   values from params.css. */
 .step-details {
   --sd-control: var(--control-md);
   --sd-row: var(--control-sm);
@@ -788,7 +790,8 @@ weave-issues-indicator {
   #sd-panel-parameters:not([hidden]) {
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  /* Scrolls only when the grid at its minimum and the problems don't fit. */
+  overflow: auto;
   padding-bottom: var(--sd-edge);
 }
 .sd-rail {
@@ -827,4 +830,21 @@ weave-issues-indicator {
 .sd-rail-caption {
   writing-mode: vertical-rl;
   white-space: nowrap;
+}
+/* From 768 to 1099 px the Data pane folds to a rail beside the grid until
+   the person opens it. */
+.step-details[data-table][data-layout="two"][data-data-folded] .sd-panes {
+  grid-template-columns: minmax(0, 1fr) var(--sd-rail);
+  grid-template-rows: minmax(0, 1fr);
+}
+.step-details[data-table][data-layout="two"][data-data-folded] .sd-main {
+  grid-column: 1;
+  grid-row: 1;
+}
+.step-details[data-table] .sd-rail-data {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: end;
+  border-left: 0;
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
 }

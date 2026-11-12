@@ -69,6 +69,7 @@ import type { TryCard, TryView } from "./try-view";
       margin: 0;
       font: var(--type-small);
       color: var(--muted);
+      text-wrap: pretty;
     }
     .dg-try-reset {
       align-self: flex-start;
@@ -179,6 +180,11 @@ interface ResultRow {
     }
     .pane-views {
       margin-left: auto;
+    }
+    /* Table and JSON keep their padding in a narrow pane; their icons may
+       drop. */
+    :host .pane-views button[role="radio"] {
+      padding: 0 var(--space-2);
     }
     .pane-sub {
       flex-wrap: nowrap;

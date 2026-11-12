@@ -25,6 +25,7 @@ SPDX-License-Identifier: Apache-2.0
   [attr.aria-label]="'Step details: ' + name()"
   [attr.data-layout]="layout()"
   [attr.data-table]="table() ? '' : null"
+  [attr.data-data-folded]="folded('data') ? '' : null"
   (keydown)="key($event)"
 >
   <div class="sd-top">
@@ -111,7 +112,19 @@ SPDX-License-Identifier: Apache-2.0
         }
       }
     }
-    @if (layout() === "two") {
+    @if (folded("data")) {
+      <button
+        type="button"
+        class="sd-rail sd-rail-data"
+        aria-label="Show data"
+        title="Show data"
+        (click)="unfold('data')"
+      >
+        <weave-icon name="expand" [size]="16" />
+        <span class="sd-rail-caption" aria-hidden="true">Data</span>
+      </button>
+    }
+    @if (layout() === "two" && !folded("data")) {
       <div
         class="sd-data-tabs"
         role="tablist"

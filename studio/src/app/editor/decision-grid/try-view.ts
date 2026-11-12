@@ -159,7 +159,7 @@ export function tryView(input: TryViewInput): TryView {
     note: null,
     marks: none,
   };
-  if (input.empty) return blank;
+  if (input.empty) return { ...blank, count: "Not checked" };
   if (input.problem !== null)
     return {
       ...blank,

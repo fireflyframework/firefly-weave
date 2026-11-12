@@ -27,13 +27,17 @@ SPDX-License-Identifier: Apache-2.0
       <weave-icon name="chevronLeft" [size]="16" />Back to the step
     </button>
     <span class="dg-divider" aria-hidden="true"></span>
-    <h3 class="dg-title" [attr.title]="title()" [attr.aria-label]="title()">
-      <span class="dg-name">{{ tableName() }}</span>
-      <span class="dg-version">{{ tableVersion() }}</span>
-    </h3>
-    @if (status) {
-      <span class="pill" [attr.data-tone]="status.tone">{{ status.text }}</span>
-    }
+    <span class="dg-ident">
+      <h3 class="dg-title" [attr.title]="title()" [attr.aria-label]="title()">
+        <span class="dg-name">{{ tableName() }}</span>
+        <span class="dg-version">{{ tableVersion() }}</span>
+      </h3>
+      @if (status) {
+        <span class="pill" [attr.data-tone]="status.tone">{{
+          status.text
+        }}</span>
+      }
+    </span>
     <span class="dg-spacer"></span>
     @if (view && where() === "draft") {
       @let errors = errorCount();
@@ -85,7 +89,7 @@ SPDX-License-Identifier: Apache-2.0
         <weave-icon name="warning" [size]="16" />{{ text }}
       </p>
     }
-    <div class="dg-box">
+    <div class="dg-box" [style.--dg-min-rows]="minRows()">
       <div class="dg-scroll">
         <div
           class="dg-grid"
@@ -95,7 +99,8 @@ SPDX-License-Identifier: Apache-2.0
           [attr.aria-rowcount]="rowCount() + 1"
           [attr.aria-colcount]="cols().length + 1"
           [style.grid-template-columns]="template()"
-          [style.min-width.px]="minWidth()"
+          [style.--dg-inputs]="view.inputs.length"
+          [style.--dg-results]="view.results.length"
         >
           <div class="dg-groups" aria-hidden="true">
             <span class="dg-group dg-group-start"></span>
@@ -163,13 +168,6 @@ SPDX-License-Identifier: Apache-2.0
               </div>
             }
           </div>
-          @if (!view.rows.length) {
-            <div class="dg-row dg-none" role="row">
-              <div class="dg-td dg-none-cell" role="gridcell">
-                No rules yet. Add a rule, or paste rows from a spreadsheet.
-              </div>
-            </div>
-          }
           @for (r of rowIndexes(); track r) {
             @let state = rowState(r);
             <div
@@ -290,23 +288,24 @@ SPDX-License-Identifier: Apache-2.0
           <weave-icon name="plus" [size]="16" />Add rule
         </button>
         <span class="dg-count">{{ ruleCount() }}</span>
-        <span class="dg-spacer"></span>
-        <button
-          type="button"
-          class="dg-tool"
-          [disabled]="readOnly()"
-          (click)="openColumnDialog({ mode: 'add', side: 'input' })"
-        >
-          <weave-icon name="plus" [size]="16" />Add input column
-        </button>
-        <button
-          type="button"
-          class="dg-tool"
-          [disabled]="readOnly() || view.scalar"
-          (click)="openColumnDialog({ mode: 'add', side: 'result' })"
-        >
-          <weave-icon name="plus" [size]="16" />Add result column
-        </button>
+        <span class="dg-foot-columns">
+          <button
+            type="button"
+            class="dg-tool"
+            [disabled]="readOnly()"
+            (click)="openColumnDialog({ mode: 'add', side: 'input' })"
+          >
+            <weave-icon name="plus" [size]="16" />Add input column
+          </button>
+          <button
+            type="button"
+            class="dg-tool"
+            [disabled]="readOnly() || view.scalar"
+            (click)="openColumnDialog({ mode: 'add', side: 'result' })"
+          >
+            <weave-icon name="plus" [size]="16" />Add result column
+          </button>
+        </span>
       </div>
     </div>
     @let found = problems();
@@ -322,9 +321,11 @@ SPDX-License-Identifier: Apache-2.0
           <weave-icon [name]="errors ? 'failCircle' : 'warning'" [size]="16" />
           <span class="dg-problems-count">{{ problemCount() }}</span>
           @if (errors) {
-            <span class="dg-problems-why"
-              >Publish table is off until they're fixed.</span
-            >
+            <span class="dg-problems-why">{{
+              errors === 1
+                ? "Publish table is off until it's fixed."
+                : "Publish table is off until they're fixed."
+            }}</span>
           }
         </h4>
         <ul>
@@ -338,6 +339,8 @@ SPDX-License-Identifier: Apache-2.0
                 <span class="pill dg-place" data-tone="neutral">{{
                   locationOf(at)
                 }}</span>
+              } @else {
+                <span></span>
               }
               <span class="dg-problem-text">
                 @for (part of words(problem.message); track $index) {
@@ -356,6 +359,8 @@ SPDX-License-Identifier: Apache-2.0
                 >
                   Go to cell
                 </button>
+              } @else {
+                <span></span>
               }
             </li>
           }

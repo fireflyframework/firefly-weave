@@ -122,6 +122,7 @@ describe("the Output pane's view of a try", () => {
       ),
     );
     expect(shown.kind).toBe("empty");
+    expect(shown.count).toBe("Not checked");
     expect(shown.marks).toEqual([null, null, null]);
     expect(shown.pill).toBeNull();
     expect(shown.result).toBeNull();

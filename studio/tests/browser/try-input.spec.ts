@@ -160,10 +160,23 @@ for (const size of sizes)
       await expect(panes.count).toHaveText("Rule 2 matched");
       await expect(panes.checked).toBeVisible();
       // The older answer lands now, and changes nothing.
+      const stale = page.waitForEvent(
+        "requestfinished",
+        (request) =>
+          request.url().endsWith("/studio/local/decision/evaluate") &&
+          (request.postDataJSON() as { input?: { amount?: unknown } })?.input
+            ?.amount === 2000,
+      );
       release();
+      await stale;
       await expect.poll(checks).toBeGreaterThanOrEqual(2);
       await page.evaluate(
-        () => new Promise((done) => requestAnimationFrame(() => done(null))),
+        () =>
+          new Promise((done) =>
+            requestAnimationFrame(() =>
+              requestAnimationFrame(() => done(null)),
+            ),
+          ),
       );
       await expect(panes.count).toHaveText("Rule 2 matched");
       await expect(panes.cards.first()).toContainText("Rule 2 · small");
