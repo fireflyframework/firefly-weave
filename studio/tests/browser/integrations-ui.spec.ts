@@ -17,7 +17,7 @@ SPDX-License-Identifier: Apache-2.0
 */
 // Where the quick-integration UI is mounted: the inspector's searchable action
 // picker, the palette's Integrations section, the step picker, the
-// Connections view (New integration, New connection, Check configuration),
+// Connections view (New integration, New connection, Test connection),
 // templates on Home and in the "New ▾" menu, and the builder offline.
 import { test, expect, Page, Request } from "@playwright/test";
 import {
@@ -385,12 +385,10 @@ spec:
       await expect(detail).toContainText("https://api.pets.example");
       await expect(detail).toContainText("API key in a header (X-API-Key)");
       await expect(detail).toContainText("API key: pets-api-key");
-      const check = detail.getByRole("button", {
-        name: "Check configuration (no request is sent)",
-      });
+      const check = detail.getByRole("button", { name: "Test connection" });
       await check.click();
       await expect(detail).toContainText(
-        "The platform accepted this configuration.",
+        "Connected: api.pets.example answered.",
       );
       expect(view.tests).toHaveLength(1);
       await expect(check).toBeFocused();
@@ -443,9 +441,7 @@ spec:
         "pets-api-key",
       );
       await expect(
-        page.getByRole("button", {
-          name: "Check configuration (no request is sent)",
-        }),
+        page.getByRole("button", { name: "Test connection" }),
       ).toHaveCount(0);
     });
 

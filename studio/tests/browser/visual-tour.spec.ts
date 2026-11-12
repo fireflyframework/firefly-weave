@@ -3944,12 +3944,8 @@ spec:
     await secret.fill("pets-client-secret");
     await dialog.getByRole("button", { name: "Create connection" }).click();
     await expect(dialog).toContainText("Created pets (revision 1).");
-    await dialog
-      .getByRole("button", { name: "Check configuration (no request is sent)" })
-      .click();
-    await expect(dialog).toContainText(
-      "The platform accepted this configuration.",
-    );
+    await dialog.getByRole("button", { name: "Test connection" }).click();
+    await expect(dialog).toContainText("Connected: api.pets.example answered.");
     await shot("72-connection-created", { end: ".modal-panel" });
   },
 
@@ -4007,12 +4003,8 @@ spec:
     await page.locator(".resource-row").filter({ hasText: "pets" }).click();
     const detail = page.locator(".record-detail");
     await expect(detail).toContainText("https://api.pets.example");
-    await detail
-      .getByRole("button", { name: "Check configuration (no request is sent)" })
-      .click();
-    await expect(detail).toContainText(
-      "The platform accepted this configuration.",
-    );
+    await detail.getByRole("button", { name: "Test connection" }).click();
+    await expect(detail).toContainText("Connected: api.pets.example answered.");
     await shot("74-connections-detail", { end: ".record-detail" });
   },
 

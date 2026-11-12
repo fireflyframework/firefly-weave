@@ -104,7 +104,9 @@ SPDX-License-Identifier: Apache-2.0
 - Testing a `weave-http@2` connection now sends one `HEAD` request to its base
   URL with the connection's sign-in, through the same egress rules as its
   actions, and says why it failed (`reason`); bindable connection items name an
-  HTTP connection's origin.
+  HTTP connection's origin. In Studio, the button is now **Test connection**,
+  names the host it calls, and says whether the host was unreachable, not
+  allowed, refused the sign-in or answered with an error.
 - A request can name the person it was made for in `X-Weave-Principal`; when
   the token now belongs to someone else, the platform refuses it with 409
   `WV-PRINCIPAL-CHANGED` before anything runs.
