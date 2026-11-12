@@ -36,6 +36,7 @@ from typing import Literal, cast
 
 from firefly_weave.compiler.api import validate_authoring
 from firefly_weave.compiler.parser import parse_source
+from firefly_weave.compiler.schema_profile import SCHEMA_DATA, SCHEMA_MAPS, schema_children
 from firefly_weave.contracts.language import STEP_KINDS
 from firefly_weave.contracts.language_features import ADVERTISED_FEATURES
 from firefly_weave.contracts.lumi import LumiMessage
@@ -391,10 +392,6 @@ def _parsed(format: str, source: str) -> JsonValue | None:
         return None
 
 
-# Schema keywords whose values are data, not schemas: an object there may hold a "title" that means something.
-_SCHEMA_DATA = frozenset({"const", "enum", "default", "examples"})
-
-
 def untitled(schema: JsonValue) -> JsonValue:
     """A JSON schema without its ``title`` annotations; property names and data values stay as they are."""
     if isinstance(schema, list):
@@ -405,9 +402,9 @@ def untitled(schema: JsonValue) -> JsonValue:
     for key, value in schema.items():
         if key == "title" and isinstance(value, str):
             continue
-        if key in _SCHEMA_DATA:
+        if key in SCHEMA_DATA:
             result[key] = value
-        elif key in {"properties", "patternProperties", "$defs", "dependentSchemas"} and isinstance(value, dict):
+        elif key in SCHEMA_MAPS and isinstance(value, dict):
             result[key] = {name: untitled(child) for name, child in value.items()}
         else:
             result[key] = untitled(value)
@@ -452,7 +449,7 @@ def runnable_workflow_schema(schema: JsonValue, features: Collection[str] = ADVE
                 if name not in reached and name in definitions:
                     reached.add(name)
                     pending.append(definitions[name])
-            pending.extend(value for key, value in node.items() if key not in _SCHEMA_DATA)
+            pending.extend(schema_children(node))
     result["$defs"] = {name: value for name, value in definitions.items() if name in reached}
     return result
 

@@ -32,6 +32,7 @@ from firefly_weave.compiler.agent_tools import model_parameters, offline_input_s
 from firefly_weave.compiler.agents import agent_output_schema
 from firefly_weave.compiler.catalog import CatalogSnapshot
 from firefly_weave.compiler.llm import llm_output_schema
+from firefly_weave.compiler.schema_profile import schema_children
 from firefly_weave.compiler.schemas import _Failure, validate_payload
 from firefly_weave.contracts.instance_keys import InvalidInstanceKey, node_of
 from firefly_weave.contracts.studio_documents import StudioTestData
@@ -158,7 +159,7 @@ def _embedded(schema: JsonObject, at: str) -> JsonObject:
             reference = node.get("$ref")
             if isinstance(reference, str) and reference.startswith("#"):
                 node["$ref"] = "#" + at + reference[1:]
-            pending.extend(value for key, value in node.items() if key not in {"const", "enum", "default", "examples"})
+            pending.extend(schema_children(node))
     return result
 
 

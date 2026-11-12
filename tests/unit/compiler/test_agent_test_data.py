@@ -18,7 +18,8 @@
 
 import json
 
-from test_agent_workflows import LOOKUP, agent, catalog, workflow
+import pytest
+from test_agent_workflows import LOOKUP, agent, catalog, order_action, workflow
 
 from firefly_weave.compiler.test_data import check_test_data
 from firefly_weave.contracts.studio_documents import StudioTestData
@@ -129,3 +130,32 @@ def test_saved_turns_of_an_agent_with_a_nameless_draft_tool_are_unresolved():
     found = dict(check_test_data(draft, data(aiTurns={"support": turns}), catalog()))
 
     assert found == {"/aiTurns/support": "WV-STUDIO-TESTDATA-UNRESOLVED"}
+
+
+ID = {"type": "string", "pattern": "^A-[0-9]+$"}
+
+
+def turns_check(input_schema, field):
+    action = order_action("orders-defs", "get", input_schema=input_schema)
+    tool = {"name": "lookup_order", "description": "Look up.", "action": "orders-defs@1.0.0", "connection": "orders"}
+    document = workflow(agent(tools=[tool]), profile=PROFILE)
+
+    def saved(value):
+        call = {"name": "lookup_order", "arguments": {field: value}}
+        turns = {"turns": [{"toolCalls": [call]}, {"final": "done"}]}
+        return dict(check_test_data(document, data(aiTurns={"support": turns}), catalog(action)))["/aiTurns/support"]
+
+    return saved
+
+
+@pytest.mark.parametrize("field", ["id", "default"], ids=["field", "field-named-default"])
+def test_saved_tool_arguments_follow_the_tools_local_references(field):
+    # The tool's schema moves inside the turns schema, so its local references must move with it, even under a
+    # property whose name is also a keyword.
+    saved = turns_check(
+        {"type": "object", "$defs": {"Id": ID}, "properties": {field: {"$ref": "#/$defs/Id"}}, "required": [field]},
+        field,
+    )
+
+    assert saved("A-17") is None
+    assert saved("B") == SCHEMA

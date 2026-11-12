@@ -173,6 +173,24 @@ def test_weave_ai_never_sees_a_step_kind_this_platform_cant_run():
     assert with_agents == workflow
 
 
+def test_a_definition_reached_through_a_property_named_like_a_keyword_is_kept():
+    # "default" is a property name here, not the keyword, so the definition under it is still in use.
+    schema = {
+        "$ref": "#/$defs/Step",
+        "$defs": {
+            "Step": {"oneOf": [{"$ref": "#/$defs/ActionStep"}, {"$ref": "#/$defs/AgentStep"}]},
+            "ActionStep": {"type": "object", "properties": {"default": {"$ref": "#/$defs/Branch"}}},
+            "AgentStep": {"type": "object", "properties": {"tools": {"$ref": "#/$defs/AgentTool"}}},
+            "AgentTool": {"type": "object"},
+            "Branch": {"type": "object", "properties": {"steps": {"type": "array"}}},
+        },
+    }
+
+    runnable = runnable_workflow_schema(schema, ())
+
+    assert set(runnable["$defs"]) == {"Step", "ActionStep", "Branch"}
+
+
 def test_a_standard_request_sends_schemas_without_titles_but_keeps_properties_named_title():
     schema = {
         "title": "Step",
