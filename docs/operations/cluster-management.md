@@ -525,8 +525,12 @@ asked. `list` reads only the platform and Docker, never the cluster.
 Add `--check` to compare each target's objects with what connect applies. It
 names each drifted object as `Kind/name`, such as `NetworkPolicy/weave-egress`,
 and never prints a value: kubectl hands both versions to `diff -q`, which
-reports file names only. `--check` changes nothing; run `connect` again to
-repair what it names.
+reports file names only. A deleted workers namespace reads as
+`Namespace/NAMESPACE`, since everything in it went with it. `--check` changes
+nothing; run `connect` again to repair what it names. It needs the runner image
+the platform built, which `connect` pushes to the platform registry; when Docker
+no longer holds that image, `--check` says so, and `list` without `--check`
+still works.
 
 ## After weave platform up
 

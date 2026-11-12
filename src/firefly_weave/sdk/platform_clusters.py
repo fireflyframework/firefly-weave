@@ -1543,6 +1543,10 @@ def disconnect(
 # kubectl diff hands the live and the merged objects, as two folders, to this program, which names the files that
 # differ and prints none of their content: drift is reported by kind and name only.
 _NAMES_ONLY_DIFF = "diff -q"
+RUNNER_IMAGE_GONE = (
+    "Docker on context {context} no longer holds the runner image this platform built and pushed, so --check can't "
+    "tell which runner connect applies. List without --check still works; nothing was changed."
+)
 # kubectl diff exits 1 when objects differ, which isn't a failure here.
 _DIFF_STATUS = '"$@"; status=$?; [ "$status" -le 1 ] || exit "$status"'
 _ROTATED_PATH = "jsonpath={.spec.template.metadata.annotations.firefly\\.weave/identity-rotated-at}"
@@ -1553,6 +1557,24 @@ def _diff_file(item: dict[str, Any]) -> str:
     group, _, version = item["apiVersion"].rpartition("/")
     metadata = item["metadata"]
     return f"{group + '.' if group else ''}{version}.{item['kind']}.{metadata.get('namespace', '')}.{metadata['name']}"
+
+
+def _live_uid(connection: _Connection, namespace: str) -> str | None:
+    """The namespace's UID, None when it no longer exists; read-only."""
+    uid = (
+        local._run(
+            connection.state,
+            "cluster-namespace-uid",
+            [*connection.kube, "get", "namespace", namespace, "--ignore-not-found", "-o", "jsonpath={.metadata.uid}"],
+        )
+        .decode(errors="replace")
+        .strip()
+    )
+    if not uid:
+        return None
+    if not _UID.fullmatch(uid):
+        raise local.PlatformError("kubectl didn't report the namespace's UID; nothing was changed.")
+    return uid
 
 
 def _drifted(connection: _Connection, items: list[dict[str, Any]]) -> list[str]:
@@ -1601,10 +1623,20 @@ def _drift(
     )
     kube = [*kubectl(directory, path, key), "--request-timeout=20s"]
     connection = _Connection(found, state, operations, kube, network)
-    image = _runner_digest(connection)
+    registered = {namespace: target for namespace, target in entry["targets"].items() if "target_id" in target}
+    if not registered:
+        return {}
+    try:
+        image = _runner_digest(connection)
+    except local.PlatformError:
+        raise local.PlatformError(RUNNER_IMAGE_GONE.format(context=state["context"])) from None
+    shared = objects.shared_objects(network)
     drift: dict[str, list[str]] = {}
-    for namespace, target in sorted(entry["targets"].items()):
-        if "target_id" not in target:
+    for namespace, target in sorted(registered.items()):
+        uid = _live_uid(connection, namespace)
+        if uid is None:
+            # Everything in the namespace went with it, and connect makes it again; the shared objects still count.
+            drift[namespace] = sorted({*_drifted(connection, shared), f"Namespace/{namespace}"})
             continue
         rotated = local._run(
             state,
@@ -1612,8 +1644,8 @@ def _drift(
             [*kube, "--namespace", SYSTEM_NAMESPACE, "get", "deployment", f"weave-runner-{namespace}"]
             + ["--ignore-not-found", "-o", _ROTATED_PATH],
         ).decode(errors="replace")
-        draft = _draft(connection, namespace, target, image, rotated=rotated.strip(), uid=_uid(connection, namespace))
-        drift[namespace] = _drifted(connection, [*objects.shared_objects(network), *objects.target_objects(draft)])
+        draft = _draft(connection, namespace, target, image, rotated=rotated.strip(), uid=uid)
+        drift[namespace] = _drifted(connection, [*shared, *objects.target_objects(draft)])
     return drift
 
 

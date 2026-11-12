@@ -1529,6 +1529,48 @@ def test_list_check_names_a_drifted_object_without_printing_its_values(world):
     assert applied(commands, before) == []
 
 
+def test_list_check_names_a_deleted_workers_namespace_as_drift(world):
+    """Everything in the namespace went with it, and connect makes it again: --check names the namespace and still
+    compares the cluster's shared objects."""
+    directory, commands, config, _ = world
+    connect(world)
+    commands.answer([KUBECTL, "get", "deployment", "weave-runner-weave-workers", "-o"], "2026-11-12T10:00:00.000000Z")
+
+    def gone(call):
+        # kubectl fails on a namespace that doesn't exist unless told to ignore it.
+        if "--ignore-not-found" not in call.argv:
+            raise PlatformError("Stage cluster-namespace-uid failed.")
+        return ""
+
+    commands.answer([KUBECTL, "get", "namespace", "weave-workers", "-o", "jsonpath={.metadata.uid}"], gone)
+    commands.answer([KUBECTL, "diff"], "")
+    before = len(commands.calls)
+    listed = clusters.clusters(directory, check=True, kubeconfig=config)
+    assert listed["clusters"][0]["targets"][0]["drift"] == ["Namespace/weave-workers"]
+    (diff,) = [call for call in commands.calls[before:] if "diff" in call.argv]
+    sent = [
+        (item["kind"], item["metadata"].get("namespace"), item["metadata"]["name"])
+        for item in json.loads(diff.stdin)["items"]
+    ]
+    assert ("Service", "weave-system", "weave-api") in sent
+    assert not [item for item in sent if "weave-workers" in item[1:] or item[2].endswith("-weave-workers")]
+
+
+def test_list_check_says_in_its_own_words_when_the_runner_image_is_gone(world):
+    directory, commands, config, _ = world
+    connect(world)
+    commands.answer(["image", "inspect", RUNNER_ID], PlatformError("Stage cluster-runner-inspect failed."))
+    before = len(commands.calls)
+    with pytest.raises(PlatformError) as refused:
+        clusters.clusters(directory, check=True, kubeconfig=config)
+    assert str(refused.value) == (
+        "Docker on context colima-weave-tests no longer holds the runner image this platform built and pushed, so "
+        "--check can't tell which runner connect applies. List without --check still works; nothing was changed."
+    )
+    assert not [call for call in commands.calls[before:] if "diff" in call.argv]
+    assert clusters.clusters(directory, check=False, kubeconfig=config)["clusters"][0]["state"] == "connected"
+
+
 def test_a_second_namespace_leaves_the_first_targets_objects_and_runner_unchanged(world):
     _, commands, _, _ = world
     connect(world)
