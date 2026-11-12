@@ -263,11 +263,7 @@ import { scopeKeyOf } from "./operate/operate-list";
 import { RecordsView } from "./operations/records-view";
 import { SettingsPage } from "./settings/settings-page";
 import { LumiPanel } from "./lumi/lumi-panel";
-import {
-  canvasSheet,
-  keyPlatform,
-  typingIn,
-} from "./editor/state/canvas-commands";
+import { typingIn } from "./editor/state/typing";
 import type {
   BuilderTab,
   HttpActionUse,
@@ -3302,15 +3298,33 @@ export class App implements CanvasHost {
     { keys: "Escape", does: "Stop moving a step, or close the inspector" },
     { keys: "?", does: "Show these shortcuts" },
   ];
-  get shortcuts() {
-    return this.editorNext
-      ? canvasSheet(keyPlatform()).flatMap((section) =>
+  /** The new editor's rows, read from its shortcut table when the sheet first opens. */
+  private editorShortcuts: { keys: string; does: string }[] = [];
+  /**
+   * Opens the "Keyboard shortcuts" sheet. The new editor's table loads with
+   * it, so the first page doesn't carry it.
+   */
+  async showShortcuts() {
+    try {
+      if (this.editorNext && !this.editorShortcuts.length) {
+        const { canvasSheet, keyPlatform } = await import(
+          "./editor/state/canvas-commands"
+        );
+        this.editorShortcuts = canvasSheet(keyPlatform()).flatMap((section) =>
           section.entries.map((entry) => ({
             keys: entry.keys.join(" "),
             does: entry.label,
           })),
-        )
-      : this.classicShortcuts;
+        );
+      }
+      this.shortcutsOpen = true;
+    } catch (e) {
+      this.fail(e);
+    }
+    this.cdr.markForCheck();
+  }
+  get shortcuts() {
+    return this.editorNext ? this.editorShortcuts : this.classicShortcuts;
   }
   /** "Main sequence" or "Case 1 of route": where a step sits. */
   placeLabel(owner: string) {
@@ -10819,7 +10833,7 @@ export class App implements CanvasHost {
     }
     if (!command && event.key === "?") {
       event.preventDefault();
-      this.shortcutsOpen = true;
+      void this.showShortcuts();
     }
     if (!onGraph) return;
     if (

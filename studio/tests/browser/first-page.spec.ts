@@ -115,6 +115,22 @@ test("the decision grid stays out of the first page and under its chunk budget",
   expect(gzipped(grid[0])).toBeLessThanOrEqual(GRID_BUDGET);
 });
 
+test("the editor's shortcut table loads with the editor, not with the first page", () => {
+  // A label only the shortcut table holds.
+  const marker = "Extend the selection downstream";
+  const index = readFileSync(join(BUILD, "index.html"), "utf8");
+  const first = [...index.matchAll(/(?:src|href)="([^"]+\.js)"/g)].map(
+    (match) => match[1],
+  );
+  const holding = readdirSync(BUILD).filter(
+    (file) =>
+      file.endsWith(".js") &&
+      readFileSync(join(BUILD, file), "utf8").includes(marker),
+  );
+  expect(holding).toHaveLength(1);
+  expect(first).not.toContain(holding[0]);
+});
+
 test("the designer opens once the test data service loads, and step details read it", async ({
   page,
 }) => {
