@@ -58,6 +58,17 @@ SPDX-License-Identifier: Apache-2.0
   `WV-COMP-ERROR_REFERENCE`, `WV-COMP-ON_ERROR_AMBIGUOUS` and
   `WV-COMP-CALL_MODE` for `onError`. No migration. See
   [Handle step errors](docs/guides/handle-step-errors.md).
+- A call step that waits for a workflow whose output is `null` now gets that
+  `null` and goes on. Before, the platform read the `null` as a failed child
+  and failed while delivering the result, so the calling run never moved on,
+  and Studio stopped a simulated run at the call step and refused a `null`
+  test output for a call step with a 422. A result an operator accepts for a
+  call incident may be `null` too.
+- Weave clients no longer present a refresh token within two seconds of
+  obtaining it, so Keycloak's whole-second stale-token check refuses every
+  replaced refresh token. Credential records now keep when their tokens were
+  obtained; an earlier client cannot read such a record and reports
+  `WV-AUTH-STORE` until `weave auth login` signs in again.
 
 ## 0.1.0a17
 
