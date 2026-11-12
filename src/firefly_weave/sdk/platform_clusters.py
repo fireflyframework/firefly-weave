@@ -1892,17 +1892,24 @@ def _delete(state: dict[str, Any], directory: Path, provider: str, cluster: str,
 
 
 def create_cluster(
-    directory: Path, provider: str, cluster: str, *, context: str | None = None, connect: bool = True
+    directory: Path,
+    provider: str,
+    cluster: str,
+    *,
+    context: str | None = None,
+    then_connect: bool = True,
+    notice: Callable[[str], None] = lambda line: None,
 ) -> dict[str, str]:
-    """Create a single-node kind or k3d test cluster on its own network, from the pinned tools, and wait until its
-    nodes are Ready. A cluster of that name already on the context is refused, and only a cluster this call
-    created is deleted when its nodes don't become Ready; a failed or interrupted create deletes nothing."""
+    """Create a single-node kind or k3d test cluster on its own network, from the pinned tools, wait until its
+    nodes are Ready, then connect its weave-workers namespace unless told not to. A cluster of that name already on
+    the context is refused, and only a cluster this call created is deleted when its nodes don't become Ready; a
+    failed or interrupted create deletes nothing, and a cluster that fails to connect stays."""
     if provider not in PROVIDERS or cluster_name_problem(cluster):
         raise local.PlatformError(NAME_PROBLEM)
-    if connect:
-        # TODO(T-g8fz7adl1o8): connect the new cluster once weave platform cluster connect exists.
-        raise local.PlatformError("Connecting a new cluster isn't available yet; create it with --no-connect.")
     directory, state, context = _lifecycle(directory, context)
+    if then_connect and (platform_operations.receipt(directory) or {}).get("stage") != "ready":
+        # Connect would refuse after the cluster exists; say so before it takes 6 GiB of Docker disk.
+        raise local.PlatformError(OPERATIONS_OFF.replace("then connect again", "or create with --no-connect"))
     if _exists(state, provider, cluster, context):
         raise local.PlatformError(
             f"A cluster named {cluster} already exists on context {context}; nothing was changed."
@@ -1943,19 +1950,44 @@ def create_cluster(
         if isinstance(error, _NotReady):
             raise local.PlatformError(f"{reason}; the cluster was deleted.") from None
         raise
-    return {"cluster": cluster, "context": f"{provider}-{cluster}", "network": cluster_network(provider, cluster)}
+    created = {"cluster": cluster, "context": f"{provider}-{cluster}", "network": cluster_network(provider, cluster)}
+    if not then_connect:
+        return created
+    try:
+        connected = connect(directory, provider, cluster, DEFAULT_NAMESPACE, kubeconfig=None, notice=notice)
+    except local.PlatformError as error:
+        raise local.PlatformError(
+            f"The cluster {cluster} was created but isn't connected: {error} Run weave platform cluster connect "
+            f"--provider {provider} --name {cluster} to retry."
+        ) from None
+    return {**created, "target_id": connected["target_id"], "target_name": connected["target_name"]}
 
 
-def delete_cluster(directory: Path, provider: str, cluster: str, *, context: str | None = None) -> dict[str, Any]:
-    """Delete a test cluster; a cluster that still has connected targets is refused until they're disconnected."""
+def delete_cluster(
+    directory: Path,
+    provider: str,
+    cluster: str,
+    *,
+    context: str | None = None,
+    notice: Callable[[str], None] = lambda line: None,
+) -> dict[str, Any]:
+    """Delete a test cluster after disconnecting each of its targets; when a target can't be disconnected, the
+    cluster stays."""
     if provider not in PROVIDERS or cluster_name_problem(cluster):
         raise local.PlatformError(NAME_PROBLEM)
     directory, state, context = _lifecycle(directory, context)
-    connected = receipt(directory)["clusters"].get(f"{provider}-{cluster}", {}).get("targets", {})
-    if connected:
-        # TODO(T-g8fz7adl1o8): disconnect each target once weave platform cluster disconnect exists.
-        raise local.PlatformError(
-            "This cluster still has connected targets; disconnect them first. Nothing was deleted."
-        )
+    targets = receipt(directory)["clusters"].get(f"{provider}-{cluster}", {}).get("targets", {})
+    disconnected = []
+    for namespace, target in sorted(targets.items()):
+        try:
+            disconnect(directory, provider, cluster, namespace, kubeconfig=None, notice=notice)
+        except local.PlatformError as error:
+            raise local.PlatformError(f"{error} The cluster was not deleted.") from None
+        disconnected.append(target["target_name"])
     _delete(state, directory, provider, cluster, context)
-    return {"cluster": cluster, "disconnected": [], "deleted": True}
+    return {"cluster": cluster, "disconnected": disconnected, "deleted": True}
+
+
+def doctor_cluster(directory: Path) -> dict[str, str]:
+    """The pinned cluster tools' state in the installation directory; downloads nothing and creates no file."""
+    return tools.tool_versions(directory)

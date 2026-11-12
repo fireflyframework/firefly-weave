@@ -91,23 +91,40 @@ def platform(ctx: click.Context, directory: Path) -> None:
 @platform.command()
 @click.option("--source", type=click.Path(path_type=Path), default=Path("."), show_default=True)
 @click.option("--context", help="Named local Docker context; default: current context.")
+@click.option("--cluster", "cluster_tools", is_flag=True, help="Also report the pinned kubectl, kind and k3d.")
 @click.option("--output", type=click.Choice(["text", "json"]), default="text")
-def doctor(source: Path, context: str | None, output: str) -> None:
-    """Check prerequisites without creating files or changing services."""
+@click.pass_obj
+def doctor(directory: Path, source: Path, context: str | None, cluster_tools: bool, output: str) -> None:
+    """Check prerequisites without creating files or changing services.
+
+    With --cluster, also reports each pinned cluster tool's version when its
+    verified file is in the installation directory, or not fetched; it
+    downloads nothing.
+    """
+
+    def check() -> dict[str, Any]:
+        value = lifecycle.doctor(source, context)
+        if cluster_tools:
+            from firefly_weave.sdk import platform_clusters
+
+            value["cluster_tools"] = platform_clusters.doctor_cluster(directory)
+        return value
 
     def render(value: dict[str, Any]) -> None:
         for key, item in value.items():
-            if key not in {"source_sha256", "engine", "endpoint", "ok", "notes"}:
+            if key not in {"source_sha256", "engine", "endpoint", "ok", "notes", "cluster_tools"}:
                 click.echo(f"{key.replace('_', ' ').capitalize()}: {item}")
+        if "cluster_tools" in value:
+            click.echo("Cluster tools: " + ", ".join(f"{name} {item}" for name, item in value["cluster_tools"].items()))
         for note in value.get("notes", []):
             click.echo(note)
 
-    _call(lambda: lifecycle.doctor(source, context), output, render)
+    _call(check, output, render)
 
 
 @platform.group()
 def cluster() -> None:
-    """Create and delete local kind and k3d test clusters (development only).
+    """Create, connect, list, disconnect and delete local kind and k3d clusters (development only).
 
     A cluster gets its own Docker network. The chosen provider's pinned tool
     and kubectl are downloaded into the installation directory and verified
@@ -125,11 +142,13 @@ def cluster() -> None:
 def cluster_create(
     directory: Path, provider: str, name: str, no_connect: bool, context: str | None, output: str
 ) -> None:
-    """Create a single-node test cluster and wait until its nodes are Ready.
+    """Create a single-node test cluster, wait until its nodes are Ready, and connect it.
 
     Refuses a name that already exists on the Docker context or whose network
     does, a Docker context that isn't on this computer's Unix socket, and less
-    than 6 GiB of free Docker disk. Deletes only a cluster it created.
+    than 6 GiB of free Docker disk. Deletes only a cluster it created. Without
+    --no-connect, connects its weave-workers namespace as connect does; a
+    cluster that fails to connect stays, and connect retries it.
     """
     from firefly_weave.sdk import platform_clusters
 
@@ -139,9 +158,13 @@ def cluster_create(
             f"Created {provider_name} cluster {value['cluster']}: kubeconfig context {value['context']}, "
             f"Docker network {value['network']}."
         )
+        if "target_name" in value:
+            click.echo(f"Target: {value['target_name']}")
 
     _call(
-        lambda: platform_clusters.create_cluster(directory, provider, name, context=context, connect=not no_connect),
+        lambda: platform_clusters.create_cluster(
+            directory, provider, name, context=context, then_connect=not no_connect, notice=_notice(output)
+        ),
         output,
         render,
     )
@@ -156,15 +179,112 @@ def cluster_create(
 def cluster_delete(directory: Path, provider: str, name: str, context: str | None, output: str) -> None:
     """Delete any kind or k3d cluster with this name, even one Weave didn't create.
 
-    Refuses a cluster that still has connected targets, and a Docker context
-    that isn't on this computer's Unix socket.
+    Disconnects each of the cluster's connected targets first; when one can't
+    be disconnected, the cluster stays. Refuses a Docker context that isn't on
+    this computer's Unix socket.
     """
     from firefly_weave.sdk import platform_clusters
 
+    def render(value: dict[str, Any]) -> None:
+        for target in value["disconnected"]:
+            click.echo(f"Disconnected {target}.")
+        click.echo(f"Deleted cluster {value['cluster']}.")
+
     _call(
-        lambda: platform_clusters.delete_cluster(directory, provider, name, context=context),
+        lambda: platform_clusters.delete_cluster(directory, provider, name, context=context, notice=_notice(output)),
         output,
-        lambda value: click.echo(f"Deleted cluster {value['cluster']}."),
+        render,
+    )
+
+
+@cluster.command("connect")
+@click.option("--provider", required=True, help="kind or k3d.")
+@click.option("--name", "name", required=True, help="The cluster's name.")
+@click.option("--namespace", default="weave-workers", show_default=True, help="The workers namespace to connect.")
+@click.option("--kubeconfig", type=click.Path(path_type=Path), help="Kubeconfig file; default: where kubectl looks.")
+@click.option("--output", type=click.Choice(["text", "json"]), default="text")
+@click.pass_obj
+def cluster_connect(
+    directory: Path, provider: str, name: str, namespace: str, kubeconfig: Path | None, output: str
+) -> None:
+    """Connect a local kind or k3d cluster's namespace as a deployment target.
+
+    Accepts only a cluster on this platform's Docker context and its own
+    network, joins the platform to that network, applies the cluster's
+    objects, proves what pods can reach, then registers the target and starts
+    its runner. Nothing is registered before the probes pass. Rerun it to
+    repair a target; a rerun rotates the runner's secret.
+    """
+    from firefly_weave.sdk import platform_clusters
+
+    def render(value: dict[str, Any]) -> None:
+        click.echo(f"Target: {value['target_name']}")
+        click.echo(f"Runner: {value['runner']}")
+        click.echo(f"Observed: {value['observed_at']}")
+
+    _call(
+        lambda: platform_clusters.connect(
+            directory, provider, name, namespace, kubeconfig=kubeconfig, notice=_notice(output)
+        ),
+        output,
+        render,
+    )
+
+
+@cluster.command("list")
+@click.option("--check", is_flag=True, help="Also name each target's objects that differ from what connect applies.")
+@click.option("--kubeconfig", type=click.Path(path_type=Path), help="Kubeconfig file for --check.")
+@click.option("--output", type=click.Choice(["text", "json"]), default="text")
+@click.pass_obj
+def cluster_list(directory: Path, check: bool, kubeconfig: Path | None, output: str) -> None:
+    """List connected clusters, their targets and each target's runner.
+
+    A cluster whose nodes are gone reads missing. --check compares each
+    target's objects with the cluster and names the drifted ones by kind and
+    name only, never their values; it changes nothing.
+    """
+    from firefly_weave.sdk import platform_clusters
+
+    def render(value: dict[str, Any]) -> None:
+        if not value["clusters"]:
+            click.echo("No clusters are connected.")
+        for item in value["clusters"]:
+            click.echo(f"Cluster: {item['context']} ({item['state']})")
+            for target in item["targets"]:
+                drift = f", drift: {', '.join(target['drift'])}" if target["drift"] else ""
+                click.echo(f"Target: {target['target_name']}, runner {target['runner']}{drift}")
+
+    _call(lambda: platform_clusters.clusters(directory, check=check, kubeconfig=kubeconfig), output, render)
+
+
+@cluster.command("disconnect")
+@click.option("--provider", required=True, help="kind or k3d.")
+@click.option("--name", "name", required=True, help="The cluster's name.")
+@click.option("--namespace", default="weave-workers", show_default=True, help="The connected workers namespace.")
+@click.option("--kubeconfig", type=click.Path(path_type=Path), help="Kubeconfig file; default: where kubectl looks.")
+@click.option("--output", type=click.Choice(["text", "json"]), default="text")
+@click.pass_obj
+def cluster_disconnect(
+    directory: Path, provider: str, name: str, namespace: str, kubeconfig: Path | None, output: str
+) -> None:
+    """Disconnect a target: revoke its runner, disable it, and free its identities.
+
+    Deletes the target's objects in the cluster and its Keycloak clients;
+    the cluster's last target also removes the shared objects and takes the
+    platform off the cluster's network. Never deletes the workers namespace,
+    and leaves a namespace another installation took untouched.
+    """
+    from firefly_weave.sdk import platform_clusters
+
+    def render(value: dict[str, Any]) -> None:
+        click.echo(f"Disconnected {namespace} from {provider}-{name}; removed {len(value['removed'])} objects.")
+
+    _call(
+        lambda: platform_clusters.disconnect(
+            directory, provider, name, namespace, kubeconfig=kubeconfig, notice=_notice(output)
+        ),
+        output,
+        render,
     )
 
 

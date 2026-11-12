@@ -24,6 +24,7 @@ import pytest
 from click.testing import CliRunner
 from fake_commands import FakeCommands
 
+from firefly_weave.cli import EXIT_USAGE
 from firefly_weave.cli.main import cli
 from firefly_weave.sdk import platform_cluster_tools as tools
 from firefly_weave.sdk import platform_clusters as clusters
@@ -175,11 +176,68 @@ def test_create_prints_the_cluster_context_and_network_as_one_json_line_or_a_sen
     )
 
 
-def test_create_without_no_connect_refuses_until_connecting_exists(world):
+CONNECTED = {
+    "target_id": "0f8fad5b-d9cb-469f-a165-70867728950e",
+    "target_name": f"kind-{NAME}",
+    "provider": "kind",
+    "cluster": NAME,
+    "namespace": "weave-workers",
+    "context": f"kind-{NAME}",
+    "runner": "online",
+    "observed_at": "2026-11-12T10:00:05Z",
+}
+
+
+def test_create_without_no_connect_connects_the_new_cluster(world, monkeypatch):
+    directory, commands, _ = world
+    monkeypatch.setattr(clusters.platform_operations, "receipt", lambda path: {"stage": "ready"})
+    asked = []
+
+    def connect(path, provider, name, namespace, *, kubeconfig, notice):
+        asked.append((path, provider, name, namespace, kubeconfig, len(commands.calls)))
+        return CONNECTED
+
+    monkeypatch.setattr(clusters, "connect", connect)
+    result = invoke(directory, "create")
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout.splitlines()[-1]) == {
+        "cluster": NAME,
+        "context": f"kind-{NAME}",
+        "network": f"weave-kind-{NAME}",
+        "target_id": CONNECTED["target_id"],
+        "target_name": f"kind-{NAME}",
+    }
+    ((path, provider, name, namespace, kubeconfig, at),) = asked
+    assert (path, provider, name, namespace, kubeconfig) == (directory, "kind", NAME, "weave-workers", None)
+    assert calls(commands, "wait", "--for=condition=Ready") and at == len(commands.calls)
+
+
+def test_create_refuses_before_creating_when_operations_are_off(world):
     directory, commands, _ = world
     result = invoke(directory, "create")
-    assert result.exit_code != 0 and "--no-connect" in result.output
-    assert commands.calls == []
+    assert result.exit_code == EXIT_USAGE
+    assert (
+        "Operations are off in this installation. Run weave platform up without --no-operations, or create with "
+        "--no-connect."
+    ) in " ".join(result.output.split())
+    assert not calls(commands, "create")
+
+
+def test_a_new_cluster_that_fails_to_connect_stays_and_says_how_to_retry(world, monkeypatch):
+    directory, commands, _ = world
+    monkeypatch.setattr(clusters.platform_operations, "receipt", lambda path: {"stage": "ready"})
+
+    def connect(path, provider, name, namespace, *, kubeconfig, notice):
+        raise PlatformError("A test pod couldn't pull the worker image through the platform registry.")
+
+    monkeypatch.setattr(clusters, "connect", connect)
+    result = invoke(directory, "create")
+    assert result.exit_code != 0
+    assert (
+        f"The cluster {NAME} was created but isn't connected: A test pod couldn't pull the worker image through the "
+        f"platform registry. Run weave platform cluster connect --provider kind --name {NAME} to retry."
+    ) in " ".join(result.output.split())
+    assert not calls(commands, "delete")
 
 
 def test_a_failed_wait_deletes_the_cluster_this_run_created(world):
@@ -430,8 +488,7 @@ def test_an_installation_folder_that_others_can_open_is_refused_before_any_comma
     assert commands.calls == []
 
 
-def test_delete_refuses_a_cluster_that_still_has_connected_targets(world):
-    directory, commands, _ = world
+def receipt_with_target(directory):
     target = {
         "target_id": "0f8fad5b-d9cb-469f-a165-70867728950e",
         "target_name": f"kind-{NAME}",
@@ -449,12 +506,47 @@ def test_delete_refuses_a_cluster_that_still_has_connected_targets(world):
         "subnet": "172.30.0.0/16",
         "api_address": "172.30.0.5",
         "registry_address": "172.30.0.6",
-        "targets": {"weave-workers": target},
+        "targets": {"weave-workers": target, "team-b": {**target, "pair": 2, "target_name": f"kind-{NAME}.team-b"}},
     }
     clusters.save(directory, {"format": clusters.FORMAT, "clusters": {f"kind-{NAME}": record}})
+
+
+def test_delete_disconnects_each_connected_target_before_deleting_the_cluster(world, monkeypatch):
+    directory, commands, _ = world
+    receipt_with_target(directory)
+    asked = []
+
+    def disconnect(path, provider, name, namespace, *, kubeconfig, notice):
+        asked.append((namespace, len(commands.calls)))
+        return {"target_id": None, "disabled": True, "removed": []}
+
+    monkeypatch.setattr(clusters, "disconnect", disconnect)
+    result = invoke(directory, "delete")
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout) == {
+        "cluster": NAME,
+        "disconnected": [f"kind-{NAME}.team-b", f"kind-{NAME}"],
+        "deleted": True,
+    }
+    assert [namespace for namespace, _ in asked] == ["team-b", "weave-workers"]
+    (deleted,) = calls(commands, "delete", "cluster")
+    assert all(at <= commands.calls.index(deleted) for _, at in asked)
+
+
+def test_a_target_that_fails_to_disconnect_keeps_the_cluster(world, monkeypatch):
+    directory, commands, _ = world
+    receipt_with_target(directory)
+
+    def disconnect(path, provider, name, namespace, *, kubeconfig, notice):
+        raise PlatformError("The local Keycloak service is unavailable. Check platform status, then retry.")
+
+    monkeypatch.setattr(clusters, "disconnect", disconnect)
     result = invoke(directory, "delete")
     assert result.exit_code != 0
-    assert "This cluster still has connected targets; disconnect them first. Nothing was deleted." in result.output
+    assert (
+        "The local Keycloak service is unavailable. Check platform status, then retry. The cluster was not deleted."
+        in (" ".join(result.output.split()))
+    )
     assert not calls(commands, "delete")
 
 
@@ -477,3 +569,81 @@ def test_delete_removes_the_clusters_own_network_when_nothing_else_uses_it(world
     commands.answer(["docker", "network", "ls"], "")
     assert invoke(directory, "delete", provider).exit_code == 0
     assert not calls(commands, "network", "rm")
+
+
+def run(directory, *argv):
+    return CliRunner().invoke(cli, ["platform", "--directory", str(directory), *argv])
+
+
+def test_connect_prints_the_target_and_its_runner(world, monkeypatch):
+    directory, _, _ = world
+    asked = []
+
+    def connect(path, provider, name, namespace, *, kubeconfig, notice):
+        asked.append((provider, name, namespace, kubeconfig))
+        notice("preflight: checking the cluster and your kubeconfig")
+        return CONNECTED
+
+    monkeypatch.setattr(clusters, "connect", connect)
+    config = directory / "kubeconfig"
+    text = run(directory, "cluster", "connect", "--provider", "kind", "--name", NAME, "--namespace", "team-b")
+    assert text.exit_code == 0, text.output
+    assert text.stdout.splitlines() == [
+        f"Target: kind-{NAME}",
+        "Runner: online",
+        "Observed: 2026-11-12T10:00:05Z",
+    ]
+    assert "preflight: checking the cluster and your kubeconfig" in text.stderr
+    connect_json = ["cluster", "connect", "--provider", "kind", "--name", NAME, "--output", "json"]
+    result = run(directory, *connect_json, "--kubeconfig", str(config))
+    assert json.loads(result.stdout) == CONNECTED and result.stderr == ""
+    assert asked == [("kind", NAME, "team-b", None), ("kind", NAME, "weave-workers", config)]
+
+
+def test_connect_refuses_a_bad_name_with_its_sentence_and_a_usage_exit(world):
+    directory, commands, _ = world
+    result = run(directory, "cluster", "connect", "--provider", "kind", "--name", "Weave_Test", "--output", "json")
+    assert result.exit_code == EXIT_USAGE
+    assert json.loads(result.stdout)["diagnostics"][0]["message"] == clusters.NAME_PROBLEM
+    assert commands.calls == []
+
+
+def test_disconnect_refuses_a_namespace_without_a_target_and_changes_nothing(world):
+    directory, commands, _ = world
+    result = run(directory, "cluster", "disconnect", "--provider", "kind", "--name", NAME, "--namespace", "team-b")
+    assert result.exit_code == EXIT_USAGE
+    assert f"kind-{NAME} has no target in namespace team-b; nothing was changed." in " ".join(result.output.split())
+    assert commands.calls == []
+
+
+def test_list_output_json_has_the_contract_keys(world, monkeypatch):
+    directory, _, _ = world
+    receipt_with_target(directory)
+    state = {"directory": str(directory), "source": str(directory), "context": "colima-weave-tests", "id": "a" * 24}
+    monkeypatch.setattr(clusters.local, "_state", lambda path: state)
+    monkeypatch.setattr(clusters.platform_operations, "receipt", lambda path: None)
+    result = run(directory, "cluster", "list", "--output", "json")
+    assert result.exit_code == 0, result.output
+    (listed,) = json.loads(result.stdout)["clusters"]
+    assert set(listed) == {"provider", "cluster", "context", "network", "state", "targets"}
+    assert listed["state"] == "missing"
+    for target in listed["targets"]:
+        assert set(target) == {"target_id", "target_name", "namespace", "runner", "drift"}
+        assert (target["runner"], target["drift"]) == ("unknown", [])
+    text = run(directory, "cluster", "list")
+    assert text.stdout.splitlines()[:2] == [
+        f"Cluster: kind-{NAME} (missing)",
+        f"Target: kind-{NAME}.team-b, runner unknown",
+    ]
+
+
+def test_doctor_cluster_reports_the_pinned_tools_and_creates_no_file(world, monkeypatch):
+    directory, _, _ = world
+    monkeypatch.setattr(clusters.local, "doctor", lambda source, context: {"ok": True, "version": "26.11.0"})
+    before = sorted(directory.rglob("*"))
+    result = run(directory, "doctor", "--cluster", "--output", "json")
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["cluster_tools"] == {name: tools.NOT_FETCHED for name in tools.TOOLS}
+    assert sorted(directory.rglob("*")) == before
+    plain = run(directory, "doctor", "--output", "json")
+    assert "cluster_tools" not in json.loads(plain.stdout)
