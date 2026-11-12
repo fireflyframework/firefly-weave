@@ -390,6 +390,12 @@ only in an interactive terminal; set `WEAVE_NO_ANIMATION=1` for plain progress
 messages. Redirected output has no animation, and JSON output has no progress
 messages. No command resets or deletes the installation itself.
 
+A command that refuses or fails exits 2 with `WV-CLI-PLATFORM`. A refusal's
+message says what to change, such as another cluster name or `--kubeconfig`;
+any other failure says to check the checkout, the Docker context, the private
+directory, and its retained logs. With `--output json`, the message is the
+diagnostic's `message`.
+
 **Status and sign-in.** `status` also reports `sign_in`, the
 `weave auth setup http://127.0.0.1:PORT` command for this platform,
 `integrations_enabled`, and, once integrations are enabled,

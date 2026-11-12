@@ -563,9 +563,24 @@ network. It deletes the `weave-system` namespace itself only when the namespace
 carries this installation's `firefly.weave/installation` label; one without
 that label may hold objects that aren't Weave's, so it stays.
 
+Disconnect deletes the namespace's `weave-worker` Deployment, so running
+workers stop: each pod gets up to 240 s to finish its task before it's
+stopped. Plan a disconnect when no task needs those workers.
+
 Disconnect never deletes the workers namespace, and it deletes nothing in a
-namespace that another Weave installation now owns. Each step is safe to
-repeat, so running it again finishes a disconnect that stopped.
+namespace that another Weave installation now owns. The namespace it keeps
+still carries this installation's `firefly.weave/installation` label, so this
+installation can connect it again, and another installation's connect refuses
+it. Remove the label, or delete the namespace, to hand it to another
+installation:
+
+```sh
+# Remove this installation's label from the team-b namespace of the weave-test cluster.
+kubectl --context kind-weave-test label namespace team-b firefly.weave/installation-
+```
+
+Each step is safe to repeat, so running disconnect again finishes one that
+stopped.
 
 ## Current bounds
 
