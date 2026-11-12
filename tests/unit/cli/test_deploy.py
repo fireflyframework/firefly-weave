@@ -346,6 +346,33 @@ def test_a_process_group_that_refuses_the_kill_still_ends_the_command_cleanly(tm
         deployment.run_command([sys.executable, "-c", "import time; time.sleep(10)"], timeout=0.2, limit=100)
 
 
+def test_a_running_group_that_refuses_the_kill_fails_at_once_instead_of_waiting(tmp_path, monkeypatch):
+    """EPERM while the leader still runs means the kill really failed; the runner reports it rather than waiting."""
+    import contextlib
+    import os
+    import signal
+    import sys
+    import time
+
+    from firefly_weave.sdk import deployment
+
+    def refused(pid, signum):
+        raise PermissionError(1, "Operation not permitted")
+
+    monkeypatch.setattr(deployment.os, "killpg", refused)
+    marker = tmp_path / "child.pid"
+    code = f"import os, pathlib, time; pathlib.Path({str(marker)!r}).write_text(str(os.getpid())); time.sleep(5)"
+    started = time.monotonic()
+    try:
+        with pytest.raises(deployment.DeploymentError, match="prerequisites"):
+            deployment.run_command([sys.executable, "-c", code], timeout=0.5, limit=100)
+        assert time.monotonic() - started < 3
+    finally:
+        if marker.exists():
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(int(marker.read_text()), signal.SIGKILL)
+
+
 def test_package_ancestor_swap_cannot_write_outside_requested_tree(package_inputs, tmp_path, monkeypatch):
     import os
 

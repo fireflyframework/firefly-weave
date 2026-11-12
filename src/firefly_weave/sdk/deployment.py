@@ -303,11 +303,19 @@ def package_worker(
 OWNERSHIP_LABEL = "io.getfirefly.weave.deployment"
 
 
-def _stop_group(pid: int) -> None:
-    """Kill the command's own process group; a group that is already gone needs nothing. Once every process of a
-    group has exited, macOS can answer killpg with EPERM instead of ESRCH, so both mean gone here."""
-    with suppress(ProcessLookupError, PermissionError):
-        os.killpg(pid, signal.SIGKILL)
+def _stop_group(child: subprocess.Popen[bytes]) -> None:
+    """Kill the command's own process group; a group that is already gone needs nothing.
+
+    Once every process of a group has exited, macOS can answer killpg with EPERM instead of ESRCH. EPERM while the
+    leader still runs means the kill really failed, and waiting for the leader could last forever.
+    """
+    try:
+        os.killpg(child.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        return
+    except PermissionError:
+        if child.poll() is None:
+            raise DeploymentError("Worker operation failed; check inputs and prerequisites.") from None
 
 
 def run_command(
@@ -356,7 +364,7 @@ def run_command(
                 if child.returncode is None and child.poll() is not None:
                     # A completed command's helper can retain the pipe: stop the owned group,
                     # then drain the output already buffered before returning the leader's result.
-                    _stop_group(child.pid)
+                    _stop_group(child)
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     fail()
@@ -374,12 +382,14 @@ def run_command(
     except (OSError, subprocess.TimeoutExpired):
         raise DeploymentError("Worker operation failed; check inputs and prerequisites.") from None
     finally:
-        _stop_group(child.pid)
-        child.wait()
-        child.stdout.close()
-        if log is not None:
-            log.write(result[:limit])
-            log.close()
+        try:
+            _stop_group(child)
+            child.wait()
+        finally:
+            child.stdout.close()
+            if log is not None:
+                log.write(result[:limit])
+                log.close()
 
 
 def verified_context(directory: Path) -> dict[str, Any]:

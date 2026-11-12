@@ -22,7 +22,6 @@ import asyncio
 import math
 import os
 import signal
-from contextlib import suppress
 from pathlib import Path
 
 # The longest one command may run: within the runner's 600 s job budget, long enough to stop drained workers
@@ -37,9 +36,15 @@ class CommandError(Exception):
 
 async def _reap(process: asyncio.subprocess.Process) -> None:
     # The command owns a new session, including any child processes it creates. A group that is already gone needs
-    # nothing; once all its processes have exited, macOS can answer EPERM instead of ESRCH.
-    with suppress(ProcessLookupError, PermissionError):
+    # nothing; once all its processes have exited, macOS can answer EPERM instead of ESRCH. EPERM while the leader
+    # still runs means the kill really failed, and waiting for it could last forever.
+    try:
         os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    except PermissionError:
+        if process.returncode is None:
+            raise CommandError() from None
     await process.wait()
 
 
