@@ -69,6 +69,11 @@ SPDX-License-Identifier: Apache-2.0
   replaced refresh token. Credential records now keep when their tokens were
   obtained; an earlier client cannot read such a record and reports
   `WV-AUTH-STORE` until `weave auth login` signs in again.
+- Security: aiohttp is updated to 3.14.4 (CVE-2026-111064, CVE-2026-111066,
+  CVE-2026-123817) in the Teams extra and the Agentic worker.
+- Security: the Agentic worker updates dnspython to 2.9.0 (CVE-2026-114605),
+  filelock to 4.2.1 (CVE-2026-112940) and pyasn1 to 0.6.5 (CVE-2026-119194 to
+  CVE-2026-119197).
 
 ## 0.1.0a17
 
