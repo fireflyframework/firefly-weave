@@ -54,7 +54,8 @@ type VersionedReference = Annotated[UnicodeString, Field(pattern=rf"^{NAME_PATTE
 type JsonPointer = Annotated[UnicodeString, Field(pattern=r"^(?:/(?:[^~/]|~[01])*)*$")]
 type PositiveInt = Annotated[int, Field(gt=0, le=MAX_SAFE_INTEGER)]
 # A tool name an AI model can call: a letter first, as model providers require.
-type ToolName = Annotated[UnicodeString, Field(pattern=r"^[A-Za-z][A-Za-z0-9_-]{0,63}$")]
+TOOL_NAME_PATTERN: Final = r"^[A-Za-z][A-Za-z0-9_-]{0,63}$"
+type ToolName = Annotated[UnicodeString, Field(pattern=TOOL_NAME_PATTERN)]
 type SideEffect = Literal["read_only", "idempotent", "idempotency_key", "non_idempotent"]
 # A worker or connector failure code, as TaskError reports it.
 type FailureCode = Annotated[UnicodeString, Field(pattern=r"^[A-Z][A-Z0-9_-]{0,63}$")]

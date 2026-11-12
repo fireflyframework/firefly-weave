@@ -49,7 +49,12 @@ from firefly_weave.contracts.agent_turns import (
     wire_json,
 )
 from firefly_weave.contracts.agentic import output_schema
-from firefly_weave.contracts.definitions import RESERVED_TOOL_NAME, TOOL_TARGET_FIELDS, load_definition
+from firefly_weave.contracts.definitions import (
+    RESERVED_TOOL_NAME,
+    TOOL_NAME_PATTERN,
+    TOOL_TARGET_FIELDS,
+    load_definition,
+)
 from firefly_weave.contracts.values import JsonObject, JsonValue
 
 # A model sees each tool's parameters on every turn, so they stay small.
@@ -59,7 +64,7 @@ MAX_ALL_TOOL_PARAMETERS_BYTES: Final = 65_536
 MAX_AGENT_PROFILE_CALLS: Final = 8
 # Agent transcripts running at once in a loop may hold up to this much of the run's state before the compiler warns.
 AGENT_STATE_WARNING_BYTES: Final = 16 * 1024 * 1024
-_TOOL_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,63}")
+_TOOL_NAME = re.compile(TOOL_NAME_PATTERN)
 
 MESSAGES: Final[dict[str, str]] = {
     "AGENT_PROFILE": (

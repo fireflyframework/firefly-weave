@@ -246,9 +246,12 @@ def test_the_manifest_lists_the_ai_agent_as_pending_behind_its_feature():
     assert MAX_RUN_AGENT_TOKENS == 2_000_000
 
 
-def test_both_tool_name_patterns_stay_equal():
-    # Step tests keep their own copy until they import the language's; the two must not drift.
+def test_every_tool_name_check_accepts_the_same_names():
+    # Step tests and the turn input schema keep their own copies of the pattern; none may drift from the language's.
+    from firefly_weave.compiler.agents import agent_shape_issues
+    from firefly_weave.compiler.schemas import validate_payload
     from firefly_weave.contracts import definitions, step_tests
+    from firefly_weave.contracts.agent_turns import turn_input_schema
 
     names = ["lookup_order", "A", "a" * 64, "a" * 65, "1lookup", "_invalid_tool", "look up", "lookup.order", "é"]
 
@@ -260,4 +263,16 @@ def test_both_tool_name_patterns_stay_equal():
                 kept.append(adapter.validate_python(name))
         return kept
 
-    assert accepted(definitions.ToolName) == accepted(step_tests.ToolName) == ["lookup_order", "A", "a" * 64]
+    def compiler_accepts(name: str) -> bool:
+        step = {"id": "support", "kind": "agent", "tools": [{"name": name, "action": "orders-get@1.0.0"}]}
+        return agent_shape_issues({"spec": {"steps": [step]}}) == []
+
+    tool_schema = turn_input_schema()["properties"]["tools"]["items"]
+
+    def turn_accepts(name: str) -> bool:
+        return not validate_payload(tool_schema, {"name": name, "description": "Look up.", "parameters": {}}, {})
+
+    expected = ["lookup_order", "A", "a" * 64]
+    assert accepted(definitions.ToolName) == accepted(step_tests.ToolName) == expected
+    assert [name for name in names if compiler_accepts(name)] == expected
+    assert [name for name in names if turn_accepts(name)] == expected
