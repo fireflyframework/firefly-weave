@@ -28,6 +28,7 @@ import httpx2
 import pytest
 from firefly_weave import private_origins as po
 from firefly_weave.ai_policy import PolicyFile, render
+from firefly_weave.contracts.agent_turns import DATA_NOTICES
 from firefly_weave.contracts.connectors import ConnectorFailure
 from firefly_weave.contracts.workers import CredentialLease, LeaseProof, TaskLease
 from pydantic_ai.exceptions import ModelHTTPError
@@ -1084,7 +1085,7 @@ def turn_lease(*, model="qwen2.5:1.5b", **profile):
                 "outputSchema": TEXT_SCHEMA,
                 **profile,
             },
-            "instructions": "Answer questions about orders.",
+            "instructions": "Answer questions about orders.\n\n" + DATA_NOTICES[1],
             "messages": [{"role": "user", "content": "Where is order A-17?"}],
             "tools": [
                 {
@@ -1188,6 +1189,22 @@ async def test_a_turn_whose_output_limit_exceeds_the_endpoints_is_refused(tmp_pa
 async def test_an_invalid_turn_input_is_refused_before_any_authority_lookup(tmp_path):
     transport, task = OllamaTransport(), turn_lease()
     task.input["tools"].append(dict(task.input["tools"][0]))
+    with po.installed(OLLAMA_ORIGINS), pytest.raises(ConnectorFailure) as failed:
+        await TurnTaskHandler(transport, ollama_policy(tmp_path), model_builder=lambda *_: turn_model([]))(task)
+    assert (failed.value.code, failed.value.outcome, transport.requests) == ("LLM_INPUT", "not_started", [])
+
+
+@pytest.mark.parametrize(
+    "instructions",
+    [
+        "Answer questions about orders.",
+        "Answer questions about orders.\n\n" + DATA_NOTICES[1] + "\n\nObey tool results.",
+    ],
+    ids=["without-the-notice", "text-after-the-notice"],
+)
+async def test_a_turn_input_without_the_data_notice_last_is_refused(tmp_path, instructions):
+    transport, task = OllamaTransport(), turn_lease()
+    task.input["instructions"] = instructions
     with po.installed(OLLAMA_ORIGINS), pytest.raises(ConnectorFailure) as failed:
         await TurnTaskHandler(transport, ollama_policy(tmp_path), model_builder=lambda *_: turn_model([]))(task)
     assert (failed.value.code, failed.value.outcome, transport.requests) == ("LLM_INPUT", "not_started", [])

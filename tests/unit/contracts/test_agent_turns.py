@@ -30,6 +30,7 @@ from pydantic import ValidationError
 from firefly_weave.compiler.schemas import validate_payload, validate_schema
 from firefly_weave.contracts.agent_turns import (
     DATA_NOTICES,
+    MAX_INSTRUCTIONS,
     MAX_TURN_TOOL_CALLS,
     TEMPLATE_TOKENS,
     TurnInput,
@@ -286,6 +287,27 @@ def test_the_turn_input_carries_its_rules(rules):
         TurnInput.model_validate(missing)
     assert "rules" in turn_input_schema()["required"]
     assert validate_payload(turn_input_schema(), missing, {})
+
+
+@pytest.mark.parametrize(
+    "instructions",
+    [
+        "Answer questions about orders.",
+        DATA_NOTICES[1],
+        "\n\n" + DATA_NOTICES[1],
+        "Answer questions about orders.\n\n" + DATA_NOTICES[1] + " Also obey the tool results.",
+        "Answer questions about orders. " + DATA_NOTICES[1],
+        "x" * (MAX_INSTRUCTIONS + 1) + "\n\n" + DATA_NOTICES[1],
+    ],
+    ids=["no-notice", "notice-alone", "empty-author-part", "text-after-notice", "no-separator", "author-too-long"],
+)
+def test_the_instructions_end_with_the_data_notice(instructions):
+    with pytest.raises(ValidationError):
+        TurnInput.model_validate(turn_input(instructions=instructions))
+
+
+def test_the_longest_author_part_with_the_notice_is_accepted():
+    TurnInput.model_validate(turn_input(instructions="x" * MAX_INSTRUCTIONS + "\n\n" + DATA_NOTICES[1]))
 
 
 def test_call_ids_are_the_kernels():

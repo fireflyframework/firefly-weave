@@ -175,6 +175,10 @@ class TurnInput(_Wire):
     @model_validator(mode="after")
     def one_request(self) -> Self:
         """Refuse what no model request could carry, before the worker reads its connection."""
+        notice = "\n\n" + DATA_NOTICES[self.rules]
+        author = self.instructions.removesuffix(notice)
+        if author == self.instructions or not author.strip() or len(author) > MAX_INSTRUCTIONS:
+            raise ValueError("The instructions are the author's text followed by the data notice of the turn's rules")
         names = [tool.name for tool in self.tools]
         if len(set(names)) != len(names) or FINAL_RESULT_TOOL in names:
             raise ValueError("Tool names must be unique and must not be the reserved final_result")
