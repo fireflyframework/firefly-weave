@@ -301,12 +301,26 @@ def test_a_tool_names_exactly_one_target_at_its_field():
     assert ("WV-COMP-AGENT_TOOL_TARGET", "error", "/spec/steps/0/tools/0") in errors(workflow(agent(tools=[tool])))
 
 
-def test_an_unknown_tool_action_is_a_tool_target_error():
-    tool = {**LOOKUP, "action": "orders-missing@1.0.0"}
+@pytest.mark.parametrize(
+    ("tool", "field"),
+    [
+        ({**LOOKUP, "action": "orders-missing@1.0.0"}, "action"),
+        (
+            {
+                "name": "notify",
+                "description": "Notify.",
+                "workflow": "notify-missing@1.0.0",
+                "review": {"assignment": "support-leads"},
+            },
+            "workflow",
+        ),
+    ],
+    ids=["action", "workflow"],
+)
+def test_an_unknown_tool_target_is_a_tool_target_error(tool, field):
+    found = errors(workflow(agent(tools=[tool])))
 
-    assert ("WV-COMP-AGENT_TOOL_TARGET", "error", "/spec/steps/0/tools/0/action") in errors(
-        workflow(agent(tools=[tool]))
-    )
+    assert found == [("WV-COMP-AGENT_TOOL_TARGET", "error", f"/spec/steps/0/tools/0/{field}")]
 
 
 @pytest.mark.parametrize(

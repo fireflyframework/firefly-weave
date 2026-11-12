@@ -114,19 +114,27 @@ def default_approval(target: ToolTargetKind, side_effect: SideEffect | None) -> 
     return "auto" if target == "human" or (target == "action" and side_effect == "read_only") else "required"
 
 
+def _target(
+    analysis: AgentAnalysis, kind: Literal["Action", "Workflow"], reference: str, location: str
+) -> CatalogResource | None:
+    """The pinned target of a tool; one the catalog doesn't hold is a tool target error."""
+    if analysis.catalog.resolve(kind, reference) is None:
+        if analysis.catalog_absent:
+            # Without a catalog the reference is recorded for complete compilation, which checks it.
+            analysis.resolve(kind, reference, location)
+        else:
+            analysis.issue("AGENT_TOOL_TARGET", location, stage="resolution")
+        return None
+    return analysis.resolve(kind, reference, location)
+
+
 class _ActionTool:
     target: ToolTargetKind = "action"
 
     def resolve(self, tool: JsonObject, path: str, analysis: AgentAnalysis) -> ResolvedTool | None:
         reference = cast(str, tool["action"])
         location = path + "/action"
-        if analysis.catalog.resolve("Action", reference) is None:
-            if analysis.catalog_absent:
-                analysis.resolve("Action", reference, location)
-            else:
-                analysis.issue("AGENT_TOOL_TARGET", location, stage="resolution")
-            return None
-        resource = analysis.resolve("Action", reference, location)
+        resource = _target(analysis, "Action", reference, location)
         if resource is None:
             return None
         spec = cast(JsonObject, resource.definition.value["spec"])
@@ -153,7 +161,7 @@ class _WorkflowTool:
     def resolve(self, tool: JsonObject, path: str, analysis: AgentAnalysis) -> ResolvedTool | None:
         reference = cast(str, tool["workflow"])
         location = path + "/workflow"
-        resource = analysis.resolve("Workflow", reference, location)
+        resource = _target(analysis, "Workflow", reference, location)
         if resource is None:
             return None
         # A workflow tool is a call that waits for the child's result.
