@@ -282,6 +282,19 @@ def test_tool_names_are_checked_at_their_field(tools, path):
     assert ("WV-COMP-AGENT_TOOL_NAME", "error", path) in errors(workflow(agent(tools=tools)))
 
 
+def test_a_tool_set_aside_for_its_name_keeps_the_others_checked():
+    # Tool 10's finding must not set aside tool 1, whose path is a prefix of tool 10's.
+    tools = [{**LOOKUP, "name": f"lookup_{index}"} for index in range(11)]
+    tools[1]["description"] = ""
+    tools[10]["name"] = "1lookup"
+
+    found = {(code, path) for code, _, path in errors(workflow(agent(tools=tools)))}
+
+    assert ("WV-COMP-AGENT_TOOL_NAME", "/spec/steps/0/tools/10/name") in found
+    # Tool 1's empty description is still validated, so the step reports it.
+    assert ("WV-SCHEMA-INVALID_INSTANCE", "/spec/steps/0") in found
+
+
 def test_a_tool_names_exactly_one_target_at_its_field():
     tool = {"name": "lookup_order", "description": "Look up."}
 

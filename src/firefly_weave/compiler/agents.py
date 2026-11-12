@@ -329,11 +329,15 @@ def without_agent_shape_issues(document: JsonObject) -> JsonObject:
             step["tools"] = [
                 tool
                 for index, tool in enumerate(tools)
-                if not any(item.startswith(f"{path}/tools/{index}") for item in flagged)
+                if not any(_within(item, f"{path}/tools/{index}") for item in flagged)
             ]
-        if any(item.startswith(path + "/memory/") for item in flagged):
+        if any(_within(item, path + "/memory") for item in flagged):
             step.pop("memory", None)
     return result
+
+
+def _within(pointer: str, base: str) -> bool:
+    return pointer == base or pointer.startswith(base + "/")
 
 
 def agent_expressions(step: JsonObject, path: str) -> Iterator[tuple[JsonObject, str]]:
