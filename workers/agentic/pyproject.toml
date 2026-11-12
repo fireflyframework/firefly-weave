@@ -47,6 +47,9 @@ dev = ["pytest>=9,<10", "pytest-asyncio>=1.3,<2", "ruff>=0.15,<1", "mypy>=1.20,<
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+  "live_ollama: calls a real Ollama model; set WEAVE_LIVE_OLLAMA_URL to run them",
+]
 
 [tool.ruff]
 line-length = 120
