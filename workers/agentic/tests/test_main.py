@@ -387,3 +387,52 @@ async def test_main_refuses_invalid_labels_before_any_request(tmp_path, monkeypa
     with po.installed(po.PrivateOrigins.empty()), pytest.raises(ValueError, match="WEAVE_WORKER_LABELS") as caught:
         await main.main()
     assert requests == [] and "hunter2" not in str(caught.value)
+
+
+async def test_the_worker_registers_the_generate_and_turn_capabilities(tmp_path, monkeypatch):
+    import asyncio
+    import json
+    from uuid import uuid4
+
+    from weave_agentic_worker.handler import AgenticTaskHandler, TurnTaskHandler
+
+    registration_environment(tmp_path, monkeypatch)
+    main, requests = agentic_registration(monkeypatch, [httpx.Response(201, json={"id": str(uuid4())})])
+    served = []
+
+    async def run(self):
+        served.append(self)
+
+    monkeypatch.setattr(main.Worker, "run", run)
+    monkeypatch.setattr(type(asyncio.get_running_loop()), "add_signal_handler", lambda *args: None)
+    with po.installed(po.PrivateOrigins.empty()):
+        await main.main()
+    capabilities = ["weave-agentic.generate@1.0.0", "weave-agentic.turn@1.0.0"]
+    assert json.loads(requests[0].content)["task_types"] == capabilities == list(main.CAPABILITIES)
+    handlers = served[0].handlers
+    assert list(handlers) == capabilities
+    assert type(handlers[capabilities[0]]) is AgenticTaskHandler and type(handlers[capabilities[1]]) is TurnTaskHandler
+
+
+def test_the_catalog_and_release_manifest_list_both_tasks(monkeypatch, capsys):
+    import json
+
+    from firefly_weave.compiler.catalog import CatalogSnapshot
+
+    from weave_agentic_worker.main import run
+
+    monkeypatch.setattr("sys.argv", ["weave-agentic-worker", "--catalog"])
+    run()
+    lock = json.loads(capsys.readouterr().out)
+    catalog = CatalogSnapshot.from_lock(lock)
+    for reference in ("weave-agentic-generate@1.0.0", "weave-agentic-turn@1.0.0"):
+        assert catalog.resolve("Action", reference) is not None
+    assert [(task["taskType"], task["sideEffect"]) for task in lock["tasks"]] == [
+        ("weave-agentic.generate", "non_idempotent"),
+        ("weave-agentic.turn", "idempotent"),
+    ]
+    monkeypatch.setattr("sys.argv", ["weave-agentic-worker", "--release-manifest"])
+    run()
+    manifest = json.loads(capsys.readouterr().out)
+    assert [item["taskType"] for item in manifest["capabilities"]] == ["weave-agentic.generate", "weave-agentic.turn"]
+    assert manifest["credential_capabilities"] == ["weave-agentic.generate@1.0.0", "weave-agentic.turn@1.0.0"]

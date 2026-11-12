@@ -111,15 +111,27 @@ async def immediately(seconds):
     return None
 
 
+BOTH_TASKS = ["weave-agentic.generate@1.0.0", "weave-agentic.turn@1.0.0"]
+
+
 def test_the_image_catalog_must_be_this_servers_catalog():
     found = setup.verify_catalog(catalog_output())
     assert FrozenDocument.from_value(found["connector"]).digest == setup.CONNECTOR_DIGEST
     assert FrozenDocument.from_value(found["action"]).digest == setup.ACTION_DIGEST
-    changed = json.loads(catalog_output())
-    changed["definitions"][1]["document"]["spec"]["timeoutSeconds"] = 5
+    assert FrozenDocument.from_value(found["turn_action"]).digest == setup.TURN_ACTION_DIGEST
+    for index in (1, 2):
+        changed = json.loads(catalog_output())
+        changed["definitions"][index]["document"]["spec"]["timeoutSeconds"] = 5
+        with pytest.raises(platform.PlatformError, match="does not carry this server's AI catalog"):
+            setup.verify_catalog(json.dumps(changed).encode())
+    assert setup.release_manifest(manifest_output())["credential_capabilities"] == BOTH_TASKS
+
+
+def test_an_image_without_ai_agent_turns_is_not_this_servers():
     with pytest.raises(platform.PlatformError, match="does not carry this server's AI catalog"):
-        setup.verify_catalog(json.dumps(changed).encode())
-    assert setup.release_manifest(manifest_output())["credential_capabilities"] == ["weave-agentic.generate@1.0.0"]
+        setup.verify_catalog(catalog_output(turns=False))
+    with pytest.raises(platform.PlatformError, match="unexpected release manifest"):
+        setup.release_manifest(manifest_output(turns=False))
 
 
 async def test_definitions_publish_with_digest_keys_and_the_release_by_image():
@@ -129,7 +141,7 @@ async def test_definitions_publish_with_digest_keys_and_the_release_by_image():
     assert await setup.admit_release(client, IMAGE, setup.release_manifest(manifest_output())) == str(RELEASE)
     assert client.calls[0] == ("publish", "connectors", "weave-platform-ai-connectors-" + setup.CONNECTOR_DIGEST[:40])
     release = client.calls[1][1]
-    assert release.image_digest == IMAGE and release.credential_capabilities == ["weave-agentic.generate@1.0.0"]
+    assert release.image_digest == IMAGE and release.credential_capabilities == BOTH_TASKS
 
 
 async def test_the_worker_principal_is_created_linked_and_granted_once():
@@ -148,7 +160,7 @@ async def test_the_worker_principal_is_created_linked_and_granted_once():
     link = next(call for call in client.calls if call[0] == "principals.link")
     assert link[1].subject == SUBJECT and link[1].provider_id == "local-keycloak" and link[2] == PRINCIPAL
     grant = next(call for call in client.calls if call[0] == "members.grant")[1]
-    assert grant.role == "worker" and grant.resources == (str(RELEASE), "weave-agentic.generate@1.0.0")
+    assert grant.role == "worker" and grant.resources == (str(RELEASE), *BOTH_TASKS)
     again = Client()
     assert await setup.worker_principal(again, SCOPE, receipt=receipt, save=save, **arguments) is False
     assert again.calls == [] and subjects == [1]

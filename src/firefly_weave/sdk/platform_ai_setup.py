@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 from firefly_weave.compiler.catalog import FrozenDocument
+from firefly_weave.contracts.agent_turns import TURN_CAPABILITY, turn_action_definition, turn_capability
 from firefly_weave.contracts.agentic import (
     AGENTIC_DESCRIPTOR,
     CONNECTOR_REFERENCE,
@@ -63,6 +64,9 @@ if TYPE_CHECKING:
 CAPABILITY = f"{TASK_TYPE}@{TASK_VERSION}"
 CONNECTOR_DIGEST = "7dfc18419ba042e7dff2a15198373c13da3e1a5e83a78976c422993f57a937e7"
 ACTION_DIGEST = "cd1ab7add02d438b419cb206fdb7164c027fe5c5a5b4b3029af2402ce60ebbf0"
+TURN_ACTION_DIGEST = "b581a66adb081a56f52d927a4d29a2b82a2802976a7b99a3ba3c1da402147dbd"
+# The worker serves both tasks: the typed AI call and the AI agent turn.
+CAPABILITIES = (CAPABILITY, TURN_CAPABILITY)
 WORKER_CLIENT = "weave-worker"
 CONNECTION = "ollama-local"
 SMOKE_INPUT = {"text": "Firefly Weave runs durable workflows and records every step, so a run can be replayed."}
@@ -85,20 +89,30 @@ def _normal(value: Any) -> Any:
 
 
 def verify_catalog(output: bytes) -> dict[str, dict[str, Any]]:
-    """The Connector and Action the worker image carries, only when they are this server's built-ins."""
+    """The Connector and Actions the worker image carries, only when they are exactly this server's built-ins."""
     try:
         value = strict_json(output)
-        documents = {item["document"]["kind"]: item["document"] for item in value["definitions"]}
-        connector, action = documents["Connector"], documents["Action"]
-        if (
-            connector != _normal(load_definition(AGENTIC_DESCRIPTOR.manifest.value).model_dump(by_alias=True))
-            or FrozenDocument.from_value(connector).digest != CONNECTOR_DIGEST
-            or action != _normal(load_definition(action_definition()).model_dump(by_alias=True))
-            or FrozenDocument.from_value(action).digest != ACTION_DIGEST
-            or value["tasks"] != [_normal(task_capability().model_dump(by_alias=True))]
-        ):
+        expected = {
+            "connector": (load_definition(AGENTIC_DESCRIPTOR.manifest.value), CONNECTOR_DIGEST),
+            "action": (load_definition(action_definition()), ACTION_DIGEST),
+            "turn_action": (load_definition(turn_action_definition()), TURN_ACTION_DIGEST),
+        }
+        documents = [item["document"] for item in value["definitions"]]
+        if len(documents) != len(expected):
             raise ValueError("Catalog differs")
-        return {"connector": connector, "action": action}
+        found: dict[str, dict[str, Any]] = {}
+        for (key, (definition, digest)), document in zip(expected.items(), documents, strict=True):
+            if (
+                document != _normal(definition.model_dump(by_alias=True))
+                or FrozenDocument.from_value(document).digest != digest
+            ):
+                raise ValueError("Catalog differs")
+            found[key] = document
+        if value["tasks"] != [
+            _normal(task.model_dump(by_alias=True)) for task in (task_capability(), turn_capability())
+        ]:
+            raise ValueError("Catalog differs")
+        return found
     except (ValueError, KeyError, TypeError):
         raise local.PlatformError(
             "The Agentic worker image does not carry this server's AI catalog; nothing was published."
@@ -106,11 +120,12 @@ def verify_catalog(output: bytes) -> dict[str, dict[str, Any]]:
 
 
 def release_manifest(output: bytes) -> dict[str, Any]:
-    """The image's task and credential capabilities, only when they are exactly the typed AI call's."""
+    """The image's task and credential capabilities, only when they are exactly this server's AI tasks."""
     try:
         value = strict_json(output)
         capabilities, credentials = value["capabilities"], value["credential_capabilities"]
-        if capabilities != [_normal(task_capability().model_dump(by_alias=True))] or credentials != [CAPABILITY]:
+        tasks = [_normal(task.model_dump(by_alias=True)) for task in (task_capability(), turn_capability())]
+        if capabilities != tasks or credentials != list(CAPABILITIES):
             raise ValueError("Manifest differs")
         return {"capabilities": capabilities, "credential_capabilities": credentials}
     except (ValueError, KeyError, TypeError):
@@ -242,7 +257,7 @@ async def worker_principal(
                 role="worker",
                 project_id=UUID(scope["project_id"]),
                 environment_id=UUID(scope["environment_id"]),
-                resources=(release_id, CAPABILITY),
+                resources=(release_id, *CAPABILITIES),
             )
         )
         save({"granted_release_id": release_id})
