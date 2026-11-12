@@ -1306,6 +1306,47 @@ async def _grant(
             ) from None
 
 
+async def _test_calls(
+    api: str, scope: dict[str, str], host_token: str, transport: httpx.AsyncBaseTransport | None
+) -> str:
+    from firefly_weave.contracts.access import Scope
+    from firefly_weave.contracts.step_tests import EnvironmentTestPolicy, EnvironmentTestPolicyUpdate
+    from firefly_weave.sdk.client import WeaveClient
+    from firefly_weave.sdk.errors import WeaveError
+
+    async with WeaveClient(api, lambda: host_token, Scope.model_validate(scope), timeout=30, transport=transport) as c:
+        policy: EnvironmentTestPolicy = await c.invoke("test_policy.read")
+        # Turned on once: a policy someone saved, on or off, is theirs to keep.
+        if policy.revision > 0:
+            return policy.test_calls
+        try:
+            saved: EnvironmentTestPolicy = await c.invoke(
+                "test_policy.save", body=EnvironmentTestPolicyUpdate(test_calls="enabled")
+            )
+        except WeaveError as error:
+            if error.code != "WV-REVISION":
+                raise
+            current: EnvironmentTestPolicy = await c.invoke("test_policy.read")
+            return current.test_calls
+        return saved.test_calls
+
+
+def demo_test_calls(directory: Path, *, transport: httpx.AsyncBaseTransport | None = None) -> str:
+    """Turn test calls on in the demo environment the first time; returns whether they are on now."""
+    import asyncio
+
+    from firefly_weave.sdk.errors import WeaveError
+
+    state, scope = _workspace(directory, "that runs steps for real")
+    api = _ready_api(directory, state)
+    try:
+        return asyncio.run(_test_calls(api, scope, _host_token(state), transport))
+    except WeaveError as error:
+        raise PlatformError(
+            f"Test calls weren't turned on in the demo environment ({error.code}). Run up again."
+        ) from None
+
+
 def integrations_grant(
     directory: Path,
     connection: str,
@@ -2045,6 +2086,7 @@ def up(
         start(directory, progress)
         first = demo(directory)
         result = {**_summary(state), "first_run_saved": True, "run": first["receipt"]}
+        result["test_calls"] = demo_test_calls(directory)
         if state.get("private_origins"):
             result["private_origins"] = platform_origins.summary(state)
         if username is not None:

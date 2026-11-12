@@ -33,7 +33,7 @@
 "step-execution" = false
 "decision-table-editor" = false
 "editor-runs" = false
-"step-tests" = false
+"step-tests" = true
 "activation-dialog" = false
 "text-templates" = false
 "loops" = false

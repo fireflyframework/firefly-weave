@@ -113,6 +113,29 @@ and role names use `lumi`.
 A worker identity stays limited to worker capabilities even if a human role is
 attached to it by mistake.
 
+**Running steps for real needs a role and an environment that allows it.** A
+step tester (`step_tester`) can run one step of a saved draft for real, but only
+where that environment's test calls are on, and only with connections they may
+bind. Test calls are off in every environment until someone with
+`environment.manage` (a tenant administrator) turns them on; `weave platform
+up` turns them on in the local demo environment only. Read and change the
+setting with the API; the first save sends no `If-Match`, and later saves send
+the revision they read:
+
+```sh
+# Read whether test calls are on in an environment.
+curl -sS -H "Authorization: Bearer $TOKEN" \
+  "$WEAVE_API_URL/api/v1/tenants/$TENANT/projects/$PROJECT/environments/$ENVIRONMENT/test-policy"
+# Turn them on for the first time; to change a saved policy, add -H 'If-Match: "1"' with the revision you read.
+curl -sS -X PUT -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"test_calls": "enabled"}' \
+  "$WEAVE_API_URL/api/v1/tenants/$TENANT/projects/$PROJECT/environments/$ENVIRONMENT/test-policy"
+```
+
+The SDK's `WeaveClient` calls the same operations as `test_policy.read` and
+`test_policy.save` (pass `revision=` for a saved policy). Every change is
+audited with the old and new values.
+
 **Scope narrows a grant.** A tenant binding covers every project and
 environment in the tenant. A project binding covers that project and its
 environments. An environment binding covers only that environment. Resource

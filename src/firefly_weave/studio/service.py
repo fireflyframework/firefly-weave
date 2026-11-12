@@ -84,6 +84,9 @@ STUDIO_FAMILIES = frozenset(
         "email_tokens",
         "connections",
         "bindable_connections",
+        # Running one step for real from step details, and whether the environment allows it.
+        "step_tests",
+        "test_policy",
         # AI connection tests run in the AI gateway; connection.manage is checked server-side.
         "ai_connections",
         "ai_endpoints",

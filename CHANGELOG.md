@@ -20,6 +20,27 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+- Steps can run for real in an environment. `POST {environment}/step-tests`
+  runs one step of a saved draft, an action or an AI task, as a test run of the
+  normal runtime, and only the person who started it can read or cancel it.
+  The server checks, before anything is written, the new `step_tester` role
+  (`step.test`), catalog read on the project, the environment's test policy,
+  `connection.bind` on each connection, the step's side effect (steps that
+  change data need `acknowledged_side_effect`, every time), the input and the
+  releases; a person runs at most 4 at once and starts 30 a minute per
+  environment. Test versions and activations never appear in a list, lookup or
+  compile catalog, expire with their run's timeout, and are purged once no run
+  uses them. Each environment's test policy (`GET`/`PUT
+  {environment}/test-policy`) is off until an administrator turns it on;
+  `weave platform up` turns it on in the local demo environment and gives the
+  local owner the role there. Migration `0040_editor_step_tests`.
+- Testing a `weave-http@2` connection now sends one `HEAD` request to its base
+  URL with the connection's sign-in, through the same egress rules as its
+  actions, and says why it failed (`reason`); bindable connection items name an
+  HTTP connection's origin.
+- A request can name the person it was made for in `X-Weave-Principal`; when
+  the token now belongs to someone else, the platform refuses it with 409
+  `WV-PRINCIPAL-CHANGED` before anything runs.
 - Workflow transactions run. A `transaction` step confirms its reservations
   once it goes ahead and undoes what went through, newest first, when a step
   fails, the run is canceled or it times out; the platform lists

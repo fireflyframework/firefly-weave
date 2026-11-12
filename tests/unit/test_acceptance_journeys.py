@@ -133,6 +133,7 @@ def test_the_committed_map_is_valid():
         "studio-brand",
         "brand-assets",
         "docs-brand",
+        "step-tests",
         "text-operators",
         "instance-keys",
         "loop-compiler",
@@ -161,6 +162,12 @@ def test_the_committed_map_is_valid():
     for step in ("J0.3/operations", "J0.10", "J5.2", "J5.3", "J5.4", "J5.7", "J9.2/operations-controls"):
         assert enablement.missing(step) == (), step
     assert enablement.missing("J5.6") == ("alerts",)
+    # Step tests landed on the platform: J0 checks the role and the demo environment's test calls; executing a
+    # step from Studio still waits for step execution.
+    assert enablement.missing("J0.4/step-tester") == ()
+    assert enablement.missing("J0.11") == ()
+    assert enablement.missing("J2.2") == ("editor-canvas", "step-details", "step-execution")
+    assert enablement.missing("J9.2/execute-in-local") == ("step-execution",)
     assert enablement.applies("J5.1", "pr") and not enablement.applies("J5.1", "ai")
     assert enablement.journey_steps("J1") == tuple(f"J1.{n}" for n in range(1, 11))
     assert enablement.journey_steps("J2") == tuple(f"J2.{n}" for n in range(1, 10))
