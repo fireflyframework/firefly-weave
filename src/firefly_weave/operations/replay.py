@@ -352,7 +352,7 @@ def replay(artifact: CompiledArtifact, events: tuple[RuntimeEvent, ...]) -> Repl
                     )
                 if event.type == "task_completed" and agent is not None:
                     require("output" in event.data, "WV-REPLAY-EVENT")
-                    agent_output(ir, event, evidence)
+                    agent_output(ir, event, evidence, state)
                 elif event.type == "task_completed":
                     require("output" in event.data, "WV-REPLAY-EVENT")
                     assert isinstance(node, ActionNode | CallWorkflowNode)
@@ -390,7 +390,7 @@ def replay(artifact: CompiledArtifact, events: tuple[RuntimeEvent, ...]) -> Repl
                         handles
                         and prior is not None
                         and confirmable(node_id, prior.code)
-                        and isinstance(node, ActionNode)
+                        and runs_task
                         and type(attempted) is int
                         and attempted >= 0
                         and "output" in event.data
@@ -448,7 +448,7 @@ def replay(artifact: CompiledArtifact, events: tuple[RuntimeEvent, ...]) -> Repl
                     validate(ir, schema, event.data["output"])
                 elif kind == "accept_reconciled_result" and agent is not None:
                     require("output" in event.data, "WV-REPLAY-EVENT")
-                    agent_output(ir, event, evidence)
+                    agent_output(ir, event, evidence, state)
                 elif kind == "accept_reconciled_result":
                     require("output" in event.data and isinstance(node, ActionNode), "WV-REPLAY-EVENT")
                     assert isinstance(node, ActionNode)
@@ -479,6 +479,10 @@ def replay(artifact: CompiledArtifact, events: tuple[RuntimeEvent, ...]) -> Repl
                 if node_id in deadlines:
                     require(event.timestamp < deadlines[node_id].deadline, "WV-REPLAY-HUMAN-EXPIRED")
                     deadlines.pop(node_id)
+                if person:
+                    # A review's decision or a person's answer to an agent fits the form the task offered.
+                    require("output" in event.data, "WV-REPLAY-EVENT")
+                    agent_output(ir, event, evidence, state)
             elif event.type in {"wait_elapsed", "timed_out", "signal_received"}:
                 _verify_wait(event, evidence, deadlines, nodes, duration_nodes, continuations)
                 if event.type == "signal_received":
@@ -579,10 +583,11 @@ def replay(artifact: CompiledArtifact, events: tuple[RuntimeEvent, ...]) -> Repl
     )
 
 
-def agent_output(ir: WorkflowIR, event: RuntimeEvent, evidence: RecordedEvidence) -> None:
-    """A recorded output at an agent's key fits what it ran: the turn's pinned guard, or the tool the evidence names."""
+def agent_output(ir: WorkflowIR, event: RuntimeEvent, evidence: RecordedEvidence, state: RunState) -> None:
+    """A recorded output at an agent's key fits what it ran: the turn's pinned guard, or the tool the run's agent
+    recorded for the call (a person's resolution carries no task receipt to name it)."""
     schemas = agent_output_schemas(
-        ir, event.data.get("node_id"), event.type, event.data, evidence.model_dump(mode="json")
+        ir, event.data.get("node_id"), event.type, event.data, evidence.model_dump(mode="json"), state.agents
     )
     require(bool(schemas), "WV-REPLAY-EVENT")
     for schema in schemas or []:

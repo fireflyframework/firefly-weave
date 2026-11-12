@@ -24,9 +24,12 @@ from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).parents[1] / "runtime"))
 
 from agent_fixtures import (  # noqa: E402
+    CANCEL,
     INPUT,
     LOOKUP,
     NOW,
@@ -39,6 +42,7 @@ from agent_fixtures import (  # noqa: E402
     tool_calls,
     workflow,
 )
+from test_agent_workflows import catalog, order_action, orders_connector  # noqa: E402
 
 from firefly_weave.compiler.canonical import canonical_digest  # noqa: E402
 from firefly_weave.contracts.access import Scope  # noqa: E402
@@ -135,11 +139,11 @@ def recorded(flow, script):
                 )
         node = data.get("node_id")
         task_receipt = human_receipt = call_receipt = None
-        if kind in {"task_completed", "step_failed"} and node in tasks:
+        if kind in {"task_completed", "step_failed", "incident_opened"} and node in tasks:
             task_receipt = TaskReceipt(
                 task=tasks[node],
                 receipt_id=event.id,
-                generation=1,
+                generation=data.get("generation", 1),
                 timing=TaskTiming(kind="live_admission", checked_at=NOW, effective_deadline=tasks[node].deadline),
             )
         if kind == "human_completed":
@@ -263,6 +267,133 @@ def test_exports_keep_agent_events_and_their_codes():
     # Turn answers, the tool's result, the review's decision and its digest, and the child's result all stay.
     assert [safe_event(event, flow).data for event in events[1:]] == [event.data for event in events[1:]]
     assert safe_event(failed, flow).data == failed.data
+
+
+def approve(key):
+    """The review's approval of the call at ``key``, built from the review task the run issued."""
+
+    def build(humans):
+        command = humans[key + ".review"][1]
+        return {
+            "node_id": command.node_id,
+            "task_id": str(humans[command.node_id][0].task_id),
+            "actor_id": str(uuid4()),
+            "output": {"decision": "approve", "data": {}},
+            "input_digest": command.context["inputDigest"],
+        }
+
+    return build
+
+
+def resolved(kind, output=None):
+    """A person's resolution of the cancel held in doubt at its first attempt, as the incident service records it."""
+    data = {
+        "incident_key": "support#1.1:1",
+        "receipt_id": str(uuid4()),
+        "node_id": "support#1.1",
+        "generation": 1,
+        "kind": kind,
+        "output": output,
+        "reason": "Checked by hand",
+        "evidence_reference": "ticket-17",
+        "actor_id": str(uuid4()),
+    }
+    if kind == "accept_reconciled_failure":
+        data["attempts"] = 1
+    return ("incident_resolved", data)
+
+
+def held_cancel(resolution):
+    """The model cancels an order, a person approves, the worker dies in doubt and a person resolves the incident."""
+    return [
+        ("started", {"admission_policy": "classified-v1"}),
+        turn("support#1", tool_calls(("cancel_order", {"id": "A-17"}))),
+        ("human_completed", approve("support#1.1")),
+        ("incident_opened", {"node_id": "support#1.1", "generation": 1, "code": "WV-TASK-AMBIGUOUS"}),
+        resolution,
+        turn("support#2", final()),
+    ]
+
+
+@pytest.mark.parametrize(
+    "resolution",
+    [resolved("accept_reconciled_result", {"status": "cancelled"}), resolved("accept_reconciled_failure")],
+    ids=["reconciled-result", "confirmed-no-effect"],
+)
+def test_a_resolved_tool_incident_replays_as_the_kernel_accepted_it(resolution):
+    flow = artifact(plain(answering(workflow(agent(tools=[LOOKUP, CANCEL])))))
+
+    report = replay(flow, recorded(flow, held_cancel(resolution)))
+
+    assert report.status == "consistent", report.diagnostics
+
+
+TRACK_OUTPUT = {"type": "object", "properties": {"eta": {"type": "string"}}, "required": ["eta"]}
+TRACK = {"name": "track_order", "description": "When an order arrives.", "action": "orders-track@1.0.0"}
+
+
+def tracking():
+    """An action whose output differs from every order action's, on a connector of its own."""
+    connector = orders_connector()
+    connector["metadata"]["name"] = "tracking"
+    connector["spec"]["actions"] = {"get": {**connector["spec"]["actions"]["get"], "outputSchema": TRACK_OUTPUT}}
+    action = order_action("orders-track", "get")
+    action["spec"]["implementation"]["uses"] = "tracking@1.0.0"
+    action["spec"]["connection"] = {"connector": "tracking@1.0.0"}
+    action["spec"]["outputSchema"] = TRACK_OUTPUT
+    return connector, action
+
+
+def test_a_reconciled_tool_result_is_checked_against_the_tool_that_ran():
+    document = answering(workflow(agent(tools=[{**TRACK, "connection": "tracking"}, CANCEL])))
+    document["spec"]["connections"]["tracking"] = {"connector": "tracking@1.0.0"}
+    flow = artifact(plain(document), catalog(*tracking()))
+    # The result fits the cancel that ran, not the tracking tool beside it.
+    script = held_cancel(resolved("accept_reconciled_result", {"status": "cancelled"}))
+
+    assert replay(flow, recorded(flow, script)).status == "consistent"
+    broken = held_cancel(resolved("accept_reconciled_result", {"status": 7}))
+    assert codes(replay(flow, recorded(flow, broken))) == ("inconsistent", ["WV-REPLAY-EVENT"])
+
+
+ASK = {
+    "name": "ask_desk",
+    "description": "Ask the order desk.",
+    "human": {
+        "questionSchema": {"type": "object", "properties": {"question": {"type": "string"}}, "required": ["question"]},
+        "formSchema": {"type": "object", "properties": {"answer": {"type": "string"}}, "additionalProperties": False},
+        "assignment": "order-desk",
+    },
+}
+
+
+def answered(data):
+    def build(humans):
+        return {
+            "node_id": "support#1.1",
+            "task_id": str(humans["support#1.1"][0].task_id),
+            "actor_id": str(uuid4()),
+            "output": {"decision": "submit", "data": data},
+        }
+
+    return build
+
+
+def asked(data):
+    return [
+        ("started", {"admission_policy": "classified-v1"}),
+        turn("support#1", tool_calls(("ask_desk", {"question": "Where is A-17?"}))),
+        ("human_completed", answered(data)),
+        turn("support#2", final()),
+    ]
+
+
+def test_a_persons_answer_to_an_agent_replays_and_is_checked_by_its_form():
+    flow = artifact(plain(answering(workflow(agent(tools=[LOOKUP, ASK])))))
+
+    assert replay(flow, recorded(flow, asked({"answer": "Two days late"}))).status == "consistent"
+    report = replay(flow, recorded(flow, asked({"answer": "Two days late", "extra": 1})))
+    assert codes(report) == ("inconsistent", ["WV-REPLAY-EVENT"]) and report.last_verified_sequence == 2
 
 
 class CapturedFacts(FactRepository):

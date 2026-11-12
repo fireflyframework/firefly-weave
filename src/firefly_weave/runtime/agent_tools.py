@@ -439,12 +439,18 @@ def _recorded(evidence: Mapping[str, object], *path: str) -> object:
 
 
 def agent_output_schemas(
-    ir: WorkflowIR, key: object, event_type: str, data: Mapping[str, object], evidence: Mapping[str, object]
+    ir: WorkflowIR,
+    key: object,
+    event_type: str,
+    data: Mapping[str, object],
+    evidence: Mapping[str, object],
+    states: Mapping[str, AgentState] | None = None,
 ) -> list[JsonObject] | None:
     """What an output recorded at an agent's key is screened with in replay and exports: a turn's pinned guard, a
-    review's answer, or the output schemas of every tool the call may have run, narrowed by the evidence that names
-    its target. An output must fit and classify under each one. None for a key that isn't an agent's."""
-    reference = agent_key(ir, key) if isinstance(key, str) else None
+    review's answer, or a tool call's output. With the run's agents (``states``, as replay has them) a call's tool is
+    the one the agent recorded; without them (exports) it is every tool the call may have run, narrowed by the evidence
+    that names its target. An output must fit and classify under each one. None for a key that isn't an agent's."""
+    reference = agent_key(ir, key, states) if isinstance(key, str) else None
     if reference is None:
         return None
     if reference.key.review:
@@ -458,6 +464,10 @@ def agent_output_schemas(
         return [ir.schemas[guard.schema_ref]]
     # Only a task's result can be reconciled at a call key.
     completion = "task_completed" if event_type == "incident_resolved" else event_type
+    if reference.tool is not None and reference.target is not None:
+        if reference.target.completion != completion:
+            return []
+        return reference.target.event_schemas(ir, reference.tool, event_type, data)
     return [
         schema
         for tool in reference.node.tools
