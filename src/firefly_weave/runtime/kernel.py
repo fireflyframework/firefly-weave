@@ -82,9 +82,12 @@ from firefly_weave.runtime.agents import (
     UnsupportedRules,
     activate,
     append_memory,
+    budget_granted,
     call_key,
+    parse_agent_key,
     review_decided,
     review_key,
+    tool_failed,
     tool_resolved,
     turn_completed,
     turn_key,
@@ -208,6 +211,9 @@ STEP_OUTCOMES: frozenset[StepOutcome] = frozenset({"not_started", "failed", "unk
 def error_policy(ir: WorkflowIR, key: str) -> str:
     """What the final failure of the step instance ``key`` does: ``stop``, ``continue`` or ``errorOutput``."""
     node = next((node for node in ir.graph.nodes if node.id == node_of(key)), None)
+    if isinstance(node, AgentNode) and (parsed := parse_agent_key(key)) is not None and parsed.call is not None:
+        # A tool call's final failure goes to its agent, which hands it to the model or fails by its setting.
+        return "continue"
     if isinstance(node, HandlesErrors) and node.on_error is not None:
         return node.on_error
     return "stop"
@@ -1341,6 +1347,16 @@ def _advance_owned(
         """Whether the instance ``name`` is a task: an action step, or an action that confirms, cancels or undoes."""
         phase = split_phase(name)
         node = nodes[node_of(name)]
+        if isinstance(node, AgentNode):
+            reference = agent_key(ir, name, current_state.agents)
+            return reference is not None and (
+                reference.key.call is None
+                or (
+                    not reference.key.review
+                    and reference.target is not None
+                    and reference.target.completion == "task_completed"
+                )
+            )
         if phase is None:
             return isinstance(node, ActionNode)
         participation = node.txn if isinstance(node, (ActionNode, CallWorkflowNode)) else None
@@ -1737,6 +1753,9 @@ def _advance_owned(
             close_agent(key)
             queue.append(successor(key))
         elif effects.failure is not None:
+            if effects.state is None:
+                # Whatever the agent still has open ends with it; a budget stop keeps the state for one more turn.
+                close_agent(key, keep=True)
             # The agent's own key holds the incident, as an action's key does; Operate resolves it there.
             incident(key, effects.failure)
 
@@ -1760,7 +1779,7 @@ def _advance_owned(
             raise KernelError("WV-RUNTIME-EVENT")
         # A failure while the agent decides belongs to the agent's own key.
         current = agent
-        if reference.key.call is None:
+        if reference.key.call is None and completion.type != "step_failed":
             if (
                 completion.type != "task_completed"
                 or "output" not in completion.data
@@ -1774,7 +1793,18 @@ def _advance_owned(
             effects = turn_completed(
                 ir, node, agent, state, TurnOutput.model_validate(value), current_state.agent_tokens
             )
-        elif reference.key.review and reference.tool is not None:
+        elif completion.type == "step_failed":
+            if reference.key.call is None or reference.key.review or reference.tool is None:
+                raise KernelError("WV-RUNTIME-EVENT")
+            code, error = tool_failure(reference, identifier, completion)
+            current_state.active.remove(identifier)
+            current_state.waits.pop(identifier, None)
+            result.steps.append(StepChange(node_id=identifier, status="failed", output=None, error=error))
+            try:
+                effects = tool_failed(ir, node, state, identifier, code, current_state.agent_tokens)
+            except ValueError:
+                raise KernelError("WV-RUNTIME-EVENT") from None
+        elif reference.key.review and reference.tool is not None and reference.key.call is not None:
             decision, comment, digest = review_answer(identifier, completion)
             current_state.active.remove(identifier)
             current_state.waits.pop(identifier, None)
@@ -1800,6 +1830,28 @@ def _advance_owned(
         else:
             raise KernelError("WV-RUNTIME-EVENT")
         agent_effects(node, agent, effects)
+
+    def tool_failure(reference: AgentKeyRef, key: str, completion: RuntimeEvent) -> tuple[str, JsonObject]:
+        """The code and error object of a tool call's final failure. An unknown outcome of a call that changes data
+        and is never retried is never handed on: it keeps its incident until a person says what happened."""
+        data = completion.data
+        code, outcome, attempts = data.get("code"), data.get("outcome", "unknown"), data.get("attempts", 1)
+        if (
+            not isinstance(code, str)
+            or not 0 < len(code) <= 128
+            or outcome not in STEP_OUTCOMES
+            or not isinstance(attempts, int)
+            or isinstance(attempts, bool)
+            or attempts < 0
+        ):
+            raise KernelError("WV-RUNTIME-EVENT")
+        assert reference.tool is not None and reference.target is not None
+        if outcome == "unknown" and reference.target.side_effect(ir, reference.tool) == "non_idempotent":
+            raise KernelError("WV-RUNTIME-EVENT")
+        try:
+            return code, step_error(code, cast(StepOutcome, outcome), attempts, key)
+        except ValueError as error:
+            raise KernelError("WV-RUNTIME-EVENT") from error
 
     def review_answer(
         key: str, completion: RuntimeEvent
@@ -1851,7 +1903,7 @@ def _advance_owned(
             phase_result(identifier, completion)
             return
         node = nodes[node_of(identifier)]
-        if isinstance(node, AgentNode) and completion.type != "step_failed":
+        if isinstance(node, AgentNode):
             reference = agent_key(ir, identifier, current_state.agents)
             if reference is not None:
                 agent_event(reference, identifier, completion)
@@ -2083,6 +2135,17 @@ def _advance_owned(
                         else None
                     }
                 )
+                if kind == "retry_safe" and prior.code == "WV-AGENT-BUDGET":
+                    budget_node = nodes[node_of(prior.node_id)]
+                    budget_state = current_state.agents.get(prior.node_id)
+                    if not isinstance(budget_node, AgentNode) or budget_state is None or budget_state.granted:
+                        raise KernelError("WV-RUNTIME-EVENT")
+                    current = prior.node_id
+                    agent_effects(
+                        budget_node,
+                        prior.node_id,
+                        budget_granted(ir, budget_node, budget_state, current_state.agent_tokens),
+                    )
                 if kind == "accept_reconciled_failure":
                     attempts = event.data.get("attempts", prior.generation)
                     completion = event.model_copy(
@@ -2146,7 +2209,9 @@ def _advance_owned(
                 generation = event.data.get("generation", 0)
                 if not isinstance(generation, int) or isinstance(generation, bool) or generation < 0:
                     raise KernelError("WV-RUNTIME-EVENT")
-                if not inside or handles(nodes[node_of(current)], current, event.data.get("effect", "unknown")):
+                if not isinstance(nodes[node_of(current)], AgentNode) and (
+                    not inside or handles(nodes[node_of(current)], current, event.data.get("effect", "unknown"))
+                ):
                     reported_failure(nodes[node_of(current)], current, event)
                 interim = current_state.incidents.get(f"{current}:{generation}")
                 if interim is not None and interim.code != "WV-TASK-FAILED":

@@ -32,7 +32,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Final, Protocol, cast
+from typing import TYPE_CHECKING, Final, Literal, Protocol, cast
 
 from firefly_weave.compiler.ir import AgentNode, AgentToolIR, Dependency, ToolTargetKind, WorkflowIR
 from firefly_weave.compiler.schemas import _Failure, payload_issues, validate_payload
@@ -131,6 +131,11 @@ def cut(content: JsonValue, size: int = TOOL_RESULT_BYTES) -> JsonValue:
 class ToolTarget(Protocol):
     target: ToolTargetKind
 
+    @property
+    def completion(self) -> Literal["task_completed", "call_completed", "human_completed"]:
+        """The event that completes a call of this target at its call key."""
+        ...
+
     def requires_review(self, ir: WorkflowIR, tool: AgentToolIR) -> bool:
         """Whether a call waits for a person's review before it runs, whatever the IR says (it fails closed)."""
         ...
@@ -161,6 +166,7 @@ class ToolTarget(Protocol):
 
 class _ActionTarget:
     target: ToolTargetKind = "action"
+    completion: Literal["task_completed"] = "task_completed"
 
     def requires_review(self, ir: WorkflowIR, tool: AgentToolIR) -> bool:
         # The pinned action's own side effect decides too, so an IR that says auto can't skip a changing call.
@@ -207,6 +213,7 @@ class _ActionTarget:
 
 class _WorkflowTarget:
     target: ToolTargetKind = "workflow"
+    completion: Literal["call_completed"] = "call_completed"
 
     def requires_review(self, ir: WorkflowIR, tool: AgentToolIR) -> bool:
         return True
@@ -254,6 +261,7 @@ class _WorkflowTarget:
 
 class _HumanTarget:
     target: ToolTargetKind = "human"
+    completion: Literal["human_completed"] = "human_completed"
 
     def requires_review(self, ir: WorkflowIR, tool: AgentToolIR) -> bool:
         return tool.approval == "required"
@@ -397,6 +405,23 @@ def agent_key(ir: WorkflowIR, key: str, states: Mapping[str, AgentState] | None 
         name = next((call.name for call in state.calls if call.turn == parsed.turn and call.index == parsed.call), None)
         tool = next((item for item in node.tools if item.name == name), None)
     return AgentKeyRef(parsed, node, tool, TOOL_TARGETS[tool.target] if tool is not None else None)
+
+
+def reconciled_schema(ir: WorkflowIR, key: str, states: Mapping[str, AgentState]) -> JsonObject | None:
+    """What an operator's reconciled output at an agent's task key must fit: a turn's pinned output guard, or a tool
+    task's own output schema. None for a key that runs no task (the agent itself, a review, a child run, a person)."""
+    reference = agent_key(ir, key, states)
+    if reference is None or reference.key.review:
+        return None
+    if reference.key.call is None:
+        guard = next(
+            (item for item in ir.guards if item.path == reference.node.path and item.purpose == "agent_turn_output"),
+            None,
+        )
+        return ir.schemas[guard.schema_ref] if guard is not None else None
+    if reference.tool is None or reference.target is None or reference.target.completion != "task_completed":
+        return None
+    return reference.target.output_schema(ir, reference.tool)
 
 
 def _breaks(schema: JsonObject, value: JsonValue, ir: WorkflowIR) -> bool:

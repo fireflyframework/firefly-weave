@@ -197,7 +197,8 @@ def turn_completed(
     if state.forced:
         return AgentEffects(None, failure="WV-AGENT-ITERATIONS", tokens=tokens)
     if _over_budget(node, state, run_tokens + tokens):
-        return AgentEffects(state, failure="WV-AGENT-BUDGET", tokens=tokens)
+        # The calls this turn asked for never run; a granted budget sends the next turn, under the next key.
+        return AgentEffects(state.model_copy(update={"turn": state.turn + 1}), failure="WV-AGENT-BUDGET", tokens=tokens)
     agent = key
     calls: list[CallRecord] = []
     written: list[JsonObject] = []
@@ -264,6 +265,19 @@ def tool_resolved(
     if record is None or state.phase != "tools":
         raise ValueError("No running call at this key")
     return _resolve(ir, node, state, record, content, is_error, run_tokens)
+
+
+def tool_failed(
+    ir: WorkflowIR, node: AgentNode, state: AgentState, key: str, code: str, run_tokens: int
+) -> AgentEffects:
+    """A tool call failed for good with nothing that may have applied: by default the model reads the error code;
+    with ``onToolError: incident`` the agent fails with ``WV-AGENT-TOOL-FAILED``."""
+    record = next((call for call in state.calls if call.key == key and call.status == "running"), None)
+    if record is None or state.phase != "tools":
+        raise ValueError("No running call at this key")
+    if node.limits.on_tool_error == "incident":
+        return AgentEffects(None, failure="WV-AGENT-TOOL-FAILED")
+    return _resolve(ir, node, state, record, {"error": code, "retryable": False}, True, run_tokens)
 
 
 def review_decided(
