@@ -46,7 +46,7 @@ the desktop app never migrates a platform.
 | alpha14 | `0030_worker_presence` | No new schema migration. Adds the detached Docker development platform (`weave platform up`); existing foreground installations keep working and are never converted. The Agentic and Files workers 0.1.6 pin this server version. |
 | alpha15 | `0030_worker_presence` | No new schema migration and no role change. Upgrade CLIs and SDKs together with the server, review native executor `capacity` and the legacy private-network settings before restarting, and finish runs that use text templates before any rollback to alpha14; see [what changes in alpha15](#what-changes-in-alpha15). The Agentic and Files workers 0.1.7 pin this server version. |
 | alpha16 | `0033_language_workflow_calls` | Three new migrations, no role change. `0031_operations_key_collation` only replaces two internal accounting functions. `0032_operations_facts` adds [scoped operational fact storage](#operational-fact-storage) with a bounded historical backfill; it holds its locks until it commits (17 s for 10,000 retained runs and 32 s for 50,000 in a rehearsal), so stop every writer first. `0033_language_workflow_calls` adds two empty tables and takes well under a second whatever the number of retained runs (under 0.15 s in every measurement on 10,000 and 50,000 runs). Explicitly migrate the server before restarting it. Upgrade CLIs and SDKs together with the server, upgrade the server before its deployment runners, and finish or cancel runs that use loops or call other workflows before any rollback; see [what changes in alpha16](#what-changes-in-alpha16). `weave platform up --username` grants new local accounts the local owner roles (developer, deployer, operator, viewer, task_participant, tenant_admin, lumi_manager, execution_manager, worker_operator, deployment_reader, deployment_planner, deployment_approver, deployment_operator); existing accounts keep their roles until `weave platform user grant` adds more. `weave platform user` is now a command group; `weave platform user --username` works as before. The Agentic and Files workers 0.1.8 pin this server version. |
-| Unreleased | `0038_operations_statistics` | Five new migrations. `0034_operations_change_requests` adds the empty `deployment_change_requests` table and two nullable columns on `deployment_plans` (who made a plan, and the change request it was made for); `0035_principal_idempotency` adds the empty `principal_idempotency` table, so a repeated `Idempotency-Key` on principal creation answers the principal it created, in its current state, for seven days; the next keyed creation by the same administrator removes older keys. These two take constant time. Every existing target now needs a second approver: plans made before the upgrade must be planned again on such targets, and an environment manager can turn the rule off per target; see [change request compatibility](#change-request-compatibility). Upgrade the server first, then its deployment runners: an upgraded runner registers adapter version 2, which an earlier server refuses. `0036_editor_studio_documents` adds the empty `studio_documents` table (a platform draft's canvas and test data, the latest two revisions of each), its tenant policy and its usage accounting; it takes well under a second. Explicitly migrate the server before restarting it, and upgrade Studio together with the server: Studio saves a platform draft's canvas and test data through the new `studio_documents` operations. `0037_language_transactions` adds the empty `run_transactions` and `worker_release_awareness` tables, a `settlement` column on task and call rows, an `effect` column on call rows, a `transaction_aware` column on task leases and a `transaction_state` column on run facts; every new column has a constant default or none, and the checks on two of them apply to new rows only, so adding them changes only the catalog. The upgrade still reads `task_intents` once to build two partial indexes, and task writes wait while they build. The upgrade took 0.11 s with 10,000 and 0.08 s with 50,000 retained runs. Purge refuses a run whose transaction is not settled. It adds the `transaction_reconciler` role, which no existing account gains. Workers that send `worker` on their claims must send the release they registered with. `0038_operations_statistics` adds three empty tables for [run metrics](metrics.md) (statistics buckets, capacity samples and rollup cursors) and the functions that count and add their duration histograms; it takes constant time and backfills nothing, so figures start at the upgrade. The environment summary gains an optional `runs_24h` section, and the `run_statistics.series`, `.workflows` and `.steps` reads need `status.read`. |
+| alpha17 | `0038_operations_statistics` | Five new migrations and one new role; see [what changes in alpha17](#what-changes-in-alpha17) for the measured upgrade times. `0034_operations_change_requests` adds the empty `deployment_change_requests` table and two nullable columns on `deployment_plans` (who made a plan, and the change request it was made for); `0035_principal_idempotency` adds the empty `principal_idempotency` table, so a repeated `Idempotency-Key` on principal creation answers the principal it created, in its current state, for seven days; the next keyed creation by the same administrator removes older keys. These two take constant time. Every existing target now needs a second approver: plans made before the upgrade must be planned again on such targets, and an environment manager can turn the rule off per target; see [change request compatibility](#change-request-compatibility). Upgrade the server first, then its deployment runners: an upgraded runner registers adapter version 2, which an earlier server refuses. `0036_editor_studio_documents` adds the empty `studio_documents` table (a platform draft's canvas and test data, the latest two revisions of each), its tenant policy and its usage accounting; it takes well under a second. Explicitly migrate the server before restarting it, and upgrade Studio together with the server: Studio saves a platform draft's canvas and test data through the new `studio_documents` operations. `0037_language_transactions` adds the empty `run_transactions` and `worker_release_awareness` tables, a `settlement` column on task and call rows, an `effect` column on call rows, a `transaction_aware` column on task leases and a `transaction_state` column on run facts; every new column has a constant default or none, and the checks on two of them apply to new rows only, so adding them changes only the catalog. The upgrade still reads `task_intents` once to build two partial indexes, and task writes wait while they build. The upgrade took 0.07 s with 10,000 and 0.07 s with 50,000 retained runs. Purge refuses a run whose transaction is not settled. It adds the `transaction_reconciler` role, which no existing account gains. Workers that send `worker` on their claims must send the release they registered with. `0038_operations_statistics` adds three empty tables for [run metrics](metrics.md) (statistics buckets, capacity samples and rollup cursors) and the functions that count and add their duration histograms; it takes constant time and backfills nothing, so figures start at the upgrade. The environment summary gains an optional `runs_24h` section, and the `run_statistics.series`, `.workflows` and `.steps` reads need `status.read`. The Agentic and Files workers 0.1.9 pin this server version. |
 
 ![Schema, compatibility and execution acceptance gates](../diagrams/operations-upgrade.svg)
 
@@ -824,6 +824,81 @@ Check these changes before you reopen traffic:
 - **AI test times use the database clock.** A recorded AI connection test is
   dated with the database's clock, the same clock readiness uses to measure its
   age. Tests recorded by an earlier server keep their API-host timestamps.
+
+## What changes in alpha17
+
+Alpha17 adds five schema migrations (the head becomes
+`0038_operations_statistics`) and one role, `transaction_reconciler`, which no
+existing account gains. Follow the procedure above and migrate explicitly before
+you restart the server; a server that includes them refuses to start on the
+previous schema.
+
+- **Allow for the migration time.** The five migrations add empty tables,
+  nullable columns or columns with a constant default, indexes, policies and
+  functions; none of them backfills retained runs. `0037_language_transactions`
+  reads `task_intents` once to build two partial indexes, and task writes wait
+  while they build. `0038_operations_statistics` backfills nothing, so run
+  metrics start at the upgrade. In a rehearsal on PostgreSQL 17 (4 CPUs, 8 GiB),
+  each migration took:
+
+  | Migration | 10,000 retained runs | 50,000 retained runs |
+  | --- | --- | --- |
+  | `0034_operations_change_requests` | 0.03 s | 0.03 s |
+  | `0035_principal_idempotency` | 0.01 s | 0.01 s |
+  | `0036_editor_studio_documents` | 0.02 s | 0.02 s |
+  | `0037_language_transactions` | 0.07 s | 0.07 s |
+  | `0038_operations_statistics` | 0.05 s | 0.06 s |
+
+  Rehearse the upgrade on a restored copy to measure your own window.
+- **Upgrade CLIs, SDKs and Studio together with the server.** Earlier CLIs and
+  SDKs refuse this server's language manifest
+  ([language manifest compatibility](#language-manifest-compatibility)), cannot
+  read debug views that ran a called workflow (they gain `frames`,
+  `selected_frame` and a boundary's `frame`), and reject Weave AI answers that
+  carry `diagnostics` when they check answers strictly. Studio saves a platform
+  draft's canvas and test data through the new `studio_documents` operations.
+- **Upgrade the server before its deployment runners**, and the runners soon
+  after it: an upgraded runner registers adapter version 2, which an earlier
+  server refuses, and scale-downs wait until the target's runner is upgraded.
+  [Change request compatibility](#change-request-compatibility) has the details.
+- **Every existing target needs a second approver.** A plan made before the
+  upgrade must be planned again on such a target (409 `WV-PLAN-STALE`); an
+  environment manager can turn the rule off per target.
+- **Before any rollback**, plan to restore the backup taken before the migration,
+  as [if the upgrade fails](#if-the-upgrade-fails) explains. Change requests,
+  platform drafts saved on the platform, and run metrics recorded since the
+  upgrade are not kept by that restore.
+- **Workers and local platforms.** The Agentic and Files workers 0.1.9 pin core
+  0.1.0a17. A worker that sends `worker` on its claims must send the release it
+  registered with (409 `WV-WORKER-RELEASE`); workers that do not send it keep
+  working unchanged. A local platform still has
+  [no in-place upgrade](#a-local-platform-has-no-in-place-upgrade): set up
+  alpha17 from its own checkout in a new directory. Its `weave platform up` now
+  also starts a local registry, the sleep fixture worker and a deployment runner
+  for the target `local-docker` (`--no-operations` skips them), and it runs
+  Ollama 0.40.6.
+
+Check these changes before you reopen traffic:
+
+- **AI tasks whose result is plain text are asked for text**, in published
+  workflows too. Steps still receive a string, but a model is more likely to
+  wrap an answer asked for as JSON in a code fence, so a later step that parses
+  JSON from it may need a structured result instead. An answer cut off at the
+  output token limit fails with `LLM_LIMIT` instead of being returned.
+- **Weave AI model failures have their own problem codes**:
+  `WV-LUMI-MODEL-NOT-FOUND`, `WV-LUMI-UNREACHABLE`, `WV-LUMI-CONTEXT-LIMIT`,
+  `WV-LUMI-OUTPUT`, `WV-LUMI-TIMEOUT` and `WV-LUMI-CAPACITY` replace
+  `WV-LUMI-UNAVAILABLE` for those cases. Scripts that match the old code need
+  the new ones.
+- **Principal creation replays answer the principal it created.** For seven
+  days, a repeated `Idempotency-Key` on principal creation answers that
+  principal in its current state.
+- **Run metrics are new reads.** `run_statistics.series`, `.workflows` and
+  `.steps` need `status.read`, and the environment summary gains the optional
+  `runs_24h` section.
+- **Transactions are not offered yet.** Publishing, importing or activating a
+  workflow with a `transaction` step answers 422 `WV-IR-UNSUPPORTED`; keep such
+  workflows as drafts.
 
 ## After the upgrade: clients and sign-in
 
