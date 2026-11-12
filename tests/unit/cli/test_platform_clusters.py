@@ -1060,6 +1060,24 @@ def test_connecting_another_namespace_after_the_platform_moved_repoints_the_clus
     assert saved["api_address"] == "172.30.0.7" and set(saved["targets"]) == {"weave-workers", "team-b"}
 
 
+def test_connect_never_repoints_another_target_whose_namespace_another_installation_owns(world):
+    """Like refresh, connect checks each of the cluster's other targets' installation label before it applies the
+    platform's new addresses to them with --force-conflicts, and refuses before anything is applied."""
+    directory, commands, config, cluster = world
+    connect(world)
+    cluster.joined.discard(KEYCLOAK)
+    cluster.addresses[KEYCLOAK] = "172.30.0.7"
+    cluster.namespace = FOREIGN
+    commands.answer([KUBECTL, "get", "namespace", "team-b", "-o", "jsonpath={.metadata.uid}"], UID)
+    before = len(commands.calls)
+    with pytest.raises(PlatformError) as refused:
+        clusters.connect(directory, "kind", "weave-test", "team-b", kubeconfig=config, notice=lambda line: None)
+    assert str(refused.value) == clusters.FOREIGN_NAMESPACE.format(namespace="weave-workers")
+    assert applied(commands, before) == []
+    saved = clusters.receipt(directory)["clusters"]["kind-weave-test"]
+    assert saved["api_address"] == "172.30.0.5" and set(saved["targets"]) == {"weave-workers"}
+
+
 def test_refresh_applies_only_to_the_cluster_that_publishes_the_contexts_port(world, monkeypatch, tmp_path):
     """Refresh reaches the cluster through the default kubeconfig, so it ties the context's server port to the port
     the cluster's API publishes, as preflight does."""

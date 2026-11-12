@@ -1092,6 +1092,16 @@ def connect(
         record = _join(connection)
         network = connection.network
         assert network is not None
+        value = receipt(directory)
+        saved = value["clusters"].get(key)
+        targets: dict[str, dict[str, Any]] = saved["targets"] if saved is not None else {}
+        others = {name: item for name, item in targets.items() if name != namespace}
+        moved = _moved(saved, record)
+        if moved:
+            # The cluster's other targets follow the platform's new addresses below: as in refresh, each namespace must
+            # still be this installation's before anything is applied.
+            for owned in sorted(others):
+                _check_namespace(state, kube, owned)
         # The pods' plain-HTTP entries are consented to before the ConfigMaps that carry them are applied.
         platform_origins.set_cluster_entries(state, key, network.subnet)
 
@@ -1105,21 +1115,14 @@ def connect(
         _apply(connection, "cluster-apply-shared", objects.shared_objects(network))
 
         notice(f"namespace: applying {namespace}")
-        value = receipt(directory)
-        saved = value["clusters"].get(key)
-        targets: dict[str, dict[str, Any]] = saved["targets"] if saved is not None else {}
         _apply(
             connection,
             "cluster-apply-namespace",
             objects.namespace_objects(_draft(connection, namespace, targets.get(namespace, {}), runner_image)),
         )
-        if _moved(saved, record):
+        if moved:
             # The cluster's other targets follow the platform's new addresses before the receipt records them.
-            _follow(
-                connection,
-                {name: item for name, item in targets.items() if name != namespace},
-                "cluster-apply-namespace",
-            )
+            _follow(connection, others, "cluster-apply-namespace")
         _recorded(value, key, record)
         save(directory, value)
         uid = _uid(connection, namespace)
