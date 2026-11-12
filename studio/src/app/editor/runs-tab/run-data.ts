@@ -65,11 +65,18 @@ export class RunData implements RunDataPort {
   private readonly marks = new Map<string, StepMark>();
 
   constructor(
-    private readonly record: RunRecord,
+    private record: RunRecord,
     readonly environmentId: string,
     private readonly definition: Workflow | null,
   ) {
     this.runId = record.id;
+  }
+
+  /** The run read again while it is followed; outputs already read stay. */
+  setRecord(record: RunRecord): void {
+    if (record.id !== this.runId) return;
+    this.record = record;
+    this.changed();
   }
 
   /** Step instances read with their outputs (include=output); `stepId` names the step read. */
