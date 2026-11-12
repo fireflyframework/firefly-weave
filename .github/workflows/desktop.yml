@@ -62,19 +62,21 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
         with:
           version: '0.11.19'
           python-version: '3.12.13'
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24.15.0'
           cache: npm
           cache-dependency-path: |
             studio/package-lock.json
             desktop/package-lock.json
-      - uses: dtolnay/rust-toolchain@1.96.0
+      - uses: dtolnay/rust-toolchain@d86e0fa8f147d6539442c26a61ebba8becc19489 # 1.96.0
         with:
           components: rustfmt,clippy
           targets: ${{ matrix.target }}
@@ -187,7 +189,7 @@ jobs:
           mv desktop/work/release-assets/SHA256SUMS desktop/work/release-assets/weave-studio-${{ matrix.target }}-SHA256SUMS
       - name: Retain offline frozen startup diagnostics
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: weave-studio-${{ matrix.target }}-offline-diagnostics
           if-no-files-found: ignore
@@ -196,7 +198,7 @@ jobs:
             desktop/work/build/weave-studio-host/warn-weave-studio-host.txt
             desktop/src-tauri/binaries/weave-studio-host-*
       - name: Retain installers and host integrity manifest
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: weave-studio-${{ steps.product.outputs.version }}-${{ matrix.target }}-unsigned
           if-no-files-found: error
