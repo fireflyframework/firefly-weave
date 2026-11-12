@@ -16,60 +16,25 @@
 
 """AI agent steps in the workflow kernel: turns and tools as durable work at their instance keys."""
 
-import copy
 import time
 from datetime import timedelta
-from uuid import uuid4
 
-from agent_fixtures import CANCEL, LOOKUP, NOW, agent, artifact, final, tool_calls, workflow
+from agent_fixtures import (
+    CANCEL,
+    INPUT,
+    LOOKUP,
+    NOW,
+    SHIPPED,
+    Run,
+    agent,
+    answering,
+    final,
+    tasks,
+    tool_calls,
+    workflow,
+)
 
-from firefly_weave.runtime.kernel import transition
-from firefly_weave.runtime.models import ControlCommand, Deadline, RunState, RuntimeEvent, TaskIntent, Transition
-
-INPUT = {"message": "Where is order A-17?", "region": "eu", "orders": ["A-17"]}
-SHIPPED = {"status": "shipped-7731"}
-
-
-def plain(document):
-    # A run's input can't hold secret values, so these runs leave out the secret fields of the compiler's fixture.
-    document = copy.deepcopy(document)
-    schema = document["spec"]["inputSchema"]
-    for name in ("apiKey", "password"):
-        del schema["properties"][name]
-    schema["required"] = [name for name in schema["required"] if name in schema["properties"]]
-    return document
-
-
-def answering(document):
-    document["spec"]["output"] = {"ref": "/steps/support/output/result"}
-    return document
-
-
-class Run:
-    def __init__(self, document=None, value=None) -> None:
-        self.flow = artifact(plain(document or answering(workflow(agent(tools=[LOOKUP])))))
-        self.state = RunState(input=value or INPUT)
-        self.at = NOW
-
-    def send(self, kind: str, /, **data) -> Transition:
-        event = RuntimeEvent(
-            id=uuid4(), type=kind, timestamp=self.at, sequence=self.state.accepted_sequence + 1, data=data
-        )
-        result = transition(self.state, event, self.flow)
-        self.state = result.state
-        return result
-
-    def answer(self, key: str, output) -> Transition:
-        value = (
-            output.model_dump(mode="json", by_alias=True, exclude_none=True)
-            if hasattr(output, "model_dump")
-            else output
-        )
-        return self.send("task_completed", node_id=key, output=value)
-
-
-def tasks(result: Transition) -> dict[str, TaskIntent]:
-    return {command.node_id: command for command in result.commands if isinstance(command, TaskIntent)}
+from firefly_weave.runtime.models import ControlCommand, Deadline, Transition
 
 
 def test_turn_tool_turn_final_completes_the_step_and_runs_its_successor():

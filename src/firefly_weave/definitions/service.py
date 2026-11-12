@@ -526,13 +526,15 @@ class DefinitionService:
             )
             from firefly_weave.compiler.ir import ActionNode, HumanTaskNode
             from firefly_weave.human_tasks.service import pin_assignments
+            from firefly_weave.runtime.agent_tools import assignment_slots
             from firefly_weave.runtime.kernel import workflow
 
             nodes = workflow(artifact).graph.nodes
             assignment_pins = await pin_assignments(
                 tx,
                 request.assignment_binding_ids,
-                {node.assignment for node in nodes if isinstance(node, HumanTaskNode)},
+                {node.assignment for node in nodes if isinstance(node, HumanTaskNode)}
+                | assignment_slots(workflow(artifact)),
             )
             requirements = spec.get("connections", {})
             required = {slot for slot, requirement in requirements.items() if requirement.get("required", True)}

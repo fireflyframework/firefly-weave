@@ -25,7 +25,7 @@ import pytest
 from agent_fixtures import CANCEL, LOOKUP, NOW, agent, compiled, node_of_ir, tool_calls, workflow
 from test_agent_workflows import catalog, order_action
 
-from firefly_weave.runtime.agent_tools import TOOL_TARGETS, Refused, canonical, check_call
+from firefly_weave.runtime.agent_tools import TOOL_TARGETS, Refused, assignment_slots, canonical, check_call
 from firefly_weave.runtime.agents import ActivationValues, activate, turn_completed
 from firefly_weave.runtime.kernel import KernelError
 from firefly_weave.runtime.models import CallIntent, HumanTaskIntent, RuntimeEvent, TaskIntent
@@ -221,13 +221,21 @@ def test_a_child_outcome_is_checked_as_a_call_steps_is(data, code):
 def test_a_persons_answer_reaches_the_model():
     ir, node = ir_with(LOOKUP, ASK)
 
-    answer = TOOL_TARGETS["human"].result(
-        ir, tool(node, "ask_desk"), event("human_completed", data={"answer": "Yes"}), 1
-    )
+    # The task service's event: the person's decision and form data.
+    answered = event("human_completed", output={"decision": "submit", "data": {"answer": "Yes"}})
+    answer = TOOL_TARGETS["human"].result(ir, tool(node, "ask_desk"), answered, 1)
     expired = TOOL_TARGETS["human"].result(ir, tool(node, "ask_desk"), event("wait_elapsed"), 1)
 
     assert answer == ({"answer": {"answer": "Yes"}}, False)
     assert expired == ({"status": "expired"}, True)
+
+
+@pytest.mark.parametrize("output", [None, {"answer": "Yes"}, {"decision": "approve", "data": {}}])
+def test_an_answer_that_isnt_a_submitted_form_is_refused(output):
+    ir, node = ir_with(LOOKUP, ASK)
+
+    with pytest.raises(KernelError, match="WV-RUNTIME-EVENT"):
+        TOOL_TARGETS["human"].result(ir, tool(node, "ask_desk"), event("human_completed", output=output), 1)
 
 
 def started(ir, node):
@@ -272,3 +280,16 @@ def test_no_consumer_branches_on_the_tool_target():
     ]
 
     assert found == []
+
+
+def test_an_agents_reviewers_and_people_are_assignment_slots():
+    ir, _ = ir_with(LOOKUP, CANCEL, ASK)
+
+    assert assignment_slots(ir) == {"support-leads", "order-desk"}
+
+
+def test_an_agent_with_only_read_only_tools_has_no_assignment_slots():
+    step = agent(tools=[LOOKUP])
+    del step["review"]
+
+    assert assignment_slots(compiled(workflow(step))) == set()

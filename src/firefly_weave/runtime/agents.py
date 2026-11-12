@@ -32,7 +32,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Final, cast
+from typing import Final, Literal, cast
 
 from firefly_weave.compiler.ir import AgentNode, WorkflowIR
 from firefly_weave.contracts.agent_turns import (
@@ -263,6 +263,52 @@ def tool_resolved(
     record = next((call for call in state.calls if call.key == key and call.status == "running"), None)
     if record is None or state.phase != "tools":
         raise ValueError("No running call at this key")
+    return _resolve(ir, node, state, record, content, is_error, run_tokens)
+
+
+def review_decided(
+    ir: WorkflowIR,
+    node: AgentNode,
+    state: AgentState,
+    key: str,
+    decision: Literal["approve", "reject", "expired"],
+    comment: str | None,
+    digest: str | None,
+    run_tokens: int,
+) -> AgentEffects:
+    """A person answered the review of the call at ``key``, or it expired.
+
+    Approval runs exactly the stored input: ``digest`` (the server's copy from the review task) must equal the digest
+    stored with the call, and the stored input must still have it. A rejection or an expiry is a result the model
+    reads; the call never runs.
+    """
+    record = next((call for call in state.calls if call.key == key and call.status == "review"), None)
+    if record is None or state.phase != "tools":
+        raise ValueError("No call at this key waits for its review")
+    if decision != "approve":
+        content: JsonObject = {"status": "rejected" if decision == "reject" else "expired"}
+        if decision == "reject" and comment:
+            content["comment"] = comment
+        return _resolve(ir, node, state, record, content, True, run_tokens)
+    if digest is None or digest != record.digest or input_digest(record.input) != record.digest:
+        raise ValueError("The approval is for another input")
+    approved = record.model_copy(update={"status": "queued", "approved": True})
+    state = _with_calls(state, [approved])
+    started = _start(ir, node, state)
+    state = _with_calls(state, started)
+    return AgentEffects(state, calls=started)
+
+
+def _resolve(
+    ir: WorkflowIR,
+    node: AgentNode,
+    state: AgentState,
+    record: CallRecord,
+    content: JsonValue,
+    is_error: bool,
+    run_tokens: int,
+) -> AgentEffects:
+    key = record.key
     results = dict(state.results)
     results[key] = _tool_message(call_id(record.turn, record.index), transcript_name(record.name), content, is_error)
     calls = [call.model_copy(update={"status": "done"}) if call.key == key else call for call in state.calls]
@@ -360,7 +406,7 @@ def _start(ir: WorkflowIR, node: AgentNode, state: AgentState) -> list[CallRecor
         if call.status != "queued":
             continue
         tool = tools[call.name]
-        if TOOL_TARGETS[tool.target].requires_review(ir, tool):
+        if not call.approved and TOOL_TARGETS[tool.target].requires_review(ir, tool):
             changed.append(call.model_copy(update={"status": "review"}))
         elif room > 0:
             room -= 1

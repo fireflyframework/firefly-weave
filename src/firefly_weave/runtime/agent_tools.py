@@ -139,6 +139,11 @@ class ToolTarget(Protocol):
         """The digest of the workflow a call of this tool starts, for call delivery; None for any other target."""
         ...
 
+    def side_effect(self, ir: WorkflowIR, tool: AgentToolIR) -> str:
+        """What a call may change, as its review shows it first: an action's own side effect, ``workflow`` for a
+        child run (whatever it changes), ``read_only`` for a question to a person."""
+        ...
+
     def input_schema(self, ir: WorkflowIR, tool: AgentToolIR) -> JsonObject: ...
 
     def output_schema(self, ir: WorkflowIR, tool: AgentToolIR) -> JsonObject: ...
@@ -163,6 +168,9 @@ class _ActionTarget:
 
     def callee(self, ir: WorkflowIR, tool: AgentToolIR) -> str | None:
         return None
+
+    def side_effect(self, ir: WorkflowIR, tool: AgentToolIR) -> str:
+        return cast(str, _document(ir, "Action", tool)["sideEffect"])
 
     def input_schema(self, ir: WorkflowIR, tool: AgentToolIR) -> JsonObject:
         return cast(JsonObject, _document(ir, "Action", tool)["inputSchema"])
@@ -205,6 +213,9 @@ class _WorkflowTarget:
 
     def callee(self, ir: WorkflowIR, tool: AgentToolIR) -> str | None:
         return tool.dependency
+
+    def side_effect(self, ir: WorkflowIR, tool: AgentToolIR) -> str:
+        return "workflow"
 
     def input_schema(self, ir: WorkflowIR, tool: AgentToolIR) -> JsonObject:
         return cast(JsonObject, _document(ir, "Workflow", tool)["inputSchema"])
@@ -250,6 +261,9 @@ class _HumanTarget:
     def callee(self, ir: WorkflowIR, tool: AgentToolIR) -> str | None:
         return None
 
+    def side_effect(self, ir: WorkflowIR, tool: AgentToolIR) -> str:
+        return "read_only"
+
     def input_schema(self, ir: WorkflowIR, tool: AgentToolIR) -> JsonObject:
         assert tool.human is not None
         return tool.human.question_schema
@@ -279,7 +293,13 @@ class _HumanTarget:
             return {"status": "expired"}, True
         if completion.type != "human_completed":
             return _failure(completion), True
-        answer = completion.data.get("data")
+        # The task service records the person's decision and form data; the one decision is "submit".
+        output = completion.data.get("output")
+        if not isinstance(output, dict) or output.get("decision") != "submit" or "data" not in output:
+            from firefly_weave.runtime.kernel import KernelError
+
+            raise KernelError("WV-RUNTIME-EVENT")
+        answer = output["data"]
         if _breaks(self.output_schema(ir, tool), answer, ir):
             return {"error": "INVALID_OUTPUT", "retryable": False}, True
         return {"answer": _for_model(ir, self.output_schema(ir, tool), answer, rules)}, False
@@ -288,6 +308,62 @@ class _HumanTarget:
 TOOL_TARGETS: Final[Mapping[ToolTargetKind, ToolTarget]] = MappingProxyType(
     {"action": _ActionTarget(), "workflow": _WorkflowTarget(), "human": _HumanTarget()}
 )
+
+# What a reviewer answers: approve or reject, with an optional comment the model reads after a rejection.
+REVIEW_DECISIONS: Final = ("approve", "reject")
+
+
+def review_form() -> JsonObject:
+    return {
+        "type": "object",
+        "properties": {"comment": {"type": "string", "maxLength": 1024}},
+        "additionalProperties": False,
+    }
+
+
+def review_intent(
+    ir: WorkflowIR, node: AgentNode, tool: AgentToolIR, key: str, value: JsonObject, digest: str, expires_at: datetime
+) -> HumanTaskIntent:
+    """The review of one changing call at ``key``: the side effect first, then the tool and the stored input, shown
+    classified by the target's input schema and marked as written by AI. The assignee and the distinct-reviewer rule
+    come from the pinned IR only, never from the call; ``digest`` is the stored input's, which approval must match."""
+    if tool.review is None:
+        # A changing tool the IR left without a reviewer: nothing may run it (activation refuses such an IR).
+        from firefly_weave.runtime.kernel import KernelError
+
+        raise KernelError("WV-RUNTIME-ACTIVATION")
+    target = TOOL_TARGETS[tool.target]
+    shown = redact(target.input_schema(ir, tool), value, _bundle(ir), RULE_PATTERNS[node.rules])
+    return HumanTaskIntent(
+        node_id=key,
+        assignment=tool.review.assignment,
+        title=f"Review {tool.name} for {node.id}"[:512],
+        context={
+            "sideEffect": target.side_effect(ir, tool),
+            "tool": tool.name,
+            "description": tool.description,
+            "arguments": shown,
+            "aiWritten": True,
+            "inputDigest": digest,
+        },
+        form_schema=review_form(),
+        decisions=list(REVIEW_DECISIONS),
+        expires_at=expires_at,
+        exclude_run_starter=tool.review.distinct_reviewer,
+    )
+
+
+def assignment_slots(ir: WorkflowIR) -> set[str]:
+    """The assignment slots an activation pins for AI agents: each tool's reviewers and each person a tool asks."""
+    slots: set[str] = set()
+    for node in ir.graph.nodes:
+        if isinstance(node, AgentNode):
+            for tool in node.tools:
+                if tool.review is not None:
+                    slots.add(tool.review.assignment)
+                if tool.human is not None:
+                    slots.add(tool.human.assignment)
+    return slots
 
 
 @dataclass(frozen=True)

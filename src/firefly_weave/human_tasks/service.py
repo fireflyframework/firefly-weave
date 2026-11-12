@@ -71,7 +71,14 @@ async def human(tx: Transaction, identifier: UUID) -> Principal:
     return principal
 
 
+DISTINCT_REVIEW_MESSAGE = "Someone other than the person who started this run must review this."
+
+
 async def eligible(repository: RuntimeRepository, pin: AssignmentPin, identifier: UUID) -> bool:
+    """Whether ``identifier`` may work on a task with this pin. An excluded principal is refused outright, so claim,
+    reassign, complete and reads all answer the same 403."""
+    if identifier in pin.excluded_principal_ids:
+        raise CatalogError(403, "WV-REVIEW-DISTINCT", DISTINCT_REVIEW_MESSAGE)
     if identifier in pin.principal_ids:
         return True
     if not pin.group_ids:
@@ -105,6 +112,10 @@ async def create_task(repository: RuntimeRepository, view: Any, command: HumanTa
     pin = view.activation.assignment_pins.get(command.assignment)
     if pin is None:
         raise CatalogError(422, "WV-ASSIGNMENT", "Human task lacks an activation assignment pin")
+    if command.exclude_run_starter:
+        # The kernel never knows principals: the run's starter is the principal its row records.
+        starter = await repository.rows(f"SELECT principal_id FROM runs WHERE {SCOPE} AND id=:run", run=view.id)
+        pin = pin.model_copy(update={"excluded_principal_ids": [starter[0]["principal_id"]]})
     identifier = uuid4()
     await repository.execute(
         "INSERT INTO human_tasks(tenant_id,project_id,environment_id,id,run_id,node_id,revision,status,"
@@ -213,7 +224,8 @@ class HumanTaskService:
                 "id>cast(:cursor AS uuid)) "
                 "AND (cast(:status AS text) IS NULL OR status=cast(:status AS text)) "
                 "AND (:manage_all OR id::text=ANY(:manage_ids) "
-                "OR ((:read_all OR id::text=ANY(:read_ids)) AND ("
+                "OR ((:read_all OR id::text=ANY(:read_ids)) "
+                "AND NOT coalesce(assignment->'excluded_principal_ids','[]'::jsonb) @> cast(:actor_json AS jsonb) AND ("
                 "assignment->'principal_ids' @> cast(:actor_json AS jsonb) "
                 "OR EXISTS(SELECT 1 FROM human_task_memberships m WHERE m.tenant_id=t.tenant_id AND "
                 "m.project_id=t.project_id "
@@ -341,6 +353,13 @@ class HumanTaskService:
                         "task_id": str(identifier),
                         "actor_id": str(actor.id),
                         "output": output,
+                        # A review approves the input whose digest the server stored with the task, never one the
+                        # request names; other tasks keep their event bytes.
+                        **(
+                            {"input_digest": row["context"]["inputDigest"]}
+                            if isinstance(row["context"], dict) and "inputDigest" in row["context"]
+                            else {}
+                        ),
                     },
                 )
                 from firefly_weave.files.authority import admit_human_files

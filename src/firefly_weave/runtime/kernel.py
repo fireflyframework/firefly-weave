@@ -21,7 +21,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from types import MappingProxyType
-from typing import cast
+from typing import Literal, cast
 from uuid import UUID
 
 from pydantic import Field
@@ -68,13 +68,23 @@ from firefly_weave.contracts.transactions import (
     split_phase,
 )
 from firefly_weave.contracts.values import JsonObject, JsonValue
-from firefly_weave.runtime.agent_tools import TOOL_TARGETS, AgentKeyRef, agent_key
+from firefly_weave.runtime.agent_tools import (
+    REVIEW_DECISIONS,
+    TOOL_TARGETS,
+    AgentKeyRef,
+    agent_key,
+    review_form,
+    review_intent,
+)
 from firefly_weave.runtime.agents import (
     ActivationValues,
     AgentEffects,
     UnsupportedRules,
     activate,
     append_memory,
+    call_key,
+    review_decided,
+    review_key,
     tool_resolved,
     turn_completed,
     turn_key,
@@ -1693,9 +1703,23 @@ def _advance_owned(
             )
         tools = {tool.name: tool for tool in node.tools}
         for call in effects.calls:
+            tool = tools[call.name]
+            if call.status == "review" and effects.state is not None:
+                # The review closes by its own expiry or with the agent, whichever comes first.
+                name = review_key(key, call.turn, call.index)
+                expiry = effects.state.deadline
+                if tool.review is not None:
+                    expiry = min(checked_deadline(event.timestamp, tool.review.expiry_seconds), expiry)
+                review = review_intent(
+                    ir, node, tool, name, cast(JsonObject, call.input), cast(str, call.digest), expiry
+                )
+                current_state.active.append(name)
+                current_state.waits[name] = expiry
+                result.steps.append(StepChange(node_id=name, status="waiting"))
+                result.commands.extend([review, Deadline(node_id=name, deadline=expiry)])
+                continue
             if call.status != "running":
                 continue
-            tool = tools[call.name]
             target = TOOL_TARGETS[tool.target]
             current_state.active.append(call.key)
             result.steps.append(StepChange(node_id=call.key, status="waiting"))
@@ -1750,6 +1774,21 @@ def _advance_owned(
             effects = turn_completed(
                 ir, node, agent, state, TurnOutput.model_validate(value), current_state.agent_tokens
             )
+        elif reference.key.review and reference.tool is not None:
+            decision, comment, digest = review_answer(identifier, completion)
+            current_state.active.remove(identifier)
+            current_state.waits.pop(identifier, None)
+            if decision == "expired":
+                # Nobody answered in time: the open review task closes with its deadline.
+                result.commands.append(ControlCommand(kind="settle", node_id=identifier))
+            result.steps.append(
+                StepChange(node_id=identifier, status="completed", output=completion.data.get("output"))
+            )
+            call = call_key(agent, reference.key.turn, reference.key.call)
+            try:
+                effects = review_decided(ir, node, state, call, decision, comment, digest, current_state.agent_tokens)
+            except ValueError:
+                raise KernelError("WV-RUNTIME-EVENT") from None
         elif not reference.key.review and reference.tool is not None and reference.target is not None:
             content, is_error = reference.target.result(ir, reference.tool, completion, state.rules)
             current_state.active.remove(identifier)
@@ -1761,6 +1800,28 @@ def _advance_owned(
         else:
             raise KernelError("WV-RUNTIME-EVENT")
         agent_effects(node, agent, effects)
+
+    def review_answer(
+        key: str, completion: RuntimeEvent
+    ) -> tuple[Literal["approve", "reject", "expired"], str | None, str | None]:
+        """A review's decision, its comment and the digest the task service copied from the stored task."""
+        if completion.type == "wait_elapsed":
+            due = current_state.waits.get(key)
+            if due is None or completion.data.get("deadline") != due.isoformat() or completion.timestamp < due:
+                raise KernelError("WV-RUNTIME-EARLY-WAKEUP")
+            return "expired", None, None
+        output = completion.data.get("output")
+        if completion.type != "human_completed" or not isinstance(output, dict):
+            raise KernelError("WV-RUNTIME-EVENT")
+        decision, data, digest = output.get("decision"), output.get("data"), completion.data.get("input_digest")
+        if decision not in REVIEW_DECISIONS or not isinstance(data, dict) or not isinstance(digest, str):
+            raise KernelError("WV-RUNTIME-EVENT")
+        try:
+            validate(ir, review_form(), data)
+        except ValueError:
+            raise KernelError("WV-RUNTIME-EVENT") from None
+        comment = data.get("comment")
+        return cast(Literal["approve", "reject"], decision), cast(str | None, comment), digest
 
     def agent_timeout(key: str, completion: RuntimeEvent) -> None:
         due = current_state.waits.get(key)

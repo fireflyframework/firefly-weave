@@ -191,6 +191,8 @@ class CallRecord(ContractModel):
     input: JsonData = None
     digest: str | None = Field(default=None, exclude_if=lambda v: v is None)
     status: Literal["queued", "review", "running", "done"]
+    # A person approved this call's stored input: it runs when there is room, without another review.
+    approved: bool = Field(default=False, exclude_if=lambda v: not v)
 
 
 class AgentUsage(ContractModel):
@@ -303,6 +305,8 @@ class HumanTaskIntent(ContractModel):
     decisions: list[str]
     due_at: datetime | None = None
     expires_at: datetime | None = None
+    # "Require a different reviewer": the task's creation pins the run's starting principal as excluded.
+    exclude_run_starter: bool = Field(default=False, exclude_if=lambda v: not v)
 
 
 class CallIntent(ContractModel):

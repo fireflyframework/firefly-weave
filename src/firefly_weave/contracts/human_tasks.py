@@ -31,6 +31,8 @@ class AssignmentPin(ContractModel):
     revision: int = Field(ge=1)
     principal_ids: list[UUID] = Field(default_factory=list, max_length=256)
     group_ids: list[UUID] = Field(default_factory=list, max_length=256)
+    # People who may not answer this task even when assigned: a distinct review excludes the run's starter.
+    excluded_principal_ids: list[UUID] = Field(default_factory=list, max_length=1, exclude_if=lambda v: not v)
 
 
 class AssignmentBindingRequest(ContractModel):
