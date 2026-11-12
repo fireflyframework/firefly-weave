@@ -20,6 +20,7 @@ import asyncio
 import contextlib
 import json
 import os
+import time
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from uuid import uuid4
@@ -1102,6 +1103,10 @@ def turn_lease(*, model="qwen2.5:1.5b", **profile):
     )
 
 
+# The real lookup, kept before the fixture below replaces it for every other test here.
+REAL_OLLAMA_VERSION = handler_module.ollama_version
+
+
 @pytest.fixture(autouse=True)
 def no_version_lookup(monkeypatch):
     """Turn handlers here never look up Ollama's version over the network; a test passes its own lookup."""
@@ -1187,6 +1192,63 @@ async def test_a_turn_checks_a_half_context_cut_with_the_endpoints_ollama_versio
     with po.installed(OLLAMA_ORIGINS), pytest.raises(ConnectorFailure) as failed:
         await handler(task)
     assert (failed.value.code, failed.value.outcome, asked) == ("LLM_CONTEXT_LIMIT", "failed", ["http://ollama:11434"])
+
+
+def version_transport(respond):
+    """A pinned transport stand-in that answers every request with ``respond``."""
+
+    class Answering(httpx2.AsyncBaseTransport):
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def handle_async_request(self, request):
+            return await respond(request)
+
+    return Answering
+
+
+def version_answer(status, body):
+    async def respond(request):
+        assert request.url == "http://ollama:11434/api/version"
+        return httpx2.Response(status, json=body)
+
+    return respond
+
+
+async def refused(request):
+    raise httpx2.ConnectError("refused", request=request)
+
+
+VERSION_ENTRY = SimpleNamespace(origin="http://ollama:11434")
+VERSION_POLICY = SimpleNamespace(origins=OLLAMA_ORIGINS, resolver=None)
+
+
+@pytest.mark.parametrize(
+    "respond,expected",
+    [
+        (version_answer(200, {"version": "0.40.16"}), (0, 40, 16)),
+        (version_answer(200, {"version": "0.40.16-rc1"}), None),
+        (version_answer(200, {"version": 40}), None),
+        (version_answer(200, ["0.40.16"]), None),
+        (version_answer(500, {"version": "0.40.16"}), None),
+        (refused, None),
+    ],
+    ids=["release", "prerelease", "number", "list", "error-status", "refused"],
+)
+async def test_the_ollama_version_lookup_answers_a_release_version_or_none(monkeypatch, respond, expected):
+    monkeypatch.setattr(handler_module, "PinnedModelTransport", version_transport(respond))
+    assert await REAL_OLLAMA_VERSION(VERSION_ENTRY, VERSION_POLICY) == expected
+
+
+async def test_a_hanging_version_lookup_gives_up_within_its_bound(monkeypatch):
+    async def hang(request):
+        await asyncio.sleep(30)
+        return httpx2.Response(200, json={"version": "0.40.16"})
+
+    monkeypatch.setattr(handler_module, "PinnedModelTransport", version_transport(hang))
+    started = time.monotonic()
+    assert await REAL_OLLAMA_VERSION(VERSION_ENTRY, VERSION_POLICY) is None
+    assert time.monotonic() - started < handler_module.VERSION_SECONDS + 0.5
 
 
 async def test_a_turn_on_another_providers_connection_is_refused(tmp_path):
