@@ -103,30 +103,53 @@ class DefinitionService:
         return self.registry.snapshot()
 
     async def runtime_snapshot(
-        self, actor: Principal, scope: Scope, identifier: UUID, *, context: AuditContext, tx: Transaction
+        self,
+        actor: Principal,
+        scope: Scope,
+        identifier: UUID,
+        *,
+        context: AuditContext,
+        tx: Transaction,
+        test: bool = False,
     ) -> tuple[Activation, dict[str, Any]]:
-        """Resolve an immutable execution pin under environment run authority."""
-        self.require(actor, scope, "run.start", context)
+        """Resolve an immutable execution pin under environment run authority.
+
+        A normal start never finds a step test's activation. With ``test``, only a step test's own activation is
+        found, under ``step.test``, and only while it is neither retired nor expired.
+        """
+        self.require(actor, scope, "step.test" if test else "run.start", context)
         if scope.environment_id is None:
             raise CatalogError(422, "WV-SCOPE", "Run requires an environment")
         async with self.transaction(scope, tx, mutation=False) as enlisted:
             repository = DefinitionRepository(enlisted)
             rows = await repository.rows(
                 "SELECT payload FROM activation_revisions WHERE tenant_id=:tenant AND project_id=:project "
-                "AND environment_id=:environment AND id=:id",
+                "AND environment_id=:environment AND id=:id AND test=:test",
                 environment=scope.environment_id,
                 id=identifier,
+                test=test,
             )
             if not rows:
                 raise CatalogError(404, "WV-NOT-FOUND", "Activation not found")
+            if test:
+                live = await repository.rows(
+                    "SELECT 1 FROM test_activation_details WHERE tenant_id=:tenant AND project_id=:project "
+                    "AND environment_id=:environment AND activation_id=:id AND retired_at IS NULL "
+                    "AND expires_at>clock_timestamp()",
+                    environment=scope.environment_id,
+                    id=identifier,
+                )
+                if not live:
+                    raise CatalogError(410, "WV-TESTACTIVATION-EXPIRED", "This test activation has expired")
             activation = Activation.model_validate_json(json.dumps(rows[0]["payload"]))
             latest = await repository.rows(
                 "SELECT payload FROM activation_revisions WHERE tenant_id=:tenant AND project_id=:project "
-                "AND environment_id=:environment AND name=:name ORDER BY revision DESC LIMIT 1",
+                "AND environment_id=:environment AND name=:name AND test=:test ORDER BY revision DESC LIMIT 1",
                 environment=scope.environment_id,
                 name=activation.name,
+                test=test,
             )
-            row = await repository.version(activation.request.version_id)
+            row = await repository.version(activation.request.version_id, include_test=test)
             if activation.retired or latest[0]["payload"]["retired"] or row["retired"]:
                 raise CatalogError(422, "WV-READINESS", "Retired activation or workflow cannot start")
             if row["digest"] != activation.request.artifact_digest:
@@ -349,12 +372,15 @@ class DefinitionService:
                 f"version:{scope.tenant_id}:{scope.project_id}:{kind}:{model.metadata.name}:{model.metadata.version}",
             )
             rows = await repository.rows(
-                "SELECT * FROM definition_versions WHERE tenant_id=:tenant AND project_id=:project "
-                "AND kind=:kind AND name=:name AND version=:version",
+                "SELECT v.*, v.test AS reserved FROM definition_versions v WHERE tenant_id=:tenant "
+                "AND project_id=:project AND kind=:kind AND name=:name AND version=:version",
                 kind=kind,
                 name=model.metadata.name,
                 version=model.metadata.version,
             )
+            if rows and rows[0]["reserved"]:
+                # A step test's synthetic version holds this name and version; it is never published.
+                raise CatalogError(409, "WV-VERSION-CONFLICT", "This version is reserved; publish another version")
             if rows:
                 version = published(rows[0])
                 if version.digest != artifact.digest or version.definition_digest != definition_digest:
@@ -369,9 +395,9 @@ class DefinitionService:
                     definition_digest=definition_digest,
                 )
                 await repository.execute(
-                    "INSERT INTO definition_versions "
-                    "VALUES(:id,:tenant,:project,:kind,:name,:version,:digest,:definition_digest,cast(:document "
-                    "AS jsonb),cast(:artifact AS jsonb))",
+                    "INSERT INTO definition_versions(id,tenant_id,project_id,kind,name,version,digest,"
+                    "definition_digest,document,artifact,test) VALUES(:id,:tenant,:project,:kind,:name,:version,"
+                    ":digest,:definition_digest,cast(:document AS jsonb),cast(:artifact AS jsonb),false)",
                     **version.model_dump(),
                     document=json.dumps(document),
                     artifact=artifact.to_bytes().decode(),
@@ -547,8 +573,8 @@ class DefinitionService:
             await lock(tx, f"activation:{scope.tenant_id}:{scope.project_id}:{scope.environment_id}:{row['name']}")
             rows = await repository.rows(
                 "SELECT revision FROM activation_revisions WHERE tenant_id=:tenant AND "
-                "project_id=:project AND environment_id=:environment AND name=:name ORDER BY revision "
-                "DESC LIMIT 1",
+                "project_id=:project AND environment_id=:environment AND name=:name AND NOT test "
+                "ORDER BY revision DESC LIMIT 1",
                 environment=scope.environment_id,
                 name=row["name"],
             )
@@ -608,11 +634,14 @@ class DefinitionService:
             return activation
 
     @staticmethod
-    async def _insert_activation(repository: DefinitionRepository, activation: Activation) -> None:
+    async def _insert_activation(
+        repository: DefinitionRepository, activation: Activation, *, test: bool = False
+    ) -> None:
         await repository.execute(
-            "INSERT INTO activation_revisions "
-            "VALUES(:id,:tenant,:project,:environment,:name,:revision,:version,cast(:payload AS "
-            "jsonb))",
+            "INSERT INTO activation_revisions(id,tenant_id,project_id,environment_id,name,revision,version_id,"
+            "payload,test) VALUES(:id,:tenant,:project,:environment,:name,:revision,:version,"
+            "cast(:payload AS jsonb),:test)",
+            test=test,
             id=activation.id,
             environment=activation.request.scope.environment_id,
             name=activation.name,
@@ -755,7 +784,7 @@ class DefinitionService:
             elif collection == "activations" and scope.environment_id is not None:
                 rows = await repository.rows(
                     "SELECT payload FROM activation_revisions WHERE tenant_id=:tenant AND "
-                    "project_id=:project AND environment_id=:environment AND id=:id",
+                    "project_id=:project AND environment_id=:environment AND id=:id AND NOT test",
                     id=identifier,
                     environment=scope.environment_id,
                 )
@@ -788,7 +817,7 @@ class DefinitionService:
             if collection in {"Workflow", "Action", "Connector", "DecisionTable"}:
                 sql = (
                     "SELECT id,kind,name,version,digest,definition_digest,artifact FROM definition_versions "
-                    "WHERE tenant_id=:tenant AND project_id=:project AND kind=:kind"
+                    "WHERE tenant_id=:tenant AND project_id=:project AND kind=:kind AND NOT test"
                 )
             elif collection == "drafts":
                 sql = (
@@ -800,7 +829,7 @@ class DefinitionService:
             elif collection == "activations" and scope.environment_id is not None:
                 sql = (
                     "SELECT id,payload FROM activation_revisions WHERE tenant_id=:tenant AND "
-                    "project_id=:project AND environment_id=:environment"
+                    "project_id=:project AND environment_id=:environment AND NOT test"
                 )
             else:
                 raise CatalogError(422, "WV-COLLECTION", "Invalid collection")
@@ -926,7 +955,7 @@ class DefinitionService:
             repository = DefinitionRepository(tx)
             rows = await repository.rows(
                 "SELECT payload FROM activation_revisions WHERE tenant_id=:tenant AND "
-                "project_id=:project AND environment_id=:environment AND id=:id",
+                "project_id=:project AND environment_id=:environment AND id=:id AND NOT test",
                 environment=scope.environment_id,
                 id=identifier,
             )
@@ -936,8 +965,8 @@ class DefinitionService:
             await lock(tx, f"activation:{scope.tenant_id}:{scope.project_id}:{scope.environment_id}:{selected.name}")
             latest = await repository.rows(
                 "SELECT id,revision FROM activation_revisions WHERE tenant_id=:tenant AND "
-                "project_id=:project AND environment_id=:environment AND name=:name ORDER BY revision "
-                "DESC LIMIT 1",
+                "project_id=:project AND environment_id=:environment AND name=:name AND NOT test "
+                "ORDER BY revision DESC LIMIT 1",
                 environment=scope.environment_id,
                 name=selected.name,
             )
