@@ -21,8 +21,9 @@ stop must leave the run inactive; settlement work leaves it running, so its cont
 the reserve it spent is refreshed when its transaction commits, without the stop's check. Retrying a stuck undo gives
 its task a new deadline, so the task's payload becomes updatable. ``run_transactions.incident_key`` names the latest
 in-doubt incident of a transaction, so incidents and reads find each other without the run's state, and the
-compatibility inventory counts transactions in doubt and undoing. Adding columns with no default changes only the
-catalog, whatever the size of the tables.
+compatibility inventory counts transactions in doubt and undoing. Adding columns with no default or a constant one,
+and a check on a new column that skips the rows already there, changes only the catalog, whatever the size of the
+tables.
 """
 
 import sqlalchemy as sa
@@ -116,7 +117,13 @@ def settling_control() -> None:
 
 def records() -> None:
     op.execute("GRANT UPDATE(payload) ON task_intents TO weave_app")
-    op.execute("ALTER TABLE run_transactions ADD COLUMN incident_key text CHECK(char_length(incident_key) <= 600)")
+    op.execute("ALTER TABLE run_transactions ADD COLUMN incident_key text")
+    # The column is new, so every existing value is NULL and passes: NOT VALID skips reading the table, and the check
+    # still holds for every row written from now on.
+    op.execute(
+        "ALTER TABLE run_transactions ADD CONSTRAINT run_transactions_incident_key_check "
+        "CHECK(char_length(incident_key) <= 600) NOT VALID"
+    )
     op.execute("GRANT UPDATE(incident_key) ON run_transactions TO weave_app")
     # A record charged before this migration had no incident key: the column counts once it holds one.
     anchor = "IF relation='run_calls' AND item->'effect'='null'::jsonb THEN item:=item-'effect'; END IF;"
