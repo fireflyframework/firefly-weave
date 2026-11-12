@@ -22,6 +22,9 @@ when stopped. It never accepts database or administrator settings.
 """
 
 import asyncio
+import base64
+import ipaddress
+import json
 import os
 import signal
 import sys
@@ -44,6 +47,8 @@ from firefly_weave.sdk.worker_registration import register_worker_http
 
 TASK_TYPE = "example-sleep@1.0.0"
 MANIFEST = Path(__file__).with_name("manifest.json")
+# How long the closed probe waits for each address before it counts the address as closed.
+PROBE_SECONDS = 3.0
 
 
 def capacity(environ: Mapping[str, str]) -> int:
@@ -126,9 +131,67 @@ async def main() -> None:
         await worker.run()
 
 
+async def probe_token(environ: Mapping[str, str]) -> str:
+    """Sign in exactly as the worker does and give only the token's issuer: the token, its other claims and the
+    client secret never leave the pod."""
+    private_origins.install(private_origins.load())
+    relay = environ.get("WEAVE_TOKEN_RELAY")
+    if relay:
+        await start_relay(relay)
+    api = environ["WEAVE_API_URL"]
+    provider = ClientCredentialsTokenProvider.from_file(Path(environ["WEAVE_WORKER_OAUTH_CONFIG_FILE"]), api)
+    payload = (await provider.get_access_token(api)).split(".")[1]
+    issuer = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))["iss"]
+    if not isinstance(issuer, str):
+        raise ValueError("The token names no issuer")
+    return json.dumps({"iss": issuer})
+
+
+def _addresses(values: list[str]) -> list[tuple[str, int]] | None:
+    """Literal IP:port pairs; a name could fail to resolve and look closed, so names are refused."""
+    found = []
+    for value in values:
+        host, separator, port = value.rpartition(":")
+        try:
+            address = ipaddress.ip_address(host.removeprefix("[").removesuffix("]"))
+        except ValueError:
+            return None
+        if not separator or not port.isdigit() or not 1 <= int(port) <= 65535:
+            return None
+        found.append((str(address), int(port)))
+    return found
+
+
+async def _answers(host: str, port: int) -> bool:
+    try:
+        _, writer = await asyncio.wait_for(asyncio.open_connection(host, port), PROBE_SECONDS)
+    except (OSError, TimeoutError):
+        return False
+    writer.close()
+    return True
+
+
+async def probe_closed(values: list[str]) -> int:
+    """0 when every address refuses or doesn't answer within PROBE_SECONDS, 1 when one answers, 2 for bad input."""
+    addresses = _addresses(values)
+    if not addresses:
+        return 2
+    answered = await asyncio.gather(*(_answers(host, port) for host, port in addresses))
+    return 1 if any(answered) else 0
+
+
 def cli(argv: list[str]) -> int:
     if argv == ["--release-manifest"]:
         sys.stdout.write(MANIFEST.read_text() if MANIFEST.exists() else _packaged_manifest())
+        return 0
+    if argv[:1] == ["--probe-closed"]:
+        return asyncio.run(probe_closed(argv[1:]))
+    if argv == ["--probe-token"]:
+        try:
+            print(asyncio.run(probe_token(os.environ)))
+        except Exception as error:
+            print("The token probe failed: " + failure(error), file=sys.stderr)
+            return 1
         return 0
     try:
         asyncio.run(main())

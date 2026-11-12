@@ -171,3 +171,62 @@ async def test_registration_gives_up_at_once_on_any_other_refusal():
         with pytest.raises(httpx.HTTPStatusError):
             await module.register(client, "/env", {"release_id": "r", "task_types": [], "capacity": 1}, pause=0)
     assert answers == [201]
+
+
+def _jwt(claims):
+    import base64
+
+    def part(value):
+        return base64.urlsafe_b64encode(json.dumps(value).encode()).rstrip(b"=").decode()
+
+    return f"{part({'alg': 'RS256'})}.{part(claims)}.c2lnbmF0dXJl"
+
+
+def test_the_token_probe_signs_in_as_a_worker_and_prints_only_the_issuer(capsys, monkeypatch, tmp_path):
+    """connect compares the issuer with the platform's; the token, its other claims and the secret stay in the pod."""
+    module = fixture()
+    token = _jwt({"iss": "http://localhost:8080/realms/weave", "azp": "weave-cluster-worker-1", "sub": "canary-sub"})
+    asked = []
+
+    class Provider:
+        @classmethod
+        def from_file(cls, path, api):
+            asked.append((path, api))
+            return cls()
+
+        async def get_access_token(self, target):
+            asked.append(target)
+            return token
+
+    monkeypatch.setattr(module, "ClientCredentialsTokenProvider", Provider)
+    monkeypatch.setenv("WEAVE_API_URL", "http://weave-api.weave-system.svc:8000")
+    monkeypatch.setenv("WEAVE_WORKER_OAUTH_CONFIG_FILE", str(tmp_path / "oauth.json"))
+    monkeypatch.delenv("WEAVE_TOKEN_RELAY", raising=False)
+    assert module.cli(["--probe-token"]) == 0
+    printed = capsys.readouterr()
+    assert printed.out == '{"iss": "http://localhost:8080/realms/weave"}\n' and printed.err == ""
+    assert asked == [
+        (tmp_path / "oauth.json", "http://weave-api.weave-system.svc:8000"),
+        "http://weave-api.weave-system.svc:8000",
+    ]
+
+
+def test_the_closed_probe_fails_when_an_address_answers():
+    import socket
+
+    module = fixture()
+    with socket.socket() as listening, socket.socket() as released:
+        listening.bind(("127.0.0.1", 0))
+        listening.listen()
+        released.bind(("127.0.0.1", 0))
+        closed = f"127.0.0.1:{released.getsockname()[1]}"
+        released.close()
+        open_ = f"127.0.0.1:{listening.getsockname()[1]}"
+        assert module.cli(["--probe-closed", closed]) == 0
+        assert module.cli(["--probe-closed", closed, open_]) == 1
+
+
+@pytest.mark.parametrize("address", ["weave-api.weave-system.svc:8000", "127.0.0.1", "127.0.0.1:0", "[::1]:x"])
+def test_the_closed_probe_accepts_only_ip_addresses_and_ports(address):
+    """A name that doesn't resolve would look closed, so only literal addresses count."""
+    assert fixture().cli(["--probe-closed", address]) == 2
