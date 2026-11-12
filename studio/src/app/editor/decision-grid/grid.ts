@@ -326,13 +326,13 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
       });
     });
     // Each change of the values or the table tries it again; a table with
-    // problems isn't the one the grid shows, so it isn't tried.
+    // problems isn't the one the grid shows, so it isn't tried. An input
+    // that doesn't fit is still sent, so Weave says what doesn't fit.
     effect(() => {
       const spec = this.spec();
       const value = this.table.value();
       const revision = this.revision();
-      const blocked =
-        this.firstError() !== null || this.table.empty() || this.table.unfit();
+      const blocked = this.firstError() !== null || this.table.empty();
       untracked(() => {
         if (!spec || blocked) return this.tries.clear();
         this.tries.set(this.documentOf(spec), value as Json, revision);

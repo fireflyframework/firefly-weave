@@ -2305,6 +2305,7 @@ const scenes: Record<string, Scene> = {
     await expect(panes.input.locator("p.error")).toHaveText([
       "Enter a number.",
     ]);
+    await expect(panes.checked).toBeVisible();
     await expect(grid.root.locator(".dg-mark")).toHaveCount(0);
     await shot("175-decision-grid-input-unfit", { tabs: 0 });
   },

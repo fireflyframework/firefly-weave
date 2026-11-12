@@ -180,16 +180,16 @@ export function tryView(input: TryViewInput): TryView {
         rest: "Fix the problems under the table to see the result.",
       },
     };
-  // An input that doesn't fit isn't tried: no marks, no result.
+  // An input that doesn't fit isn't tried by Studio: no marks, no result.
+  // Weave still checks it, and its refusal says what doesn't fit.
   const unfit: TryView = {
     ...blank,
     kind: "refused",
     count: "Not checked",
     callout: { tone: "danger", lead: REFUSALS[INPUT], rest: "" },
   };
-  if (input.unfit) return unfit;
   if (state.revision !== revision || !state.live)
-    return { ...blank, kind: "pending" };
+    return input.unfit ? unfit : { ...blank, kind: "pending" };
 
   const { checked, live } = state;
   const pill: TryView["pill"] =
@@ -229,6 +229,21 @@ export function tryView(input: TryViewInput): TryView {
             ),
           }
         : null;
+  if (input.unfit) {
+    const weave =
+      checked && typeof checked === "object" && "refused" in checked
+        ? checked.refused
+        : null;
+    return {
+      ...unfit,
+      count: weave ? "" : unfit.count,
+      pill: checked === "checking" || weave ? pill : null,
+      note,
+      callout: weave
+        ? { ...unfit.callout!, lead: weave.message }
+        : unfit.callout,
+    };
+  }
   if (refusal?.code === INPUT)
     return {
       ...unfit,

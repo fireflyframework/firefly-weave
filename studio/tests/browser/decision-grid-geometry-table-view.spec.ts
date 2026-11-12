@@ -745,8 +745,10 @@ test.describe("Table view at 1440x900", () => {
     await expect(panes.output.locator(".dg-callout")).toContainText(
       "The input doesn't fit the table's input fields.",
     );
-    await expect(panes.count).toHaveText("Not checked");
-    await expect(panes.checked).toHaveCount(0);
+    // Weave still checks it and says what doesn't fit.
+    await expect(panes.checked).toHaveAttribute("data-tone", "neutral");
+    await expect(grid.root.locator(".dg-mark")).toHaveCount(0);
+    await expect(panes.result).toHaveCount(0);
     // A number again: the error goes and the marks come back.
     await amount.fill("500");
     await expect(amount).not.toHaveAttribute("aria-invalid", "true");

@@ -361,6 +361,41 @@ describe("the Output pane's view of a try", () => {
     expect(shown.pill).toBeNull();
   });
 
+  it("shows Weave's refusal of an input that doesn't fit, still without marks", () => {
+    const state: Partial<TryState> = {
+      marks: ["no-match", "no-match", "no-match"],
+      live: { ok: false, code: "WV-DECISION-INPUT", path: "/input" },
+    };
+    const checking = tryView(input(spec(), state, { unfit: true }));
+    expect(checking.pill).toEqual({
+      text: "Checking with Weave…",
+      tone: "neutral",
+    });
+    expect(checking.marks).toEqual([null, null, null]);
+    const refused = tryView(
+      input(
+        spec(),
+        {
+          ...state,
+          checked: {
+            refused: {
+              code: "WV-DECISION-INPUT",
+              message: "The input is missing amount.",
+              path: "/input/amount",
+              rules: [],
+            },
+          },
+        },
+        { unfit: true },
+      ),
+    );
+    expect(refused.pill).toEqual({ text: "Checked by Weave", tone: "neutral" });
+    expect(refused.callout?.lead).toBe("The input is missing amount.");
+    expect(refused.count).toBe("");
+    expect(refused.marks).toEqual([null, null, null]);
+    expect(refused.result).toBeNull();
+  });
+
   it("withholds the result while the table has a problem", () => {
     const live = {
       marks: ["match", "no-match", "no-match"] as const,
