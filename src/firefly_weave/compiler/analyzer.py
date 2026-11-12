@@ -70,6 +70,13 @@ from firefly_weave.compiler.parser import ParsedSource
 from firefly_weave.compiler.schema_profile import DEFAULT_CONTRACT_LIMITS, SchemaLimits
 from firefly_weave.compiler.schemas import validate_contract_payload, validate_payload, validate_schema
 from firefly_weave.compiler.source_map import pointer_child
+from firefly_weave.compiler.step_errors import (
+    ERROR_MESSAGES,
+    continued_output,
+    error_path_output,
+    error_shape_issues,
+    without_error_shape_issues,
+)
 from firefly_weave.compiler.transactions import (
     RULE_CODES,
     RULE_MESSAGES,
@@ -92,6 +99,7 @@ from firefly_weave.contracts.definitions import SideEffect, load_definition
 from firefly_weave.contracts.diagnostics import Diagnostic, RelatedLocation, SourceRange, SuggestedEdit
 from firefly_weave.contracts.language_features import UNDO_FIELDS, UNDO_KINDS
 from firefly_weave.contracts.limits import Limits
+from firefly_weave.contracts.step_errors import STEP_ERROR_SCHEMA
 from firefly_weave.contracts.transactions import DEFAULT_HOLD_SECONDS, TRANSIENT_WORKER_CODES, UndoMode, UndoPhase
 from firefly_weave.contracts.values import JsonObject, JsonValue
 
@@ -136,6 +144,8 @@ _MESSAGES = {
     ),
     "UNKNOWN_WORKFLOW": CALL_MESSAGES["UNKNOWN_WORKFLOW"],
     "CALL_MODE": CALL_MESSAGES["CALL_MODE"],
+    "ERROR_PATH": ERROR_MESSAGES["ERROR_PATH"],
+    "ON_ERROR_AMBIGUOUS": ERROR_MESSAGES["ON_ERROR_AMBIGUOUS"],
 } | {RULE_CODES[key]: message for key, message in RULE_MESSAGES.items() if "{" not in message}
 
 
@@ -212,6 +222,9 @@ class ScopeCapture:
     loops: tuple[LoopScope, ...]
     # False when every path to the position fails, so the compiler never evaluates it.
     evaluated: bool
+    # Steps whose error object may be read, in execution order: step ID, kind, and whether it is always there (inside
+    # the step's own error path) rather than only after a failure.
+    errors: tuple[tuple[str, str, bool], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -326,6 +339,9 @@ class _Analyzer:
         self.participants: dict[str, Participant] = {}
         self.pivots: set[str] = set()
         self.after_pivot: dict[str, tuple[str, ...]] = {}
+        # What each step's failure does once it is analyzed, and the steps whose error path is being analyzed.
+        self.error_policies: dict[str, str] = {}
+        self.error_owners: tuple[str, ...] = ()
 
     def location(self, path: str) -> SourceRange | None:
         while path not in self.source.locations and path:
@@ -672,10 +688,13 @@ class _Analyzer:
             ]
         if step["kind"] == "forEach":
             return [("body", cast(JsonObject, step["body"]), path + "/body")]
+        values: list[tuple[str, JsonObject, str]] = []
         if step["kind"] == "transaction":
             # A transaction is its own block: its steps and output sit beside its other fields.
-            return [("body", step, path)]
-        return []
+            values.append(("body", step, path))
+        if isinstance(step.get("errorPath"), dict):
+            values.append(("errorPath", cast(JsonObject, step["errorPath"]), path + "/errorPath"))
+        return values
 
     def infer(self, expression: JsonObject, visible: dict[str, JsonObject]) -> InferredType:
         requested: set[str] = set()
@@ -704,9 +723,14 @@ class _Analyzer:
         if include_input:
             context["input"] = self.input_schema
         if include_steps:
-            context["steps"] = _object(
-                {key: _object({"output": schema}) for key, schema in visible.items() if include_all or key in requested}
-            )
+            entries: dict[str, JsonValue] = {
+                key: self.binding(key, schema) for key, schema in visible.items() if include_all or key in requested
+            }
+            for key in self.error_owners:
+                # Inside its own error path a step has failed: its error is always there, and it has no output.
+                if key not in visible and (include_all or key in requested):
+                    entries[key] = _object({"error": STEP_ERROR_SCHEMA})
+            context["steps"] = _object(entries)
         if include_loops and self.loops:
             context["item"] = self.loops[-1].item
             context["index"] = self.loops[-1].index
@@ -716,16 +740,43 @@ class _Analyzer:
             context["transaction"] = TRANSACTION_SCHEMA
         return infer_expression(expression, context, limits=self.limits, schema_limits=self.schema_limits)
 
+    def binding(self, step: str, output: JsonObject) -> JsonObject:
+        """What ``/steps/<step>`` holds after the step: its output, and the error object when it handles failures."""
+        if self.error_policies.get(step, "stop") == "stop":
+            return _object({"output": output})
+        return {
+            "type": "object",
+            "properties": {"output": output, "error": STEP_ERROR_SCHEMA},
+            "required": ["output"],
+            "additionalProperties": False,
+        }
+
+    def error_reference(self, segments: tuple[str, ...], visible: dict[str, JsonObject]) -> str | None:
+        """The code of a step-error rule a ``/steps`` reference breaks, if any."""
+        if len(segments) < 3 or segments[0] != "steps":
+            return None
+        step, field = segments[1], segments[2]
+        if step in self.error_owners and step not in visible and field != "error":
+            return "ERROR_PATH_OUTPUT"
+        if step in visible and field == "error" and self.error_policies.get(step, "stop") == "stop":
+            return "ERROR_REFERENCE"
+        return None
+
     def observe(self, path: str, visible: dict[str, JsonObject], evaluated: bool = True) -> None:
         """Record the scope at the expression ``path`` when it holds the captured position."""
         if self.capture is None or self.captured is not None:
             return
         if self.capture == path or self.capture.startswith(path + "/"):
+            owners = tuple((key, self.kinds[key], True) for key in self.error_owners if key not in visible)
+            handled = tuple(
+                (key, self.kinds[key], False) for key in visible if self.error_policies.get(key, "stop") != "stop"
+            )
             self.captured = ScopeCapture(
                 self.input_schema,
                 tuple((key, self.kinds[key], schema) for key, schema in visible.items()),
                 self.loops,
                 evaluated,
+                owners + handled,
             )
 
     def expression(
@@ -739,9 +790,13 @@ class _Analyzer:
                 node, location = stack.pop()
                 if "ref" in node:
                     segments = pointer_segments(cast(str, node["ref"]))
-                    if (
+                    rule = self.error_reference(segments, visible)
+                    if rule is not None:
+                        self.issue(rule, location + "/ref", message=ERROR_MESSAGES[rule].format(step=segments[1]))
+                    elif (
                         len(segments) >= 2
                         and segments[0] == "steps"
+                        and segments[1] not in self.error_owners
                         and not reference_available(segments[1], frozenset(visible))
                     ):
                         self.issue("UNAVAILABLE_REFERENCE", location + "/ref")
@@ -773,13 +828,28 @@ class _Analyzer:
         if "ref" in expression:
             result = self.infer(expression, visible)
             segments = pointer_segments(cast(str, expression["ref"]))
-            unavailable = len(segments) >= 2 and segments[0] == "steps" and segments[1] not in visible
+            unavailable = (
+                len(segments) >= 2
+                and segments[0] == "steps"
+                and segments[1] not in visible
+                and segments[1] not in self.error_owners
+            )
             outside = bool(segments) and segments[0] in UNDO_ROOTS and self.undo is None
-            if unavailable or outside or not self.in_loop_scope(segments):
+            broken = self.error_reference(segments, visible) is not None
+            if unavailable or outside or broken or not self.in_loop_scope(segments):
                 return
             # In an undo phase, the step's own output is maybe missing as a whole, not per decision path.
             own = self.undo is not None and len(segments) > 1 and segments[1] == self.undo_step
-            if not handled and not own and len(segments) > 3 and segments[0] == "steps" and segments[2] == "output":
+            # A step that continues on error may have no output at all: that is presence, not an incomplete branch.
+            continued = self.error_policies.get(segments[1]) == "continue" if len(segments) > 1 else False
+            if (
+                not handled
+                and not own
+                and not continued
+                and len(segments) > 3
+                and segments[0] == "steps"
+                and segments[2] == "output"
+            ):
                 variants = [visible[segments[1]]]
                 while variants:
                     variant = variants.pop()
@@ -916,6 +986,8 @@ class _Analyzer:
             output: JsonObject = {"type": "null"}
             branches: list[AnalyzedBranch] = []
             completes = kind != "fail"
+            # The side effect of the action an action or AI step runs, once the catalog resolves it.
+            side_effect: JsonValue = None
             if kind == "transform":
                 output = self.expression(cast(JsonObject, step["value"]), location + "/value", visible)
                 self.guard(location + "/value", "transform_output", output)
@@ -931,6 +1003,7 @@ class _Analyzer:
                 self.expression(cast(JsonObject, step["context"]), location + "/context", visible)
                 resource = self.resolve("Action", cast(str, step["uses"]), location + "/uses")
                 action_spec = cast(JsonObject, resource.definition.value["spec"]) if resource else None
+                side_effect = action_spec.get("sideEffect") if action_spec else None
                 if profile is not None:
                     output = llm_output_schema(profile)
                     self.guard(location, "action_output", output)
@@ -949,6 +1022,7 @@ class _Analyzer:
             elif kind == "action":
                 resource = self.resolve("Action", cast(str, step["uses"]), location + "/uses")
                 action_spec = cast(JsonObject, resource.definition.value["spec"]) if resource else None
+                side_effect = action_spec.get("sideEffect") if action_spec else None
                 target = cast(JsonObject, action_spec["inputSchema"]) if action_spec else None
                 self.expression(cast(JsonObject, step["with"]), location + "/with", visible, target)
                 if action_spec is not None:
@@ -1054,6 +1128,10 @@ class _Analyzer:
                     )
                     completes = bool(alternatives)
             participation = self.undo_fields(step, location, visible, output) if kind in UNDO_KINDS else None
+            if step.get("onError", "stop") != "stop":
+                output, error_path = self.error_handling(step, location, visible, scope, output, side_effect)
+                if error_path is not None:
+                    branches.append(error_path)
             nodes.append(
                 AnalyzedStep(
                     identifier,
@@ -1073,6 +1151,64 @@ class _Analyzer:
                 visible[identifier] = output
             reachable = reachable and completes
         return tuple(nodes), visible, reachable
+
+    def error_handling(
+        self,
+        step: JsonObject,
+        location: str,
+        visible: dict[str, JsonObject],
+        scope: tuple[str, ...],
+        output: JsonObject,
+        side_effect: JsonValue,
+    ) -> tuple[JsonObject, AnalyzedBranch | None]:
+        """Check what a step's failure does; returns the output later steps see and the analyzed error path."""
+        identifier, policy = cast(str, step["id"]), cast(str, step["onError"])
+        self.kinds[identifier] = cast(str, step["kind"])
+        # Inside a transaction a step that is undone settles an unknown outcome by undoing it, without an incident.
+        undone = self.transaction is not None and ("compensate" in step or "confirm" in step)
+        if side_effect == "non_idempotent" and not undone:
+            self.issue("ON_ERROR_AMBIGUOUS", location + "/onError", severity="info")
+        if policy == "continue":
+            self.error_policies[identifier] = policy
+            return continued_output(output), None
+        path = cast(JsonObject, step["errorPath"])
+        expression = cast(JsonObject, path["output"])
+        outer, self.error_owners = self.error_owners, self.error_owners + (identifier,)
+        try:
+            children, path_visible, completes = self.block(
+                cast(list[JsonObject], path["steps"]),
+                location + "/errorPath/steps",
+                visible,
+                scope + (identifier, "errorPath"),
+            )
+            if completes:
+                path_schema = self.expression(expression, location + "/errorPath/output", path_visible)
+                if self.reads_pending(expression):
+                    self.pending_outputs.add(identifier)
+            else:
+                self.observe(location + "/errorPath/output", path_visible, evaluated=False)
+                path_schema = {}
+        finally:
+            self.error_owners = outer
+        self.error_policies[identifier] = policy
+        self.guard(location + "/errorPath/output", "branch_output", path_schema)
+        contained = not completes
+        if completes and output and path_schema:
+            try:
+                contained = check_compatibility(path_schema, output, self.bundle, limits=self.schema_limits) == (
+                    "compatible"
+                )
+            except TypeCheckLimit:
+                contained = False
+        branch = AnalyzedBranch(
+            "errorPath",
+            location + "/errorPath",
+            children,
+            FrozenDocument.from_value(expression),
+            self.freeze_schema(path_schema),
+            completes,
+        )
+        return error_path_output(output, path_schema, contained), branch
 
     def loop(
         self, step: JsonObject, location: str, visible: dict[str, JsonObject], scope: tuple[str, ...]
@@ -1236,6 +1372,13 @@ class _Analyzer:
                 bound = {"wait": "durationSeconds", "signal": "timeoutSeconds", "humanTask": "expirySeconds"}
                 seconds = value.get(bound[step.kind]) if step.kind in bound else None
                 found.append(Other(step.id, step.path, step.kind, cast(int | None, seconds)))
+            for path in (branch for branch in step.branches if branch.name == "errorPath"):
+                # After a failure the step's error path runs instead of nothing: a choice between the two.
+                paths = (
+                    StepSequence(path.path + "/steps", ()),
+                    StepSequence(path.path + "/steps", self.elements(path.steps)),
+                )
+                found.append(Choice(step.id, path.path, paths))
         return tuple(found)
 
     def transaction_issue(self, finding: TransactionIssue) -> None:
@@ -1512,10 +1655,15 @@ class _Analyzer:
         for key, path in shapes:
             self.issue(RULE_CODES[key], path, message=RULE_MESSAGES[key])
         document = without_undo_shape_issues(document) if shapes else document
+        # And error settings that do not fit together.
+        errors = error_shape_issues(document) if contract == "workflow" else []
+        for code, path in errors:
+            self.issue("CALL_MODE" if code == "ERROR_CALL_MODE" else code, path, message=ERROR_MESSAGES[code])
+        document = without_error_shape_issues(document) if errors else document
         issues = validate_contract_payload(contract, document, limits=self.contract_limits)
         for issue in issues:
             self.add(issue)
-        if issues or detached or shapes:
+        if issues or detached or shapes or errors:
             return self.finish(None, None)
         model = load_definition(self.source.value)
         value = model.model_dump(by_alias=True)

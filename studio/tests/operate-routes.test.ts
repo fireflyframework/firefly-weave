@@ -21,6 +21,8 @@ import {
   clustersRoute,
   clustersTabPath,
   legacyRedirects,
+  metricsPath,
+  metricsRoute,
   navEntryVisible,
   operateRoutes,
   releasesPath,
@@ -67,7 +69,7 @@ describe("Operate routes", () => {
       view: "overview",
       id: "",
     });
-    expect(viewFromPath("/operate/metrics")).toBeNull();
+    expect(viewFromPath("/operate/logs")).toBeNull();
     expect(viewFromPath("/tasks")).toEqual({ view: "tasks", id: "" });
     expect(viewFromPath("/")).toBeNull();
   });
@@ -109,6 +111,7 @@ describe("Operate routes", () => {
       "operate/incidents",
       "operate/workers",
       "operate/clusters",
+      "operate/metrics",
       "operate/runs/:id",
       "operate/workers/releases",
       "operate/workers/releases/:id",
@@ -186,6 +189,30 @@ describe("Operate routes", () => {
     expect(clustersTabPath("runners")).toBe("/operate/clusters?tab=runners");
   });
 
+  it("keeps the Metrics range and workflow in the address, and nothing else", () => {
+    expect(viewPath("metrics")).toBe("/operate/metrics");
+    expect(viewFromPath("/operate/metrics")).toEqual({
+      view: "metrics",
+      id: "",
+    });
+    expect(metricsRoute("")).toEqual({ range: "24h", workflow: "" });
+    expect(metricsRoute("?range=7d&workflow=order-review")).toEqual({
+      range: "7d",
+      workflow: "order-review",
+    });
+    // An unknown range falls back to the default; a name that is not a workflow name is dropped.
+    expect(metricsRoute("?range=2y&workflow=%3Cscript%3E")).toEqual({
+      range: "24h",
+      workflow: "",
+    });
+    expect(metricsPath({ range: "24h", workflow: "" })).toBe(
+      "/operate/metrics",
+    );
+    expect(metricsPath({ range: "1h", workflow: "order-review" })).toBe(
+      "/operate/metrics?range=1h&workflow=order-review",
+    );
+  });
+
   it("shows every entry without a known identity, and Operate entries by capability", () => {
     for (const entry of [
       "overview",
@@ -193,6 +220,7 @@ describe("Operate routes", () => {
       "incidents",
       "workers",
       "clusters",
+      "metrics",
       "tasks",
     ])
       expect(navEntryVisible(entry, null)).toBe(true);
@@ -205,6 +233,9 @@ describe("Operate routes", () => {
     expect(navEntryVisible("incidents", holds)).toBe(false);
     expect(navEntryVisible("workers", holds)).toBe(false);
     expect(navEntryVisible("clusters", holds)).toBe(true);
+    // Metrics reads run statistics, which need status.read like the summary.
+    expect(navEntryVisible("metrics", holds)).toBe(false);
+    expect(navEntryVisible("metrics", (c) => c === "status.read")).toBe(true);
     // Pages outside Operate never hide: their own pages explain access.
     expect(navEntryVisible("tasks", holds)).toBe(true);
     expect(navEntryVisible("connections", () => false)).toBe(true);

@@ -26,8 +26,8 @@ from test_incident_migration import upgrade
 from test_transaction_migration import insert_transaction
 
 pytestmark = pytest.mark.integration
-PRIOR_HEAD = "0037_language_transactions"
-HEAD = "0038_transactions_reserve"
+PRIOR_HEAD = "0038_operations_statistics"
+HEAD = "0039_transactions_reserve"
 
 
 async def test_records_charged_before_the_upgrade_cost_the_same_and_naming_an_incident_charges_it(empty_settings):

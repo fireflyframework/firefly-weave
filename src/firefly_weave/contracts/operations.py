@@ -44,7 +44,8 @@ class RecordedResolution(ContractModel):
     """A resolution as an incident keeps it: `output` is always written, null when it has none."""
 
     receipt_id: UUID
-    # accept_reconciled_failure: a person said the step that can't be undone did not happen ("It didn't happen").
+    # accept_reconciled_failure: a person confirmed the step had no effect, so the step's onError setting applies;
+    # on a transaction's step that can't be undone it means "It didn't happen" and the transaction goes back.
     kind: Literal["retry_safe", "accept_reconciled_result", "accept_reconciled_failure", "terminate"]
     reason: str = Field(min_length=1, max_length=2000)
     output: JsonData = None

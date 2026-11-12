@@ -28,8 +28,8 @@ catalog, whatever the size of the tables.
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0038_transactions_reserve"
-down_revision = "0037_language_transactions"
+revision = "0039_transactions_reserve"
+down_revision = "0038_operations_statistics"
 
 
 def patch_function(signature: str, anchor: str, replacement: str, *, applied: str) -> None:

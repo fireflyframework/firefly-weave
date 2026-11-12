@@ -177,6 +177,14 @@ from firefly_weave.contracts.public import (
     WebhookEnvelope,
 )
 from firefly_weave.contracts.run_lifecycle import RunLifecycle, RunLifecycleRequest, RunPurgeRequest
+from firefly_weave.contracts.run_statistics import (
+    StatisticsSeriesAnswer,
+    StatisticsSeriesQuery,
+    StatisticsStepsQuery,
+    StatisticsWorkflowsQuery,
+    StepStatisticsAnswer,
+    WorkflowStatisticsAnswer,
+)
 from firefly_weave.contracts.run_views import (
     RunListQuery,
     RunLogPage,
@@ -312,7 +320,11 @@ class Operation:
                 )
                 params.append(
                     OpenAPIParameter(
-                        name, "query", _present(field.annotation), required=field.is_required(), **documented
+                        field.alias or name,
+                        "query",
+                        _present(field.annotation),
+                        required=field.is_required(),
+                        **documented,
                     )
                 )
         if self.id == "human_tasks.list":
@@ -902,6 +914,30 @@ OPERATIONS = {
         ),
         Operation(
             "operations_telemetry.read", PROJECT + "/operations/telemetry", "GET", OperationsTelemetry, "status.read"
+        ),
+        Operation(
+            "run_statistics.series",
+            ENVIRONMENT + "/run-statistics/series",
+            "GET",
+            StatisticsSeriesAnswer,
+            "status.read",
+            query=StatisticsSeriesQuery,
+        ),
+        Operation(
+            "run_statistics.workflows",
+            ENVIRONMENT + "/run-statistics/workflows",
+            "GET",
+            WorkflowStatisticsAnswer,
+            "status.read",
+            query=StatisticsWorkflowsQuery,
+        ),
+        Operation(
+            "run_statistics.steps",
+            ENVIRONMENT + "/run-statistics/steps",
+            "GET",
+            StepStatisticsAnswer,
+            "status.read",
+            query=StatisticsStepsQuery,
         ),
         Operation(
             "retention.plan",

@@ -116,6 +116,40 @@ def test_a_transaction_is_cut_like_a_sequence():
     assert sliced["spec"]["steps"][0]["output"] == {"literal": None}
 
 
+def test_a_step_inside_an_error_path_keeps_its_step_and_the_path_up_to_it():
+    document = copy.deepcopy(WORKFLOW)
+    lookup = {
+        **transform("lookup"),
+        "onError": "errorOutput",
+        "errorPath": {"steps": [transform("note"), transform("later")], "output": {"literal": 1}},
+    }
+    document["spec"]["steps"] = [transform("first"), lookup, transform("after")]
+    sliced = slice_for_target(document, "note")
+    assert sliced is not None
+    assert [s["id"] for s in sliced["spec"]["steps"]] == ["first", "lookup"]
+    kept = sliced["spec"]["steps"][1]
+    assert (kept["value"], kept["onError"]) == (lookup["value"], "errorOutput")
+    assert kept["errorPath"] == {"steps": [transform("note")], "output": {"literal": None}}
+    assert "note" in [step["id"] for step in steps_of(document["spec"]["steps"])]
+
+
+def test_a_transaction_keeps_its_body_when_the_target_is_in_its_error_path():
+    document = copy.deepcopy(WORKFLOW)
+    document["spec"]["steps"] = [
+        {
+            "id": "move",
+            "kind": "transaction",
+            "steps": [transform("hold")],
+            "output": {"literal": 1},
+            "onError": "errorOutput",
+            "errorPath": {"steps": [transform("note")], "output": {"literal": 2}},
+        }
+    ]
+    kept = slice_for_target(document, "note")["spec"]["steps"][0]
+    assert kept["steps"] == [transform("hold")]
+    assert kept["errorPath"] == {"steps": [transform("note")], "output": {"literal": None}}
+
+
 def test_an_unknown_target_or_a_broken_document_gives_nothing_and_changes_nothing():
     before = copy.deepcopy(WORKFLOW)
     assert slice_for_target(WORKFLOW, "nowhere") is None

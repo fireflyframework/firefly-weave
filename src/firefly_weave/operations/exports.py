@@ -138,6 +138,7 @@ def safe_event(event: RuntimeEvent, artifact: CompiledArtifact | None, *, unavai
             "reason",
             "evidence_reference",
             "code",
+            "attempts",
         },
         "cancelled": {"actor_id", "reason", "code", "skip_undo"},
         "timed_out": {"node_id", "deadline", "wait_id", "code"},

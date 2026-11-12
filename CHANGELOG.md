@@ -40,7 +40,37 @@ SPDX-License-Identifier: Apache-2.0
   `weave.transactions` and `weave.transaction_phases` count them. Histories
   with transactions export and replay. Debug sessions don't simulate
   transactions yet. Weave AI's guide names the `transaction` step. Migration
-  `0038_transactions_reserve` changes only the catalog.
+  `0039_transactions_reserve` changes only the catalog.
+- Steps can handle their own failures with the On error setting: `onError:
+  continue` goes on with a `null` output, and `onError: errorOutput` runs the
+  step's `errorPath`, whose output becomes the step's output. Actions, AI tasks,
+  transforms, decision tables, human tasks, signals, transactions and waiting
+  calls accept it; the platform lists `flow.onError`. A handled failure is read
+  at `/steps/<id>/error` as `{code, message, outcome, attempts, instanceKey,
+  childRunId?}`, opens no incident, records a `step_failed` event and a `failed`
+  step change, counts in run facts (`handled_errors`) and in
+  `weave.step_errors`, and exports and replays. Retries come first, and an
+  unknown outcome of an action that changes data and is never retried still
+  stops the run until a person resolves it, now also with Confirm it had no
+  effect (`accept_reconciled_failure`, evidence required). Debug sessions and
+  `weave workflow simulate --error KEY=CODE` make steps fail on purpose. The
+  compiler reports `WV-COMP-ERROR_PATH`, `WV-COMP-ERROR_PATH_OUTPUT`,
+  `WV-COMP-ERROR_REFERENCE`, `WV-COMP-ON_ERROR_AMBIGUOUS` and
+  `WV-COMP-CALL_MODE` for `onError`. No migration. See
+  [Handle step errors](docs/guides/handle-step-errors.md).
+- Run metrics: **Operate › Metrics** in Studio shows runs started, success and
+  failure rates, p50 and p95 run duration and the oldest ready task for a
+  range (1 hour to 30 days) and optionally one workflow, with charts of
+  throughput, failure rate, durations, ready tasks by task type, outbox backlog
+  and worker utilization, a table of workflows with their steps, table views of
+  every chart and CSV export. Overview gains a line for the last hour under
+  each Load figure and a **Last 24 h** band. The platform keeps the figures
+  itself: the operations loop rolls finished runs and steps into 5-minute,
+  hourly and daily histograms and samples shared capacity every minute; test
+  runs never count. New reads `run_statistics.series`, `.workflows` and
+  `.steps` (`status.read`; `weave operations statistics`), errors
+  `WV-STATS-RANGE` and `WV-STATS-SERIES`, and the summary's optional
+  `runs_24h`. Migration `0038_operations_statistics`.
 - With **Try the new editor** on, **Execute step**, **Execute previous steps**
   and **Execute workflow** simulate in Studio, on this computer, without a
   platform: step details, the trigger's button, the editor bar and

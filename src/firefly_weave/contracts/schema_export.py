@@ -202,6 +202,12 @@ def contract_models() -> dict[str, SchemaModel]:
         VersionView,
     )
     from firefly_weave.contracts.run_lifecycle import RunLifecycle, RunLifecycleRequest, RunPurgeRequest
+    from firefly_weave.contracts.run_statistics import (
+        RunsDaySection,
+        StatisticsSeriesAnswer,
+        StepStatisticsAnswer,
+        WorkflowStatisticsAnswer,
+    )
     from firefly_weave.contracts.run_views import (
         RunListQuery,
         RunLogPage,
@@ -218,6 +224,7 @@ def contract_models() -> dict[str, SchemaModel]:
         UnavailableRunAcknowledgment,
     )
     from firefly_weave.contracts.schedules import ScheduleOccurrence, ScheduleRequest, ScheduleView
+    from firefly_weave.contracts.step_errors import StepError
     from firefly_weave.contracts.teams import TeamsReactivateRequest, TeamsReference, TeamsRevokeRequest
     from firefly_weave.contracts.whatsapp import WhatsAppDeliveryState, WhatsAppStatusFact
     from firefly_weave.contracts.worker_queries import (
@@ -418,6 +425,10 @@ def contract_models() -> dict[str, SchemaModel]:
         "release-usage": ReleaseUsage,
         "operations-summary": OperationsSummary,
         "operations-telemetry": OperationsTelemetry,
+        "run-statistics-series": StatisticsSeriesAnswer,
+        "run-statistics-workflows": WorkflowStatisticsAnswer,
+        "run-statistics-steps": StepStatisticsAnswer,
+        "runs-day-section": RunsDaySection,
         "lease-proof": LeaseProof,
         "task-lease": TaskLease,
         "completion-receipt": CompletionReceipt,
@@ -448,6 +459,7 @@ def contract_models() -> dict[str, SchemaModel]:
         "worker-implementation": WorkerImplementation,
         "worker-routing": WorkerRouting,
         "platform-event-v1": PlatformEvent,
+        "step-error": StepError,
     }
 
 

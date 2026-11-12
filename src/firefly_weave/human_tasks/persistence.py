@@ -23,6 +23,20 @@ if TYPE_CHECKING:
     from firefly_weave.runtime.repository import RuntimeRepository
 
 
+async def expire_task(repository: "RuntimeRepository", run_id: UUID, node_id: object) -> None:
+    """Close the open human task of one step as expired, when its step handles the expiry and the run goes on."""
+    from firefly_weave.runtime.repository import SCOPE
+
+    await repository.execute(
+        f"WITH closed AS (UPDATE human_tasks SET status='expired',revision=revision+1 WHERE {SCOPE} "
+        "AND run_id=:run AND node_id=:node AND status IN ('ready','claimed') RETURNING *) "
+        "INSERT INTO human_task_audit(tenant_id,project_id,environment_id,task_id,revision,action,created_at) "
+        "SELECT tenant_id,project_id,environment_id,id,revision,status,clock_timestamp() FROM closed",
+        node=node_id,
+        run=run_id,
+    )
+
+
 async def close_tasks(repository: "RuntimeRepository", run_id: UUID, status: str, node_id: object) -> None:
     from firefly_weave.runtime.repository import SCOPE
 

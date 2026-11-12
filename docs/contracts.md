@@ -227,6 +227,19 @@ workflow that uses a loop or a call (`WV-IR-UNSUPPORTED`). A platform runs a con
 contain `[`, `#`, or `~`, which keeps
 [instance keys](reference/compiler.md#instance-keys) unambiguous.
 
+**Step error handling.** Actions, AI tasks, transforms, decision tables, human
+tasks, signals, transactions, and waiting calls accept `onError: stop |
+continue | errorOutput` and, with `errorOutput` only, an `errorPath` block
+(`{steps, output}`). Both fields are omitted when absent, so existing documents
+keep their bytes. They need the language feature `flow.onError`. A handled
+failure is recorded as the step's error object `{code, message, outcome,
+attempts, instanceKey, childRunId?}` (exported as `step-error.schema.json`) at
+`/steps/<id>/error`; history records it as a `step_failed` event and a step
+change with `status: failed` and `error`; IR edges gain the kind `error` and
+joins the mode `error`. Incidents gain the resolution
+`accept_reconciled_failure` (Confirm it had no effect). See
+[Handle step errors](guides/handle-step-errors.md).
+
 Branches may contain zero steps, but each must declare its `output`. The compiler,
 not the shape check, enforces unique step IDs, unique signal names, branch scope,
 output compatibility, and concurrency budgets.

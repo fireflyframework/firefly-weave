@@ -142,10 +142,12 @@ def test_the_committed_map_is_valid():
         "workflow-call-runtime",
         "workflow-call-simulation",
         "workflow-transaction-runtime",
+        "step-error-handling",
         "ai-gateway",
         "ai-models-screen",
         "run-views",
         "compose-operations",
+        "metrics",
         "acceptance-foundations",
         "real-platform-journeys",
     ]
@@ -155,10 +157,10 @@ def test_the_committed_map_is_valid():
     assert enablement.applies("J0.12", "ai") and not enablement.applies("J0.12", "pr")
     assert enablement.missing("J0.3/owner-roles") == ()
     assert enablement.missing("J5.1") == ()
-    # Local operations landed: the compose-gated steps run, those that also need metrics, logs or alerts wait.
-    for step in ("J0.3/operations", "J0.10", "J5.2", "J5.3", "J5.7", "J9.2/operations-controls"):
+    # Local operations and metrics landed: the compose-gated steps and J5.4 run, those that need logs or alerts wait.
+    for step in ("J0.3/operations", "J0.10", "J5.2", "J5.3", "J5.4", "J5.7", "J9.2/operations-controls"):
         assert enablement.missing(step) == (), step
-    assert enablement.missing("J5.4") == ("metrics",)
+    assert enablement.missing("J5.6") == ("alerts",)
     assert enablement.applies("J5.1", "pr") and not enablement.applies("J5.1", "ai")
     assert enablement.journey_steps("J1") == tuple(f"J1.{n}" for n in range(1, 11))
     assert enablement.journey_steps("J2") == tuple(f"J2.{n}" for n in range(1, 10))
@@ -168,7 +170,9 @@ def test_the_committed_map_is_valid():
     # J9: authorization (J9.1, J9.2), private origins (J9.3) and the canary scan (J9.4); cluster hardening is J6.1.
     assert enablement.journey_steps("J9") == tuple(f"J9.{n}" for n in range(1, 5))
     assert enablement.applies("J8.4", "nightly") and not enablement.applies("J8.4", "pr")
-    assert "step-error-handling" in enablement.missing("J3.10")
+    # Step error handling landed; the journey still waits for the Studio controls it drives.
+    assert "step-error-handling" not in enablement.missing("J3.10")
+    assert "activation-dialog" in enablement.missing("J3.10")
     assert enablement.checks("J9.2") == ("J9.2/execute-in-local", "J9.2/operations-controls")
     # The connection Test that sends a request is J1.3's, not J9.3's; it waits for connections in step details.
     assert "step-details" in enablement.missing("J1.3/test-sends-request")

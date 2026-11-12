@@ -99,6 +99,7 @@ nav:
       - Publish and run with the CLI: guides/cli-tutorial.md
       - Add human approvals: guides/human-tasks.md
       - Call another workflow: guides/call-workflows.md
+      - Handle step errors: guides/handle-step-errors.md
       - Undo steps together with a transaction: guides/transactions.md
       - Work with files: guides/files.md
       - Connect FTP and cloud drives: guides/file-connectors.md
@@ -147,6 +148,7 @@ nav:
       - Troubleshoot a platform: operations/troubleshooting.md
       - Manage clusters and deployments: operations/cluster-management.md
       - Install an Operations runner: operations/operations-runner.md
+      - Read run metrics: operations/metrics.md
       - Export metrics and traces: operations/observability.md
       - Upgrade a platform: operations/upgrades.md
       - Back up and restore: operations/backup-restore.md

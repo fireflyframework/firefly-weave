@@ -37,6 +37,7 @@ from firefly_weave.contracts.incident_queries import IncidentQuery
 from firefly_weave.contracts.instance_keys import node_of
 from firefly_weave.contracts.operations import IncidentResolution, IncidentView
 from firefly_weave.contracts.public import UnavailableResource
+from firefly_weave.contracts.step_errors import confirmable
 from firefly_weave.contracts.transactions import IN_DOUBT_CODES, split_phase
 from firefly_weave.contracts.values import JsonObject
 from firefly_weave.definitions.models import CatalogError
@@ -44,8 +45,8 @@ from firefly_weave.operations.fact_positions import RunPosition
 from firefly_weave.operations.fact_reads import FactReadRepository, incident_of, transaction_facts
 from firefly_weave.operations.facts import task_fact_update
 from firefly_weave.persistence.uow import Transaction
+from firefly_weave.runtime.kernel import error_policy, validate_action, workflow
 from firefly_weave.runtime.kernel import transition_async as transition
-from firefly_weave.runtime.kernel import validate_action, workflow
 from firefly_weave.runtime.models import RuntimeEvent
 from firefly_weave.runtime.repository import SCOPE, RuntimeRepository
 from firefly_weave.runtime.service import RuntimeService, event_hash, view_of
@@ -169,15 +170,27 @@ class IncidentService:
             call = None
             ready: tuple[dict[str, Any], int] | None = None
             transaction_key: str | None = None
-            if request.kind == "accept_reconciled_failure" and incident["code"] != "WV-TXN-PIVOT-UNKNOWN":
+            # Dispatched on the incident's code first: a transaction in doubt moves only through its own resolutions,
+            # where accept_reconciled_failure is "It didn't happen" and a step's On error setting never applies.
+            if incident["code"] in IN_DOUBT_CODES:
+                if request.kind == "accept_reconciled_failure" and incident["code"] != "WV-TXN-PIVOT-UNKNOWN":
+                    raise CatalogError(
+                        409,
+                        "WV-RUNTIME-RECONCILIATION_REQUIRED",
+                        "Only the step that can't be undone can be said not to have happened",
+                    )
+                transaction_key, task, call, ready = await self._transaction_resolution(
+                    repository, ir, previous, incident, request, actor=actor, scope=scope, context=context
+                )
+            elif request.kind == "accept_reconciled_failure" and (
+                isinstance(node, CallWorkflowNode) or not confirmable(incident["node_id"] or "", incident["code"])
+            ):
+                # A called workflow's own history says what it did; an undo, a confirm or a cancel belongs to its
+                # transaction; an interim failure is still recovery's to decide.
                 raise CatalogError(
                     409,
                     "WV-RUNTIME-RECONCILIATION_REQUIRED",
-                    "Only the step that can't be undone can be said not to have happened",
-                )
-            if incident["code"] in IN_DOUBT_CODES:
-                transaction_key, task, call, ready = await self._transaction_resolution(
-                    repository, ir, previous, incident, request, actor=actor, scope=scope, context=context
+                    "Only the unknown outcome of a step that changes data can be confirmed as not happened",
                 )
             elif request.kind != "terminate" and isinstance(node, CallWorkflowNode):
                 call = await self._call_resolution(repository, ir, node, previous.id, incident, request, previous)
@@ -196,7 +209,20 @@ class IncidentService:
                 if not tasks or tasks[0]["status"] not in {"failed", "incident"}:
                     raise CatalogError(409, "WV-RUNTIME-STATE", "No failed task matches this incident")
                 task = tasks[0]
-                if request.kind == "retry_safe":
+                if request.kind == "accept_reconciled_failure":
+                    if error_policy(ir, incident["node_id"]) == "stop":
+                        raise CatalogError(
+                            409,
+                            "WV-RUNTIME-RECONCILIATION_REQUIRED",
+                            "Only steps with an On error setting can continue after a reconciled failure",
+                        )
+                    if not request.evidence_reference:
+                        raise CatalogError(
+                            409,
+                            "WV-RUNTIME-RECONCILIATION_REQUIRED",
+                            "Evidence that the step had no effect is required",
+                        )
+                elif request.kind == "retry_safe":
                     if not retry_allowed(definition.spec.side_effect, incident["code"] == "WV-TASK-AMBIGUOUS"):
                         raise CatalogError(
                             409, "WV-RUNTIME-RECONCILIATION_REQUIRED", "External reconciliation is required"
@@ -236,6 +262,13 @@ class IncidentService:
                     "actor_id": str(actor.id),
                     # An in-doubt incident's code says what the output is: the step's, or a reconciliation record.
                     **({"code": incident["code"]} if incident["code"] in IN_DOUBT_CODES else {}),
+                    # Attempts a worker started; the step's error object reports them. A transaction in doubt hands
+                    # nothing to the step, so it records none.
+                    **(
+                        {"attempts": incident["generation"]}
+                        if request.kind == "accept_reconciled_failure" and incident["code"] not in IN_DOUBT_CODES
+                        else {}
+                    ),
                 },
             )
             if call is not None and request.kind == "retry_safe":
@@ -291,10 +324,17 @@ class IncidentService:
                     ),
                     at=event.timestamp,
                     id=task["id"],
-                    status="ready" if request.kind == "retry_safe" else "completed",
+                    status="ready"
+                    if request.kind == "retry_safe"
+                    else "handled"
+                    if request.kind == "accept_reconciled_failure"
+                    else "completed",
                 )
             elif task is not None and request.kind == "accept_reconciled_result":
                 await repository.task_status(task["id"], "completed", at=event.timestamp)
+            elif task is not None and request.kind == "accept_reconciled_failure":
+                # The step's setting took the failure, even when the run ended in this same transition.
+                await repository.task_status(task["id"], "handled", at=event.timestamp)
             if ready is not None and result.state.status not in TERMINAL:
                 # The stuck attempt is tried again under the same operation key, with a fresh time limit.
                 again, seconds = ready

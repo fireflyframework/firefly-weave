@@ -3186,6 +3186,888 @@
           }
         ]
       }
+    },
+    {
+      "name": "inside an error path the failed step's error is always there and its output is not",
+      "document": {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {
+          "name": "scope-cases",
+          "version": "1.0.0"
+        },
+        "spec": {
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "invoices": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "number": {
+                      "type": "string"
+                    },
+                    "customerEmail": {
+                      "type": "string",
+                      "title": "Customer email"
+                    }
+                  },
+                  "required": [
+                    "number"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "batches": {
+                "type": "array",
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "number": {
+                        "type": "string"
+                      },
+                      "customerEmail": {
+                        "type": "string",
+                        "title": "Customer email"
+                      }
+                    },
+                    "required": [
+                      "number"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              }
+            },
+            "required": [
+              "invoices",
+              "batches"
+            ],
+            "additionalProperties": false
+          },
+          "outputSchema": {},
+          "steps": [
+            {
+              "id": "total",
+              "kind": "transform",
+              "value": {
+                "literal": 1
+              },
+              "onError": "errorOutput",
+              "errorPath": {
+                "steps": [
+                  {
+                    "id": "note",
+                    "kind": "transform",
+                    "value": {
+                      "ref": "/steps/total/error/code"
+                    }
+                  }
+                ],
+                "output": {
+                  "literal": 0
+                }
+              }
+            }
+          ],
+          "output": {
+            "literal": null
+          }
+        }
+      },
+      "path": "/spec/steps/0/errorPath/output",
+      "result": {
+        "found": true,
+        "evaluated": true,
+        "truncated": false,
+        "entries": [
+          {
+            "ref": "/input",
+            "source": "input",
+            "path": [],
+            "label": "Workflow input",
+            "breadcrumb": "Workflow input",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "invoices": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "number": {
+                        "type": "string"
+                      },
+                      "customerEmail": {
+                        "type": "string",
+                        "title": "Customer email"
+                      }
+                    },
+                    "required": [
+                      "number"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "batches": {
+                  "type": "array",
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "number": {
+                          "type": "string"
+                        },
+                        "customerEmail": {
+                          "type": "string",
+                          "title": "Customer email"
+                        }
+                      },
+                      "required": [
+                        "number"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                }
+              },
+              "required": [
+                "invoices",
+                "batches"
+              ],
+              "additionalProperties": false
+            },
+            "types": [
+              "object"
+            ],
+            "typeLabel": "Group",
+            "optional": false
+          },
+          {
+            "ref": "/input/invoices",
+            "source": "input",
+            "path": [
+              "invoices"
+            ],
+            "label": "invoices",
+            "breadcrumb": "Workflow input › invoices",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "number": {
+                    "type": "string"
+                  },
+                  "customerEmail": {
+                    "type": "string",
+                    "title": "Customer email"
+                  }
+                },
+                "required": [
+                  "number"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "types": [
+              "array"
+            ],
+            "typeLabel": "List of groups",
+            "optional": false
+          },
+          {
+            "ref": "/input/batches",
+            "source": "input",
+            "path": [
+              "batches"
+            ],
+            "label": "batches",
+            "breadcrumb": "Workflow input › batches",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "number": {
+                      "type": "string"
+                    },
+                    "customerEmail": {
+                      "type": "string",
+                      "title": "Customer email"
+                    }
+                  },
+                  "required": [
+                    "number"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "types": [
+              "array"
+            ],
+            "typeLabel": "List of lists",
+            "optional": false
+          },
+          {
+            "ref": "/steps/total/error",
+            "source": "error",
+            "stepId": "total",
+            "stepKind": "transform",
+            "path": [],
+            "label": "Error",
+            "breadcrumb": "total › Error",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "code": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "message": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                },
+                "outcome": {
+                  "type": "string",
+                  "enum": [
+                    "not_started",
+                    "failed",
+                    "unknown"
+                  ]
+                },
+                "attempts": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "instanceKey": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "childRunId": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              },
+              "required": [
+                "code",
+                "message",
+                "outcome",
+                "attempts",
+                "instanceKey"
+              ],
+              "additionalProperties": false
+            },
+            "types": [
+              "object"
+            ],
+            "typeLabel": "Group",
+            "optional": false
+          },
+          {
+            "ref": "/steps/total/error/code",
+            "source": "error",
+            "stepId": "total",
+            "stepKind": "transform",
+            "path": [
+              "code"
+            ],
+            "label": "code",
+            "breadcrumb": "total › Error › code",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "types": [
+              "string"
+            ],
+            "typeLabel": "Text",
+            "optional": false
+          },
+          {
+            "ref": "/steps/total/error/message",
+            "source": "error",
+            "stepId": "total",
+            "stepKind": "transform",
+            "path": [
+              "message"
+            ],
+            "label": "message",
+            "breadcrumb": "total › Error › message",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "types": [
+              "string"
+            ],
+            "typeLabel": "Text",
+            "optional": false
+          },
+          {
+            "ref": "/steps/total/error/outcome",
+            "source": "error",
+            "stepId": "total",
+            "stepKind": "transform",
+            "path": [
+              "outcome"
+            ],
+            "label": "outcome",
+            "breadcrumb": "total › Error › outcome",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "not_started",
+                "failed",
+                "unknown"
+              ]
+            },
+            "types": [
+              "string"
+            ],
+            "typeLabel": "Choice",
+            "optional": false
+          },
+          {
+            "ref": "/steps/total/error/attempts",
+            "source": "error",
+            "stepId": "total",
+            "stepKind": "transform",
+            "path": [
+              "attempts"
+            ],
+            "label": "attempts",
+            "breadcrumb": "total › Error › attempts",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "types": [
+              "integer"
+            ],
+            "typeLabel": "Whole number",
+            "optional": false
+          },
+          {
+            "ref": "/steps/total/error/instanceKey",
+            "source": "error",
+            "stepId": "total",
+            "stepKind": "transform",
+            "path": [
+              "instanceKey"
+            ],
+            "label": "instanceKey",
+            "breadcrumb": "total › Error › instanceKey",
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "types": [
+              "string"
+            ],
+            "typeLabel": "Text",
+            "optional": false
+          },
+          {
+            "ref": "/steps/total/error/childRunId",
+            "source": "error",
+            "stepId": "total",
+            "stepKind": "transform",
+            "path": [
+              "childRunId"
+            ],
+            "label": "childRunId",
+            "breadcrumb": "total › Error › childRunId",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "types": [
+              "string"
+            ],
+            "typeLabel": "Text",
+            "optional": true
+          },
+          {
+            "ref": "/steps/note/output",
+            "source": "step",
+            "stepId": "note",
+            "stepKind": "transform",
+            "path": [],
+            "label": "note",
+            "breadcrumb": "note",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "types": [
+              "string"
+            ],
+            "typeLabel": "Text",
+            "optional": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "after a step with an error path its error may be read and may be missing",
+      "document": {
+        "apiVersion": "weave/v1alpha1",
+        "kind": "Workflow",
+        "metadata": {
+          "name": "scope-cases",
+          "version": "1.0.0"
+        },
+        "spec": {
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "invoices": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "number": {
+                      "type": "string"
+                    },
+                    "customerEmail": {
+                      "type": "string",
+                      "title": "Customer email"
+                    }
+                  },
+                  "required": [
+                    "number"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "batches": {
+                "type": "array",
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "number": {
+                        "type": "string"
+                      },
+                      "customerEmail": {
+                        "type": "string",
+                        "title": "Customer email"
+                      }
+                    },
+                    "required": [
+                      "number"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              }
+            },
+            "required": [
+              "invoices",
+              "batches"
+            ],
+            "additionalProperties": false
+          },
+          "outputSchema": {},
+          "steps": [
+            {
+              "id": "total",
+              "kind": "transform",
+              "value": {
+                "literal": 1
+              },
+              "onError": "errorOutput",
+              "errorPath": {
+                "steps": [
+                  {
+                    "id": "note",
+                    "kind": "transform",
+                    "value": {
+                      "ref": "/steps/total/error/code"
+                    }
+                  }
+                ],
+                "output": {
+                  "literal": 0
+                }
+              }
+            },
+            {
+              "id": "after",
+              "kind": "transform",
+              "value": {
+                "ref": "/steps/total/output"
+              }
+            }
+          ],
+          "output": {
+            "literal": null
+          }
+        }
+      },
+      "path": "/spec/steps/1/value",
+      "result": {
+        "found": true,
+        "evaluated": true,
+        "truncated": false,
+        "entries": [
+          {
+            "ref": "/input",
+            "source": "input",
+            "path": [],
+            "label": "Workflow input",
+            "breadcrumb": "Workflow input",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "invoices": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "number": {
+                        "type": "string"
+                      },
+                      "customerEmail": {
+                        "type": "string",
+                        "title": "Customer email"
+                      }
+                    },
+                    "required": [
+                      "number"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "batches": {
+                  "type": "array",
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "number": {
+                          "type": "string"
+                        },
+                        "customerEmail": {
+                          "type": "string",
+                          "title": "Customer email"
+                        }
+                      },
+                      "required": [
+                        "number"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                }
+              },
+              "required": [
+                "invoices",
+                "batches"
+              ],
+              "additionalProperties": false
+            },
+            "types": [
+              "object"
+            ],
+            "typeLabel": "Group",
+            "optional": false
+          },
+          {
+            "ref": "/input/invoices",
+            "source": "input",
+            "path": [
+              "invoices"
+            ],
+            "label": "invoices",
+            "breadcrumb": "Workflow input › invoices",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "number": {
+                    "type": "string"
+                  },
+                  "customerEmail": {
+                    "type": "string",
+                    "title": "Customer email"
+                  }
+                },
+                "required": [
+                  "number"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "types": [
+              "array"
+            ],
+            "typeLabel": "List of groups",
+            "optional": false
+          },
+          {
+            "ref": "/input/batches",
+            "source": "input",
+            "path": [
+              "batches"
+            ],
+            "label": "batches",
+            "breadcrumb": "Workflow input › batches",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "number": {
+                      "type": "string"
+                    },
+                    "customerEmail": {
+                      "type": "string",
+                      "title": "Customer email"
+                    }
+                  },
+                  "required": [
+                    "number"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "types": [
+              "array"
+            ],
+            "typeLabel": "List of lists",
+            "optional": false
+          },
+          {
+            "ref": "/steps/total/output",
+            "source": "step",
+            "stepId": "total",
+            "stepKind": "transform",
+            "path": [],
+            "label": "total",
+            "breadcrumb": "total",
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "const": 1
+                },
+                {
+                  "type": "integer",
+                  "const": 0
+                }
+              ]
+            },
+            "types": [
+              "integer"
+            ],
+            "typeLabel": "Whole number",
+            "optional": false
+          },
+          {
+            "ref": "/steps/total/error",
+            "source": "error",
+            "stepId": "total",
+            "stepKind": "transform",
+            "path": [],
+            "label": "Error",
+            "breadcrumb": "total › Error",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "code": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "message": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                },
+                "outcome": {
+                  "type": "string",
+                  "enum": [
+                    "not_started",
+                    "failed",
+                    "unknown"
+                  ]
+                },
+                "attempts": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "instanceKey": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "childRunId": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              },
+              "required": [
+                "code",
+                "message",
+                "outcome",
+                "attempts",
+                "instanceKey"
+              ],
+              "additionalProperties": false
+            },
+            "types": [
+              "object"
+            ],
+            "typeLabel": "Group",
+            "optional": true
+          },
+          {
+            "ref": "/steps/total/error/code",
+            "source": "error",
+            "stepId": "total",
+            "stepKind": "transform",
+            "path": [
+              "code"
+            ],
+            "label": "code",
+            "breadcrumb": "total › Error › code",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "types": [
+              "string"
+            ],
+            "typeLabel": "Text",
+            "optional": true
+          },
+          {
+            "ref": "/steps/total/error/message",
+            "source": "error",
+            "stepId": "total",
+            "stepKind": "transform",
+            "path": [
+              "message"
+            ],
+            "label": "message",
+            "breadcrumb": "total › Error › message",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "types": [
+              "string"
+            ],
+            "typeLabel": "Text",
+            "optional": true
+          },
+          {
+            "ref": "/steps/total/error/outcome",
+            "source": "error",
+            "stepId": "total",
+            "stepKind": "transform",
+            "path": [
+              "outcome"
+            ],
+            "label": "outcome",
+            "breadcrumb": "total › Error › outcome",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "not_started",
+                "failed",
+                "unknown"
+              ]
+            },
+            "types": [
+              "string"
+            ],
+            "typeLabel": "Choice",
+            "optional": true
+          },
+          {
+            "ref": "/steps/total/error/attempts",
+            "source": "error",
+            "stepId": "total",
+            "stepKind": "transform",
+            "path": [
+              "attempts"
+            ],
+            "label": "attempts",
+            "breadcrumb": "total › Error › attempts",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "types": [
+              "integer"
+            ],
+            "typeLabel": "Whole number",
+            "optional": true
+          },
+          {
+            "ref": "/steps/total/error/instanceKey",
+            "source": "error",
+            "stepId": "total",
+            "stepKind": "transform",
+            "path": [
+              "instanceKey"
+            ],
+            "label": "instanceKey",
+            "breadcrumb": "total › Error › instanceKey",
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "types": [
+              "string"
+            ],
+            "typeLabel": "Text",
+            "optional": true
+          },
+          {
+            "ref": "/steps/total/error/childRunId",
+            "source": "error",
+            "stepId": "total",
+            "stepKind": "transform",
+            "path": [
+              "childRunId"
+            ],
+            "label": "childRunId",
+            "breadcrumb": "total › Error › childRunId",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "types": [
+              "string"
+            ],
+            "typeLabel": "Text",
+            "optional": true
+          }
+        ]
+      }
     }
   ]
 }

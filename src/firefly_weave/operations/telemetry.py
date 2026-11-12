@@ -71,6 +71,9 @@ OPERATIONS_ALLOWED = frozenset(OPERATIONS) | frozenset(
         "transaction.in_doubt",
         "transaction.compensating",
         "transaction.late_result",
+        "step.continue",
+        "step.errorOutput",
+        "step.incident",
         "other",
     }
 )
@@ -113,6 +116,7 @@ COUNTERS = {
     "call": "weave.calls",
     "transaction": "weave.transactions",
     "transaction_phase": "weave.transaction_phases",
+    "step_error": "weave.step_errors",
     "dropped": "weave.telemetry_dropped",
     "queue_unknown": "weave.queue_unknown",
 }

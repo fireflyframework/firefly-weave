@@ -27,9 +27,12 @@ from typing import Final, cast
 
 from firefly_weave.compiler.source_map import pointer_child
 from firefly_weave.contracts.language_features import (
+    ERROR_FIELDS,
+    ERROR_KINDS,
     KIND_FEATURES,
     OPERATOR_FEATURES,
     STEP_FIELD_FEATURES,
+    UNDO_FIELDS,
     UNDO_KINDS,
     WORKFLOW_FIELD_FEATURES,
     LanguageFeature,
@@ -37,7 +40,7 @@ from firefly_weave.contracts.language_features import (
 from firefly_weave.contracts.values import JsonObject, JsonValue
 
 COMPILED_FEATURES: Final[frozenset[LanguageFeature]] = frozenset(
-    {"flow.callWorkflow", "flow.forEach", "flow.transaction", "text.concat", "text.join"}
+    {"flow.callWorkflow", "flow.forEach", "flow.onError", "flow.transaction", "text.concat", "text.join"}
 )
 
 # Expression positions per step kind; blocks are walked separately.
@@ -93,11 +96,13 @@ def unsupported_uses(document: JsonObject) -> list[UnsupportedUse]:
                 for name in _EXPRESSIONS.get(str(kind), ()):
                     if name in step:
                         expressions.append((step[name], f"{location}/{name}"))
-                for name, field_feature in STEP_FIELD_FEATURES.items() if kind in UNDO_KINDS else ():
+                fields = (UNDO_FIELDS if kind in UNDO_KINDS else ()) + (ERROR_FIELDS if kind in ERROR_KINDS else ())
+                for name in fields:
+                    field_feature = STEP_FIELD_FEATURES[name]
                     if name in step and field_feature not in COMPILED_FEATURES:
                         found.append(UnsupportedUse(f"{location}/{name}", f"The {name} field", field_feature))
                     undo = step.get(name)
-                    if isinstance(undo, dict) and "with" in undo:
+                    if name in UNDO_FIELDS and isinstance(undo, dict) and "with" in undo:
                         expressions.append((undo["with"], f"{location}/{name}/with"))
                 for branch, branch_path in _branches(step, location):
                     if "when" in branch:
@@ -136,6 +141,8 @@ def _branches(step: JsonObject, path: str) -> list[tuple[JsonObject, str]]:
     elif kind == "transaction":
         # The transaction step is its own block: its steps and output sit beside its other fields.
         result.append((step, path))
+    if isinstance(step.get("errorPath"), dict):
+        result.append((cast(JsonObject, step["errorPath"]), path + "/errorPath"))
     return result
 
 

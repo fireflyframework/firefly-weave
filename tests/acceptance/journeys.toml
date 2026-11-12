@@ -51,7 +51,7 @@
 "workflow-call-fast-path" = false
 "workflow-transaction-runtime" = true
 "language-docs" = false
-"step-error-handling" = false
+"step-error-handling" = true
 "ai-gateway" = true
 "ai-setup" = false
 "ai-models-screen" = true
@@ -66,7 +66,7 @@
 "run-views" = true
 "compose-operations" = true
 "kubernetes-operations" = false
-"metrics" = false
+"metrics" = true
 "logs" = false
 "alerts" = false
 "operations-explanations" = false
