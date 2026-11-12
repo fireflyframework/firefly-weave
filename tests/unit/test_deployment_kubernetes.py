@@ -1129,8 +1129,11 @@ async def test_a_scale_down_refuses_members_that_are_not_the_deployments_current
     policy, plan, server = scaled(3, 1)
     server.pods = three_pods()
     server.resource["status"].update(status)
+    # A fake clock, so a regression that writes and then waits fails at once instead of after 90 s.
+    clock = Clock()
+    adapter = KubernetesAdapter(policy, command=server.command, sleep=clock.sleep, clock=clock)
     with pytest.raises(RunnerPolicyError):
-        await KubernetesAdapter(policy, command=server.command).apply(plan, server.before_write)
+        await adapter.apply(plan, server.before_write)
     assert server.events == []
 
 
