@@ -2079,6 +2079,10 @@ def up(
                 result["account"] = account
         if operations:
             result["operations"] = platform_operations.enable(directory, _load(directory), progress or (lambda _: None))
+            from firefly_weave.sdk import platform_clusters
+
+            # Connected clusters follow the platform's new addresses; a cluster that's gone reads missing.
+            result["clusters"] = platform_clusters.refresh(directory, progress or (lambda _: None))
         elif unavailable:
             result["operations"] = platform_operations.unavailable()
         return result

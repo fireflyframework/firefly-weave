@@ -1102,6 +1102,69 @@ def connect(
         }
 
 
+# Refresh
+
+
+def _refresh_cluster(
+    directory: Path,
+    state: dict[str, Any],
+    operations: dict[str, Any],
+    key: str,
+    entry: dict[str, Any],
+    notice: Callable[[str], None],
+) -> str:
+    provider, cluster = entry["provider"], entry["cluster"]
+    nodes = _lines(
+        local._run(
+            state,
+            "cluster-nodes",
+            ["docker", "--context", state["context"], "ps", "--all", "--filter"]
+            + [f"label={NODE_LABELS[provider]}={cluster}", "--format", "{{.Names}}"],
+        )
+    )
+    if not nodes:
+        return "missing"
+    notice(f"{key}: following the platform's addresses")
+    found = Preflight(provider, cluster, "", key, Path(), state["context"], entry["network"], nodes)
+    connection = _Connection(found, state, operations, [])
+    _join(connection, key)
+    network = connection.network
+    assert network is not None
+    platform_origins.set_cluster_entries(state, key, network.subnet)
+    if (network.api_address, network.registry_address) == (entry["api_address"], entry["registry_address"]):
+        return "connected"
+    # The platform's containers moved: the EndpointSlice and every policy's exceptions follow them.
+    path, server = _server(_candidates(None), key, provider, cluster)
+    if not _local(server):
+        raise local.PlatformError(f"{key} points at a server that isn't this computer; it was not refreshed.")
+    connection.kube = [*kubectl(directory, path, key), "--request-timeout=20s"]
+    _apply(connection, "cluster-refresh-shared", objects.shared_objects(network))
+    for namespace, target in sorted(entry["targets"].items()):
+        objects_of = objects.namespace_objects(_draft(connection, namespace, target, ""))
+        _apply(connection, "cluster-refresh-namespace", objects_of)
+    return "connected"
+
+
+def refresh(directory: Path, notice: Callable[[str], None]) -> list[dict[str, str]]:
+    """After up, point each connected cluster at the platform's current addresses: the network joins and the registry
+    alias, then the EndpointSlice and the policies when an address moved. A cluster that's gone reads missing, and
+    one that can't be refreshed reads unreachable with the reason in a notice; neither fails up."""
+    if not receipt(directory)["clusters"]:
+        return []
+    with local._exclusive(directory, LOCK, BUSY):
+        state = local._state(directory)
+        operations = platform_operations.receipt(directory) or {}
+        found = []
+        for key, entry in sorted(receipt(directory)["clusters"].items()):
+            try:
+                outcome = _refresh_cluster(directory, state, operations, key, entry, notice)
+            except local.PlatformError as error:
+                notice(f"{key}: not refreshed. {error}")
+                outcome = "unreachable"
+            found.append({"name": key, "state": outcome})
+        return found
+
+
 # Local test clusters
 
 MIN_FREE_GIB = 6

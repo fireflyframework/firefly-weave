@@ -430,6 +430,7 @@ class Cluster:
     def __init__(self, commands):
         self.commands = commands
         self.joined = set()
+        self.addresses = {KEYCLOAK: "172.30.0.5", REGISTRY: "172.30.0.6"}
         self.extra = []
         self.namespace = ""
         self.exits = dict.fromkeys(PROBES, 0)
@@ -445,10 +446,9 @@ class Cluster:
 
     def network(self, call):
         containers = {"node" + "0" * 60: {"Name": "weave-test-control-plane", "IPv4Address": "172.30.0.2/16"}}
-        for short, name, address in (
-            (KEYCLOAK, "weave-local-keycloak-1", "172.30.0.5"),
-            (REGISTRY, "registry-1", "172.30.0.6"),
-        ):
+        names = {KEYCLOAK: "weave-local-keycloak-1", REGISTRY: "registry-1"}
+        for short, address in self.addresses.items():
+            name = names[short]
             if short in self.joined:
                 containers[short + "0" * 52] = {"Name": name, "IPv4Address": address + "/16"}
         for name in self.extra:
@@ -739,3 +739,46 @@ def test_a_silent_runner_names_its_log_and_keeps_the_registered_target(world):
     )
     target = clusters.receipt(directory)["clusters"]["kind-weave-test"]["targets"]["weave-workers"]
     assert target["state"] == "pending" and "target_id" in target
+
+
+def test_up_repoints_a_connected_cluster_at_the_platforms_new_address(world, monkeypatch):
+    directory, commands, config, cluster = world
+    connect(world)
+    monkeypatch.setenv("KUBECONFIG", str(config))
+    lines = []
+    before = len(commands.calls)
+    assert clusters.refresh(directory, lines.append) == [{"name": "kind-weave-test", "state": "connected"}]
+    assert applied(commands, before) == []
+    # The platform restarted: keycloak left the cluster network and comes back with another address.
+    cluster.joined.discard(KEYCLOAK)
+    cluster.addresses[KEYCLOAK] = "172.30.0.7"
+    before = len(commands.calls)
+    assert clusters.refresh(directory, lines.append) == [{"name": "kind-weave-test", "state": "connected"}]
+    assert [call.argv[-1] for call in commands.calls[before:] if "connect" in call.argv] == [KEYCLOAK]
+    items = applied(commands, before)
+    (endpoints,) = [item for item in items if item["kind"] == "EndpointSlice"]
+    assert endpoints["endpoints"][0]["addresses"] == ["172.30.0.7"]
+    egress = [item for item in items if item["metadata"]["name"] == "weave-egress"]
+    assert sorted(item["metadata"]["namespace"] for item in egress) == ["weave-system", "weave-workers"]
+    for item in egress:
+        assert "172.30.0.7/32" in item["spec"]["egress"][0]["to"][1]["ipBlock"]["except"]
+    assert clusters.receipt(directory)["clusters"]["kind-weave-test"]["api_address"] == "172.30.0.7"
+
+
+def test_a_deleted_cluster_reads_missing_and_changes_nothing(world):
+    directory, commands, _, _ = world
+    connect(world)
+    commands.answer(["ps", "--filter", "label=io.x-k8s.kind.cluster=weave-test"], "")
+    before = len(commands.calls)
+    assert clusters.refresh(directory, lambda line: None) == [{"name": "kind-weave-test", "state": "missing"}]
+    assert [call.name for call in commands.calls[before:]] == ["cluster-nodes"]
+
+
+def test_a_cluster_that_cant_be_refreshed_reads_unreachable_and_says_why(world, monkeypatch):
+    directory, _, _, cluster = world
+    connect(world)
+    cluster.addresses[KEYCLOAK] = "172.30.0.7"
+    monkeypatch.setenv("KUBECONFIG", str(directory / "absent"))
+    lines = []
+    assert clusters.refresh(directory, lines.append) == [{"name": "kind-weave-test", "state": "unreachable"}]
+    assert lines[-1].startswith("kind-weave-test: not refreshed. No kind-weave-test context in your kubeconfig.")

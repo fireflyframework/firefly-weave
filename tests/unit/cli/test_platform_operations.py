@@ -473,6 +473,25 @@ def test_up_prepares_the_provider_before_starting_and_sets_operations_up_after(o
     assert called[:3] == ["provider", "start", "demo"] and "enable" in called[3:]
 
 
+def test_up_refreshes_the_connected_clusters_after_operations_and_reports_them(owned, monkeypatch):
+    """A cluster that's gone reads missing in up's result; up itself still succeeds."""
+    from firefly_weave.sdk import platform_clusters
+
+    directory, _, _ = owned
+    images = directory / "release" / "images"
+    images.mkdir(parents=True, exist_ok=True)
+    (images / "operations-worker.py").write_text("# fixture\n")
+    called = []
+    missing = [{"name": "kind-weave-test", "state": "missing"}]
+    monkeypatch.setattr(platform_operations, "prepare_provider", lambda state: None)
+    monkeypatch.setattr(platform_operations, "enable", lambda *args, **kwargs: called.append("enable") or {})
+    monkeypatch.setattr(platform_clusters, "refresh", lambda directory, notice: called.append("clusters") or missing)
+    monkeypatch.setattr(platform, "start", lambda directory, progress=None: None)
+    monkeypatch.setattr(platform, "demo", lambda directory: {"receipt": {"status": "succeeded"}})
+    result = platform.up(directory, Path("."), None)
+    assert called == ["enable", "clusters"] and result["clusters"] == missing
+
+
 @pytest.mark.parametrize(("flags", "expected"), [([], True), (["--no-operations"], False)])
 def test_the_cli_passes_no_operations_to_up(tmp_path, monkeypatch, flags, expected):
     from click.testing import CliRunner
