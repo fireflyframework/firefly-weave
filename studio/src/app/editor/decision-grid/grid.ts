@@ -31,6 +31,7 @@ import {
   DestroyRef,
   ElementRef,
   Injector,
+  afterEveryRender,
   afterNextRender,
   computed,
   effect,
@@ -261,6 +262,7 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
       state: this.tryState(),
       revision: this.revision(),
       empty: this.table.empty(),
+      unfit: this.table.unfit(),
       problem: this.firstError(),
     });
   });
@@ -288,6 +290,12 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
       // What was tried is forgotten with the grid.
       this.tries.clear();
     });
+    // The grid's and the problems' minimums follow what is drawn: rows grow
+    // for a formula, the footer and the problems wrap on a narrow card.
+    afterEveryRender(() => this.measure());
+    const resized = new ResizeObserver(() => this.measure());
+    resized.observe(this.element.nativeElement);
+    this.lifetime.onDestroy(() => resized.disconnect());
     // The step's test data fills Input when the table opens.
     effect(() => {
       const context = this.context();
@@ -323,7 +331,8 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
       const spec = this.spec();
       const value = this.table.value();
       const revision = this.revision();
-      const blocked = this.firstError() !== null || this.table.empty();
+      const blocked =
+        this.firstError() !== null || this.table.empty() || this.table.unfit();
       untracked(() => {
         if (!spec || blocked) return this.tries.clear();
         this.tries.set(this.documentOf(spec), value as Json, revision);
@@ -340,9 +349,76 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
       spec,
     };
   }
+  /**
+   * Sets the drawn minimums: the grid box holds its header, its first five
+   * body rows (all of them when fewer) and its footer; the problems list
+   * holds its head and its first three problems. The table bar drops its
+   * divider when its items can't share one line.
+   */
+  private measure() {
+    const root = this.element.nativeElement;
+    const height = (element: Element | null | undefined) =>
+      element?.getBoundingClientRect().height ?? 0;
+    const set = (element: HTMLElement, name: string, px: number) => {
+      const value = `${Math.ceil(px)}px`;
+      if (element.style.getPropertyValue(name) !== value)
+        element.style.setProperty(name, value);
+    };
+    const box = root.querySelector<HTMLElement>(".dg-box");
+    if (box) {
+      const rows = [
+        ...box.querySelectorAll(".dg-row:not(.dg-header) > .dg-mark-cell"),
+      ].slice(0, 5);
+      set(
+        box,
+        "--dg-box-min",
+        height(box.querySelector(".dg-group")) +
+          height(box.querySelector(".dg-header > .dg-th")) +
+          rows.reduce((sum, row) => sum + height(row), 0) +
+          height(box.querySelector(".dg-foot")) +
+          2,
+      );
+    }
+    const problems = root.querySelector<HTMLElement>(".dg-problems");
+    if (problems)
+      set(
+        problems,
+        "--dg-problems-max",
+        height(problems.querySelector(".dg-problems-head")) +
+          [...problems.querySelectorAll("li")]
+            .slice(0, 3)
+            .reduce((sum, item) => sum + height(item), 0) +
+          2,
+      );
+    const bar = root.querySelector<HTMLElement>(".dg-bar");
+    const back = bar?.querySelector<HTMLElement>(".dg-back");
+    const ident = bar?.querySelector<HTMLElement>(".dg-ident");
+    if (bar && back && ident) {
+      const publish = bar.querySelector<HTMLElement>(".dg-publish");
+      // Back, the divider, the name, the spacer (no width, one gap) and
+      // Publish table; the divider counts even while hidden, so hiding it
+      // never lets the line fit again.
+      const items = [back.offsetWidth, 1, ident.scrollWidth, 0];
+      if (publish) items.push(publish.offsetWidth);
+      const gap = parseFloat(getComputedStyle(bar).columnGap) || 0;
+      const needed =
+        items.reduce((sum, width) => sum + width, 0) + gap * (items.length - 1);
+      bar.classList.toggle("is-wrapped", needed > bar.clientWidth);
+    }
+  }
+  /** The text an Otherwise cell shows while the table has no Otherwise result. */
+  placeholder(row: number, col: number): string | null {
+    const view = this.view();
+    return view &&
+      !view.otherwiseSet &&
+      this.isOtherwise(row) &&
+      this.cols()[col]?.kind === "result"
+      ? "No result"
+      : null;
+  }
   /** A rule's mark in the # column: an error in its cells first, then the try. */
   mark(row: number): GridMark | null {
-    if (this.isOtherwise(row)) return null;
+    if (this.isOtherwise(row)) return this.shown()?.otherwise ?? null;
     if (this.problemRows().has(row)) return "error";
     return this.shown()?.marks[row] ?? null;
   }
@@ -545,6 +621,7 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
   isEmpty(row: number, col: number): boolean {
     if (this.isOtherwise(row) && this.cols()[col]?.kind === "input")
       return true;
+    if (this.placeholder(row, col)) return true;
     return this.text(row, col) === "-";
   }
   /** The cell's place in the grid: a merged condition spans the inputs. */

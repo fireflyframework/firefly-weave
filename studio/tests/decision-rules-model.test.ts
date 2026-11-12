@@ -43,6 +43,7 @@ import {
   setHitPolicy,
   type TableSpec,
 } from "../src/app/editor/decision-grid/rules-model";
+import { GridHistory } from "../src/app/editor/decision-grid/grid-keys";
 
 const ref = (name: string) => ({ ref: `/input/${name}` });
 const op = (name: string, ...args: unknown[]) => ({ op: { name, args } });
@@ -142,7 +143,9 @@ describe("the grid view of a table", () => {
     const view = gridOf(scalar);
     expect(view.results.map((c) => c.name)).toEqual(["Result"]);
     expect(view.rows[0].result).toEqual({ kind: "cells", cells: [lit("ok")] });
-    expect(view.otherwise).toBeNull();
+    // First match allows an Otherwise result: its row shows, with none yet.
+    expect(view.otherwise).toEqual({ kind: "cells", cells: [undefined] });
+    expect(view.otherwiseSet).toBe(false);
     const collect = setHitPolicy(table(), "collect").spec;
     expect(gridOf(collect).results.map((c) => c.name)).toEqual([
       "approve",
@@ -504,5 +507,67 @@ describe("columns the grid can't test", () => {
     const view = gridOf(spec);
     expect(view.rows[0].condition.kind).toBe("formula");
     expect(view.rows[1].condition.kind).toBe("cells");
+  });
+});
+
+describe("the Otherwise result", () => {
+  const withoutOtherwise = (): TableSpec => {
+    const spec = table();
+    delete spec.defaultOutput;
+    return spec;
+  };
+
+  it("shows Otherwise with no result while the policy allows one and the table has none", () => {
+    const view = gridOf(withoutOtherwise());
+    expect(view.otherwise).toEqual({
+      kind: "cells",
+      cells: [undefined, undefined],
+    });
+    expect(view.otherwiseSet).toBe(false);
+    expect(gridOf(table()).otherwiseSet).toBe(true);
+    // Collect all has no Otherwise.
+    expect(
+      gridOf({ ...withoutOtherwise(), hitPolicy: "collect" }).otherwise,
+    ).toBeNull();
+  });
+
+  it("sets the Otherwise result from one cell", () => {
+    const set = setResult(withoutOtherwise(), "otherwise", 0, lit(false));
+    expect(set.defaultOutput).toEqual(lit({ approve: false }));
+    expect(gridOf(set).otherwiseSet).toBe(true);
+    expect(gridOf(set).otherwise).toEqual({
+      kind: "cells",
+      cells: [lit(false), undefined],
+    });
+  });
+
+  it("clears back to no Otherwise result once its last cell is cleared", () => {
+    const set = setResult(withoutOtherwise(), "otherwise", 0, lit(false));
+    const cleared = setResult(set, "otherwise", 0, undefined);
+    expect("defaultOutput" in cleared).toBe(false);
+    expect(gridOf(cleared).otherwiseSet).toBe(false);
+    // One cell left keeps the result.
+    const two = setResult(set, "otherwise", 1, lit(10));
+    expect(setResult(two, "otherwise", 0, undefined).defaultOutput).toEqual(
+      lit({ limit: 10 }),
+    );
+  });
+
+  it("undoes setting it back to no Otherwise result", () => {
+    const before = withoutOtherwise();
+    const history = new GridHistory();
+    history.record(before, "2:3", 1000);
+    const set = setResult(before, "otherwise", 0, lit(false));
+    const undone = history.undo(set);
+    expect(undone).not.toBeNull();
+    expect("defaultOutput" in undone!).toBe(false);
+    expect(gridOf(undone!).otherwiseSet).toBe(false);
+    expect(gridOf(undone!).otherwise).toEqual({
+      kind: "cells",
+      cells: [undefined, undefined],
+    });
+    expect(history.redo(undone!)?.defaultOutput).toEqual(
+      lit({ approve: false }),
+    );
   });
 });

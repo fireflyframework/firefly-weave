@@ -18,13 +18,14 @@ SPDX-License-Identifier: Apache-2.0
 // The values Input holds while the table's input columns change.
 import { signal } from "@angular/core";
 import { describe, expect, it } from "vitest";
+import type { TableSpec } from "../src/app/editor/decision-grid/rules-model";
 import {
   TableTry,
   type TryGrid,
 } from "../src/app/editor/decision-grid/table-try";
 
-const grid = (): TryGrid => ({
-  spec: signal(null),
+const grid = (spec: TableSpec | null = null): TryGrid => ({
+  spec: signal(spec),
   view: signal(null),
   shown: signal(null),
   readOnly: signal(false),
@@ -59,5 +60,38 @@ describe("the values being tried when the input columns change", () => {
     tried.reshape(["amount", "tier"], ["amount", "tier", "region"]);
     expect(tried.value()).toEqual({ amount: 500, tier: "silver" });
     expect(tried.initial()).toEqual({ amount: 500, tier: "silver" });
+  });
+});
+
+describe("an input that doesn't fit the table's input fields", () => {
+  const spec = {
+    inputSchema: {
+      type: "object",
+      properties: {
+        amount: { type: "number" },
+        tier: { type: "string" },
+        note: { type: "string" },
+      },
+      required: ["amount", "note"],
+    },
+    outputSchema: { type: "object" },
+    hitPolicy: "first",
+    rules: [],
+  } as unknown as TableSpec;
+
+  it("names each required field left empty, with what to enter", () => {
+    const tried = new TableTry(grid(spec));
+    tried.start(null);
+    expect(tried.unfit()).toBe(false);
+    expect(tried.fieldErrors()).toEqual({});
+    tried.change({ tier: "gold" });
+    expect(tried.unfit()).toBe(true);
+    expect(tried.fieldErrors()).toEqual({
+      amount: "Enter a number.",
+      note: "Enter a value.",
+    });
+    tried.change({ tier: "gold", amount: 2000, note: "x" });
+    expect(tried.unfit()).toBe(false);
+    expect(tried.fieldErrors()).toEqual({});
   });
 });

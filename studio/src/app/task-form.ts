@@ -898,6 +898,8 @@ export class TaskForm implements OnChanges {
   fieldPath = input("/with");
   /** Headings show each field's type, and Optional at the right. */
   typed = input(false);
+  /** Errors the host knows about, by field key, shown whether or not the field was touched. */
+  extraErrors = input<Record<string, string>>({});
   dataChange = output<Record<string, unknown>>();
   /** The edited expression (bindings only); never emitted before an edit. */
   expressionChange = output<unknown>();
@@ -917,7 +919,10 @@ export class TaskForm implements OnChanges {
       this.touched.add(field.dataset["path"]);
   }
   shownError(key: string) {
-    return this.touched.has(key) ? this.errors[key] : undefined;
+    return (
+      this.extraErrors()[key] ??
+      (this.touched.has(key) ? this.errors[key] : undefined)
+    );
   }
   /** A polite announcement for added and removed rows. */
   status = "";

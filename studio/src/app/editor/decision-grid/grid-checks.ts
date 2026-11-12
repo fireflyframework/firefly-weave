@@ -198,7 +198,8 @@ export function gridProblems(spec: TableSpec): GridProblem[] {
     });
   };
   view.rows.forEach((row, i) => missing(row.result, `Rule ${i + 1}`, i));
-  if (view.otherwise) missing(view.otherwise, "Otherwise", null);
+  if (view.otherwise && view.otherwiseSet)
+    missing(view.otherwise, "Otherwise", null);
   if (spec.hitPolicy === "first") {
     const always = spec.rules.findIndex((rule) => alwaysMatches(rule.when));
     if (always >= 0)

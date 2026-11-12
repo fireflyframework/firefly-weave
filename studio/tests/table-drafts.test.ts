@@ -32,6 +32,7 @@ import {
   readEntry,
   type TableDocument,
 } from "../src/app/editor/state/table-drafts";
+import { setResult } from "../src/app/editor/decision-grid/rules-model";
 
 function memoryBackend(): StoreBackend & { data: Map<string, string> } {
   const data = new Map<string, string>();
@@ -252,6 +253,31 @@ describe("table drafts on this computer", () => {
       backend.data.get("local:weave.tableDraft.payment-policy")!,
     );
     expect(stored.document.spec.hitPolicy).toBe("unique");
+  });
+
+  it("keeps an Otherwise result set or cleared in the grid across a reload", async () => {
+    const backend = memoryBackend();
+    const drafts = new TableDrafts(backend, "local:");
+    await drafts.ready();
+    const without = published();
+    delete without.spec.defaultOutput;
+    const entry = await drafts.startDraft(without, ["1.2.0"]);
+    const spec = setResult(entry.document.spec, "otherwise", 0, {
+      literal: false,
+    });
+    await drafts.save(entry, spec);
+    const read = readEntry(
+      backend.data.get("local:weave.tableDraft.payment-policy")!,
+    );
+    expect(read?.document.spec.defaultOutput).toEqual({
+      literal: { approve: false },
+    });
+    // Cleared again, the draft has no Otherwise result after a reload.
+    await drafts.save(entry, setResult(spec, "otherwise", 0, undefined));
+    const cleared = readEntry(
+      backend.data.get("local:weave.tableDraft.payment-policy")!,
+    );
+    expect(cleared?.document.spec).not.toHaveProperty("defaultOutput");
   });
 
   it("moves a draft to the next version when its version was taken", async () => {

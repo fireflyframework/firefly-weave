@@ -32,6 +32,8 @@ import {
   DecisionGridPage,
   paymentPolicy,
   routeTables,
+  withoutOtherwise,
+  type TableDocumentFixture,
 } from "./decision-grid-po";
 
 const orders = yamlFile(
@@ -57,13 +59,14 @@ spec:
 
 async function openGrid(
   page: Page,
+  table: TableDocumentFixture = paymentPolicy("1.2.0"),
 ): Promise<{ details: StepDetailsPage; grid: DecisionGridPage }> {
   const details = await openStepFixture(page, orders, async (p) => {
     const result = await connected(p);
     await withLanguageFeatures(p);
     return result;
   });
-  await routeTables(page, [paymentPolicy("1.2.0")]);
+  await routeTables(page, [table]);
   await details.open("score");
   const grid = new DecisionGridPage(page);
   await grid.open();
@@ -270,6 +273,52 @@ for (const size of sizes)
       ).toBeVisible();
       await expect(grid.cell(2, 1)).toContainText("input.total > 5000");
       await expect(grid.cell(0, 1)).toHaveText("> 1000");
+    });
+
+    test("with no Otherwise result, the Otherwise row waits for one, and typing or pasting there sets it", async ({
+      page,
+    }) => {
+      const { details, grid } = await openGrid(page, withoutOtherwise("1.2.0"));
+      await expect(grid.cell(3, 0)).toHaveText("Otherwise");
+      await expect(grid.cell(3, 1)).toHaveText("When no rule matches");
+      await expect(grid.cell(3, 3)).toHaveText("No result");
+      await expect(grid.cell(3, 4)).toHaveText("No result");
+      await expect(grid.problems()).toHaveCount(0);
+      // By keyboard: down from rule 3's Approve, then type.
+      await grid.cell(2, 3).click();
+      await page.keyboard.press("ArrowDown");
+      await expect(grid.cell(3, 3)).toBeFocused();
+      await page.keyboard.type("true");
+      await expect(grid.root.locator(".dg-cell-input")).toHaveValue("true");
+      await page.keyboard.press("Enter");
+      await expect(grid.cell(3, 3)).toHaveText("true");
+      await grid.expectTable("1.2.1", "Draft");
+      // A value pasted on Limit.
+      await grid.cell(3, 4).click();
+      await grid.cell(3, 4).evaluate((cell) => {
+        const data = new DataTransfer();
+        data.setData("text/plain", "250");
+        cell.dispatchEvent(
+          new ClipboardEvent("paste", { clipboardData: data, bubbles: true }),
+        );
+      });
+      await expect(grid.cell(3, 4)).toHaveText("250");
+      await expect(grid.problems()).toHaveCount(0);
+      // Undo takes both back to no Otherwise result.
+      await grid.cell(3, 4).focus();
+      await page.keyboard.press("ControlOrMeta+z");
+      await expect(grid.cell(3, 4)).toHaveText("");
+      await page.keyboard.press("ControlOrMeta+z");
+      await expect(grid.cell(3, 3)).toHaveText("No result");
+      await expect(grid.cell(3, 4)).toHaveText("No result");
+      await page.keyboard.press("ControlOrMeta+Shift+z");
+      await page.keyboard.press("ControlOrMeta+Shift+z");
+      await expect(grid.cell(3, 4)).toHaveText("250");
+      await grid.back();
+      const table = await viewedTable(page, details);
+      expect(table.spec["defaultOutput"]).toEqual({
+        literal: { approve: true, limit: 250 },
+      });
     });
 
     test("Collect all removes Otherwise and Undo brings it back", async ({

@@ -70,9 +70,9 @@ for (const size of sizes)
       await grid.open();
       await grid.root.getByRole("button", { name: "Publish table" }).click();
       await grid.expectTable("1.2.1", "Published");
-      await expect(page.locator(".toast-region")).toContainText(
-        "Published payment-policy 1.2.1.",
-      );
+      await expect(
+        page.locator(".toast-region .toast-text").first(),
+      ).toHaveText("Published payment-policy 1.2.1");
       await grid.back();
       await details.close();
       await command(page, "Publish…");

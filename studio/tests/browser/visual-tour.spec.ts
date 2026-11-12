@@ -2269,31 +2269,43 @@ const scenes: Record<string, Scene> = {
   },
   async "decision-grid-otherwise"({ page, shot, size }) {
     only(size, "1440x900");
-    const { panes } = await openTriedDraft(page, {
+    const { grid, panes } = await openTriedDraft(page, {
       Amount: "3000",
       "Tier (optional)": "silver",
     });
     await expect(panes.cards.first()).toContainText("Otherwise");
     await expect(panes.count).toHaveText("No rule matched");
+    await expect(grid.root.locator(".dg-otherwise .dg-mark")).toHaveAttribute(
+      "data-mark",
+      "match",
+    );
     await shot("173-decision-grid-otherwise", { tabs: 0 });
   },
   async "decision-grid-no-otherwise"({ page, shot, size }) {
     only(size, "1440x900");
-    const { panes } = await openTableDraft(page, withoutOtherwise("1.2.1"));
+    const { grid, panes } = await openTableDraft(
+      page,
+      withoutOtherwise("1.2.1"),
+    );
     await panes.type({ amount: "3000", tier: "silver" });
     await expect(panes.output.locator(".dg-callout")).toContainText(
       "No rule matched and there's no Otherwise result.",
     );
+    await expect(grid.cell(3, 3)).toHaveText("No result");
     await expect(panes.checked).toBeVisible();
     await shot("174-decision-grid-no-otherwise", { tabs: 0 });
   },
   async "decision-grid-input-unfit"({ page, shot, size }) {
     only(size, "1440x900");
-    const { panes } = await openTableDraft(page);
+    const { grid, panes } = await openTableDraft(page);
     await panes.type({ tier: "gold" });
     await expect(panes.output.locator(".dg-callout")).toContainText(
       "The input doesn't fit the table's input fields.",
     );
+    await expect(panes.input.locator("p.error")).toHaveText([
+      "Enter a number.",
+    ]);
+    await expect(grid.root.locator(".dg-mark")).toHaveCount(0);
     await shot("175-decision-grid-input-unfit", { tabs: 0 });
   },
   async "decision-grid-checking"({ page, shot, size }) {
@@ -2338,7 +2350,7 @@ const scenes: Record<string, Scene> = {
     await shot("177-decision-grid-publishing", { tabs: 0 });
     release();
     await expect(
-      page.getByText("Published payment-policy 1.2.1.").first(),
+      page.getByText("Published payment-policy 1.2.1", { exact: true }).first(),
     ).toBeVisible();
     await expect(grid.root.locator(".dg-bar .pill")).toHaveText("Published");
     await shot("178-decision-grid-published", { tabs: 0 });

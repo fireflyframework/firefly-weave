@@ -226,6 +226,20 @@ describe("pasting at the edges", () => {
     ]);
   });
 
+  it("gives a table with no Otherwise result one when pasted on its Otherwise row", () => {
+    const spec = { ...table() };
+    delete spec.defaultOutput;
+    const { spec: next, flagged } = pasteInto(
+      spec,
+      { row: 3, column: 4 },
+      [["250"]],
+      gridOf(spec),
+    );
+    expect(next.rules).toEqual(spec.rules);
+    expect(next.defaultOutput).toEqual(lit({ limit: 250 }));
+    expect(flagged).toEqual([]);
+  });
+
   it("says when pasted cells replace a rule's formula", () => {
     const spec = table();
     const { notes } = pasteInto(

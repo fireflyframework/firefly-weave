@@ -256,7 +256,7 @@ SPDX-License-Identifier: Apache-2.0
                     <span
                       class="dg-cell-text"
                       [attr.title]="c === 0 && !isOtherwise(r) ? shown : null"
-                      >{{ shown }}</span
+                      >{{ shown || placeholder(r, c) }}</span
                     >
                     @if (c === 0 && !isOtherwise(r)) {
                       <weave-row-menu

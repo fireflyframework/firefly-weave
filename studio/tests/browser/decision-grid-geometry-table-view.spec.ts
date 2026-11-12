@@ -30,6 +30,7 @@ import {
   paymentPolicy,
   TablePanes,
   twelveRules,
+  withoutOtherwise,
   type TableDocumentFixture,
 } from "./decision-grid-po";
 import { setTestInput } from "./formula-po";
@@ -686,6 +687,114 @@ test.describe("Table view at 1440x900", () => {
     await expectProblemsBeside(grid);
   });
 
+  test("while a cell is edited, its text box is its only frame", async ({
+    page,
+  }) => {
+    const { grid } = await openDraftGrid(page);
+    const cell = grid.cell(1, 1);
+    await cell.click();
+    expect(await after(cell, "box-shadow")).toContain(
+      await tokenColor(page, "--focus"),
+    );
+    await page.keyboard.press("Enter");
+    await expect(grid.root.locator(".dg-cell-input")).toBeFocused();
+    await expect(cell).toHaveClass(/is-editing/);
+    expect(await after(cell, "box-shadow"), "the cursor's outline").toBe(
+      "none",
+    );
+    // A cell with a problem: neither the outline nor the underline.
+    await page.keyboard.press("ControlOrMeta+a");
+    await page.keyboard.type(">> 1");
+    await page.keyboard.press("Enter");
+    await expect(cell).toHaveClass(/is-flagged/);
+    await cell.click();
+    await page.keyboard.press("Enter");
+    await expect(cell).toHaveClass(/is-editing/);
+    expect(await after(cell, "box-shadow"), "a flagged cell").toBe("none");
+  });
+
+  test("a required test value left blank says so in Input, and the grid shows no marks", async ({
+    page,
+  }) => {
+    const { grid, panes } = await openDraftGrid(page);
+    const danger = await tokenColor(page, "--danger");
+    await panes.type({ amount: "2000", tier: "gold" });
+    await expect(row(grid, 0).locator(".dg-mark")).toHaveAttribute(
+      "data-mark",
+      "match",
+    );
+    const amount = panes.field("amount");
+    await amount.fill("");
+    await expect(amount).toHaveAttribute("aria-invalid", "true");
+    await expect(panes.input.locator("p.error")).toHaveText([
+      "Enter a number.",
+    ]);
+    expect(await style(amount, "border-top-color")).toBe(danger);
+    await expect(grid.root.locator(".dg-mark")).toHaveCount(0);
+    await expect(panes.output.locator(".dg-callout")).toContainText(
+      "The input doesn't fit the table's input fields.",
+    );
+    await expect(panes.count).toHaveText("Not checked");
+    await expect(panes.checked).toHaveCount(0);
+    // A number again: the error goes and the marks come back.
+    await amount.fill("500");
+    await expect(amount).not.toHaveAttribute("aria-invalid", "true");
+    await expect(panes.input.locator("p.error")).toHaveCount(0);
+    await expect(row(grid, 1).locator(".dg-mark")).toHaveAttribute(
+      "data-mark",
+      "match",
+    );
+  });
+
+  test("with no Otherwise result, the Otherwise row's results read No result in the subtle color", async ({
+    page,
+  }) => {
+    const { grid } = await openDraftGrid(page, withoutOtherwise("1.2.1"));
+    const subtle = await tokenColor(page, "--subtle");
+    await expect(grid.cell(3, 1)).toHaveText("When no rule matches");
+    for (const col of [3, 4]) {
+      await expect(grid.cell(3, col)).toHaveText("No result");
+      expect(
+        await style(grid.cell(3, col).locator(".dg-cell-text"), "color"),
+        "No result",
+      ).toBe(subtle);
+    }
+  });
+
+  test("when no rule matches, the Otherwise row is the matched row", async ({
+    page,
+  }) => {
+    const { grid, panes } = await openDraftGrid(page);
+    const [success, successBg] = await Promise.all(
+      ["--success", "--success-bg"].map((token) => tokenColor(page, token)),
+    );
+    await panes.type({ amount: "3000", tier: "silver" });
+    await expect(panes.count).toHaveText("No rule matched");
+    const other = row(grid, 3);
+    await expect(other).toHaveClass(/dg-otherwise/);
+    await expect(other.locator(".dg-mark")).toHaveAttribute(
+      "data-mark",
+      "match",
+    );
+    await expect(other.locator(".dg-mark weave-icon")).toHaveCount(1);
+    for (const cell of await other.locator(".dg-td").all())
+      expect(await style(cell, "background-color"), "an Otherwise cell").toBe(
+        successBg,
+      );
+    expect(await style(other.locator(".dg-mark-cell"), "box-shadow")).toContain(
+      success,
+    );
+    for (const index of [0, 1, 2])
+      await expect(row(grid, index).locator(".dg-mark")).toHaveAttribute(
+        "data-mark",
+        "no-match",
+      );
+    // A rule matches again: Otherwise goes back to its own color.
+    await panes.type({ amount: "500" });
+    await expect(other.locator(".dg-mark")).toHaveCount(0);
+    await expect(other).not.toHaveClass(/is-match/);
+  });
+
   test("rows stay 36 px while a cell is edited, a one-line formula and Otherwise included", async ({
     page,
   }) => {
@@ -929,5 +1038,67 @@ for (const size of [
       const { grid } = await openDraftGrid(page, twelveRules("1.2.1"));
       for (const row of [0, 1, 2, 3]) await grid.edit(row, 2, ">> x");
       await expectProblemsBeside(grid);
+    });
+
+    test("beside the Data pane, a short table's rows and both of its problems show in full", async ({
+      page,
+    }) => {
+      const { grid, panes } = await openDraftGrid(page);
+      await panes.show("Output");
+      await expect(panes.output).toBeVisible();
+      await grid.edit(0, 1, ">> 1000");
+      await grid.edit(1, 0, "big-gold");
+      const problems = grid.problems();
+      await expect(problems.locator("li")).toHaveCount(2);
+      const scroller = grid.root.locator(".dg-scroll");
+      const view = await box(scroller);
+      const rows = await boxes(
+        grid.root.locator(".dg-row:not(.dg-header) > .dg-mark-cell"),
+      );
+      expect(rows.length, "three rules and Otherwise").toBe(4);
+      for (const [index, cell] of rows.entries()) {
+        expect(cell.y, `row ${index + 1}'s top`).toBeGreaterThanOrEqual(view.y);
+        expect(cell.bottom, `row ${index + 1}'s bottom`).toBeLessThanOrEqual(
+          view.bottom + 0.5,
+        );
+      }
+      expect(
+        await scroller.evaluate((e) => e.scrollHeight - e.clientHeight),
+        "the grid scrolls",
+      ).toBeLessThanOrEqual(1);
+      const list = await box(problems);
+      for (const item of await boxes(problems.locator("li")))
+        expect(item.bottom, "a problem").toBeLessThanOrEqual(list.bottom + 0.5);
+      expect(
+        await problems.evaluate((e) => e.scrollHeight - e.clientHeight),
+        "the list scrolls",
+      ).toBeLessThanOrEqual(1);
+    });
+
+    test("the table bar's divider shows only while its items share one line", async ({
+      page,
+    }) => {
+      const { grid, panes } = await openDraftGrid(page);
+      const bar = grid.root.locator(".dg-bar");
+      const divider = bar.locator(".dg-divider");
+      const oneLine = async () => {
+        const [back, ident, publish] = [
+          await box(bar.locator(".dg-back")),
+          await box(bar.locator(".dg-ident")),
+          await box(bar.locator(".dg-publish")),
+        ];
+        return ident.y < back.bottom && publish.y < back.bottom;
+      };
+      // The Data pane folded: one line, with the divider.
+      expect(await oneLine(), "folded").toBe(true);
+      await expect(divider).toBeVisible();
+      // The Data pane open: at 768 the bar wraps and the divider goes.
+      await panes.show("Output");
+      await expect(panes.output).toBeVisible();
+      const shared = await oneLine();
+      if (size.width === 768)
+        expect(shared, "beside the Data pane").toBe(false);
+      if (shared) await expect(divider).toBeVisible();
+      else await expect(divider).toBeHidden();
     });
   });

@@ -18,7 +18,7 @@ SPDX-License-Identifier: Apache-2.0
 // Trying the table, shared by the grid and the Input and Output panes of
 // table view: the test values Input holds, where they came from, and how
 // Output shows the result. What is tried lives in memory only.
-import { signal, type Signal } from "@angular/core";
+import { computed, signal, type Signal } from "@angular/core";
 import type { Schema } from "../../forms/core/scope";
 import { uiKey, type BrowserStorage } from "../state/browser-store";
 import { studioStorage } from "../state/studio-storage";
@@ -88,6 +88,41 @@ export class TableTry {
   /** True once a value differs from the step's test data. */
   readonly edited = signal(false);
   readonly resultView = signal<ResultView>(readResultView());
+  /** The table's required fields left empty while other values are tried. */
+  readonly missing = computed(() => {
+    const schema = this.grid.spec()?.inputSchema as
+      | Record<string, unknown>
+      | undefined;
+    const required = Array.isArray(schema?.["required"])
+      ? (schema["required"] as string[])
+      : [];
+    const value = this.value();
+    if (Object.values(value).every(blank)) return [];
+    return required.filter((name) => blank(value[name]));
+  });
+  /** True while the values tried don't fit the table's input fields. */
+  readonly unfit = computed(() => this.missing().length > 0);
+  /** What each empty required field asks for, shown on the field in Input. */
+  readonly fieldErrors = computed(() => {
+    const schema = this.grid.spec()?.inputSchema as
+      | Record<string, unknown>
+      | undefined;
+    const properties = (schema?.["properties"] ?? {}) as Record<
+      string,
+      Record<string, unknown>
+    >;
+    return Object.fromEntries(
+      this.missing().map((name) => {
+        const type = properties[name]?.["type"];
+        return [
+          name,
+          type === "number" || type === "integer"
+            ? "Enter a number."
+            : "Enter a value.",
+        ];
+      }),
+    );
+  });
 
   constructor(readonly grid: TryGrid) {}
 

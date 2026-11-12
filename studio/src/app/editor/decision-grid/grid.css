@@ -100,6 +100,10 @@ SPDX-License-Identifier: Apache-2.0
   height: 20px;
   background: var(--line);
 }
+/* When the bar's items can't share a line, the divider goes. */
+.dg-bar.is-wrapped .dg-divider {
+  display: none;
+}
 .dg-title {
   display: inline-flex;
   align-items: baseline;
@@ -206,9 +210,14 @@ button.dg-publish {
    it. */
 .dg-box {
   flex: 0 1 auto;
-  min-height: calc(
-    var(--dg-group) + var(--dg-head) + var(--dg-min-rows, 5) * var(--dg-row) +
-      var(--dg-foot) + 2px
+  /* --dg-box-min is measured from the drawn rows (grid.ts); the nominal
+     sizes hold until the first measure. */
+  min-height: var(
+    --dg-box-min,
+    calc(
+      var(--dg-group) + var(--dg-head) + var(--dg-min-rows, 5) * var(--dg-row) +
+        var(--dg-foot) + 2px
+    )
   );
   display: flex;
   flex-direction: column;
@@ -529,6 +538,11 @@ button.dg-publish {
 .dg-td.is-cursor::after {
   box-shadow: inset 0 0 0 2px var(--focus);
 }
+/* While a cell is edited, its text box's ring is the only frame. */
+.dg-td.is-cursor.is-editing::after,
+.dg-td.is-cursor.is-editing.is-flagged::after {
+  box-shadow: none;
+}
 .dg-td.is-cursor.is-flagged::after {
   box-shadow:
     inset 0 0 0 2px var(--focus),
@@ -630,7 +644,8 @@ button.dg-tool[disabled] {
    shows its head and three problems, and scrolls for the rest. */
 .dg-problems {
   flex: none;
-  max-height: calc(4 * 40px + 2px);
+  /* Its head and three problems as drawn (grid.ts measures them). */
+  max-height: var(--dg-problems-max, calc(4 * 40px + 2px));
   overflow: auto;
   border: 1px solid var(--danger-bd);
   border-radius: var(--radius-md);

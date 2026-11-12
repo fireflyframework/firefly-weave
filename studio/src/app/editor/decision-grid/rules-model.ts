@@ -68,8 +68,13 @@ export interface GridView {
   results: GridColumn[];
   scalar: boolean;
   rows: RowView[];
-  /** The Otherwise row; null without `defaultOutput` (always for collect). */
+  /**
+   * The Otherwise row: its result, or empty cells while the table has none
+   * (typing one sets it); null for collect, which has no Otherwise.
+   */
   otherwise: ResultView | null;
+  /** True when the table has an Otherwise result (`defaultOutput`). */
+  otherwiseSet: boolean;
 }
 
 export const FIELD_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -226,9 +231,13 @@ export function gridOf(spec: TableSpec): GridView {
       };
     }),
     otherwise:
-      spec.hitPolicy !== "collect" && spec.defaultOutput !== undefined
-        ? resultView(spec.defaultOutput, results, scalar)
-        : null,
+      spec.hitPolicy === "collect"
+        ? null
+        : spec.defaultOutput !== undefined
+          ? resultView(spec.defaultOutput, results, scalar)
+          : { kind: "cells", cells: results.map(() => undefined) },
+    otherwiseSet:
+      spec.hitPolicy !== "collect" && spec.defaultOutput !== undefined,
   };
 }
 
@@ -592,8 +601,16 @@ export function setResult(
   const current =
     row === "otherwise" ? view.otherwise : (view.rows[row]?.result ?? null);
   let output: Expression;
-  if (view.scalar) output = value ?? { literal: null };
-  else {
+  // Otherwise with no cell left has no result at all.
+  const none = (): TableSpec => {
+    const next = { ...spec };
+    delete next.defaultOutput;
+    return next;
+  };
+  if (view.scalar) {
+    if (row === "otherwise" && value === undefined) return none();
+    output = value ?? { literal: null };
+  } else {
     const cells =
       current?.kind === "cells"
         ? [...current.cells]
@@ -609,6 +626,7 @@ export function setResult(
     const set = names
       .map((name, i) => [name, cells[i]] as const)
       .filter((entry): entry is readonly [string, Expression] => !!entry[1]);
+    if (row === "otherwise" && !set.length) return none();
     const fixed = set.every(
       ([, cell]) =>
         isRecord(cell) && Object.keys(cell).length === 1 && "literal" in cell,

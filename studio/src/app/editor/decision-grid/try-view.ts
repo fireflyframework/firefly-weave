@@ -53,6 +53,8 @@ export interface TryView {
   /** Why only Studio's live answer shows. */
   note: string | null;
   marks: (GridMark | null)[];
+  /** The Otherwise row's mark: "match" when its result answered. */
+  otherwise: "match" | null;
 }
 export interface TryViewInput {
   view: GridView;
@@ -61,6 +63,8 @@ export interface TryViewInput {
   revision: number;
   /** No test value yet. */
   empty: boolean;
+  /** A required input field is empty: the input doesn't fit the table. */
+  unfit: boolean;
   /** The first error in the table: its rule (from 0), "table" for one on no rule. */
   problem: number | "table" | null;
 }
@@ -79,6 +83,7 @@ const REFUSALS: Readonly<Record<string, string>> = {
 const COULDNT = "A rule couldn't be evaluated with this input.";
 const MULTIPLE = "WV-DECISION-MULTIPLE_MATCHES";
 const NO_MATCH = "WV-DECISION-NO_MATCH";
+const INPUT = "WV-DECISION-INPUT";
 
 /** "rule 4", "rules 2 and 3", "rules 2 to 9". */
 function rules(from: number, to: number): string {
@@ -158,6 +163,7 @@ export function tryView(input: TryViewInput): TryView {
     result: null,
     note: null,
     marks: none,
+    otherwise: null,
   };
   if (input.empty) return { ...blank, count: "Not checked" };
   if (input.problem !== null)
@@ -174,6 +180,14 @@ export function tryView(input: TryViewInput): TryView {
         rest: "Fix the problems under the table to see the result.",
       },
     };
+  // An input that doesn't fit isn't tried: no marks, no result.
+  const unfit: TryView = {
+    ...blank,
+    kind: "refused",
+    count: "Not checked",
+    callout: { tone: "danger", lead: REFUSALS[INPUT], rest: "" },
+  };
+  if (input.unfit) return unfit;
   if (state.revision !== revision || !state.live)
     return { ...blank, kind: "pending" };
 
@@ -215,6 +229,13 @@ export function tryView(input: TryViewInput): TryView {
             ),
           }
         : null;
+  if (refusal?.code === INPUT)
+    return {
+      ...unfit,
+      pill,
+      note,
+      callout: { ...unfit.callout!, lead: refusal.message },
+    };
   if (refusal) {
     const shown: TryView = {
       ...blank,
@@ -298,5 +319,6 @@ export function tryView(input: TryViewInput): TryView {
       : rows.map((row) => card(view, row, "success")),
     caption: caption(view, rows),
     result: { value: answer.output },
+    otherwise: answer.usedDefault ? "match" : null,
   };
 }

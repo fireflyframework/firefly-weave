@@ -122,6 +122,7 @@ import type { TryCard, TryView } from "./try-view";
           [schema]="schema()"
           [initialData]="state().initial()"
           [typed]="true"
+          [extraErrors]="state().fieldErrors()"
           choiceIcon="chevronDown"
           (dataChange)="state().change($event)"
         />

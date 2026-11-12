@@ -1136,7 +1136,7 @@ export class StepDetailsController {
           entry.document as unknown as Record<string, unknown>,
         );
         tables.retry();
-        host.notify(`Published ${name} ${version}.`);
+        host.notify(`Published ${name} ${version}`);
         return { published: true };
       },
       evaluate: (body) =>

@@ -105,6 +105,7 @@ function input(
     },
     revision: 4,
     empty: false,
+    unfit: false,
     problem: null,
     ...rest,
   };
@@ -157,6 +158,7 @@ describe("the Output pane's view of a try", () => {
     expect(shown.marks).toEqual(["match", null, null]);
     expect(shown.result).toEqual({ value: { approve: true, limit: 5000 } });
     expect(shown.callout).toBeNull();
+    expect(shown.otherwise).toBeNull();
   });
 
   it("says which rules didn't match before the one that won, and which weren't checked after it", () => {
@@ -237,6 +239,8 @@ describe("the Output pane's view of a try", () => {
     ]);
     expect(shown.result).toEqual({ value: { approve: false, limit: 0 } });
     expect(shown.marks).toEqual(["no-match", "no-match", "no-match"]);
+    // The grid's Otherwise row shows it matched, as Output does.
+    expect(shown.otherwise).toBe("match");
   });
 
   it("explains an Exactly one refusal: both rules, what a run does, and no result", () => {
@@ -336,6 +340,25 @@ describe("the Output pane's view of a try", () => {
       "The input doesn't fit the table's input fields.",
     );
     expect(shown.result).toBeNull();
+    // The rules weren't tried on it: no marks.
+    expect(shown.marks).toEqual([null, null, null]);
+  });
+
+  it("says the input doesn't fit as soon as a required field is empty, without trying the rules", () => {
+    const shown = tryView(
+      input(
+        spec(),
+        { marks: ["error", "no-match", "no-match"], checked: null },
+        { unfit: true },
+      ),
+    );
+    expect(shown.callout?.lead).toBe(
+      "The input doesn't fit the table's input fields.",
+    );
+    expect(shown.count).toBe("Not checked");
+    expect(shown.marks).toEqual([null, null, null]);
+    expect(shown.result).toBeNull();
+    expect(shown.pill).toBeNull();
   });
 
   it("withholds the result while the table has a problem", () => {

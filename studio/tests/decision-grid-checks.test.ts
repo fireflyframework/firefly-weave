@@ -21,7 +21,10 @@ import {
   type Column,
 } from "../src/app/editor/decision-grid/cell-grammar";
 import { gridProblems } from "../src/app/editor/decision-grid/grid-checks";
-import { composeWhen } from "../src/app/editor/decision-grid/rules-model";
+import {
+  composeWhen,
+  gridOf,
+} from "../src/app/editor/decision-grid/rules-model";
 import { tryTable } from "../src/app/editor/decision-grid/table-evaluate";
 import type { Json } from "../src/app/forms/core/json";
 import type {
@@ -223,5 +226,40 @@ describe("the problems under the grid", () => {
     expect(messages(spec(many))).toEqual([
       "error: A table holds at most 1,000 rules; this one has 1,001.",
     ]);
+  });
+});
+
+describe("an Otherwise with no result", () => {
+  it("is not a missing result", () => {
+    const spec = {
+      inputSchema: {
+        type: "object",
+        properties: { amount: { type: "number" } },
+      },
+      outputSchema: {
+        type: "object",
+        properties: { approve: { type: "boolean" } },
+        required: ["approve"],
+      },
+      hitPolicy: "first" as const,
+      rules: [
+        {
+          id: "big",
+          when: {
+            op: {
+              name: "gt",
+              args: [{ ref: "/input/amount" }, { literal: 1 }],
+            },
+          },
+          output: { literal: { approve: true } },
+        },
+      ],
+    };
+    // The grid draws its Otherwise row, waiting for a result.
+    expect(gridOf(spec).otherwise).toEqual({
+      kind: "cells",
+      cells: [undefined],
+    });
+    expect(gridProblems(spec)).toEqual([]);
   });
 });
