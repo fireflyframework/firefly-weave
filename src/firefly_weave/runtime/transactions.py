@@ -95,9 +95,15 @@ def failure_effect(action: Mapping[str, Any], error: Mapping[str, Any], *, trans
     return "unknown"
 
 
-def deadline_key(transaction_key: str, kind: DeadlineKind) -> str:
-    """The instance key of a transaction's hold, settle or decide deadline: ``move[2]`` → ``move[2]#settle``."""
-    return f"{transaction_key}#{kind}"
+def deadline_key(transaction_key: str, kind: DeadlineKind, generation: int = 0) -> str:
+    """The instance key of a transaction's hold, settle or decide deadline: ``move[2]`` → ``move[2]#settle``.
+
+    A settle deadline armed again after a person retried a settle timeout gets a key of its own per generation
+    (``move#settle.1``): the one before it was consumed when it fired, and a deadline row fires once.
+    """
+    if generation and kind != "settle":
+        raise ValueError("Only a settle deadline is armed again")
+    return f"{transaction_key}#{kind}" + (f".{generation}" if generation else "")
 
 
 def split_deadline(key: object) -> tuple[str, DeadlineKind] | None:
@@ -108,9 +114,15 @@ def split_deadline(key: object) -> tuple[str, DeadlineKind] | None:
         parsed = split_instance(key)
     except InvalidInstanceKey:
         return None
-    if len(parsed.segments) != 1 or parsed.count is not None or parsed.segments[0] not in DEADLINE_SEGMENTS:
+    if parsed.count is not None or not parsed.segments or parsed.segments[0] not in DEADLINE_SEGMENTS:
         return None
-    return key.rpartition("#")[0], cast(DeadlineKind, parsed.segments[0])
+    if len(parsed.segments) == 2:
+        generation = parsed.segments[1]
+        if parsed.segments[0] != "settle" or not generation.isdigit() or generation.startswith("0"):
+            return None
+    elif len(parsed.segments) != 1:
+        return None
+    return key.partition("#")[0], cast(DeadlineKind, parsed.segments[0])
 
 
 def references(expression: object) -> set[str]:
@@ -151,6 +163,8 @@ class TransactionShapes:
     # How many loops enclose each transaction step: its instance key keeps that many loop indexes.
     depths: Mapping[str, int]
     reads: Mapping[str, PhaseReads]
+    # Transaction steps whose business key reads an input classified secret: it never leaves in events or records.
+    withheld: frozenset[str] = frozenset()
 
     def owner_key(self, key: str) -> str | None:
         """The instance key of the transaction whose body holds the instance ``key``, or ``None``."""
@@ -198,7 +212,48 @@ def shapes(ir: WorkflowIR) -> TransactionShapes | None:
                 elif segments[0] in {"item", "index", "loops"}:
                     roots.add(segments[0])
         reads[node.id] = PhaseReads(frozenset(steps), frozenset(roots), own)
-    return TransactionShapes(MappingProxyType(owners), MappingProxyType(depths), MappingProxyType(reads))
+    withheld = frozenset(
+        node.id
+        for node in transactions
+        if node.business_key is not None
+        and any(secret_input(ir, pointer) for pointer in references(node.business_key.model_dump(by_alias=True)))
+    )
+    return TransactionShapes(MappingProxyType(owners), MappingProxyType(depths), MappingProxyType(reads), withheld)
+
+
+def secret_input(ir: WorkflowIR, pointer: str) -> bool:
+    """Whether a pointer may read an input value classified secret (``x-secret`` or ``writeOnly``).
+
+    The input schema is followed property by property; where it can't be followed exactly (references, combinators,
+    pattern or additional properties), any marker under the input schema counts. Pointers that don't read the input
+    read values the run produced and are not classified here.
+    """
+    from firefly_weave.operations.redaction import has_markers
+
+    segments = pointer.split("/")[1:]
+    if not segments or segments[0] != "input":
+        return False
+    schema: object = ir.schemas[ir.input_schema]
+    whole = has_markers(cast(JsonValue, schema)) or any(
+        has_markers(cast(JsonValue, item.document)) for item in ir.dependencies if item.kind == "Schema"
+    )
+    for segment in segments[1:]:
+        if not isinstance(schema, dict):
+            return whole
+        if schema.get("x-secret") is True or schema.get("writeOnly") is True:
+            return True
+        if any(keyword in schema for keyword in ("$ref", "allOf", "anyOf", "oneOf", "if", "patternProperties")):
+            return whole
+        properties = schema.get("properties")
+        if isinstance(properties, dict) and segment in properties:
+            schema = properties[segment]
+        elif isinstance(schema.get("items"), dict) and segment.isdigit():
+            schema = schema["items"]
+        else:
+            return whole
+    return has_markers(cast(JsonValue, schema)) or (
+        isinstance(schema, dict) and any(keyword in schema for keyword in ("$ref", "allOf", "anyOf", "oneOf")) and whole
+    )
 
 
 def is_participant(node: IRNode) -> bool:

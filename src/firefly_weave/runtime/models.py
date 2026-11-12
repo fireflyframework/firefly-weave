@@ -69,7 +69,8 @@ class BranchState(ContractModel):
 class JoinState(ContractModel):
     owner: str
     node_id: str
-    mode: Literal["all", "selected"]
+    # "error" joins a step's error path back into the sequence; it exists only while that path runs.
+    mode: Literal["all", "selected", "error"]
     branches: list[str]
     concurrency: int = Field(ge=1)
     required_count: int = Field(ge=1)
@@ -160,6 +161,10 @@ class TransactionRecord(ContractModel):
     incident: str | None = Field(default=None, exclude_if=lambda v: v is None)
     # Set once the transaction starts going back: the rest of its body never runs.
     rollback: bool = Field(default=False, exclude_if=lambda v: not v)
+    # The business key derives from an input classified secret: events, records and the run log never carry it.
+    business_key_withheld: bool = Field(default=False, exclude_if=lambda v: not v)
+    # How a person said a transaction in doubt ended when they marked it reconciled.
+    reconciled_as: Literal["completed", "compensated"] | None = Field(default=None, exclude_if=lambda v: v is None)
     participants: list[ParticipantRecord] = Field(default_factory=list)
     # Body steps that wait for every reservation to be confirmed.
     resume: list[str] = Field(default_factory=list, exclude_if=lambda v: not v)
@@ -276,9 +281,12 @@ class Deadline(ContractModel):
 
 class StepChange(ContractModel):
     node_id: str
-    status: Literal["completed", "waiting"]
+    # "failed" records a failure the step's onError setting handled; the run goes on.
+    status: Literal["completed", "waiting", "failed"]
     output: JsonData = None
     decision: JsonObjectData | None = Field(default=None, exclude_if=lambda value: value is None)
+    # The error object of a handled failure; only with status "failed".
+    error: JsonObjectData | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class ControlCommand(ContractModel):

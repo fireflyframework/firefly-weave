@@ -160,6 +160,8 @@ def workflow_steps(document: JsonValue) -> Iterator[tuple[JsonObject, str]]:
                 blocks.append((cast(JsonObject, step["body"]).get("steps"), location + "/body/steps"))
             elif kind == "transaction":
                 blocks.append((step.get("steps"), location + "/steps"))
+            if isinstance(step.get("errorPath"), dict):
+                blocks.append((cast(JsonObject, step["errorPath"]).get("steps"), location + "/errorPath/steps"))
 
 
 def called_references(document: JsonValue) -> list[str]:

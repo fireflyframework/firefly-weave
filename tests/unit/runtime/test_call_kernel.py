@@ -54,6 +54,8 @@ CALLEE = {
         "output": {"ref": "/steps/pick/output"},
     },
 }
+# The same called workflow returning null, as a workflow that computes no output does.
+NULL_CALLEE = {**CALLEE, "spec": {**CALLEE["spec"], "outputSchema": {}, "output": {"literal": None}}}
 
 
 def call(identifier="enrich", **settings) -> dict:
@@ -66,7 +68,7 @@ def call(identifier="enrich", **settings) -> dict:
     }
 
 
-def compiled(steps, output, *, input_schema=None) -> CompiledArtifact:
+def compiled(steps, output, *, input_schema=None, callee=CALLEE) -> CompiledArtifact:
     document = {
         "apiVersion": "weave/v1alpha1",
         "kind": "Workflow",
@@ -83,7 +85,7 @@ def compiled(steps, output, *, input_schema=None) -> CompiledArtifact:
             "output": output,
         },
     }
-    catalog = CatalogSnapshot.from_definitions([load_definition(CALLEE)])
+    catalog = CatalogSnapshot.from_definitions([load_definition(callee)])
     result = compile_source(json.dumps(document), format="json", catalog=catalog)
     assert result.ok, result.to_bytes()
     return result.artifact
@@ -138,6 +140,42 @@ def test_a_child_that_succeeds_gives_its_output_to_a_call_that_stops_on_failure(
     run.send("started")
     run.finish("enrich", "succeeded", {"tier": "gold"})
     assert (run.state.status, run.state.output, run.state.active) == ("succeeded", {"tier": "gold"}, [])
+
+
+@pytest.mark.parametrize(
+    ("settings", "received"),
+    [
+        ({}, None),
+        ({"onFailure": "continue"}, {"status": "succeeded", "runId": CHILD, "output": None}),
+    ],
+)
+def test_a_child_that_succeeds_with_null_gives_null_to_the_next_step(settings, received):
+    after = {"id": "after", "kind": "transform", "value": {"object": {"received": {"ref": "/steps/enrich/output"}}}}
+    flow = compiled([call(mode="wait", **settings), after], {"ref": "/steps/after/output"}, callee=NULL_CALLEE)
+    run = Run(flow, {"customerId": "c-1"})
+    run.send("started")
+    run.finish("enrich", "succeeded", None)
+    assert (run.state.status, run.state.incident, run.state.output) == ("succeeded", None, {"received": received})
+
+
+def test_a_call_incident_resolved_with_a_null_result_gives_null_to_the_call():
+    run = Run(compiled([call()], {"ref": "/steps/enrich/output"}, callee=NULL_CALLEE), {"customerId": "c-1"})
+    run.send("started")
+    run.send("incident_opened", node_id="enrich", generation=0, code="WV-CALL-START")
+    run.send(
+        "incident_resolved",
+        incident_key="enrich:0",
+        node_id="enrich",
+        generation=0,
+        kind="accept_reconciled_result",
+        output=None,
+    )
+    assert (run.state.status, run.state.incident, run.state.output, run.state.incidents) == (
+        "succeeded",
+        None,
+        None,
+        {},
+    )
 
 
 def test_a_child_output_that_breaks_the_called_workflow_schema_opens_an_incident():

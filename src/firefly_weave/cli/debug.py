@@ -31,6 +31,7 @@ from firefly_weave.operations.debug.models import (
     DebugError,
     DebugLimits,
     DebugView,
+    ScriptedError,
 )
 from firefly_weave.operations.debug.simulator import Simulator
 
@@ -49,9 +50,27 @@ from firefly_weave.operations.debug.simulator import Simulator
     metavar="REF=ARTIFACT.json",
     help="The compiled artifact of a workflow version a call runs, to step into it; repeat for each version.",
 )
+@click.option(
+    "--error",
+    "failures",
+    multiple=True,
+    metavar="KEY=CODE",
+    help="Make a step fail with CODE instead of using a mock, such as node:send[2]=RATE_LIMITED; repeatable.",
+)
 @click.option("--output", type=click.Choice(["text", "json"]), default="text")
-def simulate(request_file: Path, commands: Path | None, called: tuple[str, ...], output: str) -> None:
-    """Simulate a local JSON {artifact,mocks,input,now} request with no external effects."""
+def simulate(
+    request_file: Path, commands: Path | None, called: tuple[str, ...], failures: tuple[str, ...], output: str
+) -> None:
+    """Simulate a local JSON {artifact,mocks,errors,input,now} request with no external effects."""
+    scripted: dict[str, ScriptedError] = {}
+    for value in failures:
+        key, separator, code = value.rpartition("=")
+        try:
+            if not separator or not key:
+                raise ValueError(value)
+            scripted[key] = ScriptedError(code=code)
+        except ValueError:
+            raise click.BadParameter("Use KEY=CODE, such as node:send=RATE_LIMITED.", param_hint="--error") from None
     artifacts: dict[str, Path] = {}
     for value in called:
         reference, separator, path = value.partition("=")
@@ -79,6 +98,7 @@ def simulate(request_file: Path, commands: Path | None, called: tuple[str, ...],
             input=request.input,
             now=request.now,
             workflows=workflows,
+            errors={**request.errors, **scripted},
         )
         if commands is None:
             view = simulator.continue_until_breakpoint()

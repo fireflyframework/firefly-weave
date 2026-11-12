@@ -95,6 +95,7 @@ export function pendingStepFields(
     .flatMap((entry) => [
       ...(entry.path ? [entry.path] : []),
       ...Object.values(entry.paths ?? {}).flat(),
+      ...(entry.block?.path ? [entry.block.path] : []),
     ])
     .map((path) => path.replace(/^\//, ""));
 }

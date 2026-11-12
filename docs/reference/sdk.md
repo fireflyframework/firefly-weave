@@ -351,8 +351,9 @@ capability.
 | `create_connection`, `read_connection`, `test_connection`, `list_connections` | Immutable integration connections that hold only secret handles, and explicit checks |
 | `start_run`, `read_run`, `signal`, `cancel`, `retry`, `list_runs` | Durable runs |
 | `pause_run`, `resume_run`, `run_lifecycle`, `archive_run`, `restore_run`, `purge_run` | Run lifecycle management |
-| `history`, `export_run`, `replay`, `run_incidents`, `list_incidents`, `read_incident`, `resolve_incident` | Bounded evidence and audited recovery |
+| `history`, `export_run`, `replay`, `run_incidents`, `list_incidents`, `read_incident`, `resolve_incident` | Bounded evidence and audited recovery; `resolve_incident` accepts `accept_reconciled_failure` (Confirm it had no effect) for a step with an On error setting, and as It didn't happen for a transaction's step that can't be undone |
 | `run_calls`; `firefly_weave.sdk.call_pins.current_call_pins(client, request)` | The calls a run made, with each child run; pin the current activation of every workflow version an activation request's workflow calls |
+| `run_transactions`; `cancel(..., skip_undo=True)`; `retire_activation(..., force=True)` | A run's workflow transactions, without business values; stop a run without undoing its transactions, or retire an activation a running transaction may still need (both need `transaction.reconcile`) |
 | `human_tasks`, `read_human_task`, `claim_human_task`, `release_human_task`, `complete_human_task`, `reassign_human_task` | Human task inbox and decisions |
 | `assignment_bindings`, `put_assignment_binding`, `put_human_group` | Who may work on which human task |
 | `register_release`, `read_release`, `list_releases`, `register_worker`, `read_worker`, `list_workers`, `revoke_worker`, `grant_connection` | Trusted worker releases and instances |
@@ -594,7 +595,9 @@ change, so that a late answer never overwrites newer state:
   answer, or a failed save, the fence remains and the next process asks for a
   new sign-in; old tokens are never restored. A renewal that provably never
   reached the provider keeps the previous sign-in and fails with
-  `WV-AUTH-OFFLINE`. A wider scope or a missing rotation is rejected.
+  `WV-AUTH-OFFLINE`. A wider scope or a missing rotation is rejected. A
+  refresh token is never presented within 2 seconds of being obtained; until
+  then the client uses the still-valid access token, or waits out the rest.
 - **Sign-out** saves a token-free signed-out record and removes the local
   record under the lock. A failed removal is an error. Revocation cannot shorten
   an access token that was already issued, or undo its effects.
@@ -608,11 +611,12 @@ power loss depend on your operating system. Tokens and verifiers never appear
 in `repr`, CLI JSON, lock files, or errors.
 
 **Provider note.** The bundled local environment uses Keycloak, whose
-stale-refresh check compares whole-second timestamps. This is an observation
-about that local provider, not a requirement to deploy Keycloak: the client
-fence stops cooperating processes from reusing an old record regardless of
-the provider. A rotated token alone does not prove stronger replay protection
-on the provider side. See [identity and secrets](../operations/identity-and-secrets.md)
+stale-refresh check compares whole-second timestamps. The client spaces
+rotations so that this check refuses every replaced refresh token. This is an
+observation about that local provider, not a requirement to deploy Keycloak:
+the client fence stops cooperating processes from reusing an old record
+regardless of the provider. A rotated token alone does not prove stronger
+replay protection on the provider side. See [identity and secrets](../operations/identity-and-secrets.md)
 for compatible OIDC settings.
 
 ## Next steps

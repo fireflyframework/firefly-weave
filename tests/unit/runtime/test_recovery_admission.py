@@ -100,6 +100,9 @@ class _Harness:
         monkeypatch.setattr("firefly_weave.runtime.recovery.RuntimeRepository", Repository)
         monkeypatch.setattr("firefly_weave.runtime.recovery.view_of", lambda row: _View(row["state"]))
         monkeypatch.setattr("firefly_weave.runtime.recovery.import_artifact", lambda artifact: None)
+        # The fake artifact holds no workflow: every step stops the run, as before step error handling.
+        monkeypatch.setattr("firefly_weave.runtime.recovery.workflow", lambda artifact: None)
+        monkeypatch.setattr("firefly_weave.runtime.recovery.error_policy", lambda ir, key: "stop")
         # `transition_async` resolves the pure reducer at call time, inside the admitted thread.
         monkeypatch.setattr("firefly_weave.runtime.kernel.transition", transition)
 
