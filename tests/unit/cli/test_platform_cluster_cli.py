@@ -98,6 +98,13 @@ def test_the_installed_weave_command_has_cluster_create_and_delete():
         assert flag in help_text
 
 
+def test_the_cli_reference_says_what_create_deletes_with_the_commands_own_deadline():
+    reference = (Path(__file__).resolve().parents[3] / "docs/reference/cli.md").read_text()
+    (row,) = [line for line in reference.splitlines() if line.startswith("| `cluster create ")]
+    assert "kind or k3d fails or is interrupted, nothing is deleted" in row
+    assert f"a cluster whose nodes aren't Ready within {clusters.READY_SECONDS} s is deleted again" in row
+
+
 def test_create_refuses_when_the_docker_disk_has_less_than_6_gib_free(world):
     directory, commands, _ = world
     commands.answer(["docker", "run", "df"], df(5))
