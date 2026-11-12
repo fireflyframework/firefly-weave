@@ -152,6 +152,7 @@ SERVICE_PACKAGES = (
     "firefly_weave.connections.bindable",
     "firefly_weave.connections.descriptors",
     "firefly_weave.connections.source_bindings",
+    "firefly_weave.step_tests",
     "firefly_weave.runtime",
     "firefly_weave.providers.credentials",
     "firefly_weave.providers.service",
