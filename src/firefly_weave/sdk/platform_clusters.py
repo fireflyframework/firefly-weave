@@ -24,6 +24,7 @@ call; it is never written, copied, printed or stored, and the receipt keeps the 
 
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import json
 import os
@@ -32,20 +33,28 @@ import secrets
 import socket
 import tempfile
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
+from uuid import UUID
 
 import yaml
 
 from firefly_weave.sdk import platform as local
+from firefly_weave.sdk import platform_cluster_objects as objects
 from firefly_weave.sdk import platform_cluster_tools as tools
-from firefly_weave.sdk import platform_operations
+from firefly_weave.sdk import platform_operations, platform_origins
 from firefly_weave.sdk.deployment import DeploymentError, read_file, strict_json
 from firefly_weave.sdk.platform_cluster_objects import SYSTEM_NAMESPACE
+
+if TYPE_CHECKING:
+    import httpx
+
+    from firefly_weave.sdk.client import WeaveClient
 
 PROVIDERS = ("kind", "k3d")
 DEFAULT_NAMESPACE = "weave-workers"
@@ -456,6 +465,641 @@ def reserve(value: dict[str, Any], key: str, namespace: str) -> dict[str, Any]:
         }
     found: dict[str, Any] = targets[namespace]
     return found
+
+
+# Connect
+
+LOCK = ".clusters.lock"
+BUSY = "Another cluster command is active; retry after it ends."
+CONNECT_STAGES = (
+    "preflight",
+    "network",
+    "mirror",
+    "images",
+    "shared",
+    "namespace",
+    "identities",
+    "probe",
+    "target",
+    "runner",
+    "ready",
+    "receipt",
+)
+DEPLOYMENT = "weave-workers"
+CONTACT_SECONDS = 120
+PROBE_SECONDS = 180
+WORKER_SCRIPT = "/opt/weave/operations-worker/main.py"
+RUNNER_REPOSITORY = "weave/runner"
+_CONTAINER_ID = re.compile(r"[a-f0-9]{12,64}")
+_UID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+# Image pulls that won't succeed by waiting longer.
+_PULL_FAILURES = frozenset({"ErrImagePull", "ImagePullBackOff", "InvalidImageName", "ErrImageNeverPull"})
+NOTHING_REGISTERED = "Nothing was registered."
+FOREIGN_NAMESPACE = "Namespace {namespace} belongs to another Weave installation. Choose another namespace."
+PROBE_PULL = (
+    "A test pod couldn't pull the worker image through the platform registry. Create the cluster with weave platform "
+    "cluster create, which sets up the registry mirror. Nothing was registered."
+)
+POLICY_OFF = (
+    "This cluster doesn't enforce NetworkPolicy, so any pod could reach the platform. Create the cluster with weave "
+    "platform cluster create. Nothing was registered."
+)
+OTHER_ISSUER = (
+    "A test pod signed in, but the token came from another issuer. Run weave platform up again, then connect. "
+    "Nothing was registered."
+)
+PROBE_FAILED = (
+    "A test pod stopped before it could check what it reaches. Run connect again; if it stops again, check the "
+    "cluster's events with kubectl get events. Nothing was registered."
+)
+OTHER_CONTAINERS = (
+    "The cluster's Docker network holds containers that are neither its nodes nor the platform's. Create the cluster "
+    "with weave platform cluster create, which gives each cluster its own network."
+)
+# Replaced in tests.
+wait_async = asyncio.sleep
+
+
+@dataclass
+class _Connection:
+    """What the stages share: the preflight, the platform's state and operations receipt, and the cluster's place."""
+
+    found: Preflight
+    state: dict[str, Any]
+    operations: dict[str, Any]
+    kube: list[str]
+    network: objects.ClusterNetwork | None = None
+
+
+def _docker(connection: _Connection) -> list[str]:
+    return ["docker", "--context", connection.state["context"]]
+
+
+def _platform_container(connection: _Connection, service: str) -> str:
+    """The ID of one of the platform's own containers, by Compose's exact ownership labels."""
+    project = f"weave-local-{connection.state['id']}"
+    ids = _lines(
+        local._run(
+            connection.state,
+            "cluster-platform-container",
+            [*_docker(connection), "ps", "--quiet", "--filter", f"label=com.docker.compose.project={project}"]
+            + ["--filter", f"label=com.docker.compose.service={service}"],
+        )
+    )
+    if len(ids) != 1 or not _CONTAINER_ID.fullmatch(ids[0]):
+        raise local.PlatformError(
+            f"The platform's {service} container isn't running. Run weave platform up, then connect again."
+        )
+    return ids[0]
+
+
+def _network_view(connection: _Connection) -> tuple[str, dict[str, tuple[str, str]]]:
+    """The cluster network's IPv4 subnet and its containers: full ID to (name, IPv4 address)."""
+    try:
+        (described,) = strict_json(
+            local._run(
+                connection.state,
+                "cluster-network-inspect",
+                [*_docker(connection), "network", "inspect", connection.found.network],
+            )
+        )
+        subnets = [item["Subnet"] for item in described["IPAM"]["Config"] if "." in str(item.get("Subnet"))]
+        members = {
+            key: (str(item["Name"]), str(item.get("IPv4Address", "")).split("/")[0])
+            for key, item in (described.get("Containers") or {}).items()
+        }
+    except (ValueError, TypeError, KeyError, DeploymentError):
+        raise local.PlatformError("Docker didn't describe the cluster's network; nothing was changed.") from None
+    if len(subnets) != 1:
+        raise local.PlatformError("The cluster's Docker network has no single IPv4 subnet; nothing was changed.")
+    return str(subnets[0]), members
+
+
+def _member(members: dict[str, tuple[str, str]], short: str) -> tuple[str, str] | None:
+    found = [item for key, item in members.items() if key.startswith(short)]
+    return found[0] if len(found) == 1 else None
+
+
+def _join(connection: _Connection, key: str) -> None:
+    """Join the API's network namespace (the keycloak container) and the registry to the cluster network, then
+    allow only the cluster's own nodes and those two containers on it."""
+    found = connection.found
+    joined = {"keycloak": "weave-platform", "registry": "weave-registry"}
+    ids = {service: _platform_container(connection, service) for service in joined}
+    _, members = _network_view(connection)
+    for service, alias in joined.items():
+        if _member(members, ids[service]) is None:
+            local._run(
+                connection.state,
+                "cluster-network-join",
+                [*_docker(connection), "network", "connect", "--alias", alias, found.network, ids[service]],
+            )
+    subnet, members = _network_view(connection)
+    platform = {service: _member(members, ids[service]) for service in joined}
+    if any(item is None or not item[1] for item in platform.values()):
+        raise local.PlatformError("The platform's containers didn't join the cluster's network; nothing was changed.")
+    allowed = set(found.nodes) | {item[0] for item in platform.values() if item is not None}
+    if any(name not in allowed for name, _ in members.values()):
+        raise local.PlatformError(OTHER_CONTAINERS)
+    local._validate_subnet(subnet)
+    api, registry = (item[1] for item in platform.values() if item is not None)
+    value = receipt(Path(connection.state["directory"]))
+    entry = value["clusters"].get(key)
+    record = cluster_record(found, subnet=subnet, api_address=api, registry_address=registry)
+    if entry is None:
+        value["clusters"][key] = record
+    else:
+        entry.update({name: record[name] for name in _CLUSTER_KEYS})
+    save(Path(connection.state["directory"]), value)
+    connection.network = objects.ClusterNetwork(
+        provider=found.provider,
+        cluster=found.cluster,
+        network=found.network,
+        subnet=subnet,
+        api_address=api,
+        registry_address=registry,
+        registry_port=int(connection.operations["registry_port"]),
+        installation=connection.state["id"],
+    )
+
+
+def _mirror(connection: _Connection) -> None:
+    """Point the nodes' pulls of the platform registry's loopback name at its address on the cluster network."""
+    found, port = connection.found, int(connection.operations["registry_port"])
+    host = f"127.0.0.1:{port}"
+    docker = _docker(connection)
+    if found.provider == "kind":
+        folder = f"/etc/containerd/certs.d/{host}"
+        hosts = (
+            f'server = "http://{host}"\n\n[host."http://weave-registry:5000"]\n  capabilities = ["pull", "resolve"]\n'
+        )
+        for node in found.nodes:
+            local._run(connection.state, "cluster-mirror", [*docker, "exec", node, "mkdir", "-p", folder])
+            local._run(
+                connection.state,
+                "cluster-mirror",
+                [*docker, "exec", "-i", node, "cp", "/dev/stdin", folder + "/hosts.toml"],
+                stdin=hosts.encode(),
+            )
+        return
+    path = "/etc/rancher/k3s/registries.yaml"
+    wanted = f'mirrors:\n  "{host}":\n    endpoint:\n      - "http://weave-registry:5000"\n'
+    nodes = [node for node in found.nodes if re.fullmatch(rf"k3d-{found.cluster}-(server|agent)-[0-9]+", node)]
+    for node in nodes:
+        current = local._run(connection.state, "cluster-mirror-read", [*docker, "exec", node, "cat", path])
+        if current.decode(errors="replace") == wanted:
+            continue
+        local._run(
+            connection.state,
+            "cluster-mirror",
+            [*docker, "exec", "-i", node, "cp", "/dev/stdin", path],
+            stdin=wanted.encode(),
+        )
+        # k3s reads its mirrors when it starts: restart this node once, only because the file changed.
+        local._run(connection.state, "cluster-mirror-restart", [*docker, "restart", node], timeout=120)
+    if nodes:
+        _wait_nodes(connection)
+
+
+def _wait_nodes(connection: _Connection) -> None:
+    deadline = clock() + READY_SECONDS
+    while True:
+        wait = max(1, min(60, int(deadline - clock())))
+        try:
+            local._run(
+                connection.state,
+                "cluster-mirror-ready",
+                [*connection.kube, "wait", "--for=condition=Ready", "node", "--all", f"--timeout={wait}s"],
+                timeout=wait + 30,
+            )
+            return
+        except local.PlatformError:
+            if clock() >= deadline:
+                raise local.PlatformError(
+                    f"The cluster's nodes weren't Ready within {READY_SECONDS} s after the registry mirror was "
+                    "added. Nothing was registered."
+                ) from None
+        sleep(5)
+
+
+def _runner_image(connection: _Connection) -> str:
+    """Push the runner image the platform built to its registry; adapters accept images by digest only."""
+    image, port = connection.operations["runner_image"], int(connection.operations["registry_port"])
+    repository = f"127.0.0.1:{port}/{RUNNER_REPOSITORY}"
+    tag = f"{repository}:{image.removeprefix('sha256:')[:12]}"
+    docker = _docker(connection)
+    local._run(connection.state, "cluster-runner-tag", [*docker, "tag", image, tag])
+    local._run(connection.state, "cluster-runner-push", [*docker, "push", tag], timeout=600)
+    inspected = strict_json(
+        local._run(connection.state, "cluster-runner-inspect", [*docker, "image", "inspect", image])
+    )
+    digests = [item for item in inspected[0].get("RepoDigests") or [] if item.startswith(repository + "@")]
+    if len(digests) != 1 or not re.fullmatch(r"sha256:[a-f0-9]{64}", digests[0].rsplit("@", 1)[1]):
+        raise local.PlatformError("The platform registry didn't report the runner image's digest.")
+    return str(digests[0])
+
+
+def _apply(connection: _Connection, name: str, items: list[dict[str, Any]]) -> None:
+    """Server-side apply as the platform's field manager, so a manual edit to an owned field is reverted."""
+    document = json.dumps({"apiVersion": "v1", "kind": "List", "items": items}).encode()
+    local._run(
+        connection.state,
+        name,
+        [*connection.kube, "apply", "--server-side", f"--field-manager={objects.MANAGED_BY}", "--force-conflicts"]
+        + ["-f", "-"],
+        stdin=document,
+        timeout=90,
+    )
+
+
+def _check_namespace(connection: _Connection, namespace: str) -> None:
+    """Refuse a namespace another installation owns, before anything is applied to it."""
+    existing = local._run(
+        connection.state,
+        "cluster-namespace",
+        [*connection.kube, "get", "namespace", namespace, "--ignore-not-found", "-o", "json"],
+    )
+    if existing.strip():
+        try:
+            labels = strict_json(existing)["metadata"].get("labels") or {}
+        except (ValueError, TypeError, KeyError, AttributeError, DeploymentError):
+            raise local.PlatformError("kubectl didn't describe the namespace; nothing was registered.") from None
+        owner = labels.get("firefly.weave/installation")
+        if owner is not None and owner != connection.state["id"]:
+            raise local.PlatformError(FOREIGN_NAMESPACE.format(namespace=namespace))
+
+
+def _uid(connection: _Connection, namespace: str) -> str:
+    uid = (
+        local._run(
+            connection.state,
+            "cluster-namespace-uid",
+            [*connection.kube, "get", "namespace", namespace, "-o", "jsonpath={.metadata.uid}"],
+        )
+        .decode(errors="replace")
+        .strip()
+    )
+    if not _UID.fullmatch(uid):
+        raise local.PlatformError("kubectl didn't report the namespace's UID; nothing was registered.")
+    return uid
+
+
+def _secret(connection: _Connection, name: str, namespace: str, value: bytes, labels: dict[str, str]) -> None:
+    """Replace a Secret whose only key is the client secret, read by kubectl from stdin: never argv or a file."""
+    kube = [*connection.kube, "--namespace", namespace]
+    local._run(connection.state, "cluster-secret", [*kube, "delete", "secret", name, "--ignore-not-found"])
+    local._run(
+        connection.state,
+        "cluster-secret",
+        [*kube, "create", "secret", "generic", name, f"--from-file={objects.SECRET_KEY}=/dev/stdin"],
+        stdin=value,
+    )
+    local._run(
+        connection.state,
+        "cluster-secret",
+        [*kube, "label", "secret", name, "--overwrite", *(f"{key}={item}" for key, item in sorted(labels.items()))],
+    )
+
+
+def _has(connection: _Connection, kind: str, name: str, namespace: str) -> bool:
+    """Whether an object exists, by name only: kubectl prints no data of it."""
+    found = local._run(
+        connection.state,
+        "cluster-exists",
+        [*connection.kube, "--namespace", namespace, "get", kind, name, "--ignore-not-found", "-o", "name"],
+    )
+    return bool(found.strip())
+
+
+def _issuer(connection: _Connection) -> str:
+    return f"http://localhost:{connection.state['ports']['keycloak']}/realms/weave"
+
+
+def _probe_outcomes(connection: _Connection, namespace: str, names: list[str]) -> dict[str, int]:
+    """Wait with a deadline for each probe pod to end; its container's exit code."""
+    deadline = clock() + PROBE_SECONDS
+    outcomes: dict[str, int] = {}
+    while True:
+        for name in names:
+            if name in outcomes:
+                continue
+            try:
+                pod = strict_json(
+                    local._run(
+                        connection.state,
+                        "cluster-probe-state",
+                        [*connection.kube, "--namespace", namespace, "get", "pod", name, "-o", "json"],
+                    )
+                )
+                status = pod.get("status") or {}
+                containers = [*(status.get("initContainerStatuses") or []), *(status.get("containerStatuses") or [])]
+            except (ValueError, TypeError, AttributeError, DeploymentError):
+                raise local.PlatformError("kubectl didn't describe a test pod. " + NOTHING_REGISTERED) from None
+            if any(
+                ((item.get("state") or {}).get("waiting") or {}).get("reason") in _PULL_FAILURES for item in containers
+            ):
+                raise local.PlatformError(PROBE_PULL)
+            if status.get("phase") in {"Succeeded", "Failed"}:
+                main = [
+                    item for item in status.get("containerStatuses") or [] if "terminated" in (item.get("state") or {})
+                ]
+                code = main[0]["state"]["terminated"].get("exitCode") if main else None
+                outcomes[name] = code if isinstance(code, int) else -1
+        if len(outcomes) == len(names):
+            return outcomes
+        if clock() >= deadline:
+            raise local.PlatformError(f"The test pods didn't finish within {PROBE_SECONDS} s. " + NOTHING_REGISTERED)
+        sleep(2)
+
+
+def _probe(connection: _Connection, target: objects.ClusterTarget) -> None:
+    """Prove reach before anything is registered: a labeled pod signs in at the platform's issuer and can't reach the
+    registry, and an unlabeled pod reaches neither the API, Keycloak nor the registry. The pods are always deleted."""
+    network = connection.network
+    assert network is not None
+    api, registry = network.api_address, network.registry_address
+    worker = ["python", "-I", WORKER_SCRIPT]
+    probes = {
+        "weave-probe-token": (True, [*worker, "--probe-token"]),
+        "weave-probe-unlabeled": (False, [*worker, "--probe-closed", f"{api}:8000", f"{api}:8080", f"{registry}:5000"]),
+        "weave-probe-registry": (True, [*worker, "--probe-closed", f"{registry}:5000"]),
+    }
+    kube = [*connection.kube, "--namespace", target.namespace]
+    names = list(probes)
+    local._run(connection.state, "cluster-probe", [*kube, "delete", "pod", *names, "--ignore-not-found"])
+    try:
+        pods = [
+            objects.probe_pod(target, name=name, labeled=labeled, command=command)
+            for name, (labeled, command) in probes.items()
+        ]
+        document = json.dumps({"apiVersion": "v1", "kind": "List", "items": pods}).encode()
+        local._run(connection.state, "cluster-probe", [*kube, "create", "-f", "-"], stdin=document)
+        outcomes = _probe_outcomes(connection, target.namespace, names)
+        closed = (outcomes["weave-probe-unlabeled"], outcomes["weave-probe-registry"])
+        # --probe-closed exits 1 only when an address answered; any other failure means the check never ran.
+        if 1 in closed:
+            raise local.PlatformError(POLICY_OFF)
+        if any(code != 0 for code in closed):
+            raise local.PlatformError(PROBE_FAILED)
+        if outcomes["weave-probe-token"] != 0:
+            raise local.PlatformError(
+                "A test pod couldn't sign in as the cluster's worker. Run connect again. " + NOTHING_REGISTERED
+            )
+        printed = local._run(connection.state, "cluster-probe-token", [*kube, "logs", "pod/weave-probe-token"])
+        try:
+            issuer = strict_json(printed.strip().splitlines()[-1])["iss"]
+        except (ValueError, TypeError, KeyError, IndexError, DeploymentError):
+            issuer = None
+        if issuer != _issuer(connection):
+            raise local.PlatformError(OTHER_ISSUER)
+    finally:
+        local._run(
+            connection.state,
+            "cluster-probe-delete",
+            [*kube, "delete", "pod", *names, "--ignore-not-found", "--wait=false"],
+        )
+
+
+def _key(connection: _Connection, entry: dict[str, Any]) -> str:
+    """The idempotency prefix of a target's platform records: a rerun answers what a lost response created, and a
+    pair taken again (a new generation) never answers with the records of its previous target."""
+    return f"weave-platform-cluster-{connection.state['id']}-{entry['generation']}"
+
+
+async def _principals(
+    client: Any, connection: _Connection, entry: dict[str, Any], subjects: dict[str, str], save_entry: Any
+) -> None:
+    runner, worker = platform_operations.cluster_clients(entry["pair"])
+    await platform_operations._principals(
+        client,
+        connection.state,
+        entry,
+        save_entry,
+        roles=(("worker", "worker", worker), ("runner", "application", runner)),
+        subjects=subjects,
+        key=_key(connection, entry),
+    )
+
+
+async def _register(
+    client: Any, connection: _Connection, entry: dict[str, Any], uid: str, namespace: str, save_entry: Any
+) -> None:
+    """The target, its deployment and the runner's grant on it; the workers' grant on the fixture release only."""
+    from firefly_weave.contracts.members import MemberGrantRequest
+    from firefly_weave.sdk.members import MembersClient
+
+    operations = connection.operations
+    request = {
+        "name": entry["target_name"],
+        "adapter": "kubernetes",
+        "external_identity": uid,
+        "boundary": namespace,
+        "runner_principal_id": entry["runner_principal_id"],
+        "capabilities": list(objects.CAPABILITIES),
+        "approval_policy": {"distinct_approver": False},
+    }
+    await platform_operations._target(
+        client,
+        entry,
+        save_entry,
+        scope=operations["scope"],
+        request=request,
+        deployment=platform_operations.deployment_request(DEPLOYMENT, objects.WORKER, operations),
+        key=_key(connection, entry),
+    )
+    if entry.get("worker_granted") != operations["release_id"]:
+        scope = operations["scope"]
+        await MembersClient(client).grant(
+            MemberGrantRequest(
+                principal_id=UUID(entry["worker_principal_id"]),
+                role="worker",
+                project_id=UUID(scope["project_id"]),
+                environment_id=UUID(scope["environment_id"]),
+                resources=(operations["release_id"], platform_operations.TASK_TYPE),
+            )
+        )
+        entry["worker_granted"] = operations["release_id"]
+        save_entry()
+
+
+def _silent(connection: _Connection, namespace: str) -> str:
+    return (
+        f"The runner didn't make contact within {CONTACT_SECONDS} s. Read its log with kubectl --context "
+        f"{connection.found.context} --namespace {objects.SYSTEM_NAMESPACE} logs deployment/weave-runner-{namespace}. "
+        "The target is registered; run connect again to retry."
+    )
+
+
+async def _ready(client: Any, connection: _Connection, entry: dict[str, Any], namespace: str, key: str) -> str:
+    """Ask for one observation as the signed-in owner, then wait for runner contact and a complete observation."""
+    from firefly_weave.contracts.deployments import ObserveRequest
+
+    target = UUID(entry["target_id"])
+    job = await client.invoke(
+        "deployment_observations.create", body=ObserveRequest(target_id=target), idempotency_key=key
+    )
+    deadline = clock() + CONTACT_SECONDS
+    while True:
+        runners = await client.invoke("deployment_runners.list", query={"target_id": str(target)})
+        now = datetime.now(UTC)
+        online = any(not item.revoked and item.expires_at > now for item in runners.items)
+        current = await client.invoke("deployment_jobs.read", identifier=job.id)
+        if online and current.state == "succeeded" and current.observation_id is not None:
+            observation = await client.invoke("deployment_observations.read", identifier=current.observation_id)
+            if observation.complete:
+                return str(observation.observed_at.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"))
+        if current.state in {"failed", "cancelled", "reconciliation_required"} or clock() >= deadline:
+            raise local.PlatformError(_silent(connection, namespace))
+        await wait_async(2)
+
+
+def _draft(
+    connection: _Connection,
+    namespace: str,
+    entry: dict[str, Any],
+    runner_image: str,
+    *,
+    rotated: str = "",
+    uid: str = "",
+) -> objects.ClusterTarget:
+    """The target as the renderer sees it; before registration it has no target ID, and before the identities stage
+    no pair of its own (the namespace's objects don't depend on it)."""
+    network, operations = connection.network, connection.operations
+    assert network is not None
+    return objects.ClusterTarget(
+        network=network,
+        namespace=namespace,
+        target_id=UUID(entry["target_id"]) if "target_id" in entry else None,
+        pair=int(entry.get("pair", 1)),
+        scope=operations["scope"],
+        release_id=UUID(operations["release_id"]),
+        worker_image=operations["worker_image"],
+        runner_image=runner_image,
+        namespace_uid=uid,
+        identity_rotated_at=rotated,
+    )
+
+
+def connect(
+    directory: Path,
+    provider: str,
+    cluster: str,
+    namespace: str,
+    *,
+    kubeconfig: Path | None,
+    notice: Callable[[str], None],
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> dict[str, Any]:
+    """Connect a local kind or k3d cluster's namespace as a deployment target. Every stage is repeatable: a rerun
+    repairs what it finds and rotates the runner's secret. Nothing is registered before the probes pass."""
+    with local._exclusive(directory, LOCK, BUSY):
+        notice("preflight: checking the cluster and your kubeconfig")
+        found = preflight(directory, provider, cluster, namespace, kubeconfig=kubeconfig)
+        state = local._state(directory)
+        operations = platform_operations.receipt(directory) or {}
+        kube = [*kubectl(directory, found.kubeconfig, found.context), "--request-timeout=20s"]
+        connection = _Connection(found, state, operations, kube)
+        key = found.context
+
+        notice(f"network: joining the platform to {found.network}")
+        _join(connection, key)
+        network = connection.network
+        assert network is not None
+        # The pods' plain-HTTP entries are consented to before the ConfigMaps that carry them are applied.
+        platform_origins.set_cluster_entries(state, key, network.subnet)
+
+        notice("mirror: pointing the nodes at the platform registry")
+        _mirror(connection)
+
+        notice("images: pushing the runner image to the platform registry")
+        runner_image = _runner_image(connection)
+
+        notice(f"shared: applying the objects in {objects.SYSTEM_NAMESPACE}")
+        _apply(connection, "cluster-apply-shared", objects.shared_objects(network))
+
+        notice(f"namespace: applying {namespace}")
+        value = receipt(directory)
+        known = value["clusters"][key]["targets"].get(namespace, {})
+        _check_namespace(connection, namespace)
+        _apply(
+            connection,
+            "cluster-apply-namespace",
+            objects.namespace_objects(_draft(connection, namespace, known, runner_image)),
+        )
+        uid = _uid(connection, namespace)
+
+        notice("identities: the runner's and the workers' sign-in")
+        entry = reserve(value, key, namespace)
+        save(directory, value)
+
+        def save_entry() -> None:
+            save(directory, value)
+
+        runner_client, worker_client = platform_operations.cluster_clients(entry["pair"])
+        named = {runner_client: secrets.token_urlsafe(32).encode()}
+        # Running workers keep the secret their pods copied at start, so it is made once, with the pair.
+        worker_new = not entry.get("worker_linked") or not _has(
+            connection, "secret", objects.WORKER_IDENTITY, namespace
+        )
+        if worker_new:
+            named[worker_client] = secrets.token_urlsafe(32).encode()
+        subjects = asyncio.run(platform_operations._keycloak_clients(state, named, transport))
+
+        async def link(client: WeaveClient) -> None:
+            await _principals(client, connection, entry, subjects, save_entry)
+
+        asyncio.run(platform_operations._api(state, operations, link, transport))
+        draft = _draft(connection, namespace, entry, runner_image)
+        labels = objects._labels(network, draft)
+        if worker_new:
+            _secret(connection, objects.WORKER_IDENTITY, namespace, named[worker_client], labels)
+        _secret(
+            connection, f"weave-runner-identity-{namespace}", objects.SYSTEM_NAMESPACE, named[runner_client], labels
+        )
+        named.clear()
+        # The runner's pod template carries this time, so applying it rolls the runner onto the new secret.
+        rotated = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        _apply(connection, "cluster-apply-worker-config", [objects.worker_config(draft)])
+
+        notice("probe: checking what pods in the namespace can reach")
+        _probe(connection, draft)
+
+        notice(f"target: registering {entry['target_name']}")
+
+        async def register(client: WeaveClient) -> None:
+            await _register(client, connection, entry, uid, namespace, save_entry)
+
+        asyncio.run(platform_operations._api(state, operations, register, transport))
+
+        notice(f"runner: starting weave-runner-{namespace}")
+        target = _draft(connection, namespace, entry, runner_image, rotated=rotated, uid=uid)
+        _apply(connection, "cluster-apply-target", objects.target_objects(target))
+        if not _has(connection, "deployment", objects.WORKER, namespace):
+            # Created once at 0 replicas: its replicas, image and resources belong to reviewed change requests.
+            document = json.dumps(objects.worker_deployment(target)).encode()
+            local._run(state, "cluster-worker", [*kube, "create", "-f", "-"], stdin=document)
+
+        notice("ready: waiting for the runner's first observation")
+
+        async def ready(client: WeaveClient) -> str:
+            return await _ready(client, connection, entry, namespace, f"{_key(connection, entry)}-observe-{rotated}")
+
+        observed = asyncio.run(platform_operations._api(state, operations, ready, transport))
+
+        notice("receipt: recording the connected target")
+        entry["state"] = "connected"
+        entry["connected_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        save(directory, value)
+        return {
+            "target_id": entry["target_id"],
+            "target_name": entry["target_name"],
+            "provider": provider,
+            "cluster": cluster,
+            "namespace": namespace,
+            "context": found.context,
+            "runner": "online",
+            "observed_at": observed,
+        }
 
 
 # Local test clusters

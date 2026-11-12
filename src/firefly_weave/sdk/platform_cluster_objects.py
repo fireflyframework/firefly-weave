@@ -130,7 +130,8 @@ class ClusterTarget:
 
     network: ClusterNetwork
     namespace: str
-    target_id: UUID
+    # None until connect registers the target: the namespace and the probes are rendered before that.
+    target_id: UUID | None
     pair: int
     scope: dict[str, str]
     release_id: UUID
@@ -150,7 +151,7 @@ def _labels(network: ClusterNetwork, target: ClusterTarget | None = None) -> dic
         "firefly.weave/installation": network.installation,
         "firefly.weave/cluster": network.name,
     }
-    if target is not None:
+    if target is not None and target.target_id is not None:
         labels[TARGET_LABEL] = str(target.target_id)
     return labels
 
@@ -278,6 +279,8 @@ def shared_objects(network: ClusterNetwork) -> list[dict[str, Any]]:
 
 def destination_policy(target: ClusterTarget) -> DestinationPolicy:
     """What the target's runner may do: observe, update, scale and restart the one worker Deployment."""
+    if target.target_id is None:
+        raise ValueError("A runner's policy names its registered target")
     port = target.network.registry_port
     return DestinationPolicy(
         target_id=target.target_id,
@@ -607,6 +610,26 @@ def _runner_deployment(target: ClusterTarget, labels: dict[str, str], digest: st
     }
 
 
+def namespace_objects(target: ClusterTarget) -> list[dict[str, Any]]:
+    """The workers namespace with its network policies and private origins: what the probes need before the target
+    is registered, and the start of the target's own objects after."""
+    labels = _labels(target.network, target)
+    namespace = target.namespace
+    return [
+        _namespace(namespace, labels),
+        _account("default", namespace, labels),
+        *_policies(target.network, namespace, labels),
+        _config_map(ORIGINS, namespace, labels, {"private-origins.json": _origins_text(target.network)}),
+    ]
+
+
+def worker_config(target: ClusterTarget) -> dict[str, Any]:
+    """The workers' sign-in settings for the target's pair, without the secret."""
+    labels = _labels(target.network, target)
+    oauth = {"oauth.json": _oauth(cluster_clients(target.pair)[1])}
+    return _config_map(WORKER_CONFIG, target.namespace, labels, oauth)
+
+
 def target_objects(target: ClusterTarget) -> list[dict[str, Any]]:
     """A target's own objects, in apply order; the worker Deployment is separate (created once)."""
     labels = _labels(target.network, target)
@@ -620,11 +643,8 @@ def target_objects(target: ClusterTarget) -> list[dict[str, Any]]:
     origins = {"private-origins.json": _origins_text(target.network)}
     digest = hashlib.sha256(json.dumps([runner_config, kubeconfig, origins], sort_keys=True).encode()).hexdigest()
     return [
-        _namespace(namespace, labels),
-        _account("default", namespace, labels),
-        *_policies(target.network, namespace, labels),
-        _config_map(ORIGINS, namespace, labels, origins),
-        _config_map(WORKER_CONFIG, namespace, labels, {"oauth.json": _oauth(cluster_clients(target.pair)[1])}),
+        *namespace_objects(target),
+        worker_config(target),
         _account(runner, SYSTEM_NAMESPACE, labels),
         {
             "apiVersion": "rbac.authorization.k8s.io/v1",

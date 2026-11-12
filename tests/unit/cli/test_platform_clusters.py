@@ -19,7 +19,10 @@ clusters: the developer's kubeconfig is read, never written, copied or stored.""
 
 import json
 import os
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 from fake_commands import FakeCommands
@@ -401,3 +404,338 @@ def record(targets, *, cluster="weave-test"):
         "registry_address": "172.30.0.6",
         "targets": targets,
     }
+
+
+# Connect
+
+SUBNET = "172.30.0.0/16"
+SCOPE = {
+    "tenant_id": "0b9f5f4e-0000-4000-8000-000000000001",
+    "project_id": "0b9f5f4e-0000-4000-8000-000000000002",
+    "environment_id": "0b9f5f4e-0000-4000-8000-000000000003",
+}
+RELEASE = "0b9f5f4e-0000-4000-8000-000000000004"
+WORKER_IMAGE = "127.0.0.1:5001/example-sleep@sha256:" + "a" * 64
+RUNNER_ID = "sha256:" + "2" * 64
+RUNNER_REF = "127.0.0.1:5001/weave/runner@sha256:" + "b" * 64
+KEYCLOAK, REGISTRY = "abcabcabcabc", "defdefdefdef"
+UID = "9f0b6a1e-1111-4222-8333-444455556666"
+ISSUER = "http://localhost:55202/realms/weave"
+PROBES = ("weave-probe-token", "weave-probe-unlabeled", "weave-probe-registry")
+
+
+class Cluster:
+    """The cluster, Docker and the platform as connect sees them: answers, and what each was asked."""
+
+    def __init__(self, commands):
+        self.commands = commands
+        self.joined = set()
+        self.extra = []
+        self.namespace = ""
+        self.exits = dict.fromkeys(PROBES, 0)
+        self.pull = None
+        self.issuer = ISSUER
+        self.worker_secret = False
+        self.worker_deployment = False
+        self.online = True
+        self.api_calls = []
+        self.keycloak = []
+        self.origins = []
+        self.registered_after = None
+
+    def network(self, call):
+        containers = {"node" + "0" * 60: {"Name": "weave-test-control-plane", "IPv4Address": "172.30.0.2/16"}}
+        for short, name, address in (
+            (KEYCLOAK, "weave-local-keycloak-1", "172.30.0.5"),
+            (REGISTRY, "registry-1", "172.30.0.6"),
+        ):
+            if short in self.joined:
+                containers[short + "0" * 52] = {"Name": name, "IPv4Address": address + "/16"}
+        for name in self.extra:
+            containers[name * 8] = {"Name": name, "IPv4Address": "172.30.0.9/16"}
+        return json.dumps(
+            [{"IPAM": {"Config": [{"Subnet": SUBNET}, {"Subnet": "fc00:f853::/64"}]}, "Containers": containers}]
+        )
+
+    def create_secret(self, call):
+        if "weave-worker-identity" in call.argv:
+            self.worker_secret = True
+        return "secret created"
+
+    def create(self, call):
+        if json.loads(call.stdin).get("kind") == "Deployment":
+            self.worker_deployment = True
+        return "created"
+
+    def pod(self, call):
+        name = next(item for item in call.argv if item in PROBES)
+        if self.pull:
+            waiting = {"state": {"waiting": {"reason": self.pull}}}
+            return json.dumps({"status": {"phase": "Pending", "containerStatuses": [waiting]}})
+        terminated = {"state": {"terminated": {"exitCode": self.exits[name]}}}
+        phase = "Succeeded" if self.exits[name] == 0 else "Failed"
+        return json.dumps({"status": {"phase": phase, "containerStatuses": [terminated]}})
+
+    async def invoke(self, operation, **kwargs):
+        self.api_calls.append((operation, kwargs))
+        if operation == "deployment_targets.create":
+            self.registered_after = [call.name for call in self.commands.calls]
+        if operation == "deployment_runners.list":
+            fresh = datetime.now(UTC) + timedelta(seconds=60)
+            return SimpleNamespace(items=[SimpleNamespace(revoked=False, expires_at=fresh)] if self.online else [])
+        if operation == "deployment_jobs.read":
+            return SimpleNamespace(state="succeeded", observation_id=uuid4())
+        if operation == "deployment_observations.read":
+            return SimpleNamespace(complete=True, observed_at=datetime(2026, 11, 12, 10, 0, 5, tzinfo=UTC))
+        return SimpleNamespace(id=uuid4())
+
+    def count(self, operation):
+        return sum(1 for name, _ in self.api_calls if name == operation)
+
+
+@pytest.fixture
+def world(platform, monkeypatch):
+    directory, commands, config = platform
+    cluster = Cluster(commands)
+    clusters.local._state(directory)["ports"] = {"keycloak": 55202}
+    operations = {
+        "stage": "ready",
+        "registry_port": 5001,
+        "worker_image": WORKER_IMAGE,
+        "runner_image": RUNNER_ID,
+        "release_id": RELEASE,
+        "scope": SCOPE,
+    }
+    monkeypatch.setattr(clusters.platform_operations, "receipt", lambda path: operations)
+
+    async def api(state, value, work, transport):
+        assert value["scope"] == SCOPE
+        return await work(cluster)
+
+    async def keycloak(state, named, transport):
+        cluster.keycloak.append(dict(named))
+        return {client: str(uuid4()) for client in named}
+
+    def origins(state, name, subnet):
+        cluster.origins.append((name, subnet, len(commands.calls)))
+        return True
+
+    async def no_wait(seconds):
+        return None
+
+    ticks = iter(range(0, 100000, 10))
+    monkeypatch.setattr(clusters.platform_operations, "_api", api)
+    monkeypatch.setattr(clusters.platform_operations, "_keycloak_clients", keycloak)
+    monkeypatch.setattr(clusters.platform_origins, "set_cluster_entries", origins)
+    monkeypatch.setattr(clusters, "sleep", lambda seconds: None)
+    monkeypatch.setattr(clusters, "clock", lambda: next(ticks))
+    monkeypatch.setattr(clusters, "wait_async", no_wait)
+    for service, short in (("keycloak", KEYCLOAK), ("registry", REGISTRY)):
+        commands.answer(["ps", "--quiet", f"label=com.docker.compose.service={service}"], short + "\n")
+    commands.answer(["network", "inspect", "weave-kind-weave-test"], cluster.network)
+    commands.answer(["network", "connect"], lambda call: cluster.joined.add(call.argv[-1]) or "")
+    commands.answer(["exec", "mkdir"], "")
+    commands.answer(["exec", "-i", "cp", "/dev/stdin"], "")
+    commands.answer(["tag", RUNNER_ID], "")
+    commands.answer(["push"], "")
+    commands.answer(["image", "inspect", RUNNER_ID], json.dumps([{"RepoDigests": [RUNNER_REF]}]))
+    commands.answer([KUBECTL, "apply", "--server-side"], "")
+    commands.answer([KUBECTL, "get", "namespace", "weave-workers", "-o", "json"], lambda call: cluster.namespace)
+    commands.answer([KUBECTL, "get", "namespace", "weave-workers", "-o", "jsonpath={.metadata.uid}"], UID)
+    commands.answer(
+        [KUBECTL, "get", "secret", "weave-worker-identity"],
+        lambda call: "secret/weave-worker-identity" if cluster.worker_secret else "",
+    )
+    commands.answer([KUBECTL, "delete", "secret"], "")
+    commands.answer([KUBECTL, "create", "secret", "generic"], cluster.create_secret)
+    commands.answer([KUBECTL, "label", "secret"], "")
+    commands.answer([KUBECTL, "delete", "pod"], "")
+    commands.answer([KUBECTL, "create", "-f", "-"], cluster.create)
+    for name in PROBES:
+        commands.answer([KUBECTL, "get", "pod", name], cluster.pod)
+    commands.answer([KUBECTL, "logs", "pod/weave-probe-token"], lambda call: json.dumps({"iss": cluster.issuer}) + "\n")
+    commands.answer(
+        [KUBECTL, "get", "deployment", "weave-worker"],
+        lambda call: "deployment.apps/weave-worker" if cluster.worker_deployment else "",
+    )
+    return directory, commands, config, cluster
+
+
+def connect(case, notice=None):
+    directory, _, config, _ = case
+    lines = [] if notice is None else notice
+    return clusters.connect(directory, "kind", "weave-test", "weave-workers", kubeconfig=config, notice=lines.append)
+
+
+def applied(commands, since=0):
+    """Every object a server-side apply sent, in order."""
+    return [item for call in commands.calls[since:] if "apply" in call.argv for item in json.loads(call.stdin)["items"]]
+
+
+def test_connect_runs_its_stages_in_order_and_registers_the_target_only_after_the_probes_pass(world):
+    directory, commands, _, cluster = world
+    lines = []
+    result = connect(world, lines)
+    assert [line.split(":")[0] for line in lines] == list(clusters.CONNECT_STAGES)
+    assert "cluster-probe-token" in cluster.registered_after and "cluster-probe-delete" in cluster.registered_after
+    (request,) = [kwargs["body"] for name, kwargs in cluster.api_calls if name == "deployment_targets.create"]
+    assert (request.name, request.adapter, request.external_identity, request.boundary) == (
+        "kind-weave-test",
+        "kubernetes",
+        UID,
+        "weave-workers",
+    )
+    assert request.capabilities == ["observe", "update", "scale_workers", "restart_workers"]
+    assert request.approval_policy.distinct_approver is False
+    (deployment,) = [kwargs["body"] for name, kwargs in cluster.api_calls if name == "deployments.create"]
+    assert (deployment.name, deployment.components[0].name, deployment.components[0].replicas) == (
+        "weave-workers",
+        "weave-worker",
+        0,
+    )
+    assert result == {
+        "target_id": str(request_id(cluster)),
+        "target_name": "kind-weave-test",
+        "provider": "kind",
+        "cluster": "weave-test",
+        "namespace": "weave-workers",
+        "context": "kind-weave-test",
+        "runner": "online",
+        "observed_at": "2026-11-12T10:00:05Z",
+    }
+    saved = clusters.receipt(directory)["clusters"]["kind-weave-test"]
+    assert (saved["api_address"], saved["registry_address"], saved["subnet"]) == ("172.30.0.5", "172.30.0.6", SUBNET)
+    assert saved["targets"]["weave-workers"]["state"] == "connected"
+    assert saved["targets"]["weave-workers"]["pair"] == 1
+
+
+def request_id(cluster):
+    """The target ID connect recorded: the runner grant names it as its only resource."""
+    grants = [kwargs["body"] for name, kwargs in cluster.api_calls if name == "members.grant"]
+    return next(grant.resources[0] for grant in grants if grant.role == "deployment_runner")
+
+
+def test_a_probe_that_reaches_the_platform_unlabeled_stops_connect_and_a_rerun_reuses_its_pair(world):
+    directory, commands, _, cluster = world
+    cluster.exits["weave-probe-unlabeled"] = 1
+    with pytest.raises(PlatformError) as refused:
+        connect(world)
+    assert str(refused.value) == clusters.POLICY_OFF
+    assert cluster.count("deployment_targets.create") == 0
+    deleted = [call.argv for call in commands.calls if call.name == "cluster-probe-delete"]
+    assert len(deleted) == 1 and set(PROBES) <= set(deleted[0])
+    first = clusters.receipt(directory)["clusters"]["kind-weave-test"]["targets"]["weave-workers"]
+    assert first["state"] == "pending" and "target_id" not in first
+    cluster.exits["weave-probe-unlabeled"] = 0
+    connect(world)
+    again = clusters.receipt(directory)["clusters"]["kind-weave-test"]["targets"]["weave-workers"]
+    assert (again["pair"], again["generation"]) == (first["pair"], first["generation"])
+    # The worker's client was made once; the rerun only rotates the runner's secret.
+    assert [sorted(named) for named in cluster.keycloak] == [
+        ["weave-cluster-runner-1", "weave-cluster-worker-1"],
+        ["weave-cluster-runner-1"],
+    ]
+    assert cluster.count("principals.create") == 2 and cluster.count("deployment_targets.create") == 1
+
+
+@pytest.mark.parametrize(
+    ("setup", "message"),
+    [
+        (lambda cluster: setattr(cluster, "pull", "ImagePullBackOff"), clusters.PROBE_PULL),
+        (lambda cluster: setattr(cluster, "issuer", "http://localhost:9999/realms/other"), clusters.OTHER_ISSUER),
+        (lambda cluster: cluster.exits.update({"weave-probe-registry": 1}), clusters.POLICY_OFF),
+        # A probe that never ran its check (here its init copy failed) proves nothing about the policies.
+        (lambda cluster: cluster.exits.update({"weave-probe-registry": -1}), clusters.PROBE_FAILED),
+    ],
+)
+def test_a_failed_probe_stops_connect_before_registering(world, setup, message):
+    _, commands, _, cluster = world
+    setup(cluster)
+    with pytest.raises(PlatformError) as refused:
+        connect(world)
+    assert str(refused.value) == message
+    assert cluster.count("deployment_targets.create") == 0
+    assert [call.name for call in commands.calls].count("cluster-probe-delete") == 1
+
+
+def test_secrets_reach_kubectl_only_on_stdin(world, monkeypatch):
+    directory, commands, _, cluster = world
+    made = iter(f"canary-client-secret-{index}" for index in range(10))
+    monkeypatch.setattr(clusters.secrets, "token_urlsafe", lambda size: next(made))
+    lines = []
+    connect(world, lines)
+    canaries = [f"canary-client-secret-{index}" for index in range(2)]
+    created = [call for call in commands.calls if call.argv[-1:] == ["--from-file=client-secret=/dev/stdin"]]
+    assert sorted(call.stdin.decode() for call in created) == canaries
+    for call in commands.calls:
+        assert not any(canary in " ".join([*call.argv, *(call.env or {}).values()]) for canary in canaries)
+        if call not in created:
+            assert not any(canary.encode() in (call.stdin or b"") for canary in canaries)
+    for path in [*commands.logs(), directory / "clusters.json"]:
+        assert not any(canary in path.read_text() for canary in canaries)
+    assert not any(canary in line for line in lines for canary in canaries)
+    # A reconnect rotates the runner's secret only.
+    before = len(commands.calls)
+    connect(world)
+    again = [call for call in commands.calls[before:] if call.argv[-1:] == ["--from-file=client-secret=/dev/stdin"]]
+    assert [call.stdin.decode() for call in again] == ["canary-client-secret-2"]
+    assert "weave-runner-identity-weave-workers" in again[0].argv
+
+
+def test_reconnecting_never_changes_the_worker_deployment_or_its_secret(world):
+    _, commands, _, cluster = world
+    connect(world)
+    runner = [item for item in applied(commands) if item["metadata"]["name"] == "weave-runner-weave-workers"]
+    before = len(commands.calls)
+    connect(world)
+    later = commands.calls[before:]
+    creates = [call for call in later if call.argv[-3:] == ["create", "-f", "-"]]
+    assert creates and not [call for call in creates if json.loads(call.stdin).get("kind") == "Deployment"]
+    assert not [item for item in applied(commands, before) if item["metadata"]["name"] == "weave-worker"]
+    assert not [call for call in later if "weave-worker-identity" in call.argv and "get" not in call.argv]
+    again = [item for item in applied(commands, before) if item["metadata"]["name"] == "weave-runner-weave-workers"]
+    stamp = "firefly.weave/identity-rotated-at"
+    first, second = (item[-1]["spec"]["template"]["metadata"]["annotations"][stamp] for item in (runner, again))
+    assert first != second
+
+
+def test_the_clusters_private_origins_are_recorded_before_the_objects_that_carry_them(world):
+    _, commands, _, cluster = world
+    connect(world)
+    ((name, subnet, at),) = cluster.origins
+    assert (name, subnet) == ("kind-weave-test", SUBNET)
+    assert "cluster-apply-shared" not in [call.name for call in commands.calls[:at]]
+
+
+def test_only_the_clusters_nodes_and_the_platforms_containers_may_share_its_network(world):
+    _, commands, _, cluster = world
+    cluster.extra = ["someone-else"]
+    with pytest.raises(PlatformError) as refused:
+        connect(world)
+    assert str(refused.value) == clusters.OTHER_CONTAINERS
+    assert not [call for call in commands.calls if "apply" in call.argv]
+
+
+def test_a_namespace_of_another_installation_is_refused_before_anything_is_applied_to_it(world):
+    _, commands, _, cluster = world
+    cluster.namespace = json.dumps({"metadata": {"labels": {"firefly.weave/installation": "b" * 24}}})
+    with pytest.raises(PlatformError) as refused:
+        connect(world)
+    assert (
+        str(refused.value) == "Namespace weave-workers belongs to another Weave installation. Choose another namespace."
+    )
+    assert "cluster-apply-namespace" not in [call.name for call in commands.calls]
+
+
+def test_a_silent_runner_names_its_log_and_keeps_the_registered_target(world):
+    directory, _, _, cluster = world
+    cluster.online = False
+    with pytest.raises(PlatformError) as refused:
+        connect(world)
+    assert str(refused.value) == (
+        "The runner didn't make contact within 120 s. Read its log with kubectl --context kind-weave-test "
+        "--namespace weave-system logs deployment/weave-runner-weave-workers. The target is registered; run connect "
+        "again to retry."
+    )
+    target = clusters.receipt(directory)["clusters"]["kind-weave-test"]["targets"]["weave-workers"]
+    assert target["state"] == "pending" and "target_id" in target
