@@ -343,6 +343,15 @@ author = "Firefly Software Foundation"
 license = "Apache-2.0"
 
 [[exceptions]]
+path = "tests/fixtures/agent_turns/token_shapes.json"
+kind = "generated"
+source = "workers/agentic/tests/live/test_token_shapes.py"
+reason = "Strict JSON of the prompt token counts local Ollama models report for each text shape, written by the live shape check and read offline by the token count's tests; change it only by measuring again."
+copyright = "Copyright 2026 Firefly Software Foundation."
+author = "Firefly Software Foundation"
+license = "Apache-2.0"
+
+[[exceptions]]
 path = "tests/fixtures/golden/step_errors.json"
 kind = "generated"
 source = "scripts/golden_step_errors.py"
