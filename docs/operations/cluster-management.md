@@ -427,6 +427,8 @@ with `cluster`, `context`, and `network`.
 
 The command:
 
+- uses only a Docker context on this computer's Unix socket, never a remote or
+  shared engine, and `delete` follows the same rule;
 - downloads only the chosen provider's pinned tool (kind or k3d) and kubectl
   into the installation directory, and checks each one's SHA-256 before it
   runs it;

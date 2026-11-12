@@ -56,6 +56,8 @@ NODE_LABELS = {"kind": "io.x-k8s.kind.cluster", "k3d": "k3d.cluster"}
 KUBECONFIG_LIMIT = 1024 * 1024
 _CLUSTER = re.compile(r"[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?")
 _NAMESPACE = re.compile(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?")
+# A Docker context name, as every platform command accepts it.
+_CONTEXT = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}")
 
 NAME_PROBLEM = (
     "Use --provider kind or k3d and a cluster name of 1 to 32 lowercase letters, digits and hyphens that starts and "
@@ -475,7 +477,8 @@ def _tool_environment(context: str, **extra: str) -> dict[str, str]:
 
 
 def _lifecycle(directory: Path, context: str | None) -> tuple[Path, dict[str, Any], str]:
-    """The private folder that keeps the tools and logs, and the Docker context: the installation's unless given."""
+    """The private folder that keeps the tools and logs, and the Docker context: the installation's unless given.
+    The state also holds the context's endpoint, this computer's Docker socket, which k3d gets as DOCKER_HOST."""
     if not directory.is_dir():
         # weave platform setup refuses a folder that exists, so this never makes the installation's folder.
         raise local.PlatformError("Run weave platform up first, or pass --directory with an existing folder.")
@@ -488,20 +491,29 @@ def _lifecycle(directory: Path, context: str | None) -> tuple[Path, dict[str, An
             raise local.PlatformError(
                 "Run weave platform up first, or pass --context with the platform's Docker context."
             ) from None
-    return directory, {"directory": str(directory), "source": str(directory)}, context
+    state: dict[str, Any] = {"directory": str(directory), "source": str(directory)}
+    state["endpoint"] = _local_endpoint(state, context)
+    return directory, state, context
 
 
-def _docker_host(state: dict[str, Any], context: str) -> str:
-    """k3d talks to the Docker API directly, so it gets the context's endpoint."""
+def _local_endpoint(state: dict[str, Any], context: str) -> str:
+    """The context's Docker endpoint, which must be this computer's Unix socket, as for every platform command: a
+    remote or shared engine could hold someone else's cluster of the same name, and its TLS settings stay behind."""
+    if not _CONTEXT.fullmatch(context):
+        raise local.PlatformError("Select a named local Docker context.")
     described = strict_json(
         local._run(state, "cluster-context", ["docker", "context", "inspect", context], env=_tool_environment(context))
     )
     try:
-        return str(described[0]["Endpoints"]["docker"]["Host"])
+        endpoint = described[0]["Endpoints"]["docker"]["Host"]
     except (KeyError, IndexError, TypeError):
+        endpoint = None
+    if not isinstance(endpoint, str) or not endpoint.startswith("unix:///"):
         raise local.PlatformError(
-            f"Docker context {context} has no Docker endpoint k3d can use; nothing was changed."
-        ) from None
+            f"Docker context {context} doesn't use a local Unix socket; test clusters run only on this computer's "
+            "Docker. Nothing was changed."
+        )
+    return endpoint
 
 
 def _exists(state: dict[str, Any], provider: str, cluster: str, context: str) -> bool:
@@ -578,7 +590,8 @@ def _create(state: dict[str, Any], directory: Path, provider: str, cluster: str,
             )
         return
     disabled = [item for service in K3S_DISABLED for item in ("--k3s-arg", f"--disable={service}@server:0")]
-    host = _docker_host(state, context)
+    # k3d talks to the Docker API directly, so it gets the context's local socket.
+    host = state["endpoint"]
     with _private_file(directory, K3D_REGISTRIES) as registries:
         _run_create(
             state,
@@ -616,7 +629,7 @@ def _wait_ready(state: dict[str, Any], directory: Path, provider: str, cluster: 
 def _delete(state: dict[str, Any], directory: Path, provider: str, cluster: str, context: str) -> None:
     if provider == "k3d":
         # k3d removes the cluster's network with it.
-        env = _tool_environment(context, DOCKER_HOST=_docker_host(state, context))
+        env = _tool_environment(context, DOCKER_HOST=state["endpoint"])
         local._run(
             state,
             "cluster-delete",

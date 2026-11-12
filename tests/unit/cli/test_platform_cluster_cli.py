@@ -72,14 +72,14 @@ def world(tmp_path, monkeypatch):
     return directory, commands, configs
 
 
-def invoke(directory, action, provider="kind", *extra, output="json"):
+def invoke(directory, action, provider="kind", *extra, output="json", context="colima-weave-tests"):
     argv = ["platform", "--directory", str(directory), "cluster", action, "--provider", provider, "--name", NAME]
-    argv += ["--context", "colima-weave-tests", "--output", output, *extra]
+    argv += ["--context", context, "--output", output, *extra]
     return CliRunner().invoke(cli, argv)
 
 
-def create(directory, provider="kind", *extra, output="json"):
-    return invoke(directory, "create", provider, "--no-connect", *extra, output=output)
+def create(directory, provider="kind", *extra, output="json", context="colima-weave-tests"):
+    return invoke(directory, "create", provider, "--no-connect", *extra, output=output, context=context)
 
 
 def calls(commands, *tokens):
@@ -241,12 +241,29 @@ def test_the_tools_keep_the_docker_configuration_but_no_other_docker_setting(wor
     assert call.env["DOCKER_CONFIG"] == "/Users/me/.docker-weave" and "DOCKER_HOST" not in call.env
 
 
-def test_a_context_without_a_docker_endpoint_is_refused_in_one_sentence(world):
+REMOTE = (
+    "Docker context colima-weave-tests doesn't use a local Unix socket; test clusters run only on this computer's "
+    "Docker."
+)
+
+
+@pytest.mark.parametrize(
+    ("context", "endpoints", "refusal"),
+    [
+        ("colima-weave-tests", {"docker": {"Host": "tcp://10.0.0.5:2376"}}, REMOTE),
+        ("colima-weave-tests", {}, REMOTE),
+        ("tcp://10.0.0.5:2376", None, "Select a named local Docker context."),
+    ],
+    ids=["remote-engine", "no-endpoint", "not-a-context-name"],
+)
+def test_only_a_context_on_this_computers_docker_socket_is_used(world, context, endpoints, refusal):
+    """Like every platform command: a remote or shared engine could hold another cluster with the same name."""
     directory, commands, _ = world
-    commands.answer(["docker", "context", "inspect", "colima-weave-tests"], '[{"Endpoints": {}}]')
-    result = create(directory, "k3d")
-    assert result.exit_code != 0 and not calls(commands, "create")
-    assert "Docker context colima-weave-tests has no Docker endpoint k3d can use; nothing was changed." in result.output
+    if endpoints is not None:
+        commands.answer(["docker", "context", "inspect", context], json.dumps([{"Endpoints": endpoints}]))
+    for result in (create(directory, context=context), invoke(directory, "delete", "k3d", context=context)):
+        assert result.exit_code != 0 and refusal in result.output
+    assert all(call.argv[:3] == ["docker", "context", "inspect"] for call in commands.calls)
 
 
 def test_delete_deletes_the_cluster_and_reports_it(world):
