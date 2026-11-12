@@ -26,11 +26,16 @@ from firefly_weave.contracts.instance_keys import InstanceKeyTextOrEmpty, node_o
 from firefly_weave.contracts.values import JsonObjectData
 
 
-class AssignmentPin(ContractModel):
+class TaskAssignment(ContractModel):
+    """Who a task is assigned to, as its views show it."""
+
     binding_id: UUID
     revision: int = Field(ge=1)
     principal_ids: list[UUID] = Field(default_factory=list, max_length=256)
     group_ids: list[UUID] = Field(default_factory=list, max_length=256)
+
+
+class AssignmentPin(TaskAssignment):
     # People who may not answer this task even when assigned: a distinct review excludes the run's starter.
     excluded_principal_ids: list[UUID] = Field(default_factory=list, max_length=1, exclude_if=lambda v: not v)
 
@@ -87,7 +92,8 @@ class HumanTask(ContractModel):
     context: JsonObjectData
     form_schema: JsonObjectData
     decisions: list[str]
-    assignment: AssignmentPin
+    # Who is excluded stays on the server: a view never names the person a distinct review shuts out.
+    assignment: TaskAssignment
     claimant_id: UUID | None = None
     created_at: AwareDatetime
     due_at: AwareDatetime | None = None

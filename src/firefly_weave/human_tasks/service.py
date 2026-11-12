@@ -41,6 +41,7 @@ from firefly_weave.contracts.human_tasks import (
     HumanTask,
     HumanTaskCommand,
     ReassignHumanTask,
+    TaskAssignment,
     TaskGroup,
     TaskGroupRequest,
 )
@@ -49,6 +50,7 @@ from firefly_weave.contracts.values import JsonObject
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.persistence.idempotency import Idempotency, lock
 from firefly_weave.persistence.uow import Transaction
+from firefly_weave.runtime.agents import parse_agent_key
 from firefly_weave.runtime.kernel import transition_async, validate, workflow
 from firefly_weave.runtime.models import HumanTaskIntent, RuntimeEvent
 from firefly_weave.runtime.repository import SCOPE, RuntimeRepository
@@ -59,9 +61,22 @@ from firefly_weave.runtime.waits import TERMINAL, settle
 def task_view(row: dict[str, Any]) -> HumanTask:
     """The API view of a stored task: its static step ID, plus its instance key and iteration inside loops."""
     values = {key: row[key] for key in HumanTask.model_fields if key in row}
+    values["assignment"] = {
+        key: value for key, value in row["assignment"].items() if key in TaskAssignment.model_fields
+    }
     identity = instance_view(row["node_id"])
     values.update(node_id=identity.node_id, instance_key=identity.instance_key, iteration=identity.iteration)
     return HumanTask.model_validate_json(json.dumps(values, default=str))
+
+
+def review_digest(row: dict[str, Any]) -> dict[str, str]:
+    """A review approves the input whose digest the server stored with the task, never one the request names. Only an
+    agent's review key carries it: any other task keeps its event bytes, whatever its context holds."""
+    key = parse_agent_key(row["node_id"])
+    if key is None or not key.review or not isinstance(row["context"], dict):
+        return {}
+    digest = row["context"].get("inputDigest")
+    return {"input_digest": digest} if isinstance(digest, str) else {}
 
 
 async def human(tx: Transaction, identifier: UUID) -> Principal:
@@ -74,11 +89,16 @@ async def human(tx: Transaction, identifier: UUID) -> Principal:
 DISTINCT_REVIEW_MESSAGE = "Someone other than the person who started this run must review this."
 
 
+def refuse_excluded(pin: AssignmentPin, identifier: UUID) -> None:
+    """An excluded principal may not see or answer the task, whatever else they may do with human tasks."""
+    if identifier in pin.excluded_principal_ids:
+        raise CatalogError(403, "WV-REVIEW-DISTINCT", DISTINCT_REVIEW_MESSAGE)
+
+
 async def eligible(repository: RuntimeRepository, pin: AssignmentPin, identifier: UUID) -> bool:
     """Whether ``identifier`` may work on a task with this pin. An excluded principal is refused outright, so claim,
     reassign, complete and reads all answer the same 403."""
-    if identifier in pin.excluded_principal_ids:
-        raise CatalogError(403, "WV-REVIEW-DISTINCT", DISTINCT_REVIEW_MESSAGE)
+    refuse_excluded(pin, identifier)
     if identifier in pin.principal_ids:
         return True
     if not pin.group_ids:
@@ -170,12 +190,14 @@ class HumanTaskService:
     async def _readable(
         self, repository: RuntimeRepository, row: dict[str, Any], actor: Principal, scope: Scope, context: AuditContext
     ) -> None:
+        pin = AssignmentPin.model_validate_json(json.dumps(row["assignment"]))
+        # A distinct review shuts its run's starter out before any grant counts, managers included.
+        refuse_excluded(pin, actor.id)
         try:
             self.require(actor, scope, "human_task.manage", context, resource=row["id"])
             return
         except AccessDenied:
             self.require(actor, scope, "human_task.read", context, resource=row["id"])
-        pin = AssignmentPin.model_validate_json(json.dumps(row["assignment"]))
         if not await eligible(repository, pin, actor.id):
             raise AccessDenied()
 
@@ -223,9 +245,9 @@ class HumanTaskService:
                 f"SELECT t.* FROM human_tasks t WHERE {SCOPE} AND (cast(:cursor AS uuid) IS NULL OR "
                 "id>cast(:cursor AS uuid)) "
                 "AND (cast(:status AS text) IS NULL OR status=cast(:status AS text)) "
+                "AND NOT coalesce(assignment->'excluded_principal_ids','[]'::jsonb) @> cast(:actor_json AS jsonb) "
                 "AND (:manage_all OR id::text=ANY(:manage_ids) "
-                "OR ((:read_all OR id::text=ANY(:read_ids)) "
-                "AND NOT coalesce(assignment->'excluded_principal_ids','[]'::jsonb) @> cast(:actor_json AS jsonb) AND ("
+                "OR ((:read_all OR id::text=ANY(:read_ids)) AND ("
                 "assignment->'principal_ids' @> cast(:actor_json AS jsonb) "
                 "OR EXISTS(SELECT 1 FROM human_task_memberships m WHERE m.tenant_id=t.tenant_id AND "
                 "m.project_id=t.project_id "
@@ -295,6 +317,7 @@ class HumanTaskService:
             if row["revision"] != request.expected_revision:
                 raise CatalogError(409, "WV-HUMAN-TASK-REVISION", "Task revision changed")
             pin = AssignmentPin.model_validate_json(json.dumps(row["assignment"]))
+            refuse_excluded(pin, actor.id)
             if command != "reassign" and not await eligible(repository, pin, actor.id):
                 raise AccessDenied()
             now = await repository.now()
@@ -353,13 +376,7 @@ class HumanTaskService:
                         "task_id": str(identifier),
                         "actor_id": str(actor.id),
                         "output": output,
-                        # A review approves the input whose digest the server stored with the task, never one the
-                        # request names; other tasks keep their event bytes.
-                        **(
-                            {"input_digest": row["context"]["inputDigest"]}
-                            if isinstance(row["context"], dict) and "inputDigest" in row["context"]
-                            else {}
-                        ),
+                        **review_digest(row),
                     },
                 )
                 from firefly_weave.files.authority import admit_human_files
