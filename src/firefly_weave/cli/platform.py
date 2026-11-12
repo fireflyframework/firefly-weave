@@ -346,11 +346,14 @@ def _show_private_origins(value: dict[str, Any] | None) -> None:
 
 def _show_status(value: dict[str, Any]) -> None:
     for key, item in value.items():
-        if key not in {"source_sha256", "engine", "endpoint", "ok", "private_origins", "operations"}:
+        if key not in {"source_sha256", "engine", "endpoint", "ok", "private_origins", "operations", "clusters"}:
             click.echo(f"{key.replace('_', ' ').capitalize()}: {item}")
     operations = value.get("operations")
     if operations:
         click.echo(f"Operations: {operations['stage']}, runner {operations['runner']}, target {operations['target']}")
+    if value.get("clusters"):
+        named = [f"{name} ({', '.join(namespaces)})" for name, namespaces in value["clusters"].items()]
+        click.echo("Clusters: " + "; ".join(named))
     _show_private_origins(value.get("private_origins"))
 
 

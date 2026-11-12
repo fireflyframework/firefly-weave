@@ -363,7 +363,7 @@ initial steps in one `up` command.
 | `logs [--lines COUNT]` | Read the owned Docker API logs; default 100 lines, maximum 1,000 |
 | `setup [--source REPO] [--context NAME] [--subnet CIDR]` | Build and install an isolated server, start its own dependencies, and set up identity; `--subnet` sets an unused private (RFC 1918) IPv4 Docker subnet when the default pools are exhausted |
 | `start` | Resume the saved mode: detached API for a Docker installation, foreground API for a host installation |
-| `status` | Show the saved stage, API and identity readiness, URLs, whether a first run is saved, and the sign-in command |
+| `status` | Show the saved stage, API and identity readiness, URLs, whether a first run is saved, and the sign-in command; with connected clusters, `clusters` names each cluster's connected namespaces, read from the saved settings without reaching the cluster |
 | `demo` | Create one authorized demo run; repeating it reuses the saved receipt |
 | `user --username NAME [--role ROLE ...]` | New in 0.1.0a7: create a development sign-in account, a linked person, and roles in the demo workspace |
 | `user grant --username NAME --role ROLE [--role ROLE ...]` | Add roles in the demo workspace to an account this platform's `user` or `up` created; grants are added, never removed |

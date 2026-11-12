@@ -897,9 +897,16 @@ def status(directory: Path) -> dict[str, Any]:
 
         result["private_origins"] = platform_origins.summary(state)
     if state.get("mode") == "docker":
-        from firefly_weave.sdk import platform_operations
+        from firefly_weave.sdk import platform_clusters, platform_operations
 
         result["operations"] = platform_operations.status(state)
+        # The connected clusters and their namespaces, from the receipt alone: status reaches no cluster.
+        try:
+            connected = platform_clusters.receipt(directory)["clusters"]
+        except PlatformError:
+            connected = {}
+        if connected:
+            result["clusters"] = {key: sorted(entry["targets"]) for key, entry in sorted(connected.items())}
     return result
 
 
