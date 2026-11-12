@@ -170,7 +170,16 @@ def test_weave_ai_never_sees_a_step_kind_this_platform_cant_run():
     assert "AgentTool" not in runnable["$defs"] and "AgentMemory" not in runnable["$defs"]
     assert {"ActionStep", "LLMStep", "ForEachStep", "TransactionStep"} <= _step_kinds(runnable)
     assert "AgentStep" in _step_kinds(with_agents) and "AgentTool" in with_agents["$defs"]
-    assert with_agents == workflow
+    # Only the agent kind and the definitions it alone used go; everything else is the exported schema, byte for byte.
+    removed = set(workflow["$defs"]) - set(runnable["$defs"])
+    assert {"AgentStep", "AgentTool", "AgentMemory", "AgentLimits", "ToolName"} <= removed
+    assert all(name.startswith(("Agent", "OmissionOnly_", "MemoryTtl", "ToolName")) for name in removed)
+    assert {name: value for name, value in runnable["$defs"].items() if name != "Step"} == {
+        name: value for name, value in workflow["$defs"].items() if name not in removed | {"Step"}
+    }
+    assert {key: value for key, value in runnable.items() if key != "$defs"} == {
+        key: value for key, value in workflow.items() if key != "$defs"
+    }
 
 
 def test_a_definition_reached_through_a_property_named_like_a_keyword_is_kept():
