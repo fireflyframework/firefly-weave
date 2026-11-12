@@ -616,6 +616,21 @@ def test_memory_added_to_an_agent_without_it_stays_with_the_step():
     assert "memory.scope of agent support" in answer.answer and "memory.key of agent support" in answer.answer
 
 
+def test_memory_narrowed_to_the_run_keeps_the_drafts_key():
+    draft = guarded()
+    draft["spec"]["steps"][0]["memory"] = {"scope": "conversation", "key": {"ref": "/input/message"}, "window": 12}
+    edited = copy.deepcopy(draft)
+    edited["spec"]["steps"][0]["memory"] = {"scope": "run", "key": "all-desks", "window": 12}
+
+    answer = answered(edited, drafts=[draft])
+
+    memory = step_of(answer.proposals[0])["memory"]
+    assert memory == {"scope": "run", "key": {"ref": "/input/message"}, "window": 12}
+    assert answer.answer.splitlines()[2:] == [
+        "Kept the draft's memory.key of agent support: only the editor can loosen a safeguard."
+    ]
+
+
 def test_memory_narrowed_to_the_step_keeps_the_proposals_scope_and_the_lower_window():
     draft = remembering()
     edited = copy.deepcopy(draft)

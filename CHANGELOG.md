@@ -130,9 +130,9 @@ SPDX-License-Identifier: Apache-2.0
   keeps its name but runs another action is also held to the draft's tools of
   that action, so swapping two tools' names keeps the stricter safeguards on
   each. Weave AI never loosens a safeguard: a tool failure that stops the agent
-  stays; memory keeps the draft's scope and key unless the proposal narrows the
-  scope; and its window and context size keep the lower value. A change that
-  would loosen one is not applied and the
+  stays; memory keeps the draft's scope unless the proposal narrows it, and the
+  draft's key unless the scope becomes `step`; and its window and context size
+  keep the lower value. A change that would loosen one is not applied and the
   answer says so. A proposal Weave AI withholds, and a
   draft whose safeguards it can't read, are named first in the answer. Weave AI
   can also ask that a different person than the run's starter approves an

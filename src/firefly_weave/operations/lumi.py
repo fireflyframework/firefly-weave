@@ -114,7 +114,7 @@ MEMORY_SIZES: Final = {
     size.alias or name: size.default for name, size in AgentMemory.model_fields.items() if type(size.default) is int
 }
 # What the memory scope decides with it: the name it is kept under, and how long a conversation lasts.
-MEMORY_SCOPED: Final = ("key", "ttlSeconds")
+MEMORY_SCOPED: Final = ("scope", "key", "ttlSeconds")
 MAX_PROPOSAL_CHARACTERS: Final = 100000
 # The answer's limit in the reply contract, and how many kept guards it names before it counts the rest.
 MAX_ANSWER_CHARACTERS: Final = 20000
@@ -416,8 +416,9 @@ def _keep_step(step: JsonObject, kept: Sequence[JsonObject], notes: _Kept, where
 
 
 def _memory(step: JsonObject, kept: Sequence[JsonObject], notes: _Kept, where: str) -> None:
-    """Memory decides what an agent shares across activations and runs: its scope and key stay the first draft's unless
-    the proposal narrows the scope, and each size is held to the lowest the drafts allow."""
+    """Memory decides what an agent shares across activations and runs: its scope stays the first draft's unless the
+    proposal narrows it, its key stays the first draft's unless the scope becomes step, which takes none, and each size
+    is held to the lowest the drafts allow."""
     drafts = [cast(JsonObject, agent["memory"]) if isinstance(agent.get("memory"), dict) else {} for agent in kept]
     first = drafts[0]
     value = step.get("memory")
@@ -429,21 +430,25 @@ def _memory(step: JsonObject, kept: Sequence[JsonObject], notes: _Kept, where: s
     def rank(scope: JsonValue) -> int:
         return MEMORY_SCOPES.index(scope) if isinstance(scope, str) and scope in MEMORY_SCOPES else len(MEMORY_SCOPES)
 
-    # A scope left out keeps the draft's, like any guard; only a narrower one written replaces it.
-    if "scope" not in value or rank(value["scope"]) >= rank(first.get("scope", MEMORY_SCOPES[0])):
-        for name in ("scope", *MEMORY_SCOPED):
-            if (name in value) != (name in first) or value.get(name) != first.get(name):
-                if name in value:
-                    notes.changed_back(f"memory.{name}", where)
-                if name in first:
-                    value[name] = copy.deepcopy(first[name])
-                else:
-                    del value[name]
+    # A scope left out keeps the draft's, like any guard; only a narrower one written replaces it. A conversation's
+    # lifetime goes with its scope.
+    narrowed = "scope" in value and rank(value["scope"]) < rank(first.get("scope", MEMORY_SCOPES[0]))
+    kept_names: list[str] = [] if narrowed else ["scope", "ttlSeconds"]
+    if not narrowed or value["scope"] != MEMORY_SCOPES[0]:
+        kept_names.append("key")
+    for name in kept_names:
+        if (name in value) != (name in first) or value.get(name) != first.get(name):
+            if name in value:
+                notes.changed_back(f"memory.{name}", where)
+            if name in first:
+                value[name] = copy.deepcopy(first[name])
+            else:
+                del value[name]
     for name, default in MEMORY_SIZES.items():
         if _lowest(value, drafts, name, default):
             notes.changed_back(f"memory.{name}", where)
     for key, setting in first.items():
-        if key not in value and key not in ("scope", *MEMORY_SCOPED):
+        if key not in value and key not in MEMORY_SCOPED:
             value[key] = copy.deepcopy(setting)
     if value or "memory" in step:
         step["memory"] = value
