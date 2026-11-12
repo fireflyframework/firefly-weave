@@ -20,6 +20,12 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Unreleased
 
+- An operator's command, such as resuming a drained worker, no longer answers
+  429 `WV-OPERATION-CAPACITY` at once while worker and runner claim polls hold
+  both of the API's slots for changes. A request that finds every slot of its
+  kind busy now waits up to 250 ms for one to free before it is refused, with
+  the same code and `Retry-After`; reads, such as the readiness probe, wait the
+  same way for theirs.
 - Workflow transactions run. A `transaction` step confirms its reservations
   once it goes ahead and undoes what went through, newest first, when a step
   fails, the run is canceled or it times out; the platform lists

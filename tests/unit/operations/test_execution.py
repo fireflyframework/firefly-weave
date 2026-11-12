@@ -178,3 +178,57 @@ async def test_inventory_slot_is_reserved_apart_from_request_admission():
         assert await asyncio.to_thread(exited.wait, 2)
     async with inventory_execution():
         assert await execute_pure(lambda: "recovered", control=True) == "recovered"
+
+
+@pytest.mark.parametrize("moment", ["before the slot frees", "as the slot frees"])
+async def test_a_request_that_stops_waiting_leaves_the_freed_slot_to_the_next_one(monkeypatch, moment):
+    """A cancelled waiter never takes the wake-up that a freed work slot owes the request waiting after it."""
+    from firefly_weave.operations import execution
+    from firefly_weave.operations.execution import WORK_SLOTS, request_execution
+
+    refused: dict[asyncio.Task, asyncio.Event] = {}
+
+    class Watched(threading.BoundedSemaphore):
+        def acquire(self, blocking=True, timeout=None):
+            taken = super().acquire(blocking, timeout)
+            if not taken:
+                refused.setdefault(asyncio.current_task(), asyncio.Event()).set()
+            return taken
+
+    monkeypatch.setattr(execution, "_work_slots", Watched(WORK_SLOTS))
+    monkeypatch.setattr(execution, "REQUEST_SLOT_WAIT_SECONDS", 30, raising=False)
+
+    async def admitted(name):
+        async with request_execution():
+            return name
+
+    async def first_refusal(task):
+        refused.setdefault(task, asyncio.Event())
+        await refused[task].wait()
+
+    holders = [request_execution() for _ in range(WORK_SLOTS)]
+    for holder in holders:
+        await holder.__aenter__()
+    waiting = []
+    try:
+        async with asyncio.timeout(5):
+            waiting.append(asyncio.create_task(admitted("gone")))
+            await first_refusal(waiting[0])
+            waiting.append(asyncio.create_task(admitted("next")))
+            await first_refusal(waiting[1])
+            if moment == "before the slot frees":
+                waiting[0].cancel()
+                await asyncio.gather(waiting[0], return_exceptions=True)
+                await holders.pop().__aexit__(None, None, None)
+            else:
+                # The wake-up goes to the request that waited longest, which stops waiting before it can use it.
+                await holders.pop().__aexit__(None, None, None)
+                waiting[0].cancel()
+            await asyncio.gather(waiting[0], return_exceptions=True)
+            assert await waiting[1] == "next"
+    finally:
+        for task in waiting:
+            task.cancel()
+        await asyncio.gather(*waiting, return_exceptions=True)
+        for holder in holders:
+            await holder.__aexit__(None, None, None)

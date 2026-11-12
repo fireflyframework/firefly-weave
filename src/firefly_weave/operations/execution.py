@@ -14,10 +14,11 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-"""No-queue isolation for pure CPU work; database sessions remain with their caller."""
+"""Bounded isolation for pure CPU work; database sessions remain with their caller."""
 
 import asyncio
 import threading
+from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable
 from concurrent.futures import Future
 from contextlib import asynccontextmanager
@@ -35,12 +36,82 @@ _control_slots = threading.BoundedSemaphore(CONTROL_SLOTS)
 _debug_slots = threading.BoundedSemaphore(DEBUG_EXECUTION_SLOTS)
 _inventory_slots = threading.BoundedSemaphore(INVENTORY_SLOTS)
 
+# How long a request waits for a slot that another request is about to free before it is refused for capacity. A
+# claim poll holds a slot for its whole request, so two of them in flight used to refuse an operator's command at
+# once. The wait is no longer than a project change waits for the project's operation lock.
+REQUEST_SLOT_WAIT_SECONDS = 0.25
+_waiting: dict[threading.BoundedSemaphore, deque[tuple[asyncio.AbstractEventLoop, asyncio.Future[None]]]] = {}
+_waiting_lock = threading.Lock()
+
+
+def _capacity_unavailable() -> CatalogError:
+    return CatalogError(429, "WV-OPERATION-CAPACITY", "Pure execution capacity unavailable")
+
+
+def _wake(slots: threading.BoundedSemaphore) -> None:
+    """Tell the request that has waited longest for ``slots`` that one is free; callable from any thread."""
+    with _waiting_lock:
+        queue = _waiting.get(slots)
+        while queue:
+            loop, woken = queue.popleft()
+            try:
+                loop.call_soon_threadsafe(_resolve, slots, woken)
+            except RuntimeError:  # Its event loop has closed, so nobody waits there any more.
+                continue
+            return
+
+
+def _resolve(slots: threading.BoundedSemaphore, woken: asyncio.Future[None]) -> None:
+    if woken.done():
+        # That request stopped waiting: the free slot is owed to the next one.
+        _wake(slots)
+    else:
+        woken.set_result(None)
+
+
+async def _admitted(slots: threading.BoundedSemaphore) -> bool:
+    """Take one of ``slots``, waiting at most REQUEST_SLOT_WAIT_SECONDS for a request that is ending to free one."""
+    if slots.acquire(blocking=False):
+        return True
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + REQUEST_SLOT_WAIT_SECONDS
+    while True:
+        woken: asyncio.Future[None] = loop.create_future()
+        entry = (loop, woken)
+        with _waiting_lock:
+            _waiting.setdefault(slots, deque()).append(entry)
+        try:
+            # A slot freed before this request was listed woke nobody, so look again once listed.
+            if slots.acquire(blocking=False):
+                return True
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                return False
+            try:
+                await asyncio.wait_for(woken, remaining)
+            except TimeoutError:
+                return slots.acquire(blocking=False)
+        except BaseException:
+            if woken.done() and not woken.cancelled():
+                # Woken, then cancelled before it took the slot: the wake-up belongs to the next waiting request.
+                _wake(slots)
+            raise
+        finally:
+            with _waiting_lock:
+                queue = _waiting.get(slots)
+                if queue is not None and entry in queue:
+                    queue.remove(entry)
+                if queue is not None and not queue:
+                    del _waiting[slots]
+
 
 class _Lease:
-    def __init__(self, control: bool, *, slots: threading.BoundedSemaphore | None = None) -> None:
+    def __init__(
+        self, control: bool, *, slots: threading.BoundedSemaphore | None = None, admitted: bool = False
+    ) -> None:
         self.slots = slots if slots is not None else (_control_slots if control else _work_slots)
-        if not self.slots.acquire(blocking=False):
-            raise CatalogError(429, "WV-OPERATION-CAPACITY", "Pure execution capacity unavailable")
+        if not admitted and not self.slots.acquire(blocking=False):
+            raise _capacity_unavailable()
         self.lock = threading.Lock()
         self.owned = True
         self.running = False
@@ -66,6 +137,7 @@ class _Lease:
         if not self.owned and not self.running and not self.released:
             self.released = True
             self.slots.release()
+            _wake(self.slots)
 
 
 _request_lease: ContextVar[_Lease | None] = ContextVar("weave_request_execution", default=None)
@@ -123,7 +195,11 @@ class ReservedSlots:
 
 @asynccontextmanager
 async def request_execution(*, control: bool = False) -> AsyncIterator[None]:
-    lease = _Lease(control)
+    """Hold one request slot for the whole request; a request waits briefly for one to free, then is refused."""
+    slots = _control_slots if control else _work_slots
+    if not await _admitted(slots):
+        raise _capacity_unavailable()
+    lease = _Lease(control, slots=slots, admitted=True)
     token = _request_lease.set(lease)
     try:
         yield

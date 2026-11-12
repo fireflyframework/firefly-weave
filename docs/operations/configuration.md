@@ -219,6 +219,13 @@ outstanding work, and may return a bounded
 authorize further ordinary execution. Serialized byte limits are separate from
 process memory and database disk usage.
 
+**Request execution.** Each API process works on at most two requests that
+change something and four that read or stop something (`GET` requests, health
+and readiness probes included, and paths that end in `/cancel`, `/disable`, or
+`/revoke`) at a time. A request that finds every slot of its kind busy waits up
+to 250 ms for one to free, then answers 429 `WV-OPERATION-CAPACITY` with
+`Retry-After: 1`. These limits have no setting.
+
 **Request bodies.** Each API process receives at most 16 request bodies and
 128 MiB at a time. Ordinary traffic can use 12 receivers and 96 MiB; four
 receivers and 32 MiB stay reserved for control and inspection requests, and the
