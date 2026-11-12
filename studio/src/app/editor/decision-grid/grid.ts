@@ -414,7 +414,12 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
       // fit again.
       const width = (element: Element) => element.getBoundingClientRect().width;
       const gap = parseFloat(getComputedStyle(bar).columnGap) || 0;
-      const needed = width(back) + 1 + width(ident) + 2 * gap;
+      const divider = bar.querySelector(".dg-divider");
+      const margins = divider
+        ? parseFloat(getComputedStyle(divider).marginLeft) +
+          parseFloat(getComputedStyle(divider).marginRight)
+        : 0;
+      const needed = width(back) + 1 + margins + width(ident) + 2 * gap;
       bar.classList.toggle("is-wrapped", needed > width(bar));
     }
   }

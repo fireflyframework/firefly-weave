@@ -1119,6 +1119,10 @@ for (const size of [
         expect(line.height, "the divider's height").toBeCloseTo(20, 0);
         expect(line.x, "after Back").toBeGreaterThanOrEqual(back.right);
         expect(line.right, "before the name").toBeLessThanOrEqual(ident.x);
+        // The compact layout spaces it 8 px each side, so a published
+        // table's name still fits beside Back at 768.
+        expect(line.x - back.right, "space before").toBeCloseTo(8, 0);
+        expect(ident.x - line.right, "space after").toBeCloseTo(8, 0);
       };
       await expectDivider();
       // Beside the Data pane Publish table may take a line of its own; the
