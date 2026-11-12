@@ -339,6 +339,26 @@ def test_the_bridge_admits_only_agent_log_reads_of_an_agent_key(tmp_path):
             assert bridge.check_scope(f"{ENVIRONMENT}/runs/{RUN}/agents/{key}/log", "GET") == 404, key
 
 
+@pytest.mark.parametrize("part", ["%", "\\", "?", "#", ".."])
+def test_the_bridge_refuses_a_path_with_a_character_it_never_forwards_before_matching(tmp_path, part):
+    async def upstream(request):
+        raise AssertionError("Nothing is forwarded")
+
+    browser, _ = studio(tmp_path, upstream)
+    with browser:
+        bridge = browser.app.state.studio
+        path = f"{ENVIRONMENT}/runs/{RUN}/agents/support{part}2/log"
+        incoming = Request({"type": "http", "method": "GET", "path": f"/studio/api{path}", "headers": []})
+
+        response = browser.portal.call(bridge.bridge, incoming, path)
+
+    # The key check would also answer 404, but with the profile message: this proves the first check refused it.
+    assert (response.status_code, response.body) == (
+        404,
+        b'{"status":404,"code":"WV-STUDIO-ROUTE","message":"Unknown platform operation"}',
+    )
+
+
 def test_studio_forwards_an_activations_log_by_its_decoded_key(tmp_path):
     seen = []
 
