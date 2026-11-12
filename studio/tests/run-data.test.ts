@@ -182,11 +182,13 @@ describe("what a step received", () => {
       ENVIRONMENT,
       next({ ref: "/steps/add/output/id" }),
     );
+    // The platform withholds a repeated activation's output as unclassifiable;
+    // that never leaves the step's own output out.
     data.setOutputs([
       {
-        ...fact("add", "succeeded", { value: { id: 1 } }),
+        ...fact("add", "succeeded"),
         instance_key: "add#undo",
-        output: { id: 97 },
+        omissions: [{ path: "/output", reason: "classification_unavailable" }],
       },
     ]);
     expect(data.received("next")).toEqual({ ok: true, value: 1 });
@@ -200,6 +202,46 @@ describe("what a step received", () => {
       next({ ref: "/steps/add/error/code" }),
     );
     expect(handled.received("next")).toEqual({ ok: true, value: "CRM_DOWN" });
+  });
+
+  it("keeps a handled failure's error when its recorded output is read", () => {
+    const workflow: Workflow = {
+      ...definition({}),
+      spec: {
+        steps: [
+          {
+            id: "add",
+            kind: "action",
+            action: "crm.lookup@2.0.0",
+            onError: "continue",
+          },
+          {
+            id: "next",
+            kind: "action",
+            action: "crm.lookup@2.0.0",
+            with: {
+              object: {
+                code: { ref: "/steps/add/error/code" },
+                output: { ref: "/steps/add/output" },
+              },
+            },
+          },
+        ],
+      },
+    };
+    const data = new RunData(
+      record({
+        completed: { add: { output: null, error: { code: "CRM_DOWN" } } },
+      }),
+      ENVIRONMENT,
+      workflow,
+    );
+    // Step details read the step's recorded output: a value, here null.
+    data.setOutputs([fact("add", "succeeded", { value: null })]);
+    expect(data.received("next")).toEqual({
+      ok: true,
+      value: { code: "CRM_DOWN", output: null },
+    });
   });
 });
 

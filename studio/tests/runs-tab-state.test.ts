@@ -68,10 +68,15 @@ class FakeEnvironment implements PollEnvironment {
     for (const listener of [...this.listeners]) listener();
     await settle();
   }
-  /** Runs every timer due within `milliseconds`, in order, letting answers land between them. */
+  /**
+   * Runs every timer due within `milliseconds`, in order, letting answers
+   * land between them. Timers that keep firing without the clock reaching
+   * the end are a busy loop, and fail the test instead of hanging it.
+   */
   async advance(milliseconds: number) {
     const end = this.time + milliseconds;
-    for (;;) {
+    for (let fired = 0; ; fired++) {
+      if (fired > 10_000) throw new Error("Timers kept firing: a busy loop.");
       await settle();
       const due = [...this.timers]
         .filter(([, timer]) => timer.at <= end)
@@ -742,35 +747,42 @@ describe("the chosen run", () => {
   });
 
   it("drops a followed run's answer that arrives after the run was left", async () => {
-    const { state, platform, env } = await started();
-    const running = summaryOf(platform.data, fixtureIds.running);
-    await state.choose(running.id);
-    const data = state.chosen()!.data!;
-    const stamp = data.version();
-    platform.hold = (path) => path.endsWith(`/runs/${running.id}`);
-    await env.advance(2000);
-    state.leave();
-    // Another run is shown before the late answer arrives.
-    platform.hold = null;
-    await state.choose(fixtureIds.failed);
-    const shown = state.chosen()!;
-    platform.views.set(
-      running.id,
-      viewOf(
-        { ...running, status: "succeeded" },
-        { steps: { support: { output: {} } } },
-      ),
-    );
-    platform.release();
-    await settle();
-    expect(state.chosen()).toBe(shown);
-    expect(shown.data?.iterations("support")).toEqual([]);
-    // The data shown before isn't updated with the late answer.
-    expect(data.version()).toBe(stamp);
-    // And the run left isn't read again.
-    const reads = platform.count(new RegExp(`/runs/${running.id}$`));
-    await env.advance(10_000);
-    expect(platform.count(new RegExp(`/runs/${running.id}$`))).toBe(reads);
+    // The late answer is the run's state, or a page of its steps read after it.
+    for (const late of ["", "/steps"]) {
+      const { state, platform, env } = await started();
+      const running = summaryOf(platform.data, fixtureIds.running);
+      await state.choose(running.id);
+      const data = state.chosen()!.data!;
+      const stamp = data.version();
+      platform.hold = (path) =>
+        path.replace(/\?.*$/, "").endsWith(`/runs/${running.id}${late}`);
+      await env.advance(2000);
+      state.leave();
+      // Another run is shown before the late answer arrives.
+      platform.hold = null;
+      await state.choose(fixtureIds.failed);
+      const shown = state.chosen()!;
+      platform.views.set(
+        running.id,
+        viewOf(
+          { ...running, status: "succeeded" },
+          { steps: { support: { output: {} } } },
+        ),
+      );
+      platform.release();
+      await settle();
+      expect(state.chosen(), late).toBe(shown);
+      // None of the left run's step instances reach the run shown now.
+      expect(shown.data?.iterations("support"), late).toEqual([]);
+      // The data shown before isn't updated with the late answer.
+      expect(data.version(), late).toBe(stamp);
+      // And the run left isn't read again.
+      const reads = platform.count(new RegExp(`/runs/${running.id}$`));
+      await env.advance(10_000);
+      expect(platform.count(new RegExp(`/runs/${running.id}$`)), late).toBe(
+        reads,
+      );
+    }
   });
 
   it("drops a run whose version arrives after the environment changed", async () => {
