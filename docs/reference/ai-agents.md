@@ -127,8 +127,9 @@ the agent fails, is different: it may have applied. It keeps its own key and tas
 
 Activation checks an agent like an AI task: its connection must use the profile's provider
 (`WV-ACTIVATION-AI-PROVIDER`), and the AI policy must approve the model for the connection's endpoint
-(`WV-ACTIVATION-AI-MODEL`). Activation also refuses any step other than an agent that would run the model turn, and an
-agent whose turn action isn't the platform's (`WV-ACTIVATION-AI-RESERVED`).
+(`WV-ACTIVATION-AI-MODEL`). Activation also refuses any step other than an agent that would run the model turn, an
+agent whose turn action isn't the platform's, and an agent tool whose action runs a model task
+(`WV-ACTIVATION-AI-RESERVED`).
 
 ## Agent log
 

@@ -120,10 +120,11 @@ SPDX-License-Identifier: Apache-2.0
   tool's and the step's schemas. A value marked secret is left out with its
   reason, and a tool name the model wrote is shown escaped.
 - When Weave AI proposes a change to an existing AI agent step, it keeps every
-  safeguard the proposal leaves out: a tool's fixed arguments, approval and
-  person, the review's expiry and distinct reviewer, and the step's limits,
-  memory and error handling. Weave AI can make a safeguard stricter but never
-  drops one; loosening one is done in the editor. Weave AI can also ask that a
+  safeguard the proposal leaves out, also when the proposal renames the step or
+  a tool: a tool's fixed arguments, approval and person, the review's expiry and
+  distinct reviewer, and the step's limits, memory and error handling. A
+  safeguard Weave AI changes on purpose, such as a looser approval, shows in the
+  proposal you review before you apply it. Weave AI can also ask that a
   different person than the run's starter approves an agent's data-changing
   calls (`distinctReviewer`).
 
