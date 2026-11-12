@@ -710,7 +710,8 @@
           "callWorkflow",
           "humanTask",
           "signal",
-          "transaction"
+          "transaction",
+          "agent"
         ],
         "values": [
           "stop",

@@ -122,6 +122,7 @@ from firefly_weave.runtime.control import (
     loop_suffix,
 )
 from firefly_weave.runtime.models import (
+    AgentState,
     BranchState,
     CallIntent,
     ControlCommand,
@@ -1688,6 +1689,7 @@ def _advance_owned(
     def agent_effects(node: AgentNode, key: str, effects: AgentEffects) -> None:
         """Apply one agent transition: its state, the turn and tool calls it sends, and how the step ends."""
         nonlocal current_state
+        prior = current_state.agents.get(key)
         if effects.tokens:
             current_state = current_state.model_copy(
                 update={"agent_tokens": current_state.agent_tokens + effects.tokens}
@@ -1753,11 +1755,34 @@ def _advance_owned(
             close_agent(key)
             queue.append(successor(key))
         elif effects.failure is not None:
-            if effects.state is None:
-                # Whatever the agent still has open ends with it; a budget stop keeps the state for one more turn.
-                close_agent(key, keep=True)
-            # The agent's own key holds the incident, as an action's key does; Operate resolves it there.
-            incident(key, effects.failure)
+            agent_failed(node, key, effects.failure, prior, keep_state=effects.state is not None)
+
+    def agent_failed(
+        node: AgentNode,
+        key: str,
+        code: str,
+        state: AgentState | None,
+        *,
+        error: JsonObject | None = None,
+        keep_state: bool = False,
+    ) -> None:
+        """An agent failed for good: its onError setting takes the failure, unless a call that changes data and is
+        never retried may have applied (it is still running); then, or without a setting, its key holds the incident.
+        Whatever the agent still has open ends with it; a budget stop keeps the state for one more granted turn."""
+        tools = {tool.name: tool for tool in node.tools}
+        uncertain = state is not None and any(
+            call.status == "running"
+            and TOOL_TARGETS[tools[call.name].target].side_effect(ir, tools[call.name]) == "non_idempotent"
+            for call in state.calls
+        )
+        if node.on_error is not None and not uncertain:
+            close_agent(key)
+            fail_step(node, key, error or step_error(code, "failed", state.turn if state is not None else 1, key))
+            return
+        if not keep_state:
+            close_agent(key, keep=True)
+        # The agent's own key holds the incident, as an action's key does; Operate resolves it there.
+        incident(key, code)
 
     def close_agent(key: str, *, keep: bool = False) -> None:
         """End an agent: settle every turn, tool and review it still has open, and drop its state."""
@@ -1793,8 +1818,17 @@ def _advance_owned(
             effects = turn_completed(
                 ir, node, agent, state, TurnOutput.model_validate(value), current_state.agent_tokens
             )
+        elif completion.type == "step_failed" and reference.key.call is None:
+            # A turn failed for good and the agent's setting takes it: the step's error names the turn.
+            if reference.key.turn != state.turn:
+                raise KernelError("WV-RUNTIME-EVENT")
+            code, error = turn_failure(identifier, completion)
+            current_state.active.remove(identifier)
+            result.steps.append(StepChange(node_id=identifier, status="failed", output=None, error=error))
+            agent_failed(node, agent, code, state, error=error)
+            return
         elif completion.type == "step_failed":
-            if reference.key.call is None or reference.key.review or reference.tool is None:
+            if reference.key.review or reference.tool is None:
                 raise KernelError("WV-RUNTIME-EVENT")
             code, error = tool_failure(reference, identifier, completion)
             current_state.active.remove(identifier)
@@ -1830,6 +1864,17 @@ def _advance_owned(
         else:
             raise KernelError("WV-RUNTIME-EVENT")
         agent_effects(node, agent, effects)
+
+    def turn_failure(key: str, completion: RuntimeEvent) -> tuple[str, JsonObject]:
+        """The code and error object of a turn's final failure; a turn changes nothing, so any outcome is handled."""
+        data = completion.data
+        code, outcome, attempts = data.get("code"), data.get("outcome", "unknown"), data.get("attempts", 1)
+        if not isinstance(code, str) or outcome not in STEP_OUTCOMES or not isinstance(attempts, int):
+            raise KernelError("WV-RUNTIME-EVENT")
+        try:
+            return code, step_error(code, cast(StepOutcome, outcome), attempts, key)
+        except ValueError as error:
+            raise KernelError("WV-RUNTIME-EVENT") from error
 
     def tool_failure(reference: AgentKeyRef, key: str, completion: RuntimeEvent) -> tuple[str, JsonObject]:
         """The code and error object of a tool call's final failure. An unknown outcome of a call that changes data
@@ -1879,8 +1924,9 @@ def _advance_owned(
         due = current_state.waits.get(key)
         if due is None or completion.data.get("deadline") != due.isoformat() or completion.timestamp < due:
             raise KernelError("WV-RUNTIME-EARLY-WAKEUP")
-        close_agent(key, keep=True)
-        incident(key, "WV-AGENT-TIMEOUT")
+        node = nodes[node_of(key)]
+        assert isinstance(node, AgentNode)
+        agent_failed(node, key, "WV-AGENT-TIMEOUT", current_state.agents.get(key))
 
     def accept(completion: RuntimeEvent) -> None:
         nonlocal current, current_state

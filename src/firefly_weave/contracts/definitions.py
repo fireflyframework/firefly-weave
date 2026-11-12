@@ -462,6 +462,18 @@ class AgentStep(ContractModel):
     review: OmissionOnly[AgentReview] = Field(
         default=None, exclude_if=_is_absent, json_schema_extra=_omit_absent_default
     )
+    # What the agent's final failure does; omitted means stop. An effect that may have happened keeps its incident.
+    on_error: OmissionOnly[StepErrorPolicy] = Field(
+        default=None, alias="onError", exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+    error_path: OmissionOnly[Branch] = Field(
+        default=None, alias="errorPath", exclude_if=_is_absent, json_schema_extra=_omit_absent_default
+    )
+
+    @model_validator(mode="after")
+    def error_handling(self) -> AgentStep:
+        _error_handling(self)
+        return self
 
     @model_validator(mode="after")
     def unique_tools(self) -> AgentStep:
@@ -764,9 +776,10 @@ type Step = Annotated[
 ]
 
 
-# The steps that accept onError. An AI agent step joins them when it is added.
+# The steps that accept onError.
 type ErrorHandlingStep = (
     ActionStep
+    | AgentStep
     | LLMStep
     | TransformStep
     | DecisionTableStep

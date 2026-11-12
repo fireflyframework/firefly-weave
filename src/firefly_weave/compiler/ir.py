@@ -378,7 +378,7 @@ class AgentMemoryIR(ContractModel):
     context_tokens: int = Field(ge=512, le=262144, alias="contextTokens")
 
 
-class AgentNode(Node):
+class AgentNode(HandlesErrors, Node):
     """An AI agent: the kernel runs its loop, one turn task on ``dependency`` (the turn action) at a time."""
 
     kind: Literal["agent"]

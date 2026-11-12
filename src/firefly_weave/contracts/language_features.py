@@ -68,7 +68,7 @@ WORKFLOW_FIELD_FEATURES: Final[Mapping[str, LanguageFeature]] = MappingProxyType
 # Step fields that need a feature, by the kinds that accept them: how a step inside a transaction is undone.
 UNDO_FIELDS: Final[tuple[str, ...]] = ("confirm", "cancel", "compensate", "irreversible", "holdSeconds")
 UNDO_KINDS: Final[tuple[str, ...]] = ("action", "callWorkflow")
-# What a step's final failure does, by the kinds that accept it. An AI agent step joins them when it is added.
+# What a step's final failure does, by the kinds that accept it.
 ERROR_FIELDS: Final[tuple[str, ...]] = ("onError", "errorPath")
 ERROR_KINDS: Final[tuple[str, ...]] = (
     "action",
@@ -79,6 +79,7 @@ ERROR_KINDS: Final[tuple[str, ...]] = (
     "humanTask",
     "signal",
     "transaction",
+    "agent",
 )
 # Every step field that needs a feature.
 _UNDO_FEATURE: Final[LanguageFeature] = "flow.transaction"
