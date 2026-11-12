@@ -218,17 +218,26 @@ def test_create_refuses_a_cluster_name_that_already_exists_on_the_context(world,
         (PlatformError("not ready"), "The cluster's nodes weren't Ready within 180 s"),
         (KeyboardInterrupt(), "The readiness wait was interrupted"),
     ],
+    ids=["not-ready", "wait-interrupted"],
 )
-def test_a_failed_cleanup_says_to_run_delete(world, failure, reason):
+@pytest.mark.parametrize(
+    ("cleanup", "outcome"),
+    [
+        (PlatformError("delete failed"), "deleting the cluster failed"),
+        (KeyboardInterrupt(), "deleting the cluster was interrupted"),
+    ],
+    ids=["delete-failed", "delete-interrupted"],
+)
+def test_a_failed_or_interrupted_cleanup_says_to_run_delete(world, failure, reason, cleanup, outcome):
+    """A second Ctrl-C during the cleanup still ends with what to run, not a bare Aborted!."""
     directory, commands, _ = world
     commands.answer(["wait", "--for=condition=Ready"], failure)
-    commands.answer(["delete"], PlatformError("delete failed"))
+    commands.answer(["delete"], cleanup)
     result = create(directory)
     assert result.exit_code != 0 and calls(commands, "delete", "cluster", "--name", NAME)
     assert "was deleted" not in result.output
     assert (
-        f"{reason}, and deleting the cluster failed; run weave platform cluster delete with the same provider and "
-        "name to remove it."
+        f"{reason}, and {outcome}; run weave platform cluster delete with the same provider and name to remove it."
     ) in result.output
 
 

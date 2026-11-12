@@ -703,9 +703,11 @@ def create_cluster(
         )
         try:
             _delete(state, directory, provider, cluster, context)
-        except Exception:
+        except (Exception, KeyboardInterrupt) as cleanup:
+            # A second Ctrl-C stops the cleanup too; either way, say what removes the cluster.
+            outcome = "was interrupted" if isinstance(cleanup, KeyboardInterrupt) else "failed"
             raise local.PlatformError(
-                f"{reason}, and deleting the cluster failed; run weave platform cluster delete with the same "
+                f"{reason}, and deleting the cluster {outcome}; run weave platform cluster delete with the same "
                 "provider and name to remove it."
             ) from None
         if isinstance(error, _NotReady):
