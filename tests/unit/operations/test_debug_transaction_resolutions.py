@@ -218,6 +218,12 @@ def test_a_reconciled_block_output_with_a_secret_marked_value_is_refused():
     refused(simulator, "hold#confirm:2", "accept_reconciled_result", {**COMPLETED, "blockOutput": {"token": "t"}})
 
 
+def test_an_it_happened_output_with_a_secret_marked_value_is_refused():
+    flow = compiled([transaction([hold(), add(), submit(), notify()])], snapshot=secret_token_catalog())
+    simulator = in_doubt(flow, PIVOT_UNKNOWN)
+    refused(simulator, "submit:1", "accept_reconciled_result", {"orderId": "o-1", "token": "t"})
+
+
 def test_it_happened_confirms_and_runs_the_steps_after_the_point_of_no_return():
     simulator = in_doubt(compiled([transaction([hold(), add(), submit(), notify()])]), PIVOT_UNKNOWN)
     simulator.resolve("submit:1", "accept_reconciled_result", {"orderId": "o-1"})
@@ -472,3 +478,28 @@ def test_retrying_a_called_step_after_the_point_of_no_return_runs_it_again():
     [completed] = [e for e in view.events if e.type == "call_completed" and e.data["node_id"] == "after"]
     assert (completed.data["generation"], completed.data["status"]) == (3, "succeeded")
     assert (record(view)["status"], view.status) == ("completed", "succeeded")
+
+
+def refused_command(simulator, command):
+    """The command is refused for its shape: the session keeps every byte."""
+    before = simulator.serialize()
+    with pytest.raises(DebugError) as raised:
+        simulator.command(command)
+    assert raised.value.code == "WV-DEBUG-COMMAND"
+    assert simulator.serialize() == before
+
+
+def test_a_payload_on_a_resolution_that_takes_none_is_refused():
+    simulator = in_doubt(compiled([move()]), UNDO_STUCK)
+    for resolution in ("retry_safe", "accept_reconciled_failure", "terminate"):
+        command = DebugCommand(kind="resolve", incident_key="add#undo:10", resolution=resolution, payload=UNDONE)
+        refused_command(simulator, command)
+    assert "add#undo:10" in simulator.inspect().variables["incidents"]
+
+
+def test_skip_undo_outside_a_cancel_is_refused():
+    simulator = stopped_at_add()
+    refused_command(simulator, DebugCommand(kind="continue", skip_undo=True))
+    refused_command(
+        simulator, DebugCommand(kind="resolve", incident_key="add#undo:10", resolution="terminate", skip_undo=True)
+    )

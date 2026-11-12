@@ -1243,7 +1243,11 @@ class Simulator:
         default), as one event boundary of that run; ``payload`` is the reconciled result or record. The kernel
         decides: a resolution it doesn't take changes nothing and is refused with ``WV-DEBUG-INCIDENT``, as is one
         while a run is in the middle of an event. The steps it releases run on the next ``next`` or ``continue``.
+        Only ``accept_reconciled_result`` takes a payload; any other resolution with one is refused with
+        ``WV-DEBUG-COMMAND``, so nothing a person sends is silently dropped.
         """
+        if payload is not None and resolution != "accept_reconciled_result":
+            raise DebugError("WV-DEBUG-COMMAND")
 
         def apply() -> None:
             key = frame or ""
@@ -1303,6 +1307,9 @@ class Simulator:
         return self._mutate(move)
 
     def command(self, command: DebugCommand) -> DebugView:
+        if command.skip_undo and command.kind != "cancel":
+            # Only a cancel can skip the undo; any other command with it would silently ignore it.
+            raise DebugError("WV-DEBUG-COMMAND")
         if command.kind == "next":
             return self.next()
         if command.kind == "continue":
