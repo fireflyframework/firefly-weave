@@ -250,7 +250,7 @@ async def run_turn(
     try:
         async with asyncio.timeout(profile.timeout_seconds):
             response = await model_request(
-                model, messages, model_settings=request_settings, model_request_parameters=parameters
+                model, messages, model_settings=request_settings, model_request_parameters=parameters, instrument=False
             )
             counted = response.usage.input_tokens
             if ollama and context_tokens is not None and cut(counted, sent, estimate, context_tokens):
@@ -280,6 +280,7 @@ async def run_turn(
                         follow,
                         model_settings=request_settings,
                         model_request_parameters=_formatting(turn, output_mode),
+                        instrument=False,
                     )
                     responses.append(formatted)
                     # It resends the whole transcript, so Ollama can cut it too.

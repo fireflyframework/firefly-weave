@@ -469,3 +469,13 @@ def test_a_turn_uses_only_the_direct_model_api():
     ]
     assert calls and all(not call.args for call in calls)
     assert {keyword.arg for call in calls for keyword in call.keywords} <= ALLOWED_PARAMETERS
+    # No request is instrumented: the turn's prompt and answer never reach a tracer.
+    requests = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "model_request"
+    ]
+    instrument = [
+        next((keyword.value for keyword in call.keywords if keyword.arg == "instrument"), None) for call in requests
+    ]
+    assert len(requests) == 2 and all(isinstance(value, ast.Constant) and value.value is False for value in instrument)
