@@ -127,6 +127,14 @@ def test_the_image_catalog_must_be_this_servers_catalog():
     assert setup.release_manifest(manifest_output())["credential_capabilities"] == BOTH_TASKS
 
 
+def test_a_catalog_that_drops_the_turn_capability_is_refused():
+    changed = json.loads(catalog_output())
+    changed["tasks"] = [task for task in changed["tasks"] if task["taskType"] != "weave-agentic.turn"]
+    assert len(changed["tasks"]) == 1
+    with pytest.raises(platform.PlatformError, match="does not carry this server's AI catalog"):
+        setup.verify_catalog(json.dumps(changed).encode())
+
+
 def test_an_image_without_ai_agent_turns_is_not_this_servers():
     with pytest.raises(platform.PlatformError, match="does not carry this server's AI catalog"):
         setup.verify_catalog(catalog_output(turns=False))
