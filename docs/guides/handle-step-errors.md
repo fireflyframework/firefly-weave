@@ -151,8 +151,11 @@ the other system, then either:
 Confirm it had no effect resolves only `WV-TASK-AMBIGUOUS` on the step itself.
 It is refused (`409 WV-RUNTIME-RECONCILIATION_REQUIRED`) for a step without the
 setting, without evidence, for incidents of calls, for the confirm, cancel or
-undo of a step inside a transaction, for a transaction in doubt, and for an
-interim `WV-TASK-FAILED` that recovery has not decided yet.
+undo of a step inside a transaction, and for an interim `WV-TASK-FAILED` that
+recovery has not decided yet. On a transaction in doubt the same kind means
+**It didn't happen**, for the step that can't be undone only: the transaction
+undoes the steps before it, and the step's setting does not apply; see
+[Undo steps together with a transaction](transactions.md).
 See [Incident operations](../reference/incident-operations.md).
 
 ## Waits and calls
@@ -178,7 +181,8 @@ be undone fails with nothing applied and has the setting, the transaction stays
 open and the body goes on, so its reservations are confirmed at the end instead
 of released. A transaction step with the setting handles its own
 clean rollback (`WV-TXN-ROLLED-BACK`, outcome `failed`); a transaction in
-doubt is never handled.
+doubt is never handled, and when a person says the step that can't be undone
+didn't happen, the transaction goes back even if that step has the setting.
 
 ## What you see
 

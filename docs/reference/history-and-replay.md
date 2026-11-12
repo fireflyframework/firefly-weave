@@ -168,7 +168,10 @@ recovery timing for a task that failed after its retries or that nobody claimed
 before its deadline, the deadline and its order for a signal or human task that
 timed out, and the refused call row for a call that could not start. Confirm it
 had no effect (`accept_reconciled_failure`) replays only for a task incident of
-a step with a setting, and `incident_resolved` keeps its `attempts`.
+a step with a setting, and `incident_resolved` keeps its `attempts`. On a
+transaction in doubt the same kind is It didn't happen: it records the
+incident's `code` and no `attempts`, and replay checks it through the kernel
+like the transaction's other resolutions.
 
 ## Transactions in a history
 

@@ -250,6 +250,30 @@ async def test_it_happened_confirms_then_runs_the_steps_after_and_it_didnt_happe
     assert (await platform.record(other.id))["state"] == "compensated"
 
 
+async def test_it_didnt_happen_goes_back_even_when_the_step_has_an_on_error_setting(platform, reconciler):
+    # The incident's code decides first: on a transaction in doubt the answer is the transaction's, before any check
+    # of a step's own setting, and it records no attempts because the step's setting never takes it.
+    steps = [transaction(hold(), add(), {**submit(), "onError": "continue"})]
+    run = await platform.start(await platform.publish(workflow("move-with-a-setting", steps)))
+    await platform.complete(await platform.lease("hold"))
+    await platform.complete(await platform.lease("add"))
+    await platform.fail(await platform.lease("submit"), "UNAVAILABLE")
+    await platform.scan()
+    incident = await active(platform, run.id)
+    assert incident["code"] == "WV-TXN-PIVOT-UNKNOWN"
+    with pytest.raises(AccessDenied):
+        await resolve(platform, incident, "accept_reconciled_failure", evidence_reference="T")
+    await resolve(platform, incident, "accept_reconciled_failure", actor=reconciler, evidence_reference="T")
+    [resolved] = await platform.query(
+        "SELECT data FROM run_events WHERE run_id=:run AND type='incident_resolved'", run=run.id
+    )
+    assert resolved["data"]["code"] == "WV-TXN-PIVOT-UNKNOWN" and "attempts" not in resolved["data"]
+    await platform.complete(await platform.lease("add#undo"))
+    await platform.complete(await platform.lease("hold#cancel"))
+    assert (await platform.state(run.id))["status"] == "failed"
+    assert (await platform.record(run.id))["state"] == "compensated"
+
+
 async def test_it_didnt_happen_is_refused_for_any_other_incident(platform, reconciler):
     _, incident = await undo_stuck(platform)
     with pytest.raises(CatalogError) as refused:

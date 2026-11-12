@@ -104,7 +104,7 @@ but a person's decision moves it. Check the other systems first, then choose:
 | **Retry the undo** (or the confirm) | `retry_safe` | The cause is fixed. The same step runs again with the same operation key and a fresh time limit, and undoing resumes where it stopped |
 | **Mark as reconciled** | `accept_reconciled_result` with a reconciliation record | You fixed things by hand. Say how the transaction ended (`compensated` or `completed`) and what happened to each stuck step; with `completed`, give the block's output, which later steps read |
 | **It happened** | `accept_reconciled_result` with the step's output | The order went through. Weave confirms the reservations and runs the steps after it |
-| **It didn't happen** | `accept_reconciled_failure` | The order never went through. Weave undoes the steps before it |
+| **It didn't happen** | `accept_reconciled_failure` | The order never went through. Weave undoes the steps before it, even when the step has an On error setting |
 | **Force end** | `terminate` | Stop here: nothing more is done or undone. The run ends canceled and what was applied stays applied |
 
 A late result of work a person already ended changes nothing; it is counted

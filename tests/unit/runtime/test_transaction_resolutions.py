@@ -188,6 +188,24 @@ def test_it_didnt_happen_undoes_what_was_done_before_it():
     assert (run.txn().status, run.state.status) == ("compensated", "failed")
 
 
+def test_it_didnt_happen_goes_back_even_when_the_step_has_an_on_error_setting():
+    # A person's answer about the step that can't be undone belongs to its transaction; the step's setting never
+    # takes it, so nothing reads an error at the step and what was done before it is undone.
+    run = Run(compiled([transaction([hold(), add(), {**submit(), "onError": "continue"}])]))
+    run.start()
+    run.done("hold", {"holdId": "h-1"})
+    run.done("add", {"id": "a-1"})
+    run.failed("submit", "TIMEOUT", effect="unknown", generation=3)
+    assert run.state.incidents["submit:3"].code == "WV-TXN-PIVOT-UNKNOWN"
+    went_back = resolve(run, "submit:3", "accept_reconciled_failure")
+    assert [task.node_id for task in tasks(went_back)] == ["add#undo"]
+    assert (run.state.incidents, run.txn().status, run.statuses()["submit"]) == ({}, "compensating", "failed")
+    assert "submit" not in run.state.steps
+    run.done("add#undo", {})
+    run.done("hold#cancel", {})
+    assert (run.txn().status, run.state.status, run.state.output) == ("compensated", "failed", ROLLED_BACK)
+
+
 def test_only_the_step_that_cant_be_undone_can_be_said_to_have_happened_or_not():
     run = pivot_unknown()
     resolve(run, "submit:3", "retry_safe")

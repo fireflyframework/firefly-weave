@@ -231,6 +231,15 @@ HISTORIES = {
             done("hold#cancel", {}),
         ],
     ),
+    "it didn't happen to a step with a setting": (
+        [transaction([hold(), add(), {**submit(), "onError": "continue"}])],
+        [
+            *PIVOT,
+            resolved("submit:1", "submit", 1, "accept_reconciled_failure", "WV-TXN-PIVOT-UNKNOWN"),
+            done("add#undo", {}),
+            done("hold#cancel", {}),
+        ],
+    ),
     "force ended": (FLOW, [*UNDO_STUCK, resolved("add#undo:3", "add#undo", 3, "terminate", "WV-TXN-UNDO-STUCK")]),
     "cancel skipping undo": (
         FLOW,
