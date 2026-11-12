@@ -188,9 +188,15 @@ CONNECTED = {
 }
 
 
+def platform_on(monkeypatch, context):
+    """A platform with operations on, whose containers run on this Docker context."""
+    monkeypatch.setattr(clusters.platform_operations, "receipt", lambda path: {"stage": "ready"})
+    monkeypatch.setattr(clusters.local, "_state", lambda path: {"context": context, "id": "a" * 24})
+
+
 def test_create_without_no_connect_connects_the_new_cluster(world, monkeypatch):
     directory, commands, _ = world
-    monkeypatch.setattr(clusters.platform_operations, "receipt", lambda path: {"stage": "ready"})
+    platform_on(monkeypatch, "colima-weave-tests")
     asked = []
 
     def connect(path, provider, name, namespace, *, kubeconfig, notice):
@@ -223,9 +229,26 @@ def test_create_refuses_before_creating_when_operations_are_off(world):
     assert not calls(commands, "create")
 
 
+def test_create_refuses_before_creating_when_its_context_is_not_the_platforms(world, monkeypatch):
+    """Connect accepts only nodes on the platform's own Docker context; without --no-connect, create says so before
+    it takes 6 GiB of another context's disk."""
+    directory, commands, _ = world
+    platform_on(monkeypatch, "colima-platform")
+    asked = []
+    monkeypatch.setattr(clusters, "connect", lambda *args, **kwargs: asked.append(args))
+    result = invoke(directory, "create")
+    assert result.exit_code == EXIT_USAGE
+    assert (
+        "Connect needs the cluster on this platform's Docker context colima-platform, not colima-weave-tests. "
+        "Create it with --context colima-platform, or with --no-connect. Nothing was changed."
+    ) in " ".join(result.output.split())
+    assert asked == [] and not calls(commands, "create") and not calls(commands, "df")
+    assert create(directory).exit_code == 0 and calls(commands, "create")
+
+
 def test_a_new_cluster_that_fails_to_connect_stays_and_says_how_to_retry(world, monkeypatch):
     directory, commands, _ = world
-    monkeypatch.setattr(clusters.platform_operations, "receipt", lambda path: {"stage": "ready"})
+    platform_on(monkeypatch, "colima-weave-tests")
 
     def connect(path, provider, name, namespace, *, kubeconfig, notice):
         raise PlatformError("A test pod couldn't pull the worker image through the platform registry.")
@@ -550,6 +573,24 @@ def test_a_target_that_fails_to_disconnect_keeps_the_cluster(world, monkeypatch)
         in (" ".join(result.output.split()))
     )
     assert not calls(commands, "delete")
+
+
+def test_delete_refuses_another_context_than_the_one_its_targets_are_connected_on(world, monkeypatch):
+    """A cluster of the same name on another context isn't the connected one: its targets stay connected."""
+    directory, commands, _ = world
+    receipt_with_target(directory)
+    other = json.dumps([{"Endpoints": {"docker": {"Host": "unix:///Users/me/.colima/other/docker.sock"}}}])
+    commands.answer(["docker", "context", "inspect", "colima-other"], other)
+    asked = []
+    monkeypatch.setattr(clusters, "disconnect", lambda *args, **kwargs: asked.append(args))
+    result = invoke(directory, "delete", context="colima-other")
+    assert result.exit_code == EXIT_USAGE
+    assert (
+        f"The kind cluster {NAME} connected to this platform runs on Docker context colima-weave-tests, not "
+        "colima-other. Nothing was changed. To delete it, run delete with --context colima-weave-tests."
+    ) in " ".join(result.output.split())
+    assert asked == [] and not calls(commands, "delete")
+    assert set(clusters.receipt(directory)["clusters"][f"kind-{NAME}"]["targets"]) == {"weave-workers", "team-b"}
 
 
 @pytest.mark.parametrize(("provider", "network"), [("kind", f"weave-kind-{NAME}"), ("k3d", f"k3d-{NAME}")])

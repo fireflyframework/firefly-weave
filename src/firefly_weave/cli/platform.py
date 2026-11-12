@@ -147,7 +147,8 @@ def cluster_create(
     Refuses a name that already exists on the Docker context or whose network
     does, a Docker context that isn't on this computer's Unix socket, and less
     than 6 GiB of free Docker disk. Deletes only a cluster it created. Without
-    --no-connect, connects its weave-workers namespace as connect does; a
+    --no-connect, connects its weave-workers namespace as connect does, and
+    refuses a --context that isn't the platform's before creating anything; a
     cluster that fails to connect stays, and connect retries it.
     """
     from firefly_weave.sdk import platform_clusters
@@ -182,7 +183,8 @@ def cluster_delete(directory: Path, provider: str, name: str, context: str | Non
     Disconnects each of the cluster's connected targets first, on the
     platform's side only, since the cluster's objects go with it; when one
     can't be disconnected, the cluster stays. Refuses a Docker context that
-    isn't on this computer's Unix socket.
+    isn't on this computer's Unix socket, and a connected cluster's name with
+    another --context than the one it's connected on.
     """
     from firefly_weave.sdk import platform_clusters
 

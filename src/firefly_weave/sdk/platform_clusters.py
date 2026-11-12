@@ -1928,9 +1928,16 @@ def create_cluster(
     if provider not in PROVIDERS or cluster_name_problem(cluster):
         raise local.PlatformError(NAME_PROBLEM)
     directory, state, context = _lifecycle(directory, context)
-    if then_connect and (platform_operations.receipt(directory) or {}).get("stage") != "ready":
+    if then_connect:
         # Connect would refuse after the cluster exists; say so before it takes 6 GiB of Docker disk.
-        raise local.PlatformError(OPERATIONS_OFF.replace("then connect again", "or create with --no-connect"))
+        if (platform_operations.receipt(directory) or {}).get("stage") != "ready":
+            raise local.PlatformError(OPERATIONS_OFF.replace("then connect again", "or create with --no-connect"))
+        platform_context = local._state(directory)["context"]
+        if context != platform_context:
+            raise local.PlatformError(
+                f"Connect needs the cluster on this platform's Docker context {platform_context}, not {context}. "
+                f"Create it with --context {platform_context}, or with --no-connect. Nothing was changed."
+            )
     if _exists(state, provider, cluster, context):
         raise local.PlatformError(
             f"A cluster named {cluster} already exists on context {context}; nothing was changed."
@@ -1998,7 +2005,15 @@ def delete_cluster(
     if provider not in PROVIDERS or cluster_name_problem(cluster):
         raise local.PlatformError(NAME_PROBLEM)
     directory, state, context = _lifecycle(directory, context)
-    targets = receipt(directory)["clusters"].get(f"{provider}-{cluster}", {}).get("targets", {})
+    entry = receipt(directory)["clusters"].get(f"{provider}-{cluster}")
+    if entry is not None and entry["docker_context"] != context:
+        # A cluster of the same name on another context isn't the connected one: its targets must stay connected.
+        raise local.PlatformError(
+            f"The {provider} cluster {cluster} connected to this platform runs on Docker context "
+            f"{entry['docker_context']}, not {context}. Nothing was changed. To delete it, run delete with --context "
+            f"{entry['docker_context']}."
+        )
+    targets = entry["targets"] if entry is not None else {}
     disconnected = []
     for namespace, target in sorted(targets.items()):
         try:

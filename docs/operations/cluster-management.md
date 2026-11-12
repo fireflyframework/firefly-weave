@@ -440,7 +440,8 @@ The command:
 - refuses when Docker has less than 6 GiB free, and refuses a cluster name that
   already exists on the Docker context;
 - without `--no-connect`, refuses before it creates anything when operations
-  are off;
+  are off or when `--context` names another Docker context than the
+  platform's, since connect accepts only nodes on the platform's context;
 - waits up to 180 s for the nodes to be Ready, and deletes the cluster again if
   they aren't;
 - deletes nothing when kind or k3d fails, times out, or is interrupted, and
@@ -462,7 +463,10 @@ weave platform cluster delete --provider kind --name weave-test
 cluster disconnect` does, but only on the platform's side: the cluster's objects
 go with the cluster, so `delete` never reaches it, and a stopped cluster or one
 whose API doesn't answer is still deleted. It keeps the cluster when a target
-can't be disconnected, for example when the platform's API isn't running.
+can't be disconnected, for example when the platform's API isn't running. For a
+connected cluster, `delete --context` must name the Docker context the cluster
+is connected on; a cluster of the same name on another context isn't the
+connected one, so `delete` refuses and changes nothing.
 `delete --name` deletes any kind or k3d cluster with that name on the Docker
 context, even one that Weave didn't create, so check the name before you run it.
 It also removes the cluster's own network when no other container uses it,
