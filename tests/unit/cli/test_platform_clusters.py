@@ -956,6 +956,26 @@ def test_connecting_another_namespace_after_the_platform_moved_repoints_the_clus
     assert saved["api_address"] == "172.30.0.7" and set(saved["targets"]) == {"weave-workers", "team-b"}
 
 
+def test_refresh_applies_only_to_the_cluster_that_publishes_the_contexts_port(world, monkeypatch, tmp_path):
+    """Refresh reaches the cluster through the default kubeconfig, so it ties the context's server port to the port
+    the cluster's API publishes, as preflight does."""
+    directory, commands, _, cluster = world
+    connect(world)
+    monkeypatch.setenv("KUBECONFIG", str(kubeconfig(tmp_path / "default", server="https://127.0.0.1:9999")))
+    cluster.joined.discard(KEYCLOAK)
+    cluster.addresses[KEYCLOAK] = "172.30.0.7"
+    lines = []
+    before = len(commands.calls)
+    assert clusters.refresh(directory, lines.append) == [{"name": "kind-weave-test", "state": "unreachable"}]
+    assert applied(commands, before) == []
+    assert lines[-1] == (
+        "kind-weave-test: not refreshed. kind-weave-test points at port 9999, but the kind cluster weave-test on "
+        "Docker context colima-weave-tests publishes its API on 43123. Point the context at that cluster, or use "
+        "another cluster name."
+    )
+    assert clusters.receipt(directory)["clusters"]["kind-weave-test"]["api_address"] == "172.30.0.5"
+
+
 def test_refresh_never_applies_over_another_installations_weave_system(world, monkeypatch):
     directory, commands, config, cluster = world
     connect(world)

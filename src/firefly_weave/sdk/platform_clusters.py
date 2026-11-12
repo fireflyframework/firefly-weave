@@ -276,6 +276,39 @@ def _lines(output: bytes) -> list[str]:
     return [line for line in output.decode(errors="replace").splitlines() if line.strip()]
 
 
+def _check_api_port(
+    state: dict[str, Any], provider: str, cluster: str, nodes: list[str], context: str, server: str
+) -> None:
+    """The context's server must be this cluster's API: kind's control plane and k3d's load balancer publish 6443,
+    and the server's port must be the one they publish on the platform's Docker context."""
+    api = f"{cluster}-control-plane" if provider == "kind" else f"k3d-{cluster}-serverlb"
+    ports: Any = {}
+    if api in nodes:
+        try:
+            ports = json.loads(
+                local._run(
+                    state,
+                    "cluster-api-port",
+                    ["docker", "--context", state["context"], "inspect", "--format", "{{json .NetworkSettings.Ports}}"]
+                    + [api],
+                )
+            )
+        except (ValueError, TypeError):
+            ports = {}
+    bindings = ports.get("6443/tcp") if isinstance(ports, dict) else None
+    published = sorted({str(item.get("HostPort")) for item in bindings or [] if isinstance(item, dict)})
+    try:
+        port = urlsplit(server).port or 443
+    except ValueError:
+        port = 0
+    if str(port) not in published:
+        raise local.PlatformError(
+            f"{context} points at port {port}, but the {provider} cluster {cluster} on Docker context "
+            f"{state['context']} publishes its API on {', '.join(published) or 'no port'}. Point the context at that "
+            "cluster, or use another cluster name."
+        )
+
+
 def preflight(directory: Path, provider: str, cluster: str, namespace: str, *, kubeconfig: Path | None) -> Preflight:
     """Refuse anything but a local cluster on this platform's Docker context and its own network; change nothing."""
     _names(provider, cluster, namespace)
@@ -321,30 +354,7 @@ def preflight(directory: Path, provider: str, cluster: str, namespace: str, *, k
             "weave platform cluster create, which gives each cluster its own network."
         )
     (network,) = networks
-    # The context's server must be this cluster's API: kind's control plane and k3d's load balancer publish 6443.
-    api = f"{cluster}-control-plane" if provider == "kind" else f"k3d-{cluster}-serverlb"
-    ports: Any = {}
-    if api in nodes:
-        try:
-            ports = json.loads(
-                local._run(
-                    state, "cluster-api-port", [*docker, "inspect", "--format", "{{json .NetworkSettings.Ports}}", api]
-                )
-            )
-        except (ValueError, TypeError):
-            ports = {}
-    bindings = ports.get("6443/tcp") if isinstance(ports, dict) else None
-    published = sorted({str(item.get("HostPort")) for item in bindings or [] if isinstance(item, dict)})
-    try:
-        port = urlsplit(server).port or 443
-    except ValueError:
-        port = 0
-    if str(port) not in published:
-        raise local.PlatformError(
-            f"{context} points at port {port}, but the {provider} cluster {cluster} on Docker context "
-            f"{state['context']} publishes its API on {', '.join(published) or 'no port'}. Point the context at that "
-            "cluster, or use another cluster name."
-        )
+    _check_api_port(state, provider, cluster, nodes, context, server)
     members = local._run(
         state,
         "cluster-network-members",
@@ -1210,6 +1220,7 @@ def _refresh_cluster(
     path, server = _server(_candidates(None), key, provider, cluster)
     if not _local(server):
         raise local.PlatformError(f"{key} points at a server that isn't this computer; it was not refreshed.")
+    _check_api_port(state, provider, cluster, nodes, key, server)
     connection.kube = [*kubectl(directory, path, key), "--request-timeout=20s"]
     for owned in (objects.SYSTEM_NAMESPACE, *entry["targets"]):
         _check_namespace(state, connection.kube, owned)
