@@ -27,6 +27,7 @@ import pytest
 
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.deployments import ComponentSpec, DeploymentPlan, PlanStep
+from firefly_weave.deployment_runner.command import CommandError
 from firefly_weave.deployment_runner.kubernetes import KubernetesAdapter
 from firefly_weave.deployment_runner.policy import DestinationPolicy
 from firefly_weave.deployment_runner.runtime import RunnerPolicyError
@@ -258,6 +259,9 @@ class Server:
         self.restart_delay = 0
         self.never_replace = False
         self.replacement = None
+        self.forbid_pod_patches = False
+        # Pod listings during which a restart's new pods still report not ready.
+        self.unready_listings = 0
 
     async def command(self, argv, **kwargs):
         self.calls.append((argv, kwargs))
@@ -274,8 +278,17 @@ class Server:
         if "horizontalpodautoscalers.autoscaling" in argv:
             return b'{"items":[]}'
         if argv[6:8] == ["patch", "pods"]:
-            assert argv[9:] == ["--type=json", "--patch-file=/dev/stdin", "-o=name"]
-            return self.patch_pod(argv[8], json.loads(kwargs["stdin"]))
+            dry = argv[-1] == "--dry-run=server"
+            assert argv[9:] == [
+                "--type=json",
+                "--patch-file=/dev/stdin",
+                "-o=name",
+                *(["--dry-run=server"] if dry else []),
+            ]
+            if self.forbid_pod_patches:
+                # What kubectl does without RBAC patch on pods: the server refuses dry runs too.
+                raise CommandError()
+            return self.patch_pod(argv[8], json.loads(kwargs["stdin"]), dry=dry)
         if argv[6:] == ["get", "pods", "--selector=app=engine", "-o=jsonpath=" + COSTED_PODS]:
             costed = [item for item in self.pods if DELETION_COST in item["metadata"]["annotations"]]
             return "".join(item["metadata"]["name"] + "\n" for item in costed).encode()
@@ -286,6 +299,12 @@ class Server:
                     self.pods, self.replacement = self.replacement, None
                 else:
                     self.restart_delay -= 1
+            if self.unready_listings and all("restarted" in item["metadata"]["name"] for item in self.pods):
+                self.unready_listings -= 1
+                unready = copy.deepcopy(self.pods)
+                for item in unready:
+                    item["status"]["conditions"] = [{"type": "Ready", "status": "False"}]
+                return render(unready)
             return render(self.pods)
         assert "deployments.apps" in argv and "engine" in argv
         if "get" in argv:
@@ -325,12 +344,14 @@ class Server:
                 ]
         return json.dumps(result).encode()
 
-    def patch_pod(self, name, operations):
+    def patch_pod(self, name, operations, *, dry=False):
         found = [index for index, item in enumerate(self.pods) if item["metadata"]["name"] == name]
         assert len(found) == 1, f"no pod {name}"
-        self.events.append("cost:" + name)
-        self.pod_patches.append((name, operations))
-        self.pods[found[0]] = apply_json_patch(self.pods[found[0]], operations)
+        patched = apply_json_patch(self.pods[found[0]], operations)
+        self.events.append(("dry-cost:" if dry else "cost:") + name)
+        if not dry:
+            self.pod_patches.append((name, operations))
+            self.pods[found[0]] = patched
         return f"pod/{name}\n".encode()
 
     def settle(self):
@@ -866,7 +887,15 @@ async def test_a_scale_down_marks_the_reviewed_pods_before_it_lowers_the_replica
     server.pods = three_pods()
     result = await KubernetesAdapter(policy, command=server.command).apply(plan, server.before_write)
     # The shared rule: the pod that isn't ready, then the most recently started; marked after renewal, before the write.
-    assert server.events == ["dry", "renew", "cost:engine-7d9f8c6b5-stuck", "cost:engine-7d9f8c6b5-late", "write"]
+    assert server.events == [
+        "dry",
+        "dry-cost:engine-7d9f8c6b5-stuck",
+        "dry-cost:engine-7d9f8c6b5-late",
+        "renew",
+        "cost:engine-7d9f8c6b5-stuck",
+        "cost:engine-7d9f8c6b5-late",
+        "write",
+    ]
     assert server.pod_patches == [
         ("engine-7d9f8c6b5-stuck", [*SAME_POD, LOWEST]),
         ("engine-7d9f8c6b5-late", [*SAME_POD, LOWEST]),
@@ -879,12 +908,12 @@ async def test_a_scale_down_clears_an_earlier_deletion_cost_from_the_pods_it_kee
     # An earlier scale-down marked this pod, and it survived.
     server.pods = three_pods(cost="-2147483648")
     result = await KubernetesAdapter(policy, command=server.command).apply(plan, server.before_write)
+    marks = ["engine-7d9f8c6b5-early", "engine-7d9f8c6b5-stuck", "engine-7d9f8c6b5-late"]
     assert server.events == [
         "dry",
+        *("dry-cost:" + name for name in marks),
         "renew",
-        "cost:engine-7d9f8c6b5-early",
-        "cost:engine-7d9f8c6b5-stuck",
-        "cost:engine-7d9f8c6b5-late",
+        *("cost:" + name for name in marks),
         "write",
     ]
     assert server.pod_patches[0] == (
@@ -1043,3 +1072,98 @@ async def test_a_restart_refuses_a_changed_image_or_replica_count(change):
     with pytest.raises(RunnerPolicyError):
         await adapter.apply(plan, server.before_write)
     assert server.events == []
+
+
+async def test_a_missing_permission_to_patch_pods_refuses_before_any_change():
+    """Kubernetes runners set up before scale-downs may lack patch on pods; the dry run finds out before renewal."""
+    policy, plan, server = scaled(3, 1)
+    server.pods = three_pods()
+    server.forbid_pod_patches = True
+    with pytest.raises(CommandError):
+        await KubernetesAdapter(policy, command=server.command).apply(plan, server.before_write)
+    assert server.events == ["dry"] and server.pod_patches == [] and len(server.pods) == 3
+
+
+async def test_new_pods_that_are_not_ready_keep_a_restart_waiting():
+    policy, plan, server, clock = restart()
+    server.unready_listings = 2
+    adapter = KubernetesAdapter(policy, command=server.command, sleep=clock.sleep, clock=clock)
+    result = await adapter.apply(plan, server.before_write)
+    assert clock.sleeps == [1, 1] and all(member.ready for member in result.resources[0].members)
+
+
+async def test_an_unreadable_listing_during_a_restart_never_counts_as_replaced():
+    policy, plan, server, clock = restart()
+    original = server.command
+    written = []
+
+    async def command(argv, **kwargs):
+        if argv[6:8] == ["patch", "deployments.apps"] and "--dry-run=server" not in argv:
+            written.append(True)
+        if written and argv[6:8] == ["get", "pods"]:
+            return b"unreadable"
+        return await original(argv, **kwargs)
+
+    adapter = KubernetesAdapter(policy, command=command, sleep=clock.sleep, clock=clock)
+    with pytest.raises(TimeoutError):
+        await adapter.apply(plan, server.before_write)
+    assert written == [True]
+
+
+async def test_an_unreadable_listing_before_a_restart_refuses_it():
+    policy, plan, server, clock = restart()
+    original = server.command
+
+    async def command(argv, **kwargs):
+        return b"unreadable" if argv[6:8] == ["get", "pods"] else await original(argv, **kwargs)
+
+    with pytest.raises(RunnerPolicyError):
+        await KubernetesAdapter(policy, command=command, sleep=clock.sleep, clock=clock).apply(
+            plan, server.before_write
+        )
+    assert server.events == []
+
+
+@pytest.mark.parametrize("status", [{"updatedReplicas": 2}, {"observedGeneration": 0}])
+async def test_a_scale_down_refuses_members_that_are_not_the_deployments_current_pods(status):
+    policy, plan, server = scaled(3, 1)
+    server.pods = three_pods()
+    server.resource["status"].update(status)
+    with pytest.raises(RunnerPolicyError):
+        await KubernetesAdapter(policy, command=server.command).apply(plan, server.before_write)
+    assert server.events == []
+
+
+@pytest.mark.parametrize(
+    "output",
+    [b"\xff\n", b"Engine_Pod\n", "".join(f"engine-{index}\n" for index in range(1001)).encode(), b"engine-1"],
+)
+async def test_an_unreadable_list_of_costed_pods_refuses_a_scale_down(output):
+    policy, plan, server = scaled(3, 1)
+    server.pods = three_pods()
+    original = server.command
+
+    async def command(argv, **kwargs):
+        if argv[6:] == ["get", "pods", "--selector=app=engine", "-o=jsonpath=" + COSTED_PODS]:
+            return output
+        return await original(argv, **kwargs)
+
+    with pytest.raises(RunnerPolicyError):
+        await KubernetesAdapter(policy, command=command).apply(plan, server.before_write)
+    assert server.events == []
+
+
+async def test_no_call_in_a_restart_wait_runs_past_its_deadline():
+    policy, plan, server, clock = restart()
+    server.never_replace = True
+
+    async def sleep(seconds):
+        clock.now += 40
+
+    adapter = KubernetesAdapter(policy, command=server.command, sleep=sleep, clock=clock)
+    with pytest.raises(TimeoutError):
+        await adapter.apply(plan, server.before_write)
+    # Polls at 0, 40, ... 320 s: each call gets at most 30 s, and the last ones only the 10 s left.
+    timeouts = [kwargs["timeout"] for _, kwargs in server.calls]
+    assert max(timeouts) == 30 and min(timeouts) == 10
+    assert clock.now <= 330 + 40

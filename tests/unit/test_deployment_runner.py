@@ -497,3 +497,94 @@ async def test_the_runner_starts_the_token_relay_when_asked(monkeypatch):
     monkeypatch.setenv("WEAVE_TOKEN_RELAY", "weave-api.weave-system.svc:8080")
     await application.serve(runner_configuration("https://weave.example"), once=True)
     assert started == [("weave-api.weave-system.svc:8080", 8080)] and closed == [True]
+
+
+def scale_down_lease():
+    """The fixture's lease as a reviewed scale-down from 3 workers to 1."""
+    lease, policy = fixture()
+    observed = lease.observation.resources[0].model_copy(update={"replicas": 3, "ready_replicas": 3})
+    observation = lease.observation.model_copy(update={"resources": [observed]})
+    observation = observation.model_copy(
+        update={"digest": canonical_digest(observation.model_dump(mode="json", exclude={"digest"}))}
+    )
+    step = lease.plan.steps[0]
+    component = step.component.model_copy(update={"replicas": 1})
+    plan = lease.plan.model_copy(
+        update={"steps": [step.model_copy(update={"component": component})], "observation_digest": observation.digest}
+    )
+    plan = plan.model_copy(update={"digest": canonical_digest(plan.model_dump(mode="json", exclude={"digest"}))})
+    job = lease.job.model_copy(update={"plan_digest": plan.digest})
+    deployment = lease.deployment.model_copy(update={"components": [component]})
+    return lease.model_copy(
+        update={"plan": plan, "observation": observation, "job": job, "deployment": deployment}
+    ), policy
+
+
+class Cluster:
+    """kubectl for the fixture's namespace: three ready worker pods, and no permission to patch pods."""
+
+    def __init__(self, image, target_id):
+        self.image, self.target_id, self.writes, self.dry_pod_patches = image, str(target_id), [], 0
+
+    def deployment(self, replicas):
+        return {
+            "apiVersion": "apps/v1",
+            "kind": "Deployment",
+            "metadata": {
+                "name": "worker",
+                "namespace": "weave",
+                "uid": "deployment-uid",
+                "resourceVersion": "8",
+                "generation": 1,
+                "labels": {"firefly.weave/target": self.target_id},
+            },
+            "spec": {
+                "replicas": replicas,
+                "selector": {"matchLabels": {"app": "worker"}},
+                "template": {
+                    "metadata": {"annotations": {"firefly.weave/configuration": "current"}},
+                    "spec": {"containers": [{"name": "worker", "image": self.image}]},
+                },
+            },
+            "status": {"observedGeneration": 1, "replicas": 3, "readyReplicas": 3, "updatedReplicas": 3},
+        }
+
+    async def command(self, argv, **kwargs):
+        import json
+
+        from firefly_weave.deployment_runner.command import CommandError
+
+        args = argv[6:]
+        if args[:2] == ["get", "namespace"]:
+            return json.dumps({"metadata": {"name": "weave", "uid": "test-cluster"}}).encode()
+        if args[:2] == ["get", "deployments.apps"]:
+            value = self.deployment(3)
+            value["metadata"]["labels"] = {}
+            return json.dumps(value).encode()
+        if args[:2] == ["get", "pods"] and "?(@.metadata.annotations" in args[-1]:
+            return b""
+        if args[:2] == ["get", "pods"]:
+            fields = ["worker-abc12-{0}", "weave", "", "abc12", "apps/v1", "ReplicaSet", "worker-abc12", "Running"]
+            line = "\t".join([*fields, "True", "0", "2026-11-11T10:0{0}:00Z", "node"]) + "\n"
+            return "".join(line.format(index) for index in range(3)).encode()
+        if args[:2] == ["patch", "deployments.apps"]:
+            if "--dry-run=server" not in args:
+                self.writes.append(args)
+            return json.dumps(self.deployment(1)).encode()
+        if args[:2] == ["patch", "pods"]:
+            self.dry_pod_patches += "--dry-run=server" in args
+            raise CommandError()
+        raise AssertionError(args)
+
+
+async def test_a_scale_down_without_permission_to_patch_pods_fails_before_any_change():
+    """A Kubernetes runner set up before scale-downs may lack patch on pods: the job fails, nothing changed."""
+    from firefly_weave.deployment_runner.kubernetes import KubernetesAdapter
+
+    lease, policy = scale_down_lease()
+    client, cluster = Client(lease), Cluster(lease.plan.steps[0].component.image, policy.target_id)
+    await OperationsRunner(client, policy, KubernetesAdapter(policy, command=cluster.command)).execute(lease)
+    terminal = client.reports[-1]
+    assert [item.state for item in client.reports] == ["running", "failed"]
+    assert terminal.receipt.code == "precondition_failed" and not terminal.receipt.external_effects_may_continue
+    assert cluster.writes == [] and cluster.dry_pod_patches == 1

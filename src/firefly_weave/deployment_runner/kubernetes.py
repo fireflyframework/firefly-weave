@@ -42,8 +42,12 @@ from firefly_weave.deployment_runner.runtime import RunnerPolicyError, observed_
 
 TARGET_LABEL = "firefly.weave/target"
 CONFIGURATION_ANNOTATION = "firefly.weave/configuration"
-# The ReplicaSet controller removes the pods with the lowest deletion cost first when it scales down. The lowest
-# value it accepts puts each reviewed pod ahead of every unmarked one (cost 0).
+# When the ReplicaSet controller scales down, it removes unassigned pods first, then pending ones, then pods that
+# aren't ready, and only then the pods with the lowest deletion cost. The lowest cost it accepts puts each reviewed
+# pod ahead of every unmarked one (cost 0) among pods in the same state. The shared rule already chooses pods that
+# aren't ready first, so the two agree on the state the plan saw; they differ only when a kept pod becomes
+# unassigned, pending or not ready between the marking and the controller's choice, and the final observation then
+# shows the reviewed pod still there.
 DELETION_COST = "controller.kubernetes.io/pod-deletion-cost"
 LOWEST_COST = "-2147483648"
 SCALE_WAIT_SECONDS = 90
@@ -167,8 +171,15 @@ class KubernetesAdapter:
         if policy.adapter != "kubernetes":
             raise RunnerPolicyError()
         self.policy, self.command, self.sleep, self.clock = policy, command, sleep, clock
+        self._until: float | None = None
 
     async def _run(self, *args: str, stdin: bytes | None = None) -> bytes:
+        # While a change waits to settle, no call runs past its deadline.
+        timeout = 30.0
+        if self._until is not None:
+            timeout = min(timeout, self._until - self.clock())
+            if timeout <= 0:
+                raise TimeoutError()
         return await self.command(
             [
                 self.policy.executable,
@@ -180,7 +191,7 @@ class KubernetesAdapter:
                 *args,
             ],
             stdin=stdin,
-            timeout=30,
+            timeout=timeout,
             limit=1024 * 1024,
         )
 
@@ -377,11 +388,12 @@ class KubernetesAdapter:
             raise RunnerPolicyError()
         return set(names)
 
-    async def _mark(self, binding: ComponentBinding, victims: list[_Pod], kept: list[_Pod]) -> None:
+    async def _mark(self, binding: ComponentBinding, victims: list[_Pod], kept: list[_Pod], *, dry: bool) -> None:
         """Clear an earlier cost from each pod the scale-down keeps, then give each victim the lowest cost.
 
         Each patch first tests the pod's template hash and configuration, so a pod replaced since the listing is
-        never marked: a ReplicaSet never reuses a pod name.
+        never marked: a ReplicaSet never reuses a pod name. A dry run sends every patch for the server to check,
+        so a runner without the permission to patch pods refuses before any change.
         """
         changes = [(pod, {"op": "remove", "path": _pointer(DELETION_COST)}) for pod in kept if pod.costed]
         changes += [(pod, {"op": "add", "path": _pointer(DELETION_COST), "value": LOWEST_COST}) for pod in victims]
@@ -398,6 +410,7 @@ class KubernetesAdapter:
                 "--type=json",
                 "--patch-file=/dev/stdin",
                 "-o=name",
+                *(["--dry-run=server"] if dry else []),
                 stdin=json.dumps(patch, separators=(",", ":")).encode(),
             )
 
@@ -522,19 +535,35 @@ class KubernetesAdapter:
             prepared.append((binding, component, json.dumps(patch, separators=(",", ":")).encode(), lowered))
         # Validate all components before the first effect; each actual write still has server-side preconditions.
         stamp = restarted if plan.intent == "restart_workers" else None
-        for binding, component, patch_bytes, _ in prepared:
+        for binding, component, patch_bytes, (victims, kept) in prepared:
             predicted = await self._patch(binding, patch_bytes, dry=True)
             self._desired(predicted, binding, component, resources=plan.intent == "update", restarted=stamp)
+            await self._mark(binding, victims, kept, dry=True)
         for binding, component, patch_bytes, (victims, kept) in prepared:
             await self._identity()
             await self._singleton_policy(binding)
             await before_write()
             # Marked after the renewal and before the replicas drop. A victim that survives anyway is reported in
             # the final observation, where the platform warns that a removed worker is still there.
-            await self._mark(binding, victims, kept)
+            await self._mark(binding, victims, kept, dry=False)
             applied = await self._patch(binding, patch_bytes, dry=False)
             self._desired(applied, binding, component, resources=plan.intent == "update", restarted=stamp)
         deadline = self.clock() + (RESTART_WAIT_SECONDS if plan.intent == "restart_workers" else SCALE_WAIT_SECONDS)
+        self._until = deadline
+        try:
+            return await self._settled(plan, prepared, replaced, stamp, deadline)
+        finally:
+            self._until = None
+
+    async def _settled(
+        self,
+        plan: DeploymentPlan,
+        prepared: list[tuple[ComponentBinding, ComponentSpec, bytes, tuple[list[_Pod], list[_Pod]]]],
+        replaced: set[str],
+        stamp: str | None,
+        deadline: float,
+    ) -> ObservationReport:
+        """Observe until every step's component reads as planned, or raise TimeoutError at the deadline."""
         while True:
             result = await self.observe()
             for binding, component, _, _ in prepared:
