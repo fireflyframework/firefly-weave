@@ -300,6 +300,7 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
     const resized = new ResizeObserver(() => this.measure());
     resized.observe(this.element.nativeElement);
     this.lifetime.onDestroy(() => resized.disconnect());
+    this.resized = resized;
     // The step's test data fills Input when the table opens.
     effect(() => {
       const context = this.context();
@@ -359,6 +360,8 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
    * holds its head and its first three problems. The table bar drops its
    * divider when the table's name starts a new line.
    */
+  private resized: ResizeObserver | null = null;
+  private readonly observed = new WeakSet<Element>();
   private measure() {
     const root = this.element.nativeElement;
     const height = (element: Element | null | undefined) =>
@@ -398,13 +401,21 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
     const back = bar?.querySelector<HTMLElement>(".dg-back");
     const ident = bar?.querySelector<HTMLElement>(".dg-ident");
     if (bar && back && ident) {
+      // Their widths change with no render or resize of the grid too, as
+      // when a web font arrives: watch them.
+      for (const element of [bar, back, ident])
+        if (!this.observed.has(element)) {
+          this.observed.add(element);
+          this.resized?.observe(element);
+        }
       // The name follows Back on its line while Back, the divider and the
       // name fit with their gaps; Publish table may wrap on its own. The
       // divider counts even while hidden, so hiding it never lets the name
       // fit again.
+      const width = (element: Element) => element.getBoundingClientRect().width;
       const gap = parseFloat(getComputedStyle(bar).columnGap) || 0;
-      const needed = back.offsetWidth + 1 + ident.scrollWidth + 2 * gap;
-      bar.classList.toggle("is-wrapped", needed > bar.clientWidth);
+      const needed = width(back) + 1 + width(ident) + 2 * gap;
+      bar.classList.toggle("is-wrapped", needed > width(bar));
     }
   }
   /** The text an Otherwise cell shows while the table has no Otherwise result. */

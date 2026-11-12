@@ -1135,6 +1135,13 @@ for (const size of [
           back.bottom,
         );
       }
+      // The name grows with no render and no resize of the grid, as when
+      // a web font arrives late: the divider follows, both ways.
+      const name = bar.locator(".dg-ident");
+      await name.evaluate((e) => (e.style.letterSpacing = "20px"));
+      await expect(divider).toBeHidden();
+      await name.evaluate((e) => (e.style.letterSpacing = ""));
+      await expectDivider();
       // Too narrow for Back and the name: the name starts a line, and the
       // divider goes.
       await grid.root.evaluate((e) => (e.style.width = "280px"));
