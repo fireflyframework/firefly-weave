@@ -15,11 +15,16 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-// Try an input, with no platform at all: each rule's mark and the result as
-// you type, then Weave's own check on this computer's Studio host.
+// Trying a table, with no platform at all: Input takes the test values, each
+// rule's mark and the result show as you type, then Weave's own check on
+// this computer's Studio host.
 import { expect, test, type Page } from "@playwright/test";
 import { openStepFixture, sizes, yamlFile } from "./step-details-po";
-import { DecisionGridPage, paymentPolicy } from "./decision-grid-po";
+import {
+  DecisionGridPage,
+  keepTableDraft,
+  TablePanes,
+} from "./decision-grid-po";
 import { hasPython, localAuthoring } from "./local-authoring";
 
 test.skip(!hasPython, "Weave's check runs the repository's Python.");
@@ -45,35 +50,17 @@ spec:
 `,
 );
 
-/** payment-policy 1.2.1, a draft kept on this computer before Studio opens. */
-async function keepDraft(page: Page) {
-  const document = paymentPolicy("1.2.1");
-  const entry = {
-    kind: "draft",
-    name: "payment-policy",
-    version: "1.2.1",
-    base: "1.2.0",
-    document,
-    savedAt: "2026-10-27T08:00:00.000Z",
-  };
-  await page.addInitScript(
-    (value) =>
-      localStorage.setItem("local:weave.tableDraft.payment-policy", value),
-    JSON.stringify(entry),
-  );
-}
-
 async function openTry(page: Page) {
-  await keepDraft(page);
+  await keepTableDraft(page);
   const details = await openStepFixture(page, workflow);
   const calls = await localAuthoring(page);
   await details.open("score");
   const grid = new DecisionGridPage(page);
   await grid.open();
-  await grid.root.getByRole("button", { name: "Try an input" }).click();
-  const panel = grid.root.getByRole("region", { name: "Try an input" });
-  await expect(panel).toBeVisible();
-  return { details, grid, panel, calls };
+  const panes = new TablePanes(page);
+  await panes.show("Input");
+  await expect(panes.input).toBeVisible();
+  return { details, grid, panes, calls };
 }
 const mark = (grid: DecisionGridPage, row: number) =>
   grid.root
@@ -82,79 +69,104 @@ const mark = (grid: DecisionGridPage, row: number) =>
     .locator(".dg-mark");
 
 for (const size of sizes)
-  test.describe(`Try an input at ${size.tag}`, () => {
+  test.describe(`Trying a table at ${size.tag}`, () => {
     test.use({ viewport: { width: size.width, height: size.height } });
 
     test("each rule shows whether it matches as you type, then Weave confirms", async ({
       page,
     }) => {
-      const { grid, panel } = await openTry(page);
-      await panel.getByLabel("amount").fill("2000");
-      await panel.getByLabel("tier").fill("gold");
-      await expect(mark(grid, 0)).toHaveAttribute("data-mark", "match");
-      await expect(mark(grid, 0)).toContainText("Matches");
-      await expect(mark(grid, 1)).toHaveAttribute("data-mark", "no-match");
-      await expect(mark(grid, 1)).toContainText("Doesn't match");
-      await expect(mark(grid, 2)).toHaveAttribute("data-mark", "no-match");
-      await expect(panel.locator(".dg-try-output")).toContainText(
-        '"limit": 5000',
+      const { grid, panes } = await openTry(page);
+      await panes.type({ amount: "500", tier: "silver" });
+      await panes.show("Parameters");
+      await expect(mark(grid, 0)).toHaveAttribute("data-mark", "no-match");
+      await expect(mark(grid, 0)).toContainText("Doesn't match");
+      await expect(mark(grid, 1)).toHaveAttribute("data-mark", "match");
+      await expect(mark(grid, 1)).toContainText("Matches");
+      // First match: the rules after the one that won weren't checked.
+      await expect(mark(grid, 2)).toHaveCount(0);
+      await panes.show("Input");
+      await panes.type({ amount: "2000", tier: "gold" });
+      await panes.show("Output");
+      await expect(panes.count).toHaveText("Rule 1 matched");
+      await expect(panes.cards).toHaveCount(1);
+      await expect(panes.cards.first()).toContainText("Rule 1 · big-gold");
+      await expect(panes.output).toContainText(
+        "First match: rules 2 and 3 weren't checked.",
       );
-      await expect(panel).toContainText("Matched: big-gold");
-      await expect(
-        panel.locator(".pill", { hasText: "Checked by Weave" }),
-      ).toBeVisible();
+      await expect(panes.result).toContainText("5000");
+      await expect(panes.checked).toBeVisible();
+      await panes.show("Parameters");
+      await expect(mark(grid, 0)).toHaveAttribute("data-mark", "match");
+      await expect(mark(grid, 1)).toHaveCount(0);
     });
 
-    test("Exactly one with two matches says which rules", async ({ page }) => {
-      const { grid, panel } = await openTry(page);
+    test("Exactly one with two matches says which rules, and that a run stops", async ({
+      page,
+    }) => {
+      const { grid, panes } = await openTry(page);
+      await panes.show("Parameters");
       await grid.policy("Exactly one");
-      await panel.getByLabel("amount").fill("6000");
-      await panel.getByLabel("tier").fill("gold");
-      await expect(panel).toContainText(
-        "Two rules matched but the policy allows exactly one (rules 1 and 3).",
+      await panes.show("Input");
+      await panes.type({ amount: "6000", tier: "gold" });
+      await panes.show("Output");
+      await expect(panes.output.locator(".dg-callout")).toContainText(
+        "Two rules matched but the policy allows exactly one (rules 1 and 3). A run with this input stops for review.",
+      );
+      await expect(panes.cards).toHaveCount(2);
+      await expect(panes.output).toContainText(
+        "No result for this input. Change one of the two rules so only one matches, or choose First match.",
       );
     });
 
     test("an input that breaks the input fields is refused by Weave", async ({
       page,
     }) => {
-      const { panel } = await openTry(page);
+      const { panes } = await openTry(page);
       // payment-policy needs an amount.
-      await panel.getByLabel("tier").fill("gold");
-      await expect(panel).toContainText(
+      await panes.type({ tier: "gold" });
+      await panes.show("Output");
+      await expect(panes.output.locator(".dg-callout")).toContainText(
         "The input doesn't fit the table's input fields.",
       );
-      await expect(
-        panel.locator(".pill", { hasText: "Checked by Weave" }),
-      ).toHaveCount(0);
+      await expect(panes.checked).toHaveAttribute("data-tone", "neutral");
+      await expect(panes.result).toHaveCount(0);
     });
 
     test("editing while Weave checks shows only the newest answer", async ({
       page,
     }) => {
-      const { panel, calls } = await openTry(page);
+      const { panes, calls } = await openTry(page);
+      // Weave's first check is held until the newer answer has shown.
+      let release = () => {};
+      const held = new Promise<void>((done) => (release = done));
+      let arrived = () => {};
+      const inFlight = new Promise<void>((done) => (arrived = done));
       let first = true;
       await page.route("**/studio/local/decision/evaluate", async (route) => {
         if (first) {
           first = false;
-          await new Promise((resolve) => setTimeout(resolve, 1000));
+          arrived();
+          await held;
         }
         await route.fallback();
       });
-      await panel.getByLabel("amount").fill("2000");
-      await panel.getByLabel("tier").fill("gold");
-      await page.waitForTimeout(500);
-      await panel.getByLabel("amount").fill("500");
-      await expect(panel).toContainText("Matched: small");
-      await expect(
-        panel.locator(".pill", { hasText: "Checked by Weave" }),
-      ).toBeVisible();
-      await page.waitForTimeout(1200);
-      await expect(panel).toContainText("Matched: small");
-      expect(
+      const checks = () =>
         calls.filter((call) => call.path === "/studio/local/decision/evaluate")
-          .length,
-      ).toBeGreaterThanOrEqual(2);
+          .length;
+      await panes.type({ amount: "2000", tier: "gold" });
+      await inFlight;
+      await panes.type({ amount: "500" });
+      await panes.show("Output");
+      await expect(panes.count).toHaveText("Rule 2 matched");
+      await expect(panes.checked).toBeVisible();
+      // The older answer lands now, and changes nothing.
+      release();
+      await expect.poll(checks).toBeGreaterThanOrEqual(2);
+      await page.evaluate(
+        () => new Promise((done) => requestAnimationFrame(() => done(null))),
+      );
+      await expect(panes.count).toHaveText("Rule 2 matched");
+      await expect(panes.cards.first()).toContainText("Rule 2 · small");
     });
 
     test("trying an input sends nothing to the platform", async ({ page }) => {
@@ -163,13 +175,11 @@ for (const size of sizes)
         if (request.url().includes("/studio/api/"))
           platform.push(request.url());
       });
-      const { panel, calls } = await openTry(page);
+      const { panes, calls } = await openTry(page);
       platform.length = 0;
-      await panel.getByLabel("amount").fill("2000");
-      await panel.getByLabel("tier").fill("gold");
-      await expect(
-        panel.locator(".pill", { hasText: "Checked by Weave" }),
-      ).toBeVisible();
+      await panes.type({ amount: "2000", tier: "gold" });
+      await panes.show("Output");
+      await expect(panes.checked).toBeVisible();
       expect(platform).toEqual([]);
       expect(calls.map((call) => call.path)).toContain(
         "/studio/local/decision/evaluate",
@@ -179,13 +189,12 @@ for (const size of sizes)
     test("the input you try isn't kept anywhere", async ({ page }) => {
       const logged: string[] = [];
       page.on("console", (message) => logged.push(message.text()));
-      const { grid, panel } = await openTry(page);
+      const { grid, panes } = await openTry(page);
       const marker = "zq-marker-7731";
-      await panel.getByLabel("amount").fill("2000");
-      await panel.getByLabel("tier").fill(marker);
-      await expect(
-        panel.locator(".pill", { hasText: "Checked by Weave" }),
-      ).toBeVisible();
+      await panes.type({ amount: "2000", tier: marker });
+      await panes.show("Output");
+      await expect(panes.checked).toBeVisible();
+      await panes.show("Parameters");
       await grid.back();
       const kept = await page.evaluate(() => ({
         local: Object.entries(localStorage).join("\n"),

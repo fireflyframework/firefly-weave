@@ -16,286 +16,330 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 -->
 @let view = this.view();
-<section class="dg" [attr.aria-label]="'Table ' + title()">
-  <header class="dg-head">
+@let status = this.status();
+<section
+  class="dg"
+  [class.is-read-only]="readOnly()"
+  [attr.aria-label]="'Table ' + title()"
+>
+  <header class="dg-bar">
     <button type="button" class="text-link dg-back" (click)="back()">
       <weave-icon name="chevronLeft" [size]="16" />Back to the step
     </button>
-    <h3 class="dg-title" [attr.title]="title()">{{ title() }}</h3>
+    <span class="dg-divider" aria-hidden="true"></span>
+    <h3 class="dg-title" [attr.title]="title()" [attr.aria-label]="title()">
+      <span class="dg-name">{{ tableName() }}</span>
+      <span class="dg-version">{{ tableVersion() }}</span>
+    </h3>
+    @if (status) {
+      <span class="pill" [attr.data-tone]="status.tone">{{ status.text }}</span>
+    }
     <span class="dg-spacer"></span>
-    @if (view) {
+    @if (view && where() === "draft") {
+      @let errors = errorCount();
       <button
         type="button"
-        class="dg-tool dg-try-toggle"
-        [attr.aria-pressed]="tryOpen()"
-        (click)="toggleTry()"
+        class="primary dg-publish"
+        [attr.aria-disabled]="errors || publishing() ? 'true' : null"
+        [attr.aria-busy]="publishing() ? 'true' : null"
+        [attr.aria-describedby]="errors ? 'dg-publish-why' : null"
+        [attr.title]="errors ? publishBlocked() : null"
+        (click)="publish()"
       >
-        <weave-icon name="execute" [size]="16" />Try an input
+        <weave-icon name="upload" [size]="16" />{{
+          publishing() ? "Publishing…" : "Publish table"
+        }}
       </button>
-      @if (where() === "draft") {
-        <button
-          type="button"
-          class="dg-tool dg-publish"
-          [class.primary]="!hasErrors()"
-          [attr.aria-disabled]="publishing() ? 'true' : null"
-          (click)="publish()"
-        >
-          <weave-icon name="upload" [size]="16" />Publish table
-        </button>
+      @if (errors) {
+        <span class="sr-only" id="dg-publish-why">{{ publishBlocked() }}</span>
       }
     }
   </header>
   <p class="sr-only" aria-live="polite">{{ announcement() }}</p>
   @if (view) {
-    <div class="dg-toolbar" role="toolbar" aria-label="Table commands">
-      <div class="dg-policy">
-        <label class="dg-policy-label" for="dg-policy"
-          >When several rules match</label
-        >
-        <weave-select
-          data-control
-          icon="chevronDown"
-          label="When several rules match"
-          [hideLabel]="true"
-          controlId="dg-policy"
-          describedBy="dg-policy-hint"
-          [options]="policyOptions"
-          [value]="view.hitPolicy"
-          [disabled]="readOnly()"
-          (choose)="setPolicy($event)"
-        />
-      </div>
-      <p class="dg-hint" id="dg-policy-hint">{{ policyHint() }}</p>
-      <span class="dg-spacer"></span>
-      <button
-        type="button"
-        class="dg-tool"
-        [disabled]="readOnly()"
-        (click)="addRuleAfter(cursor().row)"
-      >
-        <weave-icon name="plus" [size]="16" />Add rule
-      </button>
-      <button
-        type="button"
-        class="dg-tool"
-        [disabled]="readOnly()"
-        (click)="openColumnDialog({ mode: 'add', side: 'input' })"
-      >
-        <weave-icon name="plus" [size]="16" />Add input column
-      </button>
-      <button
-        type="button"
-        class="dg-tool"
-        [disabled]="readOnly() || view.scalar"
-        (click)="openColumnDialog({ mode: 'add', side: 'result' })"
-      >
-        <weave-icon name="plus" [size]="16" />Add result column
-      </button>
-    </div>
     @if (banner(); as text) {
       <p class="dg-banner" role="note">
-        <weave-icon name="info" [size]="16" />{{ text }}
+        <weave-icon name="info" [size]="16" /><span>{{ text }}</span>
       </p>
     }
+    <div class="dg-policy">
+      <label class="dg-policy-label" for="dg-policy"
+        >When several rules match</label
+      >
+      <weave-select
+        data-control
+        icon="chevronDown"
+        label="When several rules match"
+        [hideLabel]="true"
+        controlId="dg-policy"
+        describedBy="dg-policy-hint"
+        [options]="policyOptions"
+        [value]="view.hitPolicy"
+        [disabled]="readOnly()"
+        (choose)="setPolicy($event)"
+      />
+      <p class="dg-hint" id="dg-policy-hint">{{ policyHint() }}</p>
+    </div>
     @if (notice(); as text) {
       <p class="dg-notice" role="alert">
         <weave-icon name="warning" [size]="16" />{{ text }}
       </p>
     }
-    <div class="dg-work">
-      <div class="dg-main">
-        <div class="dg-scroll">
-          <div
-            class="dg-grid"
-            role="grid"
-            [attr.aria-label]="gridLabel()"
-            (paste)="paste($event)"
-            [attr.aria-rowcount]="rowCount() + 1"
-            [attr.aria-colcount]="cols().length + 1"
-            [style.grid-template-columns]="template()"
-          >
-            <div class="dg-groups" aria-hidden="true">
-              <span class="dg-group dg-group-start"></span>
-              @if (view.inputs.length) {
-                <span
-                  class="dg-group"
-                  [style.grid-column]="'span ' + view.inputs.length"
-                  >Inputs</span
-                >
-              }
-              @if (view.results.length) {
-                <span
-                  class="dg-group dg-group-results"
-                  [style.grid-column]="'span ' + view.results.length"
-                  >Results</span
-                >
-              }
+    <div class="dg-box">
+      <div class="dg-scroll">
+        <div
+          class="dg-grid"
+          role="grid"
+          [attr.aria-label]="gridLabel()"
+          (paste)="paste($event)"
+          [attr.aria-rowcount]="rowCount() + 1"
+          [attr.aria-colcount]="cols().length + 1"
+          [style.grid-template-columns]="template()"
+          [style.min-width.px]="minWidth()"
+        >
+          <div class="dg-groups" aria-hidden="true">
+            <span class="dg-group dg-group-start"></span>
+            @if (view.inputs.length) {
+              <span
+                class="dg-group"
+                [style.grid-column]="'span ' + view.inputs.length"
+                >Inputs</span
+              >
+            }
+            @if (view.results.length) {
+              <span
+                class="dg-group dg-group-results"
+                [style.grid-column]="'span ' + view.results.length"
+                >Results</span
+              >
+            }
+          </div>
+          <div class="dg-row dg-header" role="row" aria-rowindex="1">
+            <div
+              class="dg-th dg-mark-cell"
+              role="columnheader"
+              aria-colindex="1"
+            >
+              #
             </div>
-            <div class="dg-row dg-header" role="row" aria-rowindex="1">
+            @for (col of cols(); track $index) {
               <div
-                class="dg-th dg-mark-cell"
+                class="dg-th"
                 role="columnheader"
-                aria-colindex="1"
+                [attr.aria-colindex]="$index + 2"
+                [class.dg-name-cell]="col.kind === 'name'"
+                [class.dg-first-result]="
+                  col.kind === 'result' && col.index === 0
+                "
+                [class.is-cursor-col]="cursor().col === $index"
+                [attr.aria-label]="
+                  col.kind === 'name'
+                    ? null
+                    : col.column.name + ', ' + typeLabel(col.column)
+                "
               >
-                #
-              </div>
-              @for (col of cols(); track $index) {
-                <div
-                  class="dg-th"
-                  role="columnheader"
-                  [attr.aria-colindex]="$index + 2"
-                  [class.dg-name-cell]="col.kind === 'name'"
-                  [class.dg-first-result]="
-                    col.kind === 'result' && col.index === 0
-                  "
-                >
-                  @if (col.kind === "name") {
-                    Rule name
-                  } @else {
-                    <span class="dg-th-text"
-                      ><span class="dg-th-name">{{ col.column.name }}</span
-                      ><span class="dg-th-type">
-                        · {{ typeLabel(col.column) }}</span
-                      ></span
-                    >
-                    <weave-row-menu
-                      class="dg-th-menu"
-                      [label]="'Column menu for ' + col.column.name"
-                      [items]="columnMenu(col)"
-                    />
-                  }
-                </div>
-              }
-            </div>
-            @for (r of rowIndexes(); track r) {
-              <div
-                class="dg-row"
-                role="row"
-                [attr.aria-rowindex]="r + 2"
-                [class.dg-otherwise]="isOtherwise(r)"
-                [class.is-match]="mark(r) === 'match'"
-              >
-                <div
-                  class="dg-td dg-mark-cell"
-                  role="rowheader"
-                  aria-colindex="1"
-                >
-                  @if (!isOtherwise(r)) {
-                    <span class="dg-number">{{ r + 1 }}</span>
-                  }
-                  @if (mark(r); as m) {
-                    <span class="dg-mark" [attr.data-mark]="m">
-                      @if (m === "match") {
-                        <weave-icon name="check" [size]="16" />
-                      } @else if (m === "error") {
-                        <weave-icon name="warning" [size]="16" />
-                      } @else {
-                        <span aria-hidden="true">–</span>
-                      }
-                      <span class="sr-only">{{ markText(m) }}</span>
-                    </span>
-                  }
-                </div>
-                @for (c of rowCols(r); track c) {
-                  @let editing = this.editing();
-                  @let problem = problemFor(r, c);
-                  <div
-                    class="dg-td"
-                    role="gridcell"
-                    [attr.aria-colindex]="c + 2"
-                    [attr.data-cell]="r + ':' + c"
-                    [attr.tabindex]="isCursor(r, c) && !editing ? 0 : -1"
-                    [attr.aria-invalid]="problem ? 'true' : null"
-                    [attr.aria-describedby]="
-                      problem ? 'dg-problem-' + r + '-' + c : null
+                @if (col.kind === "name") {
+                  Rule name
+                } @else {
+                  <span
+                    class="dg-type-tile"
+                    [attr.title]="typeLabel(col.column)"
+                    aria-hidden="true"
+                    ><weave-icon [name]="typeIcon(col.column)"
+                  /></span>
+                  <span
+                    class="dg-th-text"
+                    [attr.title]="
+                      col.column.name + ', ' + typeLabel(col.column)
                     "
-                    [attr.aria-readonly]="!editable(r, c) || null"
-                    [style.grid-column]="span(r, c)"
-                    [class.dg-name-cell]="c === 0"
-                    [class.dg-first-result]="
-                      cols()[c]?.kind === 'result' &&
-                      $any(cols()[c]).index === 0
-                    "
-                    [class.is-empty]="isEmpty(r, c)"
-                    [class.is-formula]="isFormula(r, c)"
-                    [class.is-flagged]="!!problem"
-                    [class.is-cursor]="isCursor(r, c)"
-                    (click)="cursor.set({ row: r, col: c })"
-                    (dblclick)="startEdit(r, c)"
-                    (keydown)="cellKey($event, r, c)"
+                    >{{ col.column.name }}</span
                   >
-                    @if (editing && editing.row === r && editing.col === c) {
-                      <input
-                        class="dg-cell-input"
-                        autocomplete="off"
-                        spellcheck="false"
-                        [attr.aria-label]="cellLabel(r, c)"
-                        [value]="editing.text"
-                        (input)="editInput($event)"
-                        (blur)="commitEdit()"
-                      />
-                    } @else {
-                      @if (isFormula(r, c)) {
-                        <span class="dg-f" aria-label="Formula">ƒ</span>
-                      }
-                      <span class="dg-cell-text">{{ text(r, c) }}</span>
-                      @if (c === 0 && !isOtherwise(r)) {
-                        <weave-row-menu
-                          class="dg-rule-menu"
-                          [label]="'Rule ' + (r + 1) + ' menu'"
-                          [items]="ruleMenu(r)"
-                          [tabIndex]="-1"
-                        />
-                      }
-                    }
-                    @if (problem) {
-                      <span
-                        class="sr-only"
-                        [id]="'dg-problem-' + r + '-' + c"
-                        >{{ problem }}</span
-                      >
-                    }
-                  </div>
+                  <weave-row-menu
+                    class="dg-th-menu"
+                    [label]="'Column menu for ' + col.column.name"
+                    [items]="columnMenu(col)"
+                  />
                 }
               </div>
             }
           </div>
+          @if (!view.rows.length) {
+            <div class="dg-row dg-none" role="row">
+              <div class="dg-td dg-none-cell" role="gridcell">
+                No rules yet. Add a rule, or paste rows from a spreadsheet.
+              </div>
+            </div>
+          }
+          @for (r of rowIndexes(); track r) {
+            @let state = rowState(r);
+            <div
+              class="dg-row"
+              role="row"
+              [attr.aria-rowindex]="r + 2"
+              [class.dg-otherwise]="isOtherwise(r)"
+              [class.is-match]="state === 'match'"
+              [class.is-refused]="state === 'refused'"
+              [class.is-cursor-row]="cursor().row === r"
+            >
+              <div
+                class="dg-td dg-mark-cell"
+                role="rowheader"
+                aria-colindex="1"
+              >
+                @if (!isOtherwise(r)) {
+                  <span class="dg-number">{{ r + 1 }}</span>
+                }
+                @if (mark(r); as m) {
+                  <span class="dg-mark" [attr.data-mark]="m">
+                    @if (m === "match") {
+                      <weave-icon name="check" [size]="16" />
+                    } @else if (m === "no-match") {
+                      <span aria-hidden="true">–</span>
+                    } @else {
+                      <weave-icon name="warning" [size]="16" />
+                    }
+                    <span class="sr-only">{{ markText(r, m) }}</span>
+                  </span>
+                }
+              </div>
+              @for (c of rowCols(r); track c) {
+                @let editing = this.editing();
+                @let problem = problemFor(r, c);
+                @let formulaCell = isFormula(r, c);
+                <div
+                  class="dg-td"
+                  role="gridcell"
+                  [attr.aria-colindex]="c + 2"
+                  [attr.data-cell]="r + ':' + c"
+                  [attr.tabindex]="isCursor(r, c) && !editing ? 0 : -1"
+                  [attr.aria-invalid]="problem ? 'true' : null"
+                  [attr.aria-describedby]="
+                    problem ? 'dg-problem-' + r + '-' + c : null
+                  "
+                  [attr.aria-readonly]="!editable(r, c) || null"
+                  [style.grid-column]="span(r, c)"
+                  [class.dg-name-cell]="c === 0"
+                  [class.dg-first-result]="
+                    cols()[c]?.kind === 'result' && $any(cols()[c]).index === 0
+                  "
+                  [class.is-empty]="isEmpty(r, c)"
+                  [class.is-formula]="formulaCell"
+                  [class.is-flagged]="!!problem"
+                  [class.is-cursor]="isCursor(r, c)"
+                  [class.is-editing]="
+                    editing && editing.row === r && editing.col === c
+                  "
+                  (click)="cursor.set({ row: r, col: c })"
+                  (dblclick)="startEdit(r, c)"
+                  (keydown)="cellKey($event, r, c)"
+                >
+                  @if (editing && editing.row === r && editing.col === c) {
+                    <input
+                      class="dg-cell-input"
+                      autocomplete="off"
+                      spellcheck="false"
+                      [attr.aria-label]="cellLabel(r, c)"
+                      [value]="editing.text"
+                      (input)="editInput($event)"
+                      (blur)="commitEdit()"
+                    />
+                  } @else if (formulaCell) {
+                    @let shown = text(r, c);
+                    <span class="dg-f" aria-label="Formula">ƒ</span>
+                    <span class="dg-formula" [attr.title]="shown">
+                      @for (part of formulaParts(shown); track $index) {
+                        <span [attr.data-kind]="part.kind">{{
+                          part.text
+                        }}</span>
+                      }
+                    </span>
+                  } @else {
+                    @let shown = text(r, c);
+                    <span
+                      class="dg-cell-text"
+                      [attr.title]="c === 0 && !isOtherwise(r) ? shown : null"
+                      >{{ shown }}</span
+                    >
+                    @if (c === 0 && !isOtherwise(r)) {
+                      <weave-row-menu
+                        class="dg-rule-menu"
+                        [label]="'Rule ' + (r + 1) + ' menu'"
+                        [items]="ruleMenu(r)"
+                        [tabIndex]="-1"
+                      />
+                    }
+                  }
+                  @if (problem) {
+                    <span class="sr-only" [id]="'dg-problem-' + r + '-' + c">{{
+                      problem
+                    }}</span>
+                  }
+                </div>
+              }
+            </div>
+          }
         </div>
-        @if (!readOnly()) {
-          <button
-            type="button"
-            class="text-link dg-add-rule"
-            (click)="addRuleAfter(view.rows.length - 1)"
-          >
-            <weave-icon name="plus" [size]="16" />Add rule
-          </button>
-        }
       </div>
-      @if (tryOpen()) {
-        <weave-try-input
-          [schema]="$any(spec()?.inputSchema ?? {})"
-          [initial]="tryInitial()"
-          [fromTestData]="tryFromTestData()"
-          [state]="tryState()"
-          (changed)="tryValue.set($event)"
-          (closed)="toggleTry()"
-        />
-      }
+      <div class="dg-foot" role="group" aria-label="Rules and columns">
+        <button
+          type="button"
+          class="dg-tool dg-add-rule"
+          [disabled]="readOnly()"
+          (click)="addRuleAfter(view.rows.length - 1)"
+        >
+          <weave-icon name="plus" [size]="16" />Add rule
+        </button>
+        <span class="dg-count">{{ ruleCount() }}</span>
+        <span class="dg-spacer"></span>
+        <button
+          type="button"
+          class="dg-tool"
+          [disabled]="readOnly()"
+          (click)="openColumnDialog({ mode: 'add', side: 'input' })"
+        >
+          <weave-icon name="plus" [size]="16" />Add input column
+        </button>
+        <button
+          type="button"
+          class="dg-tool"
+          [disabled]="readOnly() || view.scalar"
+          (click)="openColumnDialog({ mode: 'add', side: 'result' })"
+        >
+          <weave-icon name="plus" [size]="16" />Add result column
+        </button>
+      </div>
     </div>
     @let found = problems();
     @if (found.length) {
+      @let errors = errorCount();
       <section
         class="dg-problems"
-        [attr.role]="hasErrors() ? 'alert' : 'status'"
+        [attr.data-severity]="errors ? 'error' : 'warning'"
+        [attr.role]="errors ? 'alert' : 'status'"
         aria-label="Problems"
       >
-        <h4 class="dg-problems-title">
-          <weave-icon name="warning" [size]="16" />{{ problemCount() }}
+        <h4 class="dg-problems-head">
+          <weave-icon [name]="errors ? 'failCircle' : 'warning'" [size]="16" />
+          <span class="dg-problems-count">{{ problemCount() }}</span>
+          @if (errors) {
+            <span class="dg-problems-why"
+              >Publish table is off until they're fixed.</span
+            >
+          }
         </h4>
         <ul>
           @for (problem of found; track $index) {
             <li [attr.data-severity]="problem.severity">
-              <span>
+              <weave-icon
+                [name]="problem.severity === 'error' ? 'failCircle' : 'warning'"
+                [size]="16"
+              />
+              @if (problem.at; as at) {
+                <span class="pill dg-place" data-tone="neutral">{{
+                  locationOf(at)
+                }}</span>
+              }
+              <span class="dg-problem-text">
                 @for (part of words(problem.message); track $index) {
                   @if (part.code) {
                     <code>{{ part.text }}</code>
@@ -305,7 +349,11 @@ SPDX-License-Identifier: Apache-2.0
                 }
               </span>
               @if (problem.at; as at) {
-                <button type="button" class="text-link" (click)="goTo(at)">
+                <button
+                  type="button"
+                  class="text-link dg-go"
+                  (click)="goTo(at)"
+                >
                   Go to cell
                 </button>
               }

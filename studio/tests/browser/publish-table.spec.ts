@@ -42,9 +42,7 @@ async function startDraft(page: Page, options: Options = {}) {
   const grid = new DecisionGridPage(page);
   await grid.open();
   await grid.edit(1, 1, "<= 900");
-  await expect(grid.root).toContainText(
-    "payment-policy 1.2.1 · on this computer",
-  );
+  await grid.expectTable("1.2.1", "Draft");
   return { ...platform, details, grid };
 }
 
@@ -71,7 +69,7 @@ for (const size of sizes)
       await details.open("score");
       await grid.open();
       await grid.root.getByRole("button", { name: "Publish table" }).click();
-      await expect(grid.root).toContainText("payment-policy 1.2.1 · published");
+      await grid.expectTable("1.2.1", "Published");
       await expect(page.locator(".toast-region")).toContainText(
         "Published payment-policy 1.2.1.",
       );
@@ -90,13 +88,21 @@ for (const size of sizes)
       );
     });
 
-    test("publishing a table with problems asks to fix them first", async ({
+    test("Publish table is off while the table has problems, and says why", async ({
       page,
     }) => {
       const { grid, posts } = await startDraft(page);
       await grid.edit(1, 0, "big-gold");
-      await grid.root.getByRole("button", { name: "Publish table" }).click();
-      await expect(grid.root).toContainText("Fix 1 problem before publishing.");
+      const publish = grid.root.getByRole("button", { name: "Publish table" });
+      await expect(publish).toHaveAttribute("aria-disabled", "true");
+      await expect(publish).toHaveAccessibleDescription(
+        "Fix the problem to publish",
+      );
+      // Clicking it anyway publishes nothing.
+      await publish.dispatchEvent("click");
+      await expect(grid.problems()).toContainText(
+        "Publish table is off until they're fixed.",
+      );
       expect(posts).toEqual([]);
     });
 
@@ -110,9 +116,7 @@ for (const size of sizes)
       await expect(grid.root).toContainText(
         "payment-policy 1.2.1 was published by someone else. Your changes start 1.2.2.",
       );
-      await expect(grid.root).toContainText(
-        "payment-policy 1.2.2 · on this computer",
-      );
+      await grid.expectTable("1.2.2", "Draft");
       await grid.back();
       await details.close();
       expect(parse(await sourceText(page)).spec.steps[0].uses).toBe(

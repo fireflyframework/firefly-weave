@@ -15,12 +15,14 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-// The decision table grid, in the wide layout of step details. It edits the
+// The decision table grid, in table view of step details. It edits the
 // step's table as a spreadsheet: one row per rule, a cell per input column
 // (a short test such as "> 1000") and per result column, and an Otherwise
 // row. Editing a published version starts the draft of its next version on
 // this computer and moves the step to it in the same undo step; every change
-// after that is kept in the draft a moment later.
+// after that is kept in the draft a moment later. The Input and Output panes
+// try the table as the person types: Input holds the test values, Output the
+// rule that matched and the result, and each rule's mark shows in the grid.
 import {
   ChangeDetectionStrategy,
   ChangeDetectorRef,
@@ -47,6 +49,7 @@ import type {
   Json,
   NdvContext,
   ParameterComponent,
+  ParameterPanes,
 } from "../ndv/registry";
 import {
   COLUMN_TYPE_LABELS,
@@ -55,16 +58,18 @@ import {
   type ColumnType,
 } from "./cell-grammar";
 import {
+  COLUMN_TYPE_ICONS,
   ColumnDialog,
   type ColumnAnswer,
   type ColumnRequest,
 } from "./column-dialog";
 import { gridProblems, type GridProblem } from "./grid-checks";
 import { FormulaDialog } from "./formula-dialog";
-import { TryInput } from "./try-input";
 import { TryInputService, type TryRequest } from "./try-input-service";
-import type { RowMark } from "./table-evaluate";
-import { splitIntoCells, tableFormula } from "./formula-cells";
+import { TableInputPane, TableOutputPane } from "./try-panes";
+import { TableTry } from "./table-try";
+import { tryView, type GridMark, type TryView } from "./try-view";
+import { formulaParts, splitIntoCells, tableFormula } from "./formula-cells";
 import {
   GridHistory,
   moveCursor,
@@ -110,11 +115,8 @@ export interface GridCellAt {
   col: number;
 }
 
-const WHERE: Record<string, string> = {
-  draft: "on this computer",
-  copy: "on this computer",
-  published: "published",
-};
+/** Track minimums: #, Rule name, an input column, a result column. */
+const TRACKS = { mark: 48, name: 160, input: 140, result: 120 };
 export const POLICY_OPTIONS: SelectOption[] = [
   { value: "first", label: "First match" },
   { value: "unique", label: "Exactly one" },
@@ -141,7 +143,7 @@ const specOf = (document: Json | null): TableSpec | null =>
   selector: "weave-decision-grid",
   standalone: true,
   changeDetection: ChangeDetectionStrategy.Eager,
-  imports: [Icon, Select, RowMenu, ColumnDialog, FormulaDialog, TryInput],
+  imports: [Icon, Select, RowMenu, ColumnDialog, FormulaDialog],
   templateUrl: "./grid.html",
   styleUrl: "./grid.css",
 })
@@ -209,12 +211,8 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
   /** The account of the edits waiting to be kept. */
   private editedIn: string | null = null;
-  /** Counts the table's changes: Try an input's answers apply to the one they were asked for. */
+  /** Counts the table's changes: a try's answers apply to the one they were asked for. */
   readonly revision = signal(0);
-  readonly tryOpen = signal(false);
-  readonly tryValue = signal<Record<string, unknown>>({});
-  readonly tryInitial = signal<Record<string, unknown>>({});
-  readonly tryFromTestData = signal(false);
   private readonly tries = new TryInputService(
     (body: TryRequest) =>
       this.context().tables?.evaluate(
@@ -233,6 +231,58 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
   readonly tryState = this.tries.state;
   /** The grid's own undo history, apart from the workflow's. */
   private readonly history = new GridHistory();
+  /** The problems under the grid, read once per change. */
+  private readonly found = computed(() => this.problems());
+  readonly errorCount = computed(
+    () => this.found().filter((problem) => problem.severity === "error").length,
+  );
+  /** The rules with an error in one of their cells. */
+  private readonly problemRows = computed(() => {
+    const rows = this.view()?.rows.length ?? 0;
+    return new Set(
+      this.found()
+        .filter((problem) => problem.severity === "error")
+        .flatMap((problem) =>
+          problem.at && problem.at.row < rows ? [problem.at.row] : [],
+        ),
+    );
+  });
+  /** The first error: its rule, "table" when it isn't a rule's, or none. */
+  private readonly firstError = computed<number | "table" | null>(() => {
+    const error = this.found().find((problem) => problem.severity === "error");
+    if (!error) return null;
+    const rows = this.view()?.rows.length ?? 0;
+    return error.at && error.at.row < rows ? error.at.row : "table";
+  });
+  /** What the Output pane shows, and each rule's mark. */
+  readonly shown = computed<TryView | null>(() => {
+    const view = this.view();
+    if (!view) return null;
+    return tryView({
+      view,
+      state: this.tryState(),
+      revision: this.revision(),
+      empty: this.table.empty(),
+      problem: this.firstError(),
+    });
+  });
+  /** Trying the table, shared with the Input and Output panes. */
+  readonly table: TableTry = new TableTry({
+    spec: this.spec,
+    view: this.view,
+    shown: this.shown,
+    readOnly: computed(() => this.context().readOnly),
+    goToRule: (row) => this.focusCell(row, 0),
+  });
+  readonly panes: ParameterPanes = {
+    input: TableInputPane,
+    output: TableOutputPane,
+    state: this.table,
+  };
+  /** While a draft is open, Publish table is the one primary button. */
+  readonly ownsPrimary = signal(false);
+  private tryStarted = false;
+  readonly formulaParts = formulaParts;
 
   constructor() {
     this.lifetime.onDestroy(() => {
@@ -240,15 +290,31 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
       // What was tried is forgotten with the grid.
       this.tries.clear();
     });
+    // The step's test data fills Input when the table opens.
     effect(() => {
-      if (!this.tryOpen()) return;
+      const context = this.context();
+      if (this.tryStarted) return;
+      this.tryStarted = true;
+      untracked(() => {
+        const sample = context.sample.resolvedInput();
+        this.table.start(
+          sample.state === "available" && isRecord(sample.value)
+            ? (sample.value as Record<string, unknown>)
+            : null,
+        );
+      });
+    });
+    // Each change of the values or the table tries it again; a table with
+    // problems isn't the one the grid shows, so it isn't tried.
+    effect(() => {
       const spec = this.spec();
-      const input = this.tryValue();
+      const value = this.table.value();
       const revision = this.revision();
-      if (!spec) return;
-      untracked(() =>
-        this.tries.set(this.documentOf(spec), input as Json, revision),
-      );
+      const blocked = this.firstError() !== null || this.table.empty();
+      untracked(() => {
+        if (!spec || blocked) return this.tries.clear();
+        this.tries.set(this.documentOf(spec), value as Json, revision);
+      });
     });
   }
   /** The table as a document, named as the step uses it. */
@@ -261,39 +327,34 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
       spec,
     };
   }
-  toggleTry() {
-    if (this.tryOpen()) {
-      this.tryOpen.set(false);
-      this.tries.clear();
-      this.tryValue.set({});
-      return;
+  /** A rule's mark in the # column: an error in its cells first, then the try. */
+  mark(row: number): GridMark | null {
+    if (this.isOtherwise(row)) return null;
+    if (this.problemRows().has(row)) return "error";
+    return this.shown()?.marks[row] ?? null;
+  }
+  /** The row's tint: matched, or refused by Exactly one. */
+  rowState(row: number): "match" | "refused" | null {
+    const mark = this.mark(row);
+    return mark === "match" || mark === "refused" ? mark : null;
+  }
+  markText(row: number, mark: GridMark): string {
+    switch (mark) {
+      case "match":
+        return "Matches";
+      case "no-match":
+        return "Doesn't match";
+      case "refused":
+        return "Matches, as another rule does";
+      default:
+        return this.problemRows().has(row)
+          ? "Has a problem"
+          : "Can't be checked with this input";
     }
-    const sample = this.context().sample.resolvedInput();
-    const initial =
-      sample.state === "available" && isRecord(sample.value)
-        ? (sample.value as Record<string, unknown>)
-        : {};
-    this.tryInitial.set(initial);
-    this.tryFromTestData.set(Object.keys(initial).length > 0);
-    this.tryValue.set(initial);
-    this.tryOpen.set(true);
-  }
-  /** A rule's mark while Try an input is open, for the table revision it was computed on. */
-  mark(row: number): RowMark | null {
-    if (!this.tryOpen()) return null;
-    const state = this.tryState();
-    if (state.revision !== this.revision()) return null;
-    return state.marks[row] ?? null;
-  }
-  markText(mark: RowMark): string {
-    return mark === "match"
-      ? "Matches"
-      : mark === "error"
-        ? "Error"
-        : "Doesn't match";
   }
   ngDoCheck() {
     this.sync();
+    this.ownsPrimary.set(this.where() === "draft" && !!this.view());
   }
 
   // ------------------------------------------------------------- reading
@@ -320,17 +381,30 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
     return this.spec();
   }
   title(): string {
-    const uses = this.uses();
-    const where = this.where();
-    const name = `${nameOf(uses)} ${versionOf(uses)}`;
-    return where ? `${name} · ${WHERE[where]}` : name;
+    return `${this.tableName()} ${this.tableVersion()}`;
   }
-  /** Shown while the step uses a published version: the first change starts the next one. */
+  tableName(): string {
+    return nameOf(this.uses());
+  }
+  tableVersion(): string {
+    return versionOf(this.uses());
+  }
+  /** The status pill beside the table's name. */
+  status(): { text: string; tone: "warning" | "success" } | null {
+    const where = this.where();
+    if (where === "draft") return { text: "Draft", tone: "warning" };
+    if (where === "published" || where === "copy")
+      return { text: "Published", tone: "success" };
+    return null;
+  }
+  /** What the status does to test runs and to publishing. */
   banner(): string | null {
     const where = this.where();
-    if (where !== "published" && where !== "copy") return null;
-    const uses = this.uses();
-    return `${nameOf(uses)} ${versionOf(uses)} is published. Your first change starts the next version on this computer.`;
+    if (where === "draft")
+      return `Draft ${this.tableVersion()} is saved on this computer, and test runs use it. Publish it before publishing this workflow.`;
+    if (where === "published" || where === "copy")
+      return `${this.title()} is published. Your first change starts the next version on this computer.`;
+    return null;
   }
   gridLabel(): string {
     const uses = this.uses();
@@ -346,12 +420,45 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
   typeLabel(column: GridColumn): string {
     return column.type ? COLUMN_TYPE_LABELS[column.type] : "Other";
   }
-  /** "1fr" tracks: #, Rule name, then one track per column. */
+  typeIcon(column: GridColumn): string {
+    return column.type ? COLUMN_TYPE_ICONS[column.type] : "typeAny";
+  }
+  /**
+   * The tracks: # and Rule name, then the inputs and the results. They
+   * stretch to fill the box from fixed minimums and never follow a cell's
+   * text, so editing a cell moves no column.
+   */
   template(): string {
     const view = this.view();
     if (!view) return "";
-    const tracks = view.inputs.length + view.results.length;
-    return `var(--dg-mark) fit-content(var(--dg-name-max))${" fit-content(var(--dg-max))".repeat(tracks)}`;
+    const { mark, name, input, result } = TRACKS;
+    return [
+      `${mark}px minmax(${name}px, 1.2fr)`,
+      ...view.inputs.map(() => `minmax(${input}px, 1.5fr)`),
+      ...view.results.map(() => `minmax(${result}px, 1fr)`),
+    ].join(" ");
+  }
+  /** The tracks' minimums: below them the box scrolls sideways. */
+  minWidth(): number {
+    const view = this.view();
+    if (!view) return 0;
+    return (
+      TRACKS.mark +
+      TRACKS.name +
+      view.inputs.length * TRACKS.input +
+      view.results.length * TRACKS.result
+    );
+  }
+  ruleCount(): string {
+    const count = this.view()?.rows.length ?? 0;
+    return `${count} rule${count === 1 ? "" : "s"}`;
+  }
+  /** A problem's place: "Rule 1 · amount", "Rule 2 · Rule name". */
+  locationOf(at: GridCellAt): string {
+    const column = this.cols()[at.col];
+    return `${this.rowLabel(at.row)} · ${
+      !column || column.kind === "name" ? "Rule name" : column.column.name
+    }`;
   }
   isOtherwise(row: number): boolean {
     return row === (this.view()?.rows.length ?? -1);
@@ -391,9 +498,9 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
     if (!view || !column) return "";
     const other = this.isOtherwise(row);
     if (column.kind === "name")
-      return other ? "Otherwise (no rule matches)" : (view.rows[row]?.id ?? "");
+      return other ? "Otherwise" : (view.rows[row]?.id ?? "");
     if (column.kind === "input") {
-      if (other) return "";
+      if (other) return "When no rule matches";
       const condition = view.rows[row]?.condition;
       if (!condition) return "";
       if (condition.kind === "formula")
@@ -428,7 +535,10 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
     if (result.kind === "formula") return true;
     return printResult(result.cells[column.index], column.column) === null;
   }
+  /** A cell that tests nothing: "-", and Otherwise's merged inputs. */
   isEmpty(row: number, col: number): boolean {
+    if (this.isOtherwise(row) && this.cols()[col]?.kind === "input")
+      return true;
     return this.text(row, col) === "-";
   }
   /** The cell's place in the grid: a merged condition spans the inputs. */
@@ -457,16 +567,8 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
   readonly publishing = signal(false);
   /** Publish table: the grid's errors first, then the platform. */
   async publish() {
-    if (this.publishing()) return;
-    const errors = this.problems().filter(
-      (problem) => problem.severity === "error",
-    ).length;
-    if (errors) {
-      this.notice.set(
-        `Fix ${errors} problem${errors === 1 ? "" : "s"} before publishing.`,
-      );
-      return;
-    }
+    // Off while the grid has errors: its description says why.
+    if (this.publishing() || this.errorCount()) return;
     const tables = this.context().tables;
     if (!tables) return;
     this.publishing.set(true);
@@ -483,6 +585,14 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
     } finally {
       this.publishing.set(false);
     }
+  }
+
+  /** Why Publish table is off. */
+  publishBlocked(): string {
+    const count = this.errorCount();
+    return count === 1
+      ? "Fix the problem to publish"
+      : `Fix the ${count} problems to publish`;
   }
 
   // ------------------------------------------------------------ problems
@@ -526,9 +636,6 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
   problemCount(): string {
     const count = this.problems().length;
     return `${count} problem${count === 1 ? "" : "s"}`;
-  }
-  hasErrors(): boolean {
-    return this.problems().some((problem) => problem.severity === "error");
   }
   goTo(at: GridCellAt) {
     this.focusCell(at.row, at.col);
@@ -1109,14 +1216,14 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
       return this.element.nativeElement
         .querySelector<HTMLElement>(".dg-add-rule")
         ?.focus();
-    if (next === "leave-backward")
-      return [
-        ...this.element.nativeElement.querySelectorAll<HTMLElement>(
-          ".dg-toolbar button:not([disabled])",
-        ),
-      ]
-        .at(-1)
-        ?.focus();
+    if (next === "leave-backward") {
+      // Back to the control before the grid: the policy, or Back to the step.
+      const root = this.element.nativeElement;
+      return (
+        root.querySelector<HTMLElement>("#dg-policy") ??
+        root.querySelector<HTMLElement>(".dg-back")
+      )?.focus();
+    }
     if (!horizontal) return this.focusCell(next.row, covering(next.row, col));
     if (next.row === row) return this.focusCell(row, drawn[next.column]);
     // Wrapped to the next or previous row.

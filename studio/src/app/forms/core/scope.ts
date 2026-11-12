@@ -821,3 +821,25 @@ function expand(
   });
   return { entries: accepted.map((p) => p.entry), truncated };
 }
+
+/** The icon of a field's type, from its JSON types and its type label. */
+export function typeIcon(types: string[], label: string): string {
+  if (/date/i.test(label)) return "typeDate";
+  if (/file/i.test(label)) return "typeFile";
+  const type = types.find((t) => t !== "null");
+  switch (type) {
+    case "string":
+      return "typeText";
+    case "number":
+    case "integer":
+      return "typeNumber";
+    case "boolean":
+      return "typeBoolean";
+    case "array":
+      return "typeList";
+    case "object":
+      return "typeObject";
+    default:
+      return "typeAny";
+  }
+}

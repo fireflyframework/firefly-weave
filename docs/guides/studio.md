@@ -1122,15 +1122,27 @@ controls grow to touch size.
 
 A **Decision table** step shows **Table**, with **Edit table** and **New table**
 under it, and one **Table input** row per required input of the table. **Edit
-table** opens the table in a grid inside step details; **Input** and **Output**
-fold to narrow rails at the edges, which open over the grid when you select them.
-**Back to the step** returns to the step's fields.
+table** opens the table in a grid inside step details. On a window 1280 pixels
+wide or wider, **Input**, **Parameters** and **Output** stay side by side:
+**Input** holds the values you try the table with, the grid fills
+**Parameters**, and **Output** shows the rule that matched and the result. On a
+narrower window, the grid has the **Data** pane beside it, with **Output** first.
+**Fold** in a pane's header folds it to a narrow rail, and selecting the rail
+opens it again; Studio remembers both the pane widths and the folds of this view
+apart from the step's. **Back to the step** returns to the step's fields.
+
+Above the grid, the table's name and version carry a **Draft** or **Published**
+pill, with one line on what that means: a draft is saved on this computer and
+test runs use it; a published version starts its next version with your first
+change.
 
 The grid has one row per rule, a column per input and per result, and an
 **Otherwise** row for when no rule matches. **When several rules match** chooses
 **First match**, **Exactly one** or **Collect all**. **Add rule**, **Add input
-column** and **Add result column** grow the table; a column's menu renames it,
-changes its type or removes it. Each input cell holds a short test of that column:
+column** and **Add result column**, in the grid's footer, grow the table; a
+column's menu, beside its name, renames it, changes its type or removes it. The
+columns stretch to fill the grid and keep their width while you edit. Each input
+cell holds a short test of that column:
 
 | Write | Means |
 | --- | --- |
@@ -1148,11 +1160,13 @@ changes its type or removes it. Each input cell holds a short test of that colum
 
 Result cells hold a value of the column's type (`true`, `5000`, `"gold"`), or a
 formula after `=`, such as `= input.amount`. A rule the cells can't show stays one
-**ƒ** cell with its formula until you edit it. A cell that doesn't read keeps your
-text, is underlined, and the problems line under the grid says why, with **Go to
-cell**; so do duplicate rule names, a missing required result, rules that can never
-match under **First match**, and inputs that two rules of an **Exactly one** table
-both match.
+**ƒ** cell with its formula until you edit it, on up to two lines. A cell that
+doesn't read keeps your text, is underlined, and the problems under the grid say
+why, with the cell's place (such as "Rule 1 · amount") and **Go to cell**; so do
+duplicate rule names, a missing required result, rules that can never match
+under **First match**, and inputs that two rules of an **Exactly one** table both
+match (a warning). While a problem other than a warning remains, **Publish
+table** is off and says how many problems to fix.
 
 Keys: arrows move between cells, Tab and Shift+Tab along a row, Enter or F2
 edits, Enter keeps the edit and Escape cancels it, Delete clears a cell,
@@ -1160,10 +1174,16 @@ Alt+Enter adds a rule below, Alt+↑ and Alt+↓ move a rule, Ctrl+D or Cmd+D
 duplicates it, and Ctrl+Z or Cmd+Z undoes the last change in the grid. Pasting
 cells copied from a spreadsheet fills a block from the selected cell.
 
-**Try an input** opens a form over the table's input fields. As you type, each
-rule shows whether it matches and the result appears; a moment later Weave checks
-the same input on Studio's host, offline too, and the result reads **Checked by
-Weave** or says in words why the table gave no answer. What you try isn't kept.
+To try the table, type values in **Input**; it starts from the step's test data
+when the step has some, and **Use the step's test data** brings them back after
+you change them. As you type, each rule's row shows whether it matches (green
+when it does, red when two rules match under **Exactly one**), and **Output**
+shows the matched rule, what happened to the other rules and the result, as a
+table or as JSON. Selecting a matched rule moves the grid to it. A moment later
+Weave checks the same input on Studio's host, offline too: **Output** reads
+**Checked by Weave**, or says in words why the table gave no answer and what to
+do. While the table has a problem, **Output** says so instead of trying it. What
+you try isn't kept.
 
 Changing a published version starts its next patch version as a draft on this
 computer, and the step moves to it. **Publish table** publishes the draft; until

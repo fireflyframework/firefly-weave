@@ -192,11 +192,17 @@ export class DecisionGridPage {
       .click();
     await this.page.getByRole("option", { name: label, exact: true }).click();
   }
+  /** Add rule in the grid's footer: a rule after the last one. */
   async addRule() {
     await this.root
-      .getByRole("toolbar", { name: "Table commands" })
+      .getByRole("group", { name: "Rules and columns" })
       .getByRole("button", { name: "Add rule" })
       .click();
+  }
+  /** The table bar: the table's version and its Draft or Published pill. */
+  async expectTable(version: string, status: "Draft" | "Published") {
+    await expect(this.root.locator(".dg-version")).toHaveText(version);
+    await expect(this.root.locator(".dg-bar .pill")).toHaveText(status);
   }
   async addColumn(side: "input" | "result", name: string, type: string) {
     await this.root
@@ -218,10 +224,7 @@ export class DecisionGridPage {
   }
 }
 
-/** A workflow whose one step uses payment-policy@1.2.0. */
-export const ordersWorkflow = yamlFile(
-  "orders.yaml",
-  `apiVersion: weave/v1alpha1
+const ordersText = `apiVersion: weave/v1alpha1
 kind: Workflow
 metadata: { name: orders, version: 1.0.0 }
 spec:
@@ -238,8 +241,9 @@ spec:
       uses: payment-policy@1.2.0
       with: { ref: /input }
   output: { literal: {} }
-`,
-);
+`;
+/** A workflow whose one step uses payment-policy@1.2.0. */
+export const ordersWorkflow = yamlFile("orders.yaml", ordersText);
 
 /** Opens that workflow connected, its step's details, and the grid on payment-policy 1.2.0. */
 export async function openPaymentGrid(
@@ -255,6 +259,96 @@ export async function openPaymentGrid(
   const grid = new DecisionGridPage(page);
   await grid.open();
   return { details, grid };
+}
+
+/** payment-policy's next version, a draft kept on this computer before Studio opens. */
+export async function keepTableDraft(
+  page: Page,
+  document: TableDocumentFixture = paymentPolicy("1.2.1"),
+) {
+  await page.addInitScript(
+    (value) =>
+      localStorage.setItem("local:weave.tableDraft.payment-policy", value),
+    JSON.stringify({
+      kind: "draft",
+      name: "payment-policy",
+      version: document.metadata.version,
+      base: "1.2.0",
+      document,
+      savedAt: "2026-10-27T08:00:00.000Z",
+    }),
+  );
+}
+
+/** The orders workflow on the draft payment-policy@1.2.1. */
+export const draftOrdersWorkflow = yamlFile(
+  "orders.yaml",
+  ordersText.replace("@1.2.0", "@1.2.1"),
+);
+
+/** The draft grid, offline, with the Studio host's own check answering. */
+export async function openDraftGrid(
+  page: Page,
+  document?: TableDocumentFixture,
+): Promise<{
+  details: StepDetailsPage;
+  grid: DecisionGridPage;
+  panes: TablePanes;
+}> {
+  await keepTableDraft(page, document);
+  const details = await openStepFixture(page, draftOrdersWorkflow);
+  await localAuthoring(page);
+  await details.open("score");
+  const grid = new DecisionGridPage(page);
+  await grid.open();
+  return { details, grid, panes: new TablePanes(page) };
+}
+
+/** While the grid is open: Input holds the test values, Output the result. */
+export class TablePanes {
+  constructor(readonly page: Page) {}
+  get input(): Locator {
+    return this.page.locator(".sd-input weave-table-input-pane");
+  }
+  get output(): Locator {
+    return this.page.locator(".sd-output weave-table-output-pane");
+  }
+  field(name: string): Locator {
+    return this.input.getByLabel(name, { exact: true });
+  }
+  /** Shows a pane: below 1280 px the panes are tabs (Data, or the sheet's). */
+  async show(pane: "Input" | "Parameters" | "Output") {
+    const region = this.page.locator(
+      pane === "Input"
+        ? ".sd-input"
+        : pane === "Output"
+          ? ".sd-output"
+          : ".sd-main",
+    );
+    if (await region.isVisible()) return;
+    await this.page
+      .getByRole("tablist", { name: /^(Data|Step details panes)$/ })
+      .getByRole("tab", { name: pane, exact: true })
+      .click();
+    await expect(region).toBeVisible();
+  }
+  /** Types the test values the way a person does, field by field. */
+  async type(values: Record<string, string>) {
+    for (const [name, value] of Object.entries(values))
+      await this.field(name).fill(value);
+  }
+  get count(): Locator {
+    return this.output.locator(".dg-try-count");
+  }
+  get cards(): Locator {
+    return this.output.locator(".dg-rule-card");
+  }
+  get result(): Locator {
+    return this.output.locator(".dg-result");
+  }
+  get checked(): Locator {
+    return this.output.locator(".pill", { hasText: "Checked by Weave" });
+  }
 }
 
 /** The table's document as the Table field's viewer shows it. */

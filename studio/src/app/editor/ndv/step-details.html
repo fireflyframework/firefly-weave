@@ -24,8 +24,7 @@ SPDX-License-Identifier: Apache-2.0
   tabindex="-1"
   [attr.aria-label]="'Step details: ' + name()"
   [attr.data-layout]="layout()"
-  [attr.data-wide]="wide() ? '' : null"
-  [attr.data-rail]="wide() ? rail() : null"
+  [attr.data-table]="table() ? '' : null"
   (keydown)="key($event)"
 >
   <div class="sd-top">
@@ -94,35 +93,25 @@ SPDX-License-Identifier: Apache-2.0
         }
       </div>
     }
-    @if (wide()) {
-      @for (
-        which of layout() === "three" ? ["input", "output"] : ["data"];
-        track which
-      ) {
-        <button
-          type="button"
-          [class]="'sd-rail sd-rail-' + which"
-          [attr.aria-expanded]="rail() === which"
-          [attr.aria-controls]="
-            which === 'data' ? 'sd-region-' + dataPane() : 'sd-region-' + which
-          "
-          [attr.aria-label]="
-            which === 'input'
-              ? 'Show input data'
-              : which === 'output'
-                ? 'Show output data'
-                : 'Show data'
-          "
-          (click)="toggleRail($any(which))"
-        >
-          <weave-icon name="expand" [size]="16" />
-          <span class="sd-rail-caption" aria-hidden="true">{{
-            which === "input" ? "Input" : which === "output" ? "Output" : "Data"
-          }}</span>
-        </button>
+    @if (table() && layout() === "three") {
+      @for (side of sides; track side) {
+        @if (folded(side)) {
+          <button
+            type="button"
+            [class]="'sd-rail sd-rail-' + side"
+            [attr.aria-label]="side === 'input' ? 'Show Input' : 'Show Output'"
+            [attr.title]="side === 'input' ? 'Show Input' : 'Show Output'"
+            (click)="unfold(side)"
+          >
+            <weave-icon name="expand" [size]="16" />
+            <span class="sd-rail-caption" aria-hidden="true">{{
+              side === "input" ? "Input" : "Output"
+            }}</span>
+          </button>
+        }
       }
     }
-    @if (layout() === "two" && (!wide() || rail() === "data")) {
+    @if (layout() === "two") {
       <div
         class="sd-data-tabs"
         role="tablist"
@@ -157,13 +146,15 @@ SPDX-License-Identifier: Apache-2.0
       tabindex="-1"
       [hidden]="!showPane('input')"
     >
-      @if (target() === "$trigger") {
+      @if (tablePanes()) {
+        <ng-container #tableInputHost />
+      } @else if (target() === "$trigger") {
         <weave-test-event-pane [session]="session()" />
       } @else {
         <weave-input-pane [session]="session()" [mapped]="mappedRefs()" />
       }
     </section>
-    @if (layout() === "three" && !wide()) {
+    @if (layout() === "three" && !folded("input")) {
       <div
         class="sd-separator sd-separator-input"
         role="separator"
@@ -189,7 +180,6 @@ SPDX-License-Identifier: Apache-2.0
       id="sd-region-parameters"
       tabindex="-1"
       [hidden]="!showPane('parameters')"
-      (pointerdown)="mainPointer()"
     >
       <header class="sd-head" data-region="header" tabindex="-1">
         <span class="sd-kind" aria-hidden="true"
@@ -252,7 +242,7 @@ SPDX-License-Identifier: Apache-2.0
               @if (executing()) {
                 <button
                   type="button"
-                  class="primary"
+                  [class.primary]="executePrimary()"
                   title="Stop executing"
                   (click)="stop()"
                 >
@@ -267,7 +257,7 @@ SPDX-License-Identifier: Apache-2.0
               } @else {
                 <button
                   type="button"
-                  class="primary"
+                  [class.primary]="executePrimary()"
                   [title]="executeLabel() + ' (Ctrl/Cmd+Enter)'"
                   (click)="execute('step')"
                 >
@@ -360,7 +350,7 @@ SPDX-License-Identifier: Apache-2.0
         }
       </div>
     </section>
-    @if (layout() === "three" && !wide()) {
+    @if (layout() === "three" && !folded("output")) {
       <div
         class="sd-separator sd-separator-output"
         role="separator"
@@ -387,7 +377,11 @@ SPDX-License-Identifier: Apache-2.0
       tabindex="-1"
       [hidden]="!showPane('output')"
     >
-      <weave-output-pane [session]="session()" />
+      @if (tablePanes()) {
+        <ng-container #tableOutputHost />
+      } @else {
+        <weave-output-pane [session]="session()" />
+      }
     </section>
   </div>
   @if (layout() !== "sheet") {

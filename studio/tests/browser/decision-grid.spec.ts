@@ -96,7 +96,7 @@ for (const size of sizes)
       await expect(grid.grid).toHaveAccessibleName(
         "Rules of payment-policy 1.2.0",
       );
-      await expect(grid.root).toContainText("payment-policy 1.2.0 · published");
+      await grid.expectTable("1.2.0", "Published");
       await expect(grid.cell(0, 0)).toHaveText("big-gold");
       await expect(grid.cell(0, 1)).toHaveText("> 1000");
       await expect(grid.cell(0, 2)).toContainText("gold");
@@ -108,7 +108,8 @@ for (const size of sizes)
         'ƒinput.amount > 5000 or input.tier == "platinum"',
       );
       await expect(grid.cell(2, 2)).toHaveCount(0);
-      await expect(grid.cell(3, 0)).toHaveText("Otherwise (no rule matches)");
+      await expect(grid.cell(3, 0)).toHaveText("Otherwise");
+      await expect(grid.cell(3, 1)).toHaveText("When no rule matches");
       await expect(grid.cell(3, 3)).toHaveText("false");
       await expect(grid.cell(3, 4)).toHaveText("0");
       await expect(
@@ -123,9 +124,7 @@ for (const size of sizes)
     }) => {
       const { details, grid } = await openGrid(page);
       await grid.edit(1, 1, "<= 900");
-      await expect(grid.root).toContainText(
-        "payment-policy 1.2.1 · on this computer",
-      );
+      await grid.expectTable("1.2.1", "Draft");
       await expect(grid.cell(1, 1)).toHaveText("<= 900");
       await grid.back();
       await details.close();
@@ -154,7 +153,7 @@ for (const size of sizes)
     }) => {
       const { details, grid } = await openGrid(page);
       await grid.edit(1, 1, "<= 900");
-      await expect(grid.root).toContainText("1.2.1 · on this computer");
+      await grid.expectTable("1.2.1", "Draft");
       await grid.back();
       const table = details.field("table");
       await table.getByRole("radio", { name: "From list" }).click();
@@ -167,14 +166,14 @@ for (const size of sizes)
       await expect(grid.root).toContainText(
         "payment-policy 1.2.1 is already a draft on this computer. Choose it in Table to keep editing it.",
       );
-      await expect(grid.root).toContainText("payment-policy 1.2.0 · published");
+      await grid.expectTable("1.2.0", "Published");
       await expect(grid.cell(1, 1)).toHaveText("<= 1000");
     });
 
     test("typing a cell writes the rule's condition", async ({ page }) => {
       const { details, grid } = await openGrid(page);
       await grid.edit(0, 1, "> 5000");
-      await expect(grid.root).toContainText("1.2.1 · on this computer");
+      await grid.expectTable("1.2.1", "Draft");
       await grid.back();
       const table = await viewedTable(page, details);
       expect(table.metadata.version).toBe("1.2.1");
@@ -211,7 +210,7 @@ for (const size of sizes)
         />>\s+isn't a test; try\s+> 1000\s*\./,
       );
       // Nothing was written: the step still uses the published version.
-      await expect(grid.root).toContainText("payment-policy 1.2.0 · published");
+      await grid.expectTable("1.2.0", "Published");
       await cell.focus();
       await page.keyboard.press("Escape");
       await expect(cell.locator(".dg-cell-text")).toHaveText("> 1000");
@@ -243,9 +242,12 @@ for (const size of sizes)
     }) => {
       const { details, grid } = await openGrid(page);
       await grid.addColumn("input", "country", "Text");
-      await expect(
-        grid.grid.getByRole("columnheader", { name: /country/ }),
-      ).toContainText("country · Text");
+      const header = grid.grid.getByRole("columnheader", { name: /country/ });
+      await expect(header).toHaveAccessibleName("country, Text");
+      await expect(header.locator(".dg-th-text")).toHaveAttribute(
+        "title",
+        "country, Text",
+      );
       await grid.back();
       const table = await viewedTable(page, details);
       expect(
@@ -282,7 +284,7 @@ for (const size of sizes)
         .locator(".toast", { hasText: "Removed the Otherwise result." })
         .getByRole("button", { name: "Undo", exact: true })
         .click();
-      await expect(grid.cell(3, 0)).toHaveText("Otherwise (no rule matches)");
+      await expect(grid.cell(3, 0)).toHaveText("Otherwise");
     });
 
     test("the problems line explains each problem and goes to its cell", async ({

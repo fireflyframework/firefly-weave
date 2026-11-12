@@ -159,9 +159,7 @@ test("after sign-out no table draft remains for that account", async ({
   const grid = new DecisionGridPage(page);
   await grid.open();
   await grid.edit(1, 1, "<= 900");
-  await expect(grid.root).toContainText(
-    "payment-policy 1.2.1 · on this computer",
-  );
+  await grid.expectTable("1.2.1", "Draft");
   await grid.back();
   await details.close();
   const kept = () =>

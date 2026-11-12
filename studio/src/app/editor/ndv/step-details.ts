@@ -45,12 +45,18 @@ import {
 import { parse as parseYaml, stringify as yamlText } from "yaml";
 import { DialogService, Modal } from "../../dialog";
 import {
+  FORM_PANES,
   KEY_STEP,
+  RAIL,
+  TABLE_PANES,
+  readFolds,
   readWidths,
   resized,
   toEdge,
+  writeFolds,
   writeWidths,
-  defaultWidths,
+  type PaneFolds,
+  type PaneProfile,
   type PaneWidths,
 } from "./panes/layout";
 import { InputPane } from "./panes/input-pane";
@@ -103,6 +109,7 @@ import {
   type NdvContext,
   type ParamSpec,
   type ParameterComponent,
+  type ParameterPanes,
 } from "./registry";
 import { renameHint, renameWithExtras, type RenameResult } from "./rename";
 import { reservedActionNames } from "./owned/insert-owned";
@@ -355,8 +362,11 @@ export class StepDetails {
 
   readonly pane = signal<"input" | "parameters" | "output">("parameters");
   readonly dataPane = signal<"input" | "output">("input");
-  /** A folded pane opened over the wide layout's edge; null while every pane is folded. */
-  readonly rail = signal<"input" | "output" | "data" | null>(null);
+  /** The side panes the person folded to rails in table view. */
+  readonly folds = signal<PaneFolds>({ input: false, output: false });
+  readonly sides = ["input", "output"] as const;
+  /** What the open component draws in the Input and Output panes (the table's test values and result). */
+  readonly tablePanes = signal<ParameterPanes | null>(null);
   /** The registered parameter component last loaded, by its kind and slot. */
   private readonly loadedComponent = signal<{
     key: string;
@@ -371,25 +381,71 @@ export class StepDetails {
       return null;
     return loaded?.key === `${open.kind}/${open.subNode ?? ""}` ? loaded : null;
   }
-  /** True while a wide component (the decision table grid) is open: the data panes fold to rails. */
-  wide(): boolean {
-    return !!this.component()?.wide && this.layout() !== "sheet";
+  /**
+   * True while table view is open (the decision table grid): the panes keep
+   * widths of their own, Input and Output hold the test values and the
+   * result, and three panes need 1280 px.
+   */
+  table(): boolean {
+    return !!this.component()?.wide;
+  }
+  /** The pane widths in use: table view's own while it is open. */
+  private profile(): PaneProfile {
+    return this.table() ? TABLE_PANES : FORM_PANES;
+  }
+  /** Execute step is the primary button unless the open component shows its own. */
+  executePrimary(): boolean {
+    return !(this.tablePanes() && this.componentRef?.instance.ownsPrimary?.());
   }
   /** Where the open component is drawn, in place of the form. */
   private readonly componentHost = viewChild("componentHost", {
     read: ViewContainerRef,
   });
   private componentRef: ComponentRef<ParameterComponent> | null = null;
+  /** Where the open component's Input and Output panes are drawn. */
+  private readonly tableInputHost = viewChild("tableInputHost", {
+    read: ViewContainerRef,
+  });
+  private readonly tableOutputHost = viewChild("tableOutputHost", {
+    read: ViewContainerRef,
+  });
+  private paneRefs: {
+    input: ComponentRef<unknown>;
+    output: ComponentRef<unknown>;
+  } | null = null;
   /** What the open component reads and edits. */
   componentContext(): NdvContext {
     return this.controller().ndvContext(this.target());
   }
-  toggleRail(which: "input" | "output" | "data") {
-    this.rail.set(this.rail() === which ? null : which);
+  /** Fold in a pane's header: the pane folds to its rail, and the rail takes focus. */
+  fold(side: keyof PaneFolds) {
+    this.setFolds({ ...this.folds(), [side]: true });
+    afterNextRender(
+      () =>
+        this.dialog()
+          .nativeElement.querySelector<HTMLElement>(`.sd-rail-${side}`)
+          ?.focus(),
+      { injector: this.injector },
+    );
   }
-  /** A click into the grid closes a pane opened over its edge. */
-  mainPointer() {
-    if (this.rail()) this.rail.set(null);
+  /** A rail opens its pane again, and its Fold button takes focus. */
+  unfold(side: keyof PaneFolds) {
+    this.setFolds({ ...this.folds(), [side]: false });
+    afterNextRender(
+      () =>
+        this.dialog()
+          .nativeElement.querySelector<HTMLElement>(`.sd-${side} .dg-fold`)
+          ?.focus(),
+      { injector: this.injector },
+    );
+  }
+  private setFolds(folds: PaneFolds) {
+    this.folds.set(folds);
+    writeFolds(folds);
+  }
+  /** True while a side pane shows as its rail. */
+  folded(side: keyof PaneFolds): boolean {
+    return this.table() && this.layout() === "three" && this.folds()[side];
   }
   readonly widths = signal<PaneWidths>({ input: 0, output: 0 });
   private readonly inputPane = viewChild(InputPane);
@@ -450,6 +506,7 @@ export class StepDetails {
       untracked(() => {
         if (!open || !place) {
           this.componentRef = null;
+          this.tablePanes.set(null);
           return;
         }
         if (
@@ -460,15 +517,66 @@ export class StepDetails {
           this.componentRef = place.createComponent(open.type);
         }
         this.componentRef.setInput("context", this.componentContext());
+        this.tablePanes.set(this.componentRef.instance.panes ?? null);
+      });
+    });
+    // Its Input and Output panes, drawn in place of the step's data.
+    effect(() => {
+      const panes = this.tablePanes();
+      const input = this.tableInputHost();
+      const output = this.tableOutputHost();
+      untracked(() => {
+        if (!panes || !input || !output) {
+          this.paneRefs = null;
+          return;
+        }
+        const drawn = this.paneRefs;
+        if (
+          drawn &&
+          drawn.input.componentType === panes.input &&
+          input.indexOf(drawn.input.hostView) >= 0 &&
+          output.indexOf(drawn.output.hostView) >= 0
+        ) {
+          drawn.input.setInput("state", panes.state);
+          drawn.output.setInput("state", panes.state);
+          return;
+        }
+        input.clear();
+        output.clear();
+        const refs = {
+          input: input.createComponent(panes.input),
+          output: output.createComponent(panes.output),
+        };
+        for (const [side, ref] of Object.entries(refs) as [
+          keyof PaneFolds,
+          ComponentRef<unknown>,
+        ][]) {
+          ref.setInput("state", panes.state);
+          ref.setInput("foldable", this.layout() === "three");
+          (
+            ref.instance as {
+              fold?: { subscribe(next: () => void): unknown };
+            }
+          ).fold?.subscribe(() => this.fold(side));
+        }
+        this.paneRefs = refs;
+      });
+    });
+    // Table view keeps widths and folds of its own; in two panes it shows
+    // Output first, where trying the table answers.
+    effect(() => {
+      const table = this.table();
+      untracked(() => {
+        if (this.total)
+          this.widths.set(readWidths(this.total, undefined, this.profile()));
+        this.folds.set(table ? readFolds() : { input: false, output: false });
+        if (table && this.layout() === "two") this.dataPane.set("output");
       });
     });
     // A registered component asked for: load its chunk once.
     effect(() => {
       const open = this.controller().parameterComponent();
-      if (!open) {
-        untracked(() => this.rail.set(null));
-        return;
-      }
+      if (!open) return;
       const key = `${open.kind}/${open.subNode ?? ""}`;
       if (untracked(() => this.loadedComponent())?.key === key) return;
       const registration = ndvRegistry.parameters(open.kind, open.subNode);
@@ -495,6 +603,8 @@ export class StepDetails {
     // name wraps or the pane changes: keep their height measured.
     const sticky = new ResizeObserver(() => this.measureSticky());
     afterEveryRender(() => {
+      this.paneRefs?.input.setInput("foldable", this.layout() === "three");
+      this.paneRefs?.output.setInput("foldable", this.layout() === "three");
       this.coverShell();
       this.recoverLayoutFocus();
       this.measureSticky(sticky);
@@ -511,7 +621,7 @@ export class StepDetails {
     const observer = new ResizeObserver(([entry]) => {
       this.dragEnd();
       this.total = Math.round(entry.contentRect.width);
-      this.widths.set(readWidths(this.total));
+      this.widths.set(readWidths(this.total, undefined, this.profile()));
     });
     afterNextRender(
       () => {
@@ -601,7 +711,9 @@ export class StepDetails {
   }
   layout(): "three" | "two" | "sheet" {
     const width = this.host().windowWidth;
-    return width >= 1100 ? "three" : width >= 768 ? "two" : "sheet";
+    // Table view's three panes need room for the grid's tracks.
+    const three = this.table() ? 1280 : 1100;
+    return width >= three ? "three" : width >= 768 ? "two" : "sheet";
   }
   private iconOf(id: string): string {
     if (id === "$trigger") return "manualTrigger";
@@ -819,30 +931,39 @@ export class StepDetails {
 
   // ------------------------------------------------------------- panes
   paneStyle(): Record<string, string> {
-    const w = this.widths();
+    const w = this.effective();
     return w.input
       ? { "--sd-input": `${w.input}px`, "--sd-output": `${w.output}px` }
       : {};
   }
+  /** The widths drawn: a folded pane is its rail. */
+  private effective(): PaneWidths {
+    const w = this.widths();
+    return {
+      input: this.folded("input") ? RAIL : w.input,
+      output: this.folded("output") ? RAIL : w.output,
+    };
+  }
   showPane(which: "input" | "parameters" | "output"): boolean {
     const layout = this.layout();
-    if (this.wide() && which !== "parameters") {
-      const rail = this.rail();
-      return layout === "three"
-        ? rail === which
-        : rail === "data" && which === this.dataPane();
-    }
-    if (layout === "three") return true;
+    if (layout === "three")
+      return which === "parameters" || !this.folded(which);
     if (layout === "two")
       return which === "parameters" || which === this.dataPane();
     return which === this.pane();
   }
   maxOf(side: keyof PaneWidths): number {
-    return toEdge(this.widths(), side, "max", this.total)[side];
+    return toEdge(this.effective(), side, "max", this.total, this.profile())[
+      side
+    ];
+  }
+  /** A side's new width, with the other side as drawn (its rail when folded). */
+  private withSide(side: keyof PaneWidths, next: PaneWidths): PaneWidths {
+    return { ...this.widths(), [side]: next[side] };
   }
   private setWidths(next: PaneWidths) {
     this.widths.set(next);
-    writeWidths(next, this.total);
+    writeWidths(next, this.total, undefined, this.profile());
   }
   dragStart(event: PointerEvent, side: keyof PaneWidths) {
     if (event.button !== 0 || this.dragging || this.layout() !== "three")
@@ -862,7 +983,17 @@ export class StepDetails {
     const drag = this.dragging;
     if (!drag || drag.pointer !== event.pointerId) return;
     const delta = (event.clientX - drag.x) * (drag.side === "input" ? 1 : -1);
-    this.widths.set(resized(drag.start, drag.side, delta, this.total));
+    const start = {
+      ...drag.start,
+      input: this.folded("input") ? RAIL : drag.start.input,
+      output: this.folded("output") ? RAIL : drag.start.output,
+    };
+    this.widths.set(
+      this.withSide(
+        drag.side,
+        resized(start, drag.side, delta, this.total, this.profile()),
+      ),
+    );
   }
   dragEnd(event?: PointerEvent) {
     const drag = this.dragging;
@@ -870,7 +1001,7 @@ export class StepDetails {
     this.dragging = null;
     if (drag.handle.hasPointerCapture(drag.pointer))
       drag.handle.releasePointerCapture(drag.pointer);
-    writeWidths(this.widths(), this.total);
+    writeWidths(this.widths(), this.total, undefined, this.profile());
   }
   separatorKey(event: KeyboardEvent, side: keyof PaneWidths) {
     if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey)
@@ -878,20 +1009,22 @@ export class StepDetails {
     const grow = side === "input" ? "ArrowRight" : "ArrowLeft";
     const shrink = side === "input" ? "ArrowLeft" : "ArrowRight";
     let next: PaneWidths | null = null;
+    const now = this.effective();
+    const profile = this.profile();
     if (event.key === grow)
-      next = resized(this.widths(), side, KEY_STEP, this.total);
+      next = resized(now, side, KEY_STEP, this.total, profile);
     else if (event.key === shrink)
-      next = resized(this.widths(), side, -KEY_STEP, this.total);
+      next = resized(now, side, -KEY_STEP, this.total, profile);
     else if (event.key === "Home")
-      next = toEdge(this.widths(), side, "min", this.total);
+      next = toEdge(now, side, "min", this.total, profile);
     else if (event.key === "End")
-      next = toEdge(this.widths(), side, "max", this.total);
+      next = toEdge(now, side, "max", this.total, profile);
     if (!next) return;
     event.preventDefault();
-    this.setWidths(next);
+    this.setWidths(this.withSide(side, next));
   }
   resetWidths() {
-    this.setWidths(defaultWidths(this.total));
+    this.setWidths(this.profile().defaults(this.total));
   }
 
   // ------------------------------------------------------------ regions
@@ -1895,18 +2028,6 @@ export class StepDetails {
   }
   private escape(event: KeyboardEvent) {
     event.preventDefault();
-    const rail = this.rail();
-    if (rail) {
-      this.rail.set(null);
-      afterNextRender(
-        () =>
-          this.dialog()
-            .nativeElement.querySelector<HTMLElement>(`.sd-rail-${rail}`)
-            ?.focus(),
-        { injector: this.injector },
-      );
-      return;
-    }
     if (this.mapMenu()) return this.closeMapMenu();
     if (activeDrag()) return this.clearMapping();
     if (this.renaming() !== null) {

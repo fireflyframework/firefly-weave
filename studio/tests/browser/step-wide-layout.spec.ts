@@ -15,8 +15,10 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-// The wide layout of step details: while a decision table is open in the
-// grid, Input and Output fold to 48 px rails that open over the grid's edge.
+// Table view of step details: while a decision table is open in the grid,
+// Input, Parameters and Output stay side by side at widths of their own, a
+// pane the person folds becomes a 48 px rail, and below 1280 px the Data
+// pane sits beside the grid with Output first.
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { connected } from "./support";
 import {
@@ -53,57 +55,45 @@ const widthOf = async (locator: Locator) =>
 test.describe("at 1440x900", () => {
   test.use({ viewport: { width: 1440, height: 900 } });
 
-  test("Edit table folds Input and Output to rails", async ({ page }) => {
-    const details = await openGrid(page);
-    const input = details.dialog.getByRole("button", {
-      name: "Show input data",
-    });
-    const output = details.dialog.getByRole("button", {
-      name: "Show output data",
-    });
-    const main = details.dialog.locator(".sd-main");
-    const [left, right, middle] = [
-      await box(input),
-      await box(output),
-      await box(main),
-    ];
-    expect(Math.abs(left.width - 48)).toBeLessThanOrEqual(0.5);
-    expect(Math.abs(right.width - 48)).toBeLessThanOrEqual(0.5);
-    expect(left.x + left.width).toBeLessThanOrEqual(middle.x + 0.5);
-    expect(middle.x + middle.width).toBeLessThanOrEqual(right.x + 0.5);
-    await expect(input).toHaveAttribute("aria-expanded", "false");
-    await expect(details.dialog.locator(".sd-input")).toBeHidden();
-    await expect(details.dialog.locator(".sd-output")).toBeHidden();
-    await expect(details.dialog.locator(".sd-separator")).toHaveCount(0);
-  });
-
-  test("a rail opens its pane over the grid and Escape closes it", async ({
+  test("Edit table keeps Input, Parameters and Output side by side", async ({
     page,
   }) => {
     const details = await openGrid(page);
-    const rail = details.dialog.getByRole("button", {
-      name: "Show input data",
-    });
-    const before = await box(details.dialog.locator(".sd-main"));
-    await rail.click();
-    await expect(rail).toHaveAttribute("aria-expanded", "true");
-    const pane = details.dialog.locator(".sd-input");
-    await expect(pane).toBeVisible();
-    const over = await box(pane);
-    const railBox = await box(rail);
-    expect(Math.abs(over.x - (railBox.x + railBox.width))).toBeLessThanOrEqual(
-      1,
-    );
-    expect(over.width).toBeGreaterThanOrEqual(240);
-    expect(Math.abs(over.y - railBox.y)).toBeLessThanOrEqual(1);
-    expect(Math.abs(over.height - railBox.height)).toBeLessThanOrEqual(1);
-    // The grid keeps its width under the pane.
-    const after = await box(details.dialog.locator(".sd-main"));
-    expect(after.width).toBeCloseTo(before.width, 0);
-    await page.keyboard.press("Escape");
-    await expect(pane).toBeHidden();
+    const [input, main, output] = [
+      await box(details.dialog.locator(".sd-input")),
+      await box(details.dialog.locator(".sd-main")),
+      await box(details.dialog.locator(".sd-output")),
+    ];
+    expect(input.x + input.width).toBeLessThanOrEqual(main.x + 0.5);
+    expect(main.x + main.width).toBeLessThanOrEqual(output.x + 0.5);
+    await expect(details.dialog.locator(".sd-rail")).toHaveCount(0);
+    await expect(details.dialog.locator(".sd-separator")).toHaveCount(2);
+    await expect(
+      details.dialog.locator(".sd-input weave-table-input-pane"),
+    ).toBeVisible();
+    await expect(
+      details.dialog.locator(".sd-output weave-table-output-pane"),
+    ).toBeVisible();
+  });
+
+  test("Fold folds a pane to its rail and the rail opens it again, by keyboard", async ({
+    page,
+  }) => {
+    const details = await openGrid(page);
+    const fold = details.dialog.getByRole("button", { name: "Fold Output" });
+    await fold.focus();
+    await page.keyboard.press("Enter");
+    const rail = details.dialog.getByRole("button", { name: "Show Output" });
     await expect(rail).toBeFocused();
-    await expect(details.dialog).toBeVisible();
+    expect(Math.abs((await box(rail)).width - 48)).toBeLessThanOrEqual(0.5);
+    await expect(details.dialog.locator(".sd-output")).toBeHidden();
+    await expect(details.dialog.locator(".sd-separator")).toHaveCount(1);
+    const main = await box(details.dialog.locator(".sd-main"));
+    expect(main.x + main.width).toBeLessThanOrEqual((await box(rail)).x + 0.5);
+    await page.keyboard.press("Enter");
+    await expect(details.dialog.locator(".sd-output")).toBeVisible();
+    await expect(fold).toBeFocused();
+    await expect(details.dialog.locator(".sd-rail")).toHaveCount(0);
   });
 
   test("Back to the step restores the three panes at the person's widths", async ({
@@ -134,16 +124,13 @@ test.describe("at 1440x900", () => {
       .field("table")
       .getByRole("button", { name: "Edit table" })
       .click();
-    const rail = details.dialog.getByRole("button", {
-      name: "Show input data",
-    });
-    await expect(rail).toBeVisible();
-    // A rail opens its pane at the width the person chose.
-    await rail.click();
-    await expect
-      .poll(async () => widthOf(details.dialog.locator(".sd-input")))
-      .toBe(Number(chosen));
-    await rail.click();
+    // Table view uses widths of its own.
+    await expect(
+      details.dialog.locator(".sd-input weave-table-input-pane"),
+    ).toBeVisible();
+    expect(await widthOf(details.dialog.locator(".sd-input"))).not.toBe(
+      Number(chosen),
+    );
     await details.dialog
       .getByRole("button", { name: "Back to the step" })
       .click();
@@ -159,36 +146,33 @@ test.describe("at 1440x900", () => {
 test.describe("at 1024x768", () => {
   test.use({ viewport: { width: 1024, height: 768 } });
 
-  test("the data pane folds to one rail", async ({ page }) => {
+  test("the Data pane sits beside the grid, with Output first", async ({
+    page,
+  }) => {
     const details = await openGrid(page);
-    const rail = details.dialog.getByRole("button", { name: "Show data" });
-    expect(Math.abs((await box(rail)).width - 48)).toBeLessThanOrEqual(0.5);
-    await expect(
-      details.dialog.getByRole("button", { name: "Show input data" }),
-    ).toHaveCount(0);
-    await expect(
-      details.dialog.getByRole("tablist", { name: "Data" }),
-    ).toHaveCount(0);
-    await rail.click();
-    await expect(
-      details.dialog.getByRole("tablist", { name: "Data" }),
-    ).toBeVisible();
-    await expect(details.dialog.locator(".sd-input")).toBeVisible();
-    const tabs = await box(
-      details.dialog.getByRole("tablist", { name: "Data" }),
+    const tabs = details.dialog.getByRole("tablist", { name: "Data" });
+    await expect(tabs).toBeVisible();
+    await expect(details.dialog.locator(".sd-rail")).toHaveCount(0);
+    await expect(tabs.getByRole("tab", { name: "Output" })).toHaveAttribute(
+      "aria-selected",
+      "true",
     );
-    const pane = await box(details.dialog.locator(".sd-input"));
-    expect(Math.abs(tabs.x - pane.x)).toBeLessThanOrEqual(1);
-    expect(pane.y).toBeGreaterThanOrEqual(tabs.y + tabs.height - 1);
-    expect(Math.abs(pane.y - (tabs.y + tabs.height))).toBeLessThanOrEqual(1);
+    const pane = await box(details.dialog.locator(".sd-output"));
+    const strip = await box(tabs);
+    const main = await box(details.dialog.locator(".sd-main"));
+    expect(main.x + main.width).toBeLessThanOrEqual(pane.x + 0.5);
+    expect(Math.abs(strip.x - pane.x)).toBeLessThanOrEqual(24);
+    expect(pane.y).toBeGreaterThanOrEqual(strip.y + strip.height - 1);
     const panes = await box(details.dialog.locator(".sd-panes"));
     expect(pane.height).toBeGreaterThan(300);
     expect(pane.y + pane.height).toBeLessThanOrEqual(
       panes.y + panes.height + 0.5,
     );
-    await page.keyboard.press("Escape");
-    await expect(details.dialog.locator(".sd-input")).toBeHidden();
-    await expect(rail).toBeFocused();
+    await tabs.getByRole("tab", { name: "Input" }).click();
+    await expect(
+      details.dialog.locator(".sd-input weave-table-input-pane"),
+    ).toBeVisible();
+    await expect(details.dialog.locator(".sd-output")).toBeHidden();
   });
 });
 

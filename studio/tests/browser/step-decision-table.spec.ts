@@ -116,10 +116,11 @@ for (const size of sizes)
         .getByRole("button", { name: "New table" })
         .click();
       await expect(
-        details.dialog.getByRole("heading", {
-          name: "orders.score 1.0.0 · on this computer",
-        }),
+        details.dialog.getByRole("heading", { name: "orders.score 1.0.0" }),
       ).toBeVisible();
+      await expect(
+        details.dialog.locator("weave-decision-grid .dg-bar .pill"),
+      ).toHaveText("Draft");
       await details.dialog
         .getByRole("button", { name: "Back to the step" })
         .click();

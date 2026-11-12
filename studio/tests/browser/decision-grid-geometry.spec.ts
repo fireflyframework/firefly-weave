@@ -16,9 +16,9 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 // Alignment of the decision table grid, measured: its density and columns,
-// the scroll box and what stays put in it, Try an input beside the grid or
-// under it, its controls' targets and the rails beside it, at desktop and
-// narrow sizes and on touch.
+// the scroll box and what stays put in it, the test values and the result in
+// their panes, its controls' targets and the rails of folded panes, at
+// desktop and narrow sizes and on touch.
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { connected } from "./support";
 import {
@@ -31,6 +31,7 @@ import {
   ordersWorkflow,
   paymentPolicy,
   routeTables,
+  TablePanes,
   type TableDocumentFixture,
 } from "./decision-grid-po";
 import { hasPython, localAuthoring } from "./local-authoring";
@@ -129,7 +130,7 @@ async function openGrid(page: Page, table = paymentPolicy("1.2.0")) {
   return { details, grid };
 }
 
-/** The wide table as a draft on this computer, offline, with Try an input open and checked by the host. */
+/** The wide table as a draft on this computer, offline, tried and checked by the host. */
 async function openTry(page: Page) {
   const document = wideTable("1.2.1");
   await page.addInitScript(
@@ -153,15 +154,12 @@ async function openTry(page: Page) {
   await details.open("score");
   const grid = new DecisionGridPage(page);
   await grid.open();
-  await grid.root.getByRole("button", { name: "Try an input" }).click();
-  const panel = grid.root.getByRole("region", { name: "Try an input" });
-  await expect(panel).toBeVisible();
-  await panel.getByLabel("amount").fill("100");
-  await panel.getByLabel("region").fill("r2");
-  await expect(
-    panel.locator(".pill", { hasText: "Checked by Weave" }),
-  ).toBeVisible();
-  return { details, grid, panel };
+  const panes = new TablePanes(page);
+  await panes.show("Input");
+  await panes.type({ amount: "100", region: "r2" });
+  await panes.show("Output");
+  await expect(panes.checked).toBeVisible();
+  return { details, grid, panes };
 }
 
 /** The page never scrolls sideways. */
@@ -213,19 +211,28 @@ for (const size of SIZES)
   test.describe(`The decision grid at ${size.tag}`, () => {
     test.use(size.use);
 
-    test("rows, cells and toolbar controls follow the density, and every column lines up", async ({
+    test("rows, cells and the footer's controls follow the density, and every column lines up", async ({
       page,
     }) => {
       const { grid } = await openGrid(page);
-      const { row, control } = await density(page);
-      for (const cell of await boxes(grid.root.locator(".dg-th, .dg-td")))
+      const { touch } = await density(page);
+      const row = touch ? 44 : 36;
+      for (const cell of await boxes(grid.root.locator(".dg-th")))
+        expect(cell.height, "header height").toBeCloseTo(row, 0);
+      // A row with a formula grows to its lines; the others keep the density.
+      for (const cell of await boxes(
+        grid.root.locator(
+          ".dg-row:not(.dg-header):not(:has(.is-formula)) > .dg-td",
+        ),
+      ))
         expect(cell.height, "cell height").toBeCloseTo(row, 0);
-      const tools = await boxes(
-        grid.root.locator("button.dg-tool, .dg-policy .choice-field"),
-      );
-      expect(tools.length, "toolbar controls").toBe(5);
+      const tools = await boxes(grid.root.locator(".dg-foot button.dg-tool"));
+      expect(tools.length, "footer commands").toBe(3);
       for (const tool of tools)
-        expect(tool.height, "toolbar control height").toBeCloseTo(control, 0);
+        expect(tool.height, "footer command height").toBeCloseTo(
+          touch ? 44 : 32,
+          0,
+        );
       // A tap anywhere inside the policy's field opens it: its text box
       // fills the field inside the border.
       const field = await box(grid.root.locator(".dg-policy .choice-field"));
@@ -233,18 +240,20 @@ for (const size of SIZES)
       expect(text.height, "the policy's text box").toBeGreaterThanOrEqual(
         field.height - 2.5,
       );
-      // The policy's explanation sits right under it, before any other command.
+      // The policy's explanation sits beside it while the row has room, and
+      // right under the label otherwise.
       const hint = await box(grid.root.locator("#dg-policy-hint"));
-      const policy = await box(grid.root.locator(".dg-policy"));
-      expectAligned([hint.x, policy.x], "the explanation's left edge");
-      expect(
-        hint.y - policy.bottom,
-        "the explanation under the policy",
-      ).toBeGreaterThanOrEqual(-0.5);
-      expect(
-        hint.y - policy.bottom,
-        "the explanation under the policy",
-      ).toBeLessThanOrEqual(12);
+      const policy = await box(grid.root.locator(".dg-policy-label"));
+      if (hint.y < field.bottom - 0.5)
+        expect(hint.x, "the explanation beside the policy").toBeGreaterThan(
+          field.right,
+        );
+      else {
+        expectAligned([hint.x, policy.x], "the explanation's left edge");
+        expect(hint.y - field.bottom, "under the policy").toBeLessThanOrEqual(
+          12,
+        );
+      }
 
       const headers = await boxes(grid.root.locator(".dg-header > .dg-th"));
       expectAligned(
@@ -252,15 +261,12 @@ for (const size of SIZES)
         "header tops",
       );
       const [mark, name, ...columns] = headers;
-      expect(mark.width, "# column").toBeCloseTo(56, 0);
+      expect(mark.width, "# column").toBeCloseTo(48, 0);
       expect(name.width, "Rule name column").toBeGreaterThanOrEqual(159.5);
-      expect(name.width, "Rule name column").toBeLessThanOrEqual(
-        phone(page) ? 160.5 : 240.5,
-      );
-      for (const column of columns) {
-        expect(column.width, "column width").toBeGreaterThanOrEqual(119.5);
-        expect(column.width, "column width").toBeLessThanOrEqual(320.5);
-      }
+      for (const column of columns.slice(0, 2))
+        expect(column.width, "input column").toBeGreaterThanOrEqual(139.5);
+      for (const column of columns.slice(2))
+        expect(column.width, "result column").toBeGreaterThanOrEqual(119.5);
       for (let index = 1; index <= headers.length; index++)
         expectAligned(
           (await boxes(grid.root.locator(`[aria-colindex="${index}"]`))).map(
@@ -389,34 +395,25 @@ for (const size of SIZES)
       ).toBeGreaterThanOrEqual((await box(stays)).right - 0.5);
     });
 
-    test("Try an input sits beside the grid on a desktop and under it on a phone", async ({
+    test("the test values and the result sit in their panes, whole and never over the grid", async ({
       page,
     }) => {
       test.skip(!hasPython, "Create the Python development environment first.");
-      const { grid, panel } = await openTry(page);
-      const [scroll, tried, toolbar] = [
-        await box(grid.root.locator(".dg-scroll")),
-        await box(panel),
-        await box(grid.root.getByRole("toolbar", { name: "Table commands" })),
-      ];
-      expect(intersects(scroll, tried), "Try an input covers the grid").toBe(
-        false,
-      );
-      if (phone(page)) {
-        expect(tried.y, "under the grid").toBeGreaterThanOrEqual(
-          scroll.bottom - 0.5,
-        );
-        expectAligned([tried.x, toolbar.x], "left edges");
-        expectAligned([tried.right, toolbar.right], "right edges");
-      } else {
-        expect(tried.x, "beside the grid").toBeGreaterThanOrEqual(
-          scroll.right - 0.5,
-        );
-        expectAligned([tried.right, toolbar.right], "right edges");
-      }
-      expect(await clippedText(panel, "")).toEqual([]);
+      const { details, grid, panes } = await openTry(page);
       const { target } = await density(page);
-      await expectTargets(panel, target, "Try an input");
+      for (const side of ["Input", "Output"] as const) {
+        await panes.show(side);
+        const pane = side === "Input" ? panes.input : panes.output;
+        const shown = await box(pane);
+        if (await grid.root.isVisible())
+          expect(
+            intersects(shown, await box(grid.root.locator(".dg-box"))),
+            "a pane covers the grid",
+          ).toBe(false);
+        expect(await clippedText(pane, "")).toEqual([]);
+        await expectTargets(pane, target, "the pane");
+      }
+      await expect(details.dialog.locator(".dg-try")).toHaveCount(0);
       await expectNoPageScroll(page);
     });
 
@@ -429,7 +426,9 @@ for (const size of SIZES)
       await expect(problems).toContainText(">> isn't a test");
       expect(await clippedText(grid.root, ".dg-header")).toEqual([]);
       expect(await clippedText(grid.root, ".dg-problems")).toEqual([]);
-      expect(await clippedText(grid.root, ".dg-toolbar")).toEqual([]);
+      expect(await clippedText(grid.root, ".dg-bar")).toEqual([]);
+      expect(await clippedText(grid.root, ".dg-policy")).toEqual([]);
+      expect(await clippedText(grid.root, ".dg-foot")).toEqual([]);
       const { target } = await density(page);
       await expectTargets(grid.root, target, "the grid");
     });
@@ -477,7 +476,7 @@ for (const size of SIZES)
     });
   });
 
-test.describe("The rails beside the grid at 1440x900", () => {
+test.describe("The rails of folded panes at 1440x900", () => {
   test.use({ viewport: { width: 1440, height: 900 } });
 
   test("each rail runs the full height of the pane it folds", async ({
@@ -490,11 +489,13 @@ test.describe("The rails beside the grid at 1440x900", () => {
     });
     await routeTables(page, [paymentPolicy("1.2.0")]);
     await details.open("score");
+    await new DecisionGridPage(page).open();
     const panes = [
       await box(details.dialog.locator(".sd-input")),
       await box(details.dialog.locator(".sd-output")),
     ];
-    await new DecisionGridPage(page).open();
+    await details.dialog.getByRole("button", { name: "Fold Input" }).click();
+    await details.dialog.getByRole("button", { name: "Fold Output" }).click();
     const rails: Box[] = [
       await box(details.dialog.locator(".sd-rail-input")),
       await box(details.dialog.locator(".sd-rail-output")),

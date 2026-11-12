@@ -224,7 +224,7 @@ bodies are camelCase. The Python models are in
 | `POST /studio/local/testdata/check` | `CheckTestDataRequest` | `{entries: [{path, ok, code?}]}` |
 | `POST /studio/local/decision/evaluate` | `{table, input}` | `{output, matched_rule_ids, used_default}` |
 
-- **Try an input.** `decision/evaluate` compiles the table against an empty
+- **Trying a table.** `decision/evaluate` compiles the table against an empty
   catalog and evaluates it with `evaluate_decision_table`, as the platform does,
   on the same two slots as validation. A table that gives no answer is refused
   with 422, its `WV-DECISION-*` or `WV-EXPR-*` code, a sentence and

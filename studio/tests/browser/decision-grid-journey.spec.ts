@@ -17,13 +17,13 @@ SPDX-License-Identifier: Apache-2.0
 */
 // Building business rules from nothing, with no platform: a Decision table
 // step, New table, its columns, three rules by keyboard, Exactly one with
-// an overlap found and fixed, Try an input checked by Weave, then Execute
+// an overlap found and fixed, the table tried and checked by Weave, then Execute
 // step answering from the table kept on this computer.
 import { expect, test } from "@playwright/test";
 import { parse, stringify } from "yaml";
 import { insertStep, newWorkflow, offline } from "./support";
 import { StepDetailsPage } from "./step-details-po";
-import { DecisionGridPage } from "./decision-grid-po";
+import { DecisionGridPage, TablePanes } from "./decision-grid-po";
 import { shownExecute } from "./execute-po";
 import { outputPane } from "./test-data-po";
 import { hasPython, localAuthoring } from "./local-authoring";
@@ -60,7 +60,7 @@ for (const size of [
         .click();
       const grid = new DecisionGridPage(page);
       await expect(grid.grid).toBeVisible();
-      await expect(grid.root).toContainText("· on this computer");
+      await expect(grid.root.locator(".dg-bar .pill")).toHaveText("Draft");
       await grid.addColumn("input", "amount", "Number");
       await grid.addColumn("input", "tier", "Text");
       await grid.addColumn("result", "approve", "Yes/No");
@@ -117,18 +117,16 @@ for (const size of [
       await grid.edit(2, 1, "> 1000");
       await grid.edit(2, 2, "silver");
       await expect(problems).toHaveCount(0);
-      // Try an input: live, then Weave's check on this computer.
-      await grid.root.getByRole("button", { name: "Try an input" }).click();
-      const panel = grid.root.getByRole("region", { name: "Try an input" });
-      await panel.getByLabel("amount").fill("2000");
-      await panel.getByLabel("tier").fill("gold");
-      await expect(panel).toContainText("Matched: rule-1");
-      await expect(
-        panel.locator(".pill", { hasText: "Checked by Weave" }),
-      ).toBeVisible();
-      await grid.root
-        .getByRole("button", { name: "Close Try an input" })
-        .click();
+      // Try the table: Input takes the values, Output answers at once,
+      // then Weave checks on this computer.
+      const panes = new TablePanes(page);
+      await panes.show("Input");
+      await panes.type({ amount: "2000", tier: "gold" });
+      await panes.show("Output");
+      await expect(panes.count).toHaveText("Rule 1 matched");
+      await expect(panes.cards.first()).toContainText("Rule 1 · rule-1");
+      await expect(panes.checked).toBeVisible();
+      await panes.show("Parameters");
       await grid.back();
       // The step gives the table fixed values (as YAML), then executes.
       await details.dialog

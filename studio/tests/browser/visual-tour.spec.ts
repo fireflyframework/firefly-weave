@@ -126,7 +126,9 @@ import {
   ordersWorkflow,
   paymentPolicy,
   routeTables,
+  TablePanes,
   tablePlatform,
+  type TableDocumentFixture,
 } from "./decision-grid-po";
 import { crossingOf } from "./woven-crossing";
 import {
@@ -218,6 +220,72 @@ async function keepPaymentDraft(page: Page) {
       savedAt: "2026-10-27T08:00:00.000Z",
     }),
   );
+}
+
+/** The draft grid, with the step's test data from the trigger in Input. */
+async function openTriedDraft(page: Page, values: Record<string, string>) {
+  await keepPaymentDraft(page);
+  const details = await openStepFixture(page, draftWorkflow);
+  await localAuthoring(page);
+  await setTestInput(page, details, values);
+  await details.open("score");
+  const grid = new DecisionGridPage(page);
+  await grid.open();
+  const panes = new TablePanes(page);
+  await panes.show("Output");
+  await expect(panes.checked).toBeVisible();
+  return { details, grid, panes };
+}
+/** payment-policy with a fourth rule for silver amounts from 1000 to 5000. */
+function withSilverRule(table: TableDocumentFixture): TableDocumentFixture {
+  const spec = table.spec as { rules: unknown[] };
+  const ref = (name: string) => ({ ref: `/input/${name}` });
+  return {
+    ...table,
+    spec: {
+      ...table.spec,
+      rules: [
+        ...spec.rules,
+        {
+          id: "silver-mid",
+          // A range cell, [1000..5000], then the tier.
+          when: {
+            op: {
+              name: "and",
+              args: [
+                {
+                  op: {
+                    name: "and",
+                    args: [
+                      {
+                        op: {
+                          name: "gte",
+                          args: [ref("amount"), { literal: 1000 }],
+                        },
+                      },
+                      {
+                        op: {
+                          name: "lte",
+                          args: [ref("amount"), { literal: 5000 }],
+                        },
+                      },
+                    ],
+                  },
+                },
+                {
+                  op: {
+                    name: "eq",
+                    args: [ref("tier"), { literal: "silver" }],
+                  },
+                },
+              ],
+            },
+          },
+          output: { literal: { approve: true, limit: 2500 } },
+        },
+      ],
+    },
+  };
 }
 
 test.describe.configure({ mode: "parallel" });
@@ -2059,8 +2127,27 @@ const scenes: Record<string, Scene> = {
     await shot("161-decision-table-form", { tabs: 0, end: ".sd-panes" });
   },
   async "decision-grid"({ page, shot }) {
-    const { grid } = await openPaymentGrid(page);
-    await expect(grid.cell(3, 0)).toBeVisible();
+    // A published table with a fourth rule; rule 3, a formula, matches and
+    // Output shows the result as JSON.
+    const details = await openStepFixture(page, ordersWorkflow, async (p) => {
+      const result = await connected(p);
+      await withLanguageFeatures(p);
+      return result;
+    });
+    await localAuthoring(page);
+    await routeTables(page, [withSilverRule(paymentPolicy("1.2.0"))]);
+    await details.open("score");
+    const grid = new DecisionGridPage(page);
+    await grid.open();
+    await expect(grid.cell(4, 0)).toBeVisible();
+    const panes = new TablePanes(page);
+    await panes.show("Input");
+    await panes.type({ amount: "6000", tier: "silver" });
+    await panes.show("Output");
+    await panes.output.getByRole("radio", { name: "JSON" }).click();
+    await expect(panes.checked).toBeVisible();
+    await panes.show("Parameters");
+    await grid.cell(3, 2).click();
     await shot("162-decision-grid", { tabs: 0, end: ".sd-panes" });
   },
   async "decision-grid-cell-edit"({ page, shot }) {
@@ -2073,20 +2160,15 @@ const scenes: Record<string, Scene> = {
     await shot("163-decision-grid-cell-edit", { tabs: 0, end: ".sd-panes" });
   },
   async "decision-grid-try-input"({ page, shot }) {
-    await keepPaymentDraft(page);
-    const details = await openStepFixture(page, draftWorkflow);
-    await localAuthoring(page);
-    await details.open("score");
-    const grid = new DecisionGridPage(page);
-    await grid.open();
-    await grid.root.getByRole("button", { name: "Try an input" }).click();
-    const panel = grid.root.getByRole("region", { name: "Try an input" });
-    await panel.getByLabel("amount").fill("2000");
-    await panel.getByLabel("tier").fill("gold");
-    await expect(
-      panel.locator(".pill", { hasText: "Checked by Weave" }),
-    ).toBeVisible();
-    await page.evaluate(() => (document.activeElement as HTMLElement).blur());
+    // A draft, the step's test data in Input, rule 1 matched in Output, and
+    // the cursor on rule 2's amount.
+    const { grid, panes } = await openTriedDraft(page, {
+      Amount: "2000",
+      "Tier (optional)": "gold",
+    });
+    await expect(panes.cards.first()).toContainText("Rule 1 · big-gold");
+    await panes.show("Parameters");
+    await grid.cell(1, 1).click();
     await shot("164-decision-grid-try-input", { tabs: 0, end: ".sd-panes" });
   },
   async "decision-grid-publish"({ page, shot }) {
@@ -2116,7 +2198,11 @@ const scenes: Record<string, Scene> = {
     await shot("166-decision-publish-blocked", { tabs: 0 });
   },
   async "decision-grid-problems"({ page, shot }) {
-    const { grid } = await openPaymentGrid(page);
+    const { grid } = await openTriedDraft(page, {
+      Amount: "2000",
+      "Tier (optional)": "gold",
+    });
+    await new TablePanes(page).show("Parameters");
     await grid.edit(0, 1, ">> 1000");
     await grid.edit(1, 0, "big-gold");
     await expect(grid.root.locator(".dg-problems")).toContainText(
@@ -2136,20 +2222,18 @@ const scenes: Record<string, Scene> = {
     await shot("168-decision-grid-column-dialog", { tabs: 2 });
   },
   async "decision-grid-exactly-one"({ page, shot }) {
-    await keepPaymentDraft(page);
-    const details = await openStepFixture(page, draftWorkflow);
-    await localAuthoring(page);
-    await details.open("score");
-    const grid = new DecisionGridPage(page);
-    await grid.open();
-    await grid.root.getByRole("button", { name: "Try an input" }).click();
-    const panel = grid.root.getByRole("region", { name: "Try an input" });
+    const { grid, panes } = await openTriedDraft(page, {
+      Amount: "6000",
+      "Tier (optional)": "gold",
+    });
+    await panes.show("Parameters");
     await grid.policy("Exactly one");
-    await panel.getByLabel("amount").fill("6000");
-    await panel.getByLabel("tier").fill("gold");
-    await expect(panel).toContainText(
+    await panes.show("Output");
+    await expect(panes.output.locator(".dg-callout")).toContainText(
       "Two rules matched but the policy allows exactly one (rules 1 and 3).",
     );
+    await expect(panes.checked).toBeVisible();
+    await panes.show("Parameters");
     await page.evaluate(() => (document.activeElement as HTMLElement).blur());
     await shot("169-decision-grid-exactly-one", { tabs: 0, end: ".sd-panes" });
   },

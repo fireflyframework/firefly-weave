@@ -114,7 +114,7 @@ for (const size of sizes)
         grid.root.getByRole("button", { name: "Back to the step" }),
       ).toBeFocused();
       await expect(details.dialog).toBeVisible();
-      await expect(grid.root).toContainText("payment-policy 1.2.0 · published");
+      await grid.expectTable("1.2.0", "Published");
     });
 
     test("Tab leaves the grid from its last cell", async ({ page }) => {
@@ -122,10 +122,11 @@ for (const size of sizes)
       await grid.cell(3, 4).click();
       await page.keyboard.press("Tab");
       await expect(grid.root.locator(".dg-add-rule")).toBeFocused();
+      // Back from the first cell to the control before the grid.
       await grid.cell(0, 0).click();
       await page.keyboard.press("Shift+Tab");
       await expect(
-        grid.root.getByRole("button", { name: "Add result column" }),
+        grid.root.getByRole("combobox", { name: "When several rules match" }),
       ).toBeFocused();
     });
 
@@ -145,13 +146,13 @@ for (const size of sizes)
         );
       });
       await expect(grid.cell(3, 1)).toHaveText(">= 7");
-      await expect(grid.cell(4, 0)).toHaveText("Otherwise (no rule matches)");
+      await expect(grid.cell(4, 0)).toHaveText("Otherwise");
       await expect(grid.cell(2, 2)).toContainText("silver");
       await expect(grid.cell(3, 4)).toHaveText("30");
       await grid.cell(1, 1).focus();
       await page.keyboard.press("ControlOrMeta+z");
       await expect(grid.cell(1, 1)).toHaveText("<= 1000");
-      await expect(grid.cell(3, 0)).toHaveText("Otherwise (no rule matches)");
+      await expect(grid.cell(3, 0)).toHaveText("Otherwise");
       await expect(grid.cell(2, 1)).toContainText("input.amount > 5000");
     });
 
@@ -161,12 +162,12 @@ for (const size of sizes)
       const { details, grid } = await openPaymentGrid(page);
       await grid.edit(0, 1, "> 10");
       await grid.edit(1, 1, "<= 20");
-      await expect(grid.root).toContainText("1.2.1 · on this computer");
+      await grid.expectTable("1.2.1", "Draft");
       await grid.cell(1, 1).focus();
       await page.keyboard.press("ControlOrMeta+z");
       await expect(grid.cell(1, 1)).toHaveText("<= 1000");
       await expect(grid.cell(0, 1)).toHaveText("> 10");
-      await expect(grid.root).toContainText("1.2.1 · on this computer");
+      await grid.expectTable("1.2.1", "Draft");
       await grid.back();
       await details.close();
       expect(parse(await sourceText(page)).spec.steps[0].uses).toBe(

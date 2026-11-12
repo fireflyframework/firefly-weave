@@ -289,6 +289,19 @@ export interface ParameterRegistration {
 export interface ParameterComponent {
   /** Provided with input.required(). */
   readonly context: Signal<NdvContext>;
+  /**
+   * A wide component may fill the Input and Output panes itself (the decision
+   * table's test values and result). Step details draws each in its pane and
+   * gives it `state` as its `state` input; Fold in a pane's header emits `fold`.
+   */
+  readonly panes?: ParameterPanes;
+  /** True while the component shows its own primary action: Execute step turns secondary. */
+  readonly ownsPrimary?: Signal<boolean>;
+}
+export interface ParameterPanes {
+  input: Type<unknown>;
+  output: Type<unknown>;
+  state: unknown;
 }
 
 export type DataSource =
