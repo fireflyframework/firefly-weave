@@ -28,7 +28,13 @@ from firefly_weave.access.scheduler import next_scope
 from firefly_weave.connectors.broker import BrokerConnectionConfig
 from firefly_weave.connectors.kafka_transport import BrokerClients, BrokerOwner
 from firefly_weave.operations.execution import ReservedSlots
-from firefly_weave.operations.loop_health import TRAVERSAL_SECONDS, LoopHealth, track
+from firefly_weave.operations.loop_health import (
+    TRAVERSAL_SECONDS,
+    LoopHealth,
+    raise_if_cancelled,
+    stop_task,
+    track,
+)
 from firefly_weave.persistence.migrations import check_schema
 from firefly_weave.persistence.uow import UnitOfWork
 from firefly_weave.settings import Settings
@@ -183,27 +189,30 @@ class KafkaLoop:
             self.health.started("kafka_loop")
             try:
                 healthy = await self.cycle()
-            except Exception:
+            except Exception as error:
+                raise_if_cancelled(error)
                 logging.getLogger(__name__).error("Broker traversal failed; retrying bounded turn")
                 healthy = False
             if healthy:
                 self.health.succeeded("kafka_loop")
             else:
                 self.health.failed("kafka_loop")
+            raise_if_cancelled()
             await asyncio.sleep(TRAVERSAL_SECONDS)
 
     async def close(self) -> None:
-        if self.task:
-            self.task.cancel()
-            with suppress(asyncio.CancelledError):
-                await self.task
-            self.task = None
-        self.health.running("kafka_loop", False)
-        turns = tuple(self.turns)
-        for task in turns:
-            task.cancel()
-        if turns:
-            await asyncio.gather(*turns, return_exceptions=True)
-        if self.engine:
-            await self.engine.dispose()
-            self.engine = None
+        try:
+            await stop_task(self.task, "kafka_loop", self.settings.shutdown_timeout_seconds)
+        finally:
+            # A task still running after its bound stays owned: a later close() stops it again, open() starts none.
+            if self.task is not None and self.task.done():
+                self.task = None
+            self.health.running("kafka_loop", False)
+            turns = tuple(self.turns)
+            for turn in turns:
+                turn.cancel()
+            if turns:
+                await asyncio.gather(*turns, return_exceptions=True)
+            if self.engine:
+                await self.engine.dispose()
+                self.engine = None

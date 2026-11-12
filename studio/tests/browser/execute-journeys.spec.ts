@@ -21,13 +21,18 @@ SPDX-License-Identifier: Apache-2.0
 import { expect, test, type Page } from "@playwright/test";
 import { CanvasPage, openNewWorkflow } from "./canvas-po";
 import {
+  breakAt,
   executions,
   moreWays,
   openExecuteWorkflow,
   pinSample,
   shownExecute,
 } from "./execute-po";
-import { hasPython, localAuthoring } from "./local-authoring";
+import {
+  hasPython,
+  localAuthoring,
+  stopLocalAuthoring,
+} from "./local-authoring";
 import { sizes, StepDetailsPage, yamlFile } from "./step-details-po";
 import { outputPane } from "./test-data-po";
 
@@ -178,8 +183,7 @@ test.describe("every way to execute on one workflow", () => {
     );
     await details.close();
     // 6. A breakpoint: Execute workflow pauses before rows; Continue finishes.
-    await new CanvasPage(page).tileBody("rows").click();
-    await page.keyboard.press("F9");
+    await breakAt(page, new CanvasPage(page).tileBody("rows"));
     await executeInBar(page).click();
     await expect(log.locator(".run-log-status")).toHaveText(
       "Paused before rows",
@@ -187,5 +191,28 @@ test.describe("every way to execute on one workflow", () => {
     await log.getByRole("button", { name: "Continue", exact: true }).click();
     await expect(log.locator(".run-log-status")).toHaveText(/^Completed/);
     expect(executions(calls).length).toBeGreaterThanOrEqual(5);
+  });
+});
+
+test.describe("on a slow machine", () => {
+  test.use({ viewport: { width: 1440, height: 900 } });
+  test.afterEach(() => {
+    delete process.env["WEAVE_TEST_HELPER_START_DELAY"];
+    stopLocalAuthoring();
+  });
+
+  test("the local host's start isn't spent waiting for the first step's answer", async ({
+    page,
+  }) => {
+    // Longer than an expectation waits: the host must be up before the page asks.
+    stopLocalAuthoring();
+    process.env["WEAVE_TEST_HELPER_START_DELAY"] = "6";
+    const { details } = await openExecuteWorkflow(page, JOURNEY);
+    await details.open("shape");
+    await (await shownExecute(details)).click();
+    const pane = await outputPane(details);
+    await expect(pane.locator(".pane-notice")).toContainText(
+      "Step lookup needs test data.",
+    );
   });
 });
