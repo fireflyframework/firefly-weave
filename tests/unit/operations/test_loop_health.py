@@ -459,7 +459,7 @@ async def test_outbox_and_broker_turn_failures_fail_the_next_cycle(monkeypatch):
     monkeypatch.setattr(outbox_loop, "reserve", lambda count: count)
     monkeypatch.setattr(outbox_loop, "release", lambda count: None)
     outbox = OutboxLoop(
-        SimpleNamespace(),  # type: ignore[arg-type]
+        SimpleNamespace(shutdown_timeout_seconds=1.0),  # type: ignore[arg-type]
         None,  # type: ignore[arg-type]
         SimpleNamespace(operational=lambda: True, _dispatch=failing_dispatch),  # type: ignore[arg-type]
     )
@@ -740,3 +740,97 @@ async def test_cancellation_marks_the_loop_down_and_propagates(monkeypatch):
     assert {health.snapshot(name).state for name in ("recovery_loop", "schedules")} == {"down"}
     await loop.close()
     assert health.snapshot("recovery_loop").state == "down"
+
+
+async def test_an_error_that_hides_a_pending_cancellation_is_raised_as_that_cancellation():
+    from firefly_weave.operations.loop_health import raise_if_cancelled
+
+    entered = asyncio.Event()
+    failures = []
+    hiding = True
+
+    async def unit():
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            if not hiding:
+                raise
+            # A rollback that fails while the cancellation unwinds replaces it.
+            raise RuntimeError("connection is closed") from None
+
+    async def loop():
+        while True:
+            try:
+                await unit()
+            except Exception as error:
+                raise_if_cancelled(error)
+                failures.append(error)
+
+    task = asyncio.create_task(loop())
+    try:
+        await entered.wait()
+        task.cancel()
+        finished, _ = await asyncio.wait({task}, timeout=2)
+        assert task in finished and task.cancelled()
+        assert failures == []
+    finally:
+        # Let a loop that outlived its cancellation end, so a failure here never hangs the run.
+        hiding = False
+        task.cancel()
+        await asyncio.wait({task}, timeout=2)
+
+
+async def test_an_error_without_a_pending_cancellation_stays_the_error():
+    from firefly_weave.operations.loop_health import raise_if_cancelled
+
+    error = RuntimeError("relation is busy")
+    raise_if_cancelled(error)
+    assert asyncio.current_task().cancelling() == 0  # type: ignore[union-attr]
+
+
+async def test_an_error_that_hides_a_budget_expiry_is_still_the_budget_timeout():
+    from firefly_weave.operations.loop_health import raise_if_cancelled
+
+    async def unit():
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            raise RuntimeError("connection is closed") from None
+
+    with pytest.raises(TimeoutError):
+        async with asyncio.timeout(0.01):
+            try:
+                await unit()
+            except Exception as error:
+                raise_if_cancelled(error)
+                raise
+    assert asyncio.current_task().cancelling() == 0  # type: ignore[union-attr]
+
+
+async def test_stopping_a_loop_never_swallows_the_stopper_s_own_cancellation():
+    from firefly_weave.operations.loop_health import stop_task
+
+    released, started, cancelled = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    async def stubborn():
+        started.set()
+        while not released.is_set():
+            try:
+                await released.wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                continue
+
+    loop = asyncio.create_task(stubborn())
+    await started.wait()
+    stopper = asyncio.create_task(stop_task(loop, "provider_loop", 30))
+    # The loop saw the stopper's cancellation, so the stopper now waits for it to end.
+    await cancelled.wait()
+    stopper.cancel()
+    try:
+        finished, _ = await asyncio.wait({stopper}, timeout=2)
+        assert stopper in finished and stopper.cancelled()
+    finally:
+        released.set()
+        await asyncio.wait({loop, stopper}, timeout=2)

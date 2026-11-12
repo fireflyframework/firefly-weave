@@ -34,6 +34,7 @@ from firefly_weave.contracts.providers import ProviderReceipt
 from firefly_weave.contracts.runtime import StartRunRequest
 from firefly_weave.definitions.models import CatalogError, capacity_rejected
 from firefly_weave.operations.facts import RunStartFacts
+from firefly_weave.operations.loop_health import raise_if_cancelled
 from firefly_weave.providers.repository import ProviderRepository
 from firefly_weave.providers.service import ProviderIngressService
 from firefly_weave.runtime.repository import SCOPE
@@ -149,7 +150,9 @@ class ProviderDispatcher:
         for row in rows:
             try:
                 await self.dispatch_one(authority.scope, row["receipt_id"])
-            except Exception:
+            except Exception as error:
+                # A shutdown that a rollback error hid is not a provider failure: stop without a cooldown.
+                raise_if_cancelled(error)
                 # Retryable rollback receives a durable cooldown so older poison rows cannot pin traversal.
                 async with (
                     asyncio.timeout(2),
