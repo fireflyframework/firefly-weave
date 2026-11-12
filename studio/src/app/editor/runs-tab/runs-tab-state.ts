@@ -97,6 +97,8 @@ export type RunsTabStatus =
 export const LIST_INTERVAL_MS = 5000;
 export const FOLLOW_INTERVAL_MS = 2000;
 export const FOLLOW_LIMIT_MS = 30 * 60_000;
+/** The longest wait a Retry-After can ask for. */
+export const MAX_RETRY_AFTER_MS = 5 * 60_000;
 const FACTS_PAGE = 500;
 const OUTPUT_PAGE = 200;
 const UNREADABLE = {
@@ -399,13 +401,17 @@ export class RunsTabState {
     this.state.set("error");
     const wait = error instanceof ApiError ? error.retryAfter : undefined;
     if (failed.status === 429 && wait !== undefined) {
-      // The platform said when to ask again: no request before then.
+      // The platform said when to ask again: no request before then, and
+      // never more than 5 minutes (a larger delay overflows the timer).
       this.lister.stop();
       this.clearRetry();
-      this.retryTimer = this.env.setTimeout(() => {
-        this.retryTimer = null;
-        if (!this.destroyed) this.lister.start(this.env.visible());
-      }, wait * 1000);
+      this.retryTimer = this.env.setTimeout(
+        () => {
+          this.retryTimer = null;
+          if (!this.destroyed) this.lister.start(this.env.visible());
+        },
+        Math.min(wait * 1000, MAX_RETRY_AFTER_MS),
+      );
     }
   }
   private setItems(

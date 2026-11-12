@@ -464,6 +464,26 @@ describe("the list", () => {
     expect(platform.count(LIST)).toBe(2);
     expect(state.state()).toBe("error");
   });
+
+  it("waits at most 5 minutes, whatever Retry-After asks", async () => {
+    const { platform, env, state } = setup();
+    platform.fail = (path) =>
+      path.includes(LIST)
+        ? {
+            status: 429,
+            body: { code: "WV-REQUEST-CAPACITY", message: "Busy." },
+            retryAfter: 10 ** 12,
+          }
+        : null;
+    state.start();
+    await env.advance(0);
+    platform.fail = null;
+    await env.advance(5 * 60_000 - 1);
+    expect(platform.count(LIST)).toBe(1);
+    await env.advance(1);
+    expect(platform.count(LIST)).toBe(2);
+    expect(state.state()).toBe("ready");
+  });
 });
 
 describe("the chosen run", () => {
