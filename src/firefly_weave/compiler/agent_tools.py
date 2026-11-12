@@ -32,13 +32,13 @@ from typing import Final, Literal, Protocol, cast
 
 from firefly_weave.compiler.calls import CallGraph, check_call_target
 from firefly_weave.compiler.catalog import CatalogResource, CatalogSnapshot, ResourceKind
+from firefly_weave.compiler.ir import ToolTargetKind
 from firefly_weave.contracts.agent_turns import TURN_TASK_TYPE
 from firefly_weave.contracts.agentic import TASK_TYPE as GENERATE_TASK_TYPE
 from firefly_weave.contracts.definitions import TOOL_TARGET_FIELDS, SideEffect
 from firefly_weave.contracts.limits import Limits
 from firefly_weave.contracts.values import JsonObject
 
-type ToolTargetKind = Literal["action", "workflow", "human"]
 type Approval = Literal["auto", "required"]
 
 # Tasks that run a model: a tool can't run one, so a model never starts another model through a tool.

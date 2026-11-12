@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import copy
 import re
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from functools import lru_cache
 from typing import Final, Protocol, cast
 
@@ -28,18 +28,25 @@ from firefly_weave.compiler.agent_tools import (
     TOOL_RESOLVERS,
     AgentAnalysis,
     ResolvedTool,
-    ToolTargetKind,
     default_approval,
     model_parameters,
     tool_target,
 )
 from firefly_weave.compiler.calls import workflow_steps
 from firefly_weave.compiler.catalog import FrozenDocument
+from firefly_weave.compiler.ir import ToolTargetKind
 from firefly_weave.compiler.loops import LoopScope
 from firefly_weave.compiler.schema_profile import SchemaLimits
 from firefly_weave.compiler.source_map import pointer_child
 from firefly_weave.compiler.typecheck import TypeCheckLimit, check_compatibility
-from firefly_weave.contracts.agent_turns import MAX_TURN_TEXT, TRANSCRIPT_BYTES, TURN_TASK_TYPE, wire_json
+from firefly_weave.contracts.agent_turns import (
+    MAX_TURN_TEXT,
+    TRANSCRIPT_BYTES,
+    TURN_RULES,
+    TURN_TASK_TYPE,
+    turn_output_schema,
+    wire_json,
+)
 from firefly_weave.contracts.agentic import output_schema
 from firefly_weave.contracts.definitions import RESERVED_TOOL_NAME, TOOL_TARGET_FIELDS, load_definition
 from firefly_weave.contracts.values import JsonObject, JsonValue
@@ -100,6 +107,8 @@ class AgentChecks(AgentAnalysis, Protocol):
     def expression(
         self, expression: JsonObject, path: str, visible: dict[str, JsonObject], target: JsonObject | None = None
     ) -> JsonObject: ...
+
+    def guard(self, path: str, purpose: str, schema: JsonObject) -> None: ...
 
 
 @lru_cache(maxsize=1)
@@ -222,8 +231,12 @@ def agent_expressions(step: JsonObject, path: str) -> Iterator[tuple[JsonObject,
 
 def analyze_agent(
     checks: AgentChecks, step: JsonObject, location: str, visible: dict[str, JsonObject], scope: tuple[str, ...]
-) -> JsonObject:
-    """Check one AI agent step; returns its output schema ({} when its profile is missing)."""
+) -> tuple[JsonObject, JsonObject]:
+    """Check one AI agent step; returns its output schema ({} when its profile is missing) and its resolved tools.
+
+    Each resolved tool is the compiled tool as lowering writes it, with its model-visible ``parameters`` schema in
+    place of the schema table reference.
+    """
     if checks.transaction is not None:
         from firefly_weave.compiler.transactions import RULE_CODES, RULE_MESSAGES
 
@@ -247,9 +260,12 @@ def analyze_agent(
     elif step["connection"] not in checks.connections:
         checks.issue("CONNECTION", location + "/connection")
     tools = cast(list[JsonObject], step["tools"])
-    total = 0
+    total, compiled = 0, []
     for index, tool in enumerate(tools):
-        total += _tool(checks, step, tool, f"{location}/tools/{index}", visible)
+        size, resolved = _tool(checks, step, tool, f"{location}/tools/{index}", visible)
+        total += size
+        if resolved is not None:
+            compiled.append(resolved)
     if total > MAX_ALL_TOOL_PARAMETERS_BYTES:
         checks.issue("AGENT_TOOL_SCHEMA", location + "/tools", message=MESSAGES["AGENT_TOOL_SCHEMA"])
     _memory(checks, step, location, scope)
@@ -268,7 +284,12 @@ def analyze_agent(
         running *= loop.concurrency
     if running * TRANSCRIPT_BYTES > AGENT_STATE_WARNING_BYTES:
         checks.issue("AGENT_STATE", location, severity="warning", message=MESSAGES["AGENT_STATE"])
-    return agent_output_schema(profile) if profile is not None else {}
+    if profile is None:
+        return {}, {"tools": cast(JsonValue, compiled)}
+    output = agent_output_schema(profile)
+    checks.guard(location, "agent_turn_output", turn_output_schema(cast(JsonObject, profile["outputSchema"])))
+    checks.guard(location, "agent_output", output)
+    return output, {"tools": cast(JsonValue, compiled)}
 
 
 def secret_input(checks: AgentChecks, inferred: JsonObject, path: str) -> None:
@@ -277,8 +298,10 @@ def secret_input(checks: AgentChecks, inferred: JsonObject, path: str) -> None:
         checks.issue("AI_SECRET_INPUT", path, message=MESSAGES["AI_SECRET_INPUT"])
 
 
-def _tool(checks: AgentChecks, step: JsonObject, tool: JsonObject, path: str, visible: dict[str, JsonObject]) -> int:
-    """Check one tool; returns the size of the parameters the model sees (0 when it doesn't resolve)."""
+def _tool(
+    checks: AgentChecks, step: JsonObject, tool: JsonObject, path: str, visible: dict[str, JsonObject]
+) -> tuple[int, JsonObject | None]:
+    """Check one tool; returns the size of the parameters the model sees and the compiled tool (none unresolved)."""
     target = cast(ToolTargetKind, tool_target(tool))
     resolved = TOOL_RESOLVERS[target].resolve(tool, path, checks)
     fixed = cast(JsonObject, cast(JsonObject, tool.get("fixed", {"object": {}}))["object"])
@@ -292,11 +315,31 @@ def _tool(checks: AgentChecks, step: JsonObject, tool: JsonObject, path: str, vi
     if (explicit or default) == "required" and "review" not in tool and "review" not in step:
         checks.issue("AGENT_REVIEW", path, message=MESSAGES["AGENT_REVIEW"])
     if resolved is None:
-        return 0
-    size = len(wire_json(model_parameters(resolved.parameters, list(fixed))).encode())
+        return 0, None
+    parameters = model_parameters(resolved.parameters, list(fixed))
+    size = len(wire_json(parameters).encode())
     if size > MAX_TOOL_PARAMETERS_BYTES:
         checks.issue("AGENT_TOOL_SCHEMA", path, message=MESSAGES["AGENT_TOOL_SCHEMA"])
-    return size
+    checks.guard(path, "agent_tool_arguments", parameters)
+    approval = explicit or default
+    compiled: JsonObject = {
+        "name": tool["name"],
+        "description": tool["description"],
+        "parameters": parameters,
+        "target": target,
+        "approval": approval,
+    }
+    if resolved.dependency is not None:
+        compiled["dependency"] = resolved.dependency
+    if resolved.connection is not None:
+        compiled["connection"] = resolved.connection
+    for name in ("human", "fixed"):
+        if name in tool:
+            compiled[name] = tool[name]
+    review = tool.get("review", step.get("review"))
+    if approval == "required" and review is not None:
+        compiled["review"] = review
+    return size, compiled
 
 
 def _fixed(
@@ -364,3 +407,30 @@ def _in_parallel(first: Sequence[str], second: Sequence[str]) -> bool:
                 name.startswith("case:") or name == "default" for name in (first[position], second[position])
             )
     return False
+
+
+def lower_agent(
+    value: JsonObject, facts: JsonObject, profile: JsonObject, schema: Callable[[JsonObject], str]
+) -> JsonObject:
+    """The fields of an agent's IR node beside its identity: its turn, its pinned tools, memory, limits and rules.
+
+    ``schema`` stores a schema in the artifact's schema table and returns its digest.
+    """
+    tools = []
+    for tool in cast(list[JsonObject], facts["tools"]):
+        lowered = {key: item for key, item in tool.items() if key != "parameters"}
+        lowered["parametersRef"] = schema(cast(JsonObject, tool["parameters"]))
+        tools.append(lowered)
+    node: JsonObject = {
+        "connection": value["connection"],
+        "llmProfile": profile,
+        "instructions": value["instructions"],
+        "prompt": value["prompt"],
+        "tools": cast(JsonValue, tools),
+        "memory": value["memory"],
+        "limits": value["limits"],
+        "rules": TURN_RULES,
+    }
+    if "context" in value:
+        node["context"] = value["context"]
+    return node

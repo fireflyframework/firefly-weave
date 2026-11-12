@@ -194,13 +194,6 @@ def workflow(*steps, profile=None):
     }
 
 
-@pytest.fixture(autouse=True)
-def agents_compiled(monkeypatch):
-    import firefly_weave.compiler.language_support as support
-
-    monkeypatch.setattr(support, "COMPILED_FEATURES", support.COMPILED_FEATURES | {"ai.agent"})
-
-
 def diagnostics(document, snapshot=None):
     result = analyze(parse_source(document, format="object"), snapshot or catalog())
     return [(item.code, item.severity, item.path) for item in result.diagnostics]

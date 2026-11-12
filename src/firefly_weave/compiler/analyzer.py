@@ -220,6 +220,8 @@ class AnalyzedStep:
     reachable: bool = True
     # How a step inside a transaction is undone: mode, hold, and each phase with the reference it uses.
     participation: FrozenDocument | None = None
+    # An AI agent's compiled tools, as lowering writes them.
+    agent: FrozenDocument | None = None
 
 
 @dataclass(frozen=True)
@@ -1004,6 +1006,7 @@ class _Analyzer:
             completes = kind != "fail"
             # The side effect of the action an action or AI step runs, once the catalog resolves it.
             side_effect: JsonValue = None
+            agent: FrozenDocument | None = None
             if kind == "transform":
                 output = self.expression(cast(JsonObject, step["value"]), location + "/value", visible)
                 self.guard(location + "/value", "transform_output", output)
@@ -1038,7 +1041,8 @@ class _Analyzer:
                 if action_spec is None and step["connection"] not in self.connections:
                     self.issue("CONNECTION", location + "/connection")
             elif kind == "agent":
-                output = analyze_agent(self, step, location, visible, scope)
+                output, facts = analyze_agent(self, step, location, visible, scope)
+                agent = FrozenDocument.from_value(facts)
             elif kind == "action":
                 resource = self.resolve("Action", cast(str, step["uses"]), location + "/uses")
                 action_spec = cast(JsonObject, resource.definition.value["spec"]) if resource else None
@@ -1166,6 +1170,7 @@ class _Analyzer:
                     completes,
                     reachable,
                     participation,
+                    agent,
                 )
             )
             self.kinds[identifier] = kind

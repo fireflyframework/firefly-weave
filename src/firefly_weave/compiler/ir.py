@@ -19,7 +19,7 @@
 from __future__ import annotations
 
 from collections import deque
-from collections.abc import Collection
+from collections.abc import Callable, Collection, Mapping
 from typing import Annotated, Literal, cast, get_args
 
 from pydantic import AfterValidator, Field, model_validator
@@ -33,6 +33,9 @@ from firefly_weave.contracts import language_features
 from firefly_weave.contracts.definitions import (
     ActionDefinition,
     ActionSpec,
+    AgentHumanTool,
+    AgentLimits,
+    AgentReview,
     ArrayExpression,
     ConnectionRequirement,
     ConnectorDefinition,
@@ -48,6 +51,7 @@ from firefly_weave.contracts.definitions import (
     PositiveInt,
     ResourceName,
     SideEffect,
+    ToolName,
     UndoRetryPolicy,
     WorkerImplementation,
     WorkflowSpec,
@@ -61,6 +65,9 @@ from firefly_weave.contracts.values import MAX_SAFE_INTEGER, JsonObject, JsonObj
 
 type Digest = Annotated[UnicodeString, Field(pattern=r"^[a-f0-9]{64}$")]
 type NodeId = Annotated[UnicodeString, Field(min_length=1)]
+# What an AI agent tool runs. Each kind has one compile-time resolver and one runtime target, and nothing else
+# compares it.
+type ToolTargetKind = Literal["action", "workflow", "human"]
 IR_VERSION = "weave/ir-v1alpha1"
 HUMAN_IR_VERSION = "weave/ir-v1alpha2"
 COMPARISON_IR_VERSION = "weave/ir-v1alpha3"
@@ -110,6 +117,9 @@ class Guard(ContractModel):
         "undo_input",
         "workflow_input",
         "workflow_output",
+        "agent_turn_output",
+        "agent_tool_arguments",
+        "agent_output",
     ]
     schema_ref: Digest = Field(alias="schemaRef")
 
@@ -333,10 +343,65 @@ class JoinNode(Node):
     completes: bool
 
 
+class AgentToolIR(ContractModel):
+    """One tool an AI agent may call, resolved at compile time: what the model sees and what the tool runs."""
+
+    name: ToolName
+    description: Annotated[UnicodeString, Field(min_length=1, max_length=1024)]
+    # The model-visible parameters in the schema table: the target's input without the fixed fields.
+    parameters_ref: Digest = Field(alias="parametersRef")
+    target: ToolTargetKind
+    # The pinned action's or callee workflow's digest; none for a person.
+    dependency: Digest | None = Field(default=None, exclude_if=lambda value: value is None)
+    connection: ResourceName | None = Field(default=None, exclude_if=lambda value: value is None)
+    human: AgentHumanTool | None = Field(default=None, exclude_if=lambda value: value is None)
+    fixed: ObjectExpression | None = Field(default=None, exclude_if=lambda value: value is None)
+    # Resolved, never omitted: every tool that changes data is required.
+    approval: Literal["auto", "required"]
+    # Who reviews a required call: the tool's own review, else the step's.
+    review: AgentReview | None = Field(default=None, exclude_if=lambda value: value is None)
+
+    @model_validator(mode="after")
+    def target_fields(self) -> AgentToolIR:
+        if (self.target == "human") != (self.human is not None) or (self.target == "human") == (
+            self.dependency is not None
+        ):
+            raise ValueError("A tool's target and its pinned fields disagree")
+        if self.approval == "required" and self.review is None:
+            raise ValueError("A reviewed tool names its reviewers")
+        return self
+
+
+class AgentMemoryIR(ContractModel):
+    scope: Literal["step", "run", "conversation"]
+    key: ResourceName | Expression | None = Field(default=None, exclude_if=lambda value: value is None)
+    window: int = Field(ge=2, le=200)
+    ttl_seconds: PositiveInt | None = Field(default=None, alias="ttlSeconds", exclude_if=lambda value: value is None)
+    context_tokens: int = Field(ge=512, le=262144, alias="contextTokens")
+
+
+class AgentNode(Node):
+    """An AI agent: the kernel runs its loop, one turn task on ``dependency`` (the turn action) at a time."""
+
+    kind: Literal["agent"]
+    dependency: Digest
+    connection: ResourceName
+    llm_profile: LLMProfile = Field(alias="llmProfile")
+    instructions: Expression
+    prompt: Expression
+    context: Expression | None = Field(default=None, exclude_if=lambda value: value is None)
+    tools: list[AgentToolIR] = Field(max_length=32)
+    memory: AgentMemoryIR
+    limits: AgentLimits
+    # The version of the rules that shape each turn input; a runtime refuses rules it doesn't implement.
+    rules: PositiveInt
+
+
 type IRNode = Annotated[
     StartNode
     | EndNode
     | ActionNode
+    | AgentNode
     | DecisionTableNode
     | TransformNode
     | WaitNode
@@ -537,6 +602,7 @@ class IRGraph(ContractModel):
                 (
                     StartNode,
                     ActionNode,
+                    AgentNode,
                     DecisionTableNode,
                     TransformNode,
                     WaitNode,
@@ -654,6 +720,19 @@ def workflow_requirements(graph: IRGraph) -> tuple[str, list[LanguageFeature]]:
             if node.txn is not None:
                 features.add("flow.transaction")
                 expressions.extend(phase.input for phase in node.txn.phases.values())
+        elif isinstance(node, AgentNode):
+            level = max(level, 2)
+            features.add("ai.agent")
+            expressions.extend((node.instructions, node.prompt))
+            if node.context is not None:
+                expressions.append(node.context)
+            if not isinstance(node.memory.key, (str, type(None))):
+                expressions.append(node.memory.key)
+            for tool in node.tools:
+                if tool.target in language_features.TOOL_TARGET_FEATURES:
+                    features.add(language_features.TOOL_TARGET_FEATURES[tool.target])
+                if tool.fixed is not None:
+                    expressions.append(tool.fixed)
         elif isinstance(node, HumanTaskNode):
             level = max(level, 1)
             expressions.extend((node.title, node.context))
@@ -931,6 +1010,7 @@ def _validate_dependency_closure(executable: ExecutableBase) -> None:
         actions = {
             dependency.digest: definitions[key] for key, dependency in resources.items() if dependency.kind == "Action"
         }
+        workflows = {dependency.digest for dependency in resources.values() if dependency.kind == "Workflow"}
         for node in executable.graph.nodes:
             if isinstance(node, (ActionNode, CallWorkflowNode)) and node.txn is not None:
                 for phase in node.txn.phases.values():
@@ -939,6 +1019,8 @@ def _validate_dependency_closure(executable: ExecutableBase) -> None:
                         if not isinstance(undo_action, ActionDefinition):
                             raise ValueError("Unknown undo action dependency")
                         binding(phase.connection, undo_action.spec.connection, executable.connections)
+            if isinstance(node, AgentNode):
+                _validate_agent(node, actions, workflows, executable, binding)
             if isinstance(node, ActionNode):
                 locked_action = actions.get(node.dependency)
                 if not isinstance(locked_action, ActionDefinition):
@@ -980,6 +1062,36 @@ def _validate_dependency_closure(executable: ExecutableBase) -> None:
             if isinstance(children, list):
                 pending_schemas.extend(children)
         pending_schemas.extend(schema[key] for key in SCHEMA_SINGLE if key in schema)
+
+
+def _validate_agent(
+    node: AgentNode,
+    actions: Mapping[str, object],
+    workflows: set[str],
+    executable: WorkflowIR,
+    binding: Callable[[str | None, ConnectionRequirement | None, dict[str, ConnectionRequirement]], None],
+) -> None:
+    """An agent's turn and tools are pinned in the artifact, and run on connections it declares."""
+    from firefly_weave.compiler.agents import agent_output_schema, runs_turn_task
+
+    turn = actions.get(node.dependency)
+    if not isinstance(turn, ActionDefinition) or not runs_turn_task(turn.spec.model_dump(by_alias=True)):
+        raise ValueError("An AI agent runs the turn action")
+    binding(node.connection, turn.spec.connection, executable.connections)
+    for tool in node.tools:
+        if tool.parameters_ref not in executable.schemas:
+            raise ValueError("Unresolved AI agent tool parameters")
+        if tool.target == "action":
+            action = actions.get(cast(str, tool.dependency))
+            if not isinstance(action, ActionDefinition):
+                raise ValueError("Unknown AI agent tool action")
+            binding(tool.connection, action.spec.connection, executable.connections)
+        elif tool.target == "workflow" and tool.dependency not in workflows:
+            raise ValueError("Unknown AI agent tool workflow")
+    profile = node.llm_profile.model_dump(mode="json", by_alias=True)
+    guards = [guard for guard in executable.guards if guard.path == node.path and guard.purpose == "agent_output"]
+    if len(guards) != 1 or executable.schemas[guards[0].schema_ref] != agent_output_schema(profile):
+        raise ValueError("An AI agent's output requires its pinned profile's schema guard")
 
 
 type Executable = Annotated[WorkflowIR | ActionIR | ConnectorIR | DecisionTableIR, Field(discriminator="kind")]
