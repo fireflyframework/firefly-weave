@@ -118,9 +118,29 @@ jobs:
           cargo test --locked --manifest-path desktop/src-tauri/Cargo.toml
       - name: Build unsigned installers
         working-directory: desktop
+        env:
+          TARGET: ${{ matrix.target }}
+          BUNDLES: ${{ matrix.bundles }}
+        # On GitHub's macOS runners hdiutil sometimes finds a new disk image busy ("Resource busy") and
+        # stops Tauri's bundle_dmg.sh. Only that failure is built again, three attempts at most. --verbose
+        # prints the script's own output, which Tauri otherwise hides.
         run: |
           npm ci
-          npm run build -- --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
+          for attempt in 1 2 3; do
+            if npm run build -- --target "$TARGET" --bundles "$BUNDLES" --verbose 2>&1 | tee "$RUNNER_TEMP/installer-build.log"; then
+              exit 0
+            fi
+            grep -q "error running bundle_dmg.sh" "$RUNNER_TEMP/installer-build.log" || exit 1
+            [ "$attempt" -lt 3 ] || exit 1
+            echo "::warning::Bundling the DMG failed on attempt $attempt of 3; bundling it again"
+            # A failed attempt can leave its read-write image attached, and on disk beside the app, where the
+            # asset step would take it for a second installer.
+            for volume in /Volumes/dmg.*; do
+              if [ -d "$volume" ]; then hdiutil detach -force "$volume" || true; fi
+            done
+            rm -f "src-tauri/target/$TARGET/release/bundle/macos/"rw.*.dmg
+            sleep $((attempt * 10))
+          done
       - name: Verify macOS nested and outer bundle seals
         if: runner.os == 'macOS'
         run: |
