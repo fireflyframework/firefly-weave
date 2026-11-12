@@ -189,9 +189,19 @@ async function expectProblemsBeside(grid: DecisionGridPage) {
     (cell) => cell.y >= scroller.y + 63 && cell.bottom <= scroller.bottom + 0.5,
   );
   expect(shown.length, "body rows in view").toBeGreaterThanOrEqual(5);
+  // The list holds its head and its first three problems as drawn, and
+  // scrolls to the fourth.
   const list = await box(problems);
+  const head = await box(problems.locator(".dg-problems-head"));
+  const items = await boxes(problems.locator("li"));
+  const three =
+    head.height + items.slice(0, 3).reduce((sum, item) => sum + item.height, 0);
+  expect(
+    list.height,
+    "the list: its head and three rows",
+  ).toBeGreaterThanOrEqual(three);
   expect(list.height, "the list: its head and three rows").toBeLessThanOrEqual(
-    40 * 4 + 2.5,
+    three + 3.5,
   );
   expect(
     await problems.evaluate((e) => e.scrollHeight > e.clientHeight),
@@ -693,6 +703,7 @@ test.describe("Table view at 1440x900", () => {
     const { grid } = await openDraftGrid(page);
     const cell = grid.cell(1, 1);
     await cell.click();
+    await expect(cell).toHaveClass(/is-cursor/);
     expect(await after(cell, "box-shadow")).toContain(
       await tokenColor(page, "--focus"),
     );
