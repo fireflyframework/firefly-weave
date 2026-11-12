@@ -512,14 +512,19 @@ def keep_agent_guards(document: JsonValue, drafts: Sequence[JsonValue]) -> KeptG
         holders = list(matched)
         for tool in _tools(step):
             name, target = tool.get("name"), _tool_target(tool, connectors)
-            same = [(agent, old) for agent in matched for old in _tools(agent) if old.get("name") == name]
-            if not same and target is not None:
+            named = [(agent, old) for agent in matched for old in _tools(agent) if old.get("name") == name]
+            aimed: list[tuple[JsonObject, JsonObject]] = []
+            if target is not None and (not named or any(aims.get(id(old)) != target for _, old in named)):
+                # A tool that keeps a name but runs another target also answers to the draft tools of its target, so
+                # swapping names never moves a read tool's looser guards onto a tool that changes data.
                 found = [(agent, old) for agent in matched for old in _tools(agent) if aims.get(id(old)) == target]
-                same = found or targets.get(target, [])
-                holders += [agent for agent, _ in same]
-                if len({json.dumps(guards(agent, old), sort_keys=True) for agent, old in same}) > 1:
+                aimed = found or targets.get(target, [])
+                holders += [agent for agent, _ in aimed]
+                if not named and len({json.dumps(guards(agent, old), sort_keys=True) for agent, old in aimed}) > 1:
                     unclear.add(target)
                     continue
+            # The tools of the same target come first: their fixed arguments belong to the action.
+            same = list({id(old): (agent, old) for agent, old in [*aimed, *named]}.values())
             if same:
                 own = "review" in tool
                 had = [really(agent, old, own or all(agent is not held for held in matched)) for agent, old in same]

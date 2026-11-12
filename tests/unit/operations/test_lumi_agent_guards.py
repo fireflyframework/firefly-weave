@@ -516,6 +516,50 @@ def test_a_renamed_tool_whose_action_moves_to_another_version_keeps_its_guards()
     assert (kept["fixed"], kept["approval"], kept["review"]) == (CANCEL["fixed"], "required", REVIEW)
 
 
+def cancel_tool(step):
+    [tool] = [tool for tool in step["tools"] if tool["action"].startswith("orders-cancel")]
+    return tool
+
+
+@pytest.mark.parametrize("written", ["left-out", "looser"])
+def test_swapping_two_tools_names_never_moves_a_read_tools_safeguards_onto_a_changing_one(written):
+    draft = guarded()
+    edited = copy.deepcopy(draft)
+    lookup, cancel = edited["spec"]["steps"][0]["tools"]
+    lookup["name"], cancel["name"] = cancel["name"], lookup["name"]
+    for tool in (lookup, cancel):
+        for name in ("fixed", "approval", "review"):
+            tool.pop(name, None)
+    if written == "looser":
+        cancel.update(approval="auto", fixed=copy.deepcopy(LOOKUP["fixed"]))
+
+    tool = cancel_tool(step_of(proposed(edited, drafts=[draft])))
+
+    assert (tool["name"], tool["approval"], tool["fixed"], tool["review"]) == (
+        "lookup_order",
+        "required",
+        CANCEL["fixed"],
+        REVIEW,
+    )
+
+
+def test_a_read_tools_name_pointed_at_a_changing_action_takes_the_changing_tools_safeguards():
+    draft = guarded()
+    edited = stripped()
+    tools = edited["spec"]["steps"][0]["tools"]
+    tools[0]["action"] = CANCEL["action"]
+    del tools[1]
+
+    tool = cancel_tool(step_of(proposed(edited, drafts=[draft])))
+
+    assert (tool["name"], tool["approval"], tool["fixed"], tool["review"]) == (
+        "lookup_order",
+        "required",
+        CANCEL["fixed"],
+        REVIEW,
+    )
+
+
 def test_a_tool_failure_that_stops_the_agent_is_never_loosened():
     draft = guarded()
     draft["spec"]["steps"][0]["limits"]["onToolError"] = "incident"
