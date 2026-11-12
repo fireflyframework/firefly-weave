@@ -480,6 +480,11 @@ def test_a_tool_review_on_the_tool_is_enough():
     assert errors(workflow(step)) == []
 
 
+def joined(pointer):
+    # Joining text keeps the secret out of the result's type, so only the path the expression reads can find it.
+    return {"op": {"name": "concat", "args": [{"literal": "k"}, {"ref": pointer}]}}
+
+
 @pytest.mark.parametrize(
     ("change", "path"),
     [
@@ -522,8 +527,18 @@ def test_a_tool_review_on_the_tool_is_enough():
             },
             "/spec/steps/0/context",
         ),
+        ({"context": {"array": [joined("/input/apiKey")]}}, "/spec/steps/0/context"),
     ],
-    ids=["instructions", "prompt", "context", "fixed", "operator", "fixed-operator", "object-key-named-literal"],
+    ids=[
+        "instructions",
+        "prompt",
+        "context",
+        "fixed",
+        "operator",
+        "fixed-operator",
+        "object-key-named-literal",
+        "array-item",
+    ],
 )
 def test_secret_inputs_are_refused_in_every_agent_text_position(change, path):
     assert ("WV-COMP-AI_SECRET_INPUT", "error", path) in errors(workflow(agent(**change)))
@@ -565,11 +580,6 @@ def test_a_secret_two_local_references_away_is_refused():
     assert ("WV-COMP-AI_SECRET_INPUT", "error", "/spec/steps/0/context") in errors(document)
 
 
-def joined(pointer):
-    # Joining text keeps the secret out of the result's type, so only the path the expression reads can find it.
-    return {"op": {"name": "concat", "args": [{"literal": "k"}, {"ref": pointer}]}}
-
-
 @pytest.mark.parametrize(
     ("fields", "pointer"),
     [
@@ -595,7 +605,11 @@ class InputOnly:
     bundle: dict = {}
 
     def reference_documents(self, segments, visible):
-        return [(INPUT, segments[1:])] if segments[:1] == ("input",) else [(INPUT, ())] if not segments else []
+        if not segments:
+            return [(INPUT, ())]
+        if segments[0] == "input":
+            return [(INPUT, segments[1:])]
+        return []
 
 
 @pytest.mark.parametrize(
@@ -604,12 +618,49 @@ class InputOnly:
         {"object": {"note": "not an expression"}},
         {"op": {"name": "concat", "args": [{"literal": "k"}, {"ref": "/input/region", "literal": "x"}]}},
         {"op": {"name": "concat", "args": [{"literal": "k"}, {"ref": "input/region"}]}},
+        {"op": {"name": "concat"}},
     ],
-    ids=["value-outside-the-grammar", "node-with-two-tags", "pointer-that-does-not-parse"],
+    ids=["value-outside-the-grammar", "node-with-two-tags", "pointer-that-does-not-parse", "operator-without-args"],
 )
 def test_an_expression_the_check_cannot_read_counts_as_reading_every_secret(expression):
     # The schema refuses these before the agent checks run; the check still fails closed if one gets through.
     assert reads_secret(InputOnly(), expression, {}) is True
+
+
+WHOLE_CONTEXT = {"op": {"name": "eq", "args": [{"ref": ""}, {"literal": None}]}}
+TOKEN = {"type": "object", "properties": {"token": {"type": "string", "x-secret": True}}}
+
+
+def without_secret_input(document):
+    schema = document["spec"]["inputSchema"] = copy.deepcopy(INPUT)
+    for name in ("apiKey", "password"):
+        del schema["properties"][name]
+    schema["required"] = [name for name in schema["required"] if name in schema["properties"]]
+    return document
+
+
+@pytest.mark.parametrize(
+    ("document", "path"),
+    [
+        (workflow(agent(context=WHOLE_CONTEXT)), "/spec/steps/0/context"),
+        (
+            without_secret_input(
+                workflow(
+                    {"id": "token", "kind": "signal", "name": "event", "timeoutSeconds": 10, "payloadSchema": TOKEN},
+                    agent(context=WHOLE_CONTEXT),
+                )
+            ),
+            "/spec/steps/1/context",
+        ),
+    ],
+    ids=["secret-in-the-input", "secret-only-in-an-earlier-steps-output"],
+)
+def test_reading_the_whole_context_counts_every_secret_the_step_can_see(document, path):
+    assert ("WV-COMP-AI_SECRET_INPUT", "error", path) in errors(document)
+
+
+def test_reading_the_whole_context_without_any_secret_may_reach_the_model():
+    assert errors(without_secret_input(workflow(agent(context=WHOLE_CONTEXT)))) == []
 
 
 def test_an_expression_that_reads_no_secret_passes_the_check():
