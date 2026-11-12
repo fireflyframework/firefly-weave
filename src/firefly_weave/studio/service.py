@@ -446,7 +446,7 @@ class StudioService:
             if not token or not isinstance(token, str) or any(ord(char) < 33 for char in token):
                 return problem(401, "WV-AUTH-REQUIRED", "The selected profile needs authentication")
             headers = {"Authorization": "Bearer " + token, "Accept": "application/json", "Accept-Encoding": "identity"}
-            for name in ("Content-Type", "If-Match", "Idempotency-Key"):
+            for name in ("Content-Type", "If-Match", "Idempotency-Key", "X-Weave-Principal"):
                 if name in request.headers:
                     headers[name] = request.headers[name]
             # Do not inherit upstream cookie authentication across browser operations.
