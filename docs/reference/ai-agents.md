@@ -55,6 +55,13 @@ Each tool has a `name`, a `description` the model reads, and exactly one target:
 | Workflow | `workflow` | A callable workflow, as a child run the agent waits for |
 | Person | `human` (`questionSchema`, `formSchema`, `assignment`) | A human task that asks a person |
 
+A tool can also set how its calls are reviewed:
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `approval` | `auto` for a read-only Action and for a question to a person; `required` for every other tool | `required` makes each call wait for a person's review. `auto` on a tool that changes data is refused (`WV-COMP-AGENT_UNREVIEWED_EFFECT`). |
+| `review` | The step's `review` | Who reviews this tool's calls: `assignment`, `expirySeconds` and `distinctReviewer`, as in [Reviews](#reviews). A tool whose calls are reviewed needs a `review` on the tool or on the step (`WV-COMP-AGENT_REVIEW`). |
+
 `fixed` sets arguments the model can't change: they are merged last and always win. The model sees only the other
 arguments. A tool result is redacted by the tool's output schema and by the secret patterns before the model reads it.
 
