@@ -478,6 +478,43 @@ def test_a_tool_moved_to_a_new_agent_keeps_the_step_review_it_had():
     assert moved["tools"][0].get("review", moved["review"]) == REVIEW
 
 
+def test_a_tool_moved_to_a_stricter_agent_inherits_that_agents_review_rather_than_a_copy():
+    draft = leaning()
+    edited = copy.deepcopy(draft)
+    first = edited["spec"]["steps"][0]
+    stricter = {**REVIEW, "expirySeconds": 600}
+    second = {**copy.deepcopy(first), "id": "support_cancel", "tools": [first["tools"][1]], "review": stricter}
+    first["tools"] = first["tools"][:1]
+    edited["spec"]["steps"].append(second)
+
+    moved = yaml.safe_load(proposed(edited, drafts=[draft]).source)["spec"]["steps"][1]
+
+    assert "review" not in moved["tools"][0] and moved["review"] == stricter
+
+
+def test_a_moved_tool_that_two_agents_reviewed_differently_is_reported_rather_than_guessed():
+    draft = leaning()
+    escalation = {**copy.deepcopy(draft["spec"]["steps"][0]), "id": "escalation"}
+    escalation["review"] = {**REVIEW, "assignment": "order-desk"}
+    draft["spec"]["steps"].append(escalation)
+    edited = copy.deepcopy(draft)
+    agents = edited["spec"]["steps"]
+    # Both draft tools set the same guards of their own; only the review each gets from its agent differs.
+    moved = {**agents[0], "id": "handover", "tools": [{**agents[0]["tools"][1], "name": "cancel_orders"}]}
+    for step in agents:
+        step["tools"] = step["tools"][:1]
+    agents.append(moved)
+    for name in ("fixed", "approval"):
+        del moved["tools"][0][name]
+    edited = json.loads(json.dumps(edited))
+
+    checked = proposed(edited, drafts=[draft])
+
+    tool = yaml.safe_load(checked.source)["spec"]["steps"][2]["tools"][0]
+    assert "fixed" not in tool and "approval" not in tool
+    assert checked.diagnostics == proposed(yaml.safe_load(checked.source)).diagnostics + 1
+
+
 def test_a_tool_whose_action_moves_to_another_version_keeps_its_guards():
     draft = guarded()
     edited = stripped()
@@ -514,6 +551,17 @@ def test_a_renamed_tool_whose_action_moves_to_another_version_keeps_its_guards()
     kept = step_of(proposed(edited, drafts=[draft]))["tools"][1]
 
     assert (kept["fixed"], kept["approval"], kept["review"]) == (CANCEL["fixed"], "required", REVIEW)
+
+
+def test_a_tool_that_keeps_its_name_keeps_its_guards_whatever_action_it_runs():
+    draft = guarded()
+    edited = stripped()
+    # No draft tool runs the refund action, so only the name says which tool this was.
+    edited["spec"]["steps"][0]["tools"][1]["action"] = "orders-refund@1.0.0"
+
+    tool = step_of(proposed(edited, drafts=[draft]))["tools"][1]
+
+    assert (tool["fixed"], tool["approval"], tool["review"]) == (CANCEL["fixed"], "required", REVIEW)
 
 
 def cancel_tool(step):
@@ -700,14 +748,15 @@ def test_safeguards_that_could_not_be_checked_are_named_first():
     assert lines[0].startswith("Safeguards could not be checked") and len(lines) == 1 + 12 + 1
 
 
-def test_the_same_workflows_draft_decides_what_only_the_editor_changes_whatever_the_order():
+@pytest.mark.parametrize("same_first", [False, True], ids=["other-first", "same-first"])
+def test_the_same_workflows_draft_decides_what_only_the_editor_changes_whatever_the_order(same_first):
     draft = guarded()
     other = guarded()
     other["metadata"]["name"] = "returns-desk"
     other["spec"]["steps"][0]["onError"] = "continue"
     other["spec"]["steps"][0]["errorPath"] = {"steps": [], "output": {"literal": "other"}}
 
-    step = step_of(proposed(stripped(), drafts=[other, draft]))
+    step = step_of(proposed(stripped(), drafts=[draft, other] if same_first else [other, draft]))
 
     assert (step["onError"], step["errorPath"]) == ("errorOutput", ERROR_PATH)
 
