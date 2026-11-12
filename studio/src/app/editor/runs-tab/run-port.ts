@@ -45,8 +45,8 @@ export interface RunDataPort {
   input(): Json;
   /** The recorded output of a step instance (its instance key). */
   output(key: string): RecordedOutput;
-  /** What the step received; `key` picks one instance of a step that ran several times. */
-  received(stepId: string, key?: string): Received;
+  /** What the step received, recomputed with the version the run used. */
+  received(stepId: string): Received;
   /** The step's instance keys, the failing one first. */
   iterations(stepId: string): readonly string[];
   /** The error code the step failed with in this run; null when it didn't fail. */
