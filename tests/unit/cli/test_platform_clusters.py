@@ -1323,3 +1323,78 @@ def test_disconnecting_a_namespace_without_a_target_changes_nothing(world):
         disconnect(world, "team-b")
     assert str(refused.value) == "kind-weave-test has no target in namespace team-b; nothing was changed."
     assert commands.calls[before:] == [] and cluster.api_calls[calls:] == []
+
+
+# List
+
+
+def test_list_reports_each_clusters_state_and_each_targets_runner_without_reaching_the_cluster(world):
+    directory, commands, config, cluster = world
+    result = connect(world)
+    before = len(commands.calls)
+    listed = clusters.clusters(directory, check=False, kubeconfig=config)
+    assert listed == {
+        "clusters": [
+            {
+                "provider": "kind",
+                "cluster": "weave-test",
+                "context": "kind-weave-test",
+                "network": "weave-kind-weave-test",
+                "state": "connected",
+                "targets": [
+                    {
+                        "target_id": result["target_id"],
+                        "target_name": "kind-weave-test",
+                        "namespace": "weave-workers",
+                        "runner": "online",
+                        "drift": [],
+                    }
+                ],
+            }
+        ]
+    }
+    assert not [call for call in commands.calls[before:] if call.argv[0] == KUBECTL]
+    cluster.online = False
+    commands.answer(["ps", "--filter", "label=io.x-k8s.kind.cluster=weave-test"], "")
+    (gone,) = clusters.clusters(directory, check=False, kubeconfig=config)["clusters"]
+    assert (gone["state"], gone["targets"][0]["runner"]) == ("missing", "offline")
+
+
+def test_list_check_names_a_drifted_object_without_printing_its_values(world):
+    directory, commands, config, _ = world
+    connect(world)
+    canary = "canary-drift-value-7c1d"
+    rotated = "2026-11-12T10:00:00.000000Z"
+    commands.answer([KUBECTL, "get", "deployment", "weave-runner-weave-workers", "-o"], rotated)
+    live = "/tmp/LIVE-1/networking.k8s.io.v1.NetworkPolicy.weave-system.weave-egress"
+    merged = "/tmp/MERGED-2/networking.k8s.io.v1.NetworkPolicy.weave-system.weave-egress"
+    commands.answer([KUBECTL, "diff"], f"Files {live} and {merged} differ\n-  cidr: {canary}\n")
+    before = len(commands.calls)
+    listed = clusters.clusters(directory, check=True, kubeconfig=config)
+    assert listed["clusters"][0]["targets"][0]["drift"] == ["NetworkPolicy/weave-egress"]
+    assert canary not in json.dumps(listed)
+    (diff,) = [call for call in commands.calls[before:] if "diff" in call.argv]
+    # kubectl hands the two folders to `diff -q`, which prints file names only, so no value reaches the log either.
+    assert diff.env["KUBECTL_EXTERNAL_DIFF"] == "diff -q"
+    sent = {(item["kind"], item["metadata"]["name"]) for item in json.loads(diff.stdin)["items"]}
+    assert {("Service", "weave-api"), ("Deployment", "weave-runner-weave-workers")} <= sent
+    assert applied(commands, before) == []
+
+
+def test_a_second_namespace_leaves_the_first_targets_objects_and_runner_unchanged(world):
+    _, commands, _, _ = world
+    connect(world)
+    shared = [item for item in applied(commands) if item["metadata"].get("namespace") == "weave-system"]
+    before = len(commands.calls)
+    connect_team_b(world)
+    again = applied(commands, before)
+    assert not [call for call in commands.calls[before:] if "weave-runner-weave-workers" in " ".join(call.argv)]
+    assert not [
+        item for item in again if "weave-workers" in (item["metadata"].get("namespace"), item["metadata"]["name"])
+    ]
+    first = {
+        item["metadata"]["name"]: item for item in shared if not item["metadata"]["name"].endswith("weave-workers")
+    }
+    for item in again:
+        if item["metadata"]["name"] in first and item["metadata"].get("namespace") == "weave-system":
+            assert item == first[item["metadata"]["name"]]

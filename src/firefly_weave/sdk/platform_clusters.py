@@ -771,8 +771,15 @@ def _runner_image(connection: _Connection) -> str:
     docker = _docker(connection)
     local._run(connection.state, "cluster-runner-tag", [*docker, "tag", image, tag])
     local._run(connection.state, "cluster-runner-push", [*docker, "push", tag], timeout=600)
+    return _runner_digest(connection)
+
+
+def _runner_digest(connection: _Connection) -> str:
+    """The runner image's reference by digest in the platform registry, as the last push recorded it; read-only."""
+    image, port = connection.operations["runner_image"], int(connection.operations["registry_port"])
+    repository = f"127.0.0.1:{port}/{RUNNER_REPOSITORY}"
     inspected = strict_json(
-        local._run(connection.state, "cluster-runner-inspect", [*docker, "image", "inspect", image])
+        local._run(connection.state, "cluster-runner-inspect", [*_docker(connection), "image", "inspect", image])
     )
     digests = [item for item in inspected[0].get("RepoDigests") or [] if item.startswith(repository + "@")]
     if len(digests) != 1 or not re.fullmatch(r"sha256:[a-f0-9]{64}", digests[0].rsplit("@", 1)[1]):
@@ -1493,6 +1500,149 @@ def disconnect(
             "disabled": disabled,
             "removed": sorted(f"{part['kind']}/{part['metadata']['name']}" for part in parts),
         }
+
+
+# List
+
+# kubectl diff hands the live and the merged objects, as two folders, to this program, which names the files that
+# differ and prints none of their content: drift is reported by kind and name only.
+_NAMES_ONLY_DIFF = "diff -q"
+# kubectl diff exits 1 when objects differ, which isn't a failure here.
+_DIFF_STATUS = '"$@"; status=$?; [ "$status" -le 1 ] || exit "$status"'
+_ROTATED_PATH = "jsonpath={.spec.template.metadata.annotations.firefly\\.weave/identity-rotated-at}"
+
+
+def _diff_file(item: dict[str, Any]) -> str:
+    """The file name kubectl diff gives an object: [group.]version.Kind.namespace.name."""
+    group, _, version = item["apiVersion"].rpartition("/")
+    metadata = item["metadata"]
+    return f"{group + '.' if group else ''}{version}.{item['kind']}.{metadata.get('namespace', '')}.{metadata['name']}"
+
+
+def _drifted(connection: _Connection, items: list[dict[str, Any]]) -> list[str]:
+    """The objects whose live state differs from what connect applies, as Kind/name, from a server-side diff."""
+    document = json.dumps({"apiVersion": "v1", "kind": "List", "items": items}).encode()
+    output = local._run(
+        connection.state,
+        "cluster-diff",
+        ["sh", "-c", _DIFF_STATUS, "kubectl-diff", *connection.kube, "diff", "--server-side"]
+        + [f"--field-manager={objects.MANAGED_BY}", "--force-conflicts", "-f", "-"],
+        env={**local._environment(), "KUBECTL_EXTERNAL_DIFF": _NAMES_ONLY_DIFF},
+        stdin=document,
+        timeout=90,
+    )
+    named = {token.rsplit("/", 1)[-1].rstrip(":") for line in _lines(output) for token in line.split()}
+    return sorted({f"{item['kind']}/{item['metadata']['name']}" for item in items if _diff_file(item) in named})
+
+
+def _drift(
+    directory: Path,
+    state: dict[str, Any],
+    operations: dict[str, Any],
+    key: str,
+    entry: dict[str, Any],
+    nodes: list[str],
+    kubeconfig: Path | None,
+) -> dict[str, list[str]]:
+    """Each registered target's drifted objects, the cluster's shared ones included; reaches the cluster as
+    preflight does and changes nothing."""
+    provider, cluster = entry["provider"], entry["cluster"]
+    path, server = _server(_candidates(kubeconfig), key, provider, cluster)
+    if not _local(server):
+        raise local.PlatformError(f"{key} points at a server that isn't this computer; it was not checked.")
+    _check_api_port(state, provider, cluster, nodes, key, server)
+    found = Preflight(provider, cluster, "", key, path, state["context"], entry["network"], nodes)
+    network = objects.ClusterNetwork(
+        provider=provider,
+        cluster=cluster,
+        network=entry["network"],
+        subnet=entry["subnet"],
+        api_address=entry["api_address"],
+        registry_address=entry["registry_address"],
+        registry_port=int(operations["registry_port"]),
+        installation=state["id"],
+    )
+    kube = [*kubectl(directory, path, key), "--request-timeout=20s"]
+    connection = _Connection(found, state, operations, kube, network)
+    image = _runner_digest(connection)
+    drift: dict[str, list[str]] = {}
+    for namespace, target in sorted(entry["targets"].items()):
+        if "target_id" not in target:
+            continue
+        rotated = local._run(
+            state,
+            "cluster-runner-rotated",
+            [*kube, "--namespace", SYSTEM_NAMESPACE, "get", "deployment", f"weave-runner-{namespace}"]
+            + ["--ignore-not-found", "-o", _ROTATED_PATH],
+        ).decode(errors="replace")
+        draft = _draft(connection, namespace, target, image, rotated=rotated.strip(), uid=_uid(connection, namespace))
+        drift[namespace] = _drifted(connection, [*objects.shared_objects(network), *objects.target_objects(draft)])
+    return drift
+
+
+def _runner_states(
+    state: dict[str, Any], operations: dict[str, Any], ids: list[str], transport: httpx.AsyncBaseTransport | None
+) -> dict[str, str]:
+    """Each target's runner: online while one unrevoked runner's lease is current, else offline; unknown for every
+    target when the platform can't be asked."""
+
+    async def read(client: WeaveClient) -> dict[str, str]:
+        now, found = datetime.now(UTC), {}
+        for identifier in ids:
+            page = await client.invoke("deployment_runners.list", query={"target_id": identifier})
+            online = any(not item.revoked and item.expires_at > now for item in page.items)
+            found[identifier] = "online" if online else "offline"
+        return found
+
+    if not ids or "scope" not in operations:
+        return {}
+    try:
+        return asyncio.run(platform_operations._api(state, operations, read, transport))
+    except local.PlatformError:
+        return {}
+
+
+def clusters(
+    directory: Path, *, check: bool, kubeconfig: Path | None, transport: httpx.AsyncBaseTransport | None = None
+) -> dict[str, Any]:
+    """The receipt's clusters and targets: each cluster connected or missing, each target's runner, and with
+    `check` each target's drift by kind and name only. Changes nothing."""
+    value = receipt(directory)
+    if not value["clusters"]:
+        return {"clusters": []}
+    state = local._state(directory)
+    operations = platform_operations.receipt(directory) or {}
+    ids = [
+        target["target_id"]
+        for entry in value["clusters"].values()
+        for target in entry["targets"].values()
+        if "target_id" in target
+    ]
+    runners = _runner_states(state, operations, ids, transport)
+    listed = []
+    for key, entry in sorted(value["clusters"].items()):
+        nodes = _recorded_nodes(state, entry)
+        drift = _drift(directory, state, operations, key, entry, nodes, kubeconfig) if check and nodes else {}
+        listed.append(
+            {
+                "provider": entry["provider"],
+                "cluster": entry["cluster"],
+                "context": key,
+                "network": entry["network"],
+                "state": "connected" if nodes else "missing",
+                "targets": [
+                    {
+                        "target_id": target.get("target_id"),
+                        "target_name": target["target_name"],
+                        "namespace": namespace,
+                        "runner": runners.get(target.get("target_id", ""), "unknown"),
+                        "drift": drift.get(namespace, []),
+                    }
+                    for namespace, target in sorted(entry["targets"].items())
+                ],
+            }
+        )
+    return {"clusters": listed}
 
 
 # Local test clusters
