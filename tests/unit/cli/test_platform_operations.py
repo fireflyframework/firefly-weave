@@ -270,6 +270,7 @@ def test_no_operations_skips_the_step_and_status_says_so(owned, monkeypatch):
     monkeypatch.setattr(platform_operations, "prepare_provider", lambda state: called.append("provider"))
     monkeypatch.setattr(platform, "start", lambda directory, progress=None: None)
     monkeypatch.setattr(platform, "demo", lambda directory: {"receipt": {"status": "succeeded"}})
+    monkeypatch.setattr(platform, "demo_test_calls", lambda directory: "enabled")
     result = platform.up(directory, Path("."), None, operations=False)
     assert called == [] and "operations" not in result
     assert not any("build" in name for name in runner.names())
@@ -415,8 +416,9 @@ def test_up_prepares_the_provider_before_starting_and_sets_operations_up_after(o
     monkeypatch.setattr(
         platform, "demo", lambda directory: called.append("demo") or {"receipt": {"status": "succeeded"}}
     )
+    monkeypatch.setattr(platform, "demo_test_calls", lambda directory: called.append("test calls") or "enabled")
     platform.up(directory, Path("."), None)
-    assert called[:3] == ["provider", "start", "demo"] and "enable" in called[3:]
+    assert called[:4] == ["provider", "start", "demo", "test calls"] and "enable" in called[4:]
 
 
 @pytest.mark.parametrize(("flags", "expected"), [([], True), (["--no-operations"], False)])
@@ -556,6 +558,7 @@ def test_up_on_an_installation_made_before_local_operations_skips_them_and_says_
     monkeypatch.setattr(platform_operations, "enable", lambda *args, **kwargs: called.append("enable"))
     monkeypatch.setattr(platform, "start", lambda directory, progress=None: None)
     monkeypatch.setattr(platform, "demo", lambda directory: {"receipt": {"status": "succeeded"}})
+    monkeypatch.setattr(platform, "demo_test_calls", lambda directory: "enabled")
     result = platform.up(directory, Path("."), None)
     assert called == []
     assert result["operations"] == {
