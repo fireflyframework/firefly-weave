@@ -453,6 +453,10 @@ def test_a_widened_secret_volume_mode_is_reported():
     assert objects.worker_drift(live, target()) == ["spec.template.spec.volumes[identity].defaultMode"]
 
 
+def _worker(pod):
+    return pod["containers"][0]
+
+
 # One edit each to a live worker's pod spec, and the one field it must be reported by.
 WEAKENED = {
     "allowed to run as root": (
@@ -467,6 +471,30 @@ WEAKENED = {
     "given a host path volume": (
         lambda pod: pod["volumes"].append({"name": "host", "hostPath": {"path": "/"}}),
         "spec.template.spec.volumes[host]",
+    ),
+    "sharing one process namespace": (
+        lambda pod: pod.update(shareProcessNamespace=True),
+        "spec.template.spec.shareProcessNamespace",
+    ),
+    "given another Secret as environment": (
+        lambda pod: _worker(pod).update(envFrom=[{"secretRef": {"name": "other-secret"}}]),
+        "spec.template.spec.containers[worker].envFrom",
+    ),
+    "given the identity Secret mounted": (
+        lambda pod: _worker(pod)["volumeMounts"].append({"name": "identity", "mountPath": "/run/raw"}),
+        "spec.template.spec.containers[worker].volumeMounts",
+    ),
+    "given another command": (
+        lambda pod: _worker(pod).update(command=["sh", "-c", "cat /run/raw/*"]),
+        "spec.template.spec.containers[worker].command",
+    ),
+    "given arguments": (
+        lambda pod: _worker(pod).update(args=["--debug"]),
+        "spec.template.spec.containers[worker].args",
+    ),
+    "given another copy step": (
+        lambda pod: pod["initContainers"][0].update(command=["sh", "-c", "cp -R /identity/. /secrets/"]),
+        "spec.template.spec.initContainers[secrets].command",
     ),
 }
 

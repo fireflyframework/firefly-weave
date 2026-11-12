@@ -678,13 +678,16 @@ def target_objects(target: ClusterTarget) -> list[dict[str, Any]]:
     ]
 
 
+_CONTAINER_HARDENING = ("securityContext", "env", "envFrom", "volumeMounts", "command", "args")
+
+
 def _hardening(spec: dict[str, Any]) -> dict[str, Any]:
     """The fields of a pod spec that keep it hardened, keyed by their dotted path."""
     fields: dict[str, Any] = {
         "spec.template.spec.automountServiceAccountToken": spec.get("automountServiceAccountToken"),
         "spec.template.spec.securityContext": spec.get("securityContext"),
     }
-    for key in ("hostNetwork", "hostPID", "hostIPC", "serviceAccountName"):
+    for key in ("hostNetwork", "hostPID", "hostIPC", "shareProcessNamespace", "serviceAccountName"):
         fields[f"spec.template.spec.{key}"] = spec.get(key)
     for volume in spec.get("volumes") or []:
         # Each volume's kind of source, what it names, its storage medium and file mode; the server fills in neither
@@ -699,9 +702,10 @@ def _hardening(spec: dict[str, Any]) -> dict[str, Any]:
         }
     for group in ("initContainers", "containers"):
         for container in spec.get(group) or []:
+            # What each container runs and everything it reads: an added envFrom or mount brings a Secret in without
+            # touching the pod's volumes. The server fills in none of these, and change requests never set them.
             fields[f"spec.template.spec.{group}[{container.get('name')}]"] = {
-                "securityContext": container.get("securityContext"),
-                "env": container.get("env"),
+                key: container.get(key) for key in _CONTAINER_HARDENING
             }
     return fields
 

@@ -1539,6 +1539,8 @@ def test_list_check_names_a_drifted_object_without_printing_its_values(world):
     ("change", "drift"),
     [
         ("writable root filesystem", ["Deployment/weave-worker"]),
+        ("another Secret as environment", ["Deployment/weave-worker"]),
+        ("the identity Secret mounted", ["Deployment/weave-worker"]),
         ("deleted", ["Deployment/weave-worker"]),
         ("scaled to a new image and restarted", []),
     ],
@@ -1552,8 +1554,13 @@ def test_list_check_compares_only_the_worker_deployments_hardening(world, change
     commands.answer([KUBECTL, "diff"], "")
     template = cluster.worker["spec"]["template"]
     container = template["spec"]["containers"][0]
+    canary = "canary-secret-5e2b"
     if change == "writable root filesystem":
         container["securityContext"]["readOnlyRootFilesystem"] = False
+    elif change == "another Secret as environment":
+        container["envFrom"] = [{"secretRef": {"name": canary}}]
+    elif change == "the identity Secret mounted":
+        container["volumeMounts"].append({"name": "identity", "mountPath": f"/run/{canary}", "readOnly": True})
     elif change == "deleted":
         cluster.worker = None
     else:
@@ -1564,7 +1571,9 @@ def test_list_check_compares_only_the_worker_deployments_hardening(world, change
     before = len(commands.calls)
     listed = clusters.clusters(directory, check=True, kubeconfig=config)
     assert listed["clusters"][0]["targets"][0]["drift"] == drift
-    assert "readOnlyRootFilesystem" not in json.dumps(listed)
+    # Kind and name only: neither the edited field nor what it names reaches the output.
+    shown = json.dumps(listed)
+    assert not [word for word in ("readOnlyRootFilesystem", "envFrom", "volumeMounts", canary) if word in shown]
     assert applied(commands, before) == [] and not [call for call in commands.calls[before:] if "create" in call.argv]
 
 
