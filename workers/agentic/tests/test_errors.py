@@ -30,7 +30,7 @@ from pydantic_ai.models.function import FunctionModel
 
 from weave_agentic_worker.egress import ModelEgressDenied
 from weave_agentic_worker.errors import classify
-from weave_agentic_worker.execution import estimate_tokens, provider_schema, run_model, text_result, without_thinking
+from weave_agentic_worker.execution import provider_schema, rough_tokens, run_model, text_result, without_thinking
 
 REQUEST = httpx2.Request("POST", "http://ollama:11434/v1/chat/completions")
 
@@ -139,8 +139,8 @@ def profile(max_tokens=1024, schema=TEXT):
 
 
 def test_tokens_are_estimated_as_four_characters_each():
-    assert estimate_tokens("abcd", "ef") == 2
-    assert estimate_tokens() == 0
+    assert rough_tokens("abcd", "ef") == 2
+    assert rough_tokens() == 0
 
 
 async def test_a_prompt_longer_than_the_context_is_refused_before_any_call():
@@ -171,7 +171,7 @@ def tokens_needed(model_profile, prompt, context, instructions=""):
     request = json.dumps({"prompt": prompt, "context": context}, ensure_ascii=False)
     structured = not text_result(model_profile.output_schema)
     schema = json.dumps(provider_schema(model_profile.output_schema)) if structured else ""
-    return estimate_tokens(instructions, request, schema) + model_profile.options.max_tokens
+    return rough_tokens(instructions, request, schema) + model_profile.options.max_tokens
 
 
 async def test_a_long_context_is_refused_even_when_the_answer_allowance_is_small():
