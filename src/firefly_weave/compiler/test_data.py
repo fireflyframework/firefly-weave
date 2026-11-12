@@ -77,6 +77,8 @@ def _steps(steps: object) -> Iterator[JsonObject]:
             branches = list(cast(dict[str, object], step.get("branches") or {}).values())
         elif kind == "forEach":
             branches = [step.get("body")]
+        # A step's error path holds steps of its own, whatever the step's kind.
+        branches.append(step.get("errorPath"))
         for branch in branches:
             if isinstance(branch, dict):
                 yield from _steps(branch.get("steps"))

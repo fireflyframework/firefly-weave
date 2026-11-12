@@ -317,6 +317,26 @@ _ITEM_ROWS = [
     ("/item/customerEmail", "item", "notify", "Text"),
     ("/index", "index", "notify", "Whole number"),
 ]
+# A step whose failure runs an error path, and the error object's fields as scope suggestions show them.
+_GUARDED = {
+    "id": "total",
+    "kind": "transform",
+    "value": {"literal": 1},
+    "onError": "errorOutput",
+    "errorPath": {
+        "steps": [{"id": "note", "kind": "transform", "value": {"ref": "/steps/total/error/code"}}],
+        "output": {"literal": 0},
+    },
+}
+_ERROR_ROWS = [
+    ("/steps/total/error", "error", None, "Group"),
+    ("/steps/total/error/code", "error", None, "Text"),
+    ("/steps/total/error/message", "error", None, "Text"),
+    ("/steps/total/error/outcome", "error", None, "Choice"),
+    ("/steps/total/error/attempts", "error", None, "Whole number"),
+    ("/steps/total/error/instanceKey", "error", None, "Text"),
+    ("/steps/total/error/childRunId", "error", None, "Text"),
+]
 # (name, document, path, (ref, source, loop, typeLabel) per entry, or None when the position is not found)
 SCOPE_CASES: tuple[tuple[str, dict[str, Any], str, list[tuple[str, str, str | None, str]] | None], ...] = (
     (
@@ -403,6 +423,18 @@ SCOPE_CASES: tuple[tuple[str, dict[str, Any], str, list[tuple[str, str, str | No
         _workflow(_call("notify", mode="detach"), output={"ref": "/steps/notify/output"}),
         "/spec/output",
         [*_INPUT_ROWS, ("/steps/notify/output", "step", None, "Empty")],
+    ),
+    (
+        "inside an error path the failed step's error is always there and its output is not",
+        _workflow(_GUARDED),
+        "/spec/steps/0/errorPath/output",
+        [*_INPUT_ROWS, *_ERROR_ROWS, ("/steps/note/output", "step", None, "Text")],
+    ),
+    (
+        "after a step with an error path its error may be read and may be missing",
+        _workflow(_GUARDED, {"id": "after", "kind": "transform", "value": {"ref": "/steps/total/output"}}),
+        "/spec/steps/1/value",
+        [*_INPUT_ROWS, ("/steps/total/output", "step", None, "Whole number"), *_ERROR_ROWS],
     ),
 )
 

@@ -56,12 +56,25 @@ workflow evidence.
 | `activation.activated` | A version is activated in an environment | That environment |
 | `activation.retired` | An activation is retired | That environment |
 | `change_request.transition` | A change request moves to a new state, such as awaiting approval or applied | The change request's environment |
+| `transaction.completed`, `transaction.compensated`, `transaction.cancelled` | A workflow transaction finished: it went through, or what it did was undone (`cancelled` when nothing needed undoing) | The run's environment |
+| `transaction.in_doubt` | A transaction is in doubt and waits for a person's decision | The run's environment |
+| `transaction.reconciled`, `transaction.force_ended` | A person marked a transaction in doubt as reconciled, or ended it by force | The run's environment |
 
 A `change_request.transition` event carries the change request's ID and, in its
 payload, `change_state` and `revision`; the payload's run fields `status` and
 `sequence` are present and `null`. It never carries the change's title, reason,
 people or plan. Read the change request itself for the rest. A subscription selects at most
-five event types.
+12 event types.
+
+A `transaction.*` event's `resource_id` and `correlation_id` are the run, and its
+payload carries `transaction`: the workflow name and version, the run ID, the
+transaction's instance key, its business key, its state, its `cause` (`code`,
+`step`, and the step's own `origin_code`), the steps `done`, `undone` and
+`pending` (each with `step`, `instance_key`, how it is undone, and for pending
+work the `phase` and its `attempts`), the in-doubt `incident_id`, and `test`.
+It carries no other business value. Each event ID is derived from the run, the
+transaction, its state and its revision, so a retried write never sends it
+twice. Subscribing to transaction events needs `run.read`.
 
 The event's `correlation_id` is the stable UUID of the source resource. The
 change, the immutable event, and every matching delivery intent commit in the

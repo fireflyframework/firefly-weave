@@ -42,11 +42,24 @@ class Transaction:
         return factory(self.session)
 
     def record(
-        self, kind: str, operation: str, status: str = "ok", error_code: str = "none", *, amount: int = 1
+        self,
+        kind: str,
+        operation: str,
+        status: str = "ok",
+        error_code: str = "none",
+        *,
+        amount: int = 1,
+        duration: float | None = None,
     ) -> None:
         if self.telemetry is not None:
             self.telemetry.after_commit(
-                self.on_commit, kind, operation=operation, status=status, error_code=error_code, amount=amount
+                self.on_commit,
+                kind,
+                operation=operation,
+                status=status,
+                error_code=error_code,
+                amount=amount,
+                duration=duration,
             )
 
     def on_commit(self, callback: Callable[[], None]) -> bool:

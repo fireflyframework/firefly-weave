@@ -125,10 +125,11 @@ def terminal_signals(row: dict[str, Any]) -> dict[str, str] | None:
         executable = ArtifactEnvelope.model_validate(parsed.value).executable
         if not isinstance(executable, WorkflowIR):
             return None
+        # A wait whose step handles its timeout never ends the run.
         return {
             node.id: node.name if isinstance(node, SignalNode) else "@human:" + node.id
             for node in executable.graph.nodes
-            if isinstance(node, (SignalNode, HumanTaskNode))
+            if isinstance(node, (SignalNode, HumanTaskNode)) and node.on_error is None
         }
     except (ValueError, RecursionError, ParseFailure):
         return None

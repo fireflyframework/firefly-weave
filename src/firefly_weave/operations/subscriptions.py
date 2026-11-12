@@ -40,7 +40,9 @@ from firefly_weave.runtime.repository import SCOPE, RuntimeRepository
 
 def event_capability(kind: str) -> str:
     """The read capability a subscriber needs for one event type."""
-    return {"run.transition": "run.read", "change_request.transition": "deployment.read"}.get(kind, "catalog.read")
+    if kind == "run.transition" or kind.startswith("transaction."):
+        return "run.read"
+    return {"change_request.transition": "deployment.read"}.get(kind, "catalog.read")
 
 
 @service
