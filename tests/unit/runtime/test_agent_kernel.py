@@ -156,7 +156,7 @@ def test_a_tool_completion_after_the_agents_deadline_reaches_nothing():
 
     # The kernel refuses the event: it opens WV-RUNTIME-EVENT at that key and the ended agent gets nothing.
     assert tasks(late) == {} and run.state.agents == {}
-    assert ("support#1.1", "WV-RUNTIME-EVENT") in refused(run)
+    assert refused(run) == {("support", "WV-AGENT-TIMEOUT"), ("support#1.1", "WV-RUNTIME-EVENT")}
 
 
 def refused(run: Run) -> set[tuple[str, str]]:
@@ -170,6 +170,8 @@ def test_a_result_at_a_key_the_agent_is_not_waiting_for_is_refused():
     result = run.answer("support#1.1", SHIPPED)
 
     assert tasks(result) == {} and refused(run) == {("support#1.1", "WV-RUNTIME-EVENT")}
+    # The agent still waits for its first turn.
+    assert run.state.agents["support"].phase == "turn" and "support#1" in run.state.active
 
 
 def test_a_changing_tool_is_never_dispatched_before_its_review():
@@ -254,6 +256,7 @@ def test_cancel_ends_an_agent_with_open_calls():
     run = Run()
     run.send("started")
     run.answer("support#1", tool_calls(("lookup_order", {"id": "A-17"})))
+    assert run.state.agents["support"].calls[0].status == "running"
 
     result = run.send("cancelled")
 
@@ -274,6 +277,7 @@ def test_a_transition_stays_well_under_a_second():
         run.answer(f"support#{turn}.1", SHIPPED)
 
     started = time.perf_counter()
-    run.answer("support#12", tool_calls(("lookup_1", {"id": "A-99"}), turn=12))
+    result = run.answer("support#12", tool_calls(("lookup_1", {"id": "A-99"}), turn=12))
 
     assert time.perf_counter() - started < 0.2
+    assert set(tasks(result)) == {"support#12.1"}
