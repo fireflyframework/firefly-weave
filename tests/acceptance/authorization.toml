@@ -149,6 +149,12 @@ answers = [{ status = 501, code = "WV-UNAVAILABLE", until = "logs" }]
 capability = "run.read"
 identifier = "random"
 
+# An AI agent's log: a random run has no agent step, so a permitted call answers 404.
+[operations."runs.agent_log"]
+capability = "run.read"
+identifier = "random"
+key = "support"
+
 # Canvas rows: a canvas needs exactly the listed capability (test data also needs simulate and, for run data,
 # run.read). A random draft has no document, so a permitted call answers 404 and nothing is stored.
 [operations."studio_documents.delete"]

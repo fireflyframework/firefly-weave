@@ -678,6 +678,33 @@ takes a long time; see [Upgrades](../operations/upgrades.md#runs-that-need-a-new
 In `runs.list`, only a recorded policy block withholds a run before its own read
 classifies it.
 
+**Agent log.** `runs.agent_log` (`GET …/runs/{identifier}/agents/{key}/log`)
+shows what an AI agent did, turn by turn. It checks `run.read` on both the token
+and the current principal, like `runs.steps`. `key` is the agent step's ID or
+one activation's instance key:
+
+- A step ID, such as `support`, pages through the step's activations in
+  iteration order, outer loop first. Outside a loop, the page has the one
+  activation.
+- An activation key, such as `support[2]`, reads that activation. Encode its
+  brackets in the path: `support%5B2%5D`.
+- `limit` is 1 to 20 activations (20 by default). `cursor` continues a page
+  and is bound to the run and the key.
+- A key that names a turn, a tool call, a review or a loop yield (`support#1`,
+  `each~1`) answers `422` with `WV-VALIDATION` before anything is read. A
+  step that isn't an AI agent, or an activation that hasn't run, answers `404`
+  with `WV-NOT-FOUND`.
+- The outputs on one page are limited to 8 MiB in total; a larger page answers
+  `429 WV-PAGE-LIMIT`, so request a smaller `limit`.
+
+Each activation lists its turns with their tokens and times, and each turn
+lists the tool calls the model asked for. Arguments, outputs and the final
+answer follow the run views' rules: each is classified by the tool's or the
+step's schema, and a value that can't be shown is left out with its omission
+reason. The log is assembled from the run's step facts, step outputs and turn
+inputs on each read; nothing extra is stored. See
+[AI agent steps](ai-agents.md#agent-log) for the fields.
+
 **Incidents.** `incidents.list` and the paged `incidents.run_list` read
 incident facts after checking both token and current permissions; they never
 load run payloads. `incidents.read` (`GET …/incidents/{identifier}`) reads one
@@ -1128,6 +1155,7 @@ operation in the [full API reference](api-explorer.md); to generate a client,
 | `run_summaries.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/run-summaries` | run.read |
 | `runs.steps` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/runs/{identifier}/steps` | run.read |
 | `runs.logs` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/runs/{identifier}/logs` | run.read |
+| `runs.agent_log` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/runs/{identifier}/agents/{key}/log` | run.read |
 | `incidents.run_list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/runs/{identifier}/incidents` | incident.read |
 | `incidents.list` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/incidents` | incident.read |
 | `incidents.read` | `GET /api/v1/tenants/{tenant}/projects/{project}/environments/{environment}/incidents/{identifier}` | incident.read |

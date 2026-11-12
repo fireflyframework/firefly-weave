@@ -21,7 +21,7 @@ from __future__ import annotations
 import inspect
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 from uuid import UUID
 
 from pydantic import BaseModel, TypeAdapter, ValidationError
@@ -29,6 +29,7 @@ from pydantic import BaseModel, TypeAdapter, ValidationError
 from firefly_weave.compiler.api import CompileResult
 from firefly_weave.compiler.catalog import CatalogLock, CatalogSnapshot
 from firefly_weave.contracts.access import Scope
+from firefly_weave.contracts.agent_log import AgentLogPage, agent_log_key
 from firefly_weave.contracts.broker import BrokerIncident, BrokerTrigger, BrokerTriggerRequest, SourceBinding
 from firefly_weave.contracts.catalog import (
     Activation,
@@ -236,6 +237,7 @@ class WeaveClient:
         query: Mapping[str, str | int | list[str]] | None = None,
         adapter: str | None = None,
         kind: str | None = None,
+        key: str | None = None,
     ) -> Any:
         """Typed registry boundary also used by the thin CLI; no arbitrary URL input."""
         import httpx
@@ -253,6 +255,8 @@ class WeaveClient:
             "collection": collection,
             "adapter": adapter,
             "kind": kind,
+            # An agent step or one of its activations, refused here unless it is one; loop indexes are encoded.
+            "key": quote(agent_log_key(key), safe="") if key is not None else None,
         }
         if collection is not None and collection not in {
             "drafts",
@@ -428,6 +432,12 @@ class WeaveClient:
 
     async def delete_draft(self, identifier: UUID, *, revision: int) -> DraftRetirement:
         return cast(DraftRetirement, await self.invoke("drafts.retire", identifier=identifier, revision=revision))
+
+    async def read_agent_log(self, run: UUID, key: str, *, limit: int = 20, cursor: str | None = None) -> AgentLogPage:
+        """What an AI agent did, turn by turn: ``key`` is the agent step's ID, which pages through its activations in
+        iteration order, or one activation's instance key such as ``support[2]``."""
+        query: dict[str, str | int] = {"limit": limit, **({"cursor": cursor} if cursor is not None else {})}
+        return cast(AgentLogPage, await self.invoke("runs.agent_log", identifier=run, key=key, query=query))
 
     async def read_studio_document(self, draft: UUID, kind: StudioDocumentKind) -> StudioDocument:
         """A draft's canvas or test data, as the platform keeps it."""

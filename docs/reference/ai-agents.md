@@ -130,5 +130,49 @@ Activation checks an agent like an AI task: its connection must use the profile'
 (`WV-ACTIVATION-AI-MODEL`). Activation also refuses any step other than an agent that would run the model turn, and an
 agent whose turn action isn't the platform's (`WV-ACTIVATION-AI-RESERVED`).
 
+## Agent log
+
+The agent log shows what an agent did, turn by turn: each turn's tokens and time, the tool calls the model asked for,
+how each call ended, and the final answer. Read it with `run.read`:
+
+- API: `GET …/runs/{identifier}/agents/{key}/log`; see the [API reference](api.md).
+- SDK: `await client.read_agent_log(run_id, "support")`.
+- CLI: `weave runs agent-log <run-id> --key support`.
+
+`key` is the agent step's ID, which pages through its activations in iteration order (20 at most per page), or one
+activation's key, such as `support[2]` inside a loop.
+
+| Field | Meaning |
+| --- | --- |
+| `status` | `running`, `waiting` (a review or a person must act), `succeeded`, `failed`, `cancelled` or `timed_out`. |
+| `stop` | `final` or `forced_final` for an agent that answered; otherwise null. |
+| `error` | The code of a failed agent, such as `WV-AGENT-BUDGET`. |
+| `memory` | The memory `scope` and how many remembered messages the first turn `loaded`. |
+| `turns` | Each turn: `turn`, `forced` (the forced final turn), `input_tokens`, `output_tokens`, `started_at`, `ended_at`, `final` (the answer of the turn that answered), `calls`, `dropped_tool_calls` and `error`. |
+| `totals` | `turns`, `tool_calls`, `input_tokens`, `output_tokens` and `duration_ms` (null while the agent runs). |
+
+Each call has its `instance_key` (`support#1.2`), the `name` the model wrote, its `target`, `status`, times,
+`arguments`, `output`, `error`, `review` and, for a workflow tool, the `child_run_id`. The `target` is the tool's
+`kind` (`action`, `workflow` or `human`) and the pinned action's or workflow's `reference`; it's null when the name
+matches none of the step's tools. Treat `kind` as text: a new kind of tool can appear, and you can show it by its
+reference.
+
+| Call `status` | Meaning |
+| --- | --- |
+| `queued` | Accepted; waits for room among the parallel calls. |
+| `review` | Waits for a person's review. |
+| `running` | Sent to its target. |
+| `succeeded`, `failed` | How the target answered, as the model read it; `error.code` names a failure. |
+| `refused` | The platform refused the call and nothing ran: `UNKNOWN_TOOL`, `INVALID_ARGUMENTS`, `REPEATED_CALL` or `TOOL_BUDGET_EXHAUSTED`. |
+| `rejected`, `expired` | The review said no, or nobody answered in time; `review` holds the decision and comment. |
+| `not_run` | The agent stopped before the call could run. |
+| `cancelled` | The call was sent, then closed when the agent or the run ended. |
+
+Values follow the run views' rules. `arguments` are classified by the parameters the model saw, `output` by the
+tool's output schema and `final` by the step's result schema. A value that can't be shown is left out with its
+reason: an output with a field marked `x-secret` has `available: false` and the omission `classified_secret`. The
+`name` is the model's own text, so it's shown escaped: format characters are dropped, control characters and line
+separators are written as `\uXXXX`, and it's cut at 256 characters.
+
 See also: [history and replay](history-and-replay.md), [incident operations](incident-operations.md), and the
 [worker protocol](worker-protocol.md).

@@ -27,6 +27,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 from firefly_weave.compiler.catalog import CatalogLock
+from firefly_weave.contracts.agent_log import AgentLogKeyText, AgentLogPage, AgentLogQuery
 from firefly_weave.contracts.ai import (
     AIConnectionTestRequest,
     AIConnectionTestResult,
@@ -307,6 +308,8 @@ class Operation:
                 if name == "adapter"
                 else Literal["canvas", "test-data"]
                 if name == "kind"
+                else AgentLogKeyText
+                if name == "key"
                 else UUID,
             )
             for name in re.findall(r"{([^}]+)}", self.path)
@@ -1673,6 +1676,14 @@ OPERATIONS = {
             "run.read",
             query=RunLogQuery,
             served=False,
+        ),
+        Operation(
+            "runs.agent_log",
+            ENVIRONMENT + "/runs/{identifier}/agents/{key}/log",
+            "GET",
+            AgentLogPage,
+            "run.read",
+            query=AgentLogQuery,
         ),
         Operation(
             "incidents.run_list",

@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 from uuid import UUID
 
 import httpx
@@ -39,6 +39,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from firefly_weave import __version__
+from firefly_weave.contracts.agent_log import agent_log_key
 from firefly_weave.contracts.connector_descriptors import ADAPTER
 from firefly_weave.contracts.surface import OPERATIONS
 from firefly_weave.operations.ephemeral import until_disconnect
@@ -374,6 +375,13 @@ class StudioService:
             return ADAPTER.fullmatch(value) is not None
         if name == "kind":
             return value in ("canvas", "test-data")
+        if name == "key":
+            # An agent step or one of its activations; loop indexes arrive percent-encoded ("support%5B2%5D").
+            try:
+                agent_log_key(unquote(value, errors="strict"))
+            except (ValueError, UnicodeDecodeError):
+                return False
+            return True
         try:
             UUID(value)
         except ValueError:
