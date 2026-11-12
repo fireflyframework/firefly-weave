@@ -15,7 +15,7 @@
 # limitations under the License.
 """A request that names the person it was made for is refused when the token belongs to someone else."""
 
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -27,7 +27,7 @@ from starlette.routing import Route
 from firefly_weave.access.authentication import AuthenticationFilter
 from firefly_weave.access.models import Principal
 
-PERSON = Principal(id=uuid4(), kind="human")
+PERSON = Principal(id=UUID("2c4f6a8e-1b3d-4e5f-8a7b-9c0d1e2f3a4b"), kind="human")
 PATH = "/api/v1/tenants/t/projects/p/drafts"
 
 
@@ -58,31 +58,22 @@ def headers(principal=None):
     return values
 
 
-async def test_a_request_for_the_signed_in_person_goes_through(platform):
+async def test_only_a_request_for_the_signed_in_person_goes_through(platform):
     client, handled = platform
-    response = await client.post(PATH, headers=headers(str(PERSON.id)))
-    assert response.status_code == 200 and handled == ["POST"]
-
-
-async def test_a_request_for_another_person_is_refused_before_the_handler_runs(platform):
-    client, handled = platform
+    assert (await client.post(PATH, headers=headers(str(PERSON.id)))).status_code == 200
     for method in ("POST", "GET"):
         response = await client.request(method, PATH, headers=headers(str(uuid4())))
         assert response.status_code == 409
         assert response.json()["code"] == "WV-PRINCIPAL-CHANGED"
         assert response.json()["message"] == "This request was made for another person; nothing was changed."
-    assert handled == []
-
-
-async def test_a_request_without_the_header_goes_through(platform):
-    client, handled = platform
-    response = await client.post(PATH, headers=headers())
-    assert response.status_code == 200 and handled == ["POST"]
+    # The handler ran only for the signed-in person's request.
+    assert handled == ["POST"]
 
 
 @pytest.mark.parametrize("value", ["not-a-uuid", "", str(PERSON.id).upper()])
-async def test_a_malformed_header_is_refused(platform, value):
+async def test_a_request_without_the_header_goes_through_and_a_malformed_one_is_refused(platform, value):
     client, handled = platform
+    assert (await client.post(PATH, headers=headers())).status_code == 200
     response = await client.post(PATH, headers=headers(value))
     assert response.status_code == 409 and response.json()["code"] == "WV-PRINCIPAL-CHANGED"
-    assert handled == []
+    assert handled == ["POST"]

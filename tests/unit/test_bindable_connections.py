@@ -314,12 +314,21 @@ async def test_an_http_connections_item_names_its_origin_and_nothing_else(catalo
     assert "canary" not in page.model_dump_json()
 
 
-async def test_an_http_connection_without_a_usable_base_url_names_no_origin(catalog):
-    catalog.records[100] = catalog.records[100].model_copy(
-        update={"adapter": "weave-http-v2", "connector": "weave-http@2.0.0", "config": {"auth": {"kind": "none"}}}
-    )
-    page = await listing(catalog, limit=1)
-    assert "endpoint_origin" not in page.items[0].model_dump()
+@pytest.mark.parametrize(
+    "base, expected",
+    [
+        ("http://API.acme.test/v1#part", "http://api.acme.test:80"),
+        ("https://[2001:db8::1]:8443/", "https://[2001:db8::1]:8443"),
+        ("https://user@api.acme.test", "https://api.acme.test:443"),
+        (None, None),
+        (42, None),
+        ("ftp://files.acme.test", None),
+        ("https://api.acme.test:0", None),
+        ("not-a-url", None),
+    ],
+)
+def test_an_http_origin_is_the_base_urls_scheme_host_and_port_only(base, expected):
+    assert modules()[0].http_origin(base) == expected
 
 
 async def test_invalid_stored_endpoint_is_omitted_and_disabled(catalog):

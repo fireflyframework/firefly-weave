@@ -162,11 +162,11 @@ async def test_the_result_carries_no_response_content():
     assert "CANARY" not in result.model_dump_json()
 
 
-@pytest.mark.parametrize("slots, sent", [({"api_key": "acme-api-key"}, 1), ({}, 0)], ids=["inside", "outside"])
-async def test_only_a_connection_inside_its_profile_is_sent(slots, sent):
-    wire = Wire()
-    result = await probe(wire, bound(slots=slots))
-    assert (result.ok, len(wire.calls)) == (sent == 1, sent)
+async def test_only_a_connection_inside_its_profile_is_sent():
+    inside, outside = Wire(), Wire()
+    assert (await probe(inside, bound(slots={"api_key": "acme-api-key"}))).ok is True
+    assert (await probe(outside, bound(slots={}))).ok is False
+    assert (len(inside.calls), len(outside.calls)) == (1, 0)
 
 
 CONTROL_PLANE = "http://api.weave-system.svc:8000"
