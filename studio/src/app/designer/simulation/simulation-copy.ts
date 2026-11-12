@@ -26,6 +26,8 @@ export const debugMessages: Readonly<Record<string, string>> = {
     "An action result is attached to a step that isn't an action in this workflow. Start the simulation again from the setup.",
   "WV-DEBUG-MOCK-CONFLICT":
     "A step has both a result and a failure to report. Keep one of them and start the simulation again.",
+  "WV-DEBUG-INCIDENT":
+    "That resolution doesn't apply to this simulated run right now. Check which steps are in doubt, then try again.",
   "WV-DEBUG-MOCK-OUTPUT":
     "An action result doesn't match what that action returns. Check the action results and start again.",
   "WV-DEBUG-MISSING_MOCK":

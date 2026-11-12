@@ -21,15 +21,22 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import AwareDatetime, ConfigDict, Field
+from pydantic import AwareDatetime, ConfigDict, Field, field_validator
 
-from firefly_weave.contracts.definitions import ContractModel
+from firefly_weave.contracts.definitions import ContractModel, ResourceName
 from firefly_weave.contracts.diagnostics import Diagnostic
+from firefly_weave.contracts.instance_keys import InstanceKeyText
 from firefly_weave.contracts.language_features import MAX_CALL_DEPTH
+from firefly_weave.contracts.run_views import BusinessKey, RunTransactionCause, TransactionParticipantView
 from firefly_weave.contracts.step_errors import StepOutcome
+from firefly_weave.contracts.transactions import TransactionState
 from firefly_weave.contracts.values import JsonData, JsonObjectData
 from firefly_weave.runtime.kernel import KernelCursor
 from firefly_weave.runtime.models import Deadline, RunState, RuntimeEvent
+from firefly_weave.studio.local_contracts import MockKey
+
+# How many steps and phases a session may leave without a result.
+MAX_PENDING_KEYS = 1000
 
 
 class DebugError(ValueError):
@@ -85,6 +92,9 @@ class ScriptedError(ContractModel):
     code: str = Field(min_length=1, max_length=128, pattern=r"^[A-Z][A-Z0-9_.-]*$")
     outcome: StepOutcome = "failed"
     attempts: int = Field(default=1, ge=0)
+    # Whether the failed step may have applied anything, inside a transaction; derived from the outcome and the
+    # action's definite failure codes when omitted.
+    effect: Literal["none", "unknown"] | None = Field(default=None, exclude_if=lambda v: v is None)
 
 
 class CalledWorkflow(ContractModel):
@@ -143,6 +153,26 @@ class DebugState(ContractModel):
     # prefixed with the frame key inside called workflows. Omitted when empty, so stored sessions keep their bytes.
     inputs: dict[str, JsonData] = Field(default_factory=dict, exclude_if=lambda v: not v)
     outputs: dict[str, JsonData] = Field(default_factory=dict, exclude_if=lambda v: not v)
+    # Steps and phases whose result never arrives in this session, keyed like mocks and sorted. Named apart from
+    # ``pending``, the queue of events; omitted when none, so stored sessions keep their bytes.
+    pending_keys: list[str] = Field(default_factory=list, max_length=MAX_PENDING_KEYS, exclude_if=lambda v: not v)
+
+
+class TransactionDebugView(ContractModel):
+    """One transaction of a simulated run: its state, why it left its normal path, and its steps. It carries no
+    values: no input, output or undo scope, and no business key that derives from a secret input."""
+
+    instance_key: InstanceKeyText
+    node_id: ResourceName
+    state: TransactionState
+    cause: RunTransactionCause | None = Field(default=None, exclude_if=lambda v: v is None)
+    # A cancel or a failure that waits for the step that can't be undone to settle.
+    pending_abort: RunTransactionCause | None = Field(default=None, exclude_if=lambda v: v is None)
+    # The in-doubt incident's key, which a resolve command names.
+    incident_key: str | None = Field(default=None, exclude_if=lambda v: v is None)
+    business_key: BusinessKey | None = Field(default=None, exclude_if=lambda v: v is None)
+    reconciled_as: Literal["completed", "compensated"] | None = Field(default=None, exclude_if=lambda v: v is None)
+    participants: list[TransactionParticipantView] = Field(max_length=1000)
 
 
 class LoopView(ContractModel):
@@ -183,6 +213,7 @@ class FrameView(ContractModel):
     active_nodes: list[str]
     variables: JsonObjectData
     loops: list[LoopView] = Field(default_factory=list, exclude_if=lambda v: not v)
+    transactions: list[TransactionDebugView] = Field(default_factory=list, exclude_if=lambda v: not v)
 
 
 class DebugView(ContractModel):
@@ -202,6 +233,8 @@ class DebugView(ContractModel):
     # Omitted for workflows without simulated calls; top-level fields keep describing the simulated workflow.
     frames: list[FrameView] = Field(default_factory=list, exclude_if=lambda v: not v)
     selected_frame: str | None = Field(default=None, exclude_if=lambda v: v is None)
+    # Omitted for workflows without transactions, so their views keep their shape.
+    transactions: list[TransactionDebugView] = Field(default_factory=list, exclude_if=lambda v: not v)
 
 
 class DebugCreate(ContractModel):
@@ -214,16 +247,36 @@ class DebugCreate(ContractModel):
     resolve_workflows: bool = False
     input: JsonData = None
     now: AwareDatetime
+    # Steps and phases whose result never arrives in this session, keyed like mocks.
+    pending: list[MockKey] = Field(default_factory=list, max_length=MAX_PENDING_KEYS, exclude_if=lambda v: not v)
+
+    @field_validator("pending")
+    @classmethod
+    def _pending_once(cls, keys: list[str]) -> list[str]:
+        if len(set(keys)) != len(keys):
+            raise ValueError("A pending key is listed twice")
+        return keys
 
 
 class DebugCommand(ContractModel):
-    kind: Literal["next", "continue", "step_out", "signal", "human_decision", "advance_time", "breakpoints"]
+    kind: Literal[
+        "next", "continue", "step_out", "signal", "human_decision", "advance_time", "breakpoints", "resolve", "cancel"
+    ]
     name: str | None = None
+    # resolve: the reconciliation record, or the output of the step that can't be undone for "It happened".
     payload: JsonData = None
     seconds: int | None = Field(default=None, ge=0)
     node_ids: list[str] | None = None
-    # A called workflow's frame key for step_out, signal and human_decision; the simulated workflow when omitted.
+    # A called workflow's frame key for step_out, signal, human_decision and resolve; the simulated workflow when
+    # omitted.
     frame: str | None = None
+    # resolve: the in-doubt incident, as a transaction's ``incident_key`` names it, and the resolution to apply.
+    incident_key: str | None = Field(default=None, min_length=1, max_length=600, exclude_if=lambda v: v is None)
+    resolution: Literal["retry_safe", "accept_reconciled_result", "accept_reconciled_failure", "terminate"] | None = (
+        Field(default=None, exclude_if=lambda v: v is None)
+    )
+    # cancel: end the simulated run without undoing its transactions, as a reconciler's forced cancel does.
+    skip_undo: bool = Field(default=False, exclude_if=lambda v: not v)
 
 
 class DebugSession(ContractModel):
