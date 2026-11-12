@@ -18,7 +18,7 @@
 """Bounded mock facts around the shared resumable reducer; no server dependencies."""
 
 import json
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import cast
@@ -33,6 +33,7 @@ from firefly_weave.compiler.ir import (
     DecisionTableNode,
     HumanTaskNode,
     IRNode,
+    Participation,
     SignalNode,
     TransformNode,
     UnsupportedIR,
@@ -41,6 +42,7 @@ from firefly_weave.compiler.ir import (
 from firefly_weave.contracts.definitions import ActionDefinition, load_definition
 from firefly_weave.contracts.diagnostics import Diagnostic
 from firefly_weave.contracts.instance_keys import InvalidInstanceKey, node_of, split_instance
+from firefly_weave.contracts.transactions import PHASE_SEGMENTS, split_phase
 from firefly_weave.contracts.values import JsonObject, JsonValue
 from firefly_weave.operations.debug.models import (
     Boundary,
@@ -57,6 +59,7 @@ from firefly_weave.operations.debug.models import (
     SelectedScope,
     SignalReceipt,
 )
+from firefly_weave.operations.debug.transactions import Answer, PhaseTarget, phase_target, phase_targets, step_instance
 from firefly_weave.runtime.call_outcomes import STOPPED, call_result, screened
 from firefly_weave.runtime.capacity import ADMISSION_OUTPUT_BYTES, ADMISSION_REDUCTIONS, TRANSITION_BYTES, logical_size
 from firefly_weave.runtime.control import enclosing_loops, loop_scope
@@ -132,22 +135,63 @@ def _instance_node(prepared: PreparedWorkflow, key: str) -> IRNode | None:
     """The node that ``key`` addresses: a step ID (every instance), or one instance of a step inside loops.
 
     An instance key names one position per enclosing loop, each below that loop's ``maxItems``. Repeated
-    activations (``#``) and loop yields (``~``) are not addressed by a session.
+    activations (``#``) and loop yields (``~``) are not addressed by a session; confirms, cancels and undos are
+    addressed as phases (``phase_target``), never as steps.
     """
-    try:
-        parsed = split_instance(key)
-    except InvalidInstanceKey:
-        return None
-    node = prepared.nodes.get(parsed.node_id)
-    if node is None or parsed.segments or parsed.count is not None:
-        return None
-    if parsed.indexes:
-        loops = enclosing_loops(prepared.nodes, node)
-        if len(parsed.indexes) != len(loops):
-            return None
-        if any(index >= loop.max_items for index, loop in zip(parsed.indexes, loops, strict=True)):
-            return None
-    return node
+    return step_instance(prepared, key)
+
+
+@dataclass(frozen=True)
+class _ActionTarget:
+    """An action a mock or a failure stands for: a step, or the confirm, cancel or undo of one."""
+
+    definition: ActionDefinition
+    node: ActionNode | None
+
+
+type _Target = _ActionTarget | CallWorkflowNode | PhaseTarget | IRNode
+
+
+def _action_definition(ir: WorkflowIR, digest: str) -> tuple[str, ActionDefinition]:
+    dependency = next(d for d in ir.dependencies if d.digest == digest and d.kind == "Action")
+    return dependency.reference, cast(ActionDefinition, load_definition(dependency.document))
+
+
+def _key_targets(prepared: PreparedWorkflow, key: str) -> list[_Target]:
+    """What a mock or failure key stands for: one step or phase for ``node:`` keys, every step and phase that uses
+    the action for ``action:`` keys, nothing for a key that names none."""
+    ir = prepared.ir
+    if key.startswith("node:"):
+        instance = key.removeprefix("node:")
+        phase = phase_target(prepared, instance)
+        if phase is not None:
+            return [phase]
+        node = _instance_node(prepared, instance)
+        if isinstance(node, ActionNode):
+            return [_ActionTarget(_action_definition(ir, node.dependency)[1], node)]
+        return [node] if node is not None else []
+    if not key.startswith("action:"):
+        return []
+    reference = key.removeprefix("action:")
+    targets: list[_Target] = []
+    for node in ir.graph.nodes:
+        if isinstance(node, ActionNode):
+            found, definition = _action_definition(ir, node.dependency)
+            if found == reference:
+                targets.append(_ActionTarget(definition, node))
+    targets.extend(p for p in phase_targets(prepared) if p.kind == "action" and p.reference == reference)
+    return targets
+
+
+def _validate_output(ir: WorkflowIR, target: _ActionTarget | PhaseTarget, value: JsonValue) -> None:
+    """Check a mocked result: an action's output, or a phase's (its action's output, or its called workflow's)."""
+    if isinstance(target, _ActionTarget):
+        validate_action(ir, target.definition, "output", value, node=target.node)
+    elif target.kind == "action":
+        participation = cast(Participation, target.step.txn)
+        validate_action(ir, _action_definition(ir, participation.phases[target.phase].dependency)[1], "output", value)
+    else:
+        validate(ir, target.output_schema, value)
 
 
 class Simulator:
@@ -236,30 +280,22 @@ class Simulator:
 
     def _validate_mocks(self, prepared: PreparedWorkflow, mocks: Mapping[str, JsonValue]) -> None:
         ir = prepared.ir
-        steps: dict[str, tuple[ActionDefinition, ActionNode]] = {}
-        actions: dict[str, list[tuple[ActionDefinition, ActionNode]]] = {}
-        for node in ir.graph.nodes:
-            if isinstance(node, ActionNode):
-                dep = next(d for d in ir.dependencies if d.digest == node.dependency and d.kind == "Action")
-                definition = cast(ActionDefinition, load_definition(dep.document))
-                steps[node.id] = (definition, node)
-                actions.setdefault("action:" + dep.reference, []).append((definition, node))
         for key, value in mocks.items():
-            if key.startswith("node:"):
-                # node:<step> mocks every instance of an action step; node:<instance key> mocks one of them.
-                step = _instance_node(prepared, key.removeprefix("node:"))
-                if isinstance(step, CallWorkflowNode) and step.mode == "wait":
-                    # A waiting call's mock stands for the whole called run.
-                    self._validate_call_mock(ir, step, value)
-                    continue
-                targets = [steps[step.id]] if step is not None and step.id in steps else []
-            else:
-                targets = actions.get(key, [])
-            if not targets:
+            # node:<step> mocks every instance of an action step, node:<instance key> one of them, and
+            # node:<step>#confirm (or #cancel, #undo) that phase; action:<reference> every step and phase using it.
+            targets = _key_targets(prepared, key)
+            if key.startswith("node:") and len(targets) == 1 and isinstance(targets[0], CallWorkflowNode):
+                if targets[0].mode != "wait":
+                    raise DebugError("WV-DEBUG-MOCK-KEY")
+                # A waiting call's mock stands for the whole called run.
+                self._validate_call_mock(ir, targets[0], value)
+                continue
+            answered = [target for target in targets if isinstance(target, (_ActionTarget, PhaseTarget))]
+            if not answered or len(answered) != len(targets):
                 raise DebugError("WV-DEBUG-MOCK-KEY")
             try:
-                for definition, node in targets:
-                    validate_action(ir, definition, "output", value, node=node)
+                for target in answered:
+                    _validate_output(ir, target, value)
             except ValueError:
                 raise DebugError("WV-DEBUG-MOCK-OUTPUT") from None
 
@@ -284,45 +320,58 @@ class Simulator:
     def _validate_errors(
         prepared: PreparedWorkflow, mocks: Mapping[str, JsonValue], errors: Mapping[str, ScriptedError]
     ) -> None:
-        """Scripted failures name steps like mocks do: any action, a waiting call, or a step that handles failures."""
-        ir = prepared.ir
-        references = {
-            "action:" + d.reference
-            for node in ir.graph.nodes
-            if isinstance(node, ActionNode)
-            for d in ir.dependencies
-            if d.digest == node.dependency and d.kind == "Action"
-        }
+        """Scripted failures name steps like mocks do: any action or phase, a waiting call, or a step that handles
+        failures."""
         for key in errors:
             if key in mocks:
                 raise DebugError("WV-DEBUG-MOCK-CONFLICT")
+            targets = _key_targets(prepared, key)
             if key.startswith("node:"):
-                node = _instance_node(prepared, key.removeprefix("node:"))
-                scripted = isinstance(node, ActionNode) or (isinstance(node, CallWorkflowNode) and node.mode == "wait")
+                node = targets[0] if len(targets) == 1 else None
+                scripted = isinstance(node, (_ActionTarget, PhaseTarget)) or (
+                    isinstance(node, CallWorkflowNode) and node.mode == "wait"
+                )
                 handles = (
                     isinstance(node, (TransformNode, DecisionTableNode, SignalNode, HumanTaskNode))
                     and node.on_error is not None
                 )
                 if not (scripted or handles):
                     raise DebugError("WV-DEBUG-MOCK-KEY")
-            elif key not in references:
+            elif not any(isinstance(target, (_ActionTarget, PhaseTarget)) for target in targets):
                 raise DebugError("WV-DEBUG-MOCK-KEY")
 
-    def _scripted(self, key: str, instance: str, reference: str | None = None) -> ScriptedError | None:
-        """The failure scripted for one instance of the simulated workflow, under the mocks' precedence: the
-        instance, then its step, then its action. A mock found first wins."""
-        if key:
-            return None
-        mocks, errors = self._workflows[""].mocks, self.data.errors
-        candidates = ["node:" + instance, "node:" + node_of(instance)]
-        if reference is not None:
-            candidates.append("action:" + reference)
-        for candidate in candidates:
+    @staticmethod
+    def _candidates(instance: str, fallbacks: Sequence[str]) -> list[str]:
+        """The keys that may answer ``instance``, most specific first: the instance, its step, then the caller's
+        fallbacks. A confirm, cancel or undo is answered at its own phase keys, never at its step's."""
+        try:
+            phase = split_phase(instance)
+        except InvalidInstanceKey:
+            phase = None
+        step = f"{node_of(phase[0])}#{PHASE_SEGMENTS[phase[1]]}" if phase is not None else node_of(instance)
+        return list(dict.fromkeys(["node:" + instance, "node:" + step, *fallbacks]))
+
+    def _answer(self, frame: str, instance: str, fallbacks: Sequence[str], *, retry: bool = False) -> Answer:
+        """What the session gives one step or phase instance of the run ``frame``: the first candidate key found in
+        the mocks, the scripted failures or the results that never arrive. Failures and results that never arrive
+        apply to the simulated workflow itself; a retried attempt skips failures, which belong to the first one.
+        """
+        mocks = self._workflow(frame).mocks
+        errors = {} if frame or retry else self.data.errors
+        pending = set() if frame else set(self.data.pending_keys)
+        for candidate in self._candidates(instance, fallbacks):
             if candidate in mocks:
-                return None
+                return Answer("mock", candidate, mocks[candidate])
             if candidate in errors:
-                return errors[candidate]
-        return None
+                return Answer("error", candidate, errors[candidate])
+            if candidate in pending:
+                return Answer("pending", candidate)
+        return Answer("none")
+
+    def _scripted(self, key: str, instance: str, fallbacks: Sequence[str] = ()) -> ScriptedError | None:
+        """The failure scripted for one instance of the simulated workflow, under the mocks' precedence."""
+        answer = self._answer(key, instance, fallbacks)
+        return cast(ScriptedError, answer.value) if answer.kind == "error" else None
 
     def _failure(self, called: _Workflow, instance: str, failure: ScriptedError) -> RuntimeEvent:
         """The event a platform would record for this failure: the step's setting takes it, or an incident opens
@@ -730,18 +779,13 @@ class Simulator:
                     d.inputs[_path(key, command.node_id)] = {"title": command.title, "context": command.context}
                 elif isinstance(command, TaskIntent):
                     d.inputs[_path(key, command.node_id)] = command.input
-                    scripted = self._scripted(key, command.node_id, command.action_reference)
-                    if scripted is not None:
-                        run.pending.append(self._failure(called, command.node_id, scripted))
+                    fallbacks = ("action:" + command.action_reference,)
+                    answer = self._answer(key, command.node_id, fallbacks)
+                    if answer.kind == "error":
+                        run.pending.append(self._failure(called, command.node_id, cast(ScriptedError, answer.value)))
                         continue
-                    # A step mock applies to every instance of the step.
-                    mock = "node:" + command.node_id
-                    if mock not in called.mocks:
-                        mock = "node:" + node_of(command.node_id)
-                    if mock not in called.mocks:
-                        mock = "action:" + command.action_reference
-                    if mock not in called.mocks:
-                        tried = dict.fromkeys(["node:" + command.node_id, "node:" + node_of(command.node_id), mock])
+                    if answer.kind == "none":
+                        tried = self._candidates(command.node_id, fallbacks)
                         d.diagnostics = [
                             Diagnostic(
                                 code="WV-DEBUG-MISSING_MOCK",
@@ -756,10 +800,9 @@ class Simulator:
                             )
                         ]
                         return True
-                    run.pending.append(
-                        self._event("task_completed", {"node_id": command.node_id, "output": called.mocks[mock]})
-                    )
-                    self._grown(called.mocks[mock])
+                    value = cast(JsonValue, answer.value)
+                    run.pending.append(self._event("task_completed", {"node_id": command.node_id, "output": value}))
+                    self._grown(value)
             if result.state.status in TERMINAL:
                 self._ended(key)
         return True
@@ -768,15 +811,14 @@ class Simulator:
         """Answer a call from a mock, or start a frame that runs the called workflow; False when it cannot."""
         d = self.data
         child = _path(key, command.node_id)
+        candidates = self._candidates(command.node_id, ())
         if command.mode == "wait":
-            scripted = self._scripted(key, command.node_id)
-            if scripted is not None:
-                run.pending.append(self._failure(called, command.node_id, scripted))
+            answer = self._answer(key, command.node_id, ())
+            if answer.kind == "error":
+                run.pending.append(self._failure(called, command.node_id, cast(ScriptedError, answer.value)))
                 return True
-            candidates = list(dict.fromkeys(["node:" + command.node_id, "node:" + node_of(command.node_id)]))
-            mock = next((mock for mock in candidates if mock in called.mocks), None)
-            if mock is not None:
-                value = called.mocks[mock]
+            if answer.kind == "mock":
+                value = cast(JsonValue, answer.value)
                 run.pending.append(self._event("call_completed", self._mocked_call(child, command, value)))
                 self._grown(value)
                 return True
