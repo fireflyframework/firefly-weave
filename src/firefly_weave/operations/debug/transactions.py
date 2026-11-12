@@ -24,13 +24,21 @@ from typing import Any, Final, Literal, cast
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from firefly_weave.compiler.ir import ActionNode, CallWorkflowNode, IRNode, Participation
-from firefly_weave.contracts.instance_keys import InvalidInstanceKey, split_instance
-from firefly_weave.contracts.transactions import PHASE_SEGMENTS, Effect, UndoPhase, dispatch_effect, split_phase
+from firefly_weave.contracts.instance_keys import InvalidInstanceKey, node_of, split_instance
+from firefly_weave.contracts.run_views import RunTransactionCause, TransactionParticipantView
+from firefly_weave.contracts.transactions import (
+    PHASE_SEGMENTS,
+    Effect,
+    UndoPhase,
+    dispatch_effect,
+    participants_view,
+    split_phase,
+)
 from firefly_weave.contracts.values import JsonObject, JsonValue
-from firefly_weave.operations.debug.models import ScriptedError
+from firefly_weave.operations.debug.models import ScriptedError, TransactionDebugView
 from firefly_weave.runtime.control import enclosing_loops
 from firefly_weave.runtime.kernel import PreparedWorkflow
-from firefly_weave.runtime.models import Deadline, RunState
+from firefly_weave.runtime.models import Deadline, RunState, TransactionCause
 from firefly_weave.runtime.transactions import split_deadline
 
 # The simulated workflow's run: stable across sessions, restores, the library, the CLI and servers, so the operation
@@ -78,6 +86,33 @@ def resolution_problem(state: RunState, incident_key: str, resolution: str) -> b
     if state.status != "suspended" or incident is None:
         return True
     return resolution not in RESOLUTIONS.get(incident.code, frozenset())
+
+
+def _cause(cause: TransactionCause | None) -> RunTransactionCause | None:
+    if cause is None:
+        return None
+    return RunTransactionCause(code=cause.code, instance_key=cause.instance_key, effect=cause.effect or "unknown")
+
+
+def transaction_views(state: RunState) -> list[TransactionDebugView]:
+    """Each transaction of a simulated run, in the order it opened: its state, cause, in-doubt incident and steps,
+    as the run views show them. No values: no input, output or undo scope, and no withheld business key."""
+    return [
+        TransactionDebugView(
+            instance_key=key,
+            node_id=node_of(key),
+            state=record.status,
+            cause=_cause(record.cause),
+            pending_abort=_cause(record.pending_abort),
+            incident_key=record.incident,
+            business_key=None if record.business_key_withheld else record.business_key,
+            reconciled_as=record.reconciled_as,
+            participants=[
+                TransactionParticipantView.model_validate(item) for item in participants_view(record.participants)
+            ],
+        )
+        for key, record in state.transactions.items()
+    ]
 
 
 def due_deadline(state: RunState, deadline: Deadline) -> bool:

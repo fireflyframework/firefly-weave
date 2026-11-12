@@ -24,6 +24,7 @@ import click
 from firefly_weave.cli import LocalError, emit_result, error_result, read_bounded
 from firefly_weave.compiler.api import import_artifact
 from firefly_weave.compiler.ir import UnsupportedIR
+from firefly_weave.contracts.values import JsonObject
 from firefly_weave.operations.debug.models import (
     CalledWorkflow,
     DebugCommand,
@@ -32,6 +33,7 @@ from firefly_weave.operations.debug.models import (
     DebugLimits,
     DebugView,
     ScriptedError,
+    TransactionDebugView,
 )
 from firefly_weave.operations.debug.simulator import Simulator
 
@@ -41,7 +43,7 @@ from firefly_weave.operations.debug.simulator import Simulator
 @click.option(
     "--commands",
     type=click.Path(path_type=Path),
-    help="JSON array of next/continue/step_out/signal/human_decision/advance_time/breakpoints commands.",
+    help="JSON array of next/continue/step_out/signal/human_decision/advance_time/breakpoints/resolve/cancel commands.",
 )
 @click.option(
     "--workflow",
@@ -57,9 +59,21 @@ from firefly_weave.operations.debug.simulator import Simulator
     metavar="KEY=CODE",
     help="Make a step fail with CODE instead of using a mock, such as node:send[2]=RATE_LIMITED; repeatable.",
 )
+@click.option(
+    "--pending",
+    "unanswered",
+    multiple=True,
+    metavar="KEY",
+    help="Leave a step or phase without a result, such as node:submit; repeatable.",
+)
 @click.option("--output", type=click.Choice(["text", "json"]), default="text")
 def simulate(
-    request_file: Path, commands: Path | None, called: tuple[str, ...], failures: tuple[str, ...], output: str
+    request_file: Path,
+    commands: Path | None,
+    called: tuple[str, ...],
+    failures: tuple[str, ...],
+    unanswered: tuple[str, ...],
+    output: str,
 ) -> None:
     """Simulate a local JSON {artifact,mocks,errors,input,now} request with no external effects."""
     scripted: dict[str, ScriptedError] = {}
@@ -99,7 +113,7 @@ def simulate(
             now=request.now,
             workflows=workflows,
             errors={**request.errors, **scripted},
-            pending=request.pending,
+            pending=sorted(set(request.pending) | set(unanswered)),
         )
         if commands is None:
             view = simulator.continue_until_breakpoint()
@@ -151,5 +165,21 @@ def echo_view(view: DebugView) -> None:
     for frame in view.frames:
         status = frame.status.replace("not_simulated", "not simulated")
         click.echo(f"Called workflow {frame.key} ({frame.workflow}): {status}.")
+    runs = [("", view.transactions, view.variables)] + [(f.key + "/", f.transactions, f.variables) for f in view.frames]
+    for prefix, transactions, variables in runs:
+        for transaction in transactions:
+            click.echo(transaction_line(prefix, transaction, variables))
     for diagnostic in view.diagnostics:
         click.echo(f"{diagnostic.code}: {diagnostic.message}")
+
+
+def transaction_line(prefix: str, transaction: TransactionDebugView, variables: JsonObject) -> str:
+    """``Transaction move: in doubt (WV-TXN-UNDO-STUCK at add#undo:10).``: a transaction's state, and the incident
+    a person resolves when it is in doubt."""
+    line = f"Transaction {prefix}{transaction.instance_key}: {transaction.state.replace('_', ' ')}"
+    incidents = variables.get("incidents")
+    key = transaction.incident_key
+    incident = incidents.get(key) if isinstance(incidents, dict) and key is not None else None
+    if transaction.state == "in_doubt" and isinstance(incident, dict):
+        line += f" ({incident['code']} at {key})"
+    return line + "."

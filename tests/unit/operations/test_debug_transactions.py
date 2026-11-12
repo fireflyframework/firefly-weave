@@ -30,7 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "debug"))
 from simulation_support import NOW, STOP, callee, each, snapshot_with, strict_catalog  # noqa: E402
 from transaction_support import INPUT, add, compiled, hold, reverse_by_call, submit, transaction  # noqa: E402
 
-from firefly_weave.operations.debug.models import CalledWorkflow, DebugError, ScriptedError  # noqa: E402
+from firefly_weave.operations.debug.models import CalledWorkflow, DebugError, DebugLimits, ScriptedError  # noqa: E402
 from firefly_weave.operations.debug.simulator import Simulator, frame_run_id  # noqa: E402
 
 UNDONE = {
@@ -296,3 +296,64 @@ def test_a_pivot_with_an_unknown_outcome_waits_for_a_person():
     _, view = run(compiled([transaction([hold(), add(), submit()])]), errors=errors)
     assert view.variables["incidents"]["submit:1"]["code"] == "WV-TXN-PIVOT-UNKNOWN"
     assert phases(view) == []
+
+
+# What a view shows of each transaction.
+
+UNDO_STUCK = {
+    "node:add": ScriptedError(code="UNAVAILABLE"),
+    "node:add#undo": ScriptedError(code="UNAVAILABLE", attempts=10),
+}
+
+
+def test_the_view_shows_each_transaction_its_cause_and_steps():
+    _, view = run(compiled([transaction([hold(), add(), submit()])]), errors=UNDO_STUCK)
+    assert [entry.model_dump(mode="json") for entry in view.transactions] == [
+        {
+            "instance_key": "move",
+            "node_id": "move",
+            "state": "in_doubt",
+            "cause": {"code": "UNAVAILABLE", "instance_key": "add", "effect": "unknown"},
+            "incident_key": "add#undo:10",
+            "business_key": "M-1",
+            "participants": [
+                {"node_id": "hold", "instance_key": "hold", "mode": "reserve", "status": "done", "effect": "none"},
+                {
+                    "node_id": "add",
+                    "instance_key": "add",
+                    "mode": "compensate",
+                    "status": "undo_stuck",
+                    "effect": "unknown",
+                    "attempts": 10,
+                },
+            ],
+        }
+    ]
+
+
+def test_the_transaction_view_carries_no_values_and_no_withheld_business_key():
+    simulator, view = run(compiled([transaction([hold(), add(), submit()])]), errors=UNDO_STUCK)
+    dumped = json.dumps([entry.model_dump(mode="json") for entry in view.transactions])
+    assert all(f'"{name}"' not in dumped for name in ("input", "output", "scope"))
+    # A secret never enters a session, so a stored state stands for one whose key was withheld.
+    stored = json.loads(simulator.serialize())
+    stored["state"]["transactions"]["move"]["business_key_withheld"] = True
+    [entry] = Simulator.restore(json.dumps(stored)).inspect().transactions
+    assert entry.business_key is None
+
+
+def test_a_stored_session_with_a_transaction_restores_to_the_same_view():
+    simulator, view = run(compiled([transaction([hold(), add(), submit()])]), errors=UNDO_STUCK)
+    restored = Simulator.restore(simulator.serialize())
+    assert restored.inspect() == view
+    assert restored.resolve("add#undo:10", "retry_safe") == simulator.resolve("add#undo:10", "retry_safe")
+
+
+def test_a_session_over_its_limits_with_transactions_keeps_its_state():
+    flow = compiled([transaction([hold(), add(), submit()])])
+    simulator = session(flow, mocks_for(flow), limits=DebugLimits(node_reductions=3))
+    before = simulator.serialize()
+    with pytest.raises(DebugError) as raised:
+        simulator.continue_until_breakpoint()
+    assert raised.value.code == "WV-DEBUG-LIMIT"
+    assert simulator.serialize() == before

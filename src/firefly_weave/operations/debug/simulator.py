@@ -73,6 +73,7 @@ from firefly_weave.operations.debug.transactions import (
     scripted_effect,
     started_data,
     step_instance,
+    transaction_views,
 )
 from firefly_weave.runtime.call_outcomes import STOPPED, call_result, screened
 from firefly_weave.runtime.capacity import ADMISSION_OUTPUT_BYTES, ADMISSION_REDUCTIONS, TRANSITION_BYTES, logical_size
@@ -633,6 +634,7 @@ class Simulator:
             active_nodes=list(state.active),
             variables=state.model_dump(mode="json"),
             loops=self._loops(self._workflows[frame.workflow].prepared, state),
+            transactions=transaction_views(state),
         )
 
     def inspect(self) -> DebugView:
@@ -655,6 +657,7 @@ class Simulator:
             selected_scope=self._scope(state, selected),
             frames=[self._frame_view(frame) for frame in self.data.frames],
             selected_frame=upcoming[0] if upcoming is not None and upcoming[0] else None,
+            transactions=transaction_views(state),
         ).model_copy(deep=True)
 
     def _stops_at(self, path: str) -> bool:
