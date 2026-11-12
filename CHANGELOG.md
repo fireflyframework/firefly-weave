@@ -86,6 +86,14 @@ SPDX-License-Identifier: Apache-2.0
   table; a workflow that uses one waits for it.
 - Published actions offer Change in a new version for retry, timeout and the
   request.
+- Two changes to the same project at once, such as a failing parallel branch
+  and its sibling completing together, no longer answer 429
+  `WV-OPERATION-CAPACITY`. A change used to check its run's stored workflow
+  artifact again for every check while it held the project's operation lock.
+  Weave now keeps each checked artifact for the process (at most 64, and
+  64 MiB) and reuses it only for the same content, limits and language
+  features. A task completion holds the lock about 76 ms instead of 220–330 ms
+  on an idle host.
 
 ## 0.1.0a17
 

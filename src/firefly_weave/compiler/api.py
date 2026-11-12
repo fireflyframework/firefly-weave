@@ -355,50 +355,93 @@ def import_artifact(
     same limits and language features (the advertised ones at the time of the call when ``features`` is omitted).
     One change to a run reads its stored artifact in several checks while it holds the project's operation lock;
     verifying it each time kept that lock long enough for another change to the project to be refused. A refused
-    artifact is never kept, so it is checked, and refused, every time.
+    artifact is never kept, so it is checked, and refused, every time. The check reads a snapshot of the content the
+    key was taken from, so a source changed by its holder during the import cannot be kept under the earlier key.
     """
-    key = _import_key(source, limits, features)
-    if key is not None:
-        with _imported_lock:
-            if (kept := _imported.get(key)) is not None:
-                _imported.move_to_end(key)
-                return kept
-    artifact = _verified_artifact(source, limits, features)
-    if key is not None:
-        with _imported_lock:
-            _imported[key] = artifact
+    found = _import_key(source, limits, features)
+    if found is None:
+        return _verified_artifact(source, limits, features)
+    key, snapshot = found
+    with _imported_lock:
+        if (kept := _imported.get(key)) is not None:
             _imported.move_to_end(key)
-            while len(_imported) > IMPORTED_ARTIFACTS or (
-                sum(len(kept.to_bytes()) for kept in _imported.values()) > IMPORTED_BYTES
-            ):
-                _imported.popitem(last=False)
+            return kept
+    artifact = _verified_artifact(snapshot, limits, key[3])
+    if len(artifact.to_bytes()) > IMPORTED_BYTES:
+        # Keeping it would push every other artifact out and still leave the budget exceeded.
+        return artifact
+    with _imported_lock:
+        _imported[key] = artifact
+        _imported.move_to_end(key)
+        while len(_imported) > IMPORTED_ARTIFACTS or (
+            sum(len(kept.to_bytes()) for kept in _imported.values()) > IMPORTED_BYTES
+        ):
+            _imported.popitem(last=False)
     return artifact
+
+
+_PLAIN_SCALARS = frozenset({str, int, float, bool, type(None)})
 
 
 def _import_key(
     source: str | bytes | JsonObject, limits: ArtifactLimits, features: Collection[str] | None
-) -> _ImportKey | None:
-    """What an import's outcome depends on: the content's SHA-256, its form, the limits and the language features.
+) -> tuple[_ImportKey, str | bytes | JsonObject] | None:
+    """What an import's outcome depends on, and the snapshot of the content to check.
 
-    None for a value that is not plain JSON (a key that is not a string, a tuple, an unserializable value): it has no
-    single text, so it is verified without being kept.
+    The key holds the content's SHA-256, its form, the limits and the language features; the snapshot is decoded
+    from the very text the key hashes. None for a source that is not plain JSON (a subclass of dict, list, str or
+    int, a key that is not a string, a tuple, a cycle, a value nested past the limits): it is checked as given and
+    never kept, so the parser refuses it as it would without the cache.
     """
-    if isinstance(source, str | bytes):
-        form = type(source).__name__
-        content = source.encode("utf-8", "surrogatepass") if isinstance(source, str) else source
+    snapshot: str | bytes | JsonObject
+    if type(source) is str:
+        form, content, snapshot = "str", source.encode("utf-8", "surrogatepass"), source
+    elif type(source) is bytes:
+        form, content, snapshot = "bytes", source, source
     else:
-        try:
-            text = json.dumps(source, sort_keys=True, separators=(",", ":"), allow_nan=False)
-            if json.loads(text) != source:
-                return None
-        except (TypeError, ValueError, RecursionError):
+        if not _plain_json(source, limits):
             return None
-        form, content = "object", text.encode()
+        try:
+            text = json.dumps(source, separators=(",", ":"), allow_nan=False)
+        except ValueError:
+            return None
+        form, content, snapshot = "object", text.encode(), cast(JsonObject, json.loads(text))
     try:
         listed = frozenset(language_features.ADVERTISED_FEATURES if features is None else features)
     except TypeError:
         return None
-    return form, hashlib.sha256(content).digest(), limits, listed
+    return (form, hashlib.sha256(content).digest(), limits, listed), snapshot
+
+
+def _plain_json(value: object, limits: ArtifactLimits) -> bool:
+    """Whether every value is exactly a JSON type and every key exactly a string, within the limits' depth and nodes.
+
+    One walk, without recursion; the node bound also ends a walk through a cycle or a much-shared value.
+    """
+    if type(value) is not dict:
+        return False
+    pending: list[tuple[object, int]] = [(value, 1)]
+    nodes = 0
+    while pending:
+        item, depth = pending.pop()
+        nodes += 1
+        if nodes > limits.max_nodes:
+            return False
+        kind = type(item)
+        if kind is dict:
+            if depth > limits.max_depth:
+                return False
+            for key, nested in cast(dict[object, object], item).items():
+                if type(key) is not str:
+                    return False
+                pending.append((nested, depth + 1))
+        elif kind is list:
+            if depth > limits.max_depth:
+                return False
+            pending.extend((nested, depth + 1) for nested in cast(list[object], item))
+        elif kind not in _PLAIN_SCALARS:
+            return False
+    return True
 
 
 def _verified_artifact(

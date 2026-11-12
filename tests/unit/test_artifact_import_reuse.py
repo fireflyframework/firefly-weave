@@ -17,6 +17,7 @@
 """A stored artifact is verified once per process, and only identical content under the same rules reuses it."""
 
 import json
+from collections import OrderedDict
 from uuid import uuid4
 
 import pytest
@@ -142,6 +143,54 @@ def test_the_kept_artifacts_stay_within_their_byte_budget(monkeypatch):
     assert import_artifact(read_again(b)) is kept
     import_artifact(read_again(a))
     assert verified == [a["digest"], b["digest"], a["digest"]]
+
+
+def test_an_artifact_larger_than_the_byte_budget_leaves_the_kept_ones(monkeypatch):
+    small, large = stored(), stored({"literal": "x" * 4096 + uuid4().hex})
+    monkeypatch.setattr(api, "IMPORTED_BYTES", len(canonical_bytes(small)) + 1)
+    verified = verifications(monkeypatch)
+    kept = import_artifact(small)
+    import_artifact(large)
+    assert import_artifact(read_again(small)) is kept
+    import_artifact(read_again(large))
+    assert verified == [small["digest"], large["digest"], large["digest"]]
+
+
+class Text(str):
+    """A string that is not plain JSON, as a caller might build one."""
+
+
+def test_a_mapping_subclass_is_refused_even_after_equal_content_was_kept():
+    row = stored()
+    import_artifact(row)
+    with pytest.raises(ValueError, match="root must be an object"):
+        import_artifact(OrderedDict(read_again(row)))
+
+
+def test_a_nested_string_subclass_is_refused_even_after_equal_content_was_kept():
+    row = stored()
+    import_artifact(row)
+    other = read_again(row)
+    other["sourceHash"] = Text(other["sourceHash"])
+    with pytest.raises(ValueError, match="interoperable JSON domain"):
+        import_artifact(other)
+
+
+def test_the_kept_artifact_matches_the_content_its_key_came_from(monkeypatch):
+    x, y = stored(), stored()
+    key = api._import_key
+
+    def changed_after_the_key(source, limits, features):
+        """Another holder of the same dict changes it once its key is taken."""
+        found = key(source, limits, features)
+        source.clear()
+        source.update(read_again(y))
+        return found
+
+    with monkeypatch.context() as patch:
+        patch.setattr(api, "_import_key", changed_after_the_key)
+        import_artifact(read_again(x))
+    assert import_artifact(read_again(x)).digest == x["digest"]
 
 
 def test_what_one_caller_changes_in_an_artifact_it_read_is_not_seen_by_the_next(monkeypatch):
