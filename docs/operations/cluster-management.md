@@ -414,16 +414,18 @@ values, `drain` (`mode` and `timeout_seconds`, 60–600), `title` and `reason`.
 
 To try a Kubernetes target on this computer, create a single-node kind or k3d
 cluster with the local platform's own tools. Run the command in the folder where
-you ran `weave platform up`:
+you ran `weave platform up`, with operations on:
 
 ```sh
-# Create a kind cluster on the platform's Docker context, without connecting it yet.
-weave platform cluster create --provider kind --name weave-test --no-connect
+# Create a kind cluster on the platform's Docker context and connect its weave-workers namespace.
+weave platform cluster create --provider kind --name weave-test
 ```
 
 Expected: `Created kind cluster weave-test: kubeconfig context kind-weave-test,
-Docker network weave-kind-weave-test.` Add `--output json` for one JSON line
-with `cluster`, `context`, and `network`.
+Docker network weave-kind-weave-test.`, then `Target: kind-weave-test`. Add
+`--no-connect` to create the cluster only, and `--output json` for one JSON
+line with `cluster`, `context`, and `network`, plus `target_id` and
+`target_name` once it's connected.
 
 The command:
 
@@ -437,25 +439,116 @@ The command:
   platform never shares a network with another cluster;
 - refuses when Docker has less than 6 GiB free, and refuses a cluster name that
   already exists on the Docker context;
+- without `--no-connect`, refuses before it creates anything when operations
+  are off;
 - waits up to 180 s for the nodes to be Ready, and deletes the cluster again if
   they aren't;
 - deletes nothing when kind or k3d fails, times out, or is interrupted, and
   says to run `weave platform cluster delete` with the same provider and name
-  to remove any nodes the tool left behind.
+  to remove any nodes the tool left behind;
+- keeps a cluster that fails to connect and gives the `weave platform cluster
+  connect` command that retries.
 
 Use `--provider k3d` for a k3s cluster. kind and k3d add the cluster's context
 to your kubeconfig and make it current, as they always do. Delete the cluster
 when you're done:
 
 ```sh
-# Delete the test cluster and the Docker network it got.
+# Disconnect the cluster's targets, then delete the cluster and the Docker network it got.
 weave platform cluster delete --provider kind --name weave-test
 ```
 
+`delete` first disconnects each of the cluster's targets, as `weave platform
+cluster disconnect` does, and keeps the cluster when one can't be disconnected.
 `delete --name` deletes any kind or k3d cluster with that name on the Docker
 context, even one that Weave didn't create, so check the name before you run it.
 It also removes the cluster's own network when no other container uses it,
 including one an interrupted create left behind.
+
+## Connect a local cluster
+
+`connect` registers one namespace of a local kind or k3d cluster as a
+`kubernetes` deployment target with its own runner. Use it for a cluster you
+created with `--no-connect`, for another namespace of a connected cluster, or to
+repair a target:
+
+```sh
+# Connect the team-b namespace of the weave-test kind cluster as a second target.
+weave platform cluster connect --provider kind --name weave-test --namespace team-b
+```
+
+Expected: `Target: kind-weave-test.team-b`, `Runner: online`, and the time of
+the runner's first observation. Progress lines go to standard error. The
+namespace defaults to `weave-workers`, whose target is named
+`kind-weave-test`; another namespace adds `.NAMESPACE`. Pass `--kubeconfig`
+when the context isn't where kubectl looks.
+
+Connect accepts only a cluster whose API server is this computer, whose nodes
+run on the platform's Docker context, and whose Docker network holds nothing
+but its nodes and the platform. It then:
+
+1. Joins the platform's API and registry to the cluster's network. If another
+   container is on that network, every platform container leaves it and
+   connect stops.
+2. Points the nodes at the platform registry, pushes the runner image, and
+   applies the shared objects in `weave-system` and the namespace's objects.
+3. Creates the target's sign-in identities, then proves with three test pods
+   that a labeled pod signs in at the platform and that unlabeled pods reach
+   nothing. Nothing is registered before these probes pass.
+4. Registers the target and starts its runner, then waits up to 120 s for the
+   runner's first complete observation.
+
+A rerun repairs what it finds and rotates the runner's secret once the probes
+pass. A namespace that belongs to another Weave installation is refused; if one
+this installation connected was taken since, the refusal says which namespace
+and gives the `disconnect` command that frees it. One installation connects up
+to eight cluster targets.
+
+## List and check connected clusters
+
+```sh
+# List the connected clusters, their targets and each target's runner.
+weave platform cluster list
+```
+
+A cluster reads `connected`, or `missing` when its nodes are gone. Each target's
+runner reads `online`, `offline`, or `unknown` when the platform can't be
+asked. `list` reads only the platform and Docker, never the cluster.
+
+Add `--check` to compare each target's objects with what connect applies. It
+names each drifted object as `Kind/name`, such as `NetworkPolicy/weave-egress`,
+and never prints a value: kubectl hands both versions to `diff -q`, which
+reports file names only. `--check` changes nothing; run `connect` again to
+repair what it names.
+
+## After weave platform up
+
+Each `weave platform up` with operations on points every connected cluster at
+the platform's current addresses. It joins the platform to each cluster's
+network again and, when an address moved, applies the new addresses to the
+cluster's objects through your default kubeconfig. `up` reports each cluster as
+`connected`, `missing`, or `unreachable` with the reason, and a cluster never
+makes `up` fail. A cluster you connected with `--kubeconfig` elsewhere reads
+`unreachable` here; run `connect` again with that file.
+
+## Disconnect a target
+
+```sh
+# Disconnect the team-b target of the weave-test cluster.
+weave platform cluster disconnect --provider kind --name weave-test --namespace team-b
+```
+
+Disconnect revokes the target's runner, disables the target, deactivates its
+sign-in principals, deletes its objects in the cluster and its Keycloak
+clients, and frees its identity pair for the next connect. It also frees a
+target that a stopped connect left pending. When it's the cluster's last
+target, disconnect also removes the shared objects in `weave-system`, the
+cluster's private origins, and the platform's connections to the cluster's
+network.
+
+Disconnect never deletes the workers namespace, and it deletes nothing in a
+namespace that another Weave installation now owns. Each step is safe to
+repeat, so running it again finishes a disconnect that stopped.
 
 ## Current bounds
 
