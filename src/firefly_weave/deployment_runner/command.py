@@ -36,8 +36,9 @@ class CommandError(Exception):
 
 
 async def _reap(process: asyncio.subprocess.Process) -> None:
-    # The command owns a new session, including any child processes it creates.
-    with suppress(ProcessLookupError):
+    # The command owns a new session, including any child processes it creates. A group that is already gone needs
+    # nothing; once all its processes have exited, macOS can answer EPERM instead of ESRCH.
+    with suppress(ProcessLookupError, PermissionError):
         os.killpg(process.pid, signal.SIGKILL)
     await process.wait()
 

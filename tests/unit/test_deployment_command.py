@@ -73,3 +73,33 @@ async def test_stdin_is_explicit_and_shell_expansion_is_never_used():
         stdin=b"owned template",
     )
     assert output == b"$(not-a-command)\nowned template\n"
+
+
+@pytest.mark.asyncio
+async def test_a_process_group_that_refuses_the_kill_still_ends_the_command_cleanly(tmp_path, monkeypatch):
+    """macOS can answer killpg on a group whose processes have all exited with EPERM, not ESRCH. A finished command
+    still returns its output, a timeout still reports CommandError, and its process is still reaped."""
+    from firefly_weave.deployment_runner import command
+
+    killpg = command.os.killpg
+
+    def macos(pid, signum):
+        try:
+            killpg(pid, signum)
+        except ProcessLookupError:
+            raise PermissionError(1, "Operation not permitted") from None
+
+    monkeypatch.setattr(command.os, "killpg", macos)
+    assert await run_command([sys.executable, "-c", "print('ready')"], timeout=5) == b"ready\n"
+    marker = tmp_path / "child.pid"
+    code = (
+        "import os,time,pathlib; pathlib.Path(" + repr(str(marker)) + ").write_text(str(os.getpid())); time.sleep(30)"
+    )
+    task = asyncio.create_task(run_command([sys.executable, "-c", code], timeout=0.5))
+    async with asyncio.timeout(2):
+        while not marker.exists():
+            await asyncio.sleep(0.005)
+    with pytest.raises(CommandError):
+        await task
+    with pytest.raises(ProcessLookupError):
+        os.kill(int(marker.read_text()), 0)
