@@ -177,11 +177,11 @@ def tool(directory: Path, name: str, *, transport: httpx.BaseTransport | None = 
         raise PlatformError(f"{name} {pin.version} isn't published for {key}.")
     url, digest = pin.files[key]
     path = _path(directory, name)
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    # mkdir leaves an existing folder's mode as it is; a reused tool keeps its folder private too.
+    os.chmod(path.parent, 0o700)
     if _verified(path, digest):
         return path
-    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    # mkdir leaves an existing folder's mode as it is.
-    os.chmod(path.parent, 0o700)
     label = f"{name} {pin.version}"
     try:
         with httpx.Client(timeout=60, follow_redirects=False, transport=transport) as client:

@@ -153,3 +153,13 @@ def test_an_existing_tools_folder_is_made_private(tmp_path, pinned):
     tools.tool(tmp_path, "kubectl", transport=transport)
     if os.name != "nt":
         assert (tmp_path / "tools").stat().st_mode & 0o777 == 0o700
+
+
+def test_reusing_a_verified_tool_also_keeps_its_folder_private(tmp_path, pinned):
+    transport, served = pinned
+    tools.tool(tmp_path, "kubectl", transport=transport)
+    (tmp_path / "tools").chmod(0o755)
+    tools.tool(tmp_path, "kubectl", transport=transport)
+    assert len(served["requests"]) == 1
+    if os.name != "nt":
+        assert (tmp_path / "tools").stat().st_mode & 0o777 == 0o700
