@@ -26,15 +26,18 @@ out from the last, then the oldest messages), and the trimming is listed in ``tr
 it did not see. Nothing is cut mid-value.
 """
 
+import copy
 import json
 import re
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal, cast
 
 from firefly_weave.compiler.api import validate_authoring
 from firefly_weave.compiler.parser import parse_source
+from firefly_weave.contracts.language import STEP_KINDS
+from firefly_weave.contracts.language_features import ADVERTISED_FEATURES
 from firefly_weave.contracts.lumi import LumiMessage
 from firefly_weave.contracts.run_views import RunSummary, StepFact
 from firefly_weave.contracts.values import JsonObject, JsonValue
@@ -411,6 +414,49 @@ def untitled(schema: JsonValue) -> JsonValue:
     return result
 
 
+def runnable_workflow_schema(schema: JsonValue, features: Collection[str] = ADVERTISED_FEATURES) -> JsonValue:
+    """The workflow schema without the step kinds a platform running ``features`` can't run.
+
+    Weave AI must never write a step the platform would refuse, so a kind behind an unadvertised feature leaves the
+    ``Step`` union, and so do the definitions only it used.
+    """
+    if not isinstance(schema, dict) or not isinstance(schema.get("$defs"), dict):
+        return schema
+    hidden = {
+        "#" + entry.schema_ref.partition("#")[2]
+        for entry in STEP_KINDS
+        if entry.feature is not None and entry.feature not in features
+    }
+    if not hidden:
+        return schema
+    result = copy.deepcopy(schema)
+    definitions = cast(JsonObject, result["$defs"])
+    step = definitions.get("Step")
+    if isinstance(step, dict) and isinstance(step.get("oneOf"), list):
+        step["oneOf"] = [
+            item
+            for item in cast(list[JsonValue], step["oneOf"])
+            if not (isinstance(item, dict) and item.get("$ref") in hidden)
+        ]
+    # Keep only the definitions the rest of the schema still reaches.
+    reached: set[str] = set()
+    pending: list[JsonValue] = [{key: value for key, value in result.items() if key != "$defs"}]
+    while pending:
+        node = pending.pop()
+        if isinstance(node, list):
+            pending.extend(node)
+        elif isinstance(node, dict):
+            reference = node.get("$ref")
+            if isinstance(reference, str) and reference.startswith("#/$defs/"):
+                name = reference.removeprefix("#/$defs/")
+                if name not in reached and name in definitions:
+                    reached.add(name)
+                    pending.append(definitions[name])
+            pending.extend(value for key, value in node.items() if key not in _SCHEMA_DATA)
+    result["$defs"] = {name: value for name, value in definitions.items() if name in reached}
+    return result
+
+
 def shape(
     profile: Profile,
     budget: int | None,
@@ -436,6 +482,8 @@ def shape(
         if profile != "full":
             context["guide"] = GUIDE
         wanted = {name: schemas[name] for name in SCHEMAS[profile] if name in schemas}
+        if "workflow" in wanted:
+            wanted["workflow"] = runnable_workflow_schema(wanted["workflow"])
         if profile == "standard":
             # A standard context sends the workflow schema whole; its titles repeat the property names.
             wanted = {name: untitled(value) for name, value in wanted.items()}

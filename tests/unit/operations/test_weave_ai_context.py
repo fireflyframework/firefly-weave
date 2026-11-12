@@ -34,6 +34,7 @@ from firefly_weave.operations.lumi_context import (
     input_budget,
     outline,
     output_tokens,
+    runnable_workflow_schema,
     shape,
     untitled,
 )
@@ -149,8 +150,27 @@ def test_a_standard_request_counts_the_workflow_schema_against_its_budget():
         selected_step=None,
         schemas={"workflow": workflow},
     )
-    assert shaped.context["authoringSchemas"] == {"workflow": untitled(workflow)}
+    assert shaped.context["authoringSchemas"] == {"workflow": untitled(runnable_workflow_schema(workflow))}
     assert sent_tokens(shaped, message) <= budget
+
+
+def _step_kinds(schema):
+    return {item["$ref"].rpartition("/")[2] for item in schema["$defs"]["Step"]["oneOf"]}
+
+
+def test_weave_ai_never_sees_a_step_kind_this_platform_cant_run():
+    from firefly_weave.contracts.language_features import ADVERTISED_FEATURES
+    from firefly_weave.contracts.schema_export import export_schemas
+
+    workflow = export_schemas()["workflow"]
+    runnable = runnable_workflow_schema(workflow, ADVERTISED_FEATURES)
+    with_agents = runnable_workflow_schema(workflow, (*ADVERTISED_FEATURES, "ai.agent"))
+
+    assert "AgentStep" not in _step_kinds(runnable) and "AgentStep" not in runnable["$defs"]
+    assert "AgentTool" not in runnable["$defs"] and "AgentMemory" not in runnable["$defs"]
+    assert {"ActionStep", "LLMStep", "ForEachStep", "TransactionStep"} <= _step_kinds(runnable)
+    assert "AgentStep" in _step_kinds(with_agents) and "AgentTool" in with_agents["$defs"]
+    assert with_agents == workflow
 
 
 def test_a_standard_request_sends_schemas_without_titles_but_keeps_properties_named_title():
