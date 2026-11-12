@@ -30,6 +30,17 @@ from firefly_weave.compiler.action_config import (
     ActionConfigIssue,
     ActionConfigValidator,
 )
+from firefly_weave.compiler.agents import (
+    MESSAGES as AGENT_MESSAGES,
+)
+from firefly_weave.compiler.agents import (
+    agent_expressions,
+    agent_shape_issues,
+    analyze_agent,
+    runs_turn_task,
+    secret_input,
+    without_agent_shape_issues,
+)
 from firefly_weave.compiler.calls import (
     BUSINESS_KEY_SCHEMA,
     CALL_MESSAGES,
@@ -342,6 +353,8 @@ class _Analyzer:
         # What each step's failure does once it is analyzed, and the steps whose error path is being analyzed.
         self.error_policies: dict[str, str] = {}
         self.error_owners: tuple[str, ...] = ()
+        # Run memory keys of the AI agents analyzed so far: the first agent's scope and key path.
+        self.run_memories: dict[str, tuple[tuple[str, ...], str]] = {}
 
     def location(self, path: str) -> SourceRange | None:
         while path not in self.source.locations and path:
@@ -650,6 +663,9 @@ class _Analyzer:
             if kind == "llm":
                 self.count(cast(JsonObject, step["prompt"]), step_path + "/prompt")
                 self.count(cast(JsonObject, step["context"]), step_path + "/context")
+            if kind == "agent":
+                for expression, expression_path in agent_expressions(step, step_path):
+                    self.count(expression, expression_path)
             if kind in {"action", "decisionTable", "transform"}:
                 key = "value" if kind == "transform" else "with"
                 self.count(cast(JsonObject, step[key]), step_path + "/" + key)
@@ -997,10 +1013,12 @@ class _Analyzer:
                 profile = cast(JsonObject | None, self.llm_profiles.get(cast(str, step["profile"])))
                 if profile is None:
                     self.issue("LLM_PROFILE", location + "/profile")
-                self.expression(
+                prompt = self.expression(
                     cast(JsonObject, step["prompt"]), location + "/prompt", visible, {"type": "string", "minLength": 1}
                 )
-                self.expression(cast(JsonObject, step["context"]), location + "/context", visible)
+                secret_input(self, prompt, location + "/prompt")
+                context = self.expression(cast(JsonObject, step["context"]), location + "/context", visible)
+                secret_input(self, context, location + "/context")
                 resource = self.resolve("Action", cast(str, step["uses"]), location + "/uses")
                 action_spec = cast(JsonObject, resource.definition.value["spec"]) if resource else None
                 side_effect = action_spec.get("sideEffect") if action_spec else None
@@ -1019,9 +1037,13 @@ class _Analyzer:
                         )
                 if action_spec is None and step["connection"] not in self.connections:
                     self.issue("CONNECTION", location + "/connection")
+            elif kind == "agent":
+                output = analyze_agent(self, step, location, visible, scope)
             elif kind == "action":
                 resource = self.resolve("Action", cast(str, step["uses"]), location + "/uses")
                 action_spec = cast(JsonObject, resource.definition.value["spec"]) if resource else None
+                if action_spec is not None and runs_turn_task(action_spec):
+                    self.issue("AGENT_ACTION", location + "/uses", message=AGENT_MESSAGES["AGENT_ACTION"])
                 side_effect = action_spec.get("sideEffect") if action_spec else None
                 target = cast(JsonObject, action_spec["inputSchema"]) if action_spec else None
                 self.expression(cast(JsonObject, step["with"]), location + "/with", visible, target)
@@ -1660,10 +1682,15 @@ class _Analyzer:
         for code, path in errors:
             self.issue("CALL_MODE" if code == "ERROR_CALL_MODE" else code, path, message=ERROR_MESSAGES[code])
         document = without_error_shape_issues(document) if errors else document
+        # And AI agent tools and memory settings the definition model rejects.
+        agents = agent_shape_issues(document) if contract == "workflow" else []
+        for code, path in agents:
+            self.issue(code, path, message=AGENT_MESSAGES[code])
+        document = without_agent_shape_issues(document) if agents else document
         issues = validate_contract_payload(contract, document, limits=self.contract_limits)
         for issue in issues:
             self.add(issue)
-        if issues or detached or shapes or errors:
+        if issues or detached or shapes or errors or agents:
             return self.finish(None, None)
         model = load_definition(self.source.value)
         value = model.model_dump(by_alias=True)
