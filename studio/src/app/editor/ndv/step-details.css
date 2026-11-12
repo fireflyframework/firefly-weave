@@ -46,6 +46,27 @@ weave-step-details {
   color: var(--text);
   font: var(--type-body);
 }
+/* Step details keeps its own density as well: params.css, which sets it for
+   forms, leaves the page while table view draws the grid in place of the
+   form, and the panes, their headers and Fold still need it. */
+.step-details {
+  --sd-control: var(--control-md);
+  --sd-row: var(--control-sm);
+  --sd-target: var(--control-sm);
+  --sd-label-row: var(--space-6);
+  --sd-field-gap: var(--space-3);
+  --sd-field-inner: var(--space-1);
+}
+@media (max-width: 767px), (pointer: coarse) {
+  .step-details {
+    --sd-control: var(--control-touch);
+    --sd-row: var(--control-touch);
+    --sd-target: var(--control-touch);
+    --sd-label-row: var(--control-touch);
+    --sd-field-gap: var(--space-4);
+    --sd-field-inner: var(--space-2);
+  }
+}
 .step-details:focus {
   outline: none;
 }
