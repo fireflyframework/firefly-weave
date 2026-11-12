@@ -19,6 +19,7 @@ of them returns. Nothing here starts a run, calls a worker or reads a database."
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any, Final, Literal, cast
 from uuid import NAMESPACE_URL, UUID, uuid5
 
@@ -35,6 +36,20 @@ from firefly_weave.runtime.transactions import split_deadline
 # The simulated workflow's run: stable across sessions, restores, the library, the CLI and servers, so the operation
 # keys its confirms, cancels and undos read are too. A called workflow's run is ``frame_run_id`` of its call.
 SESSION_RUN_ID: Final[UUID] = uuid5(NAMESPACE_URL, "firefly-weave/debug/v1/run")
+
+# The resolutions each incident of a transaction in doubt (``IN_DOUBT_CODES``) takes, as the kernel decides them.
+_STUCK: Final = frozenset({"retry_safe", "accept_reconciled_result", "terminate"})
+RESOLUTIONS: Final[Mapping[str, frozenset[str]]] = MappingProxyType(
+    {
+        "WV-TXN-UNDO-STUCK": _STUCK,
+        "WV-TXN-CANCEL-STUCK": _STUCK,
+        "WV-TXN-CONFIRM-STUCK": _STUCK,
+        "WV-TXN-AFTER-PIVOT-STUCK": _STUCK,
+        "WV-TXN-SETTLE-TIMEOUT": _STUCK,
+        "WV-TXN-PIVOT-UNKNOWN": frozenset({"accept_reconciled_result", "accept_reconciled_failure", "terminate"}),
+        "WV-TXN-RUN-OVERSIZED": frozenset({"terminate"}),
+    }
+)
 
 
 def started_data(prepared: PreparedWorkflow, run_id: UUID) -> JsonObject:
@@ -53,6 +68,16 @@ def scripted_effect(action_spec: Mapping[str, Any] | None, failure: ScriptedErro
     if action_spec is not None and failure.code in action_spec.get("definiteFailures", []):
         return "none"
     return "unknown"
+
+
+def resolution_problem(state: RunState, incident_key: str, resolution: str) -> bool:
+    """Whether a session refuses ``resolution`` of ``incident_key`` before the kernel sees it: the run isn't
+    suspended, the incident isn't open or isn't a transaction's in doubt, or its code doesn't take that resolution.
+    The kernel still has the last word on a resolution this lets through."""
+    incident = state.incidents.get(incident_key)
+    if state.status != "suspended" or incident is None:
+        return True
+    return resolution not in RESOLUTIONS.get(incident.code, frozenset())
 
 
 def due_deadline(state: RunState, deadline: Deadline) -> bool:

@@ -122,6 +122,9 @@ class FrameState(ContractModel):
     events: list[RuntimeEvent] = Field(default_factory=list)
     # The event that carries this run's outcome to the calling frame, once it ended.
     result: UUID | None = Field(default=None, exclude_if=lambda v: v is None)
+    # The call's attempt: above 0 for a person's retry of a called confirm, cancel or undo, or of a called step
+    # after the point of no return.
+    generation: int = Field(default=0, ge=0, exclude_if=lambda v: not v)
 
 
 class DebugState(ContractModel):
