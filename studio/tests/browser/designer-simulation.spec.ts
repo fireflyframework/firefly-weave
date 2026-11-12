@@ -24,6 +24,7 @@ import { test, expect, Page, Route } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 import {
+  withClassicDesigner,
   allCapabilities,
   closeSheet,
   command,
@@ -32,6 +33,10 @@ import {
 } from "./support";
 import { DesignerPage } from "./designer-po";
 import { python, pythonAvailable, repository } from "../python-path";
+
+test.beforeEach(async ({ page }) => {
+  await withClassicDesigner(page);
+});
 
 const project = "**/studio/api/api/v1/tenants/tenant/projects/project";
 const source = `apiVersion: weave/v1alpha1

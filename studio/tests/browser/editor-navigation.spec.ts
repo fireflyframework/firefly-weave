@@ -20,7 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { openWorkflow, vendorPayment } from "./canvas-po";
 import { StepDetailsPage } from "./step-details-po";
-import { offline } from "./support";
+import { offline, withClassicDesigner } from "./support";
 
 const NAV_KEY = "ui:weave.editor.navExpanded";
 const navButton = (page: Page) =>
@@ -213,6 +213,7 @@ test.describe("the editor's navigation", () => {
 
   test("opens the classic editor expanded at 1440 px too", async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
+    await withClassicDesigner(page);
     await offline(page);
     await page
       .getByLabel("Choose a workflow file")

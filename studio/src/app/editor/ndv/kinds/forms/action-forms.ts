@@ -420,6 +420,7 @@ export function publishedActionForm(step: Step, ctx: KindContext): FormSpec {
     type: "resource",
     label: "Action",
     required: true,
+    requiredText: "Choose an action to call.",
     placeholder: "orders.get@1.0.0",
     hint: "The workflow uses this exact published version.",
     choices: actionChoices,
@@ -486,8 +487,19 @@ export function actionSettings(step: Step, ctx: KindContext): FormSpec {
   const uses = String(step["uses"] ?? "");
   if (!uses) return { fields: [] };
   const recipe = recipeOf(step, ctx);
+  const draft = ctx.actionDraft?.(uses) ?? null;
   const sideEffect = actionSideEffect(step, ctx);
-  const setBy = recipe ? null : `Set by ${uses}.`;
+  const implementation = specOf(ctx.actionContract(uses))["implementation"];
+  const worker =
+    isRecord(implementation) && implementation["kind"] === "worker";
+  // A draft of the action's next version changes here; a published one
+  // changes only in a new version, and a worker's retry is the worker's.
+  const setBy =
+    recipe || draft
+      ? null
+      : worker
+        ? "Set by the worker that runs this action."
+        : `Set by ${uses}.`;
   const retryReason =
     sideEffect === "non_idempotent"
       ? "Changes data, so Weave never retries it automatically."

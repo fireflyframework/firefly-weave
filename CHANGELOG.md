@@ -74,6 +74,18 @@ SPDX-License-Identifier: Apache-2.0
 - Security: the Agentic worker updates dnspython to 2.9.0 (CVE-2026-114605),
   filelock to 4.2.1 (CVE-2026-112940) and pyasn1 to 0.6.5 (CVE-2026-119194 to
   CVE-2026-119197).
+- The new editor is now on by default; turn it off in Settings › Preferences to
+  use the classic designer.
+- Decision tables open in a spreadsheet grid that fills the step's Parameters
+  card, with a short cell language, keyboard editing and pasting from
+  spreadsheets. Try an input uses the step's Input and Output panes: as you
+  type test values in Input, the grid marks the rules that match and Output
+  shows the result, checked by Weave on the Studio host
+  (`POST /studio/local/decision/evaluate`), with no platform needed.
+- Table drafts are kept on this computer until you publish them with Publish
+  table; a workflow that uses one waits for it.
+- Published actions offer Change in a new version for retry, timeout and the
+  request.
 
 ## 0.1.0a17
 

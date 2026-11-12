@@ -776,3 +776,20 @@ weave-input-pane.is-compact .pane-source-field::before {
     min-height: 44px;
   }
 }
+/* Fold, in the header of table view's Input and Output panes. */
+.step-details button.dg-fold {
+  flex: none;
+  width: var(--sd-target);
+  min-width: var(--sd-target);
+  height: var(--sd-target);
+  min-height: var(--sd-target);
+  margin-left: auto;
+  color: var(--muted);
+}
+.step-details .pane-views + button.dg-fold {
+  margin-left: 0;
+}
+/* panel-left-close is panel-right-close mirrored. */
+.step-details .dg-fold .dg-mirror {
+  transform: scaleX(-1);
+}

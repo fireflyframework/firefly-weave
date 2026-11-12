@@ -31,7 +31,11 @@ import {
   partnerOption,
   platformHost,
 } from "./platform-host";
-import { runSummary } from "./support";
+import { withClassicDesigner, runSummary } from "./support";
+
+test.beforeEach(async ({ page }) => {
+  await withClassicDesigner(page);
+});
 
 const heading = (page: Page) => page.locator("#wizard-heading");
 const wizard = (page: Page) => page.locator("weave-connection-wizard");

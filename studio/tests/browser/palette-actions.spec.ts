@@ -16,8 +16,17 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 import { test, expect } from "@playwright/test";
-import { connected, offline, newWorkflow } from "./support";
+import {
+  withClassicDesigner,
+  connected,
+  offline,
+  newWorkflow,
+} from "./support";
 import { openPaletteIntegrations } from "./integrations-po";
+
+test.beforeEach(async ({ page }) => {
+  await withClassicDesigner(page);
+});
 
 for (const width of [1440, 390]) {
   test.describe(`Action palette at ${width}`, () => {

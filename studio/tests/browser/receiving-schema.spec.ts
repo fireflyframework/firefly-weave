@@ -17,8 +17,18 @@ SPDX-License-Identifier: Apache-2.0
 */
 import { test, expect } from "@playwright/test";
 import { parse } from "yaml";
-import { connected, newWorkflow, sourceText, workerAction } from "./support";
+import {
+  withClassicDesigner,
+  connected,
+  newWorkflow,
+  sourceText,
+  workerAction,
+} from "./support";
 import { DesignerPage } from "./designer-po";
+
+test.beforeEach(async ({ page }) => {
+  await withClassicDesigner(page);
+});
 
 for (const width of [1440, 600]) {
   test(`nullable action formulas retain their field type through lazy loading at ${width}`, async ({

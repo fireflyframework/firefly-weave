@@ -22,6 +22,11 @@ import {
   expectNotClippedBy,
   tabStops,
 } from "./ux-assertions";
+import { withClassicDesigner } from "./support";
+
+test.beforeEach(async ({ page }) => {
+  await withClassicDesigner(page);
+});
 
 test("geometry helpers catch clipping and overlap while respecting the top layer", async ({
   page,

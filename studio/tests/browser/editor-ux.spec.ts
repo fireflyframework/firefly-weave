@@ -19,7 +19,17 @@ import { test, expect, type Page } from "@playwright/test";
 import { resolve } from "node:path";
 import { readFileSync } from "node:fs";
 import { parse } from "yaml";
-import { offline, expectHitTarget, sourceText, newWorkflow } from "./support";
+import {
+  withClassicDesigner,
+  offline,
+  expectHitTarget,
+  sourceText,
+  newWorkflow,
+} from "./support";
+
+test.beforeEach(async ({ page }) => {
+  await withClassicDesigner(page);
+});
 
 const fixture = resolve("tests/fixtures/vendor-payment-approval.yaml");
 async function openFixture(page: Page, incomplete = false) {

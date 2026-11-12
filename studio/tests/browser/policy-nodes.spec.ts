@@ -15,12 +15,16 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-import { selectChoice } from "./support";
+import { withClassicDesigner, selectChoice } from "./support";
 import { test, expect } from "@playwright/test";
 import { parse } from "yaml";
 import { execFileSync } from "node:child_process";
 import { offline, sourceText, connected, allCapabilities } from "./support";
 import { python } from "../python-path";
+
+test.beforeEach(async ({ page }) => {
+  await withClassicDesigner(page);
+});
 
 const profileSchema = JSON.parse(
   execFileSync(

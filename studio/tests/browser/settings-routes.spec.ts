@@ -16,9 +16,9 @@ Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
 import { expect, test } from "@playwright/test";
-import { allCapabilities, connected, offline } from "./support";
+import { allCapabilities, connected, newWorkflow, offline } from "./support";
 
-test("Settings tabs have their own addresses, and Preferences turns on the new editor", async ({
+test("Settings tabs have their own addresses, and Preferences keeps the new editor on unless turned off", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -34,22 +34,33 @@ test("Settings tabs have their own addresses, and Preferences turns on the new e
   ).toHaveCount(0);
   await page.getByRole("tab", { name: "Preferences" }).click();
   await expect(page).toHaveURL(/\/settings\/preferences$/);
-  const toggle = page.getByRole("switch", { name: "Try the new editor" });
-  await expect(toggle).not.toBeChecked();
-  await toggle.check();
+  const toggle = page.getByRole("switch", { name: "Use the new editor" });
+  await expect(toggle).toBeChecked();
+  await expect(page.locator("#editor-next-hint")).toHaveText(
+    "The new editor is on by default. Turn it off to use the classic designer, which Studio keeps for a little longer. Studio keeps this choice in this browser.",
+  );
+  await toggle.uncheck();
   expect(
     await page.evaluate(() => localStorage.getItem("ui:weave.editorNext")),
-  ).toBe("true");
+  ).toBe("false");
   await page.goBack();
   await expect(page).toHaveURL(/\/settings\/platforms$/);
   await expect(page.getByRole("tab", { name: "Platforms" })).toHaveAttribute(
     "aria-selected",
     "true",
   );
+  // After a reload the designer is the classic one: its palette, no canvas.
+  await page.goto("/");
+  await newWorkflow(page);
+  await expect(page.locator(".palette-step").first()).toBeAttached();
+  await expect(page.locator(".canvas-v2")).toHaveCount(0);
   await page.goto("/settings/preferences");
-  await expect(
-    page.getByRole("switch", { name: "Try the new editor" }),
-  ).toBeChecked();
+  const again = page.getByRole("switch", { name: "Use the new editor" });
+  await expect(again).not.toBeChecked();
+  await again.check();
+  expect(
+    await page.evaluate(() => localStorage.getItem("ui:weave.editorNext")),
+  ).toBe("true");
 });
 
 test("/settings opens Platforms, and the tabs follow the arrow keys", async ({

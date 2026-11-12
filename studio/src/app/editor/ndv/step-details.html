@@ -24,6 +24,8 @@ SPDX-License-Identifier: Apache-2.0
   tabindex="-1"
   [attr.aria-label]="'Step details: ' + name()"
   [attr.data-layout]="layout()"
+  [attr.data-table]="table() ? '' : null"
+  [attr.data-data-folded]="folded('data') ? '' : null"
   (keydown)="key($event)"
 >
   <div class="sd-top">
@@ -92,7 +94,37 @@ SPDX-License-Identifier: Apache-2.0
         }
       </div>
     }
-    @if (layout() === "two") {
+    @if (table() && layout() === "three") {
+      @for (side of sides; track side) {
+        @if (folded(side)) {
+          <button
+            type="button"
+            [class]="'sd-rail sd-rail-' + side"
+            [attr.aria-label]="side === 'input' ? 'Show Input' : 'Show Output'"
+            [attr.title]="side === 'input' ? 'Show Input' : 'Show Output'"
+            (click)="unfold(side)"
+          >
+            <weave-icon name="expand" [size]="16" />
+            <span class="sd-rail-caption" aria-hidden="true">{{
+              side === "input" ? "Input" : "Output"
+            }}</span>
+          </button>
+        }
+      }
+    }
+    @if (folded("data")) {
+      <button
+        type="button"
+        class="sd-rail sd-rail-data"
+        aria-label="Show data"
+        title="Show data"
+        (click)="unfold('data')"
+      >
+        <weave-icon name="expand" [size]="16" />
+        <span class="sd-rail-caption" aria-hidden="true">Data</span>
+      </button>
+    }
+    @if (layout() === "two" && !folded("data")) {
       <div
         class="sd-data-tabs"
         role="tablist"
@@ -127,13 +159,15 @@ SPDX-License-Identifier: Apache-2.0
       tabindex="-1"
       [hidden]="!showPane('input')"
     >
-      @if (target() === "$trigger") {
+      @if (tablePanes()) {
+        <ng-container #tableInputHost />
+      } @else if (target() === "$trigger") {
         <weave-test-event-pane [session]="session()" />
       } @else {
         <weave-input-pane [session]="session()" [mapped]="mappedRefs()" />
       }
     </section>
-    @if (layout() === "three") {
+    @if (layout() === "three" && !folded("input")) {
       <div
         class="sd-separator sd-separator-input"
         role="separator"
@@ -221,7 +255,7 @@ SPDX-License-Identifier: Apache-2.0
               @if (executing()) {
                 <button
                   type="button"
-                  class="primary"
+                  [class.primary]="executePrimary()"
                   title="Stop executing"
                   (click)="stop()"
                 >
@@ -236,7 +270,7 @@ SPDX-License-Identifier: Apache-2.0
               } @else {
                 <button
                   type="button"
-                  class="primary"
+                  [class.primary]="executePrimary()"
                   [title]="executeLabel() + ' (Ctrl/Cmd+Enter)'"
                   (click)="execute('step')"
                 >
@@ -311,7 +345,11 @@ SPDX-License-Identifier: Apache-2.0
         aria-labelledby="sd-tab-parameters"
         [hidden]="tab() !== 'parameters'"
       >
-        <weave-parameter-form [session]="session()" name="parameters" />
+        @if (component()) {
+          <ng-container #componentHost />
+        } @else {
+          <weave-parameter-form [session]="session()" name="parameters" />
+        }
       </div>
       <div
         class="sd-tabpanel"
@@ -325,7 +363,7 @@ SPDX-License-Identifier: Apache-2.0
         }
       </div>
     </section>
-    @if (layout() === "three") {
+    @if (layout() === "three" && !folded("output")) {
       <div
         class="sd-separator sd-separator-output"
         role="separator"
@@ -352,7 +390,11 @@ SPDX-License-Identifier: Apache-2.0
       tabindex="-1"
       [hidden]="!showPane('output')"
     >
-      <weave-output-pane [session]="session()" />
+      @if (tablePanes()) {
+        <ng-container #tableOutputHost />
+      } @else {
+        <weave-output-pane [session]="session()" />
+      }
     </section>
   </div>
   @if (layout() !== "sheet") {
@@ -410,16 +452,18 @@ SPDX-License-Identifier: Apache-2.0
   }
   @if (yamlOpen) {
     <weave-modal
-      [heading]="'Edit ' + name() + ' as YAML'"
+      [heading]="yamlHeading()"
       closeLabel="Cancel editing"
       (dismiss)="yamlOpen = false"
     >
-      <label class="sd-yaml-label" for="sd-yaml">Step YAML</label>
+      <label class="sd-yaml-label" for="sd-yaml">{{
+        yamlFor === "action" ? "Action YAML" : "Step YAML"
+      }}</label>
       <textarea
         id="sd-yaml"
         class="sd-yaml"
         spellcheck="false"
-        aria-label="Step YAML"
+        [attr.aria-label]="yamlFor === 'action' ? 'Action YAML' : 'Step YAML'"
         [attr.aria-invalid]="yamlError ? 'true' : null"
         [attr.aria-describedby]="yamlError ? 'sd-yaml-error' : null"
         [value]="yamlText"

@@ -48,7 +48,7 @@ expiry are independent.
 
 ## Execute in Studio's new editor
 
-With **Try the new editor** on, Studio simulates on its own host, on this
+In the new editor (on by default), Studio simulates on its own host, on this
 computer, instead of on the platform: **Execute step**, **Execute previous
 steps** and **Execute workflow** (see the
 [Studio guide](../guides/studio.md#execute-steps-and-read-the-run-log)).
@@ -86,7 +86,7 @@ steps** and **Execute workflow** (see the
 
 ## Simulate in Studio
 
-With **Try the new editor** off, in Studio, select **Simulate** on a workflow. Studio needs a connected platform
+In the classic designer (with **Use the new editor** off), in Studio, select **Simulate** on a workflow. Studio needs a connected platform
 and an account with permission to simulate (the `developer` role grants it),
 because it creates a real debug session on the platform (see
 [Server sessions](#server-sessions)).

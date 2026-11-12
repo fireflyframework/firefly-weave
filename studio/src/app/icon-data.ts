@@ -85,6 +85,7 @@ export const lucideNames = {
   cloud: "cloud",
   laptop: "laptop",
   panel: "panel-right",
+  foldPane: "panel-right-close",
   tidy: "layout-grid",
   failCircle: "circle-x",
   manualTrigger: "mouse-pointer-click",
@@ -566,6 +567,14 @@ export const iconNodes: Readonly<Record<IconName, readonly IconNode[]>> = {
       attrs: { width: "18", height: "18", x: "3", y: "3", rx: "2" },
     },
     { tag: "path", attrs: { d: "M15 3v18" } },
+  ],
+  foldPane: [
+    {
+      tag: "rect",
+      attrs: { width: "18", height: "18", x: "3", y: "3", rx: "2" },
+    },
+    { tag: "path", attrs: { d: "M15 3v18" } },
+    { tag: "path", attrs: { d: "m8 9 3 3-3 3" } },
   ],
   tidy: [
     {
