@@ -347,6 +347,8 @@ def test_the_turn_input_carries_its_rules(rules):
     ],
     ids=["no-notice", "notice-alone", "empty-author-part", "text-after-notice", "no-separator", "author-too-long"],
 )
+# author-too-long: today the field's max_length refuses it first; the notice check keeps its own length clause for a
+# later rule whose notice has another length.
 def test_the_instructions_end_with_the_data_notice(instructions):
     with pytest.raises(ValidationError):
         TurnInput.model_validate(turn_input(instructions=instructions))
