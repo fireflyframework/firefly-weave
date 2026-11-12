@@ -242,3 +242,13 @@ def test_the_manifest_lists_the_ai_agent_as_pending_behind_its_feature():
     assert KIND_FEATURES["agent"] == "ai.agent"
     assert "ai.agent" not in ADVERTISED_FEATURES
     assert MAX_RUN_AGENT_TOKENS == 2_000_000
+
+
+def test_both_tool_name_patterns_stay_equal():
+    # Step tests keep their own copy until they import the language's; the two must not drift.
+    from firefly_weave.contracts import definitions, step_tests
+
+    language = TypeAdapter(definitions.ToolName).json_schema()
+
+    assert language == TypeAdapter(step_tests.ToolName).json_schema()
+    assert language["pattern"] == "^[A-Za-z][A-Za-z0-9_-]{0,63}$"
