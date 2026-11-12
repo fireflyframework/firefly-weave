@@ -120,9 +120,16 @@ test("Execute workflow isn't offered on the Runs tab", async ({ page }) => {
   const tabs = await openWorkflow(page);
   const bar = page.locator(".editor-bar");
   const execute = bar.getByRole("button", { name: "Execute workflow" });
+  // Nor the classic designer's Simulate in its place.
+  const simulate = bar.getByRole("button", { name: /^Simulat/ });
   await expect(execute).toBeVisible();
   await tabs.getByRole("tab", { name: "Runs" }).click();
+  await expect(tabs.getByRole("tab", { name: "Runs" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
   await expect(execute).toHaveCount(0);
+  await expect(simulate).toHaveCount(0);
   await tabs.getByRole("tab", { name: "Designer" }).click();
   await expect(execute).toBeVisible();
 });

@@ -228,18 +228,23 @@ import type { App } from "../app";
               h.busy === "validate" ? "Validating…" : "Validate"
             }}</span>
           </button>
-          @if (h.editorNext && h.execution && h.tab !== "Runs") {
-            <button
-              type="button"
-              class="primary execute-workflow"
-              aria-label="Execute workflow"
-              title="Execute workflow (Ctrl/Cmd+Enter)"
-              (click)="h.executeWorkflow()"
-            >
-              <weave-icon name="execute" /><span class="execute-label"
-                >Execute<span class="execute-label-rest"> workflow</span></span
+          @if (h.editorNext && h.execution) {
+            <!-- The Runs tab reads runs that happened: nothing executes there. -->
+            @if (h.tab !== "Runs") {
+              <button
+                type="button"
+                class="primary execute-workflow"
+                aria-label="Execute workflow"
+                title="Execute workflow (Ctrl/Cmd+Enter)"
+                (click)="h.executeWorkflow()"
               >
-            </button>
+                <weave-icon name="execute" /><span class="execute-label"
+                  >Execute<span class="execute-label-rest">
+                    workflow</span
+                  ></span
+                >
+              </button>
+            }
           } @else {
             <button
               type="button"
