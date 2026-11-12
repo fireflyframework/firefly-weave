@@ -308,7 +308,7 @@ def _tool(
     _fixed(checks, fixed, resolved, path, visible)
     side_effect = resolved.side_effect if resolved is not None else None
     # A tool whose target doesn't resolve is treated as changing data: its review is never skipped.
-    default = default_approval(target, side_effect) if resolved is not None or target != "action" else "required"
+    default = default_approval(target, side_effect) if resolved is not None else "required"
     explicit = tool.get("approval")
     if explicit == "auto" and default == "required":
         checks.issue("AGENT_UNREVIEWED_EFFECT", path + "/approval", message=MESSAGES["AGENT_UNREVIEWED_EFFECT"])

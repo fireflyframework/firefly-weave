@@ -25,17 +25,17 @@ adding one resolver here and one target in ``runtime/agent_tools.py``; no other 
 from __future__ import annotations
 
 import copy
-from collections.abc import Collection, Mapping
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Final, Literal, Protocol, cast
 
 from firefly_weave.compiler.calls import CallGraph, check_call_target
 from firefly_weave.compiler.catalog import CatalogResource, CatalogSnapshot, ResourceKind
-from firefly_weave.compiler.ir import ToolTargetKind
+from firefly_weave.compiler.ir import AgentToolIR, ToolTargetKind
 from firefly_weave.contracts.agent_turns import TURN_TASK_TYPE
 from firefly_weave.contracts.agentic import TASK_TYPE as GENERATE_TASK_TYPE
-from firefly_weave.contracts.definitions import TOOL_TARGET_FIELDS, SideEffect
+from firefly_weave.contracts.definitions import TOOL_TARGET_FIELDS, ConnectionRequirement, SideEffect
 from firefly_weave.contracts.limits import Limits
 from firefly_weave.contracts.values import JsonObject
 
@@ -221,3 +221,43 @@ def tool_target(tool: JsonObject) -> ToolTargetKind | None:
     """The one target a tool names, read from the definition's target fields."""
     named = [field for field in TOOL_TARGET_FIELDS if field in tool]
     return cast(ToolTargetKind, named[0]) if len(named) == 1 else None
+
+
+def offline_input_schema(tool: JsonObject, catalog: CatalogSnapshot) -> JsonObject | None:
+    """A tool's target input schema read straight from a catalog, without analysis; None when it can't be read.
+
+    Studio's test data checks read it to check saved model turns.
+    """
+    target = tool_target(tool)
+    source: object = None
+    if target == "action" and isinstance(tool.get("action"), str):
+        resource = catalog.resolve("Action", cast(str, tool["action"]))
+        source = cast(JsonObject, resource.definition.value["spec"]).get("inputSchema") if resource else None
+    elif target == "workflow" and isinstance(tool.get("workflow"), str):
+        resource = catalog.resolve("Workflow", cast(str, tool["workflow"]))
+        source = cast(JsonObject, resource.definition.value["spec"]).get("inputSchema") if resource else None
+    elif target == "human" and isinstance(tool.get("human"), dict):
+        source = cast(JsonObject, tool["human"]).get("questionSchema")
+    return cast(JsonObject, source) if isinstance(source, dict) else None
+
+
+def check_pinned(
+    tool: AgentToolIR,
+    actions: Mapping[str, object],
+    workflows: Collection[str],
+    bind: Callable[[ConnectionRequirement | None], None],
+) -> None:
+    """Refuse an IR whose tool names a target its pinned fields don't fit: an action pinned as an Action and run on
+    a declared connection, a workflow pinned as a Workflow, a person with its forms."""
+    from firefly_weave.contracts.definitions import ActionDefinition
+
+    if tool.target == "action":
+        action = actions.get(cast(str, tool.dependency))
+        if not isinstance(action, ActionDefinition):
+            raise ValueError("Unknown AI agent tool action")
+        bind(action.spec.connection)
+    elif tool.target == "workflow":
+        if tool.dependency not in workflows:
+            raise ValueError("Unknown AI agent tool workflow")
+    elif tool.human is None:
+        raise ValueError("A person tool needs its forms")

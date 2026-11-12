@@ -28,7 +28,7 @@ import copy
 from collections.abc import Iterator
 from typing import Any, Literal, cast
 
-from firefly_weave.compiler.agent_tools import model_parameters, tool_target
+from firefly_weave.compiler.agent_tools import model_parameters, offline_input_schema
 from firefly_weave.compiler.agents import agent_output_schema
 from firefly_weave.compiler.catalog import CatalogSnapshot
 from firefly_weave.compiler.llm import llm_output_schema
@@ -166,15 +166,8 @@ def _tool_parameters(tool: JsonValue, catalog: CatalogSnapshot) -> JsonObject | 
     """What the model may send a tool: its target's input without the fixed fields; None when it can't be read."""
     if not isinstance(tool, dict):
         return None
-    target = tool_target(tool)
-    source: JsonValue = None
-    if target == "action":
-        source = _spec(_document(catalog, "Action", tool.get("action"))).get("inputSchema")
-    elif target == "workflow":
-        source = _spec(_document(catalog, "Workflow", tool.get("workflow"))).get("inputSchema")
-    elif target == "human" and isinstance(tool.get("human"), dict):
-        source = cast(JsonObject, tool["human"]).get("questionSchema")
-    if not isinstance(source, dict):
+    source = offline_input_schema(tool, catalog)
+    if source is None:
         return None
     fixed = tool.get("fixed")
     names = (

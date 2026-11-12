@@ -363,10 +363,8 @@ class AgentToolIR(ContractModel):
 
     @model_validator(mode="after")
     def target_fields(self) -> AgentToolIR:
-        if (self.target == "human") != (self.human is not None) or (self.target == "human") == (
-            self.dependency is not None
-        ):
-            raise ValueError("A tool's target and its pinned fields disagree")
+        if (self.human is None) == (self.dependency is None):
+            raise ValueError("A tool runs either a pinned dependency or a person")
         if self.approval == "required" and self.review is None:
             raise ValueError("A reviewed tool names its reviewers")
         return self
@@ -1072,6 +1070,7 @@ def _validate_agent(
     binding: Callable[[str | None, ConnectionRequirement | None, dict[str, ConnectionRequirement]], None],
 ) -> None:
     """An agent's turn and tools are pinned in the artifact, and run on connections it declares."""
+    from firefly_weave.compiler.agent_tools import check_pinned
     from firefly_weave.compiler.agents import agent_output_schema, runs_turn_task
 
     turn = actions.get(node.dependency)
@@ -1081,13 +1080,12 @@ def _validate_agent(
     for tool in node.tools:
         if tool.parameters_ref not in executable.schemas:
             raise ValueError("Unresolved AI agent tool parameters")
-        if tool.target == "action":
-            action = actions.get(cast(str, tool.dependency))
-            if not isinstance(action, ActionDefinition):
-                raise ValueError("Unknown AI agent tool action")
-            binding(tool.connection, action.spec.connection, executable.connections)
-        elif tool.target == "workflow" and tool.dependency not in workflows:
-            raise ValueError("Unknown AI agent tool workflow")
+        slot = tool.connection
+
+        def bind(requirement: ConnectionRequirement | None, slot: str | None = slot) -> None:
+            binding(slot, requirement, executable.connections)
+
+        check_pinned(tool, actions, workflows, bind)
     profile = node.llm_profile.model_dump(mode="json", by_alias=True)
     guards = [guard for guard in executable.guards if guard.path == node.path and guard.purpose == "agent_output"]
     if len(guards) != 1 or executable.schemas[guards[0].schema_ref] != agent_output_schema(profile):
