@@ -381,6 +381,22 @@ describe("connection test copy", () => {
     );
   });
 
+  it("claims no request or answer for a connection without an HTTP address", () => {
+    // Email and Teams connections have no base URL; their test checks the saved settings and contacts nothing.
+    expect(testCopy.running(testOrigin(undefined))).toBe(
+      "Testing the connection…",
+    );
+    expect(testCopy.ok(testOrigin(undefined))).toBe(
+      "The platform accepted this connection.",
+    );
+    expect(testCopy.running("api.example.com")).toBe(
+      "Testing… Weave sends one request to api.example.com.",
+    );
+    expect(testCopy.ok("api.example.com")).toBe(
+      "Connected: api.example.com answered.",
+    );
+  });
+
   it("keeps a host as written when it starts a sentence", () => {
     const origin = testOrigin("https://api.example.com/v2");
     expect(testCopy.failed(origin, "unauthorized")).toBe(

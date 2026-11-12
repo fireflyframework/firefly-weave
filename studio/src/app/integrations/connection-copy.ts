@@ -687,11 +687,20 @@ export function testOrigin(baseUrl: unknown): string {
 const subject = (origin: string) =>
   origin === anyServer ? "The server" : origin;
 
-/** A connection test sends one request with the connection's sign-in; its answer says why it failed. */
+/**
+ * A connection test of an HTTP connection sends one request with the connection's sign-in; its answer says why it
+ * failed. Other connectors (email, Teams) only check the saved settings, so their copy claims no request or answer.
+ */
 export const testCopy = {
   label: "Test connection",
-  running: (origin: string) => `Testing… Weave sends one request to ${origin}.`,
-  ok: (origin: string) => `Connected: ${origin} answered.`,
+  running: (origin: string) =>
+    origin === anyServer
+      ? "Testing the connection…"
+      : `Testing… Weave sends one request to ${origin}.`,
+  ok: (origin: string) =>
+    origin === anyServer
+      ? "The platform accepted this connection."
+      : `Connected: ${origin} answered.`,
   failed(origin: string, reason: unknown): string {
     switch (reason) {
       case "unreachable":
