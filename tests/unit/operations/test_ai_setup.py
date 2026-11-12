@@ -37,6 +37,7 @@ from firefly_weave.connections.registry import ConnectorRegistry
 from firefly_weave.connections.secrets import ScopedSecrets, SecretGrant
 from firefly_weave.connections.service import ConnectionService
 from firefly_weave.contracts.access import Scope
+from firefly_weave.contracts.agent_turns import turn_capability
 from firefly_weave.contracts.agentic import AGENTIC_DESCRIPTOR, AgenticConnectionAdapter, task_capability
 from firefly_weave.contracts.catalog import PublishedVersion
 from firefly_weave.contracts.connectors import ConnectionRevision
@@ -50,6 +51,9 @@ from firefly_weave.persistence.uow import Transaction
 from firefly_weave.workers.service import WorkerService
 
 REFERENCE = "weave-agentic.generate@1.0.0"
+# An AI agent's model turn, the second task the built-in AI Actions run.
+TURN = "weave-agentic.turn@1.0.0"
+BUILTINS = ("weave-agentic-provider@1.0.0", "weave-agentic-generate@1.0.0", "weave-agentic-turn@1.0.0")
 
 
 def module():
@@ -62,18 +66,21 @@ def release(**changes):
         **dict(
             id=uuid4(),
             image_digest="sha256:" + "a" * 64,
-            capabilities=[task_capability()],
-            credential_capabilities=[REFERENCE],
+            capabilities=[task_capability(), turn_capability()],
+            credential_capabilities=[REFERENCE, TURN],
         )
         | changes
     )
 
 
 def test_publication_identity_is_derived_from_immutable_builtins():
-    connector, action = builtin_ai_definitions()
+    connector, action, turn = builtin_ai_definitions()
     assert connector.reference == "weave-agentic-provider@1.0.0"
     assert connector.definition_digest == "7dfc18419ba042e7dff2a15198373c13da3e1a5e83a78976c422993f57a937e7"
     assert action.definition_digest == "cd1ab7add02d438b419cb206fdb7164c027fe5c5a5b4b3029af2402ce60ebbf0"
+    assert (turn.kind, turn.reference) == ("Action", "weave-agentic-turn@1.0.0")
+    assert turn.definition_digest == "105fe2df28474f761455b359edf78a5ab982845d404bf86553737742d8e89ee8"
+    assert module().publication_key(turn) == "weave-ai-Action-" + turn.definition_digest
     key = module().publication_key(connector)
     assert key == "weave-ai-Connector-" + connector.definition_digest and len(key) == 83
     assert module().publication_key(action) == "weave-ai-Action-" + action.definition_digest
@@ -172,7 +179,7 @@ def setup(monkeypatch):
                 documents = [
                     dict(kind=item.kind, name=name, version=version, document=item.document)
                     for item in builtin_ai_definitions()
-                    if item.kind in state.versions
+                    if item.reference in state.versions
                     for name, version in (item.reference.split("@"),)
                 ]
                 state.calls.append("catalog" + ("-size" if "count(*)" in sql else "-rows"))
@@ -247,9 +254,10 @@ def setup(monkeypatch):
         async with definitions.transaction(given, tx):
             assert tx is state.tx and tx.scope == project and context is state.context and actor is state.actor
             assert format == "json"
-            item = next(row for row in builtin_ai_definitions() if row.kind == kind)
+            # Two Actions share a kind, so the publication key names the built-in.
+            item = next(row for row in builtin_ai_definitions() if module().publication_key(row) == key)
+            assert item.kind == kind
             assert source == json.dumps(item.document, sort_keys=True, separators=(",", ":"))
-            assert key == "weave-ai-" + kind + "-" + item.definition_digest
             if kind == "Action" and state.failure:
                 raise state.failure
             result = await compiled(tx, source)
@@ -257,9 +265,9 @@ def setup(monkeypatch):
                 raise CatalogError(
                     422, "WV-COMPILE", "Definition compilation failed", result=json.loads(result.to_bytes())
                 )
-            if kind not in state.versions:
+            if item.reference not in state.versions:
                 name, version = item.reference.split("@")
-                state.versions[kind] = PublishedVersion(
+                state.versions[item.reference] = PublishedVersion(
                     id=uuid4(),
                     kind=kind,
                     name=name,
@@ -267,7 +275,7 @@ def setup(monkeypatch):
                     digest="a" * 64,
                     definition_digest=item.definition_digest,
                 )
-            return state.versions[kind]
+            return state.versions[item.reference]
 
     definitions.publish = AsyncMock(side_effect=publish)
     provider = SimpleNamespace(resolve=lambda handle: pytest.fail("Setup resolved a secret"))
@@ -316,22 +324,22 @@ async def test_publication_reuses_versions_across_requests_and_principals(setup)
     second = await publish(setup)
     setup.actor = setup.current = setup.actor.model_copy(update={"id": uuid4()})
     third = await publish(setup)
-    assert first == second == third and len(first.actions) == 1
-    assert len(setup.versions) == 2 and setup.opened == [setup.project] * 3
+    assert first == second == third and len(first.actions) == 2
+    assert len(setup.versions) == 3 and setup.opened == [setup.project] * 3
     assert [row[0] for row in setup.audits] == ["ai.setup.publish"] * 3
     assert all(row[2]["scope"] == setup.project for row in setup.audits)
     assert setup.calls.index("project-size") < setup.calls.index("published-rows")
 
 
-@pytest.mark.parametrize("kind", ["Connector", "Action"])
+@pytest.mark.parametrize("reference", BUILTINS)
 @pytest.mark.parametrize("mutation,code", [("retired", "WV-AI-CATALOG-RETIRED"), ("digest", "WV-VERSION-CONFLICT")])
-async def test_replays_reject_retired_or_conflicting_catalog_before_any_publication(setup, kind, mutation, code):
+async def test_replays_reject_retired_or_conflicting_catalog_before_any_publication(setup, reference, mutation, code):
     await publish(setup)
-    row = setup.versions[kind]
+    row = setup.versions[reference]
     if mutation == "retired":
         setup.retired.add(row.id)
     else:
-        setup.versions[kind] = row.model_copy(update={"definition_digest": "b" * 64})
+        setup.versions[reference] = row.model_copy(update={"definition_digest": "b" * 64})
     setup.service.definitions.publish.reset_mock()
     with pytest.raises(CatalogError) as error:
         await publish(setup)
@@ -340,15 +348,15 @@ async def test_replays_reject_retired_or_conflicting_catalog_before_any_publicat
     assert len(setup.audits) == 1
 
 
-@pytest.mark.parametrize("kind", ["Connector", "Action"])
+@pytest.mark.parametrize("reference", BUILTINS)
 @pytest.mark.parametrize("mutation,code", [("retired", "WV-AI-CATALOG-RETIRED"), ("digest", "WV-VERSION-CONFLICT")])
-async def test_unrepairable_catalog_is_reported_before_missing_worker_releases(setup, kind, mutation, code):
+async def test_unrepairable_catalog_is_reported_before_missing_worker_releases(setup, reference, mutation, code):
     await publish(setup)
-    row = setup.versions[kind]
+    row = setup.versions[reference]
     if mutation == "retired":
         setup.retired.add(row.id)
     else:
-        setup.versions[kind] = row.model_copy(update={"definition_digest": "b" * 64})
+        setup.versions[reference] = row.model_copy(update={"definition_digest": "b" * 64})
     # Admitting a worker cannot repair a retired or conflicting catalog, so setup must not suggest it.
     setup.releases, setup.other_releases = [], []
     setup.service.definitions.publish.reset_mock()
@@ -438,7 +446,10 @@ async def test_publication_requires_a_project_release_with_the_exact_action_task
     else:
         changes = {"task_type": "custom.generate"} if admitted == "custom" else {"timeout_seconds": 599}
         setup.releases = [
-            release(capabilities=[task_capability().model_copy(update=changes)], credential_capabilities=[])
+            release(
+                capabilities=[task_capability().model_copy(update=changes), turn_capability()],
+                credential_capabilities=[],
+            )
         ]
     with pytest.raises(CatalogError) as error:
         await publish(setup)
@@ -460,8 +471,8 @@ async def test_publication_compiles_once_any_project_release_provides_the_exact_
     if environment == "other":
         setup.releases, setup.other_releases = [], setup.releases
     result = await publish(setup)
-    assert len(result.actions) == 1 and set(setup.versions) == {"Connector", "Action"}
-    assert setup.service.definitions.publish.await_count == 2
+    assert len(result.actions) == 2 and set(setup.versions) == set(BUILTINS)
+    assert setup.service.definitions.publish.await_count == 3
     assert [row[0] for row in setup.audits] == ["ai.setup.publish"]
     assert "catalog-rows" in setup.calls and setup.calls.index("project-size") < setup.calls.index("project-releases")
 
@@ -493,11 +504,11 @@ async def test_keyless_grant_skips_releases_grants_and_secret_resolution_even_wh
 
 async def test_grant_covers_every_release_beyond_first_page_and_reenables_revoked_pairs(setup):
     setup.releases = [release() for _ in range(101)]
-    expected = {(r.id, setup.revision.id, REFERENCE) for r in setup.releases}
+    expected = {(r.id, setup.revision.id, task) for r in setup.releases for task in (REFERENCE, TURN)}
     setup.grants = {next(iter(expected))}
     result = await grant(setup)
     assert result.model_dump() == {"granted": True, "not_needed": False}
-    assert setup.grants == expected and setup.service.workers.grant_connection.await_count == 100
+    assert setup.grants == expected and setup.service.workers.grant_connection.await_count == 201
     setup.service.workers.grant_connection.reset_mock()
     assert await grant(setup) == result
     setup.service.workers.grant_connection.assert_not_awaited()
@@ -522,15 +533,23 @@ def test_credential_pairs_require_actual_exact_recognized_contract_and_credentia
     if mutation == "absent":
         cap["taskType"] = "custom.generate"
         other = release(capabilities=[cap], credential_capabilities=[])
-    assert module().credential_pairs([good, other]) == ((good.id, REFERENCE),)
+    assert module().credential_pairs([good, other]) == ((good.id, REFERENCE), (good.id, TURN))
 
 
 @pytest.mark.parametrize("empty", ["no_release", "no_credentials", "mismatch"])
 async def test_credentialed_connection_without_relevant_pair_is_actionable_422(setup, empty):
     setup.releases = [] if empty == "no_release" else [release(credential_capabilities=[])]
     if empty == "mismatch":
-        cap = task_capability().model_copy(update={"timeout_seconds": 599})
-        setup.releases = [release(capabilities=[cap])]
+        # Both tasks differ from the shipped contracts, so no pair is the platform's.
+        changed = {"timeout_seconds": 599}
+        setup.releases = [
+            release(
+                capabilities=[
+                    task_capability().model_copy(update=changed),
+                    turn_capability().model_copy(update=changed),
+                ]
+            )
+        ]
     with pytest.raises(CatalogError) as error:
         await grant(setup)
     assert (error.value.status, error.value.code) == (422, "WV-AI-WORKER-MISSING")

@@ -57,7 +57,7 @@
 "ai-models-screen" = true
 "ai-task" = false
 "weave-ai-ollama" = false
-"agents" = false
+"agents" = true
 "agent-editor" = false
 "ai-acceptance" = false
 "agent-memory" = false

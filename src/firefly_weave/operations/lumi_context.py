@@ -32,7 +32,7 @@ import re
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal, cast
+from typing import Final, Literal, cast
 
 from firefly_weave.compiler.api import validate_authoring
 from firefly_weave.compiler.parser import parse_source
@@ -76,19 +76,20 @@ OUTLINE_KEYS = ("id", "kind", "uses")
 # A fix request too large to send whole lists at most this many problems and the top-level steps they name.
 FIX_PROBLEMS = 10
 STEP_PATH = re.compile(r"^/spec/steps/(\d+)(?:/|$)")
-GUIDE_VERSION = 2
+GUIDE_VERSION = 3
 GUIDE = """\
-Weave workflow guide (version 2).
+Weave workflow guide (version 3).
 A workflow is YAML: apiVersion weave/v1alpha1, kind Workflow, metadata {name, version}, spec {inputSchema,
-outputSchema, steps, output}. Each step has a unique id (lowercase letters, digits, hyphens) and a kind:
-`action` (uses name@version, with, connection), `llm` (an AI task: uses weave-agentic-generate@1.0.0, profile,
-prompt, context, connection), `transform` (value), `decisionTable` (uses, with), `switch` (cases with when, then
+outputSchema, steps, output}. Each step has a unique id (lowercase, digits, hyphens) and a kind:
+`action` (uses name@version, with, connection), `llm` (uses weave-agentic-generate@1.0.0, profile, prompt,
+context, connection), `transform` (value), `decisionTable` (uses, with), `switch` (cases with when, then
 default), `parallel` (branches), `forEach` (items, body), `callWorkflow` (uses, with), `wait` (durationSeconds),
 `signal` (name, timeoutSeconds, payloadSchema), `humanTask` (assignment, title, context, formSchema) and `fail`
-(code, message). Nested steps sit in a block: {steps, output}.
-`transaction` (businessKey, steps, output) groups steps that change other systems so they are undone together.
-Each step inside it that changes data says how it is undone: confirm and cancel (it reserves), compensate (an
-action or workflow reverses it), or irreversible: true (it can't be undone). That last kind of step comes last.
+(code, message). Nested steps sit in {steps, output}.
+`agent` (uses weave-agentic-turn@1.0.0, profile, connection, instructions, prompt, tools [{name, description,
+action and connection or workflow, review: {assignment} if it changes data}]).
+`transaction` (businessKey, steps, output) undoes its steps together. Each that changes data has confirm and
+cancel, compensate (an action or workflow undoing it) or irreversible: true (last).
 Expressions: {literal: 1}, {ref: /input/name}, {ref: /steps/<id>/output/field}, {object: {key: expr}},
 {array: [expr]}, {op: {name, args}}.
 Example of a whole workflow document:
@@ -103,7 +104,7 @@ Example of a whole workflow document:
         kind: transform
         value: {object: {text: {ref: /input/name}}}
     output: {ref: /steps/greet/output}
-Versions are semantic (1.0.0). A proposal is a whole document of kind workflow, decisionTable, action or
+A proposal is a whole document of kind workflow, decisionTable, action or
 connector, never a fragment. Say what you could not see when the context lists trimmed parts.
 """
 
@@ -411,6 +412,47 @@ def untitled(schema: JsonValue) -> JsonValue:
     return result
 
 
+# The agent kind as Weave AI sees it: what a first agent needs, in a few hundred tokens instead of four thousand.
+_AGENT_FIELDS: Final = ("id", "kind", "uses", "profile", "connection", "instructions", "prompt", "context")
+_ASSIGNMENT: Final[JsonObject] = {
+    "type": "object",
+    "properties": {"assignment": {"$ref": "#/$defs/ResourceName"}},
+    "required": ["assignment"],
+    "additionalProperties": False,
+}
+
+
+def compact_agent(definition: JsonObject) -> JsonObject:
+    """An AI agent step in the shape Weave AI writes it: the step's own fields, its tools by name, description and
+    target, and who reviews them. Limits, memory and the error path are left out, so their defaults apply; the full
+    schema stays the compiler's, and a draft written to this one passes it."""
+    properties = cast(JsonObject, definition.get("properties", {}))
+    tool: JsonObject = {
+        "type": "object",
+        "properties": {
+            # The compiler checks the name's pattern and the description's length.
+            "name": {"type": "string"},
+            "description": {"type": "string"},
+            "action": {"$ref": "#/$defs/VersionedReference"},
+            "workflow": {"$ref": "#/$defs/VersionedReference"},
+            "connection": {"$ref": "#/$defs/ResourceName"},
+            "review": {"$ref": "#/$defs/AgentReview"},
+        },
+        "required": ["name", "description"],
+        "additionalProperties": False,
+    }
+    return {
+        "type": "object",
+        "properties": {
+            **{name: properties[name] for name in _AGENT_FIELDS if name in properties},
+            "tools": {"type": "array", "items": tool, "maxItems": 32},
+            "review": {"$ref": "#/$defs/AgentReview"},
+        },
+        "required": definition.get("required", []),
+        "additionalProperties": False,
+    }
+
+
 def runnable_workflow_schema(schema: JsonValue, features: Collection[str] = ADVERTISED_FEATURES) -> JsonValue:
     """The workflow schema without the step kinds a platform running ``features`` can't run.
 
@@ -424,10 +466,14 @@ def runnable_workflow_schema(schema: JsonValue, features: Collection[str] = ADVE
         for entry in STEP_KINDS
         if entry.feature is not None and entry.feature not in features
     }
-    if not hidden:
+    if not hidden and not (isinstance(schema["$defs"], dict) and "AgentStep" in schema["$defs"]):
         return schema
     result = copy.deepcopy(schema)
     definitions = cast(JsonObject, result["$defs"])
+    if isinstance(definitions.get("AgentStep"), dict):
+        definitions["AgentStep"] = compact_agent(cast(JsonObject, definitions["AgentStep"]))
+        # Who reviews a tool's calls, the one part of a review a first agent needs; its expiry keeps its default.
+        definitions["AgentReview"] = _ASSIGNMENT
     step = definitions.get("Step")
     if isinstance(step, dict) and isinstance(step.get("oneOf"), list):
         step["oneOf"] = [

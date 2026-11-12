@@ -133,6 +133,7 @@ def test_limits_follow_their_sources():
 
 def test_features_are_what_the_target_runs():
     assert ADVERTISED_FEATURES == (
+        "ai.agent",
         "flow.callWorkflow",
         "flow.forEach",
         "flow.onError",
@@ -141,6 +142,7 @@ def test_features_are_what_the_target_runs():
         "text.join",
     )
     assert language_manifest().features == [
+        "ai.agent",
         "flow.callWorkflow",
         "flow.forEach",
         "flow.onError",
@@ -169,6 +171,7 @@ def test_capabilities_list_every_runnable_kind_from_the_manifest():
         [
             "action",
             "llm",
+            "agent",
             "transform",
             "decisionTable",
             "switch",

@@ -23,11 +23,12 @@ from pydantic import ValidationError
 from test_agent_workflows import CANCEL, LOOKUP, agent, catalog, workflow
 
 from firefly_weave.compiler.agents import agent_output_schema
-from firefly_weave.compiler.api import compile_source
+from firefly_weave.compiler.api import compile_source, import_artifact
 from firefly_weave.compiler.calls import called_references
 from firefly_weave.compiler.ir import AgentNode, WorkflowIR
 from firefly_weave.compiler.scope import scope_at
 from firefly_weave.contracts.agent_turns import TURN_RULES
+from firefly_weave.contracts.language import language_manifest
 
 NOTIFY = {
     "name": "notify_customer",
@@ -74,6 +75,15 @@ def test_an_agent_needs_ai_agent_and_the_v1alpha4_ir():
     ir = artifact(workflow())
 
     assert ir.features == ["ai.agent"] and ir.ir_version == "weave/ir-v1alpha4"
+
+
+def test_the_platform_runs_ai_agents():
+    result = compile_source(workflow(), format="object", catalog=catalog())
+    assert result.ok and result.artifact is not None
+
+    # The platform imports the artifact, so activation, runs and replay accept it; Capabilities serve the feature.
+    assert import_artifact(result.artifact.to_bytes()).executable["features"] == ["ai.agent"]
+    assert "ai.agent" in language_manifest().features
 
 
 def test_a_workflow_tool_adds_flow_call_workflow():

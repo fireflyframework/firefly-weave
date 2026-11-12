@@ -105,15 +105,15 @@ def test_the_gateway_text_and_the_guide_leave_two_thirds_of_the_compact_budget()
     from firefly_weave.operations.lumi_context import ENVELOPE_TOKENS, GUIDE_TOKENS
 
     # Measured on llama3.2:3b, qwen3:4b and qwen2.5:1.5b: the gateway's instructions and reply format at most 488
-    # tokens, this guide at most 498 (raw prompt evaluation on Ollama). A change to the guide must be measured again
-    # before these numbers move.
+    # tokens, this guide at most 498 (raw prompt evaluation on Ollama; version 3, which names the agent kind, counts
+    # 498, 497 and 497). A change to the guide must be measured again before these numbers move.
     assert GATEWAY_RESERVE_TOKENS == 640 and GUIDE_TOKENS == 512
-    assert len(GUIDE) == 1827 and GUIDE.startswith("Weave workflow guide (version 2).")
+    assert len(GUIDE) == 1816 and GUIDE.startswith("Weave workflow guide (version 3).")
     # The gateway recognizes this exact guide by its digest (GUIDE_SHA256 in the gateway) to count it as the reserve.
     import hashlib
 
     assert (
-        hashlib.sha256(GUIDE.encode()).hexdigest() == "d780e245a4c859c83402f481535038a4618b51f395ccf8d56dc7b131e06a4b9e"
+        hashlib.sha256(GUIDE.encode()).hexdigest() == "deaa930e8879c898064a536681be3f1484b5303e6e65220c50332b70620aef6b"
     )
     assert GATEWAY_RESERVE_TOKENS + GUIDE_TOKENS + ENVELOPE_TOKENS <= COMPACT_INPUT_TOKENS / 3
 
@@ -131,7 +131,7 @@ def test_the_guide_shows_a_whole_workflow_the_platform_accepts_without_a_warning
         example.append(line[2:])
     assert example[:2] == ["apiVersion: weave/v1alpha1", "kind: Workflow"]
     assert list(validate_authoring("\n".join(example) + "\n", format="yaml").diagnostics) == []
-    assert GUIDE_VERSION == 2
+    assert GUIDE_VERSION == 3
 
 
 def test_a_standard_request_counts_the_workflow_schema_against_its_budget():
@@ -163,13 +163,14 @@ def test_weave_ai_never_sees_a_step_kind_this_platform_cant_run():
     from firefly_weave.contracts.schema_export import export_schemas
 
     workflow = export_schemas()["workflow"]
-    runnable = runnable_workflow_schema(workflow, ADVERTISED_FEATURES)
-    with_agents = runnable_workflow_schema(workflow, (*ADVERTISED_FEATURES, "ai.agent"))
+    # A platform that doesn't run agents: the kind goes, with what only it used.
+    runnable = runnable_workflow_schema(workflow, tuple(name for name in ADVERTISED_FEATURES if name != "ai.agent"))
+    with_agents = runnable_workflow_schema(workflow, ADVERTISED_FEATURES)
 
     assert "AgentStep" not in _step_kinds(runnable) and "AgentStep" not in runnable["$defs"]
     assert "AgentTool" not in runnable["$defs"] and "AgentMemory" not in runnable["$defs"]
     assert {"ActionStep", "LLMStep", "ForEachStep", "TransactionStep"} <= _step_kinds(runnable)
-    assert "AgentStep" in _step_kinds(with_agents) and "AgentTool" in with_agents["$defs"]
+    assert "AgentStep" in _step_kinds(with_agents)
     # Only the agent kind and the definitions it alone used go; everything else is the exported schema, byte for byte.
     removed = set(workflow["$defs"]) - set(runnable["$defs"])
     assert {"AgentStep", "AgentTool", "AgentMemory", "AgentLimits", "ToolName"} <= removed
@@ -180,6 +181,33 @@ def test_weave_ai_never_sees_a_step_kind_this_platform_cant_run():
     assert {key: value for key, value in runnable.items() if key != "$defs"} == {
         key: value for key, value in workflow.items() if key != "$defs"
     }
+
+
+def test_weave_ai_writes_agents_from_a_compact_schema_the_compiler_accepts():
+    from firefly_weave.contracts.schema_export import export_schemas
+
+    workflow = export_schemas()["workflow"]
+    full = workflow["$defs"]["AgentStep"]
+    compact = runnable_workflow_schema(workflow)["$defs"]["AgentStep"]
+
+    # The step's own fields, its tools and who reviews them; limits, memory and the error path keep their defaults.
+    assert set(compact["properties"]) == {
+        "id",
+        "kind",
+        "uses",
+        "profile",
+        "connection",
+        "instructions",
+        "prompt",
+        "context",
+        "tools",
+        "review",
+    }
+    assert set(compact["properties"]) <= set(full["properties"]) and compact["required"] == full["required"]
+    assert compact["additionalProperties"] is False
+    tool = compact["properties"]["tools"]["items"]
+    assert set(tool["properties"]) == {"name", "description", "action", "workflow", "connection", "review"}
+    assert set(tool["properties"]) <= set(workflow["$defs"]["AgentTool"]["properties"])
 
 
 def test_a_definition_reached_through_a_property_named_like_a_keyword_is_kept():

@@ -115,7 +115,7 @@ LOOP_CHECK_EVERY = 64
 RESERVE_TOKENS = 640
 # Weave AI's guide (version 2) counted at most 498 tokens on the same models; the API counts it as this reserve too.
 # Only that exact text, recognized by its digest, is counted so; any other guide is estimated like the rest.
-GUIDE_SHA256 = "d780e245a4c859c83402f481535038a4618b51f395ccf8d56dc7b131e06a4b9e"
+GUIDE_SHA256 = "deaa930e8879c898064a536681be3f1484b5303e6e65220c50332b70620aef6b"
 GUIDE_TOKENS = 512
 OLLAMA_CONTEXT_TOKENS = 8192
 # How long the gateway waits for Ollama to say whether a model thinks before it asks without the setting.

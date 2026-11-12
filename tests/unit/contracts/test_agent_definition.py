@@ -228,7 +228,7 @@ def test_a_review_expires_within_a_week():
         AgentStep.model_validate(agent(review={"assignment": "support-leads", "expirySeconds": 604_801}))
 
 
-def test_the_manifest_lists_the_ai_agent_as_pending_behind_its_feature():
+def test_the_platform_runs_ai_agents_behind_their_feature():
     entries = {entry.kind: entry for entry in language_manifest().step_kinds}
 
     assert entries["agent"].model_dump(mode="json") == {
@@ -242,7 +242,8 @@ def test_the_manifest_lists_the_ai_agent_as_pending_behind_its_feature():
         "studio": "pending",
     }
     assert KIND_FEATURES["agent"] == "ai.agent"
-    assert "ai.agent" not in ADVERTISED_FEATURES
+    # The platform runs agents; Studio's own agent editor is still pending.
+    assert "ai.agent" in ADVERTISED_FEATURES
     assert MAX_RUN_AGENT_TOKENS == 2_000_000
 
 

@@ -23,7 +23,7 @@ current authority: it reads no database, cache, gateway, network or secret.
 from collections.abc import Mapping, Sequence
 
 from firefly_weave.ai_policy import AIPolicy
-from firefly_weave.compiler.ir import ActionNode, Node
+from firefly_weave.compiler.ir import ActionNode, AgentNode, Node, WorkflowIR
 from firefly_weave.contracts.connectors import BoundConnection
 from firefly_weave.definitions.models import CatalogError
 
@@ -39,14 +39,37 @@ def validate_ai_bindings(
     if policy is None:
         return
     for node in nodes:
-        if not isinstance(node, ActionNode) or node.llm_profile is None:
+        # An AI agent runs its turns on its own connection and profile, as an AI task does.
+        profile = node.llm_profile if isinstance(node, (ActionNode, AgentNode)) else None
+        if profile is None:
             continue
+        assert isinstance(node, (ActionNode, AgentNode))
         if node.connection is None or node.connection not in bindings:
             raise CatalogError(422, "WV-CONNECTION", "Activation connection slots do not match requirements")
         config = bindings[node.connection].revision.config
-        profile = node.llm_profile
         if profile.provider != config.get("provider"):
             raise CatalogError(422, "WV-ACTIVATION-AI-PROVIDER", "The AI connection does not match the step's provider")
         entry = policy.entry_for(str(config.get("endpoint", "")))
         if entry is None or not entry.approves(profile.provider, profile.model):
             raise CatalogError(422, "WV-ACTIVATION-AI-MODEL", "The model is not approved for this AI connection")
+
+
+def validate_ai_reserved(ir: WorkflowIR) -> None:
+    """Refuse an IR that runs the model turn task anywhere but as an AI agent's own model, on the platform's turn action.
+
+    An agent step supplies what keeps a turn safe (the run's token cap, the data notice, the reviewed transcript); any
+    other step would leave that to its author. This holds with or without an AI policy.
+    """
+    from firefly_weave.compiler.agents import runs_turn_task, turn_action_digest
+
+    platform = turn_action_digest()
+    documents = {dependency.digest: dependency.document for dependency in ir.dependencies}
+    for node in ir.graph.nodes:
+        dependency = getattr(node, "dependency", None)
+        if isinstance(node, AgentNode):
+            reserved = dependency != platform
+        else:
+            spec = documents.get(dependency, {}).get("spec") if isinstance(dependency, str) else None
+            reserved = isinstance(spec, dict) and runs_turn_task(spec)
+        if reserved:
+            raise CatalogError(422, "WV-ACTIVATION-AI-RESERVED", "Only an AI agent step runs the platform's model turn")

@@ -145,6 +145,8 @@ def test_the_committed_map_is_valid():
         "step-error-handling",
         "ai-gateway",
         "ai-models-screen",
+        # The platform runs AI agents; their Studio editor, memory and acceptance stay off.
+        "agents",
         "run-views",
         "compose-operations",
         "metrics",
