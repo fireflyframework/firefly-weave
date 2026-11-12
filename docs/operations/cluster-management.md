@@ -528,13 +528,27 @@ and never prints a value: kubectl hands both versions to `diff -q`, which
 reports file names only. Connect creates the worker Deployment once, and its
 replicas, image, resources, and restart time then belong to reviewed change
 requests, so `--check` names `Deployment/weave-worker` only when it's gone or
-its security settings changed, such as a writable root filesystem or a mounted
-service account token. A deleted workers namespace reads as
-`Namespace/NAMESPACE`, since everything in it went with it. `--check` changes
+its security settings changed: what its containers run, mount, or read, how its
+pods resolve host names, or its security context, such as a writable root
+filesystem or a mounted service account token. A deleted workers namespace reads
+as `Namespace/NAMESPACE`, since everything in it went with it. `--check` changes
 nothing; run `connect` again to repair what it names. It needs the runner image
 the platform built, which `connect` pushes to the platform registry; when Docker
 no longer holds that image, `--check` says so, and `list` without `--check`
 still works.
+
+Connect creates the worker Deployment only when it's missing, so a changed one
+stays drifted after `connect`. To repair it, delete it, then connect again:
+
+```sh
+# Delete the drifted worker Deployment of the weave-workers namespace, then connect again to recreate it.
+kubectl --context kind-weave-test --namespace weave-workers delete deployment weave-worker
+weave platform cluster connect --provider kind --name weave-test
+```
+
+Deleting it stops the namespace's workers. Connect recreates it as it first did,
+at 0 replicas, so they stay stopped until a reviewed change request scales them
+again; see [Request a change](#request-a-change).
 
 ## After weave platform up
 

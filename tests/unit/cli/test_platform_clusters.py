@@ -1577,6 +1577,26 @@ def test_list_check_compares_only_the_worker_deployments_hardening(world, change
     assert applied(commands, before) == [] and not [call for call in commands.calls[before:] if "create" in call.argv]
 
 
+def test_deleting_a_drifted_worker_and_connecting_again_repairs_it(world):
+    """Connect creates the worker only when it's missing, so a changed one is repaired by deleting it first: it comes
+    back as rendered, at 0 replicas."""
+    directory, commands, config, cluster = world
+    connect(world)
+    commands.answer([KUBECTL, "get", "deployment", "weave-runner-weave-workers", "-o"], "2026-11-12T10:00:00.000000Z")
+    commands.answer([KUBECTL, "diff"], "")
+    cluster.worker["spec"]["replicas"] = 3
+    cluster.worker["spec"]["template"]["spec"]["hostAliases"] = [{"ip": "203.0.113.7", "hostnames": ["weave-api"]}]
+    connect(world)
+    assert clusters.clusters(directory, check=True, kubeconfig=config)["clusters"][0]["targets"][0]["drift"] == [
+        "Deployment/weave-worker"
+    ]
+    cluster.worker = None
+    connect(world)
+    assert clusters.clusters(directory, check=True, kubeconfig=config)["clusters"][0]["targets"][0]["drift"] == []
+    assert cluster.worker["spec"]["replicas"] == 0
+    assert "hostAliases" not in cluster.worker["spec"]["template"]["spec"]
+
+
 def test_list_check_names_a_deleted_workers_namespace_as_drift(world):
     """Everything in the namespace went with it, and connect makes it again: --check names the namespace and still
     compares the cluster's shared objects."""
