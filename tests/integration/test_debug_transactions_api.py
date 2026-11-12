@@ -75,12 +75,15 @@ async def test_a_resolve_in_a_session_changes_no_run_or_incident_of_the_project(
 ):
     from sqlalchemy import text
 
-    # integration_events is the platform's transactional outbox.
-    tables = ("runs", "incidents", "run_transactions", "integration_events")
+    # Runs, incidents, transactions, and the platform's transactional outbox (integration_events).
+    rows = text(
+        "SELECT (SELECT count(*) FROM runs), (SELECT count(*) FROM incidents),"
+        " (SELECT count(*) FROM run_transactions), (SELECT count(*) FROM integration_events)"
+    )
 
     async def counts():
         async with access_db[1]() as session:
-            return [await session.scalar(text(f"SELECT count(*) FROM {table}")) for table in tables]
+            return tuple((await session.execute(rows)).one())
 
     before = await counts()
     url, _ = await in_doubt(author, headers, project_url)
