@@ -32,3 +32,5 @@ updates:
         update-types: [minor, patch]
     commit-message:
       prefix: ci
+    # The pin follows the 1.96.0 branch and the toolchain is bumped by hand; its only tag, v1, needs a toolchain input and would break the build.
+    ignore: [{dependency-name: dtolnay/rust-toolchain}]
