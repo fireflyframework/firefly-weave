@@ -102,20 +102,23 @@ def test_a_changing_tool_waits_for_its_review():
         "properties": {"comment": {"type": "string", "maxLength": 1024}},
         "additionalProperties": False,
     }
-    # The review closes with the agent at the latest: its 24 hours end at the agent's 15 minutes here.
+    # The review closes with the agent at the latest: its 24 hours end at the agent's 15 minutes here, so the agent's
+    # own deadline closes it and the review arms none of its own.
     assert review.expires_at == NOW + timedelta(seconds=900)
-    assert [(c.node_id, c.deadline) for c in result.commands if isinstance(c, Deadline)] == [
-        (REVIEW, NOW + timedelta(seconds=900))
-    ]
+    assert [c for c in result.commands if isinstance(c, Deadline)] == []
+    assert REVIEW not in run.state.waits
     assert REVIEW in run.state.active and "support#1.1" not in run.state.active
 
 
 def test_a_review_expires_by_its_own_setting_before_the_agents_deadline():
     run = reviewed(review={"assignment": "support-leads", "expirySeconds": 300})
 
-    review = humans(asked(run))[REVIEW]
+    result = asked(run)
 
-    assert review.expires_at == NOW + timedelta(seconds=300)
+    assert humans(result)[REVIEW].expires_at == NOW + timedelta(seconds=300)
+    assert [(c.node_id, c.deadline) for c in result.commands if isinstance(c, Deadline)] == [
+        (REVIEW, NOW + timedelta(seconds=300))
+    ]
 
 
 def test_approval_dispatches_the_stored_call():
@@ -213,9 +216,39 @@ def test_text_the_model_wrote_is_marked_and_the_side_effect_comes_first():
     run_person = reviewed(LOOKUP, ASK)
     person = humans(asked(run_person, ("ask_desk", {"question": "Is A-17 late?"})))["support#1.1"]
 
-    assert list(review.context) == ["sideEffect", "tool", "description", "arguments", "aiWritten", "inputDigest"]
+    assert list(review.context) == [
+        "sideEffect",
+        "tool",
+        "description",
+        "arguments",
+        "fixed",
+        "aiWritten",
+        "inputDigest",
+    ]
     assert review.context["sideEffect"] == "non_idempotent" and review.context["aiWritten"] is True
     assert person.context["aiWritten"] is True and person.context["question"] == {"question": "Is A-17 late?"}
+
+
+def test_the_reviewer_sees_which_arguments_the_workflow_fixed():
+    # The author fixed cancel_order's region: it shows among the arguments, but the model didn't write it.
+    review = humans(asked(reviewed()))[REVIEW]
+
+    assert review.context["arguments"] == {"id": "A-17", "region": "eu"} and review.context["fixed"] == ["region"]
+
+
+def test_a_secret_the_model_writes_into_a_persons_question_is_redacted():
+    schema = {
+        "type": "object",
+        "properties": {"question": {"type": "string"}, "pin": {"type": "string", "x-secret": True}},
+        "required": ["question"],
+    }
+    ask = {**ASK, "human": {**ASK["human"], "questionSchema": schema}}
+    run = reviewed(LOOKUP, ask)
+    question = {"question": "Is key AKIAIOSFODNN7EXAMPLE still valid?", "pin": "4711"}
+
+    person = humans(asked(run, ("ask_desk", question)))["support#1.1"]
+
+    assert person.context["question"] == {"question": "Is key [redacted] still valid?", "pin": "[redacted]"}
 
 
 def test_a_persons_answer_reaches_the_model():

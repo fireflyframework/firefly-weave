@@ -1723,7 +1723,8 @@ def _advance_owned(
         for call in effects.calls:
             tool = tools[call.name]
             if call.status == "review" and effects.state is not None:
-                # The review closes by its own expiry or with the agent, whichever comes first.
+                # The review closes by its own expiry or with the agent, whichever comes first: only an expiry before
+                # the agent's deadline needs a deadline of its own, since close_agent closes the review otherwise.
                 name = review_key(key, call.turn, call.index)
                 expiry = effects.state.deadline
                 if tool.review is not None:
@@ -1732,9 +1733,11 @@ def _advance_owned(
                     ir, node, tool, name, cast(JsonObject, call.input), cast(str, call.digest), expiry
                 )
                 current_state.active.append(name)
-                current_state.waits[name] = expiry
                 result.steps.append(StepChange(node_id=name, status="waiting"))
-                result.commands.extend([review, Deadline(node_id=name, deadline=expiry)])
+                result.commands.append(review)
+                if expiry < effects.state.deadline:
+                    current_state.waits[name] = expiry
+                    result.commands.append(Deadline(node_id=name, deadline=expiry))
                 continue
             if call.status != "running":
                 continue

@@ -285,12 +285,14 @@ class _HumanTarget:
     ) -> HumanTaskIntent:
         assert tool.human is not None
         deadline = now + timedelta(seconds=node.limits.timeout_seconds)
-        # The model wrote the question: every surface shows it as plain text marked as written by AI.
+        # The model wrote the question: every surface shows it as plain text marked as written by AI, classified by the
+        # question's schema and redacted like review arguments, so a secret the model repeats never reaches a person.
+        question = redact(tool.human.question_schema, value, _bundle(ir), RULE_PATTERNS[node.rules])
         return HumanTaskIntent(
             node_id=key,
             assignment=tool.human.assignment,
             title=f"Answer {tool.name} for {node.id}"[:512],
-            context={"question": cast(JsonValue, value), "tool": tool.name, "aiWritten": True},
+            context={"question": question, "tool": tool.name, "aiWritten": True},
             form_schema=tool.human.form_schema,
             decisions=["submit"],
             expires_at=deadline,
@@ -351,6 +353,8 @@ def review_intent(
             "tool": tool.name,
             "description": tool.description,
             "arguments": shown,
+            # The workflow set these arguments, not the model.
+            "fixed": fixed_names(tool),
             "aiWritten": True,
             "inputDigest": digest,
         },
@@ -359,6 +363,13 @@ def review_intent(
         expires_at=expires_at,
         exclude_run_starter=tool.review.distinct_reviewer,
     )
+
+
+def fixed_names(tool: AgentToolIR) -> list[JsonValue]:
+    """The arguments a tool's fixed values set, in the order the author wrote them."""
+    if tool.fixed is None:
+        return []
+    return list(cast(JsonObject, tool.fixed.model_dump(by_alias=True)["object"]))
 
 
 def assignment_slots(ir: WorkflowIR) -> set[str]:

@@ -356,10 +356,21 @@ class RuntimeRepository:
             from firefly_weave.runtime.calls import record_calls
 
             await record_calls(self, view, result, event.timestamp)
+            from firefly_weave.runtime.agents import parse_agent_key
             from firefly_weave.runtime.settlement import project_transactions, settle_work
 
             for command in result.commands:
                 if isinstance(command, ControlCommand) and command.kind == "settle":
+                    reviewed = parse_agent_key(command.node_id)
+                    if (
+                        event.type == "wait_elapsed"
+                        and command.node_id == event.data.get("node_id")
+                        and (reviewed is not None and reviewed.review)
+                    ):
+                        from firefly_weave.human_tasks.persistence import expire_task
+
+                        # A review nobody answered by its own deadline closes as expired, with its audit row.
+                        await expire_task(self, view.id, command.node_id)
                     await settle_work(self, view.id, command.node_id, event.timestamp)
             await project_transactions(self, view, result, event)
             await self.record_evidence(view, event, result, task_timing)
