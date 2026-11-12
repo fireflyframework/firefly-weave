@@ -153,7 +153,11 @@ def cluster_create(
 @click.option("--output", type=click.Choice(["text", "json"]), default="text")
 @click.pass_obj
 def cluster_delete(directory: Path, provider: str, name: str, context: str | None, output: str) -> None:
-    """Delete a test cluster that has no connected targets."""
+    """Delete any kind or k3d cluster with this name, even one Weave didn't create.
+
+    Refuses a cluster that still has connected targets, and a Docker context
+    that isn't on this computer's Unix socket.
+    """
     from firefly_weave.sdk import platform_clusters
 
     _call(

@@ -98,6 +98,11 @@ def test_the_installed_weave_command_has_cluster_create_and_delete():
         assert flag in help_text
 
 
+def test_delete_help_warns_that_it_deletes_any_cluster_with_that_name():
+    help_text = " ".join(CliRunner().invoke(cli, ["platform", "cluster", "delete", "--help"]).output.split())
+    assert "Delete any kind or k3d cluster with this name, even one Weave didn't create." in help_text
+
+
 def test_the_cli_reference_says_what_create_deletes_with_the_commands_own_deadline():
     reference = (Path(__file__).resolve().parents[3] / "docs/reference/cli.md").read_text()
     (row,) = [line for line in reference.splitlines() if line.startswith("| `cluster create ")]
