@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import random
 import statistics
 import tempfile
 import time
@@ -44,9 +45,17 @@ import yaml
 from firefly_weave import private_origins as po
 from firefly_weave.ai_policy import PolicyFile, render
 from firefly_weave.compiler.schemas import validate_payload
-from firefly_weave.contracts.agent_turns import DATA_NOTICES, TOOL_RESULT_BYTES, TURN_RULES
+from firefly_weave.contracts.agent_turns import (
+    DATA_NOTICES,
+    TOOL_RESULT_BYTES,
+    TURN_RULES,
+    TurnInput,
+    turn_tokens,
+    wire_json,
+)
 from firefly_weave.contracts.connectors import ConnectorFailure
 from firefly_weave.contracts.workers import LeaseProof, TaskLease
+from token_shapes import orders
 
 from weave_agentic_worker.handler import ModelBuilder, TurnTaskHandler, WorkerPolicy
 from weave_agentic_worker.providers import BuildOptions, ModelSpec, ProviderModel, build_model
@@ -70,6 +79,8 @@ class CaseResult:
     output_tokens: int = 0
     seconds: float = 0.0
     requests: int = 0
+    # The contract's count of the turn input, template included; never below what the model reports for one request.
+    counted_tokens: int = 0
 
 
 def load_cases(path: Path = CASES) -> dict[str, Any]:
@@ -91,7 +102,16 @@ def _padded(content: Any, size: int) -> dict[str, Any]:
     while len(text.encode()) < size:
         notes.append(filler)
         text = json.dumps({**content, "notes": notes})
-    return {"truncated": True, "text": text.encode()[:TOOL_RESULT_BYTES].decode("utf-8", "ignore")}
+    return {"truncated": True, "content": text.encode()[:TOOL_RESULT_BYTES].decode("utf-8", "ignore")}
+
+
+def _records(content: Any, size: int) -> list[Any]:
+    """The facts, then as many compact order records as keep the result within ``size`` bytes, so it is not cut."""
+    pool = orders(random.Random(42), 400)
+    count = 0
+    while count < len(pool) and len(wire_json([content, *pool[: count + 1]]).encode()) <= size:
+        count += 1
+    return [content, *pool[:count]]
 
 
 def turn_input(document: dict[str, Any], case: dict[str, Any], model: str) -> dict[str, Any]:
@@ -100,6 +120,9 @@ def turn_input(document: dict[str, Any], case: dict[str, Any], model: str) -> di
     if "large_result" in case:
         last = next(index for index in reversed(range(len(messages))) if messages[index]["role"] == "tool")
         messages[last]["content"] = _padded(messages[last]["content"], case["large_result"]["bytes"])
+    if "compact_result" in case:
+        last = next(index for index in reversed(range(len(messages))) if messages[index]["role"] == "tool")
+        messages[last]["content"] = _records(messages[last]["content"], case["compact_result"]["bytes"])
     tools = [
         {
             "name": name,
@@ -253,6 +276,8 @@ async def run_case(
 ) -> CaseResult:
     """One turn case, once, through the worker's turn task."""
     result = CaseResult(case["id"], case["category"], passed=False, turns=1)
+    sent = turn_input(document, case, endpoint.model)
+    result.counted_tokens = turn_tokens(TurnInput.model_validate(sent))
     origins = endpoint.origins()
     with tempfile.TemporaryDirectory() as scratch, po.installed(origins):
         handler = TurnTaskHandler(
@@ -268,7 +293,7 @@ async def run_case(
             expires_at=now + timedelta(minutes=10),
             capability="weave-agentic.turn@1.0.0",
             worker_release_id=uuid4(),
-            input=turn_input(document, case, endpoint.model),
+            input=sent,
         )
         started = time.monotonic()
         try:

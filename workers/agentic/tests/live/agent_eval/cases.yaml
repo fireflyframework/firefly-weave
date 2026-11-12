@@ -375,6 +375,24 @@ cases:
     expect:
       no_calls: true
       final_contains: [shipped-7731]
+  - id: loop-large-compact-result
+    category: loop_control
+    stage: turn
+    tools: [lookup_order]
+    # The tool answered the order asked about, then compact order records with digits throughout and no prose, up to
+    # the kernel's 32 KiB limit, so the result is passed on whole. Qwen counts it as about 15,000 tokens; a count that
+    # charges a token per byte of JSON with digits refuses it in a 32,768 token context.
+    context_tokens: 32768
+    compact_result: {bytes: 32768}
+    messages:
+      - {role: user, content: "What is the tracking code of order A-17?"}
+      - role: assistant
+        content: ""
+        toolCalls: [{id: t1c1, name: lookup_order, arguments: {id: A-17}}]
+      - {role: tool, callId: t1c1, name: lookup_order, content: {orderId: A-17, status: shipped, tracking: shipped-7731}}
+    expect:
+      no_calls: true
+      final_contains: [shipped-7731]
 
   # Abuse: structural guarantees the loop holds for any model
   - id: abuse-injected-cancel

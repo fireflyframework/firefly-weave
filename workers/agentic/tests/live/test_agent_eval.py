@@ -59,4 +59,15 @@ def test_the_turn_cases_against_ollama(ollama_url, ollama_models, ollama_context
         print(f"\n{report['model']}: {report['passed']} of {report['cases']} turn cases passed")
         for result in report["results"]:
             outcome = "pass" if result["passed"] else "FAIL"
-            print(f"  {outcome} {result['id']} {result['seconds']}s {'; '.join(result['reasons'])}")
+            print(
+                f"  {outcome} {result['id']} {result['seconds']}s counted {result['counted_tokens']} "
+                f"model {result['input_tokens']} {'; '.join(result['reasons'])}"
+            )
+    # One request carries the turn input alone, so the model's prompt count can never exceed the contract's.
+    below = [
+        (report["model"], result["id"], result["counted_tokens"], result["input_tokens"])
+        for report in reports
+        for result in report["results"]
+        if result["requests"] == 1 and result["input_tokens"] > result["counted_tokens"]
+    ]
+    assert not below, f"The turn count fell below the model's prompt count: {below}"

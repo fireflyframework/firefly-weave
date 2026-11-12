@@ -31,11 +31,13 @@ from agent_eval_runner import (
     turn_input,
 )
 from firefly_weave.compiler.schemas import validate_payload, validate_schema
-from firefly_weave.contracts.agent_turns import TOOL_RESULT_BYTES, TurnInput
+from firefly_weave.contracts.agent_turns import TOOL_RESULT_BYTES, TurnInput, turn_fits, wire_json
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.usage import RequestUsage
+
+from weave_agentic_worker.execution import conservative_tokens
 
 DOCUMENT = load_cases()
 ENDPOINT = Endpoint(url="http://127.0.0.1:11434", model="qwen3:4b")
@@ -79,14 +81,14 @@ def builder(model):
 
 def test_the_cases_cover_every_category_with_unique_ids():
     cases = DOCUMENT["cases"]
-    assert len({case["id"] for case in cases}) == len(cases) == 24
+    assert len({case["id"] for case in cases}) == len(cases) == 25
     counts = Counter(case["category"] for case in cases)
-    assert counts == {"tool_choice": 5, "arguments": 4, "grounded_final": 5, "loop_control": 4, "abuse": 6}
+    assert counts == {"tool_choice": 5, "arguments": 4, "grounded_final": 5, "loop_control": 5, "abuse": 6}
     assert {case["id"] for case in loop_cases(DOCUMENT)} == {
         "choice-two-orders",
         *(case["id"] for case in cases if case["category"] == "abuse"),
     }
-    assert len(turn_cases(DOCUMENT)) == 17
+    assert len(turn_cases(DOCUMENT)) == 18
 
 
 @pytest.mark.parametrize("case", turn_cases(DOCUMENT), ids=lambda case: case["id"])
@@ -106,14 +108,14 @@ def test_every_turn_case_is_a_turn_the_kernel_could_send(case):
         assert not validate_payload(case["result_schema"], complete(case), {})
 
 
-async def test_the_runner_scores_a_perfect_scripted_model_17_of_17():
+async def test_the_runner_scores_a_perfect_scripted_model_18_of_18():
     results = [
         await run_case(DOCUMENT, case, ENDPOINT, model_builder=builder(perfect_model(case)))
         for case in turn_cases(DOCUMENT)
     ]
     assert [(result.id, result.reasons) for result in results if not result.passed] == []
     report = summary(ENDPOINT.model, results, [case["id"] for case in loop_cases(DOCUMENT)])
-    assert (report["passed"], report["cases"]) == (17, 17)
+    assert (report["passed"], report["cases"]) == (18, 18)
     assert report["categories"]["grounded_final"] == {"passed": 5, "cases": 5}
     assert len(report["waiting_for_the_loop"]) == 7
     structured = next(result for result in results if result.id == "grounded-structured-result")
@@ -175,5 +177,17 @@ def test_each_expectation_can_fail(case_id, output, reason):
 def test_a_large_tool_result_is_cut_to_the_kernels_limit_with_its_facts_first():
     case = by_id("loop-large-result")
     content = turn_input(DOCUMENT, case, ENDPOINT.model)["messages"][-1]["content"]
-    assert content["truncated"] is True and len(content["text"].encode()) == TOOL_RESULT_BYTES
-    assert content["text"].startswith('{"orderId": "A-17", "status": "shipped", "tracking": "shipped-7731"')
+    assert set(content) == {"truncated", "content"} and content["truncated"] is True
+    assert len(content["content"].encode()) == TOOL_RESULT_BYTES
+    assert content["content"].startswith('{"orderId": "A-17", "status": "shipped", "tracking": "shipped-7731"')
+
+
+def test_a_32_kib_compact_record_result_fits_the_turn_count_and_not_a_byte_count():
+    turn = TurnInput.model_validate(turn_input(DOCUMENT, by_id("loop-large-compact-result"), ENDPOINT.model))
+    records = turn.messages[-1].content
+    sent = wire_json(records)
+    assert records[0] == {"orderId": "A-17", "status": "shipped", "tracking": "shipped-7731"} and len(records) > 50
+    assert 32_000 < len(sent.encode()) <= TOOL_RESULT_BYTES
+    assert turn.limits.context_tokens == 32_768 and turn_fits(turn)
+    # The worker's former count charged JSON with digits a token per byte, so it refused this turn before any request.
+    assert conservative_tokens(turn.instructions, sent) + turn.limits.max_output_tokens > turn.limits.context_tokens
