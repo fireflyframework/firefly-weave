@@ -53,7 +53,6 @@ from firefly_weave.contracts.agent_turns import (
 )
 from firefly_weave.contracts.connectors import ConnectorFailure
 from firefly_weave.contracts.values import JsonValue, validate_json_value
-from pydantic import ValidationError
 from pydantic_ai.direct import model_request
 from pydantic_ai.messages import (
     ModelMessage,
@@ -84,6 +83,9 @@ from weave_agentic_worker.execution import (
 # The one message of the formatting request, sent after a text answer when the result must be structured.
 FORMAT_REQUEST = "Give your final answer again as the result fields, with nothing else."
 _FENCED = re.compile(r"\A\s*```(?:json)?\s*(.*?)\s*```\s*\Z", re.DOTALL)
+# JSON nested deeper than the interpreter's recursion limit fails to parse or check with RecursionError, and deeper
+# than the document limit with ValueError; either way the model wrote output the wire cannot carry.
+_UNCARRIED = (ValueError, RecursionError)
 
 
 def to_messages(turn: TurnInput) -> list[ModelMessage]:
@@ -122,19 +124,25 @@ def _sent_arguments(arguments: JsonValue) -> dict[str, Any] | str:
 
 
 def _written_arguments(part: ToolCallPart) -> JsonValue:
-    """The arguments as the model wrote them: parsed JSON when it parses, otherwise the text itself."""
+    """The arguments as the model wrote them: parsed JSON when it parses, otherwise the text itself.
+
+    Arguments nested too deep to parse or check fail the turn as LLM_OUTPUT, as any output the wire cannot carry.
+    """
     raw = part.args
     if raw is None:
         return {}
-    if isinstance(raw, str):
-        try:
-            return cast(JsonValue, validate_json_value(json.loads(raw)))
-        except ValueError:
-            return raw
     try:
-        return cast(JsonValue, validate_json_value(raw))
-    except ValueError:
-        return wire_json(cast(JsonValue, repr(raw)))
+        if isinstance(raw, str):
+            try:
+                return cast(JsonValue, validate_json_value(json.loads(raw)))
+            except ValueError:
+                return raw
+        try:
+            return cast(JsonValue, validate_json_value(raw))
+        except ValueError:
+            return wire_json(cast(JsonValue, repr(raw)))
+    except RecursionError:
+        raise ConnectorFailure("LLM_OUTPUT", "failed") from None
 
 
 def _text(response: ModelResponse) -> str:
@@ -190,7 +198,7 @@ def _formatted(response: ModelResponse, output_mode: str) -> JsonValue:
         fenced = _FENCED.match(text)
         try:
             value = cast(JsonValue, validate_json_value(json.loads(fenced.group(1) if fenced else text)))
-        except ValueError:
+        except _UNCARRIED:
             raise ConnectorFailure("LLM_OUTPUT", "failed") from None
     if not isinstance(value, dict) or set(value) != {"result"}:
         raise ConnectorFailure("LLM_OUTPUT", "failed")
@@ -287,6 +295,23 @@ async def run_turn(
         raise
     except Exception as error:
         raise classify(error) from None
+    try:
+        return _output(turn, response, responses, calls, result, structured)
+    except _UNCARRIED:
+        # Includes a call whose name or arguments fall outside the JSON domain, or nest past the document depth.
+        raise ConnectorFailure("LLM_OUTPUT", "failed") from None
+
+
+def _output(
+    turn: TurnInput,
+    response: ModelResponse,
+    responses: list[ModelResponse],
+    calls: list[ToolCallPart],
+    result: JsonValue,
+    structured: bool,
+) -> JsonValue:
+    """The turn's output, checked against its schema and the document limits."""
+    profile = turn.profile
     text = _text(response)
     if not calls and not structured:
         if len(text) > MAX_TURN_TEXT:
@@ -294,7 +319,6 @@ async def run_turn(
         result = text
     if not calls and validate_payload(profile.output_schema, result, {}):
         raise ConnectorFailure("LLM_OUTPUT", "failed")
-    # Validated with the output below: a name or arguments outside the JSON domain fail the turn as LLM_OUTPUT.
     kept = [
         {
             "id": call_id(turn.turn, index),
@@ -321,10 +345,6 @@ async def run_turn(
         value["result"] = result
     if len(calls) > len(kept):
         value["droppedToolCalls"] = len(calls) - len(kept)
-    try:
-        output = TurnOutput.model_validate(value)
-    except ValidationError:
-        raise ConnectorFailure("LLM_OUTPUT", "failed") from None
-    dumped = cast(JsonValue, output.model_dump(mode="json", by_alias=True))
+    dumped = cast(JsonValue, TurnOutput.model_validate(value).model_dump(mode="json", by_alias=True))
     measure_value(dumped)
     return dumped

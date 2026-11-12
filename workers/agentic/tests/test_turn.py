@@ -380,6 +380,33 @@ async def test_a_policy_context_below_the_turns_is_refused_before_any_request():
     assert (failed.value.code, failed.value.outcome, seen) == ("LLM_CONTEXT_LIMIT", "not_started", [])
 
 
+def nested(depth):
+    value = []
+    for _ in range(depth - 1):
+        value = [value]
+    return value
+
+
+@pytest.mark.parametrize("depth", [40, 3000])
+@pytest.mark.parametrize("written", ["text", "dict"])
+async def test_tool_call_arguments_nested_past_the_document_depth_fail_the_turn_as_output(depth, written):
+    arguments = '{"id": ' + "[" * depth + "]" * depth + "}" if written == "text" else {"id": nested(depth)}
+    model, _ = scripted(respond(ToolCallPart("lookup_order", arguments, "p1")))
+    with pytest.raises(ConnectorFailure) as failed:
+        await run(turn(), model)
+    assert (failed.value.code, failed.value.outcome) == ("LLM_OUTPUT", "failed")
+
+
+@pytest.mark.parametrize("output_mode", ["native", "tool"])
+async def test_a_formatted_final_nested_past_the_document_depth_fails_as_output(output_mode):
+    deep = '{"result": ' + "[" * 3000 + "]" * 3000 + "}"
+    formatted = TextPart(deep) if output_mode == "native" else ToolCallPart("final_result", deep, "f1")
+    model, _ = scripted(respond(TextPart("Order A-17 has shipped.")), respond(formatted))
+    with pytest.raises(ConnectorFailure) as failed:
+        await run(turn(schema=ORDER), model, output_mode=output_mode)
+    assert (failed.value.code, failed.value.outcome) == ("LLM_OUTPUT", "failed")
+
+
 async def test_no_tool_support_is_its_own_code():
     model, _ = scripted(ModelHTTPError(400, "qwen3:4b", body={"error": "qwen3:4b does not support tools"}))
     with pytest.raises(ConnectorFailure) as failed:
