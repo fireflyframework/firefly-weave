@@ -17,12 +17,14 @@
 """The compiler checks AI agent steps and resolves their tools through one registry of tool resolvers."""
 
 import copy
+from typing import cast
 
 import pytest
 
 from firefly_weave.compiler.agent_tools import TOOL_RESOLVERS, default_approval, model_parameters
 from firefly_weave.compiler.analyzer import analyze
 from firefly_weave.compiler.catalog import CatalogSnapshot
+from firefly_weave.compiler.ir import ToolTargetKind
 from firefly_weave.compiler.parser import parse_source
 from firefly_weave.contracts.agent_turns import turn_action_definition, turn_capability
 from firefly_weave.contracts.agentic import AGENTIC_DESCRIPTOR, action_definition, task_capability
@@ -413,6 +415,12 @@ def test_changing_tools_require_review_by_default():
     assert default_approval("workflow", None) == "required"
     assert default_approval("action", "read_only") == "auto"
     assert default_approval("human", None) == "auto"
+
+
+def test_a_tool_target_without_a_rule_requires_review():
+    # A target added later is reviewed until someone decides it is safe: the default fails closed.
+    assert default_approval(cast(ToolTargetKind, "mcp"), "non_idempotent") == "required"
+    assert default_approval(cast(ToolTargetKind, "mcp"), "read_only") == "required"
 
 
 def test_a_reviewed_tool_needs_reviewers():

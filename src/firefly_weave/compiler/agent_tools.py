@@ -108,10 +108,12 @@ def model_parameters(input_schema: JsonObject, fixed: Collection[str]) -> JsonOb
 
 
 def default_approval(target: ToolTargetKind, side_effect: SideEffect | None) -> Approval:
-    """Every tool that changes data is reviewed: any action that isn't read-only, and every sub-workflow."""
-    if target == "workflow" or (target == "action" and side_effect != "read_only"):
-        return "required"
-    return "auto"
+    """Only a question to a person and a read-only action skip review by default; every other tool is reviewed.
+
+    The rule fails closed: an action whose side effect is unknown, every sub-workflow and any target added later are
+    reviewed until a rule names them safe.
+    """
+    return "auto" if target == "human" or (target == "action" and side_effect == "read_only") else "required"
 
 
 class _ActionTool:

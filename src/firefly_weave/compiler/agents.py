@@ -306,9 +306,8 @@ def _tool(
     resolved = TOOL_RESOLVERS[target].resolve(tool, path, checks)
     fixed = cast(JsonObject, cast(JsonObject, tool.get("fixed", {"object": {}}))["object"])
     _fixed(checks, fixed, resolved, path, visible)
-    side_effect = resolved.side_effect if resolved is not None else None
-    # A tool whose target doesn't resolve is treated as changing data: its review is never skipped.
-    default = default_approval(target, side_effect) if resolved is not None else "required"
+    # An action that doesn't resolve has no known side effect, so default_approval keeps its review.
+    default = default_approval(target, resolved.side_effect if resolved is not None else None)
     explicit = tool.get("approval")
     if explicit == "auto" and default == "required":
         checks.issue("AGENT_UNREVIEWED_EFFECT", path + "/approval", message=MESSAGES["AGENT_UNREVIEWED_EFFECT"])
