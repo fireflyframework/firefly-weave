@@ -130,7 +130,7 @@ def principal(role: str | None = "viewer", *, active: bool = True) -> Principal:
 def platform(monkeypatch):
     """The service over a read unit and the recorded run; ``platform.current`` is the principal stored now."""
     unit = ReadUnit()
-    state = SimpleNamespace(unit=unit, current=principal(), recorded=None)
+    state = SimpleNamespace(unit=unit, current=principal(), recorded=None, iterations=25)
 
     async def load(session, identifier):
         assert session is unit.tx.session
@@ -138,7 +138,7 @@ def platform(monkeypatch):
 
     def repository(tx):
         assert tx is unit.tx
-        state.recorded = state.recorded or Recorded(tx)
+        state.recorded = state.recorded or Recorded(tx, state.iterations)
         return state.recorded
 
     monkeypatch.setattr("firefly_weave.operations.agent_log.load_principal", load)
@@ -184,6 +184,15 @@ async def test_a_step_id_pages_its_iterations(platform):
 
     assert [item.instance_key for item in second.items] == [f"support[{index}]" for index in range(20, 25)]
     assert second.next_cursor is None
+
+
+async def test_a_last_full_page_has_no_cursor(platform):
+    platform.iterations = 20
+
+    page = await read(platform, limit=20)
+
+    assert [item.instance_key for item in page.items] == [f"support[{index}]" for index in range(20)]
+    assert page.next_cursor is None
 
 
 async def test_a_cursor_belongs_to_its_run_and_key(platform):

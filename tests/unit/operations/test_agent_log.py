@@ -40,7 +40,7 @@ from agent_fixtures import (  # noqa: E402
     plain,
     workflow,
 )
-from test_agent_workflows import catalog, order_action  # noqa: E402
+from test_agent_workflows import PROFILE, catalog, order_action, orders_connector  # noqa: E402
 
 from firefly_weave.compiler.ir import WorkflowIR  # noqa: E402
 from firefly_weave.contracts.agent_log import AgentError, shown_name  # noqa: E402
@@ -523,6 +523,83 @@ def test_a_call_still_running_when_the_run_timed_out_failed_with_timeout():
     assert (call.status, call.error) == ("failed", AgentError(code="TIMEOUT"))
     assert (call.started_at, call.ended_at, call.output) == (NOW + 2 * SECONDS, due, None)
     assert (log.status, log.ended_at) == ("timed_out", due)
+
+
+PIN_INPUT = {
+    "type": "object",
+    "properties": {
+        "id": {"type": "string"},
+        "region": {"type": "string", "enum": ["eu", "us"]},
+        "pin": {"type": "string", "x-secret": True},
+    },
+    "required": ["id", "region"],
+    "additionalProperties": False,
+}
+
+
+def test_a_secret_tool_argument_is_withheld_with_its_reason():
+    tool = {**copy.deepcopy(LOOKUP), "name": "order_pin", "action": "orders-pin@1.0.0"}
+    run = Recorded(
+        answering(workflow(agent(tools=[tool]))), catalog(order_action("orders-pin", "get", input_schema=PIN_INPUT))
+    )
+    run.send("started", NOW, admission_policy="classified-v1")
+    run.complete("support#1", NOW + SECONDS, calls(1, ("order_pin", {"id": "A-17", "pin": "4931-secret"})))
+
+    log = run.log()
+
+    [call] = log.turns[0].calls
+    assert (call.arguments.available, call.arguments.value) == (False, None)
+    assert [(item.path, item.reason) for item in call.arguments.omissions] == [("", "classified_secret")]
+    assert "4931-secret" not in log.model_dump_json()
+
+
+def test_a_secret_field_in_the_final_answer_is_withheld_with_its_reason():
+    result = {
+        "type": "object",
+        "properties": {"reply": {"type": "string"}, "token": {"type": "string", "x-secret": True}},
+    }
+    run = Recorded(answering(workflow(agent(tools=[LOOKUP]), profile={**PROFILE, "outputSchema": result})))
+    run.send("started", NOW, admission_policy="classified-v1")
+    run.complete("support#1", NOW + SECONDS, answer({"reply": "Shipped."}))
+    # The kernel refuses a secret value in a turn's output; the log still classifies whatever the store holds.
+    run.instances["support#1"] = ("completed", answer({"reply": "Shipped.", "token": "tok-live-77aa"}))
+
+    log = run.log()
+
+    [turn] = log.turns
+    assert turn.final is not None and (turn.final.available, turn.final.value) == (False, None)
+    assert [(item.path, item.reason) for item in turn.final.omissions] == [("", "classified_secret")]
+    assert "tok-live-77aa" not in log.model_dump_json()
+
+
+def test_an_output_only_the_connectors_schema_marks_secret_is_withheld():
+    # The action's own output schema shows the token; the connector it runs marks it secret, and that decides.
+    connector = orders_connector()
+    connector["metadata"]["name"] = "vault"
+    connector["spec"]["actions"] = {"get": {**connector["spec"]["actions"]["get"], "outputSchema": SECRET_OUTPUT}}
+    action = order_action("vault-get", "get")
+    action["spec"]["implementation"]["uses"] = "vault@1.0.0"
+    action["spec"]["connection"] = {"connector": "vault@1.0.0"}
+    action["spec"]["outputSchema"] = {
+        "type": "object",
+        "properties": {"status": {"type": "string"}, "token": {"type": "string"}},
+    }
+    document = answering(
+        workflow(agent(tools=[{**LOOKUP, "name": "vault_get", "action": "vault-get@1.0.0", "connection": "vault"}]))
+    )
+    document["spec"]["connections"]["vault"] = {"connector": "vault@1.0.0"}
+    run = Recorded(document, catalog(connector, action))
+    run.send("started", NOW, admission_policy="classified-v1")
+    run.complete("support#1", NOW + SECONDS, calls(1, ("vault_get", {"id": "A-17"})))
+    run.complete("support#1.1", NOW + 2 * SECONDS, {"status": "shipped", "token": "held-by-the-vault"})
+
+    log = run.log()
+
+    [call] = log.turns[0].calls
+    assert call.status == "succeeded"
+    assert call.output is not None and (call.output.available, call.output.value) == (False, None)
+    assert [(item.path, item.reason) for item in call.output.omissions] == [("", "classified_secret")]
+    assert "held-by-the-vault" not in log.model_dump_json()
 
 
 def test_values_past_the_page_limit_are_left_out_with_their_reason():

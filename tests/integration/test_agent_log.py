@@ -16,6 +16,8 @@
 
 """The agent log on the real platform: read from what PostgreSQL recorded for a reviewed, refused and answered run."""
 
+import json
+
 import pytest
 import test_agent_runtime as runtime
 from sqlalchemy import text
@@ -23,7 +25,7 @@ from sqlalchemy import text
 from firefly_weave.access.authorization import AccessDenied
 from firefly_weave.access.models import Grant
 from firefly_weave.definitions.models import CatalogError
-from firefly_weave.operations.agent_log import AgentLogRepository, AgentLogService
+from firefly_weave.operations.agent_log import AgentLogRepository, AgentLogService, RecordedResult, TurnRecord
 
 pytestmark = pytest.mark.integration
 
@@ -224,3 +226,44 @@ async def test_values_past_the_page_limit_are_left_out_and_the_page_still_reads(
     assert (answer.input_tokens, answer.output_tokens, answer.calls) == (120, 12, [])
     assert (log.turns[1].calls[0].status, log.status, log.stop) == ("refused", "succeeded", "final")
     assert large not in log.model_dump_json()
+
+
+async def test_a_turns_recorded_input_gives_its_tools_flag_memory_and_result_codes(agent):
+    """Read in the database: whether tools were on (off on the forced final turn), how many remembered messages the
+    first message carried, and each tool result's error mark, code (128 characters at most) and status."""
+    await finish(agent)
+    messages = [
+        {
+            "role": "context",
+            "content": {"memory": [{"role": "user", "content": "A-9?"}, {"role": "assistant", "content": "Shipped."}]},
+        },
+        {"role": "user", "content": "Cancel A-17"},
+        {"role": "tool", "callId": "t1c1", "isError": True, "content": {"error": "UNKNOWN_TOOL"}},
+        {"role": "tool", "callId": "t1c2", "isError": True, "content": {"error": "E" * 129}},
+        {"role": "tool", "callId": "t1c3", "isError": True, "content": {"status": "expired"}},
+    ]
+    await change(
+        agent,
+        "UPDATE task_intents SET payload=jsonb_set(jsonb_set(payload,'{input,toolsEnabled}','false'),"
+        "'{input,messages}',cast(:messages AS jsonb))",
+        "support#3",
+        messages=json.dumps(messages),
+    )
+
+    async with agent.definitions.transaction(agent.scope, None) as tx:
+        records = await AgentLogRepository(tx).turns(agent.run.id, ["support#2", "support#3"])
+
+    assert sorted(records, key=lambda record: record.key) == [
+        # Turn 2 as the platform recorded it: tools on, no memory, and the cancel's result the model read.
+        TurnRecord("support#2", True, 0, {"t1c1": RecordedResult(False, None, "cancelled")}),
+        TurnRecord(
+            "support#3",
+            False,
+            2,
+            {
+                "t1c1": RecordedResult(True, "UNKNOWN_TOOL", None),
+                "t1c2": RecordedResult(True, None, None),
+                "t1c3": RecordedResult(True, None, "expired"),
+            },
+        ),
+    ]
