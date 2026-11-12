@@ -31,6 +31,7 @@ from firefly_weave.contracts.transactions import IN_DOUBT_CODES, split_phase
 from firefly_weave.contracts.values import JsonObject, JsonValue
 from firefly_weave.contracts.workers import TaskError
 from firefly_weave.operations.redaction import Omission, project
+from firefly_weave.runtime.agent_tools import agent_output_schemas
 from firefly_weave.runtime.kernel import action_schemas, called_workflow, workflow
 from firefly_weave.runtime.models import RuntimeEvent, Transition
 
@@ -120,7 +121,8 @@ def safe_event(event: RuntimeEvent, artifact: CompiledArtifact | None, *, unavai
     omissions: list[Omission] = []
     fields = {
         "started": {"admission_policy", "origin", "run_id", "not_after"},
-        "human_completed": {"node_id", "task_id", "actor_id", "output"},
+        # A review's decision carries the digest of the input it approved: a digest, never the input.
+        "human_completed": {"node_id", "task_id", "actor_id", "output", "input_digest"},
         "paused": {"actor_id", "reason", "control_revision"},
         "resumed": {"actor_id", "reason", "control_revision"},
         "task_completed": {"node_id", "generation", "output"},
@@ -191,7 +193,10 @@ def safe_event(event: RuntimeEvent, artifact: CompiledArtifact | None, *, unavai
         node = event_node({n.id: n for n in ir.graph.nodes}, data.get("node_id"))
         schemas: list[JsonObject] = []
         phase = phase_step(node, data.get("node_id"))
-        if (
+        agent = agent_output_schemas(ir, data.get("node_id"), event.type, data, event.evidence or {})
+        if agent is not None:
+            schemas = agent
+        elif (
             event.type == "incident_resolved"
             and data.get("code") in IN_DOUBT_CODES
             and (data.get("code") != "WV-TXN-PIVOT-UNKNOWN" or data.get("kind") != "accept_reconciled_result")

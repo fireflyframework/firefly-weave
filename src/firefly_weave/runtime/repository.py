@@ -787,12 +787,20 @@ class RuntimeRepository:
         )
 
         def task_fact(task: dict[str, Any]) -> TaskFact:
+            from firefly_weave.compiler.canonical import canonical_digest
+            from firefly_weave.runtime.agents import parse_agent_key
+
+            # A turn records what the model was given, so replay can tell a transcript rebuilt differently.
+            turn = parse_agent_key(task["node_id"])
             return TaskFact(
                 task_id=task["id"],
                 node_id=task["node_id"],
                 action_digest=task["payload"]["action_digest"],
                 release_id=task["worker_release_id"],
                 deadline=datetime.fromisoformat(task["payload"]["deadline"]),
+                input_digest=canonical_digest(task["payload"]["input"])
+                if turn is not None and turn.call is None
+                else None,
             )
 
         for command in result.commands:

@@ -163,6 +163,18 @@ class ToolTarget(Protocol):
         """What the model reads for a completed call, and whether it is an error."""
         ...
 
+    def event_schemas(
+        self, ir: WorkflowIR, tool: AgentToolIR, event_type: str, data: Mapping[str, object]
+    ) -> list[JsonObject]:
+        """What replay and exports screen an output recorded at a call key with, reconciled results included; none for
+        an event that carries no output of this target."""
+        ...
+
+    def ran(self, ir: WorkflowIR, tool: AgentToolIR, evidence: Mapping[str, object]) -> bool:
+        """Whether an event's recorded evidence is consistent with a call of this tool: the action digest a task ran,
+        or the workflow a call started. Evidence that names neither leaves every tool possible."""
+        ...
+
 
 class _ActionTarget:
     target: ToolTargetKind = "action"
@@ -209,6 +221,22 @@ class _ActionTarget:
         if _breaks(self.output_schema(ir, tool), output, ir):
             return {"error": "INVALID_OUTPUT", "retryable": False}, True
         return _for_model(ir, self.output_schema(ir, tool), output, rules), False
+
+    def event_schemas(
+        self, ir: WorkflowIR, tool: AgentToolIR, event_type: str, data: Mapping[str, object]
+    ) -> list[JsonObject]:
+        if event_type not in {"task_completed", "incident_resolved"}:
+            return []
+        from firefly_weave.contracts.definitions import ActionDefinition, load_definition
+        from firefly_weave.runtime.kernel import action_schemas
+
+        definition = load_definition(_dependency(ir, "Action", tool).document)
+        assert isinstance(definition, ActionDefinition)
+        return action_schemas(ir, definition, "output")
+
+    def ran(self, ir: WorkflowIR, tool: AgentToolIR, evidence: Mapping[str, object]) -> bool:
+        recorded = _recorded(evidence, "task_receipt", "task", "action_digest")
+        return recorded is None or recorded == _dependency(ir, "Action", tool).digest
 
 
 class _WorkflowTarget:
@@ -257,6 +285,19 @@ class _WorkflowTarget:
         if envelope["status"] == "succeeded":
             return _for_model(ir, self.output_schema(ir, tool), envelope["output"], rules), False
         return {"error": cast(JsonObject, envelope["error"])["code"], "retryable": False}, True
+
+    def event_schemas(
+        self, ir: WorkflowIR, tool: AgentToolIR, event_type: str, data: Mapping[str, object]
+    ) -> list[JsonObject]:
+        if event_type != "call_completed":
+            return []
+        from firefly_weave.compiler.calls import CALL_ERROR_SCHEMA
+
+        return [self.output_schema(ir, tool) if data.get("status") == "succeeded" else CALL_ERROR_SCHEMA]
+
+    def ran(self, ir: WorkflowIR, tool: AgentToolIR, evidence: Mapping[str, object]) -> bool:
+        recorded = _recorded(evidence, "call_receipt", "call", "workflow_reference")
+        return recorded is None or recorded == _dependency(ir, "Workflow", tool).reference
 
 
 class _HumanTarget:
@@ -314,6 +355,16 @@ class _HumanTarget:
             return {"error": "INVALID_OUTPUT", "retryable": False}, True
         return {"answer": _for_model(ir, self.output_schema(ir, tool), answer, rules)}, False
 
+    def event_schemas(
+        self, ir: WorkflowIR, tool: AgentToolIR, event_type: str, data: Mapping[str, object]
+    ) -> list[JsonObject]:
+        if event_type != "human_completed":
+            return []
+        return [_decision_schema(self.output_schema(ir, tool))]
+
+    def ran(self, ir: WorkflowIR, tool: AgentToolIR, evidence: Mapping[str, object]) -> bool:
+        return True
+
 
 TOOL_TARGETS: Final[Mapping[ToolTargetKind, ToolTarget]] = MappingProxyType(
     {"action": _ActionTarget(), "workflow": _WorkflowTarget(), "human": _HumanTarget()}
@@ -370,6 +421,49 @@ def fixed_names(tool: AgentToolIR) -> list[JsonValue]:
     if tool.fixed is None:
         return []
     return list(cast(JsonObject, tool.fixed.model_dump(by_alias=True)["object"]))
+
+
+def _decision_schema(form: JsonObject) -> JsonObject:
+    """A person's recorded decision: the decision's name and the form's data."""
+    return {"type": "object", "properties": {"data": form, "decision": {"type": "string"}}}
+
+
+def _recorded(evidence: Mapping[str, object], *path: str) -> object:
+    """A value in an event's recorded evidence, or None when the evidence doesn't hold it."""
+    value: object = evidence
+    for name in path:
+        if not isinstance(value, Mapping):
+            return None
+        value = value.get(name)
+    return value
+
+
+def agent_output_schemas(
+    ir: WorkflowIR, key: object, event_type: str, data: Mapping[str, object], evidence: Mapping[str, object]
+) -> list[JsonObject] | None:
+    """What an output recorded at an agent's key is screened with in replay and exports: a turn's pinned guard, a
+    review's answer, or the output schemas of every tool the call may have run, narrowed by the evidence that names
+    its target. An output must fit and classify under each one. None for a key that isn't an agent's."""
+    reference = agent_key(ir, key) if isinstance(key, str) else None
+    if reference is None:
+        return None
+    if reference.key.review:
+        return [_decision_schema(review_form())] if event_type == "human_completed" else []
+    if reference.key.call is None:
+        if event_type not in {"task_completed", "incident_resolved"}:
+            return []
+        guard = next(
+            item for item in ir.guards if item.path == reference.node.path and item.purpose == "agent_turn_output"
+        )
+        return [ir.schemas[guard.schema_ref]]
+    # Only a task's result can be reconciled at a call key.
+    completion = "task_completed" if event_type == "incident_resolved" else event_type
+    return [
+        schema
+        for tool in reference.node.tools
+        if (target := TOOL_TARGETS[tool.target]).completion == completion and target.ran(ir, tool, evidence)
+        for schema in target.event_schemas(ir, tool, event_type, data)
+    ]
 
 
 def assignment_slots(ir: WorkflowIR) -> set[str]:

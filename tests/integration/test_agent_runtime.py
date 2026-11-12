@@ -46,6 +46,7 @@ from firefly_weave.contracts.workers import InstanceRequest, ReleaseRequest
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.definitions.service import DefinitionService
 from firefly_weave.human_tasks.service import HumanTaskService
+from firefly_weave.operations.history import HistoryService
 from firefly_weave.operations.incidents import IncidentService
 from firefly_weave.persistence.uow import UnitOfWork
 from firefly_weave.runtime.deadlines import DeadlineService
@@ -127,7 +128,13 @@ def support_desk(review: dict) -> dict:
                     "onError": "continue",
                 }
             ],
-            "output": {"ref": "/steps/support/error/code"},
+            # The agent's error code when it failed, else its answer.
+            "output": {
+                "op": {
+                    "name": "coalesce",
+                    "args": [{"ref": "/steps/support/error/code"}, {"ref": "/steps/support/output/result"}],
+                }
+            },
         },
     }
 
@@ -429,3 +436,48 @@ async def test_once_the_held_call_is_reconciled_the_agents_failure_goes_on(agent
 
     [run] = await rows(agent, "SELECT state FROM runs WHERE id=:run")
     assert (run["state"]["status"], run["state"]["output"]) == ("succeeded", "WV-AGENT-TIMEOUT")
+
+
+async def test_a_turn_records_the_digest_of_the_input_the_model_was_given(agent):
+    issued = [
+        task
+        for row in await rows(
+            agent,
+            "SELECT f.evidence FROM run_events e JOIN run_event_evidence f USING(run_id,id,sequence) "
+            "WHERE e.run_id=:run ORDER BY e.sequence",
+        )
+        for task in row["evidence"].get("issued_tasks", [])
+    ]
+
+    turns = [task for task in issued if task["node_id"] == "support#1"]
+    assert [task["input_digest"] for task in turns] == [canonical_digest(agent.turn_input)]
+    assert all("input_digest" not in task for task in issued if task["node_id"] != "support#1")
+
+
+async def test_an_agent_run_replays_consistent_from_its_recorded_history(agent):
+    await approve(agent)
+    await complete(agent, await claim(agent), {"status": "cancelled"})
+    final = {
+        "kind": "final",
+        "text": "",
+        "result": "Order A-17 is cancelled.",
+        "usage": usage(),
+        "provider": "openai-chat",
+        "model": "fixture",
+        "finishReason": "stop",
+    }
+    await complete(agent, await claim(agent), final)
+
+    async with agent.definitions.transaction(agent.scope, None) as tx:
+        exported = await agent.graph.resolve(HistoryService).export(tx, agent.run.id, **agent.worker)
+
+    # Two turns, a review and a changing call: each recorded transition is the one replay computes.
+    assert exported.replay.status == "consistent", exported.replay
+    assert exported.replay.final_state.output == "Order A-17 is cancelled."
+    assert [event.type for event in exported.events] == [
+        "started",
+        "task_completed",
+        "human_completed",
+        "task_completed",
+        "task_completed",
+    ]
