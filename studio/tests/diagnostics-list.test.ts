@@ -103,6 +103,42 @@ describe("diagnostic rows", () => {
     expect(fieldName(["spec", "output"])).toBe("Workflow output");
     expect(fieldName(["with"])).toBe("Input");
   });
+
+  it("names a decision table's version Table version, and an action's Action version", () => {
+    const steps = {
+      ...definition,
+      spec: {
+        ...definition.spec,
+        steps: [
+          {
+            id: "score",
+            kind: "decisionTable",
+            uses: "payment-policy@1.2.1",
+            with: { ref: "/input" },
+          },
+          {
+            id: "lookup",
+            kind: "action",
+            uses: "sql.lookup@1.0.1",
+            with: { literal: {} },
+          },
+        ],
+      },
+    };
+    const { problems } = diagnosticRows(
+      ["/spec/steps/0/uses", "/spec/steps/1/uses"].map((path) => ({
+        code: "WV-COMP-DRAFT_DEPENDENCY",
+        severity: "error",
+        path,
+        message: "Publish it before publishing this workflow.",
+      })),
+      steps,
+    );
+    expect(problems.map((row) => row.where)).toEqual([
+      "Step score · Table version",
+      "Step lookup · Action version",
+    ]);
+  });
 });
 
 describe("suggested edits", () => {

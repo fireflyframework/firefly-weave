@@ -74,6 +74,10 @@ const stepFields: Record<string, string> = {
   code: "Error code",
   message: "Message",
 };
+/** Fields whose name depends on the step's kind: a decision table's `uses` is its table's version. */
+const kindFields: Record<string, Record<string, string>> = {
+  decisionTable: { uses: "Table version" },
+};
 const workflowFields: Record<string, string> = {
   inputSchema: "Input schema",
   outputSchema: "Output schema",
@@ -83,8 +87,11 @@ const workflowFields: Record<string, string> = {
   steps: "Steps",
 };
 
-/** The plain name of a property-grid field path. */
-export function fieldName(field: readonly (string | number)[]): string {
+/** The plain name of a property-grid field path, in a step of `kind` when it is known. */
+export function fieldName(
+  field: readonly (string | number)[],
+  kind?: string,
+): string {
   const [first, second, third] = field;
   if (first === "spec") return workflowFields[String(second)] ?? "";
   if (first === "metadata")
@@ -97,12 +104,17 @@ export function fieldName(field: readonly (string | number)[]): string {
     return `Case ${Number(second) + 1} ${third === "when" ? "condition" : "output"}`;
   if (first === "default") return "Otherwise output";
   if (first === "branches") return `Branch ${String(second)} output`;
-  return stepFields[String(first)] ?? "";
+  return (
+    kindFields[kind ?? ""]?.[String(first)] ?? stepFields[String(first)] ?? ""
+  );
 }
 
 /** "Step check · Input", or "Workflow settings · Input schema". */
-export function placeOf(location: DiagnosticLocation): string {
-  const field = fieldName(location.field);
+export function placeOf(location: DiagnosticLocation, kind?: string): string {
+  const field = fieldName(
+    location.field,
+    location.stepId === WORKFLOW ? undefined : kind,
+  );
   const owner =
     location.stepId === WORKFLOW
       ? "Workflow settings"
@@ -146,6 +158,18 @@ export function withPointer(
   return copy;
 }
 
+/** The node at a JSON pointer of the definition, or undefined. */
+const nodeAt = (definition: unknown, pointer: string): unknown =>
+  segmentsOf(pointer).reduce<unknown>(
+    (node, segment) =>
+      Array.isArray(node)
+        ? node[Number(segment)]
+        : isRecord(node)
+          ? node[segment]
+          : undefined,
+    definition,
+  );
+
 /** The edited step or workflow a compiler suggestion stands for. */
 export function suggestedChange(
   edit: unknown,
@@ -160,15 +184,7 @@ export function suggestedChange(
     const value = withPointer(definition, path, edit["value"]);
     return value ? { stepId: WORKFLOW, value } : null;
   }
-  const step = segmentsOf(where.stepPointer).reduce<unknown>(
-    (node, segment) =>
-      Array.isArray(node)
-        ? node[Number(segment)]
-        : isRecord(node)
-          ? node[segment]
-          : undefined,
-    definition,
-  );
+  const step = nodeAt(definition, where.stepPointer);
   // A suggestion may change the step's data, never its identity or kind.
   if (["/id", "/kind"].includes(where.fieldPath) || !isRecord(step))
     return null;
@@ -184,14 +200,25 @@ export function diagnosticRows(
   const problems: Row[] = [],
     notes: Row[] = [];
   for (const diagnostic of diagnostics) {
-    const view = describeDiagnostic(diagnostic, (key) => fieldName([key]));
     const path = diagnostic.path;
     const location =
       typeof path === "string" ? locateDiagnostic(path, definition) : null;
+    // A field's name can depend on its step's kind ("Table version").
+    const step =
+      location && location.stepId !== WORKFLOW
+        ? nodeAt(definition, location.stepPointer)
+        : undefined;
+    const kind =
+      isRecord(step) && typeof step["kind"] === "string"
+        ? step["kind"]
+        : undefined;
+    const view = describeDiagnostic(diagnostic, (key) =>
+      fieldName([key], kind),
+    );
     const row: Row = {
       view,
       location,
-      where: location ? placeOf(location) : "",
+      where: location ? placeOf(location, kind) : "",
       change: suggestedChange(diagnostic.suggestedEdit, definition),
     };
     (view.severity === "info" ? notes : problems).push(row);
