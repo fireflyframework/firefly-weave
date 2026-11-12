@@ -157,6 +157,24 @@ def shapes() -> dict[str, str]:
             for _ in range(500)
         ),
     }
+    # Random words of each letter class, the worst case each class's per-letter rate is set from.
+    letters = random.Random(17)
+    lower, upper = "abcdefghijklmnopqrstuvwxyz", "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+    def word(alphabet: str, size: int) -> str:
+        return "".join(letters.choice(alphabet) for _ in range(size))
+
+    def one_switch(size: int) -> str:
+        left = letters.randint(1, size - 2)
+        return word(lower, left) + word(upper, 1) + word(lower, size - left - 1)
+
+    texts |= {
+        "random_4_letter_words": " ".join(word(lower, 4) for _ in range(400)),
+        "random_5_letter_words": " ".join(word(lower, 5) for _ in range(350)),
+        "random_12_letter_words": " ".join(word(lower, 12) for _ in range(160)),
+        "random_capital_runs": " ".join(word(upper, letters.randint(4, 12)) for _ in range(250)),
+        "random_one_switch_words": " ".join(one_switch(letters.randint(4, 12)) for _ in range(250)),
+    }
     # A result schema whose properties refer to others, as the final tool sends it, the copied targets included.
     record = {"type": "object", "properties": {f"field_{k}": {"type": "string", "maxLength": 40} for k in range(8)}}
     referring = {f"p{i}": record for i in range(10)} | {f"q{i}": {"$ref": f"#/properties/p{i}"} for i in range(10)}

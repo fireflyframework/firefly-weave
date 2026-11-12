@@ -18,7 +18,9 @@
 
 import json
 import math
+import random
 import re
+import string
 from fractions import Fraction
 from pathlib import Path
 
@@ -192,7 +194,37 @@ def test_a_space_before_a_digit_counts_on_its_own():
 
 
 def test_a_word_of_up_to_three_letters_counts_a_token_per_letter():
-    assert [text_tokens(word, 1) for word in ("a", "ab", "abc", " ab", "abcd", "abcdefgh")] == [1, 2, 3, 2, 2, 4]
+    assert [text_tokens(word, 1) for word in ("a", "ab", "abc", " ab", "ABC", "aBc")] == [1, 2, 3, 2, 3, 3]
+
+
+def test_a_lowercase_word_of_4_to_12_letters_counts_0_7_per_letter():
+    # Random lowercase letters cost Qwen up to 0.59 tokens each; 0.7 is 1.15 times that, rounded up per word.
+    assert [text_tokens(word, 1) for word in ("abcd", "abcde", "abcdefgh", "a" * 12, "a" * 13)] == [3, 4, 6, 9, 13]
+
+
+def test_a_word_with_a_capital_counts_0_8_per_letter():
+    # Random capital runs cost up to 0.65 tokens a letter and words with one case switch 0.63; 0.8 is 1.15 times more.
+    assert [text_tokens(word, 1) for word in ("ABCD", "Abcde", "abCde", "orderId", "A" * 12)] == [4, 4, 4, 6, 10]
+    # More than one switch from lowercase to uppercase still counts a token per letter.
+    assert text_tokens("aBcDe", 1) == 5
+
+
+def test_random_five_letter_words_in_a_tool_result_do_not_fit_a_small_context():
+    # 2,800 random 5-letter words cost the model about 8,240 tokens; the turn must not fit 8,192.
+    rng = random.Random(23)
+    payload = " ".join("".join(rng.choice(string.ascii_lowercase) for _ in range(5)) for _ in range(2800))
+    value = turn_input(
+        messages=[
+            {"role": "user", "content": "Summarize the order notes."},
+            {
+                "role": "assistant",
+                "content": "",
+                "toolCalls": [{"id": "t1c1", "name": "lookup_order", "arguments": {}}],
+            },
+            {"role": "tool", "callId": "t1c1", "name": "lookup_order", "content": payload},
+        ]
+    )
+    assert text_tokens(wire_json(payload), 1) >= 2800 * 4 and not turn_fits(TurnInput.model_validate(value))
 
 
 def test_space_separated_digits_in_a_tool_result_do_not_fit_a_small_context():
@@ -232,8 +264,9 @@ def test_the_final_tool_is_counted_as_sent_with_its_references_copied():
 def test_a_32_kib_compact_record_result_counts_between_the_model_and_the_window():
     records = SHAPES["shapes"]["orders_32k"]["text"]
     assert len(records.encode()) == 32_975
-    # 15,031 is what qwen3:4b counted for it; 27,000 leaves a 32,768 context room for the rest of a turn.
-    assert 15_031 <= text_tokens(records, 1) <= 27_000
+    # 15,031 is what the local models counted for it; 31,000 leaves a 32,768 context room for its 1,024 output
+    # tokens and the rest of a one-tool turn.
+    assert 15_031 <= text_tokens(records, 1) <= 31_000 and 31_000 + 1_024 < 32_768
 
 
 def test_every_whitespace_character_counts():
@@ -242,9 +275,9 @@ def test_every_whitespace_character_counts():
 
 
 def test_text_outside_ascii_counts_its_bytes_and_splits_words():
-    # Two bytes for é; "caf" (three letters, three tokens) and "teria" (two) are separate words; a space before é
+    # Two bytes for é; "caf" (three letters, three tokens) and "teria" (four) are separate words; a space before é
     # still counts.
-    assert text_tokens("caf\u00e9teria", 1) == 3 + 2 + 2
+    assert text_tokens("caf\u00e9teria", 1) == 3 + 2 + 4
     assert text_tokens("a \u00e9", 1) == 1 + 1 + 2
 
 
@@ -264,8 +297,8 @@ def _pieces(plain):
         elif len(word) <= 3 or len(word) > 12 or len(re.findall("[a-z][A-Z]", word)) > 1:
             total += len(word)
         else:
-            capitals = sum(map(len, re.findall("[A-Z]{2,}", word)))
-            total += max(1, math.ceil(Fraction(4, 10) * (len(word) - capitals) + Fraction(7, 10) * capitals))
+            rate = Fraction(8, 10) if re.search("[A-Z]", word) else Fraction(7, 10)
+            total += math.ceil(rate * len(word))
     return total
 
 
@@ -281,13 +314,17 @@ def piece_count(text):
     return total + _pieces(plain)
 
 
-TEXT = st.text(
-    alphabet=st.one_of(
-        st.sampled_from('aZqQxXyY09 \t\n\r!{}":,-_.@'),
-        st.characters(codec="utf-8"),
-        st.characters(max_codepoint=127),
+TEXT = st.one_of(
+    st.text(
+        alphabet=st.one_of(
+            st.sampled_from('aZqQxXyY09 \t\n\r!{}":,-_.@'),
+            st.characters(codec="utf-8"),
+            st.characters(max_codepoint=127),
+        ),
+        max_size=80,
     ),
-    max_size=80,
+    # Words of every length and case, where the per-letter rates apply.
+    st.text(alphabet=st.sampled_from("abcdefxyzABCXYZ 1."), max_size=80),
 )
 
 

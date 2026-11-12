@@ -243,15 +243,17 @@ def wire_json(value: JsonValue) -> str:
 # Rule 1's count follows how byte-level BPE tokenizers (Qwen's, measured) split text. Printable ASCII and its
 # whitespace are cut into pieces by `` ?[A-Za-z]+|[0-9]| ?[^A-Za-z0-9\s]+|\s`` (a single leading space joins a word
 # or a run of marks after it, never a digit): a digit, a mark and a whitespace character count one each; a word of up
-# to 3 letters counts one per letter; a longer word counts 0.4 per letter (0.7 per letter in a run of two or more
-# capitals), rounded up, or one per letter when it is longer than 12 letters or switches from lowercase to uppercase
-# more than once. Every other character counts its UTF-8 bytes and ends the word before it. Summed, that is: the UTF-8
-# bytes, less the letters and the joined spaces, plus each word's count, which is how it is computed (in linear time,
-# with no backtracking).
+# to 3 letters counts one per letter; a longer word counts 0.7 per letter when it is all lowercase and 0.8 when it has a
+# capital, rounded up, or one per letter when it is longer than 12 letters or switches from lowercase to uppercase
+# more than once. Each rate is at least 1.15 times what random strings of its letter class cost on the measured models
+# (lowercase 0.59, capital runs 0.65, one case switch 0.63 tokens a letter, the space before each word included), so
+# no text of letters counts below them. Every other character counts its UTF-8 bytes and ends the word before it.
+# Summed, that is: the UTF-8 bytes, less the letters and the joined spaces, plus each word's count, which is how it is
+# computed (in linear time, with no backtracking).
 _WORD = re.compile(r"[A-Za-z]+")
 _JOINED_SPACE = re.compile(r" (?=[A-Za-z!-/:-@\[-`{-~])")
 _CASE_SWITCH = re.compile(r"[a-z][A-Z]")
-_CAPITALS = re.compile(r"[A-Z]{2,}")
+_CAPITAL = re.compile(r"[A-Z]")
 _LETTERS = bytes(range(ord("A"), ord("Z") + 1)) + bytes(range(ord("a"), ord("z") + 1))
 
 
@@ -259,15 +261,16 @@ _LETTERS = bytes(range(ord("A"), ord("Z") + 1)) + bytes(range(ord("a"), ord("z")
 def _word_tokens(word: str) -> int:
     if len(word) <= 3 or len(word) > 12 or len(_CASE_SWITCH.findall(word)) > 1:
         return len(word)
-    capitals = sum(len(run) for run in _CAPITALS.findall(word))
-    return max(1, -(-((len(word) - capitals) * 4 + capitals * 7) // 10))
+    tenths = 8 if _CAPITAL.search(word) else 7
+    return -(-len(word) * tenths // 10)
 
 
 def text_tokens(text: str, rules: int) -> int:
     """The tokens a model counts for ``text`` at most, under the turn's rules; never below a measured local model.
 
-    Measured on Qwen's tokenizer: exact on digits and escaped newlines, 1.1 to 2.4 times the real count on UUIDs,
-    base64, records, API payloads and prose, up to 4.75 times on Chinese and 29 times on long runs of spaces.
+    Measured on Qwen's tokenizer: exact on digits, 1.2 to 1.4 times the real count on UUIDs, base64 and random words,
+    2.0 to 3.9 times on records, API payloads and prose, up to 4.75 times on Chinese and 29 times on long runs of
+    spaces.
     """
     if rules != 1:
         raise ValueError(f"Unknown turn rules {rules}")
