@@ -432,6 +432,8 @@ class Cluster:
     def __init__(self, commands):
         self.commands = commands
         self.joined = set()
+        # The node containers on the cluster network: full ID to name.
+        self.nodes = {"node" + "0" * 60: "weave-test-control-plane"}
         self.addresses = {KEYCLOAK: "172.30.0.5", REGISTRY: "172.30.0.6"}
         self.extra = []
         self.namespace = ""
@@ -449,7 +451,7 @@ class Cluster:
         self.registered_after = None
 
     def network(self, call):
-        containers = {"node" + "0" * 60: {"Name": "weave-test-control-plane", "IPv4Address": "172.30.0.2/16"}}
+        containers = {key: {"Name": name, "IPv4Address": "172.30.0.2/16"} for key, name in self.nodes.items()}
         names = {KEYCLOAK: "weave-local-keycloak-1", REGISTRY: "registry-1"}
         for short, address in self.addresses.items():
             name = names[short]
@@ -844,6 +846,61 @@ def test_a_ninth_target_is_refused_before_the_cluster_changes(world):
     # A namespace that already holds one of the eight pairs connects again.
     commands.answer([KUBECTL, "get", "namespace", "ns-3", "-o", "jsonpath={.metadata.uid}"], UID)
     clusters.connect(directory, "kind", "weave-test", "ns-3", kubeconfig=world[2], notice=lambda line: None)
+
+
+K3D_NODES = ("k3d-weave-test-server-0", "k3d-weave-test-serverlb")
+K3D_REGISTRIES = "/etc/rancher/k3s/registries.yaml"
+
+
+@pytest.fixture
+def k3d(world, tmp_path):
+    """The same platform with a k3d cluster: a server node and its load balancer, which publishes the API."""
+    directory, commands, _, cluster = world
+    cluster.nodes = {"1" * 64: K3D_NODES[0], "2" * 64: K3D_NODES[1]}
+    cluster.registries = "mirrors: {}\n"
+    commands.answer(["ps", "--filter", "label=k3d.cluster=weave-test"], "\n".join(K3D_NODES) + "\n")
+    commands.answer(["inspect", *K3D_NODES], '{"k3d-weave-test":{}}\n' * 2)
+    commands.answer(
+        ["ps", "--filter", "network=k3d-weave-test"], "".join(f"{node}\t\tweave-test\n" for node in K3D_NODES)
+    )
+    commands.answer(["inspect", PORTS, K3D_NODES[1]], published(6550))
+    commands.answer(["network", "inspect", "k3d-weave-test"], cluster.network)
+    commands.answer(["exec", K3D_NODES[0], "cat", K3D_REGISTRIES], lambda call: cluster.registries)
+
+    def write(call):
+        cluster.registries = call.stdin.decode()
+        return ""
+
+    commands.answer(["exec", "-i", K3D_NODES[0], "cp", "/dev/stdin", K3D_REGISTRIES], write)
+    commands.answer(["restart", K3D_NODES[0]], "")
+    commands.answer([KUBECTL, "wait", "--for=condition=Ready", "node", "--all"], "")
+    config = kubeconfig(tmp_path / "k3d-kubeconfig", context="k3d-weave-test", server="https://0.0.0.0:6550")
+    return directory, commands, config, cluster
+
+
+def test_connecting_a_k3d_cluster_restarts_its_node_only_when_the_registry_mirror_changes(k3d):
+    directory, commands, config, cluster = k3d
+
+    def mirror_calls():
+        before = len(commands.calls)
+        clusters.connect(directory, "k3d", "weave-test", "weave-workers", kubeconfig=config, notice=lambda line: None)
+        return [call for call in commands.calls[before:] if call.name.startswith("cluster-mirror")]
+
+    first = mirror_calls()
+    assert [call.name for call in first] == [
+        "cluster-mirror-read",
+        "cluster-mirror",
+        "cluster-mirror-restart",
+        "cluster-mirror-ready",
+    ]
+    assert first[1].stdin == b'mirrors:\n  "127.0.0.1:5001":\n    endpoint:\n      - "http://weave-registry:5000"\n'
+    assert first[2].argv[-2:] == ["restart", K3D_NODES[0]]
+    assert cluster.count("deployment_targets.create") == 1
+    # The node already reads the platform registry's mirror: nothing is written, restarted or waited for.
+    assert [call.name for call in mirror_calls()] == ["cluster-mirror-read"]
+    assert clusters.receipt(directory)["clusters"]["k3d-weave-test"]["targets"]["weave-workers"]["state"] == (
+        "connected"
+    )
 
 
 def test_a_silent_runner_names_its_log_and_keeps_the_registered_target(world):

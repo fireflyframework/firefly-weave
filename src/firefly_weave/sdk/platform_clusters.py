@@ -705,6 +705,7 @@ def _mirror(connection: _Connection) -> None:
     path = "/etc/rancher/k3s/registries.yaml"
     wanted = f'mirrors:\n  "{host}":\n    endpoint:\n      - "http://weave-registry:5000"\n'
     nodes = [node for node in found.nodes if re.fullmatch(rf"k3d-{found.cluster}-(server|agent)-[0-9]+", node)]
+    restarted = False
     for node in nodes:
         current = local._run(connection.state, "cluster-mirror-read", [*docker, "exec", node, "cat", path])
         if current.decode(errors="replace") == wanted:
@@ -717,7 +718,8 @@ def _mirror(connection: _Connection) -> None:
         )
         # k3s reads its mirrors when it starts: restart this node once, only because the file changed.
         local._run(connection.state, "cluster-mirror-restart", [*docker, "restart", node], timeout=120)
-    if nodes:
+        restarted = True
+    if restarted:
         _wait_nodes(connection)
 
 
