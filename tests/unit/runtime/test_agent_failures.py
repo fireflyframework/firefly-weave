@@ -167,6 +167,36 @@ def test_a_definite_tool_failure_goes_back_to_the_model():
     assert [(step.status, step.error["code"]) for step in failed] == [("failed", "TIMEOUT")]
 
 
+def test_a_sub_workflow_that_cant_start_reaches_the_model_as_an_error():
+    notify = {
+        "name": "notify_customer",
+        "description": "Send the customer a status message.",
+        "workflow": "notify-customer@1.0.0",
+        "review": {"assignment": "support-leads"},
+    }
+    run = run_with(LOOKUP, notify)
+    run.send("started")
+    asked = run.answer("support#1", tool_calls(("notify_customer", {"message": "Your order has shipped."})))
+    [review] = [command for command in asked.commands if isinstance(command, HumanTaskIntent)]
+    run.send(
+        "human_completed",
+        node_id=review.node_id,
+        task_id=str(uuid4()),
+        actor_id=str(uuid4()),
+        output={"decision": "approve", "data": {}},
+        input_digest=review.context["inputDigest"],
+    )
+
+    # The call service sends a refused start as the call's failure, not an incident, because the agent takes it.
+    assert error_policy(ir_of(run), "support#1.1") == "continue"
+
+    # The child run was refused before it started (the call depth here), as the call service reports it.
+    result = tool_failed(run, code="WV-CALL-DEPTH")
+
+    assert tasks(result)["support#2"].input["messages"][-1]["content"] == {"error": "WV-CALL-DEPTH", "retryable": False}
+    assert run.state.status == "waiting" and run.state.incidents == {}
+
+
 def test_a_tool_failure_fails_the_step_when_the_agent_says_so():
     run = run_with(onToolError="incident")
     looked_up(run, ("lookup_order", {"id": "A-17"}), ("lookup_order", {"id": "A-18"}))
