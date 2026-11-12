@@ -1530,7 +1530,8 @@ def _advance_owned(
                 validate_action(ir, action(node)[1], "output", value)
                 guard(node.path, "action_output", value)
             elif isinstance(node, CallWorkflowNode):
-                value = call_result(
+                # A reconciled result is the called workflow's output; it never carries a failure.
+                value, _ = call_result(
                     ir, node, {"status": "succeeded", "output": value, "child_run_id": None, "reconciled": True}
                 )
             else:

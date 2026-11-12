@@ -20,7 +20,20 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
-from transaction_support import Run, add, compiled, controls, deadlines, hold, notify, submit, tasks, transaction
+from transaction_support import (
+    Run,
+    add,
+    calls,
+    compiled,
+    controls,
+    deadlines,
+    hold,
+    notify,
+    submit,
+    submit_by_call,
+    tasks,
+    transaction,
+)
 
 from firefly_weave.contracts.transactions import TRANSACTION_MESSAGES
 from firefly_weave.runtime.models import Transition
@@ -170,6 +183,22 @@ def test_it_happened_confirms_the_reservations_then_runs_the_steps_after_the_poi
     assert after.node_id == "notify"
     run.done("notify", {})
     assert (run.txn().status, run.state.status) == ("completed", "succeeded")
+
+
+def test_it_happened_gives_a_called_step_that_cant_be_undone_the_output_a_person_found():
+    # The called workflow was still running when its time was up; a person found it went through.
+    block = transaction([hold(holdSeconds=900), add(), submit_by_call()], output={"ref": "/steps/submit/output"})
+    run = Run(compiled([block], output={"ref": "/steps/move/output"}))
+    run.start()
+    run.done("hold", {"holdId": "h-1"})
+    assert [call.node_id for call in calls(run.done("add", {"id": "a-1"}))] == ["submit"]
+    run.fire("move#decide", started=True)
+    assert run.state.incidents["submit:0"].code == "WV-TXN-PIVOT-UNKNOWN"
+    [confirm] = tasks(resolve(run, "submit:0", "accept_reconciled_result", {"orderId": "o-found"}))
+    assert confirm.node_id == "hold#confirm"
+    assert (run.txn().status, run.statuses()["submit"]) == ("committing", "done")
+    run.done("hold#confirm", {})
+    assert (run.txn().status, run.state.status, run.state.output) == ("completed", "succeeded", {"orderId": "o-found"})
 
 
 def test_it_happened_needs_an_output_the_step_could_have_returned():
