@@ -20,13 +20,18 @@ import {
   LAYOUT_KEY,
   MIN_MAIN,
   MIN_SIDE,
+  MIN_MAIN_TABLE,
   RAIL,
+  TABLE_LAYOUT_KEY,
+  TABLE_PANES,
   clampWidths,
   defaultWidths,
+  readFolds,
   readWidths,
   resized,
+  tableWidths,
   toEdge,
-  wideWidths,
+  writeFolds,
   writeWidths,
 } from "../src/app/editor/ndv/panes/layout";
 
@@ -119,10 +124,76 @@ describe("step details panes", () => {
   });
 });
 
-describe("the wide layout", () => {
-  it("folds the side panes to 48 px rails", () => {
+describe("the table layout", () => {
+  it("starts Input at 20 % and Output at 24 % of the panes, within their bounds", () => {
+    expect(tableWidths(1392)).toEqual({ input: 278, output: 334 });
+    expect(tableWidths(1872)).toEqual({ input: 360, output: 440 });
+    expect(tableWidths(1232)).toEqual({ input: 246, output: 296 });
+    expect(tableWidths(1000)).toEqual({ input: 240, output: 280 });
+  });
+  it("keeps the grid's card at 640 px or more while a side pane grows", () => {
+    expect(MIN_MAIN_TABLE).toBe(640);
+    expect(clampWidths({ input: 600, output: 600 }, 1392, TABLE_PANES)).toEqual(
+      { input: 512, output: 240 },
+    );
+    const grown = resized(tableWidths(1392), "output", 2000, 1392, TABLE_PANES);
+    expect(1392 - grown.input - grown.output).toBe(640);
+    expect(
+      toEdge(tableWidths(1392), "input", "max", 1392, TABLE_PANES).input,
+    ).toBe(1392 - 640 - 334);
+  });
+  it("keeps its widths apart from the step form's", () => {
+    const storage = store();
+    expect(
+      writeWidths({ input: 348, output: 348 }, 1392, storage, TABLE_PANES),
+    ).toBe(true);
+    expect(readWidths(1392, storage, TABLE_PANES)).toEqual({
+      input: 348,
+      output: 348,
+    });
+    expect(readWidths(1392, storage)).toEqual(defaultWidths(1392));
+    writeWidths({ input: 278, output: 278 }, 1392, storage);
+    expect(readWidths(1392, storage, TABLE_PANES)).toEqual({
+      input: 348,
+      output: 348,
+    });
+    expect(storage.values.has(TABLE_LAYOUT_KEY)).toBe(true);
+    expect(readWidths(1392, store(), TABLE_PANES)).toEqual(tableWidths(1392));
+  });
+  it("remembers which panes the person folded, beside the widths", () => {
+    const storage = store();
+    expect(readFolds(storage)).toEqual({ input: false, output: false });
+    expect(writeFolds({ input: true, output: false }, storage)).toBe(true);
+    writeWidths({ input: 348, output: 348 }, 1392, storage, TABLE_PANES);
+    expect(readFolds(storage)).toEqual({ input: true, output: false });
+    writeFolds({ input: true, output: true }, storage);
+    expect(readWidths(1392, storage, TABLE_PANES)).toEqual({
+      input: 348,
+      output: 348,
+    });
+    // A fold is drawn as the rail.
     expect(RAIL).toBe(48);
-    expect(wideWidths(1392)).toEqual({ input: 48, output: 48, main: 1296 });
-    expect(wideWidths(900)).toEqual({ input: 48, output: 48, main: 804 });
+  });
+  it.each(["{not json", '{"folded":"input"}', '{"folded":[1,null]}', "[]"])(
+    "reads no fold from a malformed value: %s",
+    (raw) => {
+      const storage = store();
+      storage.setItem(TABLE_LAYOUT_KEY, raw);
+      expect(readFolds(storage)).toEqual({ input: false, output: false });
+      expect(readWidths(1392, storage, TABLE_PANES)).toEqual(tableWidths(1392));
+    },
+  );
+  it("survives denied browser storage for folds", () => {
+    const denied = {
+      getItem: () => {
+        throw new Error("Denied");
+      },
+      setItem: () => {
+        throw new Error("Denied");
+      },
+    };
+    expect(readFolds(denied)).toEqual({ input: false, output: false });
+    expect(writeFolds({ input: true, output: false }, denied)).toBe(false);
+    expect(writeFolds({ input: true, output: false }, null)).toBe(false);
   });
 });
