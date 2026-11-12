@@ -22,12 +22,11 @@ import asyncio
 import json
 import logging
 import re
-from copy import deepcopy
 from typing import Any, cast
 
 from firefly_weave.compiler.expressions import measure_value
-from firefly_weave.compiler.schema_profile import SCHEMA_ARRAYS, SCHEMA_MAPS, SCHEMA_SINGLE
 from firefly_weave.compiler.schemas import validate_payload
+from firefly_weave.contracts.agent_turns import provider_schema
 from firefly_weave.contracts.connectors import ConnectorFailure
 from firefly_weave.contracts.llm import LLMProfile
 from firefly_weave.contracts.values import JsonValue
@@ -150,9 +149,10 @@ def without_thinking(text: str, *, split: bool = False) -> str:
     return _REASONING_REMAINDER.sub("", text, count=1) if split else text
 
 
-def estimate_tokens(*parts: str) -> int:
-    """An approximate token count: one token per four characters, rounded up. Endpoints other than Ollama refuse a
-    prompt longer than their context themselves, so this rough count is enough for them."""
+def rough_tokens(*parts: str) -> int:
+    """An approximate token count for the generate task: one token per four characters, rounded up. Endpoints other
+    than Ollama refuse a prompt longer than their context themselves, so this rough count is enough for them. A turn
+    is counted with the contract's ``turn_tokens`` instead, the count the kernel trims with."""
     return -(-sum(len(part) for part in parts) // 4)
 
 
@@ -244,7 +244,7 @@ async def run_model(
     if context_tokens is not None:
         # Ollama silently truncates a prompt beyond its context, so refuse it before any request.
         schema = "" if text_result(profile.output_schema) else json.dumps(provider_schema(profile.output_schema))
-        estimate = (conservative_tokens if ollama else estimate_tokens)(instructions, prompt, schema)
+        estimate = (conservative_tokens if ollama else rough_tokens)(instructions, prompt, schema)
         if estimate + profile.options.max_tokens > context_tokens:
             raise ConnectorFailure("LLM_CONTEXT_LIMIT", "not_started")
     try:
@@ -335,43 +335,3 @@ async def _run_model(
         raise
     except Exception as error:
         raise classify(error) from None
-
-
-def provider_schema(source: dict[str, Any]) -> dict[str, Any]:
-    """Hoist supported local references for provider SDKs that accept only root $defs."""
-    definitions: dict[str, Any] = {}
-    references: dict[str, str] = {}
-    pending: list[dict[str, Any]] = []
-    root = deepcopy(source)
-    pending.append(root)
-    while pending:
-        node = pending.pop()
-        reference = node.get("$ref")
-        if isinstance(reference, str):
-            if reference not in references:
-                target: Any = source
-                for part in reference[1:].split("/")[1:]:
-                    key = part.replace("~1", "/").replace("~0", "~")
-                    target = target[int(key)] if isinstance(target, list) else target[key]
-                name = f"weave_{len(references)}"
-                references[reference] = name
-                definitions[name] = deepcopy(target)
-                if isinstance(definitions[name], dict):
-                    pending.append(definitions[name])
-            node["$ref"] = "#/$defs/" + references[reference]
-        # Unreferenced definitions need not travel to the provider.
-        node.pop("$defs", None)
-        for key, value in node.items():
-            if key in SCHEMA_SINGLE and isinstance(value, dict):
-                pending.append(value)
-            elif key in SCHEMA_MAPS and isinstance(value, dict):
-                pending.extend(child for child in value.values() if isinstance(child, dict))
-            elif key in SCHEMA_ARRAYS and isinstance(value, list):
-                pending.extend(child for child in value if isinstance(child, dict))
-    return {
-        "type": "object",
-        "properties": {"result": root},
-        "required": ["result"],
-        "additionalProperties": False,
-        "$defs": definitions,
-    }

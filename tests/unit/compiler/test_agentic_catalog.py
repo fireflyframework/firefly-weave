@@ -27,6 +27,7 @@ from firefly_weave.compiler.api import compile_source
 from firefly_weave.compiler.catalog import CatalogSnapshot, FrozenDocument
 from firefly_weave.compiler.schemas import validate_schema
 from firefly_weave.connections.registry import ConnectorRegistry
+from firefly_weave.contracts.agent_turns import turn_action_definition, turn_capability
 from firefly_weave.contracts.agentic import (
     AGENTIC_DESCRIPTOR,
     NO_CREDENTIAL_RESERVED,
@@ -115,6 +116,40 @@ def test_catalog_documents_keep_their_digests():
     assert FrozenDocument.from_value(action).digest == ACTION_DIGEST
     capability = task_capability().model_dump(mode="json", by_alias=True)
     assert FrozenDocument.from_value(capability).digest == CAPABILITY_DIGEST
+
+
+# Recorded when the model turn task was added; the documents above keep their digests.
+TURN_ACTION_DIGEST = "105fe2df28474f761455b359edf78a5ab982845d404bf86553737742d8e89ee8"
+TURN_CAPABILITY_DIGEST = "ca5f85310239c910bb72084d1f6fba2e3b47cfb3e93be651a028f058053176a3"
+
+
+def test_the_turn_action_is_idempotent_with_three_attempts():
+    spec = load_definition(turn_action_definition()).model_dump(by_alias=True)["spec"]
+    assert spec["implementation"] == {"kind": "worker", "taskType": "weave-agentic.turn", "taskVersion": "1.0.0"}
+    assert spec["sideEffect"] == "idempotent"
+    assert spec["retry"] == {"maxAttempts": 3, "initialDelaySeconds": 2, "maxDelaySeconds": 20}
+    assert spec["timeoutSeconds"] == 600
+    assert spec["connection"] == {"connector": "weave-agentic-provider@1.0.0", "required": True}
+    capability = turn_capability()
+    assert (capability.side_effect, capability.timeout_seconds) == ("idempotent", 600)
+    assert capability.input_schema == spec["inputSchema"] and capability.output_schema == spec["outputSchema"]
+
+
+def test_the_turn_action_compiles_against_the_worker_catalog():
+    snapshot = CatalogSnapshot.from_definitions(
+        [load_definition(AGENTIC_DESCRIPTOR.manifest.value)],
+        tasks=[task_capability(), turn_capability()],
+        adapters=["weave-agentic-provider"],
+    )
+    result = compile_source(turn_action_definition(), format="object", catalog=snapshot)
+    assert result.ok, result.to_bytes()
+
+
+def test_the_turn_documents_keep_their_digests():
+    action = load_definition(turn_action_definition()).model_dump(by_alias=True)
+    assert FrozenDocument.from_value(action).digest == TURN_ACTION_DIGEST
+    capability = turn_capability().model_dump(mode="json", by_alias=True)
+    assert FrozenDocument.from_value(capability).digest == TURN_CAPABILITY_DIGEST
 
 
 def test_typed_call_profile_defaults_to_eight_requests():
