@@ -19,6 +19,7 @@ SPDX-License-Identifier: Apache-2.0
 // the CSS viewport of a 1280x720 window at 200% browser zoom.
 import { test, expect, Page } from "@playwright/test";
 import {
+  withClassicDesigner,
   command,
   connected,
   insertStep,
@@ -26,6 +27,10 @@ import {
   runSummaries,
 } from "./support";
 import { chooseAction } from "./integrations-po";
+
+test.beforeEach(async ({ page }) => {
+  await withClassicDesigner(page);
+});
 
 const sizes = [
   { width: 600, height: 500 },

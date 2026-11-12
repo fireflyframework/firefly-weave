@@ -21,7 +21,7 @@ SPDX-License-Identifier: Apache-2.0
 // activate with the connector release pinned, and start a run from a form.
 // The local authoring endpoints run the repository's real Python code; the
 // platform is mocked. Every step leaves a screenshot under journey/.
-import { selectChoice } from "./support";
+import { withClassicDesigner, selectChoice } from "./support";
 import { test, expect, Page, Request } from "@playwright/test";
 import { parse } from "yaml";
 import {
@@ -43,6 +43,10 @@ import {
   openYaml,
   shot,
 } from "./integrations-po";
+
+test.beforeEach(async ({ page }) => {
+  await withClassicDesigner(page);
+});
 
 const project = "**/studio/api/api/v1/tenants/tenant/projects/project";
 const environment = `${project}/environments/development`;

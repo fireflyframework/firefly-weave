@@ -79,6 +79,8 @@ export const iconMap = {
   cloud: "cloud",
   laptop: "laptop",
   panel: "panel-right",
+  // Folds a side pane; mirrored, it folds the left one (panel-left-close).
+  foldPane: "panel-right-close",
   tidy: "layout-grid",
   failCircle: "circle-x",
   // Triggers

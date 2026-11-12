@@ -15,11 +15,15 @@ limitations under the License.
 Author: Firefly Software Foundation
 SPDX-License-Identifier: Apache-2.0
 */
-import { selectChoice } from "./support";
+import { withClassicDesigner, selectChoice } from "./support";
 import { test, expect } from "@playwright/test";
 import { parse } from "yaml";
 import { offline, newWorkflow, sourceText } from "./support";
 import { DesignerPage } from "./designer-po";
+
+test.beforeEach(async ({ page }) => {
+  await withClassicDesigner(page);
+});
 
 const fixture = `apiVersion: weave/v1alpha1
 kind: Workflow

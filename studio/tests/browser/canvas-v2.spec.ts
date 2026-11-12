@@ -25,7 +25,7 @@ import {
   vendorPayment,
   type CanvasPage,
 } from "./canvas-po";
-import { newWorkflow, offline } from "./support";
+import { newWorkflow, offline, withClassicDesigner } from "./support";
 
 /** A step ID of 60 characters: too long for two lines at any zoom. */
 const SIXTY_CHARACTERS =
@@ -629,6 +629,7 @@ spec:
   test("keeps the classic designer when the preference is off", async ({
     page,
   }) => {
+    await withClassicDesigner(page);
     await offline(page);
     await newWorkflow(page);
     await expect(page.locator(".canvas-v2")).toHaveCount(0);

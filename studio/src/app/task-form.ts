@@ -48,6 +48,12 @@ import {
 } from "./forms/core/form-model";
 import { fieldsOf } from "./forms/core/resolve";
 import {
+  schemaTypes,
+  typeIcon,
+  typeLabel,
+  type Schema as FieldSchema,
+} from "./forms/core/scope";
+import {
   decode,
   encode,
   formula,
@@ -351,7 +357,7 @@ let sequence = 0;
             [attr.data-path]="k"
             [class.bound]="mode !== 'value'"
           >
-            <div class="schema-field-head">
+            <div class="schema-field-head" [class.typed]="typed()">
               @if (widget === "checkbox" && mode === "value") {
                 <label class="checkbox-field" [for]="id" [id]="id + '-label'"
                   ><input
@@ -374,6 +380,16 @@ let sequence = 0;
                     <span class="optional"> (optional)</span>
                   }
                 </span>
+              } @else if (typed()) {
+                @let kind = fieldType(field);
+                <span class="schema-type-tile" aria-hidden="true"
+                  ><weave-icon [name]="kind.icon"
+                /></span>
+                <label [for]="id" [id]="id + '-label'">{{ field.key }}</label>
+                <span class="schema-type">{{ kind.label }}</span>
+                @if (!field.required) {
+                  <span class="schema-optional">Optional</span>
+                }
               } @else {
                 <label [for]="id" [id]="id + '-label'"
                   >{{ field.label }}
@@ -714,6 +730,48 @@ let sequence = 0;
         justify-content: space-between;
         gap: 4px 8px;
       }
+      /* A typed heading: the type's tile, the name, the type, and Optional
+         at the right (the decision table's test values). */
+      .schema-field-head.typed {
+        justify-content: flex-start;
+        flex-wrap: nowrap;
+        gap: var(--space-2);
+        min-width: 0;
+      }
+      .schema-field-head.typed label {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font: var(--type-label);
+        color: var(--text);
+      }
+      .schema-type-tile {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex: none;
+        width: 20px;
+        height: 20px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-xs);
+        color: var(--muted);
+      }
+      .schema-type-tile weave-icon {
+        width: 12px;
+        height: 12px;
+      }
+      .schema-type {
+        flex: none;
+        font: var(--type-caption);
+        color: var(--muted);
+      }
+      .schema-optional {
+        flex: none;
+        margin-left: auto;
+        font: var(--type-caption);
+        color: var(--subtle);
+      }
       .schema-label {
         display: block;
         margin: 6px 0 0;
@@ -838,6 +896,10 @@ export class TaskForm implements OnChanges {
   scope = input<ReferenceContext | null>(null);
   /** The expression's pointer relative to its step. */
   fieldPath = input("/with");
+  /** Headings show each field's type, and Optional at the right. */
+  typed = input(false);
+  /** Errors the host knows about, by field key, shown whether or not the field was touched. */
+  extraErrors = input<Record<string, string>>({});
   dataChange = output<Record<string, unknown>>();
   /** The edited expression (bindings only); never emitted before an edit. */
   expressionChange = output<unknown>();
@@ -857,7 +919,10 @@ export class TaskForm implements OnChanges {
       this.touched.add(field.dataset["path"]);
   }
   shownError(key: string) {
-    return this.touched.has(key) ? this.errors[key] : undefined;
+    return (
+      this.extraErrors()[key] ??
+      (this.touched.has(key) ? this.errors[key] : undefined)
+    );
   }
   /** A polite announcement for added and removed rows. */
   status = "";
@@ -907,6 +972,12 @@ export class TaskForm implements OnChanges {
     return handlers;
   }
 
+  /** A field's type in a typed heading: its icon and its name. */
+  fieldType(field: FieldInfo): { icon: string; label: string } {
+    const schema = field.schema as FieldSchema;
+    const label = typeLabel(schema);
+    return { icon: typeIcon(schemaTypes(schema), label), label };
+  }
   ngOnChanges(changes: SimpleChanges) {
     if (
       !changes["schema"] &&

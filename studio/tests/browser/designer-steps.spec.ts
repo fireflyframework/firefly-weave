@@ -18,7 +18,7 @@ SPDX-License-Identifier: Apache-2.0
 // WP-14: steps can be renamed with their references, deleted safely, read at
 // a glance on the canvas, timed in natural units, and a human task can branch
 // on its decisions in one click.
-import { selectChoice } from "./support";
+import { withClassicDesigner, selectChoice } from "./support";
 import { test, expect, Page } from "@playwright/test";
 import { parse } from "yaml";
 import {
@@ -29,6 +29,10 @@ import {
   sourceText,
 } from "./support";
 import { DesignerPage } from "./designer-po";
+
+test.beforeEach(async ({ page }) => {
+  await withClassicDesigner(page);
+});
 
 const onboarding = `# Customer onboarding
 apiVersion: weave/v1alpha1

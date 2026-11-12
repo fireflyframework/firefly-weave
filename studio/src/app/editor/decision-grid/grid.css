@@ -1,0 +1,853 @@
+/*
+Copyright 2026 Firefly Software Foundation.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+Author: Firefly Software Foundation
+SPDX-License-Identifier: Apache-2.0
+*/
+/* The decision table grid in table view: the table bar, the banner, the
+   policy, then the grid box, which spans the card and scrolls inside itself
+   with its group and header rows on top, # and Rule name at the left and the
+   footer at the bottom. Rows are 36 px with a fine pointer and 44 px on touch
+   and below 768 px; they grow for a formula on two lines. Tokens only. */
+:host {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.dg {
+  --dg-bar: var(--control-md);
+  --dg-row: var(--control-md);
+  --dg-head: var(--control-md);
+  --dg-group: 28px;
+  --dg-foot: 44px;
+  --dg-tool: var(--control-sm);
+  --dg-menu: 28px;
+  --dg-mark: 48px;
+  --dg-name: 160px;
+  --dg-input: 140px;
+  --dg-result: 120px;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+@media (max-width: 767px), (pointer: coarse) {
+  .dg {
+    --dg-bar: var(--control-touch);
+    --dg-row: var(--control-touch);
+    --dg-head: var(--control-touch);
+    --dg-foot: 52px;
+    --dg-tool: var(--control-touch);
+    --dg-menu: var(--control-touch);
+  }
+}
+/* From 768 to 1099 px the columns are compact, so a table with two inputs
+   and two results fits beside the folded Data pane. */
+@media (min-width: 768px) and (max-width: 1099px) {
+  .dg {
+    --dg-name: 128px;
+    --dg-input: 128px;
+    --dg-result: 112px;
+  }
+  /* The bar's divider sits 8 px from Back and the name, so they share a
+     line beside the Data pane. */
+  .dg-divider {
+    margin-inline: calc(var(--space-2) - var(--space-3));
+  }
+}
+.dg-spacer {
+  flex: 1;
+}
+
+/* The table bar: Back, the table's name and version, its status, Publish. */
+/* On a narrow card the bar wraps instead of hiding the table's name. */
+.dg-bar {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  min-width: 0;
+  min-height: var(--dg-bar);
+}
+.dg-back,
+.dg-go {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: var(--dg-bar);
+  font: var(--type-label);
+  white-space: nowrap;
+  text-decoration: none;
+}
+.dg-back:hover,
+.dg-go:hover {
+  text-decoration: underline;
+}
+.dg-divider {
+  flex: none;
+  width: 1px;
+  height: 20px;
+  background: var(--line);
+}
+/* When the table's name starts a new line, the divider goes. */
+.dg-bar.is-wrapped .dg-divider {
+  display: none;
+}
+.dg-title {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin: 0;
+  min-width: 0;
+  white-space: nowrap;
+}
+.dg-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font: var(--type-title-sm);
+  color: var(--text);
+}
+.dg-version {
+  flex: none;
+  font: var(--type-caption);
+  color: var(--muted);
+}
+.dg-bar .pill {
+  flex: none;
+}
+/* The table's name, version and status wrap as one. */
+.dg-ident {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+/* Off, Publish table keeps an edge on the card. */
+button.dg-publish[aria-disabled="true"] {
+  border-color: var(--border);
+}
+button.dg-publish {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--dg-bar);
+  white-space: nowrap;
+}
+
+/* The banner: what the status does to test runs and publishing. */
+.dg-banner,
+.dg-notice {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  min-height: var(--control-md);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  font: var(--type-small);
+  color: var(--text);
+}
+.dg-banner {
+  background: var(--info-bg);
+  border: 1px solid var(--info-bd);
+}
+.dg-banner > weave-icon {
+  flex: none;
+  color: var(--info-ink);
+}
+.dg-notice {
+  background: var(--danger-bg);
+  border: 1px solid var(--danger-bd);
+  color: var(--danger-ink);
+}
+
+/* The policy: its label, the choice, and the hint beside them while 420 px
+   remain on the row, under them otherwise. */
+.dg-policy {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  min-width: 0;
+  min-height: var(--control-md);
+}
+.dg-policy-label {
+  font: var(--type-label);
+  color: var(--text);
+  white-space: nowrap;
+}
+.dg-policy weave-select {
+  flex: none;
+  width: 168px;
+  --select-height: var(--dg-bar);
+}
+.dg-hint {
+  flex: 1 1 420px;
+  text-wrap: pretty;
+  margin: 0;
+  font: var(--type-small);
+  color: var(--muted);
+}
+
+/* The grid box: as tall as its rows, scrolling inside itself once they
+   don't fit; the footer stays at its bottom. It never shows fewer than
+   five body rows (all of them when there are fewer), whatever sits under
+   it. */
+.dg-box {
+  flex: 0 1 auto;
+  /* --dg-box-min is measured from the drawn rows (grid.ts); the nominal
+     sizes hold until the first measure. */
+  min-height: var(
+    --dg-box-min,
+    calc(
+      var(--dg-group) + var(--dg-head) + var(--dg-min-rows, 5) * var(--dg-row) +
+        var(--dg-foot) + 2px
+    )
+  );
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  overflow: hidden;
+}
+.dg-scroll {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  /* A cell the cursor moves to scrolls clear of the header and the columns
+     that stay put. */
+  scroll-padding: calc(var(--dg-group) + var(--dg-head)) 0 0
+    calc(var(--dg-mark) + var(--dg-name));
+}
+/* Below its tracks' minimums the grid scrolls sideways in its box. */
+.dg-grid {
+  display: grid;
+  width: 100%;
+  min-width: calc(
+    var(--dg-mark) + var(--dg-name) + var(--dg-inputs, 0) * var(--dg-input) +
+      var(--dg-results, 0) * var(--dg-result)
+  );
+}
+.dg-row,
+.dg-groups {
+  display: contents;
+}
+.dg-group {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  height: var(--dg-group);
+  padding: 0 var(--space-3);
+  display: flex;
+  align-items: center;
+  background: var(--sunken);
+  font: var(--type-caption);
+  color: var(--muted);
+  border-bottom: 1px solid var(--line);
+}
+.dg-group-start {
+  grid-column: span 2;
+  left: 0;
+  z-index: 4;
+}
+.dg-group-results {
+  border-left: 2px solid var(--border);
+}
+/* A group's label stays whole while the grid scrolls sideways: it stops
+   at the pinned columns' edge, inside its own span. */
+.dg-group-label {
+  position: sticky;
+  left: calc(var(--dg-mark) + var(--dg-name) + var(--space-3));
+  white-space: nowrap;
+}
+.dg-th,
+.dg-td {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: 0 var(--space-3);
+  border-bottom: 1px solid var(--line);
+  border-right: 1px solid var(--line);
+  background: var(--surface);
+  font: var(--type-body);
+  color: var(--text);
+  white-space: nowrap;
+}
+/* Each cell holds what is drawn over it (the cursor, a problem). */
+.dg-td {
+  position: relative;
+  min-height: var(--dg-row);
+  cursor: cell;
+}
+.dg-th {
+  position: sticky;
+  top: var(--dg-group);
+  z-index: 3;
+  height: var(--dg-head);
+  background: var(--sunken);
+  font: var(--type-label);
+}
+.dg-th-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dg-type-tile {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  color: var(--muted);
+}
+.dg-type-tile weave-icon {
+  width: 12px;
+  height: 12px;
+}
+/* Column and rule menus show on hover, on focus, and on the cursor's
+   column or row, over the end of the name (its tooltip has it whole), so
+   nothing moves when they appear. On touch they always show, in their own
+   room. */
+.dg-th-menu,
+.dg-rule-menu {
+  flex: none;
+  margin-right: calc(-1 * var(--space-2));
+  opacity: 0;
+}
+@media (pointer: fine) {
+  .dg-th-menu,
+  .dg-rule-menu {
+    position: absolute;
+    top: 50%;
+    right: var(--space-1);
+    translate: 0 -50%;
+    display: flex;
+    margin: 0;
+  }
+  /* While a menu shows, the name ends before it. */
+  .dg-th:is(:hover, :focus-within, .is-cursor-col) .dg-th-text,
+  .dg-row:is(:hover, .is-cursor-row) .dg-name-cell .dg-cell-text,
+  .dg-name-cell:focus-within .dg-cell-text {
+    padding-right: calc(var(--dg-menu) + var(--space-1) - var(--space-3));
+  }
+  /* A wrapping rule name keeps the menu's room all the time, so it never
+     wraps again when the menu shows. */
+  @media (min-width: 768px) {
+    .dg-row:not(.dg-otherwise) .dg-td.dg-name-cell .dg-cell-text {
+      padding-right: calc(var(--dg-menu) + var(--space-1) - var(--space-3));
+    }
+  }
+}
+.dg-th:is(:hover, :focus-within, .is-cursor-col) .dg-th-menu,
+.dg-row:is(:hover, .is-cursor-row) .dg-rule-menu,
+.dg-td:focus-within .dg-rule-menu {
+  opacity: 1;
+}
+@media (pointer: coarse) {
+  .dg-th-menu,
+  .dg-rule-menu {
+    opacity: 1;
+  }
+  /* A full-height target lies over the cell's bottom line, so the row
+     keeps its 44 px. */
+  .dg-rule-menu {
+    margin-bottom: -1px;
+  }
+}
+/* A menu's toggle stays clear until hovered or focused, so it never covers
+   a line or the cursor. */
+/* The toggle is the row menu's own button: ::ng-deep reaches it, inside
+   the grid's cells only. */
+.dg-th weave-row-menu ::ng-deep .row-menu-toggle,
+.dg-td weave-row-menu ::ng-deep .row-menu-toggle {
+  width: var(--dg-menu);
+  min-width: var(--dg-menu);
+  height: var(--dg-menu);
+  min-height: var(--dg-menu);
+  border-color: transparent;
+  background: transparent;
+}
+.dg-th
+  weave-row-menu
+  ::ng-deep
+  .row-menu-toggle:is(:hover, [aria-expanded="true"]),
+.dg-td
+  weave-row-menu
+  ::ng-deep
+  .row-menu-toggle:is(:hover, [aria-expanded="true"]) {
+  background: var(--hover);
+}
+.dg-rule-menu {
+  margin-left: auto;
+}
+.dg-mark-cell {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  justify-content: space-between;
+  gap: 0;
+  padding: 0 var(--space-2) 0 var(--space-3);
+  color: var(--muted);
+}
+.dg-name-cell {
+  position: sticky;
+  left: var(--dg-mark);
+  z-index: 2;
+}
+.dg-td.dg-name-cell {
+  font-weight: 600;
+}
+.dg-th.dg-mark-cell,
+.dg-th.dg-name-cell {
+  z-index: 4;
+}
+/* Scrolled sideways, the pinned columns end at the line that splits
+   Inputs from Results, so the cells sliding under them read as cut. */
+.dg-scroll.is-scrolled-x :is(.dg-group-start, .dg-name-cell)::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: -1px;
+  right: -1px;
+  z-index: 2;
+  width: 2px;
+  background: var(--border);
+  pointer-events: none;
+}
+.dg-scroll.is-scrolled-x .dg-group-start::before {
+  right: 0;
+}
+.dg-first-result {
+  border-left: 2px solid var(--border);
+}
+.dg-cell-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dg-name-cell .dg-cell-text {
+  flex: 1;
+}
+/* From 768 px a rule's name wraps like a formula: two lines at most, the
+   row growing, then an ellipsis (its tooltip has it whole). The padding
+   holds a one-line name in the row's height. The phone layout keeps one
+   line. */
+@media (min-width: 768px) {
+  .dg-td.dg-name-cell {
+    white-space: normal;
+    padding-block: calc((var(--dg-row) - 21px) / 2);
+  }
+  .dg-td.dg-name-cell .dg-cell-text {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    overflow-wrap: anywhere;
+  }
+}
+.dg-td.is-empty .dg-cell-text {
+  color: var(--subtle);
+}
+.dg-number {
+  min-width: 1em;
+  font: var(--type-caption);
+  color: var(--muted);
+}
+.dg-number.is-blank {
+  visibility: hidden;
+}
+.dg-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  color: var(--subtle);
+}
+.dg-mark[data-mark="match"] {
+  color: var(--success-ink);
+}
+.dg-mark:is([data-mark="refused"], [data-mark="error"]) {
+  color: var(--danger-ink);
+}
+
+/* A formula: the ƒ tile, then the formula in the body font with its
+   syntax colors, wrapping to two lines before it ends in an ellipsis. */
+/* A one-line formula keeps the row's height: the padding holds the 20 px
+   line, its tile and the cell's bottom line. */
+.dg-td.is-formula {
+  align-items: flex-start;
+  padding-block: calc((var(--dg-row) - 21px) / 2);
+}
+.dg-f {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  background: var(--raised);
+  color: var(--muted);
+  font: italic 600 13px/1 var(--font-sans);
+}
+.dg-formula {
+  min-width: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  font: var(--type-body);
+  color: var(--text);
+}
+.dg-formula [data-kind="keyword"] {
+  color: var(--syntax-keyword);
+}
+.dg-formula [data-kind="string"] {
+  color: var(--syntax-string);
+}
+.dg-formula [data-kind="number"] {
+  color: var(--syntax-number);
+}
+
+/* The Otherwise row: what it means sits where the conditions would be. */
+.dg-otherwise > .dg-td {
+  background: var(--sunken);
+}
+.dg-otherwise > .dg-td.dg-name-cell {
+  font-weight: 400;
+  color: var(--muted);
+}
+
+/* Row states while trying the table: matched rows are green, rows that
+   matched together under Exactly one are red; the # cell carries a bar. */
+.dg-row.is-match > .dg-td {
+  background: var(--success-bg);
+}
+.dg-row.is-match > .dg-mark-cell {
+  box-shadow: inset 3px 0 0 var(--success);
+}
+.dg-row.is-refused > .dg-td {
+  background: var(--danger-bg);
+}
+.dg-row.is-refused > .dg-mark-cell {
+  box-shadow: inset 3px 0 0 var(--danger);
+}
+/* The cursor (one cell, outlined whether or not the grid has focus, never
+   tinting its row) and a problem's underline are drawn over the cell's
+   content, so a menu never covers them; a problem shows inside the cursor. */
+.dg-td.is-cursor {
+  background: var(--selected);
+}
+.dg-td:is(.is-cursor, .is-flagged)::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+.dg-td.is-flagged::after {
+  box-shadow: inset 0 -2px 0 var(--danger);
+}
+/* The underline is a problem's only mark in a cell: no invalid field's
+   red edge or bar. */
+.dg-td[aria-invalid="true"] {
+  border-right-color: var(--line);
+  border-bottom-color: var(--line);
+  box-shadow: none;
+}
+.dg-td.dg-first-result[aria-invalid="true"] {
+  border-left-color: var(--border);
+}
+.dg-td.is-cursor::after {
+  box-shadow: inset 0 0 0 2px var(--focus);
+}
+/* While a cell is edited, its text box's ring is the only frame. */
+.dg-td.is-cursor.is-editing::after,
+.dg-td.is-cursor.is-editing.is-flagged::after {
+  box-shadow: none;
+}
+.dg-td.is-cursor.is-flagged::after {
+  box-shadow:
+    inset 0 0 0 2px var(--focus),
+    inset 0 -4px 0 var(--danger);
+}
+.dg-td:focus-visible {
+  outline: none;
+}
+/* Without edit rights the cells show no cursor; a keyboard still sees
+   where it is. */
+.dg.is-read-only .dg-td.is-cursor {
+  background: var(--surface);
+}
+.dg.is-read-only .dg-td.is-cursor:not(:focus-visible)::after {
+  box-shadow: none;
+}
+.dg.is-read-only .dg-td.is-cursor.is-flagged:not(:focus-visible)::after {
+  box-shadow: inset 0 -2px 0 var(--danger);
+}
+.dg-td.is-editing {
+  padding: 0 3px;
+}
+/* The text box fits inside the row: no field's minimum height. */
+.dg-cell-input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  height: 30px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--focus);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 0 0 1px var(--focus);
+  background: var(--raised);
+  color: var(--text);
+  font: var(--type-body);
+}
+@media (max-width: 767px), (pointer: coarse) {
+  .dg-cell-input {
+    height: calc(var(--dg-row) - 6px);
+  }
+}
+/* The box draws the outer edge, and the footer the line under the last
+   row: no second line on the last column or the last row. */
+.dg-row > :last-child {
+  border-right: 0;
+}
+.dg-row:last-child > * {
+  border-bottom: 0;
+}
+
+/* The footer: Add rule and the count, then the add-column commands. */
+/* The footer wraps on a narrow card, so no command is cut off. */
+.dg-foot {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: var(--dg-foot);
+  padding: 0 var(--space-2);
+  border-top: 1px solid var(--line);
+  background: var(--sunken);
+}
+button.dg-tool {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  min-height: var(--dg-tool);
+  padding: 0 var(--space-2);
+  border-color: transparent;
+  background: transparent;
+  color: var(--link);
+  font: var(--type-label);
+  white-space: nowrap;
+}
+button.dg-tool:hover:not([disabled]) {
+  background: var(--hover);
+}
+button.dg-tool[disabled] {
+  color: var(--disabled-ink);
+}
+/* The add-column commands stay together at the right, also when the
+   footer wraps. */
+.dg-foot-columns {
+  display: flex;
+  gap: var(--space-1);
+  margin-left: auto;
+}
+.dg-count {
+  margin: 0 var(--space-2);
+  font: var(--type-caption);
+  color: var(--subtle);
+  white-space: nowrap;
+}
+
+/* Problems: a box under the grid, one row per problem with its place. It
+   shows its head and three problems, and scrolls for the rest. */
+.dg-problems {
+  flex: none;
+  /* Its head and three problems as drawn (grid.ts measures them). */
+  max-height: var(--dg-problems-max, calc(4 * 40px + 2px));
+  overflow: auto;
+  border: 1px solid var(--danger-bd);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+.dg-problems[data-severity="warning"] {
+  border-color: var(--warning-bd);
+}
+.dg-problems-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 40px;
+  margin: 0;
+  padding: 0 var(--space-3);
+  border-bottom: 1px solid var(--line);
+  font: var(--type-label);
+  color: var(--danger-ink);
+}
+.dg-problems[data-severity="warning"] .dg-problems-head {
+  color: var(--warning-ink);
+}
+.dg-problems-why {
+  font: var(--type-caption);
+  color: var(--muted);
+}
+.dg-problems ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+/* The message wraps in its own column; the icon, the place and Go to cell
+   stay on its first line. */
+.dg-problems li {
+  display: grid;
+  grid-template-columns: 16px auto minmax(0, 1fr) auto;
+  align-items: start;
+  column-gap: var(--space-3);
+  min-height: 40px;
+  padding: 2px var(--space-3);
+  border-bottom: 1px solid var(--line);
+  font: var(--type-small);
+  color: var(--text);
+}
+.dg-problems li:last-child {
+  border-bottom: 0;
+}
+.dg-problems li > weave-icon {
+  margin-top: calc((var(--dg-bar) - 16px) / 2);
+  color: var(--danger-ink);
+}
+.dg-problems li[data-severity="warning"] > weave-icon {
+  color: var(--warning-ink);
+}
+.dg-problems li .pill {
+  margin-top: calc((var(--dg-bar) - 22px) / 2);
+}
+/* A problem's place is a tag, not a status: no dot. */
+.dg-problems .dg-place::before {
+  display: none;
+}
+.dg-problems li button.dg-go {
+  min-height: var(--dg-bar);
+}
+.dg-problem-text {
+  min-width: 0;
+  padding-block: calc((var(--dg-bar) - 20px) / 2);
+}
+.dg-problems code {
+  white-space: nowrap;
+  padding: 1px 6px;
+  border-radius: var(--radius-xs);
+  background: var(--hover);
+  font: var(--type-mono);
+}
+.dg-empty {
+  margin: 0;
+  color: var(--muted);
+}
+
+/* The column dialog lives in this chunk. */
+:host ::ng-deep .dg-column-form {
+  display: grid;
+  gap: var(--space-3);
+}
+:host ::ng-deep .dg-column-types {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+:host ::ng-deep .dg-column-types legend {
+  margin-bottom: var(--space-1);
+  padding: 0;
+  font: var(--type-label);
+  color: var(--text);
+}
+:host ::ng-deep .dg-column-type {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--dg-row);
+}
+/* A radio keeps its own size beside its name (fields take the full width). */
+:host ::ng-deep .dg-column-type input[type="radio"] {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+:host ::ng-deep .dg-column-type.is-disabled {
+  color: var(--muted);
+}
+:host ::ng-deep .dg-column-why {
+  font: var(--type-caption);
+}
+
+/* On a phone the step details sheet scrolls, and the grid's box keeps a
+   height of its own; only the rule numbers stay put while it scrolls
+   sideways, so the cells being edited keep the room. */
+@media (max-width: 767px) {
+  .dg-box {
+    flex: none;
+  }
+  .dg-scroll {
+    max-height: min(60vh, 560px);
+    scroll-padding-left: var(--dg-mark);
+  }
+  .dg-td.dg-name-cell {
+    position: relative;
+    left: auto;
+    z-index: auto;
+  }
+  .dg-th.dg-name-cell {
+    left: auto;
+    z-index: 3;
+  }
+  .dg-group-start {
+    position: static;
+    z-index: auto;
+  }
+  .dg-group-label {
+    left: calc(var(--dg-mark) + var(--space-3));
+  }
+}

@@ -26,7 +26,15 @@ import { contractOf, ownedContract, pinsView, staleText } from "./pins-stale";
 import type { StudioTestData } from "./test-data";
 import { TestDataService, type TestDataHost } from "./test-data-service";
 import { ExecutionService, type ExecutionHost } from "./execution-service";
+import { checkInputsOf } from "./test-data-inputs";
+import type { CheckInputs } from "./test-data-check";
+import {
+  studioDefinitions,
+  type StudioDefinitionsHost,
+} from "./host-definitions";
+import type { Workflow } from "../../model";
 export { checkInputsOf } from "./test-data-inputs";
+export { studioDefinitions } from "./host-definitions";
 export * as testDataOps from "./test-data-ops";
 export { readTestData } from "./test-data-read";
 export { CHECK_WORDS } from "./test-data-check";
@@ -106,4 +114,14 @@ export function simulationDataOf(
   return input === undefined && !Object.keys(pins).length
     ? null
     : { ...(input === undefined ? {} : { input }), pins };
+}
+
+/** What the Studio host checks test data against, with the drafts and copies the workflow uses. */
+export async function checkInputsFor(
+  host: StudioDefinitionsHost,
+): Promise<CheckInputs> {
+  return {
+    ...checkInputsOf(host.model.definition as Workflow, host.catalogContracts),
+    definitions: (await studioDefinitions(host)) as Json[],
+  };
 }

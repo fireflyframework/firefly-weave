@@ -20,6 +20,7 @@ import {
   ChangeDetectorRef,
   Component,
   Input,
+  DoCheck,
   OnInit,
   OnDestroy,
   inject,
@@ -142,7 +143,7 @@ import type { Step } from "../model";
     `,
   ],
 })
-export class DecisionInspector implements OnInit, OnDestroy {
+export class DecisionInspector implements OnInit, DoCheck, OnDestroy {
   @Input({ required: true }) host!: App;
   private cdr = inject(ChangeDetectorRef);
   private alive = true;
@@ -173,7 +174,34 @@ export class DecisionInspector implements OnInit, OnDestroy {
   value(event: Event) {
     return (event.target as HTMLInputElement).value;
   }
+  /** The account, platform and project the list was loaded for. */
+  private loadedFor = "";
+  private account(): string {
+    let project = "";
+    try {
+      project = this.host.profile ? this.host.api.project : "";
+    } catch {
+      project = "";
+    }
+    return JSON.stringify([
+      this.host.profile?.name ?? null,
+      project,
+      this.host.stepDataScope,
+      this.host.can("catalog.read"),
+      this.host.editorNext,
+    ]);
+  }
   ngOnInit() {
+    this.loadedFor = this.account();
+    void this.load();
+  }
+  /** The list follows the account: signing in, switching or changing project loads it again. */
+  ngDoCheck() {
+    const account = this.account();
+    if (account === this.loadedFor) return;
+    this.loadedFor = account;
+    this.tables = [];
+    this.nextCursor = null;
     void this.load();
   }
   ngOnDestroy() {
@@ -202,17 +230,25 @@ export class DecisionInspector implements OnInit, OnDestroy {
     if (valid) this.edit("uses", value);
   }
   async load(append = false) {
+    // With the new editor, step details list and read tables themselves.
+    if (this.host.editorNext) return;
     if (!this.host.profile || !this.host.can("catalog.read")) return;
     this.loading = true;
     this.error = "";
     const profile = this.host.profile;
+    const account = this.loadedFor;
     try {
       const page = await this.host.api.page(
         "decision-tables",
         false,
         append ? (this.nextCursor ?? undefined) : undefined,
       );
-      if (!this.alive || this.host.profile !== profile) return;
+      if (
+        !this.alive ||
+        this.host.profile !== profile ||
+        this.loadedFor !== account
+      )
+        return;
       this.tables = append ? [...this.tables, ...page.items] : page.items;
       this.nextCursor = page.next_cursor;
       await this.contract(String(this.step["uses"] ?? ""));

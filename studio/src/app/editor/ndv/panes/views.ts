@@ -26,6 +26,7 @@ import {
   type Schema,
   type ScopeEntry,
 } from "../../../forms/core/scope";
+export { typeIcon } from "../../../forms/core/scope";
 import {
   resolveSchema,
   type ResolveOptions,
@@ -270,27 +271,6 @@ export function countLabel(
   return shown === undefined || shown === total
     ? plural(total)
     : `${shown} of ${plural(total)}`;
-}
-
-export function typeIcon(types: string[], label: string): string {
-  if (/date/i.test(label)) return "typeDate";
-  if (/file/i.test(label)) return "typeFile";
-  const type = types.find((t) => t !== "null");
-  switch (type) {
-    case "string":
-      return "typeText";
-    case "number":
-    case "integer":
-      return "typeNumber";
-    case "boolean":
-      return "typeBoolean";
-    case "array":
-      return "typeList";
-    case "object":
-      return "typeObject";
-    default:
-      return "typeAny";
-  }
 }
 
 export function noOutputSentence(step: Step): string | null {

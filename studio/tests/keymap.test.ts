@@ -247,3 +247,48 @@ describe("the shortcuts sheet", () => {
     expect(sheet[2].entries.map((entry) => entry.keys)).toEqual([["/"]]);
   });
 });
+
+describe("the decision grid's keys", () => {
+  it("binds no Ctrl/Cmd+Enter and every grid key once", () => {
+    const expected: [string, string][] = [
+      ["ArrowUp", "cellUp"],
+      ["ArrowDown", "cellDown"],
+      ["ArrowLeft", "cellLeft"],
+      ["ArrowRight", "cellRight"],
+      ["Tab", "nextCell"],
+      ["Shift+Tab", "previousCell"],
+      ["Enter", "editCell"],
+      ["F2", "editCell"],
+      ["Delete", "clearCell"],
+      ["Backspace", "clearCell"],
+      ["Alt+Enter", "addRule"],
+      ["Alt+ArrowUp", "moveRuleUp"],
+      ["Alt+ArrowDown", "moveRuleDown"],
+      ["Mod+D", "duplicateRule"],
+    ];
+    for (const platform of ["mac", "other"] as const) {
+      for (const [combo, command] of expected) {
+        const rows = KEYMAP.filter(
+          (row) =>
+            (!row.platform || row.platform === platform) &&
+            row.keys.some(
+              (key) => canonicalCombo(key) === canonicalCombo(combo),
+            ) &&
+            row.commands.decisionGrid !== undefined,
+        );
+        expect(rows, `${platform} ${combo}`).toHaveLength(1);
+        expect(
+          commandFor(combo, ["decisionGrid", "stepDetails"], { platform }),
+          `${platform} ${combo}`,
+        ).toBe(command);
+      }
+      // Execute never runs from the grid, even though step details bind it.
+      expect(
+        commandFor("Mod+Enter", ["decisionGrid", "stepDetails"], { platform }),
+      ).toBeNull();
+      expect(commandFor("Mod+Enter", ["stepDetails"], { platform })).toBe(
+        "executeStep",
+      );
+    }
+  });
+});

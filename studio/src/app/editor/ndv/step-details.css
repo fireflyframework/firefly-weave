@@ -46,6 +46,29 @@ weave-step-details {
   color: var(--text);
   font: var(--type-body);
 }
+/* Step details' density (--sd-control, --sd-target and the field rhythm).
+   It lives here, not in params.css: the form's stylesheet leaves the page
+   while table view draws the grid in its place, and the panes, their
+   headers and Fold still need it. Forms outside step details get the same
+   values from params.css. */
+.step-details {
+  --sd-control: var(--control-md);
+  --sd-row: var(--control-sm);
+  --sd-target: var(--control-sm);
+  --sd-label-row: var(--space-6);
+  --sd-field-gap: var(--space-3);
+  --sd-field-inner: var(--space-1);
+}
+@media (max-width: 767px), (pointer: coarse) {
+  .step-details {
+    --sd-control: var(--control-touch);
+    --sd-row: var(--control-touch);
+    --sd-target: var(--control-touch);
+    --sd-label-row: var(--control-touch);
+    --sd-field-gap: var(--space-4);
+    --sd-field-inner: var(--space-2);
+  }
+}
 .step-details:focus {
   outline: none;
 }
@@ -407,7 +430,7 @@ weave-step-details {
   border-bottom-left-radius: 0;
 }
 .step-details
-  .sd-execute:not(:has(> button[aria-disabled="true"]))
+  .sd-execute:has(> button.primary:not([aria-disabled="true"]))
   .row-menu-toggle {
   background: var(--accent);
   border-color: var(--accent);
@@ -733,4 +756,95 @@ weave-issues-indicator {
   font: var(--type-small);
   color: var(--muted);
   overflow-wrap: anywhere;
+}
+
+/* Table view (the decision table grid): Input, Parameters and Output keep
+   widths of their own, with the grid's card at 640 px or more. A side pane
+   the person folds becomes its 48 px rail; the rail opens it again. In two
+   panes, the Data pane sits beside the grid as it does beside the form. */
+.step-details[data-table] {
+  --sd-rail: 48px;
+}
+.step-details[data-table][data-layout="three"] .sd-panes,
+.step-details[data-table][data-layout="three"] .sd-panes[style] {
+  grid-template-columns:
+    var(--sd-input, 20%) minmax(640px, 1fr)
+    var(--sd-output, 24%);
+}
+.step-details[data-table][data-layout="three"] :is(.sd-input, .sd-rail-input) {
+  grid-column: 1;
+  grid-row: 1;
+}
+.step-details[data-table][data-layout="three"] .sd-main {
+  grid-column: 2;
+  grid-row: 1;
+}
+.step-details[data-table][data-layout="three"]
+  :is(.sd-output, .sd-rail-output) {
+  grid-column: 3;
+  grid-row: 1;
+}
+/* The grid takes the card's height: its box scrolls inside itself and stops
+   20 px above the card's bottom. */
+.step-details[data-table]:not([data-layout="sheet"])
+  #sd-panel-parameters:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+  /* Scrolls only when the grid at its minimum and the problems don't fit. */
+  overflow: auto;
+  padding-bottom: var(--sd-edge);
+}
+.sd-rail {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  align-items: center;
+  gap: var(--space-2);
+  width: var(--sd-rail);
+  min-width: var(--sd-rail);
+  margin: 14px 0;
+  padding: var(--space-3) 0;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--muted);
+  font: var(--type-caption);
+  cursor: pointer;
+}
+.sd-rail:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.sd-rail:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+.sd-rail-input {
+  border-right: 0;
+  border-radius: var(--radius-md) 0 0 var(--radius-md);
+}
+.sd-rail-output {
+  justify-self: end;
+  border-left: 0;
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+}
+.sd-rail-caption {
+  writing-mode: vertical-rl;
+  white-space: nowrap;
+}
+/* From 768 to 1099 px the Data pane folds to a rail beside the grid until
+   the person opens it. */
+.step-details[data-table][data-layout="two"][data-data-folded] .sd-panes {
+  grid-template-columns: minmax(0, 1fr) var(--sd-rail);
+  grid-template-rows: minmax(0, 1fr);
+}
+.step-details[data-table][data-layout="two"][data-data-folded] .sd-main {
+  grid-column: 1;
+  grid-row: 1;
+}
+.step-details[data-table] .sd-rail-data {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: end;
+  border-left: 0;
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
 }

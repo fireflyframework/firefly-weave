@@ -71,6 +71,8 @@ export interface KindContext {
   workflowContract(uses: string): Json | null;
   /** The recipe of an action this workflow owns (its method, path, timeout and retry), or null. */
   ownedAction?(uses: string): Json | null;
+  /** The draft of a published action's next version kept on this computer, or null. */
+  actionDraft?(uses: string): Json | null;
 }
 export interface FieldSpec {
   /** Relative to the step, e.g. ["with"], ["cases", 0, "when"]. */
@@ -130,6 +132,15 @@ export interface Choice {
   disabled?: string;
   group?: string;
 }
+/** A button under a field (Edit table, New table). */
+export interface FieldAction {
+  id: string;
+  label: string;
+  icon: string;
+  run(ctx: NdvContext): void;
+  /** Why the button can't be used now; null when it can. */
+  disabled?(step: Step, ctx: NdvContext): string | null;
+}
 /** One field of a form, drawn by the shared renderer. */
 export interface ParamSpec {
   /** Stable within the kind: the `data-param` test hook and the diagnostics key. */
@@ -172,6 +183,12 @@ export interface ParamSpec {
   /** Text fields that become templates with text.concat. */
   templateCapable?: boolean;
   choices?: Choice[] | ((ctx: NdvContext) => Promise<Choice[]>);
+  /** resource only: what an empty list says instead of "Nothing to choose from yet". */
+  emptyChoices?(ctx: NdvContext): string | null;
+  /** What the field says while it is required and empty, in the words of its kind. */
+  requiredText?: string;
+  /** Buttons in the field's action row, under its control: commands, not fields. */
+  actions?: FieldAction[];
   min?: number;
   max?: number;
   /**
@@ -272,6 +289,19 @@ export interface ParameterRegistration {
 export interface ParameterComponent {
   /** Provided with input.required(). */
   readonly context: Signal<NdvContext>;
+  /**
+   * A wide component may fill the Input and Output panes itself (the decision
+   * table's test values and result). Step details draws each in its pane and
+   * gives it `state` as its `state` input; Fold in a pane's header emits `fold`.
+   */
+  readonly panes?: ParameterPanes;
+  /** True while the component shows its own primary action: Execute step turns secondary. */
+  readonly ownsPrimary?: Signal<boolean>;
+}
+export interface ParameterPanes {
+  input: Type<unknown>;
+  output: Type<unknown>;
+  state: unknown;
 }
 
 export type DataSource =
@@ -356,8 +386,10 @@ export interface NdvContext {
     workflows(filter?: {
       callableBy?: string;
     }): Promise<{ uses: string; title: string; disabled?: string }[]>;
-    /** Published decision tables, newest version first. */
+    /** Published decision tables, newest version first, then those on this computer. */
     tables(): Promise<{ uses: string; title: string }[]>;
+    /** Why the table list is empty for now (no signed-in account yet); null otherwise. */
+    tablesNote?(): string | null;
   };
   connections: {
     slot(name: string): { connector: string; required: boolean } | null;
@@ -374,6 +406,47 @@ export interface NdvContext {
   openAddStep(request: { slot?: string; after?: string }): void;
   /** index selects one entry of a many-valued slot (Tools). */
   openSubNode(slot: string, index?: number): void;
+  /** Opens this kind's registered parameter component (the decision table grid) in place of the form. */
+  openParameterComponent?(kind: string, subNode?: string): void;
+  /** Back to the form from a parameter component. */
+  closeParameterComponent?(): void;
+  /** A toast, with an action such as Undo. */
+  notify?(text: string, action?: { label: string; run(): void }): void;
+  /** The decision tables this step can read and change on this computer. */
+  readonly tables?: StepTables;
+}
+
+/** The step's decision table, as step details read and keep it. */
+export interface StepTables {
+  /** The table's document when Studio has it (a draft, a copy, or what it read). */
+  document(uses: string): Json | null;
+  /** Where that document comes from; null when Studio doesn't have it. */
+  where(uses: string): "draft" | "copy" | "published" | null;
+  /** Starts a new table named after the workflow and the step, moves the step to it, and answers its `uses`. */
+  newTable(): Promise<string | null>;
+  /**
+   * Starts the next version of a published table on this computer and moves
+   * the step to it in one undo step; answers the draft's `uses`, or a
+   * sentence when it can't.
+   */
+  startDraft(uses: string): Promise<{ uses: string } | { problem: string }>;
+  /** Who owns the drafts now; an edit keeps it so its save never lands in another account's store. */
+  account(): string;
+  /** Keeps the grid's table in the step's draft of the account it was edited in; a sentence when it can't, null when kept. */
+  save(uses: string, spec: Json, account: string): Promise<string | null>;
+  /**
+   * Publish table: the draft goes to the platform; answers what happened in
+   * words, and the step's new `uses` when the version was taken meanwhile.
+   */
+  publish(
+    uses: string,
+  ): Promise<
+    | { published: true }
+    | { moved: string; message: string }
+    | { problem: string }
+  >;
+  /** Weave's own answer for a table and an input, from the Studio host (Try an input). */
+  evaluate(body: { table: Json; input: Json }): Promise<unknown>;
 }
 
 /** A chip under an AI agent: data only; Studio draws it. */

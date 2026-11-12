@@ -23,6 +23,7 @@ SPDX-License-Identifier: Apache-2.0
 // that mark the optional ones instead of starring the required ones.
 import { test, expect, type Page } from "@playwright/test";
 import {
+  withClassicDesigner,
   allCapabilities,
   closeSheet,
   connected,
@@ -33,6 +34,10 @@ import {
 } from "./support";
 import { DesignerPage } from "./designer-po";
 import { chooseAction, openPaletteIntegrations } from "./integrations-po";
+
+test.beforeEach(async ({ page }) => {
+  await withClassicDesigner(page);
+});
 
 const environment =
   "**/studio/api/api/v1/tenants/tenant/projects/project/environments/development";

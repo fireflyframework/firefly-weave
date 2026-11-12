@@ -27,6 +27,7 @@ import type { AiSheetRequest } from "../../integrations/ai-connection-sheet";
 import type { ToastAction } from "../../toast";
 import type { StepDetailsRequest } from "./step-details-service";
 import { editorNextEnabled } from "../state/editor-flag";
+import type { AccountScope } from "../state/browser-store";
 import type { StepFingerprints } from "../state/fingerprints";
 import type { TestDataService } from "../state/test-data-service";
 import type { ExecuteTarget } from "../state/execution";
@@ -46,9 +47,11 @@ export interface StepDetailsHost {
   openAiConnectionDialog?(request?: AiSheetRequest): void;
   /** Account/workspace invalidation generation and stable principal identity. */
   readonly stepDataScope?: string;
+  /** Who data kept on this computer belongs to; null when it can't be told. */
+  readonly runAccount?: AccountScope | null;
   /** True while a simulation runs: the workflow can't change. */
   readonly editingLocked: boolean;
-  /** "Try the new editor", once the shell keeps it itself. */
+  /** "Use the new editor", once the shell keeps it itself. */
   readonly editorNext?: boolean;
   readonly catalogContracts: ReadonlyMap<string, Record<string, unknown>>;
   readonly decisionContracts: ReadonlyMap<string, Record<string, unknown>>;
@@ -123,6 +126,6 @@ export interface StepDetailsHost {
   refreshView(): void;
 }
 
-/** Step details follow "Try the new editor": the shell's own value once it keeps one. */
+/** Step details follow "Use the new editor": the shell's own value once it keeps one. */
 export const stepDetailsEnabled = (host: { editorNext?: boolean }): boolean =>
   host.editorNext ?? editorNextEnabled();
