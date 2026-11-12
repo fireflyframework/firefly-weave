@@ -88,7 +88,8 @@ SPDX-License-Identifier: Apache-2.0
   request.
 - Steps can run for real in an environment. `POST {environment}/step-tests`
   runs one step of a saved draft, an action or an AI task, as a test run of the
-  normal runtime, and only the person who started it can read or cancel it.
+  normal runtime. Only its creator can read or cancel it with the step test API;
+  its run is a test run that `run.read` and `run.cancel` reach like any other.
   The server checks, before anything is written, the new `step_tester` role
   (`step.test`), catalog read on the project, the environment's test policy,
   `connection.bind` on each connection, the step's side effect (steps that

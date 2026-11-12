@@ -106,6 +106,17 @@ def run_caller(link: dict[str, Any] | None) -> RunCaller | None:
     return RunCaller.model_validate_json(json.dumps(fields))
 
 
+async def is_test_run(repository: RuntimeRepository, run_id: UUID) -> bool:
+    """Whether a run is a step test's: its activation is a test activation."""
+    rows = await repository.rows(
+        "SELECT a.test FROM runs r JOIN activation_revisions a ON a.tenant_id=r.tenant_id "
+        "AND a.project_id=r.project_id AND a.environment_id=r.environment_id AND a.id=r.activation_id "
+        "WHERE r.tenant_id=:tenant AND r.project_id=:project AND r.environment_id=:environment AND r.id=:id",
+        id=run_id,
+    )
+    return bool(rows and rows[0]["test"])
+
+
 @service
 class RuntimeService:
     def __init__(self, definitions: DefinitionService) -> None:
@@ -661,6 +672,9 @@ class RuntimeService:
             row = oversized or await repository.run(run_id, lock=True)
             if caller is None:
                 self.require(await load_principal(tx.session, actor.id), scope, capability, context)
+            if capability == "step.test" and not await is_test_run(repository, run_id):
+                # step.test reaches a step test's own run only; any other run needs run.cancel.
+                raise AccessDenied()
             if skip_undo:
                 self.require(await load_principal(tx.session, actor.id), scope, "transaction.reconcile", context)
             skipped = {"skip_undo": True} if skip_undo else {}

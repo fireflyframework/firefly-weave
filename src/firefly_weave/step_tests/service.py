@@ -253,6 +253,8 @@ class StepTestService:
         """Write the synthetic version, the test activation and its details, and start the test run, all at once."""
         from firefly_weave.step_tests.repository import StepTestRepository
 
+        # A stored answer goes only to someone who may still test steps here, as a run start's replay does.
+        self.authorization.require(actor, scope, "step.test", context=context)
         async with self.uow.open(scope) as tx:
             replay = Idempotency(
                 tx,

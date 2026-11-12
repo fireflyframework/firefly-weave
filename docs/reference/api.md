@@ -526,19 +526,23 @@ expires. The server checks, in this order, and refuses before writing anything:
 
 | Answer | When |
 | --- | --- |
-| 403 `WV-FORBIDDEN` | A grant above is missing |
+| 403 `WV-FORBIDDEN` | `step.test` or `catalog.read` is missing |
 | 403 `WV-STEPTEST-DISABLED` | The environment's test calls are off; nothing about the draft is read |
 | 404 `WV-NOT-FOUND` | The draft, its revision, the step or the step's action isn't there |
 | 422 `WV-STEPTEST-KIND` | The saved step doesn't match the request, or its kind can't run for real |
-| 422 `WV-STEPTEST-CONNECTION` | A slot has no connection, or a connection can't be used here; `result.slots` says which and why |
+| 403 `WV-FORBIDDEN` | `connection.bind` is missing on a connection revision the request names |
+| 422 `WV-STEPTEST-CONNECTION` | A slot the step needs has no connection; `result.slots` says which |
 | 409 `WV-STEPTEST-CONFIRM` | The step changes data and `acknowledged_side_effect` isn't exactly its effect; `result` names the effect, the action and the environment |
-| 422 `WV-STEPTEST-INPUT` | The input breaks the action's input schema; `result.diagnostics` holds paths and codes, never values |
 | 422 `WV-SCHEMA-SECRET_VALUE` | The input holds a secret value; `result.paths` says where |
+| 422 `WV-STEPTEST-INPUT` | The input breaks the action's input schema; `result.diagnostics` holds paths and codes, never values |
+| 422 `WV-STEPTEST-CONNECTION` | A chosen connection can't be used here; `result.slots` says which and why |
 | 422 `WV-STEPTEST-RELEASE` | Several releases, or none, can run a dependency; `result.choices` lists them to send back in `releases` |
 | 429 `WV-STEPTEST-BUSY` | The person already runs 4 step tests here or started 30 in the last minute; `Retry-After` says when to try again |
 
 Only the person who started a step test can read
-(`GET {environment}/step-tests/{id}`) or cancel it; anyone else gets 404. The
+(`GET {environment}/step-tests/{id}`) or cancel it through these routes;
+anyone else gets 404. Its run is a test run like any other: `run.read` lists it
+when you send `include_test=true`, and `run.cancel` can cancel it. The
 view carries the run's status, the step's attempts and timing, its error as
 `{code, message}`, and its output as the run views classify it: an output left
 out reads `output: null` with `omitted` naming why, such as

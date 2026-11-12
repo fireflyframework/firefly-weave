@@ -18,9 +18,11 @@
 from uuid import uuid4
 
 import pytest
-from test_step_test_run import make_step_tests
+from test_step_test_run import CONTEXT, make_step_tests
 
 from firefly_weave.access.authorization import AccessDenied
+from firefly_weave.access.models import Grant
+from firefly_weave.contracts.runtime import StartRunRequest
 from firefly_weave.contracts.step_tests import SynthesizedTest
 from firefly_weave.definitions.models import CatalogError
 
@@ -48,6 +50,38 @@ async def test_each_missing_grant_is_refused_before_anything_is_created(step_tes
     with pytest.raises(AccessDenied):
         await step_tests.start(actor, step_tests.request(connections=chosen))
     assert await step_tests.nothing_written()
+
+
+async def test_a_replay_after_the_step_tester_role_is_revoked_is_refused(step_tests):
+    identifier = await step_tests.access.create_principal(step_tests.admin, "application")
+    project = step_tests.scope.model_copy(update={"environment_id": None})
+    await step_tests.access.grant(step_tests.admin, identifier, Grant(role="developer", scope=project))
+    binding = await step_tests.access.grant(
+        step_tests.admin, identifier, Grant(role="step_tester", scope=step_tests.scope)
+    )
+    await step_tests.start(await step_tests.access.load_principal(identifier))
+    await step_tests.access.revoke_grant(step_tests.admin, step_tests.scope, binding)
+    with pytest.raises(AccessDenied):
+        await step_tests.start(await step_tests.access.load_principal(identifier))
+
+
+async def test_step_test_authority_cant_cancel_a_run_that_isnt_a_test_run(step_tests, worker_setup):
+    _, runtime, _, actor, scope, activation, _ = worker_setup
+    run = await runtime.start(
+        actor, scope, StartRunRequest(activation_id=activation.id, input=3), "run", context=CONTEXT
+    )
+    with pytest.raises(AccessDenied):
+        async with step_tests.service.uow.open(scope) as tx:
+            await runtime.cancel(
+                tx,
+                run.id,
+                "Canceled from step details",
+                actor=step_tests.tester,
+                scope=scope,
+                context=CONTEXT,
+                capability="step.test",
+            )
+    assert await step_tests.scalar("SELECT state->>'status' FROM runs WHERE id=:id", id=run.id) != "cancelled"
 
 
 async def test_another_tenants_draft_is_not_found(step_tests):
