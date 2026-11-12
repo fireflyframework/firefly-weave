@@ -22,9 +22,9 @@ from dataclasses import dataclass
 from typing import Any, Final, Literal, cast
 from uuid import NAMESPACE_URL, UUID, uuid5
 
-from firefly_weave.compiler.ir import ActionNode, CallWorkflowNode, IRNode
+from firefly_weave.compiler.ir import ActionNode, CallWorkflowNode, IRNode, Participation
 from firefly_weave.contracts.instance_keys import InvalidInstanceKey, split_instance
-from firefly_weave.contracts.transactions import PHASE_SEGMENTS, UndoPhase, split_phase
+from firefly_weave.contracts.transactions import PHASE_SEGMENTS, Effect, UndoPhase, dispatch_effect, split_phase
 from firefly_weave.contracts.values import JsonObject, JsonValue
 from firefly_weave.operations.debug.models import ScriptedError
 from firefly_weave.runtime.control import enclosing_loops
@@ -150,3 +150,30 @@ class Answer:
     kind: Literal["mock", "error", "pending", "none"]
     key: str | None = None
     value: JsonValue | object = None
+
+
+def frame_effect(prepared: PreparedWorkflow, key: str, inputs: Mapping[str, object]) -> Effect:
+    """What the called run of the frame ``key`` may have applied, by the platform's own rule: ``none`` only when it
+    dispatched no call and no task of an action that changes data. ``inputs`` holds what every step of the session
+    received, by frame path, so it names what the frame dispatched."""
+    calls = False
+    digests: list[str] = []
+    prefix = key + "/"
+    for path in inputs:
+        instance = path.removeprefix(prefix)
+        if not path.startswith(prefix) or "/" in instance:
+            continue
+        phase = phase_target(prepared, instance)
+        if phase is not None:
+            if phase.kind == "callWorkflow":
+                calls = True
+            else:
+                digests.append(cast(Participation, phase.step.txn).phases[phase.phase].dependency)
+            continue
+        node = step_instance(prepared, instance)
+        if isinstance(node, ActionNode):
+            digests.append(node.dependency)
+        elif isinstance(node, CallWorkflowNode):
+            calls = True
+    dependencies = [{"digest": d.digest, "kind": d.kind, "document": d.document} for d in prepared.ir.dependencies]
+    return dispatch_effect(calls, digests, dependencies)

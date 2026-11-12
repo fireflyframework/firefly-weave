@@ -66,6 +66,7 @@ from firefly_weave.operations.debug.transactions import (
     PhaseTarget,
     decided_started,
     due_deadline,
+    frame_effect,
     phase_target,
     phase_targets,
     scripted_effect,
@@ -89,7 +90,16 @@ from firefly_weave.runtime.kernel import (
     validate,
     validate_action,
 )
-from firefly_weave.runtime.models import CallIntent, Deadline, HumanTaskIntent, RunState, RuntimeEvent, TaskIntent
+from firefly_weave.runtime.models import (
+    CallIntent,
+    ControlCommand,
+    Deadline,
+    HumanTaskIntent,
+    RunState,
+    RuntimeEvent,
+    TaskIntent,
+    Transition,
+)
 from firefly_weave.runtime.step_failures import continuation_steps, failure_data, final_failure, wait_failure
 from firefly_weave.runtime.transactions import in_transaction, shapes
 
@@ -817,55 +827,66 @@ class Simulator:
             run.cursor = None
             # Measured context parts last one event, as in production, where every transition prepares its own.
             called.prepared.contexts.parts.clear()
-            for change in result.steps:
-                waiting = called.prepared.nodes.get(node_of(change.node_id)) if change.status == "waiting" else None
-                if isinstance(waiting, (SignalNode, HumanTaskNode)):
-                    scripted = self._scripted(key, change.node_id)
-                    if scripted is not None:
-                        run.pending.append(self._failure(called, change.node_id, scripted))
-            for command in result.commands:
-                if isinstance(command, Deadline):
-                    run.deadlines.append(command)
-                elif isinstance(command, CallIntent):
-                    d.inputs[_path(key, command.node_id)] = command.input
-                    if not self._call(key, run, called, command):
-                        return True
-                elif isinstance(command, HumanTaskIntent):
-                    d.inputs[_path(key, command.node_id)] = {"title": command.title, "context": command.context}
-                elif isinstance(command, TaskIntent):
-                    d.inputs[_path(key, command.node_id)] = command.input
-                    fallbacks = ("action:" + command.action_reference,)
-                    answer = self._answer(key, command.node_id, fallbacks)
-                    if answer.kind == "error":
-                        run.pending.append(self._failure(called, command.node_id, cast(ScriptedError, answer.value)))
-                        continue
-                    if answer.kind == "pending":
-                        # Its result never arrives in this session: the step stays in flight.
-                        continue
-                    if answer.kind == "none" and _accepts_empty(called.prepared, command.node_id):
-                        # A confirm, cancel or undo with nothing to say completes with an empty result.
-                        answer = Answer("mock", None, {})
-                    if answer.kind == "none":
-                        tried = self._candidates(command.node_id, fallbacks)
-                        d.diagnostics = [
-                            Diagnostic(
-                                code="WV-DEBUG-MISSING_MOCK",
-                                severity="error",
-                                stage="evaluation",
-                                path="",
-                                message="An action requires an explicit mock.",
-                                hint="Add a mock under "
-                                + ", ".join(tried)
-                                + (f" in the mocks of {called.reference}" if called.reference else "")
-                                + ".",
-                            )
-                        ]
-                        return True
-                    value = cast(JsonValue, answer.value)
-                    run.pending.append(self._event("task_completed", {"node_id": command.node_id, "output": value}))
-                    self._grown(value)
+            if not self._dispatch(key, run, called, result):
+                return True
             if result.state.status in TERMINAL:
                 self._ended(key)
+        return True
+
+    def _dispatch(self, key: str, run: Run, called: _Workflow, result: Transition) -> bool:
+        """Carry out what one transition of the run ``key`` asks for: deadlines, calls, people's tasks, tasks, and the
+        stop of a called step a transaction no longer waits for. False when the session can't go on (a missing
+        mock)."""
+        d = self.data
+        for change in result.steps:
+            waiting = called.prepared.nodes.get(node_of(change.node_id)) if change.status == "waiting" else None
+            if isinstance(waiting, (SignalNode, HumanTaskNode)):
+                scripted = self._scripted(key, change.node_id)
+                if scripted is not None:
+                    run.pending.append(self._failure(called, change.node_id, scripted))
+        for command in result.commands:
+            if isinstance(command, Deadline):
+                run.deadlines.append(command)
+            elif isinstance(command, CallIntent):
+                d.inputs[_path(key, command.node_id)] = command.input
+                if not self._call(key, run, called, command):
+                    return False
+            elif isinstance(command, HumanTaskIntent):
+                d.inputs[_path(key, command.node_id)] = {"title": command.title, "context": command.context}
+            elif isinstance(command, ControlCommand) and command.kind == "settle":
+                self._settle(key, command.node_id)
+            elif isinstance(command, TaskIntent):
+                d.inputs[_path(key, command.node_id)] = command.input
+                fallbacks = ("action:" + command.action_reference,)
+                answer = self._answer(key, command.node_id, fallbacks)
+                if answer.kind == "error":
+                    run.pending.append(self._failure(called, command.node_id, cast(ScriptedError, answer.value)))
+                    continue
+                if answer.kind == "pending":
+                    # Its result never arrives in this session: the step stays in flight.
+                    continue
+                if answer.kind == "none" and _accepts_empty(called.prepared, command.node_id):
+                    # A confirm, cancel or undo with nothing to say completes with an empty result.
+                    answer = Answer("mock", None, {})
+                if answer.kind == "none":
+                    tried = self._candidates(command.node_id, fallbacks)
+                    d.diagnostics = [
+                        Diagnostic(
+                            code="WV-DEBUG-MISSING_MOCK",
+                            severity="error",
+                            stage="evaluation",
+                            path="",
+                            message="An action requires an explicit mock.",
+                            hint="Add a mock under "
+                            + ", ".join(tried)
+                            + (f" in the mocks of {called.reference}" if called.reference else "")
+                            + ".",
+                        )
+                    ]
+                    return False
+                value = cast(JsonValue, answer.value)
+                run.pending.append(self._event("task_completed", {"node_id": command.node_id, "output": value}))
+                self._grown(value)
         return True
 
     def _call(self, key: str, run: Run, called: _Workflow, command: CallIntent) -> bool:
@@ -902,6 +923,10 @@ class Simulator:
             frame.pending.append(self._event("started", started_data(callee, frame_run_id(child))))
             self._grown(command.input)
             return True
+        if _accepts_empty(called.prepared, command.node_id):
+            # A called confirm, cancel or undo with nothing to say completes with an empty result.
+            run.pending.append(self._event("call_completed", self._mocked_call(child, command, {})))
+            return True
         if command.mode == "detach":
             # A detached call continues at once; without its workflow, its run is shown as not simulated.
             d.frames.append(
@@ -927,6 +952,9 @@ class Simulator:
     def _mocked_call(key: str, command: CallIntent, value: JsonValue) -> JsonObject:
         """The recorded outcome a mocked call delivers, shaped like the outcome of a real child run."""
         data: JsonObject = {"node_id": command.node_id, "generation": 0}
+        if split_phase(command.node_id) is not None:
+            # A called confirm, cancel or undo is mocked with its workflow's output and answered as a success.
+            return data | {"child_run_id": str(frame_run_id(key)), "status": "succeeded", "output": value}
         if command.on_failure == "continue":
             envelope = cast(JsonObject, value)
             status = cast(str, envelope["status"])
@@ -958,15 +986,31 @@ class Simulator:
         if frame.mode != "wait" or caller_state.status in TERMINAL or frame.call_node not in caller_state.active:
             return
         data: JsonObject = {"node_id": frame.call_node, "generation": 0}
+        calling = self._workflow(_parent(key))
+        ir = calling.ir
+        # A transaction decides what a called step's outcome means: it always receives it, with what the called run
+        # may have applied, as the platform delivers it.
+        settling = in_transaction(calling.prepared.transactions, frame.call_node)
+        if settling:
+            data["effect"] = frame_effect(self._workflows[frame.workflow].prepared, key, self.data.inputs)
         refused = None
         if state.status == "succeeded":
-            # The same check a platform applies before it delivers a child's output.
-            ir = self._workflow(_parent(key)).ir
-            node = cast(CallWorkflowNode, self._workflow(_parent(key)).prepared.nodes[node_of(frame.call_node)])
+            # The same check a platform applies before it delivers a child's output; a called confirm, cancel or
+            # undo is checked against its own workflow's output schema.
+            phase = phase_target(calling.prepared, frame.call_node)
+            if phase is not None:
+                schema = phase.output_schema
+            else:
+                node = cast(CallWorkflowNode, calling.prepared.nodes[node_of(frame.call_node)])
+                schema = cast(JsonObject, called_workflow(ir, node)[1]["outputSchema"])
             bundle = {d.reference: d.document for d in ir.dependencies if d.kind == "Schema"}
-            refused = screened(cast(JsonObject, called_workflow(ir, node)[1]["outputSchema"]), state.output, bundle)
-        if frame.on_failure == "stop" and state.status in STOPPED:
+            refused = screened(schema, state.output, bundle)
+        if frame.on_failure == "stop" and state.status in STOPPED and not settling:
             event = self._event("incident_opened", data | {"code": "WV-CALL-INTERRUPTED"})
+        elif refused is not None and settling:
+            # The child ran and its output was refused: the step failed and may have applied.
+            failed = failure_data(frame.call_node, 0, refused, "unknown", 1)
+            event = self._event("step_failed", failed | {"effect": "unknown"})
         elif refused is not None:
             event = self._event("incident_opened", data | {"code": refused})
         else:
@@ -977,16 +1021,30 @@ class Simulator:
         frame.result = event.id
         caller.pending.append(event)
 
-    def _cancel(self, frame: FrameState) -> None:
-        """Cancel a waiting frame whose caller ended, as a platform's cancellation of a child run does."""
+    def _settle(self, key: str, node_id: str) -> None:
+        """A transaction going back stops a called step still in flight: its frame is cancelled, as the platform
+        cancels the child run."""
+        child = _path(key, node_id)
+        frame = next((f for f in self.data.frames if f.key == child), None)
+        if frame is not None and frame.state is not None and frame.state.status not in TERMINAL:
+            self._cancel(frame, "Transaction undone")
+
+    def _cancel(self, frame: FrameState, reason: str = "Caller run ended") -> None:
+        """Cancel a waiting frame, as a platform's cancellation of a child run does. A frame without transactions
+        ends at once; one whose transactions still hold work undoes them first, then ends cancelled."""
         state = cast(RunState, frame.state)
-        event = self._event("cancelled", {"reason": "Caller run ended"}).model_copy(
+        event = self._event("cancelled", {"reason": reason}).model_copy(
             update={"sequence": state.accepted_sequence + 1}
         )
-        frame.state = transition(state, event, self._workflows[frame.workflow].artifact).state
+        workflow = self._workflows[frame.workflow]
+        result = transition(state, event, workflow.artifact)
+        frame.state = result.state
         frame.events.append(event)
-        frame.pending, frame.deadlines, frame.signals = [], [], []
         self.data.boundaries.append(Boundary(kind="event", event_type="cancelled", frame=frame.key))
+        if workflow.prepared.transactions is not None and result.state.status not in TERMINAL:
+            self._dispatch(frame.key, frame, workflow, result)
+            return
+        frame.pending, frame.deadlines, frame.signals = [], [], []
         self._ended(frame.key)
 
     def _due(self, key: str, run: Run) -> Deadline | tuple[SignalNode, SignalReceipt] | RuntimeEvent | None:
