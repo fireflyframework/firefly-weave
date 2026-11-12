@@ -512,7 +512,18 @@ export class RunsTabState {
       this.updateChosen(ticket, { following: false, stopped: true });
       return false;
     }
-    const read = await this.readRun(ticket);
+    let read: RunRead | null;
+    try {
+      read = await this.readRun(ticket);
+    } catch (error) {
+      if (!this.runHolds(ticket)) return false;
+      // A refusal counts at once: nothing read before is kept.
+      if (problem(error).status === 403) {
+        this.refuse();
+        return false;
+      }
+      throw error;
+    }
     if (!this.runHolds(ticket)) return false;
     const chosen = this.chosen();
     if (!read || !chosen) return false;

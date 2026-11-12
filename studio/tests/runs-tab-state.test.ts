@@ -574,6 +574,27 @@ describe("the chosen run", () => {
     expect(reads()).toBe(2);
   });
 
+  it("a refused read while following keeps nothing", async () => {
+    const { state, platform, env } = await started();
+    const running = summaryOf(platform.data, fixtureIds.running);
+    await state.choose(running.id);
+    expect(state.chosen()?.following).toBe(true);
+    platform.fail = (path) =>
+      path.endsWith(`/runs/${running.id}`)
+        ? {
+            status: 403,
+            body: { code: "WV-FORBIDDEN", message: "Access denied" },
+          }
+        : null;
+    await env.advance(2000);
+    expect(state.state()).toBe("access");
+    expect(state.chosen()).toBeNull();
+    expect(state.rows()).toEqual([]);
+    const reads = platform.count(new RegExp(`/runs/${running.id}$`));
+    await env.advance(60_000);
+    expect(platform.count(new RegExp(`/runs/${running.id}$`))).toBe(reads);
+  });
+
   it("reads at most 2,000 step instances", async () => {
     const data = structuredClone(runViewsFixture);
     const facts: StepFact[] = Array.from({ length: 2500 }, (_, index) => ({
