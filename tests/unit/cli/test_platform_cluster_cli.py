@@ -103,11 +103,20 @@ def test_delete_help_warns_that_it_deletes_any_cluster_with_that_name():
     assert "Delete any kind or k3d cluster with this name, even one Weave didn't create." in help_text
 
 
-def test_the_cli_reference_says_what_create_deletes_with_the_commands_own_deadline():
+def test_create_help_and_the_cli_reference_say_what_create_refuses_and_deletes():
+    refusals = (
+        "Refuses a name that already exists on the Docker context or whose network does, a Docker context that isn't "
+        "on this computer's Unix socket, and less than 6 GiB of free Docker disk."
+    )
     reference = (Path(__file__).resolve().parents[3] / "docs/reference/cli.md").read_text()
     (row,) = [line for line in reference.splitlines() if line.startswith("| `cluster create ")]
+    help_text = " ".join(CliRunner().invoke(cli, ["platform", "cluster", "create", "--help"]).output.split())
+    assert refusals in row and refusals in help_text
     assert "kind or k3d fails or is interrupted, nothing is deleted" in row
-    assert f"a cluster whose nodes aren't Ready within {clusters.READY_SECONDS} s is deleted again" in row
+    assert (
+        f"a cluster whose nodes aren't Ready within {clusters.READY_SECONDS} s, or whose readiness wait is "
+        "interrupted, is deleted again"
+    ) in row
 
 
 def test_create_refuses_when_the_docker_disk_has_less_than_6_gib_free(world):

@@ -127,8 +127,9 @@ def cluster_create(
 ) -> None:
     """Create a single-node test cluster and wait until its nodes are Ready.
 
-    Refuses a name that already exists on the Docker context, and refuses when
-    Docker has less than 6 GiB free. Deletes only a cluster it created.
+    Refuses a name that already exists on the Docker context or whose network
+    does, a Docker context that isn't on this computer's Unix socket, and less
+    than 6 GiB of free Docker disk. Deletes only a cluster it created.
     """
     from firefly_weave.sdk import platform_clusters
 
