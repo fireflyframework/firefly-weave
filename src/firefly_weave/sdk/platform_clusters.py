@@ -1559,6 +1559,25 @@ def _diff_file(item: dict[str, Any]) -> str:
     return f"{group + '.' if group else ''}{version}.{item['kind']}.{metadata.get('namespace', '')}.{metadata['name']}"
 
 
+def _worker_drifted(connection: _Connection, target: objects.ClusterTarget) -> list[str]:
+    """The worker Deployment as Kind/name when it's gone or its hardening fields differ from what connect creates;
+    its replicas, image, resources and restart time belong to reviewed change requests. Read-only."""
+    live = local._run(
+        connection.state,
+        "cluster-worker-read",
+        [*connection.kube, "--namespace", target.namespace, "get", "deployment", objects.WORKER]
+        + ["--ignore-not-found", "-o", "json"],
+    )
+    if live.strip():
+        try:
+            changed = objects.worker_drift(strict_json(live), target)
+        except (ValueError, TypeError, KeyError, AttributeError, DeploymentError):
+            raise local.PlatformError("kubectl didn't describe the worker Deployment; nothing was changed.") from None
+        if not changed:
+            return []
+    return [f"Deployment/{objects.WORKER}"]
+
+
 def _live_uid(connection: _Connection, namespace: str) -> str | None:
     """The namespace's UID, None when it no longer exists; read-only."""
     uid = (
@@ -1645,7 +1664,9 @@ def _drift(
             + ["--ignore-not-found", "-o", _ROTATED_PATH],
         ).decode(errors="replace")
         draft = _draft(connection, namespace, target, image, rotated=rotated.strip(), uid=uid)
-        drift[namespace] = _drifted(connection, [*shared, *objects.target_objects(draft)])
+        applied = _drifted(connection, [*shared, *objects.target_objects(draft)])
+        # The worker Deployment isn't applied, so kubectl diff can't see it: its hardening is compared here.
+        drift[namespace] = sorted({*applied, *_worker_drifted(connection, draft)})
     return drift
 
 

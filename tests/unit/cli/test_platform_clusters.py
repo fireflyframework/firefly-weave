@@ -441,7 +441,8 @@ class Cluster:
         self.pull = None
         self.issuer = ISSUER
         self.worker_secret = False
-        self.worker_deployment = False
+        # The worker Deployment as the cluster holds it, once connect created it.
+        self.worker = None
         self.online = True
         self.job_state = "succeeded"
         self.api_calls = []
@@ -474,8 +475,9 @@ class Cluster:
         return "secret created"
 
     def create(self, call):
-        if json.loads(call.stdin).get("kind") == "Deployment":
-            self.worker_deployment = True
+        document = json.loads(call.stdin)
+        if document.get("kind") == "Deployment":
+            self.worker = document
         return "created"
 
     def pod(self, call):
@@ -592,7 +594,11 @@ def world(platform, monkeypatch):
     commands.answer([KUBECTL, "logs", "pod/weave-probe-token"], lambda call: json.dumps({"iss": cluster.issuer}) + "\n")
     commands.answer(
         [KUBECTL, "get", "deployment", "weave-worker"],
-        lambda call: "deployment.apps/weave-worker" if cluster.worker_deployment else "",
+        lambda call: "deployment.apps/weave-worker" if cluster.worker is not None else "",
+    )
+    commands.answer(
+        [KUBECTL, "get", "deployment", "weave-worker", "-o", "json"],
+        lambda call: json.dumps(cluster.worker) if cluster.worker is not None else "",
     )
     return directory, commands, config, cluster
 
@@ -1527,6 +1533,39 @@ def test_list_check_names_a_drifted_object_without_printing_its_values(world):
     sent = {(item["kind"], item["metadata"]["name"]) for item in json.loads(diff.stdin)["items"]}
     assert {("Service", "weave-api"), ("Deployment", "weave-runner-weave-workers")} <= sent
     assert applied(commands, before) == []
+
+
+@pytest.mark.parametrize(
+    ("change", "drift"),
+    [
+        ("writable root filesystem", ["Deployment/weave-worker"]),
+        ("deleted", ["Deployment/weave-worker"]),
+        ("scaled to a new image and restarted", []),
+    ],
+)
+def test_list_check_compares_only_the_worker_deployments_hardening(world, change, drift):
+    """Connect creates the worker once; its replicas, image and restart time then belong to reviewed change requests,
+    so only a weakened or missing worker counts as drift."""
+    directory, commands, config, cluster = world
+    connect(world)
+    commands.answer([KUBECTL, "get", "deployment", "weave-runner-weave-workers", "-o"], "2026-11-12T10:00:00.000000Z")
+    commands.answer([KUBECTL, "diff"], "")
+    template = cluster.worker["spec"]["template"]
+    container = template["spec"]["containers"][0]
+    if change == "writable root filesystem":
+        container["securityContext"]["readOnlyRootFilesystem"] = False
+    elif change == "deleted":
+        cluster.worker = None
+    else:
+        cluster.worker["spec"]["replicas"] = 3
+        container["image"] = "127.0.0.1:5001/example-sleep@sha256:" + "c" * 64
+        template["metadata"]["annotations"]["firefly.weave/restarted-at"] = "2026-11-12T11:00:00Z"
+        cluster.worker["status"] = {"replicas": 3, "readyReplicas": 3}
+    before = len(commands.calls)
+    listed = clusters.clusters(directory, check=True, kubeconfig=config)
+    assert listed["clusters"][0]["targets"][0]["drift"] == drift
+    assert "readOnlyRootFilesystem" not in json.dumps(listed)
+    assert applied(commands, before) == [] and not [call for call in commands.calls[before:] if "create" in call.argv]
 
 
 def test_list_check_names_a_deleted_workers_namespace_as_drift(world):
