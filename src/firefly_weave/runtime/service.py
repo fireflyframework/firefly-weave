@@ -195,9 +195,17 @@ class RuntimeService:
         not_after: datetime | None = None,
         start_facts: RunStartFacts | None = None,
         child: "ChildStart | None" = None,
+        capability: str = "run.start",
+        test_activation: bool = False,
     ) -> RunView:
-        """Start a run; with ``child``, the child run of a claimed call, linked to its call before its first event."""
-        self.require(actor, scope, "run.start", context)
+        """Start a run; with ``child``, the child run of a claimed call, linked to its call before its first event.
+
+        A step test starts its own test activation's run under ``step.test`` with ``test_activation``; every other
+        start needs ``run.start`` and never finds a test activation.
+        """
+        if (capability == "step.test") != test_activation or capability not in {"run.start", "step.test"}:
+            raise ValueError("A step test's run starts under step.test, and only a step test's run does")
+        self.require(actor, scope, capability, context)
         start_facts = start_facts if start_facts is not None else RunStartFacts()
         if not isinstance(start_facts, RunStartFacts):
             raise ValueError("Trusted start facts required")
@@ -218,13 +226,13 @@ class RuntimeService:
                 return RunView.model_validate_json(json.dumps(prior))
             self.definitions.registry.require_operational()
             activation, envelope = await self.definitions.runtime_snapshot(
-                actor, scope, request.activation_id, context=context, tx=enlisted
+                actor, scope, request.activation_id, context=context, tx=enlisted, test=test_activation
             )
             try:
                 artifact = import_artifact(envelope)
                 ir = workflow(artifact)
                 pins = await self.definitions.execution_readiness(
-                    actor, scope, activation.request, artifact, capability="run.start", context=context, tx=enlisted
+                    actor, scope, activation.request, artifact, capability=capability, context=context, tx=enlisted
                 )
                 if pins != activation.connector_execution_pins:
                     raise ValueError("Connector execution pins changed")
@@ -246,7 +254,7 @@ class RuntimeService:
                 data["not_after"] = child.not_after.isoformat()
             event = RuntimeEvent(id=uuid4(), type="started", timestamp=now, sequence=1, data=data)
             result = await transition(RunState(input=request.input), event, artifact)
-            self.require(await load_principal(enlisted.session, actor.id), scope, "run.start", context)
+            self.require(await load_principal(enlisted.session, actor.id), scope, capability, context)
             self.definitions.registry.require_operational()
             if not_after is not None and await repository.now() >= not_after:
                 raise CatalogError(409, "WV-SCHEDULE-STALE", "Occurrence grace expired during reduction")
@@ -299,7 +307,7 @@ class RuntimeService:
                 "run.start",
                 str(view.id),
                 scope=scope,
-                capability="run.start",
+                capability=capability,
                 context=context.model_copy(update={"run_id": view.id}),
                 details=None
                 if child is None
@@ -573,8 +581,11 @@ class RuntimeService:
         scope: Scope,
         context: AuditContext,
         skip_undo: bool = False,
+        capability: str = "run.cancel",
     ) -> RunView | UnavailableRunAcknowledgment | CapacityRunAcknowledgment:
-        return await self._cancel(tx, run_id, reason, actor=actor, scope=scope, context=context, skip_undo=skip_undo)
+        return await self._cancel(
+            tx, run_id, reason, actor=actor, scope=scope, context=context, skip_undo=skip_undo, capability=capability
+        )
 
     async def cancel_child(self, tx: Transaction, run_id: UUID, caller_run_id: UUID, *, reason: str = "") -> None:
         """Cancel a child run because its caller ended or its caller's transaction is undone: the caller's call is the
@@ -622,13 +633,17 @@ class RuntimeService:
         context: AuditContext,
         caller: UUID | None = None,
         skip_undo: bool = False,
+        capability: str = "run.cancel",
     ) -> RunView | UnavailableRunAcknowledgment | CapacityRunAcknowledgment:
         from firefly_weave.runtime.waits import TERMINAL
 
+        if capability not in {"run.cancel", "step.test"}:
+            raise ValueError("A run is cancelled under run.cancel, or its step test's creator under step.test")
         request = CancelRunRequest(reason=reason, skip_undo=skip_undo)
-        # A child whose caller ended is cancelled on the caller's authority; everyone else needs run.cancel.
+        # A child whose caller ended is cancelled on the caller's authority; everyone else needs run.cancel, or, for
+        # a step test's run, step.test, after the step test service checked the person started it.
         if caller is None:
-            self.require(actor, scope, "run.cancel", context)
+            self.require(actor, scope, capability, context)
         if skip_undo:
             # Stopping without undoing leaves other systems as they are: a reconciler's decision.
             self.require(actor, scope, "transaction.reconcile", context)
@@ -645,7 +660,7 @@ class RuntimeService:
             oversized = await oversized_row(repository, run_id)
             row = oversized or await repository.run(run_id, lock=True)
             if caller is None:
-                self.require(await load_principal(tx.session, actor.id), scope, "run.cancel", context)
+                self.require(await load_principal(tx.session, actor.id), scope, capability, context)
             if skip_undo:
                 self.require(await load_principal(tx.session, actor.id), scope, "transaction.reconcile", context)
             skipped = {"skip_undo": True} if skip_undo else {}
@@ -671,7 +686,7 @@ class RuntimeService:
                     "run.cancel",
                     str(run_id),
                     scope=scope,
-                    capability="run.cancel",
+                    capability=capability,
                     context=context.model_copy(update={"run_id": run_id}),
                     details={"external_effects_may_continue": True, "reason": request.reason, **skipped, **cascade},
                 )
@@ -736,7 +751,7 @@ class RuntimeService:
                     "run.cancel",
                     str(run_id),
                     scope=scope,
-                    capability="run.cancel",
+                    capability=capability,
                     context=context.model_copy(update={"run_id": run_id}),
                     details={"external_effects_may_continue": True, "reason": request.reason, **skipped, **cascade},
                 )
@@ -762,7 +777,7 @@ class RuntimeService:
                 "run.cancel",
                 str(run_id),
                 scope=scope,
-                capability="run.cancel",
+                capability=capability,
                 context=context.model_copy(update={"run_id": run_id}),
                 details={
                     "external_effects_may_continue": not draining,

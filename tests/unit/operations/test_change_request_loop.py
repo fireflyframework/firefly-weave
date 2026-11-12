@@ -231,9 +231,16 @@ async def test_upkeep_gets_its_own_budget_after_a_revalidation_that_spent_the_qu
     # Statistics have their own tests; here they have nothing to roll up.
     monkeypatch.setattr(loop, "roll_statistics", no_statistics)
     monkeypatch.setattr(loop, "maintain_changes", maintain)
+
+    async def sweep(scope, deadline):
+        order.append(("sweep", deadline))
+        assert deadline > clock["now"]
+        return True
+
+    monkeypatch.setattr(loop, "sweep_step_tests", sweep)
     await loop._environment(authority())
-    assert [name for name, _ in order] == ["revalidate", "upkeep"]
-    assert order[1][1] == clock["now"] + operations.UPKEEP_SECONDS
+    assert [name for name, _ in order] == ["revalidate", "upkeep", "sweep"]
+    assert order[1][1] == order[2][1] == clock["now"] + operations.UPKEEP_SECONDS
 
 
 def test_a_never_seen_worker_counts_as_drained_only_while_it_drains_with_no_lease():
