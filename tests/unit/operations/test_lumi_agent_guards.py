@@ -436,4 +436,230 @@ async def test_a_question_whose_draft_does_not_parse_keeps_the_guards_of_an_atta
 
     [checked] = answer.proposals
     assert step_of(checked)["limits"] == LIMITS and step_of(checked)["tools"][1]["fixed"] == CANCEL["fixed"]
-    assert checked.diagnostics == errors_of(guarded()) and answer.answer == "Fixed."
+    # The attached draft may be another workflow: the guards of the draft that doesn't parse are still unknown.
+    assert checked.diagnostics == errors_of(guarded()) + 1
+    assert answer.answer.startswith("Fixed.\n\nSafeguards could not be checked")
+
+
+def leaning():
+    """The guarded draft with a cancel tool that sets no review of its own: it gets its step's review."""
+    draft = guarded()
+    del draft["spec"]["steps"][0]["tools"][1]["review"]
+    return draft
+
+
+def test_a_review_written_on_a_tool_is_held_to_the_step_review_the_tool_had():
+    draft = leaning()
+    edited = copy.deepcopy(draft)
+    edited["spec"]["steps"][0]["tools"][1]["review"] = {"assignment": "anyone", "expirySeconds": 604800}
+
+    answer = answered(edited, drafts=[draft])
+
+    assert step_of(answer.proposals[0])["tools"][1]["review"] == REVIEW
+    assert "review.assignment of tool cancel_order" in answer.answer
+    assert "review.expirySeconds of tool cancel_order" in answer.answer
+
+
+def test_a_tool_moved_to_a_new_agent_keeps_the_step_review_it_had():
+    draft = leaning()
+    edited = copy.deepcopy(draft)
+    first = edited["spec"]["steps"][0]
+    second = {
+        **copy.deepcopy(first),
+        "id": "support_cancel",
+        "tools": [copy.deepcopy(first["tools"][1])],
+        "review": {"assignment": "support-leads"},
+    }
+    first["tools"] = first["tools"][:1]
+    edited["spec"]["steps"].append(second)
+
+    moved = yaml.safe_load(proposed(edited, drafts=[draft]).source)["spec"]["steps"][1]
+
+    assert moved["tools"][0].get("review", moved["review"]) == REVIEW
+
+
+def test_a_tool_whose_action_moves_to_another_version_keeps_its_guards():
+    draft = guarded()
+    edited = stripped()
+    edited["spec"]["steps"][0]["tools"][1]["action"] = "orders-cancel@1.1.0"
+
+    tool = step_of(proposed(edited, drafts=[draft]))["tools"][1]
+
+    assert (tool["fixed"], tool["approval"], tool["review"]) == (CANCEL["fixed"], "required", REVIEW)
+
+
+def other_slot(document, slot="orders_admin", connector="orders@1.0.0"):
+    document["spec"]["connections"][slot] = {"connector": connector}
+    document["spec"]["steps"][0]["tools"][1]["connection"] = slot
+    return document
+
+
+@pytest.mark.parametrize("name", ["cancel_order", "cancel_orders"], ids=["same-name", "renamed"])
+def test_a_tool_on_another_slot_of_the_same_connector_keeps_its_guards(name):
+    draft = guarded()
+    edited = other_slot(stripped())
+    edited["spec"]["steps"][0]["tools"][1]["name"] = name
+
+    tool = step_of(proposed(edited, drafts=[draft]))["tools"][1]
+
+    assert (tool["fixed"], tool["approval"], tool["review"]) == (CANCEL["fixed"], "required", REVIEW)
+
+
+def test_a_renamed_tool_whose_action_moves_to_another_version_keeps_its_guards():
+    draft = guarded()
+    edited = stripped()
+    tool = edited["spec"]["steps"][0]["tools"][1]
+    tool["name"], tool["action"] = "cancel_orders", "orders-cancel@2.0.0"
+
+    kept = step_of(proposed(edited, drafts=[draft]))["tools"][1]
+
+    assert (kept["fixed"], kept["approval"], kept["review"]) == (CANCEL["fixed"], "required", REVIEW)
+
+
+def test_a_tool_failure_that_stops_the_agent_is_never_loosened():
+    draft = guarded()
+    draft["spec"]["steps"][0]["limits"]["onToolError"] = "incident"
+    edited = copy.deepcopy(draft)
+    edited["spec"]["steps"][0]["limits"]["onToolError"] = "return_to_model"
+
+    answer = answered(edited, drafts=[draft])
+
+    assert step_of(answer.proposals[0])["limits"]["onToolError"] == "incident"
+    assert "limits.onToolError of agent support" in answer.answer
+
+
+RUN_MEMORY = {"scope": "run", "key": "support-desk", "window": 12, "contextTokens": 4096}
+
+
+def remembering():
+    document = guarded()
+    document["spec"]["steps"][0]["memory"] = copy.deepcopy(RUN_MEMORY)
+    return document
+
+
+@pytest.mark.parametrize(
+    ("written", "fields"),
+    [
+        ({"scope": "conversation", "key": {"literal": "everyone"}}, ("scope", "key")),
+        ({**RUN_MEMORY, "key": "all-desks"}, ("key",)),
+        ({**RUN_MEMORY, "window": 200, "contextTokens": 262144}, ("window", "contextTokens")),
+    ],
+    ids=["wider-scope", "other-key", "larger"],
+)
+def test_memory_written_wider_keeps_the_drafts_and_the_answer_says_so(written, fields):
+    draft = remembering()
+    edited = copy.deepcopy(draft)
+    edited["spec"]["steps"][0]["memory"] = written
+
+    answer = answered(edited, drafts=[draft])
+
+    assert step_of(answer.proposals[0])["memory"] == RUN_MEMORY
+    for name in fields:
+        assert f"memory.{name} of agent support" in answer.answer, name
+    assert len(answer.answer.splitlines()[2:]) == len(fields)
+
+
+def test_memory_added_to_an_agent_without_it_stays_with_the_step():
+    draft = guarded()
+    del draft["spec"]["steps"][0]["memory"]
+    edited = copy.deepcopy(draft)
+    edited["spec"]["steps"][0]["memory"] = {"scope": "run", "key": "everyone", "window": 8}
+
+    answer = answered(edited, drafts=[draft])
+
+    # Step memory is the default; a smaller window narrows it, so it stays.
+    assert step_of(answer.proposals[0])["memory"] == {"window": 8}
+    assert "memory.scope of agent support" in answer.answer and "memory.key of agent support" in answer.answer
+
+
+def test_memory_narrowed_to_the_step_keeps_the_proposals_scope_and_the_lower_window():
+    draft = remembering()
+    edited = copy.deepcopy(draft)
+    edited["spec"]["steps"][0]["memory"] = {"scope": "step", "window": 30}
+
+    answer = answered(edited, drafts=[draft])
+
+    assert step_of(answer.proposals[0])["memory"] == {"scope": "step", "window": 12, "contextTokens": 4096}
+    assert answer.answer.splitlines()[2:] == [
+        "Kept the draft's memory.window of agent support: only the editor can loosen a safeguard."
+    ]
+
+
+def many_loose_guards():
+    """The guarded draft rewritten with more loosened guards than the answer names one by one."""
+    loose = guarded()
+    step = loose["spec"]["steps"][0]
+    step["onError"] = "continue"
+    step["limits"] = {
+        "maxIterations": 32,
+        "maxTotalTokens": 2000000,
+        "maxToolCalls": 64,
+        "parallelToolCalls": 8,
+        "timeoutSeconds": 604800,
+    }
+    step["review"] = {"assignment": "x", "expirySeconds": 604800, "distinctReviewer": False}
+    for tool in step["tools"]:
+        tool["approval"] = "auto"
+        tool["review"] = {"assignment": "y", "expirySeconds": 604800, "distinctReviewer": False}
+        tool["fixed"] = {"object": {"region": {"literal": "us"}}}
+    return loose
+
+
+def test_a_withheld_proposal_is_named_first_however_many_safeguards_were_kept():
+    draft = guarded()
+    repeated = copy.deepcopy(draft)
+    repeated["spec"]["steps"].append(copy.deepcopy(repeated["spec"]["steps"][0]))
+    proposals = [
+        {"title": title, "kind": "workflow", "format": "yaml", "source": yaml.safe_dump(document)}
+        for title, document in (("Loose", many_loose_guards()), ("Twice", repeated))
+    ]
+
+    answer = check_proposals(LumiReply(answer="Done.", proposals=proposals), [draft])
+
+    lines = answer.answer.splitlines()[2:]
+    assert lines[0] == "Withheld the proposal Twice: it gives two steps the same id."
+    folded = lines[-1]
+    assert folded.startswith("Kept ") and folded.endswith(" more of the draft's safeguards.")
+    assert len(lines) == 1 + 12 + 1
+
+
+def test_safeguards_that_could_not_be_checked_are_named_first():
+    draft = guarded()
+
+    answer = check_proposals(
+        LumiReply(
+            answer="Done.",
+            proposals=[
+                {"title": "Loose", "kind": "workflow", "format": "yaml", "source": yaml.safe_dump(many_loose_guards())}
+            ],
+        ),
+        [draft],
+        unchecked=True,
+    )
+
+    lines = answer.answer.splitlines()[2:]
+    assert lines[0].startswith("Safeguards could not be checked") and len(lines) == 1 + 12 + 1
+
+
+def test_the_same_workflows_draft_decides_what_only_the_editor_changes_whatever_the_order():
+    draft = guarded()
+    other = guarded()
+    other["metadata"]["name"] = "returns-desk"
+    other["spec"]["steps"][0]["onError"] = "continue"
+    other["spec"]["steps"][0]["errorPath"] = {"steps": [], "output": {"literal": "other"}}
+
+    step = step_of(proposed(stripped(), drafts=[other, draft]))
+
+    assert (step["onError"], step["errorPath"]) == ("errorOutput", ERROR_PATH)
+
+
+def test_a_limit_the_draft_leaves_out_holds_the_proposal_to_the_contracts_default():
+    draft = guarded()
+    edited = copy.deepcopy(draft)
+    # The draft leaves maxToolCalls out, so its agent makes at most the default 12 calls.
+    edited["spec"]["steps"][0]["limits"]["maxToolCalls"] = 40
+
+    answer = answered(edited, drafts=[draft])
+
+    assert step_of(answer.proposals[0])["limits"] == LIMITS
+    assert "limits.maxToolCalls of agent support" in answer.answer

@@ -46,7 +46,7 @@ from firefly_weave.connections.service import ConnectionService
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.agentic import AGENTIC_DESCRIPTOR, CONNECTOR_REFERENCE, validate_connection
 from firefly_weave.contracts.connectors import ConnectionRevision
-from firefly_weave.contracts.definitions import AgentLimits, AgentReview
+from firefly_weave.contracts.definitions import AgentLimits, AgentMemory, AgentReview
 from firefly_weave.contracts.lumi import (
     LumiAnswer,
     LumiAskRequest,
@@ -91,9 +91,10 @@ PROPOSAL_KINDS = {
 # An AI agent's guards. Weave AI never loosens one, whether a proposal leaves the guard out or writes a looser value:
 # the compact schema small models write from doesn't show them all, and what a model writes can be steered. Loosening
 # is done in the editor. Against every draft the question carried, the strictest value wins: a required approval, a
-# distinct reviewer, the lower review expiry and the lower of each limit. The draft's fixed arguments, reviewers,
-# onError and errorPath stay as the draft has them; a proposal may add fixed arguments, limits and reviews. A guard
-# left out keeps the draft's value, settings key by key, and a value the proposal changed back is named in the answer.
+# distinct reviewer, the lower review expiry, the lower of each limit and memory size, and a tool failure that stops
+# the agent. The draft's fixed arguments, reviewers, memory scope and key, onError and errorPath stay as the draft has
+# them; a proposal may add fixed arguments, limits and reviews, and narrow the memory to the step. A guard left out
+# keeps the draft's value, settings key by key, and a value the proposal changed back is named in the answer.
 STEP_GUARDS: Final = ("onError", "errorPath")
 TOOL_GUARDS: Final = ("fixed", "approval", "review", "human")
 # An omitted approval is the target's default, which reviews a tool that changes data.
@@ -103,7 +104,17 @@ LIMITS: Final = {
     for limit in AgentLimits.model_fields.values()
     if limit.alias is not None and type(limit.default) is int
 }
+# What a tool's final failure does, from the loosest: the model reads the error, or the agent stops.
+TOOL_ERRORS: Final = ("return_to_model", "incident")
+TOOL_ERROR: Final = cast(str, AgentLimits.model_fields["on_tool_error"].default)
 REVIEW_EXPIRY: Final = cast(int, AgentReview.model_fields["expiry_seconds"].default)
+# Memory scopes from the narrowest: one activation, the run, then a conversation kept across runs.
+MEMORY_SCOPES: Final = ("step", "run", "conversation")
+MEMORY_SIZES: Final = {
+    size.alias or name: size.default for name, size in AgentMemory.model_fields.items() if type(size.default) is int
+}
+# What the memory scope decides with it: the name it is kept under, and how long a conversation lasts.
+MEMORY_SCOPED: Final = ("key", "ttlSeconds")
 MAX_PROPOSAL_CHARACTERS: Final = 100000
 # The answer's limit in the reply contract, and how many kept guards it names before it counts the rest.
 MAX_ANSWER_CHARACTERS: Final = 20000
@@ -193,11 +204,26 @@ def _agent_target(step: JsonObject) -> str:
     return json.dumps([step.get("uses"), step.get("profile")], sort_keys=True)
 
 
-def _tool_target(tool: JsonObject) -> str | None:
-    """What a renamed tool keeps: its action and connection, its workflow, or who it asks; None when it names none."""
+def _connectors(document: JsonValue) -> dict[str, JsonValue]:
+    """The connector each connection slot of a workflow document declares."""
+    spec = document.get("spec") if isinstance(document, dict) else None
+    slots = spec.get("connections") if isinstance(spec, dict) else None
+    return {
+        slot: value["connector"]
+        for slot, value in (slots.items() if isinstance(slots, dict) else ())
+        if isinstance(value, dict) and "connector" in value
+    }
+
+
+def _tool_target(tool: JsonObject, connectors: dict[str, JsonValue]) -> str | None:
+    """What a renamed tool keeps: its action, whatever its version, on its slot's connector (the slot when its document
+    declares none); its workflow; or who it asks. None when it names none."""
     human = tool.get("human")
     if "action" in tool:
-        target: list[JsonValue] = ["action", tool["action"], tool.get("connection")]
+        action, slot = tool["action"], tool.get("connection")
+        name = action.rpartition("@")[0] or action if isinstance(action, str) else action
+        connection = connectors.get(slot, slot) if isinstance(slot, str) else slot
+        target: list[JsonValue] = ["action", name, connection]
     elif "workflow" in tool:
         target = ["workflow", tool["workflow"]]
     elif isinstance(human, dict):
@@ -262,12 +288,19 @@ def _lowest(edited: JsonObject, kept: Sequence[JsonObject], name: str, default: 
     return stated
 
 
-def _review(edited: JsonObject, kept: Sequence[JsonObject], notes: _Kept, where: str) -> None:
+def _review(
+    edited: JsonObject, kept: Sequence[JsonObject], notes: _Kept, where: str, inherited: JsonValue = None
+) -> None:
+    """Hold a review to the drafts' reviews. ``inherited`` is the review the edited tool gets from its step when it sets
+    none: the tool keeps it unless a draft's review is stricter."""
     reviews = [draft["review"] for draft in kept if isinstance(draft.get("review"), dict)]
     if not reviews:
         return
     value = edited.get("review")
-    if not isinstance(value, dict):
+    seeded = "review" not in edited and isinstance(inherited, dict)
+    if seeded:
+        value = copy.deepcopy(cast(JsonObject, inherited))
+    elif not isinstance(value, dict):
         if "review" in edited:
             notes.changed_back("review", where)
         value = {}
@@ -286,7 +319,8 @@ def _review(edited: JsonObject, kept: Sequence[JsonObject], notes: _Kept, where:
     for key, setting in first.items():
         if key not in value:
             value[key] = copy.deepcopy(setting)
-    edited["review"] = value
+    if not (seeded and value == inherited):
+        edited["review"] = value
 
 
 def _limits(step: JsonObject, kept: Sequence[JsonObject], notes: _Kept, where: str) -> None:
@@ -299,6 +333,11 @@ def _limits(step: JsonObject, kept: Sequence[JsonObject], notes: _Kept, where: s
     for name, default in LIMITS.items():
         if _lowest(value, drafts, name, default):
             notes.changed_back(f"limits.{name}", where)
+    stops = [draft.get("onToolError", TOOL_ERROR) for draft in drafts]
+    if TOOL_ERRORS[-1] in stops and value.get("onToolError") != TOOL_ERRORS[-1]:
+        if "onToolError" in value:
+            notes.changed_back("limits.onToolError", where)
+        value["onToolError"] = TOOL_ERRORS[-1]
     for draft in drafts:
         for key, setting in draft.items():
             if key not in value:
@@ -339,7 +378,7 @@ def _fixed(tool: JsonObject, kept: Sequence[JsonObject], notes: _Kept, where: st
     tool["fixed"] = {"object": arguments}
 
 
-def _keep_tool(tool: JsonObject, kept: Sequence[JsonObject], notes: _Kept, where: str) -> None:
+def _keep_tool(tool: JsonObject, kept: Sequence[JsonObject], notes: _Kept, where: str, inherited: JsonValue) -> None:
     def approval(value: JsonValue) -> str | None:
         return next((known for known in APPROVALS if known is not None and known == value), None)
 
@@ -355,7 +394,7 @@ def _keep_tool(tool: JsonObject, kept: Sequence[JsonObject], notes: _Kept, where
             tool.pop("approval", None)
         else:
             tool["approval"] = strictest
-    _review(tool, kept, notes, where)
+    _review(tool, kept, notes, where, inherited)
     _fixed(tool, kept, notes, where)
     human = next((draft["human"] for draft in kept if "human" in draft), None)
     if "human" not in tool and human is not None:
@@ -373,12 +412,41 @@ def _keep_step(step: JsonObject, kept: Sequence[JsonObject], notes: _Kept, where
             else:
                 del step[name]
     _review(step, kept, notes, where)
-    memory, previous = step.get("memory"), first.get("memory")
-    if "memory" not in step and previous is not None:
-        step["memory"] = copy.deepcopy(previous)
-    elif isinstance(memory, dict) and isinstance(previous, dict):
-        for key, setting in previous.items():
-            memory.setdefault(key, copy.deepcopy(setting))
+    _memory(step, kept, notes, where)
+
+
+def _memory(step: JsonObject, kept: Sequence[JsonObject], notes: _Kept, where: str) -> None:
+    """Memory decides what an agent shares across activations and runs: its scope and key stay the first draft's unless
+    the proposal narrows the scope, and each size is held to the lowest the drafts allow."""
+    drafts = [cast(JsonObject, agent["memory"]) if isinstance(agent.get("memory"), dict) else {} for agent in kept]
+    first = drafts[0]
+    value = step.get("memory")
+    if not isinstance(value, dict):
+        if "memory" in step:
+            notes.changed_back("memory", where)
+        value = {}
+
+    def rank(scope: JsonValue) -> int:
+        return MEMORY_SCOPES.index(scope) if isinstance(scope, str) and scope in MEMORY_SCOPES else len(MEMORY_SCOPES)
+
+    # A scope left out keeps the draft's, like any guard; only a narrower one written replaces it.
+    if "scope" not in value or rank(value["scope"]) >= rank(first.get("scope", MEMORY_SCOPES[0])):
+        for name in ("scope", *MEMORY_SCOPED):
+            if (name in value) != (name in first) or value.get(name) != first.get(name):
+                if name in value:
+                    notes.changed_back(f"memory.{name}", where)
+                if name in first:
+                    value[name] = copy.deepcopy(first[name])
+                else:
+                    del value[name]
+    for name, default in MEMORY_SIZES.items():
+        if _lowest(value, drafts, name, default):
+            notes.changed_back(f"memory.{name}", where)
+    for key, setting in first.items():
+        if key not in value and key not in ("scope", *MEMORY_SCOPED):
+            value[key] = copy.deepcopy(setting)
+    if value or "memory" in step:
+        step["memory"] = value
 
 
 class KeptGuards(NamedTuple):
@@ -394,8 +462,9 @@ def keep_agent_guards(document: JsonValue, drafts: Sequence[JsonValue]) -> KeptG
     """Hold each agent a proposal writes to the strictest guards of the drafts it may replace; in place.
 
     An agent is matched by its step id, or when renamed, by its uses and profile; a tool by its name in its agent,
-    then by its target (action and connection, workflow, or who it asks) in that agent, then in any agent of any draft.
-    An agent holding a matched tool keeps that tool's agent's limits. A new agent and a new tool are left as written.
+    whatever its target, then by its target (action and connector, workflow, or who it asks) in that agent, then in
+    any agent of any draft. A matched tool keeps the review it really had: its own, else its agent's. An agent holding
+    a matched tool keeps that tool's agent's limits. A new agent and a new tool are left as written.
     """
     if not isinstance(document, dict):
         return KeptGuards(changed=False, unresolved=0, notes=())
@@ -408,44 +477,55 @@ def keep_agent_guards(document: JsonValue, drafts: Sequence[JsonValue]) -> KeptG
     ordered = sorted(drafts, key=lambda draft: name_of(draft) != name_of(document))
     previous: dict[str, list[JsonObject]] = {}
     targets: dict[str, list[tuple[JsonObject, JsonObject]]] = {}
+    # Each draft tool's target, by the tool: a slot's connector is read from the tool's own draft.
+    aims: dict[int, str | None] = {}
     for draft in ordered:
+        connectors = _connectors(draft)
         for identifier, step in _agents(draft).items():
             previous.setdefault(identifier, []).append(step)
             for tool in _tools(step):
-                target = _tool_target(tool)
+                aims[id(tool)] = target = _tool_target(tool, connectors)
                 if target is not None:
                     targets.setdefault(target, []).append((step, tool))
     before = json.dumps(document, sort_keys=True)
+    connectors = _connectors(document)
     agents = _agents(document)
     renamed, ambiguous = _renamed_agents(agents, previous)
     kept = _Kept(unresolved=ambiguous)
     unclear: set[str] = set()
+
+    def really(agent: JsonObject, old: JsonObject, inherits: bool) -> JsonObject:
+        """The draft tool with the review it really gets: its agent's when it sets none, unless its calls run
+        unreviewed. Only when the edited tool doesn't simply inherit its own step's review."""
+        review = agent.get("review")
+        if not inherits or "review" in old or old.get("approval") == "auto" or not isinstance(review, dict):
+            return old
+        return {**old, "review": review}
+
+    def guards(agent: JsonObject, old: JsonObject) -> JsonObject:
+        return {key: really(agent, old, True).get(key) for key in TOOL_GUARDS}
+
     for identifier, step in agents.items():
         matched = previous.get(identifier) or previous.get(renamed.get(identifier, ""), [])
         if matched:
             _keep_step(step, matched, kept, f"agent {identifier}")
         holders = list(matched)
         for tool in _tools(step):
-            name, target = tool.get("name"), _tool_target(tool)
-            same = [
-                old
-                for agent in matched
-                for old in _tools(agent)
-                if old.get("name") == name and (target is None or _tool_target(old) == target)
-            ]
+            name, target = tool.get("name"), _tool_target(tool, connectors)
+            same = [(agent, old) for agent in matched for old in _tools(agent) if old.get("name") == name]
             if not same and target is not None:
-                found = [(agent, old) for agent in matched for old in _tools(agent) if _tool_target(old) == target]
-                found = found or targets.get(target, [])
-                holders += [agent for agent, _ in found]
-                if (
-                    len({json.dumps({key: old.get(key) for key in TOOL_GUARDS}, sort_keys=True) for _, old in found})
-                    > 1
-                ):
+                found = [(agent, old) for agent in matched for old in _tools(agent) if aims.get(id(old)) == target]
+                same = found or targets.get(target, [])
+                holders += [agent for agent, _ in same]
+                if len({json.dumps(guards(agent, old), sort_keys=True) for agent, old in same}) > 1:
                     unclear.add(target)
                     continue
-                same = [old for _, old in found]
             if same:
-                _keep_tool(tool, same, kept, f"tool {name}")
+                own = "review" in tool
+                had = [really(agent, old, own or all(agent is not held for held in matched)) for agent, old in same]
+                # A tool that leaves its review out gets its step's: that one stays unless a draft's is stricter.
+                inherited = None if own or any("review" in old for _, old in same) else step.get("review")
+                _keep_tool(tool, had, kept, f"tool {name}", inherited)
         if holders:
             _limits(step, list({id(agent): agent for agent in holders}.values()), kept, f"agent {identifier}")
     return KeptGuards(
@@ -461,37 +541,48 @@ def _source(document: JsonValue, format: str) -> str:
     return yaml.dump(document, Dumper=_ProposalDumper, sort_keys=False, allow_unicode=True)
 
 
-def _guarded(
-    proposal: LumiProposal, drafts: Sequence[JsonValue], unchecked: bool
-) -> tuple[LumiProposal | None, int, tuple[str, ...]]:
-    """The proposal held to the drafts' guards, None when it must be withheld; its unresolved renames; and the lines
-    for the answer."""
+class _Guarded(NamedTuple):
+    # The proposal held to the drafts' guards; None when it must be withheld.
+    proposal: LumiProposal | None
+    # Errors the guards add: unresolved renames, and agents whose guards could not be checked.
+    errors: int
+    # What the answer must say whatever else it says: a proposal withheld, or guards that could not be checked.
+    alerts: tuple[str, ...]
+    # One line per guard the proposal wrote looser and the draft's value replaced.
+    notes: tuple[str, ...]
+
+
+def _guarded(proposal: LumiProposal, drafts: Sequence[JsonValue], unchecked: bool) -> _Guarded:
     if proposal.kind != "workflow" or not (drafts or unchecked):
-        return proposal, 0, ()
+        return _Guarded(proposal, 0, (), ())
     try:
         document = parse_source(proposal.source, format=proposal.format).value
     except Exception:
-        return proposal, 0, ()
+        return _Guarded(proposal, 0, (), ())
     title = proposal.title
     if _repeats_an_id(document):
         # Two steps with one id: which of them the draft's guards belong to can't be told.
-        return None, 0, (f"Withheld the proposal {title}: it gives two steps the same id.",)
+        return _Guarded(None, 0, (f"Withheld the proposal {title}: it gives two steps the same id.",), ())
+    # The draft that didn't parse may hold agents no other draft has, so their guards stay unknown.
+    alerts, errors = ((UNCHECKED,), 1) if unchecked and _agents(document) else ((), 0)
     if not drafts:
-        return (proposal, 1, (UNCHECKED,)) if _agents(document) else (proposal, 0, ())
+        return _Guarded(proposal, errors, alerts, ())
     kept = keep_agent_guards(document, drafts)
     if not kept.changed:
-        return proposal, kept.unresolved, kept.notes
+        return _Guarded(proposal, errors + kept.unresolved, alerts, kept.notes)
     source = _source(document, proposal.format)
     if len(source) > MAX_PROPOSAL_CHARACTERS:
         # A proposal that can't keep its guards within the size limit is withheld rather than shown loosened.
-        return None, 0, (f"Withheld the proposal {title}: it is too large once its agents keep their safeguards.",)
-    return proposal.model_copy(update={"source": source}), kept.unresolved, kept.notes
+        withheld = f"Withheld the proposal {title}: it is too large once its agents keep their safeguards."
+        return _Guarded(None, 0, (withheld,), ())
+    return _Guarded(proposal.model_copy(update={"source": source}), errors + kept.unresolved, alerts, kept.notes)
 
 
-def _with_notes(answer: str, notes: Sequence[str]) -> str:
-    if not notes:
+def _with_notes(answer: str, alerts: Sequence[str], notes: Sequence[str]) -> str:
+    """The answer, then the alerts, then the kept guards: the first ones by name and a count of the rest."""
+    if not (alerts or notes):
         return answer
-    shown = list(notes[:MAX_NOTES])
+    shown = [*alerts, *notes[:MAX_NOTES]]
     if len(notes) > MAX_NOTES:
         shown.append(f"Kept {len(notes) - MAX_NOTES} more of the draft's safeguards.")
     text = "\n".join(shown)
@@ -502,14 +593,16 @@ def check_proposals(reply: LumiReply, drafts: Sequence[JsonValue] = (), unchecke
     """The reply with each proposal's error count from the platform's own authoring check (no catalog needed).
 
     ``drafts`` are the workflow documents the question carried: each agent a proposal writes is held to their guards
-    first, and a rename that could have lost guards counts as an error. ``unchecked`` says the question's draft didn't
-    parse and no other draft came with it: a proposal with an agent then counts an error, as its guards can't be
-    checked.
+    first, and a rename that could have lost guards counts as an error. ``unchecked`` says the question's own draft
+    didn't parse: a proposal with an agent then counts an error, as that draft's guards can't be checked, even when
+    other drafts came with the question.
     """
     checked = []
+    alerts: list[str] = []
     notes: list[str] = []
     for given in reply.proposals:
-        proposal, unresolved, lines = _guarded(given, drafts, unchecked)
+        proposal, unresolved, raised, lines = _guarded(given, drafts, unchecked)
+        alerts += [line for line in raised if line not in alerts]
         notes += [line for line in lines if line not in notes]
         if proposal is None:
             continue
@@ -522,13 +615,13 @@ def check_proposals(reply: LumiReply, drafts: Sequence[JsonValue] = (), unchecke
         if errors == 0 and (not isinstance(document, dict) or document.get("kind") != PROPOSAL_KINDS[proposal.kind]):
             errors = 1
         checked.append(LumiCheckedProposal(**proposal.model_dump(), diagnostics=errors + unresolved))
-    answer = _with_notes(reply.answer, notes)
+    answer = _with_notes(reply.answer, alerts, notes)
     return LumiAnswer.model_validate({"answer": answer, "proposals": checked, "followUps": reply.follow_ups})
 
 
 def _drafts(request: LumiAskRequest, resources: Sequence[JsonValue]) -> tuple[list[JsonValue], bool]:
     """The workflow documents a question carried, its inline draft then each attached draft; and whether its inline
-    draft didn't parse with no attached draft to check guards against instead."""
+    draft didn't parse."""
     found: list[JsonValue] = []
     parsed = request.draft is None
     if request.draft is not None:
@@ -540,7 +633,7 @@ def _drafts(request: LumiAskRequest, resources: Sequence[JsonValue]) -> tuple[li
         data = resource.get("data") if isinstance(resource, dict) and resource.get("kind") == "draft" else None
         if isinstance(data, dict) and "document" in data:
             found.append(data["document"])
-    return found, not parsed and not found
+    return found, not parsed
 
 
 def _answer_limit(config: LumiConfiguration, profile: Profile) -> LumiConfiguration:
