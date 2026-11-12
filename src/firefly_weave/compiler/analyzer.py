@@ -30,6 +30,7 @@ from firefly_weave.compiler.action_config import (
     ActionConfigIssue,
     ActionConfigValidator,
 )
+from firefly_weave.compiler.agent_tools import runs_model_task
 from firefly_weave.compiler.agents import (
     MESSAGES as AGENT_MESSAGES,
 )
@@ -170,6 +171,8 @@ def reference_available(step_id: str, completed: frozenset[str]) -> bool:
     return step_id in completed
 
 
+# A model runs only in an AI step, which supplies the run's token cap, the data notice and the reviewed transcript.
+UNDO_MODEL_MESSAGE = "An undo action can't run an AI model: only an AI step runs a model, under the run's token cap."
 # What an undo phase reads besides what its step saw: the step's own operation key and outcome, and the transaction.
 UNDO_ROOTS = frozenset({"participant", "transaction"})
 PARTICIPANT_SCHEMA: JsonObject = {
@@ -1549,6 +1552,9 @@ class _Analyzer:
             if undo["kind"] == "action":
                 resource = self.resolve("Action", reference, path + "/uses")
                 spec = cast(JsonObject, resource.definition.value["spec"]) if resource else None
+                if spec is not None and runs_model_task(spec):
+                    # An undo runs with none of an AI step's guards: no token cap, data notice or reviewed transcript.
+                    self.issue("AGENT_ACTION", path + "/uses", message=UNDO_MODEL_MESSAGE)
                 target = cast(JsonObject, spec["inputSchema"]) if spec else None
                 self.expression(expression, path + "/with", scope, target)
                 # The step's connection is the default only for an undo action that needs one.

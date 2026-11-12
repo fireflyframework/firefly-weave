@@ -264,6 +264,29 @@ def test_only_an_agent_step_runs_the_turn_action():
     assert ("WV-COMP-LLM_ACTION", "error", "/spec/steps/0/uses") in errors(workflow(llm_step))
 
 
+def compensated(uses):
+    """A transaction whose refund is undone by the action ``uses`` on the AI connection."""
+    refund = {
+        "id": "refund",
+        "kind": "action",
+        "uses": "orders-refund@1.0.0",
+        "connection": "orders",
+        "with": {"object": {"id": {"literal": "A-1"}, "region": {"literal": "eu"}}},
+        "compensate": {"kind": "action", "uses": uses, "connection": "ai", "with": {"literal": {}}},
+    }
+    move = {"id": "move", "kind": "transaction", "steps": [refund], "output": {"literal": "moved"}}
+    return workflow(move)
+
+
+@pytest.mark.parametrize("uses", ["weave-agentic-turn@1.0.0", "weave-agentic-generate@1.0.0"], ids=["turn", "generate"])
+def test_an_undo_action_cant_run_an_ai_model(uses):
+    # An undo runs with none of an AI step's guards: no token cap, data notice or reviewed transcript.
+    path = "/spec/steps/0/steps/0/compensate/uses"
+
+    assert ("WV-COMP-AGENT_ACTION", "error", path) in errors(compensated(uses))
+    assert not [found for found in errors(compensated("orders-refund@1.0.0")) if found[2] == path]
+
+
 def test_a_tool_runs_on_a_slot_of_its_actions_connector():
     tool = {**LOOKUP, "connection": "ai"}
 

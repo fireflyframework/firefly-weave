@@ -23,7 +23,7 @@ current authority: it reads no database, cache, gateway, network or secret.
 from collections.abc import Mapping, Sequence
 
 from firefly_weave.ai_policy import AIPolicy
-from firefly_weave.compiler.ir import ActionNode, AgentNode, Node, WorkflowIR
+from firefly_weave.compiler.ir import ActionNode, AgentNode, CallWorkflowNode, Node, WorkflowIR
 from firefly_weave.contracts.connectors import BoundConnection
 from firefly_weave.contracts.values import JsonObject
 from firefly_weave.definitions.models import CatalogError
@@ -60,7 +60,8 @@ def validate_ai_reserved(ir: WorkflowIR) -> None:
 
     An agent step supplies what keeps a turn safe (the run's token cap, the data notice, the reviewed transcript); any
     other step would leave that to its author. No agent tool runs a model task either, so a model never starts another
-    model outside that cap. This holds with or without an AI policy.
+    model outside that cap, and no undo action of a transaction step runs one, as an undo has none of an agent's
+    guards. This holds with or without an AI policy.
     """
     from firefly_weave.compiler.agent_tools import runs_model_task
     from firefly_weave.compiler.agents import runs_turn_task, turn_action_digest
@@ -82,5 +83,7 @@ def validate_ai_reserved(ir: WorkflowIR) -> None:
             reserved = dependency != platform or any(runs_model_task(spec_of(tool.dependency)) for tool in node.tools)
         else:
             reserved = runs_turn_task(spec_of(dependency))
+        if isinstance(node, (ActionNode, CallWorkflowNode)) and node.txn is not None:
+            reserved = reserved or any(runs_model_task(spec_of(phase.dependency)) for phase in node.txn.phases.values())
         if reserved:
             raise CatalogError(422, "WV-ACTIVATION-AI-RESERVED", "Only an AI agent step runs the platform's model turn")

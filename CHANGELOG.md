@@ -134,6 +134,10 @@ SPDX-License-Identifier: Apache-2.0
   draft whose safeguards it can't read, are named first in the answer. Weave AI
   can also ask that a different person than the run's starter approves an
   agent's data-changing calls (`distinctReviewer`).
+- A transaction step's undo action (`confirm`, `cancel` or `compensate`) can't
+  run an AI model: the compiler refuses one that does
+  (`WV-COMP-AGENT_ACTION` at its `uses`), and activation refuses it too
+  (`WV-ACTIVATION-AI-RESERVED`), since an undo has none of an AI step's guards.
 
 ## 0.1.0a17
 

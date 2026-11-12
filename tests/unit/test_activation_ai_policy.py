@@ -34,7 +34,16 @@ from firefly_weave.ai_policy import AIPolicy, PolicyEndpoint, from_pairs, render
 from firefly_weave.compiler.api import compile_source
 from firefly_weave.compiler.canonical import canonical_digest
 from firefly_weave.compiler.catalog import CatalogSnapshot
-from firefly_weave.compiler.ir import ActionNode, AgentNode, AgentToolIR, TransformNode, WorkflowIR
+from firefly_weave.compiler.ir import (
+    ActionNode,
+    AgentNode,
+    AgentToolIR,
+    Dependency,
+    Participation,
+    TransformNode,
+    UndoPhaseNode,
+    WorkflowIR,
+)
 from firefly_weave.connections.registry import ConnectorRegistry
 from firefly_weave.connections.secrets import ScopedSecrets, SecretGrant
 from firefly_weave.connections.service import ConnectionService
@@ -293,25 +302,67 @@ def test_an_agent_tool_pinned_to_an_ai_task_is_refused_at_activation(task):
     assert (refused.value.status, refused.value.code) == (422, "WV-ACTIVATION-AI-RESERVED")
 
 
-@pytest.mark.parametrize("where", ["tool", "step"])
+def plain_action() -> Dependency:
+    """An Action that runs no model: it undoes a change through a connector."""
+    document = deepcopy(action_definition())
+    document["metadata"]["name"] = "remove-quantity"
+    document["spec"]["implementation"] = {"kind": "connector", "uses": "inventory@1.0.0", "action": "remove"}
+    return Dependency.model_construct(
+        kind="Action", reference="remove-quantity@1.0.0", digest=canonical_digest(document), document=document
+    )
+
+
+def undone(step: str, undo: str) -> ActionNode:
+    """A step of a transaction pinned to ``step``, compensated by an action pinned to ``undo``."""
+    phase = UndoPhaseNode.model_construct(kind="action", dependency=undo, input={"literal": {}}, connection="ai")
+    txn = Participation.model_construct(owner="move", mode="compensate", phases={"compensate": phase})
+    return ActionNode.model_construct(id="add", dependency=step, connection=None, llm_profile=None, txn=txn)
+
+
+@pytest.mark.parametrize("where", ["tool", "step", "undo"])
 def test_a_pinned_document_activation_cannot_read_is_refused_rather_than_assumed_safe(where):
+    plain = plain_action()
     ir = agent_ir()
-    reserved()(ir)
+    ir = ir.model_copy(update={"dependencies": [*ir.dependencies, plain]})
+    reserved()(with_nodes(ir, [*ir.graph.nodes, undone(plain.digest, plain.digest)]))
     agent = next(node for node in ir.graph.nodes if isinstance(node, AgentNode))
     # A digest the IR carries no document for: what it runs can't be checked, so it may be the model turn.
     unknown = "sha256:" + "1" * 64
     if where == "tool":
         tool = AgentToolIR.model_construct(name="lookup", target="action", dependency=unknown)
         nodes = [agent.model_copy(update={"tools": [tool]}) if node is agent else node for node in ir.graph.nodes]
-    else:
+    elif where == "step":
         nodes = [
             *ir.graph.nodes,
             ActionNode.model_construct(id="act", dependency=unknown, connection="ai", llm_profile=None),
         ]
+    else:
+        nodes = [*ir.graph.nodes, undone(plain.digest, unknown)]
 
     with pytest.raises(CatalogError) as refused:
         reserved()(with_nodes(ir, nodes))
     assert (refused.value.status, refused.value.code) == (422, "WV-ACTIVATION-AI-RESERVED")
+
+
+@pytest.mark.parametrize("task", ["turn", "generate"])
+def test_an_undo_action_that_runs_a_model_task_is_refused_at_activation(task):
+    plain = plain_action()
+    generate = next(
+        dependency
+        for dependency in WorkflowIR.model_validate(compiled(ai_workflow()).executable).dependencies
+        if dependency.kind == "Action"
+    )
+    ir = agent_ir()
+    ir = ir.model_copy(update={"dependencies": [*ir.dependencies, plain, generate]})
+    turn = next(node for node in ir.graph.nodes if isinstance(node, AgentNode)).dependency
+    reserved()(with_nodes(ir, [*ir.graph.nodes, undone(plain.digest, plain.digest)]))
+    # An undo runs after the step with none of an agent's guards: no token cap, data notice or reviewed transcript.
+    model = undone(plain.digest, turn if task == "turn" else generate.digest)
+
+    with pytest.raises(CatalogError) as refused:
+        reserved()(with_nodes(ir, [*ir.graph.nodes, model]))
+    assert (refused.value.status, refused.value.code) == (422, "WV-ACTIVATION-AI-RESERVED")
+    assert str(refused.value) == "Only an AI agent step runs the platform's model turn"
 
 
 # Activation: real definition, connection and authorization services over an in-memory environment.
