@@ -678,7 +678,21 @@ def target_objects(target: ClusterTarget) -> list[dict[str, Any]]:
     ]
 
 
-_CONTAINER_HARDENING = ("securityContext", "env", "envFrom", "volumeMounts", "command", "args")
+_CONTAINER_HARDENING = ("securityContext", "env", "envFrom", "volumeMounts", "command", "args", "lifecycle")
+# Only the command a probe runs: the server fills in a probe's timings.
+_PROBES = ("livenessProbe", "readinessProbe", "startupProbe")
+# The pod's isolation, identity and name resolution: hostAliases or dnsConfig could send the worker's sign-in to
+# another host.
+_POD_HARDENING = (
+    "hostNetwork",
+    "hostPID",
+    "hostIPC",
+    "shareProcessNamespace",
+    "hostAliases",
+    "dnsConfig",
+    "runtimeClassName",
+    "serviceAccountName",
+)
 
 
 def _hardening(spec: dict[str, Any]) -> dict[str, Any]:
@@ -687,8 +701,10 @@ def _hardening(spec: dict[str, Any]) -> dict[str, Any]:
         "spec.template.spec.automountServiceAccountToken": spec.get("automountServiceAccountToken"),
         "spec.template.spec.securityContext": spec.get("securityContext"),
     }
-    for key in ("hostNetwork", "hostPID", "hostIPC", "shareProcessNamespace", "serviceAccountName"):
+    for key in _POD_HARDENING:
         fields[f"spec.template.spec.{key}"] = spec.get(key)
+    # The server stores ClusterFirst when none is given.
+    fields["spec.template.spec.dnsPolicy"] = spec.get("dnsPolicy") or "ClusterFirst"
     for volume in spec.get("volumes") or []:
         # Each volume's kind of source, what it names, its storage medium and file mode; the server fills in neither
         # when it's set, so a live worker still compares equal, and the other defaults inside a source are left out.
@@ -703,9 +719,11 @@ def _hardening(spec: dict[str, Any]) -> dict[str, Any]:
     for group in ("initContainers", "containers"):
         for container in spec.get(group) or []:
             # What each container runs and everything it reads: an added envFrom or mount brings a Secret in without
-            # touching the pod's volumes. The server fills in none of these, and change requests never set them.
+            # touching the pod's volumes, and an exec hook or probe runs another command. Change requests never set
+            # these, and the rendered worker has no hooks or probes for the server to fill in.
             fields[f"spec.template.spec.{group}[{container.get('name')}]"] = {
-                key: container.get(key) for key in _CONTAINER_HARDENING
+                **{key: container.get(key) for key in _CONTAINER_HARDENING},
+                **{f"{probe}.exec": (container.get(probe) or {}).get("exec") for probe in _PROBES},
             }
     return fields
 

@@ -457,6 +457,17 @@ def _worker(pod):
     return pod["containers"][0]
 
 
+def _probe(command):
+    """An exec probe with the timings the server fills in: only the command it runs counts as drift."""
+    return {
+        "exec": {"command": command},
+        "timeoutSeconds": 1,
+        "periodSeconds": 10,
+        "successThreshold": 1,
+        "failureThreshold": 3,
+    }
+
+
 # One edit each to a live worker's pod spec, and the one field it must be reported by.
 WEAKENED = {
     "allowed to run as root": (
@@ -495,6 +506,30 @@ WEAKENED = {
     "given another copy step": (
         lambda pod: pod["initContainers"][0].update(command=["sh", "-c", "cp -R /identity/. /secrets/"]),
         "spec.template.spec.initContainers[secrets].command",
+    ),
+    "given a command after start": (
+        lambda pod: _worker(pod).update(lifecycle={"postStart": {"exec": {"command": ["sh", "-c", "env"]}}}),
+        "spec.template.spec.containers[worker].lifecycle.postStart.exec.command",
+    ),
+    **{
+        f"given a {probe} command": (
+            lambda pod, probe=probe: _worker(pod).update({probe: _probe(["sh", "-c", "env"])}),
+            f"spec.template.spec.containers[worker].{probe}.exec.command",
+        )
+        for probe in ("startupProbe", "livenessProbe", "readinessProbe")
+    },
+    "pointed at another API host": (
+        lambda pod: pod.update(hostAliases=[{"ip": "203.0.113.7", "hostnames": [objects.API_HOST]}]),
+        "spec.template.spec.hostAliases",
+    ),
+    "given another nameserver": (
+        lambda pod: pod.update(dnsConfig={"nameservers": ["203.0.113.7"]}),
+        "spec.template.spec.dnsConfig.nameservers",
+    ),
+    "on the node's DNS": (lambda pod: pod.update(dnsPolicy="Default"), "spec.template.spec.dnsPolicy"),
+    "on another runtime class": (
+        lambda pod: pod.update(runtimeClassName="runc-unconfined"),
+        "spec.template.spec.runtimeClassName",
     ),
 }
 
