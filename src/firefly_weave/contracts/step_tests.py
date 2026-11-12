@@ -20,7 +20,7 @@ These are platform API bodies, so every field is snake_case. The server enforces
 policy, connection binding, side-effect acknowledgement, ownership); these models only fix the wire shapes.
 """
 
-from typing import TYPE_CHECKING, Annotated, Final, Literal, Protocol, Self
+from typing import TYPE_CHECKING, Annotated, Final, Literal, NamedTuple, Protocol, Self
 from uuid import UUID
 
 from pydantic import AwareDatetime, Field, model_validator
@@ -28,7 +28,7 @@ from pydantic import AwareDatetime, Field, model_validator
 from firefly_weave.contracts.catalog import Digest
 from firefly_weave.contracts.definitions import ContractModel, PositiveInt, ResourceName, SideEffect, VersionedReference
 from firefly_weave.contracts.instance_keys import InstanceKeyText, InstanceKeyTextOrEmpty
-from firefly_weave.contracts.values import JsonData, JsonObjectData, UnicodeString
+from firefly_weave.contracts.values import JsonData, JsonObject, JsonObjectData, UnicodeString
 
 if TYPE_CHECKING:
     from firefly_weave.compiler.catalog import CatalogSnapshot
@@ -203,9 +203,19 @@ class SynthesizedTest(ContractModel):
     timeout_seconds: PositiveInt
 
 
+class DraftStep(NamedTuple):
+    """The saved draft's workflow document and the step a step test runs, as found in it."""
+
+    workflow: JsonObject
+    step: JsonObject
+
+
 class StepTestSynthesizer(Protocol):
-    """Builds the workflow for step tests of some step kinds (actions and AI tasks here; AI agents elsewhere)."""
+    """Builds the workflow for step tests of some step kinds (actions and AI tasks here; AI agents elsewhere).
+
+    The draft supplies what the request doesn't carry, such as the step's connection slot and AI profile.
+    """
 
     kinds: frozenset[str]
 
-    def synthesize(self, request: StepTestRequest, catalog: "CatalogSnapshot") -> SynthesizedTest: ...
+    def synthesize(self, request: StepTestRequest, draft: DraftStep, catalog: "CatalogSnapshot") -> SynthesizedTest: ...
