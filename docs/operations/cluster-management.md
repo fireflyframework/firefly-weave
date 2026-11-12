@@ -532,7 +532,8 @@ its security settings changed: what its containers run, mount, or read, how its
 pods resolve host names, or its security context, such as a writable root
 filesystem or a mounted service account token. A deleted workers namespace reads
 as `Namespace/NAMESPACE`, since everything in it went with it. `--check` changes
-nothing; run `connect` again to repair what it names. It needs the runner image
+nothing; run `connect` again to repair what it names, and for
+`Deployment/weave-worker`, see the repair below. It needs the runner image
 the platform built, which `connect` pushes to the platform registry; when Docker
 no longer holds that image, `--check` says so, and `list` without `--check`
 still works.
