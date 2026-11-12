@@ -155,6 +155,47 @@ outcome that does not match its call evidence makes the report `inconsistent`
 (`WV-REPLAY-CALL` or `WV-REPLAY-CALL-ISSUANCE`); missing call evidence makes it
 `incomplete` (`WV-REPLAY-CALL-PROVENANCE`).
 
+## Handled step failures in a history
+
+A step whose On error setting handles a failure records a `step_failed` event
+with `node_id` (the instance key), `generation`, `code`, `outcome`, `attempts`,
+and, when known, `child_run_id`, `deadline`, `wait_id`, and `effect` (inside a
+transaction). Exports keep only these codes, outcomes, and counts, never worker
+or provider text. The step change that follows has `status: failed` and the
+error object; an error path's join records the step's final change with the
+path's output. Replay checks each event against its source: the task receipt and
+recovery timing for a task that failed after its retries or that nobody claimed
+before its deadline, the deadline and its order for a signal or human task that
+timed out, and the refused call row for a call that could not start. Confirm it
+had no effect (`accept_reconciled_failure`) replays only for a task incident of
+a step with a setting, and `incident_resolved` keeps its `attempts`. On a
+transaction in doubt the same kind is It didn't happen: it records the
+incident's `code` and no `attempts`, and replay checks it through the kernel
+like the transaction's other resolutions.
+
+## Transactions in a history
+
+A run with a workflow transaction records its phases at their own keys: the
+confirm, cancel and undo of a step `hold` run at `hold#confirm`, `hold#cancel`
+and `hold#undo`, with task and call evidence like any step, and a transaction's
+own deadlines fire at `move#hold`, `move#settle` (and `move#settle.1`, … when a
+person retries a settle timeout) and `move#decide`. A step's final failure is a
+`step_failed` event (see [handled step failures](#handled-step-failures-in-a-history))
+whose `effect` is `none` only when the worker's release proved nothing was
+applied; exports keep it and the `effect` of `task_failed`,
+`recovery_scheduled` and `call_completed`, the `run_id` a transaction's run
+starts with, and `skip_undo` of a cancel. A resolution of a transaction in doubt
+records the incident's `code`, so its `output` (the step's output, or a
+reconciliation record whose `blockOutput` is classified by the block's output
+schema) is exported safely. Replay checks the resolution through the kernel and
+compares transitions byte for byte: a tampered `effect` replays `inconsistent`.
+
+A run that grew too large to undo its transactions records its hold
+(`incident_opened` at `@transactions`) with evidence that omits the expected
+transition for its size (and the run's source reference, as every evidence row
+does), so replay verifies everything before it and stops there as `incomplete`
+(`WV-REPLAY-EXPECTATION`), as it stops at an oversized stop.
+
 ## Routes, pagination, and limits
 
 All routes are under

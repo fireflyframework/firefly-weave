@@ -82,6 +82,9 @@ prompt, context, connection), `transform` (value), `decisionTable` (uses, with),
 default), `parallel` (branches), `forEach` (items, body), `callWorkflow` (uses, with), `wait` (durationSeconds),
 `signal` (name, timeoutSeconds, payloadSchema), `humanTask` (assignment, title, context, formSchema) and `fail`
 (code, message). Nested steps sit in a block: {steps, output}.
+`transaction` (businessKey, steps, output) groups steps that change other systems so they are undone together.
+Each step inside it that changes data says how it is undone: confirm and cancel (it reserves), compensate (an
+action or workflow reverses it), or irreversible: true (it can't be undone). That last kind of step comes last.
 Expressions: {literal: 1}, {ref: /input/name}, {ref: /steps/<id>/output/field}, {object: {key: expr}},
 {array: [expr]}, {op: {name, args}}.
 Example of a whole workflow document:
@@ -173,7 +176,7 @@ def _steps(block: object) -> list[JsonObject]:
         elif isinstance(value, dict):
             if isinstance(value.get("id"), str) and isinstance(value.get("kind"), str):
                 found.append(cast(JsonObject, value))
-            for key in ("steps", "cases", "default", "branches", "body"):
+            for key in ("steps", "cases", "default", "branches", "body", "errorPath"):
                 child = value.get(key)
                 pending.extend(child.values() if key == "branches" and isinstance(child, dict) else [child])
     return found
@@ -385,6 +388,29 @@ def _parsed(format: str, source: str) -> JsonValue | None:
         return None
 
 
+# Schema keywords whose values are data, not schemas: an object there may hold a "title" that means something.
+_SCHEMA_DATA = frozenset({"const", "enum", "default", "examples"})
+
+
+def untitled(schema: JsonValue) -> JsonValue:
+    """A JSON schema without its ``title`` annotations; property names and data values stay as they are."""
+    if isinstance(schema, list):
+        return [untitled(item) for item in schema]
+    if not isinstance(schema, dict):
+        return schema
+    result: JsonObject = {}
+    for key, value in schema.items():
+        if key == "title" and isinstance(value, str):
+            continue
+        if key in _SCHEMA_DATA:
+            result[key] = value
+        elif key in {"properties", "patternProperties", "$defs", "dependentSchemas"} and isinstance(value, dict):
+            result[key] = {name: untitled(child) for name, child in value.items()}
+        else:
+            result[key] = untitled(value)
+    return result
+
+
 def shape(
     profile: Profile,
     budget: int | None,
@@ -410,6 +436,9 @@ def shape(
         if profile != "full":
             context["guide"] = GUIDE
         wanted = {name: schemas[name] for name in SCHEMAS[profile] if name in schemas}
+        if profile == "standard":
+            # A standard context sends the workflow schema whole; its titles repeat the property names.
+            wanted = {name: untitled(value) for name, value in wanted.items()}
         if wanted:
             context["authoringSchemas"] = cast(JsonValue, wanted)
     # The instructions, reply format, guide and schemas are sent whole; the other parts share what they leave,

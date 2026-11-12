@@ -17,14 +17,15 @@
 """Offline replay of supplied recorded facts through the production pure kernel."""
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
+from typing import Any, cast
 from uuid import UUID
 
 from pydantic import ValidationError
 
 from firefly_weave.compiler.api import CompiledArtifact, import_artifact
 from firefly_weave.compiler.calls import call_output_schema
-from firefly_weave.compiler.ir import ActionNode, CallWorkflowNode, HumanTaskNode, IRNode, SignalNode
+from firefly_weave.compiler.ir import ActionNode, CallWorkflowNode, HandlesErrors, HumanTaskNode, IRNode, SignalNode
 from firefly_weave.contracts.definitions import ActionDefinition, load_definition
 from firefly_weave.contracts.instance_keys import node_of
 from firefly_weave.contracts.operations import (
@@ -36,7 +37,16 @@ from firefly_weave.contracts.operations import (
     ReplayReport,
     TaskFact,
 )
-from firefly_weave.operations.exports import bounded_size, event_node, lock_digest, safe_event, transition_digest
+from firefly_weave.contracts.step_errors import OUTCOME_ORDER, StepOutcome, confirmable, strongest
+from firefly_weave.contracts.transactions import IN_DOUBT_CODES, split_phase
+from firefly_weave.operations.exports import (
+    bounded_size,
+    event_node,
+    lock_digest,
+    phase_step,
+    safe_event,
+    transition_digest,
+)
 from firefly_weave.operations.redaction import project
 from firefly_weave.runtime.kernel import (
     called_workflow,
@@ -48,6 +58,8 @@ from firefly_weave.runtime.kernel import (
     workflow,
 )
 from firefly_weave.runtime.models import CallIntent, Deadline, HumanTaskIntent, RunState, RuntimeEvent, TaskIntent
+from firefly_weave.runtime.step_failures import continuation_steps
+from firefly_weave.runtime.transactions import HELD_CODE, HELD_NODE, in_transaction, shapes, split_deadline
 
 MAX_EVENTS = 10_000
 MAX_BYTES = 64 * 1024 * 1024
@@ -92,12 +104,22 @@ def replay(artifact: CompiledArtifact, events: tuple[RuntimeEvent, ...]) -> Repl
     tasks: dict[str, TaskFact] = {}
     deadlines: dict[str, DeadlineFact] = {}
     attempts: dict[str, tuple[int, str]] = {}
+    # Each task's started attempts (generations), and the outcome each failed attempt reported.
+    started: dict[str, set[int]] = {}
+    reported: dict[str, dict[int, StepOutcome]] = {}
+
+    def outcome_of(key: str) -> StepOutcome:
+        """A task's outcome over its started attempts, a lost lease counting as unknown (as recovery decides it)."""
+        return strongest(reported.get(key, {}).get(generation, "unknown") for generation in started.get(key, set()))
+
     eligible_at: dict[str, datetime] = {}
     # The latest call row issued for each call step instance, and every call row seen.
     calls: dict[str, CallFact] = {}
     call_ids: set[UUID] = set()
     nodes = {n.id: n for n in ir.graph.nodes}
     duration_nodes = duration_steps(ir)
+    transactions = shapes(ir)
+    continuations = continuation_steps(ir)
     expected_lock = lock_digest(artifact)
     for index, supplied in enumerate(events, 1):
         if index > MAX_EVENTS:
@@ -135,7 +157,9 @@ def replay(artifact: CompiledArtifact, events: tuple[RuntimeEvent, ...]) -> Repl
                 missing=True,
             )
             if event.type not in {"started", "cancelled", "timed_out", "incident_resolved", "paused", "resumed"}:
-                require(event_node(nodes, event.data.get("node_id")) is not None, "WV-REPLAY-EVENT")
+                # A run holding its transactions records its hold at a key of its own, not at a step.
+                held = event.type == "incident_opened" and event.data.get("node_id") == HELD_NODE
+                require(held or event_node(nodes, event.data.get("node_id")) is not None, "WV-REPLAY-EVENT")
             projected = safe_event(event, artifact)
             changes = {key for key in event.data if key not in projected.data}
             require(changes <= {"reason", "evidence_reference"}, "WV-REPLAY-REDACTED", missing=True)
@@ -164,9 +188,45 @@ def replay(artifact: CompiledArtifact, events: tuple[RuntimeEvent, ...]) -> Repl
             require(state.status not in TERMINAL, "WV-REPLAY-TERMINAL")
             node_id = str(event.data.get("node_id", ""))
             node = event_node(nodes, node_id)
+            phase = phase_step(node, node_id)
+            # A confirm, cancel or undo runs its own action or called workflow at its phase key.
+            runs_call = phase.kind == "callWorkflow" if phase is not None else isinstance(node, CallWorkflowNode)
+            runs_task = phase.kind == "action" if phase is not None else isinstance(node, ActionNode)
             receipt_id = UUID(str(event.data["receipt_id"])) if event.type == "incident_resolved" else event.id
             require(receipt_id not in accepted_receipts, "WV-REPLAY-DUPLICATE-RECEIPT")
-            if event.type in {"call_completed", "incident_opened"} and isinstance(node, CallWorkflowNode):
+            handles = isinstance(node, HandlesErrors) and node.on_error is not None
+            inside = event.type == "step_failed" and in_transaction(transactions, node_id)
+            if event.type == "step_failed":
+                # A step's own setting takes its failure, or its transaction does.
+                require((handles or inside) and node_id in state.active, "WV-REPLAY-EVENT")
+            if event.type == "incident_opened" and node_id == HELD_NODE:
+                require(event.data.get("code") == HELD_CODE, "WV-REPLAY-EVENT")
+            elif event.type == "step_failed" and "wait_id" in event.data:
+                # A wait's deadline the step handles: the same deadline evidence as a timeout.
+                _verify_wait(event, evidence, deadlines, nodes, duration_nodes, continuations)
+            elif event.type == "step_failed" and inside:
+                # A final failure the transaction handles: the kernel checks it; its attempts are done with.
+                generation = event.data.get("generation")
+                require(type(generation) is int and generation >= 0, "WV-REPLAY-EVENT")
+                assert isinstance(generation, int)
+                if generation:
+                    attempts[node_id] = (generation, "retired")
+            elif (
+                event.type == "step_failed"
+                and isinstance(node, ActionNode)
+                and event.data.get("code") == "WV-TASK-DEADLINE"
+            ):
+                # A task nobody claimed before its deadline: its latest attempt never ran, earlier ones may have.
+                ran = started.get(node_id, set())
+                require(
+                    node_id in tasks
+                    and event.timestamp >= tasks[node_id].deadline
+                    and event.data.get("generation") == max(ran, default=0)
+                    and event.data.get("attempts") == len(ran)
+                    and event.data.get("outcome") == outcome_of(node_id),
+                    "WV-REPLAY-EVENT",
+                )
+            elif event.type in {"call_completed", "incident_opened", "step_failed"} and runs_call:
                 require(node_id in state.active, "WV-REPLAY-EVENT")
                 call_receipt = evidence.call_receipt
                 require(call_receipt is not None, "WV-REPLAY-CALL-PROVENANCE", missing=True)
@@ -176,7 +236,13 @@ def replay(artifact: CompiledArtifact, events: tuple[RuntimeEvent, ...]) -> Repl
                     and call_receipt.call.generation == event.data.get("generation"),
                     "WV-REPLAY-CALL",
                 )
-                if event.type == "call_completed":
+                if event.type == "step_failed":
+                    # A call that could not start fails its step with the code its row recorded.
+                    require(
+                        call_receipt.status == "rejected" and call_receipt.code == event.data.get("code"),
+                        "WV-REPLAY-CALL",
+                    )
+                elif event.type == "call_completed":
                     require(
                         call_receipt.status == event.data.get("status")
                         and call_receipt.child_run_id is not None
@@ -185,8 +251,14 @@ def replay(artifact: CompiledArtifact, events: tuple[RuntimeEvent, ...]) -> Repl
                     )
                 else:
                     require(isinstance(event.data.get("code"), str) and bool(event.data["code"]), "WV-REPLAY-EVENT")
-            elif event.type in {"task_completed", "task_failed", "incident_opened", "recovery_scheduled"}:
-                require(isinstance(node, ActionNode) and node_id in state.active, "WV-REPLAY-EVENT")
+            elif event.type in {
+                "task_completed",
+                "task_failed",
+                "incident_opened",
+                "recovery_scheduled",
+                "step_failed",
+            }:
+                require(runs_task and node_id in state.active, "WV-REPLAY-EVENT")
                 receipt = evidence.task_receipt
                 require(receipt is not None, "WV-REPLAY-TASK-PROVENANCE", missing=True)
                 assert receipt is not None
@@ -208,7 +280,7 @@ def replay(artifact: CompiledArtifact, events: tuple[RuntimeEvent, ...]) -> Repl
                 )
                 recovery = timing.kind == "recovery_decision"
                 require(
-                    (recovery and event.type in {"incident_opened", "recovery_scheduled"})
+                    (recovery and event.type in {"incident_opened", "recovery_scheduled", "step_failed"})
                     or (
                         not recovery
                         and event.type in {"task_completed", "task_failed", "incident_opened"}
@@ -223,12 +295,25 @@ def replay(artifact: CompiledArtifact, events: tuple[RuntimeEvent, ...]) -> Repl
                     "WV-REPLAY-GENERATION",
                 )
                 attempts[node_id] = (receipt.generation, event.type)
+                started.setdefault(node_id, set()).add(receipt.generation)
+                if event.type == "task_failed":
+                    output = event.data.get("output")
+                    said = output.get("outcome") if isinstance(output, dict) else None
+                    reported.setdefault(node_id, {})[receipt.generation] = (
+                        cast(StepOutcome, said) if said in OUTCOME_ORDER else "unknown"
+                    )
+                if event.type == "step_failed" and not in_transaction(transactions, node_id):
+                    # A final failure handed to the step reports the outcome and count of every attempt.
+                    require(
+                        event.data.get("outcome") == outcome_of(node_id)
+                        and event.data.get("attempts") == len(started[node_id]),
+                        "WV-REPLAY-EVENT",
+                    )
                 if event.type == "task_completed":
                     require("output" in event.data, "WV-REPLAY-EVENT")
-                    assert isinstance(node, ActionNode)
-                    definition = load_definition(
-                        next(d.document for d in ir.dependencies if d.digest == node.dependency)
-                    )
+                    assert isinstance(node, ActionNode | CallWorkflowNode)
+                    digest = phase.dependency if phase is not None else node.dependency
+                    definition = load_definition(next(d.document for d in ir.dependencies if d.digest == digest))
                     assert isinstance(definition, ActionDefinition)
                     validate_action(ir, definition, "output", event.data["output"])
                 if event.type == "incident_opened":
@@ -248,9 +333,26 @@ def replay(artifact: CompiledArtifact, events: tuple[RuntimeEvent, ...]) -> Repl
                 require(
                     state.status == "suspended"
                     and (prior is not None or key == "@legacy")
-                    and kind in {"terminate", "retry_safe", "accept_reconciled_result"},
+                    and kind in {"terminate", "retry_safe", "accept_reconciled_result", "accept_reconciled_failure"},
                     "WV-REPLAY-EVENT",
                 )
+                # Dispatched on the incident's code first, as the service does: in doubt, accept_reconciled_failure is
+                # "It didn't happen" and the kernel decides it; otherwise it confirms a step's unknown outcome.
+                doubt = prior is not None and prior.code in IN_DOUBT_CODES
+                if kind == "accept_reconciled_failure" and not doubt:
+                    # Only a step that handles its failures goes on after its effect was confirmed not to happen.
+                    attempted = event.data.get("attempts")
+                    require(
+                        handles
+                        and prior is not None
+                        and confirmable(node_id, prior.code)
+                        and isinstance(node, ActionNode)
+                        and type(attempted) is int
+                        and attempted >= 0
+                        and "output" in event.data
+                        and event.data["output"] is None,
+                        "WV-REPLAY-EVENT",
+                    )
                 if kind != "terminate":
                     require(
                         prior is not None
@@ -258,7 +360,31 @@ def replay(artifact: CompiledArtifact, events: tuple[RuntimeEvent, ...]) -> Repl
                         and prior.generation == event.data.get("generation"),
                         "WV-REPLAY-EVENT",
                     )
-                if kind == "retry_safe" and isinstance(node, CallWorkflowNode):
+                require(
+                    (event.data.get("code") is None and not doubt)
+                    or (prior is not None and event.data.get("code") == prior.code),
+                    "WV-REPLAY-EVENT",
+                )
+                if doubt:
+                    # The kernel decides a resolution of a transaction in doubt; replay compares its transition.
+                    assert prior is not None
+                    if kind == "retry_safe" and runs_call:
+                        require(node_id in calls, "WV-REPLAY-CALL")
+                    elif kind == "retry_safe" and runs_task:
+                        generation = event.data.get("generation")
+                        require(
+                            type(generation) is int and generation == attempts.get(node_id, (0, ""))[0],
+                            "WV-REPLAY-GENERATION",
+                        )
+                        assert isinstance(generation, int) and isinstance(node, ActionNode | CallWorkflowNode)
+                        attempts[node_id] = (generation, "retired")
+                        eligible_at[node_id] = event.timestamp
+                        # The stuck attempt is made ready again with a fresh time limit from the resolution.
+                        seconds = retry_seconds(ir, node, node_id)
+                        tasks[node_id] = tasks[node_id].model_copy(
+                            update={"deadline": event.timestamp + timedelta(seconds=seconds)}
+                        )
+                elif kind == "retry_safe" and isinstance(node, CallWorkflowNode):
                     require(node_id in calls, "WV-REPLAY-CALL")
                 elif kind == "retry_safe":
                     generation = event.data.get("generation")
@@ -269,7 +395,9 @@ def replay(artifact: CompiledArtifact, events: tuple[RuntimeEvent, ...]) -> Repl
                     assert isinstance(generation, int)
                     attempts[node_id] = (generation, "retired")
                     eligible_at[node_id] = event.timestamp
-                if kind == "accept_reconciled_result" and isinstance(node, CallWorkflowNode):
+                if doubt:
+                    pass
+                elif kind == "accept_reconciled_result" and isinstance(node, CallWorkflowNode):
                     require("output" in event.data, "WV-REPLAY-EVENT")
                     output = called_workflow(ir, node)[1]["outputSchema"]
                     schema = call_output_schema(node.mode, node.on_failure, output)  # type: ignore[arg-type]
@@ -302,7 +430,7 @@ def replay(artifact: CompiledArtifact, events: tuple[RuntimeEvent, ...]) -> Repl
                     require(event.timestamp < deadlines[node_id].deadline, "WV-REPLAY-HUMAN-EXPIRED")
                     deadlines.pop(node_id)
             elif event.type in {"wait_elapsed", "timed_out", "signal_received"}:
-                _verify_wait(event, evidence, deadlines, nodes, duration_nodes)
+                _verify_wait(event, evidence, deadlines, nodes, duration_nodes, continuations)
                 if event.type == "signal_received":
                     require(isinstance(node, SignalNode) and node_id in state.active, "WV-REPLAY-EVENT")
                     assert isinstance(node, SignalNode)
@@ -323,11 +451,7 @@ def replay(artifact: CompiledArtifact, events: tuple[RuntimeEvent, ...]) -> Repl
             expected = [
                 (c.node_id, 0, c.mode, c.workflow_reference) for c in result.commands if isinstance(c, CallIntent)
             ]
-            if (
-                event.type == "incident_resolved"
-                and event.data.get("kind") == "retry_safe"
-                and isinstance(node, CallWorkflowNode)
-            ):
+            if event.type == "incident_resolved" and event.data.get("kind") == "retry_safe" and runs_call:
                 prior_call = calls[node_id]
                 expected.append((node_id, prior_call.generation + 1, prior_call.mode, prior_call.workflow_reference))
             issued_calls = evidence.issued_calls
@@ -366,16 +490,26 @@ def replay(artifact: CompiledArtifact, events: tuple[RuntimeEvent, ...]) -> Repl
                 tasks[issued.node_id] = issued
                 eligible_at[issued.node_id] = event.timestamp
             for deadline, issued_deadline in zip(deadline_commands, evidence.issued_deadlines, strict=True):
+                # A transaction's hold deadline moves on its one row: armed again, it keeps its wait.
+                rearmed = (
+                    split_deadline(issued_deadline.node_id) is not None
+                    and issued_deadline.node_id in deadlines
+                    and deadlines[issued_deadline.node_id].wait_id == issued_deadline.wait_id
+                )
                 require(
                     (issued_deadline.node_id, issued_deadline.deadline, issued_deadline.name)
                     == (deadline.node_id, deadline.deadline, deadline.name)
-                    and issued_deadline.node_id not in deadlines
-                    and issued_deadline.wait_id not in issued_wait_ids,
+                    and (
+                        rearmed
+                        or (issued_deadline.node_id not in deadlines and issued_deadline.wait_id not in issued_wait_ids)
+                    ),
                     "WV-REPLAY-DEADLINE",
                 )
                 deadlines[issued_deadline.node_id] = issued_deadline
                 issued_wait_ids.add(issued_deadline.wait_id)
-            if event.type in {"wait_elapsed", "signal_received"}:
+            if event.type in {"wait_elapsed", "signal_received"} or (
+                event.type == "step_failed" and "wait_id" in event.data
+            ):
                 deadlines.pop(node_id)
             seen.add(event.id)
             accepted_receipts.add(receipt_id)
@@ -394,13 +528,33 @@ def replay(artifact: CompiledArtifact, events: tuple[RuntimeEvent, ...]) -> Repl
     )
 
 
+def retry_seconds(ir: Any, node: ActionNode | CallWorkflowNode, key: str) -> int:
+    """The time limit a retried stuck attempt gets: the transaction's undo limit for a phase, the action's own for
+    a step after the point of no return."""
+    from firefly_weave.compiler.ir import TransactionNode
+    from firefly_weave.runtime.transactions import shapes
+
+    if split_phase(key) is not None:
+        facts = shapes(ir)
+        owner = facts.owner_key(key.partition("#")[0]) if facts is not None else None
+        transaction = next(n for n in ir.graph.nodes if owner is not None and n.id == node_of(owner))
+        assert isinstance(transaction, TransactionNode)
+        return transaction.policy.undo_timeout_seconds
+    definition = load_definition(next(d.document for d in ir.dependencies if d.digest == node.dependency))
+    assert isinstance(definition, ActionDefinition)
+    return definition.spec.timeout_seconds
+
+
 def _verify_wait(
     event: RuntimeEvent,
     evidence: RecordedEvidence,
     deadlines: dict[str, DeadlineFact],
     nodes: dict[str, IRNode],
     duration_nodes: set[str],
+    continuations: set[str] | None = None,
 ) -> None:
+    # Waits whose step handles the timeout continue the run like duration waits.
+    continuations = duration_nodes if continuations is None else continuations
     node_id = str(event.data.get("node_id", ""))
     issued = deadlines.get(node_id)
     require(issued is not None, "WV-REPLAY-DEADLINE")
@@ -426,7 +580,7 @@ def _verify_wait(
             if d.deadline <= event.timestamp
             and (d.name is None or not any(s.name == d.name and s.accepted_at < d.deadline for s in pending))
         ),
-        key=lambda d: deadline_order(d.node_id, d.deadline, duration_nodes),
+        key=lambda d: deadline_order(d.node_id, d.deadline, continuations),
     )
     if event.type == "signal_received":
         selected_node = next(
@@ -453,3 +607,5 @@ def _verify_wait(
             event.data.get("wait_id") == str(issued.wait_id) and bool(due) and due[0] == issued, "WV-REPLAY-DEADLINE"
         )
         require((event.type == "wait_elapsed") == (node_of(node_id) in duration_nodes), "WV-REPLAY-DEADLINE")
+        handled = node_of(node_id) in continuations - duration_nodes
+        require((event.type == "step_failed") == handled, "WV-REPLAY-DEADLINE")

@@ -96,7 +96,7 @@ platform; the others need the `client` extra and either a
 | Goal | Commands | Prerequisite and guide |
 | --- | --- | --- |
 | Create a starter or find a guide | `init DIRECTORY`, `docs [TOPIC]` | Base package; [quickstart](../quickstart.md) |
-| Validate, compile, explain, simulate, or draw a local workflow | `workflow validate`, `compile`, `explain`, `simulate`, `graph` | Base package and explicit files; [authoring guide](../guides/workflow-authoring.md) |
+| Validate, compile, explain, simulate, or draw a local workflow | `workflow validate`, `compile`, `explain`, `simulate` (`--error KEY=CODE` makes a step fail on purpose), `graph` | Base package and explicit files; [authoring guide](../guides/workflow-authoring.md) |
 | Export the language schemas | `schema export` | Base package |
 | Describe an HTTP API without code, import OpenAPI, or build a connector package | `connector http-action`, `import-openapi`, `descriptor`, `init`, `validate`, `test`, `package` | Base package; publishing needs a platform; [no-code REST integration](../connectors/http-without-code.md) |
 | Run durable workflows on your computer | `platform doctor`, `up`, `setup`, `start`, `status`, `logs`, `demo`, `user`, `token`, `stop` | Matching checkout, uv, and local Docker; [local platform](../guides/local-platform.md) |
@@ -607,6 +607,13 @@ weave runs history "$RUN_ID" --limit 50 --output json
 weave runs replay "$RUN_ID" --output json
 # List the calls a run made, with each child run's ID and status.
 weave runs calls "$RUN_ID" --output json
+# List a run's transactions: state, steps, cause and resolution, never business values.
+weave runs transactions "$RUN_ID" --output json
+# Cancel without undoing open transactions (needs transaction.reconcile); cancel.json has "skip_undo": true.
+weave runs cancel "$RUN_ID" --request cancel.json --output json
+# Retire an activation a running transaction may still need to undo a step (needs transaction.reconcile).
+weave definitions activations retire "$ACTIVATION_ID" --request retire.json --revision 3 \
+  --idempotency-key retire-1 --force --output json
 # Activate a workflow that calls others, pinning each called version's current activation.
 weave definitions activations create --request activation.json --pin-current-calls \
   --idempotency-key orders-activation-1 --output json

@@ -69,6 +69,7 @@ export const stepKinds = [
   "forEach",
   "callWorkflow",
   "agent",
+  "transaction",
 ] as const;
 export type StepKind = (typeof stepKinds)[number];
 export const stepStatuses = [
