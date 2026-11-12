@@ -186,3 +186,43 @@ def test_an_ir_whose_agent_runs_another_action_is_refused():
 
     with pytest.raises(ValidationError, match="An AI agent runs the turn action"):
         WorkflowIR.model_validate(ir)
+
+
+def reviewed_notify_ir():
+    document = workflow(agent(tools=[LOOKUP, {**NOTIFY, "review": {"assignment": "support-leads"}}]))
+    ir = artifact(document).model_dump(by_alias=True)
+    return ir, next(node for node in ir["graph"]["nodes"] if node["kind"] == "agent")
+
+
+def test_an_ir_whose_workflow_tool_points_at_an_unpinned_workflow_is_refused():
+    ir, node = reviewed_notify_ir()
+    # The lookup action is pinned, but as an Action: a workflow tool must name a pinned Workflow.
+    node["tools"][1]["dependency"] = node["tools"][0]["dependency"]
+
+    with pytest.raises(ValidationError, match="Unknown AI agent tool workflow"):
+        WorkflowIR.model_validate(ir)
+
+
+def test_an_ir_whose_tool_parameters_are_missing_from_its_schemas_is_refused():
+    ir, node = reviewed_notify_ir()
+    node["tools"][0]["parametersRef"] = "0" * 64
+
+    with pytest.raises(ValidationError, match="Unresolved AI agent tool parameters"):
+        WorkflowIR.model_validate(ir)
+
+
+@pytest.mark.parametrize(
+    ("purpose", "message"),
+    [
+        ("agent_turn_output", "An AI agent's turns require their schema guard"),
+        ("agent_tool_arguments", "Each AI agent tool's arguments require their schema guard"),
+    ],
+    ids=["turn-output", "tool-arguments"],
+)
+def test_an_ir_without_an_agent_guard_is_refused(purpose, message):
+    ir, node = reviewed_notify_ir()
+    dropped = next(guard for guard in ir["guards"] if guard["purpose"] == purpose)
+    ir["guards"].remove(dropped)
+
+    with pytest.raises(ValidationError, match=message):
+        WorkflowIR.model_validate(ir)

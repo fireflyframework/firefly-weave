@@ -1072,6 +1072,7 @@ def _validate_agent(
     """An agent's turn and tools are pinned in the artifact, and run on connections it declares."""
     from firefly_weave.compiler.agent_tools import check_pinned
     from firefly_weave.compiler.agents import agent_output_schema, runs_turn_task
+    from firefly_weave.contracts.agent_turns import turn_output_schema
 
     turn = actions.get(node.dependency)
     if not isinstance(turn, ActionDefinition) or not runs_turn_task(turn.spec.model_dump(by_alias=True)):
@@ -1087,8 +1088,17 @@ def _validate_agent(
 
         check_pinned(tool, actions, workflows, bind)
     profile = node.llm_profile.model_dump(mode="json", by_alias=True)
-    guards = [guard for guard in executable.guards if guard.path == node.path and guard.purpose == "agent_output"]
-    if len(guards) != 1 or executable.schemas[guards[0].schema_ref] != agent_output_schema(profile):
+
+    def guarded(path: str, purpose: str, schema: JsonValue) -> bool:
+        found = [guard for guard in executable.guards if guard.path == path and guard.purpose == purpose]
+        return len(found) == 1 and executable.schemas.get(found[0].schema_ref) == schema
+
+    if not guarded(node.path, "agent_turn_output", turn_output_schema(profile["outputSchema"])):
+        raise ValueError("An AI agent's turns require their schema guard")
+    for index, tool in enumerate(node.tools):
+        if not guarded(f"{node.path}/tools/{index}", "agent_tool_arguments", executable.schemas[tool.parameters_ref]):
+            raise ValueError("Each AI agent tool's arguments require their schema guard")
+    if not guarded(node.path, "agent_output", agent_output_schema(profile)):
         raise ValueError("An AI agent's output requires its pinned profile's schema guard")
 
 
