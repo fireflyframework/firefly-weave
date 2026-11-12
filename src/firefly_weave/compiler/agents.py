@@ -37,7 +37,7 @@ from firefly_weave.compiler.catalog import FrozenDocument
 from firefly_weave.compiler.expressions import ExpressionFailure, pointer_segments
 from firefly_weave.compiler.ir import ToolTargetKind
 from firefly_weave.compiler.loops import LoopScope
-from firefly_weave.compiler.schema_profile import SchemaLimits
+from firefly_weave.compiler.schema_profile import SchemaLimits, schema_children
 from firefly_weave.compiler.source_map import pointer_child
 from firefly_weave.compiler.typecheck import TypeCheckLimit, check_compatibility
 from firefly_weave.contracts.agent_turns import (
@@ -82,7 +82,8 @@ MESSAGES: Final[dict[str, str]] = {
     ),
     "AGENT_TOOL_SCHEMA": (
         f"A tool's parameters are at most {MAX_TOOL_PARAMETERS_BYTES // 1024} KiB, and all of a step's at most "
-        f"{MAX_ALL_TOOL_PARAMETERS_BYTES // 1024} KiB: the model reads them on every turn."
+        f"{MAX_ALL_TOOL_PARAMETERS_BYTES // 1024} KiB, with no reference to another schema document: the model "
+        "reads them on every turn, on their own."
     ),
     "AGENT_TOOL_FIXED": "A fixed value must name one of the tool's input fields and fit that field.",
     "AGENT_UNREVIEWED_EFFECT": (
@@ -448,7 +449,7 @@ def _tool(
         return 0, None
     parameters = model_parameters(resolved.parameters, list(fixed))
     size = len(wire_json(parameters).encode())
-    if size > MAX_TOOL_PARAMETERS_BYTES:
+    if size > MAX_TOOL_PARAMETERS_BYTES or _remote_reference(parameters):
         checks.issue("AGENT_TOOL_SCHEMA", path, message=MESSAGES["AGENT_TOOL_SCHEMA"])
     checks.guard(path, "agent_tool_arguments", parameters)
     approval = explicit or default
@@ -470,6 +471,21 @@ def _tool(
     if approval == "required" and review is not None:
         compiled["review"] = review
     return size, compiled
+
+
+def _remote_reference(schema: JsonObject) -> bool:
+    """Whether a schema the model reads on its own points outside itself, where the model can't follow."""
+    pending: list[JsonValue] = [schema]
+    while pending:
+        node = pending.pop()
+        if isinstance(node, list):
+            pending.extend(node)
+        elif isinstance(node, dict):
+            reference = node.get("$ref")
+            if isinstance(reference, str) and not reference.startswith("#"):
+                return True
+            pending.extend(schema_children(node))
+    return False
 
 
 def _fixed(

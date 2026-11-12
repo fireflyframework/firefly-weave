@@ -391,6 +391,19 @@ def test_tool_parameters_stay_small():
     assert ("WV-COMP-AGENT_TOOL_SCHEMA", "error", "/spec/steps/0/tools/0") in found
 
 
+def test_tool_parameters_hold_no_remote_reference():
+    # The model reads the parameters on their own: a reference into the schema bundle would point at nothing.
+    remote = {"type": "object", "properties": {"id": {"$ref": "ids.schema.json"}}, "required": ["id"]}
+    action = order_action("orders-remote", "get", input_schema=remote)
+    tool = {"name": "remote", "description": "Remote.", "action": "orders-remote@1.0.0", "connection": "orders"}
+
+    found = errors(
+        workflow(agent(tools=[tool])), catalog(action, schema_bundle={"ids.schema.json": {"type": "string"}})
+    )
+
+    assert ("WV-COMP-AGENT_TOOL_SCHEMA", "error", "/spec/steps/0/tools/0") in found
+
+
 def test_all_tool_parameters_together_stay_small():
     medium = {"type": "object", "properties": {f"field{index}": {"type": "string"} for index in range(400)}}
     action = order_action("orders-medium", "get", input_schema=medium)
