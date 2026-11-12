@@ -795,6 +795,11 @@ def _uid(connection: _Connection, namespace: str) -> str:
     return uid
 
 
+def _runner_secret(namespace: str) -> str:
+    """The Secret in weave-system that holds a target's runner client secret."""
+    return f"weave-runner-identity-{namespace}"
+
+
 def _secret(connection: _Connection, name: str, namespace: str, value: bytes, labels: dict[str, str]) -> None:
     """Replace a Secret whose only key is the client secret, read by kubectl from stdin: never argv or a file."""
     kube = [*connection.kube, "--namespace", namespace]
@@ -1042,7 +1047,7 @@ def connect(
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> dict[str, Any]:
     """Connect a local kind or k3d cluster's namespace as a deployment target. Every stage is repeatable: a rerun
-    repairs what it finds and rotates the runner's secret. Nothing is registered before the probes pass."""
+    repairs what it finds and rotates the runner's secret once the probes pass. Nothing is registered before then."""
     with local._exclusive(directory, LOCK, BUSY):
         notice("preflight: checking the cluster and your kubeconfig")
         found = preflight(directory, provider, cluster, namespace, kubeconfig=kubeconfig)
@@ -1096,14 +1101,17 @@ def connect(
             save(directory, value)
 
         runner_client, worker_client = platform_operations.cluster_clients(entry["pair"])
-        named = {runner_client: secrets.token_urlsafe(32).encode()}
+        # A target that already has a runner keeps it and its secret until the probes pass: the runner stage rotates
+        # them. Before the first registration no runner runs yet, so its client and secret are made here.
+        runner_later = "target_id" in entry and bool(entry.get("runner_linked"))
+        named = {} if runner_later else {runner_client: secrets.token_urlsafe(32).encode()}
         # Running workers keep the secret their pods copied at start, so it is made once, with the pair.
         worker_new = not entry.get("worker_linked") or not _has(
             connection, "secret", objects.WORKER_IDENTITY, namespace
         )
         if worker_new:
             named[worker_client] = secrets.token_urlsafe(32).encode()
-        subjects = asyncio.run(platform_operations._keycloak_clients(state, named, transport))
+        subjects = asyncio.run(platform_operations._keycloak_clients(state, named, transport)) if named else {}
 
         async def link(client: WeaveClient) -> None:
             await _principals(client, connection, entry, subjects, save_entry)
@@ -1113,12 +1121,9 @@ def connect(
         labels = objects._labels(network, draft)
         if worker_new:
             _secret(connection, objects.WORKER_IDENTITY, namespace, named[worker_client], labels)
-        _secret(
-            connection, f"weave-runner-identity-{namespace}", objects.SYSTEM_NAMESPACE, named[runner_client], labels
-        )
+        if runner_client in named:
+            _secret(connection, _runner_secret(namespace), objects.SYSTEM_NAMESPACE, named[runner_client], labels)
         named.clear()
-        # The runner's pod template carries this time, so applying it rolls the runner onto the new secret.
-        rotated = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
         _apply(connection, "cluster-apply-worker-config", [objects.worker_config(draft)])
 
         notice("probe: checking what pods in the namespace can reach")
@@ -1132,6 +1137,14 @@ def connect(
         asyncio.run(platform_operations._api(state, operations, register, transport))
 
         notice(f"runner: starting weave-runner-{namespace}")
+        if runner_later:
+            runner_secret = secrets.token_urlsafe(32).encode()
+            asyncio.run(platform_operations._keycloak_clients(state, {runner_client: runner_secret}, transport))
+            labels = objects._labels(network, _draft(connection, namespace, entry, runner_image))
+            _secret(connection, _runner_secret(namespace), objects.SYSTEM_NAMESPACE, runner_secret, labels)
+            del runner_secret
+        # The runner's pod template carries this time, so applying it rolls the runner onto the new secret.
+        rotated = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
         target = _draft(connection, namespace, entry, runner_image, rotated=rotated, uid=uid)
         _apply(connection, "cluster-apply-target", objects.target_objects(target))
         if not _has(connection, "deployment", objects.WORKER, namespace):

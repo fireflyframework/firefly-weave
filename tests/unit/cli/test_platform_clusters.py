@@ -443,6 +443,8 @@ class Cluster:
         self.online = True
         self.api_calls = []
         self.keycloak = []
+        # How many commands had run when each Keycloak call came.
+        self.keycloak_at = []
         self.origins = []
         self.registered_after = None
 
@@ -516,6 +518,7 @@ def world(platform, monkeypatch):
 
     async def keycloak(state, named, transport):
         cluster.keycloak.append(dict(named))
+        cluster.keycloak_at.append(len(commands.calls))
         return {client: str(uuid4()) for client in named}
 
     def origins(state, name, subnet):
@@ -683,6 +686,32 @@ def test_secrets_reach_kubectl_only_on_stdin(world, monkeypatch):
     again = [call for call in commands.calls[before:] if call.argv[-1:] == ["--from-file=client-secret=/dev/stdin"]]
     assert [call.stdin.decode() for call in again] == ["canary-client-secret-2"]
     assert "weave-runner-identity-weave-workers" in again[0].argv
+
+
+def test_a_reconnect_rotates_the_runners_secret_only_once_the_probes_and_registration_pass(world):
+    """The probes sign in as the worker, not the runner: a reconnect whose probe fails leaves the running runner and
+    its secret (in Keycloak and in weave-system) untouched; one that passes rotates both in the runner stage, together
+    with the pod template's stamp."""
+    _, commands, _, cluster = world
+    connect(world)
+    cluster.exits["weave-probe-unlabeled"] = 1
+    before = len(commands.calls)
+    with pytest.raises(PlatformError):
+        connect(world)
+    assert len(cluster.keycloak) == 1
+    assert not [call for call in commands.calls[before:] if call.name == "cluster-secret"]
+    assert not [item for item in applied(commands, before) if item["metadata"]["name"] == "weave-runner-weave-workers"]
+    cluster.exits["weave-probe-unlabeled"] = 0
+    before = len(commands.calls)
+    connect(world)
+    assert [sorted(named) for named in cluster.keycloak] == [
+        ["weave-cluster-runner-1", "weave-cluster-worker-1"],
+        ["weave-cluster-runner-1"],
+    ]
+    names = [call.name for call in commands.calls[before:]]
+    rotated, secret = cluster.keycloak_at[-1] - before, names.index("cluster-secret")
+    assert names.index("cluster-probe-delete") < rotated <= secret < names.index("cluster-apply-target")
+    assert cluster.registered_after is not None and "cluster-probe-delete" in cluster.registered_after
 
 
 def test_reconnecting_never_changes_the_worker_deployment_or_its_secret(world):
