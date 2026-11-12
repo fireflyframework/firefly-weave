@@ -303,6 +303,13 @@ def package_worker(
 OWNERSHIP_LABEL = "io.getfirefly.weave.deployment"
 
 
+def _stop_group(pid: int) -> None:
+    """Kill the command's own process group; a group that is already gone needs nothing. Once every process of a
+    group has exited, macOS can answer killpg with EPERM instead of ESRCH, so both mean gone here."""
+    with suppress(ProcessLookupError, PermissionError):
+        os.killpg(pid, signal.SIGKILL)
+
+
 def run_command(
     argv: list[str],
     *,
@@ -349,8 +356,7 @@ def run_command(
                 if child.returncode is None and child.poll() is not None:
                     # A completed command's helper can retain the pipe: stop the owned group,
                     # then drain the output already buffered before returning the leader's result.
-                    with suppress(ProcessLookupError):
-                        os.killpg(child.pid, signal.SIGKILL)
+                    _stop_group(child.pid)
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     fail()
@@ -368,8 +374,7 @@ def run_command(
     except (OSError, subprocess.TimeoutExpired):
         raise DeploymentError("Worker operation failed; check inputs and prerequisites.") from None
     finally:
-        with suppress(ProcessLookupError):
-            os.killpg(child.pid, signal.SIGKILL)
+        _stop_group(child.pid)
         child.wait()
         child.stdout.close()
         if log is not None:
