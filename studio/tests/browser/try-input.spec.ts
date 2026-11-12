@@ -169,6 +169,21 @@ for (const size of sizes)
       await expect(panes.cards.first()).toContainText("Rule 2 · small");
     });
 
+    test("adding an input column keeps the values being tried", async ({
+      page,
+    }) => {
+      const { grid, panes } = await openTry(page);
+      await panes.type({ amount: "500", tier: "silver" });
+      await panes.show("Parameters");
+      await grid.addColumn("input", "region", "Text");
+      await panes.show("Input");
+      await expect(panes.field("region")).toBeVisible();
+      await expect(panes.field("amount")).toHaveValue("500");
+      await expect(panes.field("tier")).toHaveValue("silver");
+      await panes.show("Output");
+      await expect(panes.count).toHaveText("Rule 2 matched");
+    });
+
     test("trying an input sends nothing to the platform", async ({ page }) => {
       const platform: string[] = [];
       page.on("request", (request) => {

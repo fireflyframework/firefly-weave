@@ -304,6 +304,17 @@ export class DecisionGrid implements ParameterComponent, DoCheck {
         );
       });
     });
+    // A column added, renamed or removed changes the input fields: Input
+    // starts them again from the values being tried, not the test data.
+    let schema: unknown;
+    effect(() => {
+      const next = this.spec()?.inputSchema;
+      untracked(() => {
+        if (schema !== undefined && next !== schema)
+          this.table.initial.set({ ...this.table.value() });
+        schema = next;
+      });
+    });
     // Each change of the values or the table tries it again; a table with
     // problems isn't the one the grid shows, so it isn't tried.
     effect(() => {
