@@ -857,6 +857,59 @@ def test_a_cluster_that_cant_be_refreshed_reads_unreachable_and_says_why(world, 
     assert lines[-1].startswith("kind-weave-test: not refreshed. No kind-weave-test context in your kubeconfig.")
 
 
+def endpoint_addresses(commands, since=0):
+    return [item["endpoints"][0]["addresses"] for item in applied(commands, since) if item["kind"] == "EndpointSlice"]
+
+
+def test_a_refresh_after_an_unreachable_one_still_repoints_the_cluster(world, monkeypatch):
+    """The receipt records the platform's new addresses only once the EndpointSlice and the policies carry them, so
+    a refresh that couldn't apply leaves the next one something to repair."""
+    directory, commands, config, cluster = world
+    connect(world)
+    cluster.joined.discard(KEYCLOAK)
+    cluster.addresses[KEYCLOAK] = "172.30.0.7"
+    monkeypatch.setenv("KUBECONFIG", str(directory / "absent"))
+    assert clusters.refresh(directory, lambda line: None) == [{"name": "kind-weave-test", "state": "unreachable"}]
+    assert clusters.receipt(directory)["clusters"]["kind-weave-test"]["api_address"] == "172.30.0.5"
+    monkeypatch.setenv("KUBECONFIG", str(config))
+    before = len(commands.calls)
+    assert clusters.refresh(directory, lambda line: None) == [{"name": "kind-weave-test", "state": "connected"}]
+    assert endpoint_addresses(commands, before) == [["172.30.0.7"]]
+    assert clusters.receipt(directory)["clusters"]["kind-weave-test"]["api_address"] == "172.30.0.7"
+
+
+def test_a_connect_whose_shared_apply_fails_keeps_the_addresses_the_cluster_still_carries(world, monkeypatch):
+    directory, commands, config, cluster = world
+    connect(world)
+    cluster.joined.discard(KEYCLOAK)
+    cluster.addresses[KEYCLOAK] = "172.30.0.7"
+    commands.answer([KUBECTL, "apply", "--server-side"], PlatformError("The API server refused the apply."))
+    with pytest.raises(PlatformError):
+        connect(world)
+    assert clusters.receipt(directory)["clusters"]["kind-weave-test"]["api_address"] == "172.30.0.5"
+    commands.answer([KUBECTL, "apply", "--server-side"], "")
+    monkeypatch.setenv("KUBECONFIG", str(config))
+    before = len(commands.calls)
+    assert clusters.refresh(directory, lambda line: None) == [{"name": "kind-weave-test", "state": "connected"}]
+    assert endpoint_addresses(commands, before) == [["172.30.0.7"]]
+
+
+def test_connecting_another_namespace_after_the_platform_moved_repoints_the_clusters_other_targets(world):
+    directory, commands, config, cluster = world
+    connect(world)
+    cluster.joined.discard(KEYCLOAK)
+    cluster.addresses[KEYCLOAK] = "172.30.0.7"
+    commands.answer([KUBECTL, "get", "namespace", "team-b", "-o", "jsonpath={.metadata.uid}"], UID)
+    before = len(commands.calls)
+    clusters.connect(directory, "kind", "weave-test", "team-b", kubeconfig=config, notice=lambda line: None)
+    egress = [item for item in applied(commands, before) if item["metadata"]["name"] == "weave-egress"]
+    assert {item["metadata"]["namespace"] for item in egress} == {"weave-system", "weave-workers", "team-b"}
+    for item in egress:
+        assert "172.30.0.7/32" in item["spec"]["egress"][0]["to"][1]["ipBlock"]["except"]
+    saved = clusters.receipt(directory)["clusters"]["kind-weave-test"]
+    assert saved["api_address"] == "172.30.0.7" and set(saved["targets"]) == {"weave-workers", "team-b"}
+
+
 def test_refresh_never_applies_over_another_installations_weave_system(world, monkeypatch):
     directory, commands, config, cluster = world
     connect(world)

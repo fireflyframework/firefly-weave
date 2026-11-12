@@ -604,10 +604,11 @@ def _leave(connection: _Connection, containers: list[str], error: local.Platform
     return local.PlatformError(f"{error}{''.join(stayed)}") if stayed else error
 
 
-def _join(connection: _Connection, key: str) -> None:
+def _join(connection: _Connection) -> dict[str, Any]:
     """Join the API's network namespace (the keycloak container) and the registry to the cluster network, only while
     it holds nothing but the cluster's own nodes and those two containers. The rule is checked before the join and
-    again after it; when the second check fails, the containers this call joined leave the network again."""
+    again after it; when the second check fails, the containers this call joined leave the network again. Returns
+    the cluster's record at the platform's addresses there, which the caller saves once its objects carry them."""
     found = connection.found
     services = {"keycloak": "weave-platform", "registry": "weave-registry"}
     ids = {service: _platform_container(connection, service) for service in services}
@@ -635,14 +636,6 @@ def _join(connection: _Connection, key: str) -> None:
     except local.PlatformError as error:
         raise _leave(connection, joined, error) from None
     api, registry = (item[1] for item in platform.values() if item is not None)
-    value = receipt(Path(connection.state["directory"]))
-    entry = value["clusters"].get(key)
-    record = cluster_record(found, subnet=subnet, api_address=api, registry_address=registry)
-    if entry is None:
-        value["clusters"][key] = record
-    else:
-        entry.update({name: record[name] for name in _CLUSTER_KEYS})
-    save(Path(connection.state["directory"]), value)
     connection.network = objects.ClusterNetwork(
         provider=found.provider,
         cluster=found.cluster,
@@ -653,6 +646,27 @@ def _join(connection: _Connection, key: str) -> None:
         registry_port=int(connection.operations["registry_port"]),
         installation=connection.state["id"],
     )
+    return cluster_record(found, subnet=subnet, api_address=api, registry_address=registry)
+
+
+def _moved(entry: dict[str, Any] | None, record: dict[str, Any]) -> bool:
+    """Whether the cluster's applied objects carry other addresses than the platform has now (or none yet)."""
+    return entry is None or any(entry[name] != record[name] for name in _CLUSTER_KEYS)
+
+
+def _recorded(value: dict[str, Any], key: str, record: dict[str, Any]) -> None:
+    """Put the cluster's record into the receipt, keeping its targets."""
+    entry = value["clusters"].get(key)
+    if entry is None:
+        value["clusters"][key] = record
+    else:
+        entry.update({name: record[name] for name in _CLUSTER_KEYS})
+
+
+def _follow(connection: _Connection, targets: dict[str, dict[str, Any]], name: str) -> None:
+    """Apply each target's namespace objects at the platform's current addresses (its policies' exceptions)."""
+    for namespace, target in sorted(targets.items()):
+        _apply(connection, name, objects.namespace_objects(_draft(connection, namespace, target, "")))
 
 
 def _mirror(connection: _Connection) -> None:
@@ -1035,7 +1049,7 @@ def connect(
         key = found.context
 
         notice(f"network: joining the platform to {found.network}")
-        _join(connection, key)
+        record = _join(connection)
         network = connection.network
         assert network is not None
         # The pods' plain-HTTP entries are consented to before the ConfigMaps that carry them are applied.
@@ -1052,12 +1066,22 @@ def connect(
 
         notice(f"namespace: applying {namespace}")
         value = receipt(directory)
-        known = value["clusters"][key]["targets"].get(namespace, {})
+        saved = value["clusters"].get(key)
+        targets: dict[str, dict[str, Any]] = saved["targets"] if saved is not None else {}
         _apply(
             connection,
             "cluster-apply-namespace",
-            objects.namespace_objects(_draft(connection, namespace, known, runner_image)),
+            objects.namespace_objects(_draft(connection, namespace, targets.get(namespace, {}), runner_image)),
         )
+        if _moved(saved, record):
+            # The cluster's other targets follow the platform's new addresses before the receipt records them.
+            _follow(
+                connection,
+                {name: item for name, item in targets.items() if name != namespace},
+                "cluster-apply-namespace",
+            )
+        _recorded(value, key, record)
+        save(directory, value)
         uid = _uid(connection, namespace)
 
         notice("identities: the runner's and the workers' sign-in")
@@ -1159,11 +1183,11 @@ def _refresh_cluster(
     notice(f"{key}: following the platform's addresses")
     found = Preflight(provider, cluster, "", key, Path(), state["context"], entry["network"], nodes)
     connection = _Connection(found, state, operations, [])
-    _join(connection, key)
+    record = _join(connection)
     network = connection.network
     assert network is not None
     platform_origins.set_cluster_entries(state, key, network.subnet)
-    if (network.api_address, network.registry_address) == (entry["api_address"], entry["registry_address"]):
+    if not _moved(entry, record):
         return "connected"
     # The platform's containers moved: the EndpointSlice and every policy's exceptions follow them.
     path, server = _server(_candidates(None), key, provider, cluster)
@@ -1173,9 +1197,11 @@ def _refresh_cluster(
     for owned in (objects.SYSTEM_NAMESPACE, *entry["targets"]):
         _check_namespace(state, connection.kube, owned)
     _apply(connection, "cluster-refresh-shared", objects.shared_objects(network))
-    for namespace, target in sorted(entry["targets"].items()):
-        objects_of = objects.namespace_objects(_draft(connection, namespace, target, ""))
-        _apply(connection, "cluster-refresh-namespace", objects_of)
+    _follow(connection, entry["targets"], "cluster-refresh-namespace")
+    # Only now do the cluster's objects carry the new addresses; a refresh that stopped before leaves them to the next.
+    value = receipt(directory)
+    _recorded(value, key, record)
+    save(directory, value)
     return "connected"
 
 
