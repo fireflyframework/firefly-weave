@@ -490,6 +490,24 @@ describe("the list", () => {
     expect(state.state()).toBe("ready");
   });
 
+  it("waits at least the list's interval, however little Retry-After asks", async () => {
+    const { platform, env, state } = setup();
+    platform.fail = (path) =>
+      path.includes(LIST)
+        ? {
+            status: 429,
+            body: { code: "WV-REQUEST-CAPACITY", message: "Busy." },
+            retryAfter: 0,
+          }
+        : null;
+    state.start();
+    await env.advance(0);
+    await env.advance(4_999);
+    expect(platform.count(LIST)).toBe(1);
+    await env.advance(1);
+    expect(platform.count(LIST)).toBe(2);
+  });
+
   it("Show older runs reads each page once, however often it's pressed", async () => {
     const data = structuredClone(runViewsFixture);
     const base = summaryOf(data, fixtureIds.succeeded);

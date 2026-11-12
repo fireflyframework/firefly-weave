@@ -408,8 +408,9 @@ export class RunsTabState {
     this.state.set("error");
     const wait = error instanceof ApiError ? error.retryAfter : undefined;
     if (failed.status === 429 && wait !== undefined) {
-      // The platform said when to ask again: no request before then, and
-      // never more than 5 minutes (a larger delay overflows the timer).
+      // The platform said when to ask again: no request before then, never
+      // sooner than the list's interval, and never more than 5 minutes (a
+      // larger delay overflows the timer).
       this.lister.stop();
       this.clearRetry();
       this.retryTimer = this.env.setTimeout(
@@ -417,7 +418,7 @@ export class RunsTabState {
           this.retryTimer = null;
           if (!this.destroyed) this.lister.start(this.env.visible());
         },
-        Math.min(wait * 1000, MAX_RETRY_AFTER_MS),
+        Math.max(LIST_INTERVAL_MS, Math.min(wait * 1000, MAX_RETRY_AFTER_MS)),
       );
     }
   }
