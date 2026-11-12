@@ -20,7 +20,7 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import AwareDatetime, Field
+from pydantic import AwareDatetime, ConfigDict, Field
 
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.definitions import ContractModel
@@ -196,6 +196,9 @@ class CallRecord(ContractModel):
 
 
 class AgentUsage(ContractModel):
+    # Written by the wire names it is read by, so the run state keeps an agent's usage when it is stored and read back.
+    model_config = ConfigDict(**ContractModel.model_config, serialize_by_alias=True)
+
     requests: int = Field(default=0, ge=0)
     input_tokens: int = Field(default=0, ge=0, alias="inputTokens")
     output_tokens: int = Field(default=0, ge=0, alias="outputTokens")

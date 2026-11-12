@@ -36,7 +36,7 @@ from agent_fixtures import (
 
 from firefly_weave.compiler.ir import WorkflowIR
 from firefly_weave.runtime.kernel import duration_steps
-from firefly_weave.runtime.models import ControlCommand, Deadline, Transition
+from firefly_weave.runtime.models import ControlCommand, Deadline, RunState, Transition
 
 
 def test_turn_tool_turn_final_completes_the_step_and_runs_its_successor():
@@ -74,6 +74,18 @@ def test_turns_and_tools_appear_as_step_instances_under_their_keys():
     assert keys[-1] == ("support", "completed")
     # Turns and tools are history only: expressions read the agent's step output, never theirs.
     assert set(run.state.steps) == {"support"}
+
+
+def test_an_agents_usage_survives_the_run_state_as_the_platform_stores_it():
+    run = Run()
+    run.send("started")
+    run.answer("support#1", tool_calls(("lookup_order", {"id": "A-17"})))
+
+    # The repository writes the state as JSON and reads it back before the next event.
+    stored = RunState.model_validate_json(run.state.model_dump_json())
+
+    assert stored.agents["support"].usage == run.state.agents["support"].usage
+    assert stored.agents["support"].usage.input_tokens == 90
 
 
 def test_a_finished_agent_leaves_no_state():
