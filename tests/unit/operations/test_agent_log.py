@@ -525,6 +525,20 @@ def test_a_call_still_running_when_the_run_timed_out_failed_with_timeout():
     assert (log.status, log.ended_at) == ("timed_out", due)
 
 
+def test_a_timed_out_call_keeps_the_code_its_fact_recorded():
+    run = Recorded()
+    run.send("started", NOW, admission_policy="classified-v1")
+    run.complete("support#1", NOW + SECONDS, calls(1, ("lookup_order", {"id": "A-17"})))
+    # A retry was scheduled after a temporary failure; the fact keeps that failure's code until a worker claims it.
+    run.facts.facts["support#1.1"].update(status="scheduled", error_code="TRANSIENT")
+    due = NOW + 5 * SECONDS
+    run.send("timed_out", due, deadline=due.isoformat())
+
+    [call] = run.log().turns[0].calls
+
+    assert (call.status, call.error, call.ended_at) == ("failed", AgentError(code="TRANSIENT"), due)
+
+
 PIN_INPUT = {
     "type": "object",
     "properties": {
