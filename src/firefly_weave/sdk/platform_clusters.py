@@ -85,6 +85,20 @@ MALFORMED = (
     "The saved cluster settings (clusters.json) are malformed or not private. Keep the file for inspection; "
     "nothing was changed."
 )
+# A context missing from the kubeconfig, for connect, which may come before the cluster exists.
+NO_CONTEXT = (
+    "No {context} context in your kubeconfig. Create the cluster with weave platform cluster create --provider "
+    "{provider} --name {cluster}, or pass --kubeconfig."
+)
+# For a recorded cluster whose nodes exist: creating it again isn't the answer, the kubeconfig that reaches it is.
+NO_CONTEXT_TO_REACH = (
+    "No {context} context in your kubeconfig, so {command} can't reach the cluster. Pass --kubeconfig with the file "
+    "{provider} wrote. Nothing was changed."
+)
+NO_CONTEXT_TO_REFRESH = (
+    "No {context} context in your default kubeconfig. Run weave platform cluster connect again with the --kubeconfig "
+    "you connected it with."
+)
 _CLUSTER_KEYS = frozenset(
     {"provider", "cluster", "context", "docker_context", "network", "subnet", "api_address", "registry_address"}
 )
@@ -219,14 +233,14 @@ def _merged(paths: list[Path]) -> dict[str, dict[str, tuple[Path, dict[str, Any]
     return view
 
 
-def _server(paths: list[Path], context: str, provider: str, cluster: str) -> tuple[Path, str]:
-    """The file that holds the whole context (its cluster and user too), and the server it names."""
+def _server(
+    paths: list[Path], context: str, provider: str, cluster: str, missing: str | None = None
+) -> tuple[Path, str]:
+    """The file that holds the whole context (its cluster and user too), and the server it names; `missing` is the
+    caller's refusal when no file defines the context, connect's by default."""
     view = _merged(paths)
     if context not in view["contexts"]:
-        raise local.PlatformError(
-            f"No {context} context in your kubeconfig. Create the cluster with weave platform cluster create "
-            f"--provider {provider} --name {cluster}, or pass --kubeconfig."
-        )
+        raise local.PlatformError(missing or NO_CONTEXT.format(context=context, provider=provider, cluster=cluster))
     path, entry = view["contexts"][context]
     raw = entry.get("context")
     spec: dict[str, Any] = raw if isinstance(raw, dict) else {}
@@ -1290,7 +1304,7 @@ def _refresh_cluster(
     if not _moved(entry, record):
         return "connected"
     # The platform's containers moved: the EndpointSlice and every policy's exceptions follow them.
-    path, server = _server(_candidates(None), key, provider, cluster)
+    path, server = _server(_candidates(None), key, provider, cluster, NO_CONTEXT_TO_REFRESH.format(context=key))
     if not _local(server):
         raise local.PlatformError(f"{key} points at a server that isn't this computer; it was not refreshed.")
     _check_api_port(state, provider, cluster, nodes, key, server)
@@ -1472,7 +1486,8 @@ def disconnect(
         parts: list[dict[str, Any]] = []
         if nodes:
             # Reach the cluster before anything changes, as preflight does; a cluster that's gone has nothing left.
-            path, server = _server(_candidates(kubeconfig), key, provider, cluster)
+            missing = NO_CONTEXT_TO_REACH.format(context=key, command="disconnect", provider=provider)
+            path, server = _server(_candidates(kubeconfig), key, provider, cluster, missing)
             if not _local(server):
                 raise local.PlatformError(
                     f"{key} points at a server that isn't this computer. Weave connects only local kind and k3d "
@@ -1568,7 +1583,8 @@ def _drift(
     """Each registered target's drifted objects, the cluster's shared ones included; reaches the cluster as
     preflight does and changes nothing."""
     provider, cluster = entry["provider"], entry["cluster"]
-    path, server = _server(_candidates(kubeconfig), key, provider, cluster)
+    missing = NO_CONTEXT_TO_REACH.format(context=key, command="--check", provider=provider)
+    path, server = _server(_candidates(kubeconfig), key, provider, cluster, missing)
     if not _local(server):
         raise local.PlatformError(f"{key} points at a server that isn't this computer; it was not checked.")
     _check_api_port(state, provider, cluster, nodes, key, server)

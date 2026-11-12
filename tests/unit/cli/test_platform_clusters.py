@@ -1052,7 +1052,11 @@ def test_a_cluster_that_cant_be_refreshed_reads_unreachable_and_says_why(world, 
     monkeypatch.setenv("KUBECONFIG", str(directory / "absent"))
     lines = []
     assert clusters.refresh(directory, lines.append) == [{"name": "kind-weave-test", "state": "unreachable"}]
-    assert lines[-1].startswith("kind-weave-test: not refreshed. No kind-weave-test context in your kubeconfig.")
+    # The cluster's nodes exist, so creating it, as connect's refusal says, isn't the answer.
+    assert lines[-1] == (
+        "kind-weave-test: not refreshed. No kind-weave-test context in your default kubeconfig. Run weave platform "
+        "cluster connect again with the --kubeconfig you connected it with."
+    )
 
 
 def endpoint_addresses(commands, since=0):
@@ -1434,6 +1438,29 @@ def test_deleting_a_cluster_that_doesnt_answer_still_frees_its_targets_and_delet
     (deleted_at,) = [index for index, call in enumerate(commands.calls) if call.argv[:3] == [kind, "delete", "cluster"]]
     left = [index for index, call in enumerate(commands.calls) if call.argv[3:5] == ["network", "disconnect"]]
     assert deleted_at > max(left)
+
+
+@pytest.mark.parametrize("command", ["disconnect", "--check"])
+def test_a_missing_context_says_to_pass_the_kubeconfig_that_reaches_the_cluster(world, tmp_path, command):
+    """The cluster's nodes exist, so creating it, as connect's refusal says, isn't the answer."""
+    directory, commands, _, cluster = world
+    connect(world)
+    elsewhere = kubeconfig(tmp_path / "elsewhere", context="kind-another")
+    before, calls = len(commands.calls), len(cluster.api_calls)
+    with pytest.raises(PlatformError) as refused:
+        if command == "disconnect":
+            clusters.disconnect(
+                directory, "kind", "weave-test", "weave-workers", kubeconfig=elsewhere, notice=lambda line: None
+            )
+        else:
+            clusters.clusters(directory, check=True, kubeconfig=elsewhere)
+    assert str(refused.value) == (
+        f"No kind-weave-test context in your kubeconfig, so {command} can't reach the cluster. Pass --kubeconfig with "
+        "the file kind wrote. Nothing was changed."
+    )
+    assert not [call for call in commands.calls[before:] if call.argv[0] == KUBECTL]
+    assert not [name for name, _ in cluster.api_calls[calls:] if name != "deployment_runners.list"]
+    assert set(clusters.receipt(directory)["clusters"]["kind-weave-test"]["targets"]) == {"weave-workers"}
 
 
 def test_disconnecting_a_namespace_without_a_target_changes_nothing(world):
