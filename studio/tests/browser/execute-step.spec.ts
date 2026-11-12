@@ -255,10 +255,12 @@ test("a step the test data doesn't reach says which path was taken", async ({
 test("a secret in test input is refused and named, never shown", async ({
   page,
 }) => {
-  const answers: string[] = [];
-  page.on("response", async (response) => {
+  // Each answer's body, read while the test goes on: Playwright doesn't wait
+  // for its event handlers, so the test waits for these before checking them.
+  const answers: Promise<string>[] = [];
+  page.on("response", (response) => {
     if (response.url().includes("/studio/local/debug/execute"))
-      answers.push(await response.text().catch(() => ""));
+      answers.push(response.text().catch(() => ""));
   });
   const { details, calls } = await openExecuteFixture(page);
   // Studio's form never takes a secret, so the test puts one in the request the
@@ -281,7 +283,8 @@ test("a secret in test input is refused and named, never shown", async ({
   );
   expect(JSON.stringify(executions(calls).at(-1)!.body)).toContain("hunter2");
   expect(answers.length).toBeGreaterThan(0);
-  for (const answer of answers) expect(answer).not.toContain("hunter2");
+  for (const answer of await Promise.all(answers))
+    expect(answer).not.toContain("hunter2");
   await expect(details.dialog).not.toContainText("hunter2");
   await expect(page.locator(".toast-region")).not.toContainText("hunter2");
   // Nor in this computer's storage, the address, or anywhere on the page.
