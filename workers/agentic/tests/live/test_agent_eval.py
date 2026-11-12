@@ -14,7 +14,7 @@
 # Author: Firefly Software Foundation
 # SPDX-License-Identifier: Apache-2.0
 
-"""The turn evaluation against a real Ollama: every turn case once per model, no retries, results to build/a6.
+"""The turn evaluation against a real Ollama: every turn case once per model, no retries, results to build/agent-eval.
 
 This records a baseline; it fails only when a case could not be scored or a model is missing. Pass counts, tokens
 and seconds per turn are in the results file and the printed summary.
@@ -51,7 +51,7 @@ async def evaluate(url: str, models: list[str], context: int, mode: str) -> list
 def test_the_turn_cases_against_ollama(ollama_url, ollama_models, ollama_context):
     mode = os.environ.get("WEAVE_LIVE_EVAL_OUTPUT_MODE", "native")
     reports = asyncio.run(evaluate(ollama_url, ollama_models, ollama_context, mode))
-    output = Path(os.environ.get("WEAVE_LIVE_EVAL_OUTPUT", ROOT / "build" / "a6"))
+    output = Path(os.environ.get("WEAVE_LIVE_EVAL_OUTPUT", ROOT / "build" / "agent-eval"))
     output.mkdir(parents=True, exist_ok=True)
     for report in reports:
         name = report["model"].replace(":", "-")
