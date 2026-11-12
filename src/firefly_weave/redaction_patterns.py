@@ -38,14 +38,17 @@ REDACTED: Final = "[redacted]"
 _SET_1: Final = (
     re.compile(r"-----BEGIN [A-Z0-9 ]{1,64}-----(?:(?!-----END )[\s\S])*(?:-----END [A-Z0-9 ]{1,64}-----)?"),
     re.compile(r"\b[Bb][Ee][Aa][Rr][Ee][Rr][ \t]+[A-Za-z0-9._~+/-]{8,}=*"),
-    re.compile(r"\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]*"),
+    # A token starts where no token character comes before it; ``\b`` would let every ``-eyJ`` inside one long run
+    # start a match that scans to the run's end, which is quadratic.
+    re.compile(r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]*"),
     re.compile(r"\bsk-[A-Za-z0-9_-]{16,}"),
     re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b"),
     re.compile(r"\bgh[pousr]_[A-Za-z0-9]{36,}\b"),
     re.compile(r"\bgithub_pat_[A-Za-z0-9_]{22,}"),
 )
-# URL user information keeps the scheme and the host around it: ``https://[redacted]@example.test/``.
-_USER_INFO: Final = re.compile(r"(?<=://)[^\s/?#@]{1,1024}(?=@)")
+# URL user information keeps the scheme and the host around it: ``https://[redacted]@example.test/``. The run is
+# possessive and stops at ``/``, so the runs after each ``://`` never overlap and the pass stays linear at any length.
+_USER_INFO: Final = re.compile(r"(?<=://)[^\s/?#@]++(?=@)")
 
 PATTERN_SETS: Final[Mapping[int, tuple[re.Pattern[str], ...]]] = MappingProxyType({1: (*_SET_1, _USER_INFO)})
 

@@ -69,6 +69,7 @@ def test_secret_shaped_text_in_an_unmarked_field_is_redacted() -> None:
         "github_pat_11ABCDEFG0123456789abcdefghijklmnop",
         "gho_" + "x" * 36,
     ],
+    ids=["bearer", "jwt", "openai", "anthropic", "aws-session", "github-pat", "github-oauth"],
 )
 def test_each_secret_shape_is_redacted_whole(secret: str) -> None:
     assert scrub(secret, 1) == (REDACTED, 1)
@@ -93,6 +94,12 @@ def test_ordinary_text_is_left_alone() -> None:
     assert scrub(text, 1) == (text, 0)
 
 
+def test_url_user_information_of_any_length_is_redacted() -> None:
+    value, count = scrub("https://" + "u" * 2000 + ":pw@example.test/orders", 1)
+
+    assert (value, count) == ("https://[redacted]@example.test/orders", 1)
+
+
 def test_secret_shaped_object_keys_are_redacted_without_losing_entries() -> None:
     value, count = scrub({GITHUB_TOKEN: 1, "gho_" + "y" * 36: 2, "id": 3}, 1)
 
@@ -113,10 +120,24 @@ def test_pattern_sets_are_frozen_by_number() -> None:
         scrub("text", 99)
 
 
-def test_a_megabyte_without_secrets_scrubs_in_linear_time() -> None:
-    # Untrusted text must not be able to make the pass backtrack: no pattern may be superlinear.
-    hostile = ("://" + "a" * 2000 + " ") * 200 + "-----BEGIN X-----" * 2000 + "Bearer " * 20000 + "eyJ" * 50000
-
+@pytest.mark.parametrize(
+    "hostile",
+    [
+        ("://" + "a" * 2000 + " ") * 200,
+        "://" + ":" * 200_000,
+        "-----BEGIN X-----" * 2000,
+        "Bearer " * 20000,
+        "eyJ" * 50000,
+        # Every ``-eyJ`` inside one long run of token characters could start a token that never reaches its dot.
+        "-eyJ" * 50000,
+        "eyJaaaa." + "-aaaa" * 40000,
+        "-sk-" * 50000,
+    ],
+    ids=["user-info", "user-info-colons", "key-block", "bearer", "jwt-start", "jwt-dashes", "jwt-segment", "sk"],
+)
+def test_hostile_text_scrubs_in_linear_time(hostile: str) -> None:
+    # Untrusted text must not be able to make the pass backtrack: no pattern may be superlinear. Each shape is timed
+    # alone, because a pattern that redacts to the end of the text (a cut key block) would hide the shapes after it.
     started = time.perf_counter()
     scrub(hostile, 1)
 
