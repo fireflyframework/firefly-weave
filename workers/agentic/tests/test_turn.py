@@ -411,8 +411,13 @@ def half_context_turn():
     return turn(messages, number=2)
 
 
-@pytest.mark.parametrize("version,cut", [((0, 40, 16), True), ((0, 40, 0), True), ((0, 39, 9), False), (None, False)])
-async def test_a_half_context_cut_is_caught_on_ollama_0_40_and_later(version, cut):
+@pytest.mark.parametrize(
+    "version,cut",
+    [((0, 40, 16), True), ((0, 40, 0), True), ((0, 39, 9), False), (None, True)],
+    ids=["0.40.16", "0.40.0", "0.39.9", "unknown"],
+)
+async def test_a_half_context_cut_is_caught_on_ollama_0_40_and_later_or_an_unknown_version(version, cut):
+    # An unknown version is checked as the newer Ollama: the count's margin is thinnest on rare letters (1.01).
     case = half_context_turn()
     assert turn_fits(case) and turn_tokens(case) > 4096 + 16
     model, _ = scripted(respond(TextPart("The sum is 2100."), input_tokens=4096))
@@ -423,6 +428,16 @@ async def test_a_half_context_cut_is_caught_on_ollama_0_40_and_later(version, cu
     with pytest.raises(ConnectorFailure) as failed:
         await run(case, model, context_tokens=8192, ollama=True, ollama_version=version)
     assert (failed.value.code, failed.value.outcome) == ("LLM_CONTEXT_LIMIT", "failed")
+
+
+async def test_an_honest_turn_under_half_the_context_succeeds_with_an_unknown_version():
+    # The half rule flags only a prompt counted above half the context whose model count sits at half; this one is
+    # counted well under half, so a model count near 4,096 can't make it look cut.
+    case = turn([{"role": "user", "content": "Where is order A-17? " * 40}])
+    assert turn_tokens(case) < 4096 - 16
+    model, _ = scripted(respond(TextPart("It shipped."), input_tokens=4096))
+    output = await run(case, model, context_tokens=8192, ollama=True, ollama_version=None)
+    assert output["result"] == "It shipped."
 
 
 async def test_a_half_context_cut_of_a_formatting_request_is_caught():

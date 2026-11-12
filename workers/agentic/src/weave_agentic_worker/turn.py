@@ -221,11 +221,15 @@ def _sent(turn: TurnInput) -> str:
 
 
 def _keeps_half(version: tuple[int, ...] | None) -> bool:
-    """Whether an Ollama of this version keeps half the context when it cuts a prompt, by the gateway's rule."""
+    """Whether to check for a cut that kept half the context: on Ollama 0.40 and later, and when the version is unknown.
+
+    The count stays above the model on every measured shape, but on words of rare letters only by 1.01 to 1.12, so an
+    Ollama whose version can't be read is checked as the newer one rather than not at all.
+    """
     # The gateway imports the handler, which imports this module, so its constant is read when a turn runs.
     from weave_agentic_worker.gateway import HALF_CUT_VERSION
 
-    return version is not None and version >= HALF_CUT_VERSION
+    return version is None or version >= HALF_CUT_VERSION
 
 
 async def run_turn(
@@ -239,8 +243,8 @@ async def run_turn(
     ollama_version: tuple[int, ...] | None = None,
 ) -> JsonValue:
     """One turn as a ``TurnOutput`` dump. ``context_tokens`` is the endpoint's context from the AI policy, if known;
-    ``ollama`` turns on the checks for endpoints that cut a long prompt silently, and ``ollama_version`` (when known)
-    says whether a cut keeps half the context, as Ollama 0.40 and later do.
+    ``ollama`` turns on the checks for endpoints that cut a long prompt silently, and ``ollama_version`` says whether a
+    cut keeps half the context, as Ollama 0.40 and later do; ``None`` (unread) is checked as such a version.
 
     The turn is refused before any request exactly when the contract's ``turn_fits`` is false, the same count the
     kernel trims with, or when the endpoint's context is smaller than the turn's.
