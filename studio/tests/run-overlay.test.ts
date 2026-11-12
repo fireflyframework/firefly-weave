@@ -135,7 +135,7 @@ describe("a run's typed record", () => {
       readRunRecord(
         runView({
           status: "failed",
-          steps: { fetch: { rows: [{ name: "Ada" }] } },
+          steps: { fetch: { output: { rows: [{ name: "Ada" }] } } },
           active: ["send"],
           waits: { "wait-for-reply": "2026-10-07T10:05:00Z" },
           incidents: {
@@ -152,7 +152,7 @@ describe("a run's typed record", () => {
               target: "approve",
               status: "completed",
               visible: {},
-              steps: { approve: { decision: "approve", data: {} } },
+              steps: { approve: { output: { decision: "approve", data: {} } } },
               output: null,
             },
           },
@@ -164,8 +164,8 @@ describe("a run's typed record", () => {
       status: "failed",
       input: { total: 120.5 },
       completed: {
-        fetch: { rows: [{ name: "Ada" }] },
-        approve: { decision: "approve", data: {} },
+        fetch: { output: { rows: [{ name: "Ada" }] } },
+        approve: { output: { decision: "approve", data: {} } },
       },
       active: ["send"],
       waiting: ["wait-for-reply"],

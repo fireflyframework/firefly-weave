@@ -174,7 +174,7 @@ function viewOf(
       status: summary.status,
       active: [],
       input: { total: 120.5 },
-      steps: { fetch: { rows: [{ name: "Ada" }] } },
+      steps: { fetch: { output: { rows: [{ name: "Ada" }] } } },
       waits: {},
       branches: {},
       incidents: {},
@@ -634,7 +634,7 @@ describe("the chosen run", () => {
       running.id,
       viewOf(
         { ...running, status: "succeeded" },
-        { steps: { fetch: {}, support: {} } },
+        { steps: { fetch: { output: {} }, support: { output: {} } } },
       ),
     );
     await env.advance(2000);

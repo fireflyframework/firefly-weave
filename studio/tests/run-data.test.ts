@@ -30,7 +30,8 @@ function record(facts: Partial<RunRecord> = {}): RunRecord {
     versionId: "9e8f5b0c-cfee-4af4-8dea-d2ae9fb06b9a",
     status: "failed",
     input: { total: 120.5 },
-    completed: { fetch: { rows: [{ name: "Ada" }] } },
+    // The run's state keeps each step's binding under its step ID.
+    completed: { fetch: { output: { rows: [{ name: "Ada" }] } } },
     active: [],
     waiting: [],
     incidents: [],
@@ -152,6 +153,53 @@ describe("what a step received", () => {
     expect(!result.ok && result.reason).toMatch(
       /^Studio couldn't recompute this input: WV-[A-Z-]+\.$/,
     );
+  });
+
+  it("reads a step's own output, never a repeated activation's", () => {
+    const next = (expression: unknown): Workflow => ({
+      ...definition({}),
+      spec: {
+        steps: [
+          { id: "add", kind: "action", action: "crm.lookup@2.0.0" },
+          {
+            id: "next",
+            kind: "action",
+            action: "crm.lookup@2.0.0",
+            with: expression,
+          },
+        ],
+      },
+    });
+    const data = new RunData(
+      record({
+        completed: {
+          add: { output: { id: 1 } },
+          // An undo's output and a loop's yield, after the step's own.
+          "add#undo": { output: { id: 99 } },
+          "add~1": { output: { id: 98 } },
+        },
+      }),
+      ENVIRONMENT,
+      next({ ref: "/steps/add/output/id" }),
+    );
+    data.setOutputs([
+      {
+        ...fact("add", "succeeded", { value: { id: 1 } }),
+        instance_key: "add#undo",
+        output: { id: 97 },
+      },
+    ]);
+    expect(data.received("next")).toEqual({ ok: true, value: 1 });
+
+    // A handled failure's binding is read as the run's state keeps it.
+    const handled = new RunData(
+      record({
+        completed: { add: { output: null, error: { code: "CRM_DOWN" } } },
+      }),
+      ENVIRONMENT,
+      next({ ref: "/steps/add/error/code" }),
+    );
+    expect(handled.received("next")).toEqual({ ok: true, value: "CRM_DOWN" });
   });
 });
 

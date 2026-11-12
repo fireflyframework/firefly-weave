@@ -28,7 +28,10 @@ export interface RunRecord {
   versionId: string;
   status: RunStatus;
   input: Json;
-  /** Instance key to output, from the run's steps and every branch's steps. */
+  /**
+   * Step ID to its binding ({output}, or {error} for a handled failure), from
+   * the run's steps and every branch's steps, as expressions read them.
+   */
   completed: Readonly<Record<string, Json>>;
   /** Instance keys the run is at. */
   active: readonly string[];

@@ -50,6 +50,12 @@ const AT_WORK = new Set<StepFact["status"]>([
 const FAILED = new Set<StepFact["status"]>(["failed", "timed_out"]);
 
 const keyOf = (fact: StepFact) => fact.instance_key || fact.node_id;
+/**
+ * Whether an instance key is the step's own: a repeated activation ("#",
+ * a confirm, cancel or undo) or a loop's yield ("~") never stands in for
+ * the output later steps read.
+ */
+const ownBinding = (key: string) => !/[#~]/.test(key);
 /** The first two segments of a JSON pointer: "/steps/fetch/output" gives ["steps", "fetch"]. */
 const head = (pointer: string) => pointer.split("/").slice(1, 3);
 
@@ -140,15 +146,22 @@ export class RunData implements RunDataPort {
     const reads = referencesOf(step["with"]).map(head);
     if (reads.some(([root]) => LOOP_ROOTS.has(root)))
       return { ok: false, reason: ONE_ITERATION };
-    const steps: Record<string, { output: Json }> = {};
+    // Expressions read each step's binding ({output}, or {error} for a
+    // handled failure), which the run's state keeps under its step ID.
+    const steps: Record<string, Json> = {};
     const leftOut = new Set<string>();
-    for (const [key, output] of Object.entries(this.record.completed))
-      steps[instanceStep(key)] = { output };
+    for (const [key, binding] of Object.entries(this.record.completed))
+      if (ownBinding(key)) steps[instanceStep(key)] = binding;
     // What was read with include=output is the platform's classified record.
     for (const [key, output] of this.outputs) {
+      if (!ownBinding(key)) continue;
       const id = instanceStep(key);
       if (output.kind === "value") {
-        steps[id] = { output: output.value };
+        const binding = steps[id];
+        steps[id] = {
+          ...(binding && typeof binding === "object" ? binding : {}),
+          output: output.value,
+        };
         leftOut.delete(id);
       } else if (output.kind === "omitted") {
         delete steps[id];
