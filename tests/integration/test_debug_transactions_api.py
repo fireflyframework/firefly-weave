@@ -70,26 +70,31 @@ async def test_a_session_runs_a_transaction_and_a_person_resolves_it(author, hea
     assert read.json() == ended.json()
 
 
-async def test_a_resolve_in_a_session_changes_no_run_or_incident_of_the_project(
+async def test_a_resolve_or_cancel_in_a_session_changes_no_run_or_incident_of_the_project(
     author, headers, project_url, access_db
 ):
     from sqlalchemy import text
 
-    # Runs, incidents, transactions, and the platform's transactional outbox (integration_events).
+    # A checksum of every row of runs, incidents, transactions, and the platform's transactional outbox
+    # (integration_events): an insert, an update or a delete in any of them changes it.
     rows = text(
-        "SELECT (SELECT count(*) FROM runs), (SELECT count(*) FROM incidents),"
-        " (SELECT count(*) FROM run_transactions), (SELECT count(*) FROM integration_events)"
+        "SELECT (SELECT md5(coalesce(string_agg(t::text, ',' ORDER BY t::text), '')) FROM runs t),"
+        " (SELECT md5(coalesce(string_agg(t::text, ',' ORDER BY t::text), '')) FROM incidents t),"
+        " (SELECT md5(coalesce(string_agg(t::text, ',' ORDER BY t::text), '')) FROM run_transactions t),"
+        " (SELECT md5(coalesce(string_agg(t::text, ',' ORDER BY t::text), '')) FROM integration_events t)"
     )
 
-    async def counts():
+    async def checksums():
         async with access_db[1]() as session:
             return tuple((await session.execute(rows)).one())
 
-    before = await counts()
+    before = await checksums()
     url, _ = await in_doubt(author, headers, project_url)
-    resolved = await author[0].post(url + "/commands", headers={**headers, "If-Match": "2"}, json=RETRY)
-    assert resolved.status_code == 200, resolved.text
-    assert await counts() == before
+    for revision, command in enumerate((RETRY, {"kind": "cancel"}, {"kind": "continue"}), start=2):
+        answered = await author[0].post(url + "/commands", headers={**headers, "If-Match": str(revision)}, json=command)
+        assert answered.status_code == 200, answered.text
+    assert answered.json()["view"]["status"] == "cancelled"
+    assert await checksums() == before
 
 
 async def test_another_person_cant_resolve_a_session(
