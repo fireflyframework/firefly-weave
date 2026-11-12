@@ -175,3 +175,52 @@ async def test_a_steps_activations_are_listed_in_iteration_order(agent):
         "support[10][10]",
     ]
     assert after == ["support[10][9]", "support[10][10]"]
+
+
+async def change(setup, sql: str, node: str, **values) -> None:
+    """Rewrite what the run recorded at ``node``, as a store could hold it."""
+    async with setup.db[1].begin() as session:
+        await session.execute(
+            text(
+                sql + " WHERE tenant_id=:tenant AND project_id=:project AND environment_id=:environment "
+                "AND run_id=:run AND node_id=:node"
+            ),
+            {
+                "tenant": setup.scope.tenant_id,
+                "project": setup.scope.project_id,
+                "environment": setup.scope.environment_id,
+                "run": setup.run.id,
+                "node": node,
+                **values,
+            },
+        )
+
+
+async def test_values_past_the_page_limit_are_left_out_and_the_page_still_reads(agent):
+    """One activation's values over 8 MiB: the smaller ones show, the larger ones are left out with their reason."""
+    await finish(agent)
+    large = "x" * (9 * 1024 * 1024)
+    await change(
+        agent,
+        "UPDATE step_instances SET output=jsonb_build_object('status',cast(:large AS text))",
+        "support#1.1",
+        large=large,
+    )
+    await change(
+        agent,
+        "UPDATE step_instances SET output=jsonb_set(output,'{result}',to_jsonb(cast(:large AS text)))",
+        "support#3",
+        large=large,
+    )
+
+    [log] = (await read(agent, limit=1)).items
+
+    limited = [("", "resource_limit")]
+    cancel = log.turns[0].calls[0]
+    assert (cancel.status, cancel.arguments.value, cancel.review.decision) == ("succeeded", {"id": "A-17"}, "approve")
+    assert cancel.output.available is False and [(o.path, o.reason) for o in cancel.output.omissions] == limited
+    answer = log.turns[2]
+    assert answer.final.available is False and [(o.path, o.reason) for o in answer.final.omissions] == limited
+    assert (answer.input_tokens, answer.output_tokens, answer.calls) == (120, 12, [])
+    assert (log.turns[1].calls[0].status, log.status, log.stop) == ("refused", "succeeded", "final")
+    assert large not in log.model_dump_json()

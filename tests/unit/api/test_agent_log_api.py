@@ -98,7 +98,7 @@ class Recorded:
 
     async def outputs(self, run_id, keys):
         self.reads.append("outputs")
-        return {key: self.answers[key] for key in keys if key in self.answers}
+        return {key: self.answers[key] for key in keys if key in self.answers}, {}
 
     async def turns(self, run_id, keys):
         self.reads.append("turns")

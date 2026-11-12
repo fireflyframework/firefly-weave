@@ -18,8 +18,11 @@
 
 Nothing is stored for the log. ``assemble`` is pure: it reads the pinned IR, the step facts of the agent's keys (times,
 status, error codes), the outputs its turns, calls and reviews recorded, and what each turn's task recorded about its
-input, and returns the log. Every one of those is read by run and key, so a page costs the same in a run with one agent
-as in a loop of ten thousand.
+input, and returns the log. Every read names the run. Outputs, turn inputs and agent state are read by their exact keys.
+Step facts are read by run and step and narrowed to the page's keys in the database, and a step's activations are sorted
+by their loop indexes there, so in a loop of many agents those two reads grow with the step's facts in the run; what a
+page returns stays bounded. The values on a page are limited to ``PAGE_BYTES``: turns before calls, the smallest first;
+a value that doesn't fit is left out with the ``resource_limit`` omission, and its turn keeps its shape.
 
 A call's tool is the one whose name the model wrote exactly, and everything about the tool goes through its target, so
 a new kind of tool needs no change here. A completed call's outcome is the result the model read: the next turn's input
@@ -37,7 +40,7 @@ from datetime import datetime
 from typing import Any, Final, Literal, cast
 from uuid import UUID
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from pyfly.container import service
 
 from firefly_weave.access.audit import AuditContext
@@ -64,7 +67,7 @@ from firefly_weave.contracts.agent_log import (
     agent_log_key,
     shown_name,
 )
-from firefly_weave.contracts.agent_turns import ToolCall, TurnOutput, call_id
+from firefly_weave.contracts.agent_turns import MAX_TURN_TOOL_CALLS, CalledName, TurnOutput, TurnUsage, call_id
 from firefly_weave.contracts.instance_keys import node_of, split_instance
 from firefly_weave.contracts.values import MAX_SAFE_INTEGER, JsonObject, JsonValue
 from firefly_weave.definitions.models import CatalogError
@@ -81,6 +84,8 @@ REFUSALS: Final = frozenset({"UNKNOWN_TOOL", "INVALID_ARGUMENTS", "REPEATED_CALL
 UNCLASSIFIED: Final = SafeProjection(
     available=False, omissions=[Omission(path="", reason="classification_unavailable")]
 )
+# A value the page's byte limit left out.
+OVER_PAGE_LIMIT: Final = SafeProjection(available=False, omissions=[Omission(path="", reason="resource_limit")])
 NOT_FOUND: Final = "No AI agent activation at this key"
 # The code a call still running when its run timed out fails with, when its step fact records none.
 TIMED_OUT: Final = "TIMEOUT"
@@ -119,6 +124,36 @@ class TurnRecord:
     results: Mapping[str, RecordedResult] = field(default_factory=dict)
 
 
+class _Called(BaseModel):
+    model_config = ConfigDict(strict=True, frozen=True, extra="ignore")
+
+    name: CalledName
+
+
+class _TurnShape(BaseModel):
+    """What a page reads of a turn whose values its byte limit left out: its kind, its calls' names and its usage."""
+
+    model_config = ConfigDict(strict=True, frozen=True, extra="ignore", populate_by_name=True)
+
+    kind: Literal["tool_calls", "final"]
+    tool_calls: list[_Called] = Field(default_factory=list, max_length=MAX_TURN_TOOL_CALLS, alias="toolCalls")
+    usage: TurnUsage
+    dropped_tool_calls: int | None = Field(default=None, ge=1, le=MAX_SAFE_INTEGER, alias="droppedToolCalls")
+
+
+@dataclass(frozen=True)
+class _Answer:
+    """A turn's output as the log reads it. ``complete`` is false when the page's byte limit left its values out: its
+    calls' arguments and its final answer."""
+
+    kind: Literal["tool_calls", "final"]
+    calls: list[tuple[str, JsonValue]]
+    result: JsonValue
+    usage: TurnUsage
+    dropped: int
+    complete: bool = True
+
+
 def assemble(
     ir: WorkflowIR,
     key: str,
@@ -127,11 +162,14 @@ def assemble(
     outputs: Mapping[str, JsonValue],
     intents: Sequence[TurnRecord],
     state: AgentState | None = None,
+    withheld: Mapping[str, JsonValue] | None = None,
 ) -> AgentLog:
     """The log of the agent activation at ``key``.
 
     ``steps`` are step facts, ``outputs`` the outputs completed keys recorded, ``intents`` what turn tasks recorded
-    about their inputs, and ``state`` the agent's state while it runs. Records of other keys are ignored.
+    about their inputs, and ``state`` the agent's state while it runs. ``withheld`` holds the completed keys whose
+    values the page's byte limit left out, with a turn's shape (``kind``, ``toolCalls`` names, ``usage``,
+    ``droppedToolCalls``) or None for a call. Records of other keys are ignored.
     """
     node = next((item for item in ir.graph.nodes if item.id == node_of(key)), None)
     if not isinstance(node, AgentNode):
@@ -148,7 +186,7 @@ def assemble(
     )
     activation = facts.get(key)
     active = activation.status not in TERMINAL if activation is not None else state is not None
-    context = _Context(ir, node, key, facts, outputs, turns, state if active else None, active)
+    context = _Context(ir, node, key, facts, outputs, withheld or {}, turns, state if active else None, active)
     rows = [context.turn(number) for number in numbers]
     status = _status(activation, rows)
     last = rows[-1] if rows else None
@@ -187,6 +225,7 @@ class _Context:
     key: str
     facts: Mapping[str, StepRecord]
     outputs: Mapping[str, JsonValue]
+    withheld: Mapping[str, JsonValue]
     turns: Mapping[str, TurnRecord]
     state: AgentState | None
     active: bool
@@ -194,39 +233,77 @@ class _Context:
     def turn(self, number: int) -> AgentTurn:
         name = turn_key(self.key, number)
         fact = self.facts.get(name)
-        output = _turn_output(self.outputs.get(name)) if name in self.outputs else None
+        answer = self.answer(name)
         record = self.turns.get(name)
         calls = (
-            [self.call(number, index, call) for index, call in enumerate(output.tool_calls, start=1)]
-            if output is not None
+            [
+                self.call(number, index, called, arguments, answer.complete)
+                for index, (called, arguments) in enumerate(answer.calls, start=1)
+            ]
+            if answer is not None
             else []
         )
         final = None
-        if output is not None and output.kind == "final":
-            final = project(output.result, self.node.llm_profile.output_schema, _bundle(self.ir))
+        if answer is not None and answer.kind == "final":
+            final = (
+                project(answer.result, self.node.llm_profile.output_schema, _bundle(self.ir))
+                if answer.complete
+                else OVER_PAGE_LIMIT
+            )
         started, ended = _times(fact)
         return AgentTurn(
             turn=number,
             forced=record is not None and not record.tools_enabled,
-            input_tokens=output.usage.input_tokens if output is not None else None,
-            output_tokens=output.usage.output_tokens if output is not None else None,
+            input_tokens=answer.usage.input_tokens if answer is not None else None,
+            output_tokens=answer.usage.output_tokens if answer is not None else None,
             started_at=started,
             ended_at=ended,
             final=final,
             calls=calls,
-            dropped_tool_calls=(output.dropped_tool_calls or 0) if output is not None else 0,
+            dropped_tool_calls=answer.dropped if answer is not None else 0,
             error=_error(fact.error_code) if fact is not None and fact.status == "failed" else None,
         )
 
-    def call(self, turn: int, index: int, call: ToolCall) -> AgentCall:
+    def answer(self, name: str) -> _Answer | None:
+        """A turn's recorded output, or only its shape when the page's byte limit left its values out."""
+        if name in self.outputs:
+            output = _turn_output(self.outputs[name])
+            if output is None:
+                return None
+            return _Answer(
+                kind=output.kind,
+                calls=[(call.name, call.arguments) for call in output.tool_calls],
+                result=output.result,
+                usage=output.usage,
+                dropped=output.dropped_tool_calls or 0,
+            )
+        if name not in self.withheld:
+            return None
+        try:
+            shape = _TurnShape.model_validate(self.withheld[name])
+        except ValidationError:
+            return None
+        return _Answer(
+            kind=shape.kind,
+            calls=[(call.name, None) for call in shape.tool_calls],
+            result=None,
+            usage=shape.usage,
+            dropped=shape.dropped_tool_calls or 0,
+            complete=False,
+        )
+
+    def call(self, turn: int, index: int, called: str, written: JsonValue, complete: bool) -> AgentCall:
+        """The call the model wrote as ``called`` with the arguments ``written``; ``complete`` is false when the page's
+        byte limit left its turn's values out."""
         name = call_key(self.key, turn, index)
         # The model's text names the tool exactly, byte for byte, as the kernel matched it.
-        tool = next((item for item in self.node.tools if item.name == call.name), None)
-        arguments = (
-            project(call.arguments, tool_schema(self.ir, tool), _bundle(self.ir))
-            if tool is not None and isinstance(call.arguments, dict)
-            else UNCLASSIFIED
-        )
+        tool = next((item for item in self.node.tools if item.name == called), None)
+        if not complete:
+            arguments = OVER_PAGE_LIMIT
+        elif tool is not None and isinstance(written, dict):
+            arguments = project(written, tool_schema(self.ir, tool), _bundle(self.ir))
+        else:
+            arguments = UNCLASSIFIED
         asked = review_key(self.key, turn, index)
         review_fact = self.facts.get(asked)
         review = _review(self.outputs.get(asked), review_fact)
@@ -242,7 +319,7 @@ class _Context:
             started, ended = _times(timed)
             return AgentCall(
                 instance_key=name,
-                name=shown_name(call.name),
+                name=shown_name(called),
                 target=_target(self.ir, tool),
                 status=status,
                 started_at=started,
@@ -276,6 +353,8 @@ class _Context:
                     completion = {"status": "succeeded" if status == "succeeded" else "failed"}
                     schemas = target.event_schemas(self.ir, tool, target.completion, completion)
                     output = _classified(self.outputs[name], schemas, _bundle(self.ir))
+                elif tool is not None and name in self.withheld:
+                    output = OVER_PAGE_LIMIT
                 return made(status, fact, error=error, output=output)
             return made("running" if fact.status not in TERMINAL and self.active else "cancelled", fact)
         if self.queued(name):
@@ -400,7 +479,7 @@ _INDEXES = (
 
 
 class AgentLogRepository:
-    """Bounded, indexed reads of what a run recorded for its agents: every read names the run and the keys."""
+    """Reads of what a run recorded for its agents: every read names the run, and the step or the keys it reads."""
 
     def __init__(self, tx: Transaction) -> None:
         self.tx = tx
@@ -436,7 +515,8 @@ class AgentLogRepository:
         return workflow(import_artifact(rows[0]["artifact"]))
 
     async def activations(self, run_id: UUID, step: str, after: list[int] | None, limit: int) -> list[str]:
-        """The step's activations in iteration order, after ``after``: the step itself outside a loop."""
+        """The step's activations in iteration order, after ``after``: the step itself outside a loop. The database
+        sorts every activation of the step in the run by its loop indexes."""
         rows = await self.rows(
             f"SELECT f.instance_key FROM step_facts f WHERE {_STEP_SCOPE} AND f.node_id=:step "
             f"AND f.instance_key !~ '[#~]' AND (cast(:after AS numeric[]) IS NULL OR {_INDEXES}>cast(:after AS "
@@ -449,7 +529,8 @@ class AgentLogRepository:
         return [row["instance_key"] or step for row in rows]
 
     async def steps(self, run_id: UUID, step: str, keys: list[str]) -> list[StepRecord]:
-        """The facts of the activations at ``keys`` and of every turn, call and review under them."""
+        """The facts of the activations at ``keys`` and of every turn, call and review under them, matched among the
+        step's facts in the run."""
         rows = await self.rows(
             "SELECT f.instance_key,f.status,f.scheduled_at,f.started_at,f.ended_at,f.error_code,f.child_run_id "
             f"FROM step_facts f WHERE {_STEP_SCOPE} AND f.node_id=:step AND (f.instance_key=ANY(:exact) OR "
@@ -473,23 +554,41 @@ class AgentLogRepository:
             for row in rows
         ]
 
-    async def outputs(self, run_id: UUID, keys: list[str]) -> dict[str, JsonValue]:
-        """The outputs the completed keys recorded; a page's outputs are limited to 8 MiB in total."""
+    async def outputs(self, run_id: UUID, keys: list[str]) -> tuple[dict[str, JsonValue], dict[str, JsonValue]]:
+        """The outputs the completed keys recorded, and the keys whose values the page's byte limit left out.
+
+        Reviews are small and always read. Turns come next, then calls, the smallest first, while the page's total
+        stays within ``PAGE_BYTES``; the rest stay in the database. A turn left out still gives its shape (its kind,
+        its calls' IDs and names, its usage), so its calls keep their rows; a call left out gives None.
+        """
         if not keys:
-            return {}
+            return {}, {}
         rows = await self.rows(
-            "WITH sized AS (SELECT s.node_id,s.output,sum(octet_length(s.output::text)) OVER () AS total_bytes "
+            "WITH sized AS (SELECT s.node_id,s.output,octet_length(s.output::text) AS bytes,"
+            "CASE WHEN s.node_id ~ '[.]review$' THEN 0 WHEN s.node_id ~ '#[0-9]+$' THEN 1 ELSE 2 END AS tier "
             "FROM step_instances s WHERE s.tenant_id=:tenant AND s.project_id=:project "
-            "AND s.environment_id=:environment AND s.run_id=:run AND s.node_id=ANY(:keys) AND s.status='completed') "
-            "SELECT node_id,CASE WHEN total_bytes<=:budget THEN output END AS output,total_bytes>:budget AS oversized "
-            "FROM sized",
+            "AND s.environment_id=:environment AND s.run_id=:run AND s.node_id=ANY(:keys) AND s.status='completed'),"
+            "ranked AS (SELECT node_id,output,tier,sum(CASE WHEN tier=0 THEN 0 ELSE bytes END) OVER "
+            '(ORDER BY tier,bytes,node_id COLLATE "C" ROWS UNBOUNDED PRECEDING) AS running FROM sized) '
+            "SELECT node_id,CASE WHEN running<=:budget THEN output END AS output,running>:budget AS withheld,"
+            "CASE WHEN running>:budget AND tier=1 THEN jsonb_strip_nulls(jsonb_build_object('kind',output->'kind',"
+            "'usage',output->'usage','droppedToolCalls',output->'droppedToolCalls','toolCalls',(SELECT "
+            "coalesce(jsonb_agg(jsonb_build_object('id',c->'id','name',c->'name') ORDER BY n),'[]'::jsonb) "
+            "FROM jsonb_array_elements(CASE WHEN jsonb_typeof(output->'toolCalls')='array' THEN output->'toolCalls' "
+            "ELSE '[]'::jsonb END) WITH ORDINALITY AS listed(c,n)))) END AS shape FROM ranked",
             run=run_id,
             keys=keys,
             budget=PAGE_BYTES,
         )
-        if any(row["oversized"] for row in rows):
-            raise CatalogError(429, "WV-PAGE-LIMIT", "Selected page exceeds the logical byte limit")
-        return {row["node_id"]: row["output"] for row in rows}
+        values: dict[str, JsonValue] = {}
+        withheld: dict[str, JsonValue] = {}
+        for row in rows:
+            if row["withheld"]:
+                shape = row["shape"]
+                withheld[row["node_id"]] = json.loads(shape) if isinstance(shape, str) else shape
+            else:
+                values[row["node_id"]] = row["output"]
+        return values, withheld
 
     async def turns(self, run_id: UUID, keys: list[str]) -> list[TurnRecord]:
         """What each turn's task recorded about its input, read in the database: only the flags, the loaded memory
@@ -588,7 +687,9 @@ class AgentLogService:
                     raise CatalogError(404, "WV-NOT-FOUND", NOT_FOUND)
                 keys = [key] if after is None or iteration(key) > after else []
             visible = keys[:limit]
-            outputs = await repository.outputs(run_id, [record.key for record in steps if record.key not in visible])
+            outputs, withheld = await repository.outputs(
+                run_id, [record.key for record in steps if record.key not in visible]
+            )
             turns = [
                 record.key
                 for record in steps
@@ -597,7 +698,15 @@ class AgentLogService:
             intents = await repository.turns(run_id, turns)
             states = await repository.agents(run_id, visible)
             items = [
-                assemble(ir, name, steps=steps, outputs=outputs, intents=intents, state=states.get(name))
+                assemble(
+                    ir,
+                    name,
+                    steps=steps,
+                    outputs=outputs,
+                    intents=intents,
+                    state=states.get(name),
+                    withheld=withheld,
+                )
                 for name in visible
             ]
             next_cursor = None

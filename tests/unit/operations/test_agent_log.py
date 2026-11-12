@@ -222,14 +222,22 @@ class Recorded:
             input_digest=self.humans[key].context["inputDigest"],
         )
 
-    def log(self, key: str = "support"):
+    def log(self, key: str = "support", withheld=None):
+        """The log as a page reads it; ``withheld`` maps the keys whose values the page's limit left out to what the
+        page still reads of them: a turn's shape, or None for a call."""
+        withheld = withheld or {}
         return assemble(
             self.ir,
             key,
             steps=self.facts.records(),
-            outputs={name: output for name, (status, output) in self.instances.items() if status == "completed"},
+            outputs={
+                name: output
+                for name, (status, output) in self.instances.items()
+                if status == "completed" and name not in withheld
+            },
             intents=[turn_record(name, value) for name, value in self.turns.items()],
             state=self.state.agents.get(key),
+            withheld=withheld,
         )
 
 
@@ -515,3 +523,30 @@ def test_a_call_still_running_when_the_run_timed_out_failed_with_timeout():
     assert (call.status, call.error) == ("failed", AgentError(code="TIMEOUT"))
     assert (call.started_at, call.ended_at, call.output) == (NOW + 2 * SECONDS, due, None)
     assert (log.status, log.ended_at) == ("timed_out", due)
+
+
+def test_values_past_the_page_limit_are_left_out_with_their_reason():
+    run = mockup_run()
+    # The page's limit left out the lookup's output and both turns' values; the turns' shapes still came back.
+    withheld = {
+        "support#1": {
+            "kind": "tool_calls",
+            "toolCalls": [{"id": "t1c1", "name": "lookup_order"}],
+            "usage": usage(612, 48),
+        },
+        "support#1.1": None,
+        "support#2": {"kind": "final", "toolCalls": [], "usage": usage(731, 35)},
+    }
+
+    log = run.log(withheld=withheld)
+
+    first, second = log.turns
+    [call] = first.calls
+    limited = [("", "resource_limit")]
+    assert (call.name, call.status, call.target.reference) == ("lookup_order", "succeeded", "orders-get@1.0.0")
+    assert call.arguments.available is False and [(o.path, o.reason) for o in call.arguments.omissions] == limited
+    assert call.output.available is False and [(o.path, o.reason) for o in call.output.omissions] == limited
+    assert second.final.available is False and [(o.path, o.reason) for o in second.final.omissions] == limited
+    assert [(turn.input_tokens, turn.output_tokens) for turn in log.turns] == [(612, 48), (731, 35)]
+    assert (log.status, log.stop, log.totals.tool_calls) == ("succeeded", "final", 1)
+    assert "A-17" not in log.model_dump_json()

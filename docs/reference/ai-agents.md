@@ -171,7 +171,8 @@ reference.
 
 Values follow the run views' rules. `arguments` are classified by the parameters the model saw, `output` by the
 tool's output schema and `final` by the step's result schema. A value that can't be shown is left out with its
-reason: an output with a field marked `x-secret` has `available: false` and the omission `classified_secret`. The
+reason: an output with a field marked `x-secret` has `available: false` and the omission `classified_secret`, and a
+value that doesn't fit in the page's 8 MiB has the omission `resource_limit`. The
 `name` is the model's own text, so it's shown escaped: format characters are dropped, control characters and line
 separators are written as `\uXXXX`, and it's cut at 256 characters.
 

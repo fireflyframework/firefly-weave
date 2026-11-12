@@ -685,17 +685,20 @@ one activation's instance key:
 
 - A step ID, such as `support`, pages through the step's activations in
   iteration order, outer loop first. Outside a loop, the page has the one
-  activation.
+  activation. A step that hasn't run yet answers `200` with an empty page.
 - An activation key, such as `support[2]`, reads that activation. Encode its
   brackets in the path: `support%5B2%5D`.
 - `limit` is 1 to 20 activations (20 by default). `cursor` continues a page
-  and is bound to the run and the key.
+  and is bound to the run and the key. The last page has no `next_cursor`.
 - A key that names a turn, a tool call, a review or a loop yield (`support#1`,
   `each~1`) answers `422` with `WV-VALIDATION` before anything is read. A
   step that isn't an AI agent, or an activation that hasn't run, answers `404`
   with `WV-NOT-FOUND`.
-- The outputs on one page are limited to 8 MiB in total; a larger page answers
-  `429 WV-PAGE-LIMIT`, so request a smaller `limit`.
+- The values on one page (tool arguments, tool outputs and final answers) are
+  limited to 8 MiB in total. Each turn's arguments and final answer come
+  before tool outputs, and the smallest come first; a value that doesn't fit
+  is left out with the omission `resource_limit`, and its turn still lists its
+  calls and tokens. A smaller `limit` leaves room for more values.
 
 Each activation lists its turns with their tokens and times, and each turn
 lists the tool calls the model asked for. Arguments, outputs and the final
