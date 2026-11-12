@@ -48,10 +48,17 @@ ADVERTISED_FEATURES: Final[tuple[LanguageFeature, ...]] = (
     "text.join",
 )
 
-# Step kinds, operators and workflow fields that need a feature. AI steps add "agent": "ai.agent" with AgentStep.
+# Step kinds, operators and workflow fields that need a feature.
 KIND_FEATURES: Final[Mapping[str, LanguageFeature]] = MappingProxyType(
-    {"forEach": "flow.forEach", "callWorkflow": "flow.callWorkflow", "transaction": "flow.transaction"}
+    {
+        "agent": "ai.agent",
+        "forEach": "flow.forEach",
+        "callWorkflow": "flow.callWorkflow",
+        "transaction": "flow.transaction",
+    }
 )
+# AI agent tool targets that need a feature beyond ai.agent: a sub-workflow tool is a workflow call.
+TOOL_TARGET_FEATURES: Final[Mapping[str, LanguageFeature]] = MappingProxyType({"workflow": "flow.callWorkflow"})
 OPERATOR_FEATURES: Final[Mapping[str, LanguageFeature]] = MappingProxyType(
     {"concat": "text.concat", "join": "text.join"}
 )
@@ -87,3 +94,5 @@ MAX_LOOP_ITEMS: Final = 10_000
 MAX_LOOP_DEPTH: Final = 3
 MAX_RUN_ITERATIONS: Final = 100_000
 MAX_CALL_DEPTH: Final = 8
+# Tokens all AI agents of one run may use; the kernel stops the agent that crosses it.
+MAX_RUN_AGENT_TOKENS: Final = 2_000_000

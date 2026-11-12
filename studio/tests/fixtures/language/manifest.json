@@ -536,6 +536,16 @@
         "studio": "ready"
       },
       {
+        "kind": "agent",
+        "feature": "ai.agent",
+        "schema_ref": "workflow.schema.json#/$defs/AgentStep",
+        "group": "ai",
+        "label": "AI agent",
+        "blocks": [],
+        "scope_roots": [],
+        "studio": "pending"
+      },
+      {
         "kind": "transform",
         "schema_ref": "workflow.schema.json#/$defs/TransformStep",
         "group": "data",

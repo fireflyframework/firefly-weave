@@ -56,6 +56,7 @@ def test_feature_vocabulary_is_frozen():
         "text.join",
     )
     assert dict(KIND_FEATURES) == {
+        "agent": "ai.agent",
         "forEach": "flow.forEach",
         "callWorkflow": "flow.callWorkflow",
         "transaction": "flow.transaction",
@@ -238,6 +239,7 @@ def test_a_manifest_from_a_server_without_step_fields_still_reads():
 def test_new_constructs_stay_pending_until_studio_ships_them():
     manifest = language_manifest()
     assert {entry.kind for entry in manifest.step_kinds if entry.studio == "pending"} == {
+        "agent",
         "forEach",
         "callWorkflow",
         "transaction",
