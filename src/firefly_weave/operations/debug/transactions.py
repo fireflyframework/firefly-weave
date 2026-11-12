@@ -18,7 +18,8 @@
 of them returns. Nothing here starts a run, calls a worker or reads a database."""
 
 from dataclasses import dataclass
-from typing import Literal, cast
+from typing import Final, Literal, cast
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 from firefly_weave.compiler.ir import ActionNode, CallWorkflowNode, IRNode
 from firefly_weave.contracts.instance_keys import InvalidInstanceKey, split_instance
@@ -26,6 +27,32 @@ from firefly_weave.contracts.transactions import PHASE_SEGMENTS, UndoPhase, spli
 from firefly_weave.contracts.values import JsonObject, JsonValue
 from firefly_weave.runtime.control import enclosing_loops
 from firefly_weave.runtime.kernel import PreparedWorkflow
+from firefly_weave.runtime.models import Deadline, RunState
+from firefly_weave.runtime.transactions import split_deadline
+
+# The simulated workflow's run: stable across sessions, restores, the library, the CLI and servers, so the operation
+# keys its confirms, cancels and undos read are too. A called workflow's run is ``frame_run_id`` of its call.
+SESSION_RUN_ID: Final[UUID] = uuid5(NAMESPACE_URL, "firefly-weave/debug/v1/run")
+
+
+def started_data(prepared: PreparedWorkflow, run_id: UUID) -> JsonObject:
+    """The data a simulated run starts with: its run ID when it has a transaction (the kernel needs it there for
+    operation keys), nothing otherwise, so sessions without transactions keep their bytes."""
+    return {"run_id": str(run_id)} if prepared.transactions is not None else {}
+
+
+def due_deadline(state: RunState, deadline: Deadline) -> bool:
+    """Whether a session may deliver ``deadline`` once its time has come: the run's own, an active step's, or one
+    of a transaction's own deadlines (a hold, a settle bound, a decision), which no step holds active."""
+    return (
+        deadline.node_id == "@run" or deadline.node_id in state.active or split_deadline(deadline.node_id) is not None
+    )
+
+
+def decided_started(deadline: Deadline) -> JsonObject:
+    """What a session records on a transaction's decide deadline: every call a session dispatches has started."""
+    found = split_deadline(deadline.node_id)
+    return {"started": True} if found is not None and found[1] == "decide" else {}
 
 
 def step_instance(prepared: PreparedWorkflow, key: str) -> IRNode | None:

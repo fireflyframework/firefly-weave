@@ -59,7 +59,17 @@ from firefly_weave.operations.debug.models import (
     SelectedScope,
     SignalReceipt,
 )
-from firefly_weave.operations.debug.transactions import Answer, PhaseTarget, phase_target, phase_targets, step_instance
+from firefly_weave.operations.debug.transactions import (
+    SESSION_RUN_ID,
+    Answer,
+    PhaseTarget,
+    decided_started,
+    due_deadline,
+    phase_target,
+    phase_targets,
+    started_data,
+    step_instance,
+)
 from firefly_weave.runtime.call_outcomes import STOPPED, call_result, screened
 from firefly_weave.runtime.capacity import ADMISSION_OUTPUT_BYTES, ADMISSION_REDUCTIONS, TRANSITION_BYTES, logical_size
 from firefly_weave.runtime.control import enclosing_loops, loop_scope
@@ -183,6 +193,18 @@ def _key_targets(prepared: PreparedWorkflow, key: str) -> list[_Target]:
     return targets
 
 
+def _accepts_empty(prepared: PreparedWorkflow, instance: str) -> bool:
+    """Whether ``instance`` is a confirm, cancel or undo whose output schema accepts an empty object."""
+    target = phase_target(prepared, instance)
+    if target is None:
+        return False
+    try:
+        _validate_output(prepared.ir, target, {})
+    except ValueError:
+        return False
+    return True
+
+
 def _validate_output(ir: WorkflowIR, target: _ActionTarget | PhaseTarget, value: JsonValue) -> None:
     """Check a mocked result: an action's output, or a phase's (its action's output, or its called workflow's)."""
     if isinstance(target, _ActionTarget):
@@ -229,7 +251,7 @@ class Simulator:
             errors=dict(errors or {}),
         )
         self._workflows = {"": _Workflow("", self.artifact, self._prepared, mocks), **called}
-        self.data.pending.append(self._event("started", {}))
+        self.data.pending.append(self._event("started", started_data(self._prepared, SESSION_RUN_ID)))
         self._bounded()
 
     def _called_workflows(self, supplied: dict[str, CalledWorkflow]) -> dict[str, _Workflow]:
@@ -710,22 +732,6 @@ class Simulator:
             return False
         key, run, event = scheduled
         called = self._workflow(key)
-        if called.prepared.transactions is not None:
-            # Transactions are not simulated yet: their confirms, cancels and undos would run with the steps' own
-            # mocks. The session stops before the workflow starts.
-            d.diagnostics = [
-                Diagnostic(
-                    code="WV-DEBUG-MISSING_MOCK",
-                    severity="error",
-                    stage="evaluation",
-                    path="",
-                    message="A transaction can't be simulated yet; run it on a test activation.",
-                    hint="Publish the workflow and run it on a test activation"
-                    + (f" ({called.reference})" if called.reference else "")
-                    + ".",
-                )
-            ]
-            return True
         state = cast(RunState, run.state)
         if event is not None:
             event = event.model_copy(update={"sequence": state.accepted_sequence + 1})
@@ -784,6 +790,9 @@ class Simulator:
                     if answer.kind == "error":
                         run.pending.append(self._failure(called, command.node_id, cast(ScriptedError, answer.value)))
                         continue
+                    if answer.kind == "none" and _accepts_empty(called.prepared, command.node_id):
+                        # A confirm, cancel or undo with nothing to say completes with an empty result.
+                        answer = Answer("mock", None, {})
                     if answer.kind == "none":
                         tried = self._candidates(command.node_id, fallbacks)
                         d.diagnostics = [
@@ -834,7 +843,8 @@ class Simulator:
                 state=RunState(input=command.input),
             )
             d.frames.append(frame)
-            frame.pending.append(self._event("started", {}))
+            callee = self._workflows[command.workflow_reference].prepared
+            frame.pending.append(self._event("started", started_data(callee, frame_run_id(child))))
             self._grown(command.input)
             return True
         if command.mode == "detach":
@@ -937,7 +947,7 @@ class Simulator:
         for deadline in deadlines:
             if deadline.deadline > self.data.now or deadline.node_id in deferred:
                 continue
-            if deadline.node_id != "@run" and deadline.node_id not in state.active:
+            if not due_deadline(state, deadline):
                 continue
             if deadline.name and any(
                 s.name == deadline.name and s.accepted_at < deadline.deadline for s in run.signals
@@ -970,7 +980,7 @@ class Simulator:
                 return self._event("step_failed", found)
             return self._event(
                 "wait_elapsed" if step in duration_steps(ir) else "timed_out",
-                {"node_id": due.node_id, "deadline": due.deadline.isoformat()},
+                {"node_id": due.node_id, "deadline": due.deadline.isoformat(), **decided_started(due)},
             )
         if isinstance(due, tuple):
             node, receipt = due
