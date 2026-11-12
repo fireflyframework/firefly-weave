@@ -16,8 +16,8 @@
 
 """kind, k3d and kubectl for local clusters, pinned per platform and kept only when their checksum matches.
 
-Weave fetches each tool over HTTPS on first use into ``<platform directory>/tools/<tool>-<version>``, so Docker is
-the only thing a developer installs and every run uses the same versions. A checksum the download doesn't match,
+Weave fetches each tool over HTTPS on first use into ``<platform directory>/tools/<tool>-<version>``, readable only
+by its owner, so Docker is the only thing a developer installs and every run uses the same versions. A checksum the download doesn't match,
 a redirect away from HTTPS, or a file over the size cap keeps nothing. The versions match the clusters' Kubernetes
 minor version, and ``tests/acceptance/versions.toml`` mirrors them.
 """
@@ -220,7 +220,8 @@ def _keep(response: httpx.Response, digest: str, path: Path, label: str) -> None
                 handle.write(chunk)
         if hasher.hexdigest() != digest:
             raise PlatformError(f"{label} didn't match its published checksum; nothing was kept.")
-        os.chmod(temporary, 0o755)
+        # Only the developer runs the tools, from their private platform directory.
+        os.chmod(temporary, 0o700)
         os.replace(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)

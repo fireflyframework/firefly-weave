@@ -70,7 +70,7 @@ def test_a_fetched_tool_is_kept_only_when_its_checksum_matches(tmp_path, pinned)
     assert path == tmp_path / "tools" / "kubectl-v1.37.2" and path.read_bytes() == BINARY
     assert kept(tmp_path) == ["kubectl-v1.37.2"]
     if os.name != "nt":
-        assert path.stat().st_mode & 0o777 == 0o755
+        assert path.stat().st_mode & 0o777 == 0o700
 
 
 def test_a_verified_tool_is_reused_without_fetching(tmp_path, pinned):
