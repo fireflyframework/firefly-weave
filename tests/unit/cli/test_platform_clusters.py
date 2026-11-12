@@ -764,7 +764,8 @@ def test_only_the_clusters_nodes_and_the_platforms_containers_may_share_its_netw
     assert not [call for call in commands.calls if "apply" in call.argv]
 
 
-def test_a_container_that_appears_during_the_join_makes_the_platform_leave_what_this_call_joined(world):
+def test_a_container_that_appears_during_the_join_makes_every_platform_container_leave(world):
+    """The check after the join takes off what this call joined and what an earlier connect joined alike."""
     _, commands, _, cluster = world
     # keycloak is on the network from an earlier connect; only the registry joins now.
     cluster.joined.add(KEYCLOAK)
@@ -778,8 +779,8 @@ def test_a_container_that_appears_during_the_join_makes_the_platform_leave_what_
     with pytest.raises(PlatformError) as refused:
         connect(world)
     assert str(refused.value) == clusters.OTHER_CONTAINERS
-    assert network_changes(commands) == [("connect", REGISTRY), ("disconnect", REGISTRY)]
-    assert cluster.joined == {KEYCLOAK}
+    assert network_changes(commands) == [("connect", REGISTRY), ("disconnect", KEYCLOAK), ("disconnect", REGISTRY)]
+    assert cluster.joined == set()
     assert not [call for call in commands.calls if "apply" in call.argv]
 
 
