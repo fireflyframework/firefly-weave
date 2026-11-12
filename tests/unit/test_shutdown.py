@@ -169,40 +169,6 @@ async def test_close_stops_the_operations_loop_when_a_rollback_error_replaces_it
         await asyncio.wait({task, closing}, timeout=2)
 
 
-async def test_close_gives_up_on_a_loop_that_outlives_its_cancellation_within_the_shutdown_bound(engines, monkeypatch):
-    from firefly_weave.operations.loop_health import LoopStopTimeout
-
-    value = settings(shutdown_timeout_seconds=0.2)
-    loop = OperationsLoop(value, None, health_for(value))  # type: ignore[arg-type]
-    released, polling = asyncio.Event(), asyncio.Event()
-
-    async def poll():
-        # A task that keeps running whatever cancels it, until the test releases it.
-        polling.set()
-        while not released.is_set():
-            try:
-                await released.wait()
-            except asyncio.CancelledError:
-                continue
-
-    monkeypatch.setattr(loop, "poll", poll)
-    await loop.open()
-    task = loop.task
-    assert task is not None
-    await polling.wait()
-    closing = asyncio.create_task(loop.close())
-    try:
-        finished, _ = await asyncio.wait({closing}, timeout=2)
-        assert closing in finished, "close() still waits for the operations loop"
-        with pytest.raises(LoopStopTimeout, match="operations_loop did not stop within 0.2 s"):
-            closing.result()
-        assert engines[0].disposed and loop.engine is None
-        assert loop.health.snapshot("operations_loop").state == "down"
-    finally:
-        released.set()
-        await asyncio.wait({task, closing}, timeout=2)
-
-
 def operations_loop(value: Settings, health: LoopHealth, monkeypatch):
     monkeypatch.setattr(operations, "OPERATIONS_SECONDS", 0.01)
     return OperationsLoop(value, None, health)  # type: ignore[arg-type]
@@ -235,7 +201,60 @@ def recovery_loop(value: Settings, health: LoopHealth, monkeypatch):
     return RecoveryLoop(value, None, None, None, health=health)  # type: ignore[arg-type]
 
 
-@pytest.mark.parametrize("make", [operations_loop, provider_loop, kafka_loop, outbox_loop, recovery_loop])
+LOOPS = [operations_loop, provider_loop, kafka_loop, outbox_loop, recovery_loop]
+
+
+class Stubborn:
+    """A loop task that keeps running whatever cancels it, until the test releases it."""
+
+    def __init__(self) -> None:
+        self.running, self.released = asyncio.Event(), asyncio.Event()
+
+    async def poll(self) -> None:
+        self.running.set()
+        while not self.released.is_set():
+            try:
+                await self.released.wait()
+            except asyncio.CancelledError:
+                continue
+
+
+async def closed(close) -> asyncio.Task:
+    """Run one close() and return its finished task, failing when it is still waiting after 2 s."""
+    closing = asyncio.create_task(close())
+    finished, _ = await asyncio.wait({closing}, timeout=2)
+    assert closing in finished, "close() still waits"
+    return closing
+
+
+@pytest.mark.parametrize("make", LOOPS)
+async def test_close_gives_up_within_the_bound_and_keeps_owning_a_loop_that_did_not_stop(make, monkeypatch):
+    from firefly_weave.operations.loop_health import LoopStopTimeout
+
+    value = settings(shutdown_timeout_seconds=0.2, scheduler_poll_seconds=0.05)
+    loop = make(value, health_for(value), monkeypatch)
+    stubborn, engine = Stubborn(), Engine()
+    loop.engine = engine
+    loop.task = task = asyncio.create_task(stubborn.poll())
+    await stubborn.running.wait()
+    try:
+        with pytest.raises(LoopStopTimeout, match=f"{make.__name__} did not stop within 0.2 s"):
+            (await closed(loop.close)).result()
+        assert engine.disposed and loop.engine is None
+        # The task still runs, so the loop still owns it: another close() cannot report success,
+        # and open() cannot start a second task beside it.
+        assert loop.task is task
+        with pytest.raises(LoopStopTimeout):
+            (await closed(loop.close)).result()
+        stubborn.released.set()
+        (await closed(loop.close)).result()
+        assert task.done() and loop.task is None
+    finally:
+        stubborn.released.set()
+        await asyncio.wait({task}, timeout=2)
+
+
+@pytest.mark.parametrize("make", LOOPS)
 async def test_close_stops_a_loop_whose_cycle_handled_the_error_that_hid_its_cancellation(make, monkeypatch):
     from sqlalchemy.exc import InterfaceError
 
@@ -307,3 +326,218 @@ async def test_compatibility_close_ends_a_rescan_whose_restricted_callback_faile
     finally:
         task.cancel()
         await asyncio.wait({task, closing}, timeout=2)
+
+
+class HidingCatalog:
+    """A catalog engine whose first statement waits, and whose cancellation the rollback error replaces."""
+
+    def __init__(self) -> None:
+        self.hiding, self.waiting = True, asyncio.Event()
+
+    @asynccontextmanager
+    async def connect(self):
+        yield self
+
+    @asynccontextmanager
+    async def begin(self):
+        yield self
+
+    async def execute(self, statement, parameters=None):
+        from sqlalchemy.exc import InterfaceError
+
+        if "READ ONLY" in str(statement):
+            self.waiting.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError as cancelled:
+                if not self.hiding:
+                    raise
+                raise InterfaceError("ROLLBACK", {}, ConnectionError("connection is closed")) from cancelled
+        return SimpleNamespace()
+
+    async def scalar(self, statement):
+        return {}
+
+    async def dispose(self):
+        return None
+
+
+async def test_compatibility_close_ends_a_rescan_whose_catalog_rollback_hid_the_cancellation(monkeypatch):
+    from firefly_weave.operations import compatibility
+    from firefly_weave.operations.compatibility import CompatibilityService
+
+    catalog = HidingCatalog()
+
+    async def authority(connection):
+        return None
+
+    monkeypatch.setattr(compatibility, "check_inventory_authority", authority)
+    monkeypatch.setattr(compatibility, "create_async_engine", lambda *args, **kwargs: catalog)
+    monkeypatch.setattr(compatibility, "INVENTORY_AGE_SECONDS", 0.01)
+    telemetry = SimpleNamespace(record=lambda *a, **k: None, inventory=lambda *a, **k: None)
+    service = CompatibilityService(settings(scheduler_enabled=False), None, None, None, telemetry)  # type: ignore[arg-type]
+    restricted: list[int] = []
+
+    async def on_restricted():
+        restricted.append(1)
+
+    service.on_restricted = on_restricted
+    await service.open()
+    task = service._freshness_task
+    assert task is not None
+    service._next_scan = 0.0
+    await catalog.waiting.wait()
+    try:
+        (await closed(service.close)).result()
+        assert task.done() and service._freshness_task is None
+    finally:
+        catalog.hiding = False
+        task.cancel()
+        await asyncio.wait({task}, timeout=2)
+
+
+async def test_compatibility_close_gives_up_within_the_bound_and_keeps_owning_the_refresh():
+    from firefly_weave.operations.compatibility import CompatibilityService
+    from firefly_weave.operations.loop_health import LoopStopTimeout
+
+    service = CompatibilityService(settings(shutdown_timeout_seconds=0.2), None, None, None, None)  # type: ignore[arg-type]
+    stubborn = Stubborn()
+    service._freshness_task = task = asyncio.create_task(stubborn.poll())
+    await stubborn.running.wait()
+    try:
+        with pytest.raises(LoopStopTimeout, match="compatibility_refresh did not stop within 0.2 s"):
+            (await closed(service.close)).result()
+        assert service._freshness_task is task
+        stubborn.released.set()
+        (await closed(service.close)).result()
+        assert task.done() and service._freshness_task is None
+    finally:
+        stubborn.released.set()
+        await asyncio.wait({task}, timeout=2)
+
+
+async def test_a_provider_scan_stops_at_the_intent_whose_rollback_hid_the_cancellation(monkeypatch):
+    from sqlalchemy.exc import InterfaceError
+
+    from firefly_weave.providers import dispatcher as providers
+    from firefly_weave.providers.dispatcher import ProviderDispatcher
+
+    rows = [{"receipt_id": uuid4()}, {"receipt_id": uuid4()}]
+    dispatched: list[UUID] = []
+    written: list[str] = []
+    sending, hiding = asyncio.Event(), {"on": True}
+
+    class Repository:
+        def __init__(self, tx):
+            self.db = SimpleNamespace(rows=self.rows, execute=self.execute)
+
+        async def rows(self, sql, **values):
+            return rows
+
+        async def execute(self, sql, **values):
+            written.append("cooldown")
+
+        async def receipt(self, receipt_id, lock=False):
+            return {"source_id": uuid4()}
+
+        async def source(self, source_id, lock=False):
+            return None
+
+        def view(self, row):
+            return SimpleNamespace(state="pending", attempts=0, model_copy=lambda update: update)
+
+        async def settle(self, receipt):
+            written.append("attempt")
+
+    @asynccontextmanager
+    async def transaction(scope, actor, mutation=True):
+        yield SimpleNamespace()
+
+    async def checked(tx, source):
+        return None
+
+    async def verify(tx):
+        return None
+
+    async def dispatch_one(scope, receipt_id):
+        dispatched.append(receipt_id)
+        if len(dispatched) > 1:
+            return
+        sending.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError as cancelled:
+            if not hiding["on"]:
+                raise
+            raise InterfaceError("ROLLBACK", {}, ConnectionError("connection is closed")) from cancelled
+
+    monkeypatch.setattr(providers, "ProviderRepository", Repository)
+    ingress = SimpleNamespace(
+        runtime=SimpleNamespace(definitions=SimpleNamespace(transaction=transaction)), checked=checked
+    )
+    dispatcher = ProviderDispatcher(ingress, None)  # type: ignore[arg-type]
+    monkeypatch.setattr(dispatcher, "dispatch_one", dispatch_one)
+    scan = asyncio.create_task(dispatcher.scan(SimpleNamespace(scope=None, verify=verify), 10))  # type: ignore[arg-type]
+    await sending.wait()
+    scan.cancel()
+    try:
+        finished, _ = await asyncio.wait({scan}, timeout=2)
+        assert scan in finished and scan.cancelled()
+        # Shutdown is not a provider failure: no attempt or cooldown is written, and the next intent is never sent.
+        assert dispatched == [rows[0]["receipt_id"]] and written == []
+    finally:
+        hiding["on"] = False
+        scan.cancel()
+        await asyncio.wait({scan}, timeout=2)
+
+
+@pytest.mark.parametrize("hidden_in", ["recovery", "schedules"])
+async def test_the_recovery_traversal_stops_at_the_tenant_whose_rollback_hid_the_cancellation(hidden_in, monkeypatch):
+    from sqlalchemy.exc import InterfaceError
+
+    from firefly_weave.runtime import scheduler
+    from firefly_weave.runtime.scheduler import RecoveryLoop
+
+    tenants = [uuid4(), uuid4()]
+    visited: list[UUID] = []
+    scanning, hiding = asyncio.Event(), {"on": True}
+
+    async def tenant_page(engine, limit=16, **kinds):
+        return tenants
+
+    async def next_scope(uow, tenant, **kinds):
+        visited.append(tenant)
+        return authority()
+
+    def scanner(kind):
+        async def scan(authority, limit):
+            if kind != hidden_in or scanning.is_set():
+                return 0
+            scanning.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError as cancelled:
+                if not hiding["on"]:
+                    raise
+                raise InterfaceError("ROLLBACK", {}, ConnectionError("connection is closed")) from cancelled
+
+        return scan
+
+    monkeypatch.setattr(scheduler, "tenant_page", tenant_page)
+    monkeypatch.setattr(scheduler, "next_scope", next_scope)
+    recovery = SimpleNamespace(_scan_scheduled=scanner("recovery"), _scan_terminal_scheduled=scanner("recovery"))
+    schedules = SimpleNamespace(_scan_scheduled=scanner("schedules"))
+    value = settings()
+    loop = RecoveryLoop(value, None, recovery, schedules, health=health_for(value))  # type: ignore[arg-type]
+    loop.engine = object()  # type: ignore[assignment]
+    traversal = asyncio.create_task(loop._traverse())
+    await scanning.wait()
+    traversal.cancel()
+    try:
+        finished, _ = await asyncio.wait({traversal}, timeout=2)
+        assert traversal in finished and traversal.cancelled()
+        assert visited == [tenants[0]]
+    finally:
+        hiding["on"] = False
+        traversal.cancel()
+        await asyncio.wait({traversal}, timeout=2)

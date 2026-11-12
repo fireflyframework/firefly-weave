@@ -22,7 +22,7 @@ import logging
 import math
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager
 from contextvars import Context
 from datetime import UTC, datetime
 from functools import partial
@@ -48,7 +48,7 @@ from firefly_weave.contracts.providers import ProviderSource, ProviderSourceRequ
 from firefly_weave.definitions.models import CatalogError
 from firefly_weave.operations.compatibility_catalog import classify_requirement
 from firefly_weave.operations.execution import execute_pure, inventory_execution
-from firefly_weave.operations.loop_health import raise_if_cancelled
+from firefly_weave.operations.loop_health import raise_if_cancelled, stop_task
 from firefly_weave.operations.telemetry import TelemetryService
 from firefly_weave.persistence.migrations import check_schema
 from firefly_weave.persistence.uow import UnitOfWork
@@ -211,6 +211,9 @@ class CompatibilityService:
 
             async def refresh() -> None:
                 while True:
+                    # A rescan records a catalog error that hid close()'s cancellation as an incomplete inventory and
+                    # returns, so the refresh checks before every sleep.
+                    raise_if_cancelled()
                     await asyncio.sleep(INVENTORY_AGE_SECONDS)
                     self.refresh_inventory_age()
                     if time.monotonic() >= self._next_scan and not self._scan_lock.locked():
@@ -226,12 +229,13 @@ class CompatibilityService:
             self._freshness_task = asyncio.create_task(refresh(), name="weave-inventory-freshness", context=Context())
 
     async def close(self) -> None:
-        if self._freshness_task is not None:
-            self._freshness_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await self._freshness_task
-            self._freshness_task = None
-        await self._dispose_catalog()
+        try:
+            await stop_task(self._freshness_task, "compatibility_refresh", self.settings.shutdown_timeout_seconds)
+        finally:
+            # A refresh still running after its bound stays owned: a later close() stops it again, open() starts none.
+            if self._freshness_task is not None and self._freshness_task.done():
+                self._freshness_task = None
+            await self._dispose_catalog()
 
     async def _dispose_catalog(self) -> None:
         if self._catalog_engine is not None:

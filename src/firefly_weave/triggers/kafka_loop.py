@@ -201,10 +201,12 @@ class KafkaLoop:
             await asyncio.sleep(TRAVERSAL_SECONDS)
 
     async def close(self) -> None:
-        task, self.task = self.task, None
         try:
-            await stop_task(task, "kafka_loop", self.settings.shutdown_timeout_seconds)
+            await stop_task(self.task, "kafka_loop", self.settings.shutdown_timeout_seconds)
         finally:
+            # A task still running after its bound stays owned: a later close() stops it again, open() starts none.
+            if self.task is not None and self.task.done():
+                self.task = None
             self.health.running("kafka_loop", False)
             turns = tuple(self.turns)
             for turn in turns:

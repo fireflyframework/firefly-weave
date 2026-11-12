@@ -144,6 +144,7 @@ class RecoveryLoop:
                         else:
                             await self.recovery._scan_terminal_scheduled(authority, 10)
                 except Exception as error:
+                    raise_if_cancelled(error)
                     logging.getLogger(__name__).error(
                         "Tenant recovery scan failed (%s); traversal will continue", failure_cause(error)
                     )
@@ -157,6 +158,7 @@ class RecoveryLoop:
                     async with asyncio.timeout(budget):
                         await self.schedules._scan_scheduled(authority, 10)
                 except Exception as error:
+                    raise_if_cancelled(error)
                     logging.getLogger(__name__).error(
                         "Tenant schedule scan failed (%s); traversal will continue", failure_cause(error)
                     )
@@ -183,10 +185,12 @@ class RecoveryLoop:
             await asyncio.sleep(self.settings.scheduler_poll_seconds)
 
     async def close(self) -> None:
-        task, self.task = self.task, None
         try:
-            await stop_task(task, "recovery_loop", self.settings.shutdown_timeout_seconds)
+            await stop_task(self.task, "recovery_loop", self.settings.shutdown_timeout_seconds)
         finally:
+            # A task still running after its bound stays owned: a later close() stops it again, open() starts none.
+            if self.task is not None and self.task.done():
+                self.task = None
             for name in ("recovery_loop", "schedules"):
                 self.health.running(name, False)
             if self.engine is not None:

@@ -331,11 +331,13 @@ class OperationsLoop:
         return completed
 
     async def close(self) -> None:
-        task, self.task = self.task, None
         try:
             # Cancellation completes, or its bound runs out, before the engine it uses is disposed.
-            await stop_task(task, "operations_loop", self.settings.shutdown_timeout_seconds)
+            await stop_task(self.task, "operations_loop", self.settings.shutdown_timeout_seconds)
         finally:
+            # A task still running after its bound stays owned: a later close() stops it again, open() starts none.
+            if self.task is not None and self.task.done():
+                self.task = None
             self.health.running("operations_loop", False)
             if self.engine is not None:
                 await self.engine.dispose()

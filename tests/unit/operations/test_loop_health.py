@@ -747,12 +747,15 @@ async def test_an_error_that_hides_a_pending_cancellation_is_raised_as_that_canc
 
     entered = asyncio.Event()
     failures = []
+    hiding = True
 
     async def unit():
         entered.set()
         try:
             await asyncio.Event().wait()
         except asyncio.CancelledError:
+            if not hiding:
+                raise
             # A rollback that fails while the cancellation unwinds replaces it.
             raise RuntimeError("connection is closed") from None
 
@@ -765,11 +768,17 @@ async def test_an_error_that_hides_a_pending_cancellation_is_raised_as_that_canc
                 failures.append(error)
 
     task = asyncio.create_task(loop())
-    await entered.wait()
-    task.cancel()
-    finished, _ = await asyncio.wait({task}, timeout=2)
-    assert task in finished and task.cancelled()
-    assert failures == []
+    try:
+        await entered.wait()
+        task.cancel()
+        finished, _ = await asyncio.wait({task}, timeout=2)
+        assert task in finished and task.cancelled()
+        assert failures == []
+    finally:
+        # Let a loop that outlived its cancellation end, so a failure here never hangs the run.
+        hiding = False
+        task.cancel()
+        await asyncio.wait({task}, timeout=2)
 
 
 async def test_an_error_without_a_pending_cancellation_stays_the_error():
