@@ -157,12 +157,14 @@ Collection = Literal["workflows", "actions", "connectors", "decision-tables"]
 
 
 def _approved_plaintext(base_url: str, transport: object, purpose: Purpose | None) -> bool:
-    """Plain HTTP to a private origin: a purpose, a transport, and an exact entry of that purpose for this origin."""
-    if purpose is None or transport is None:
+    """Plain HTTP to a private origin: a purpose, the DNS-pinned, peer-checked transport, and an exact entry of that
+    purpose for this origin."""
+    if purpose is None:
         return False
     from firefly_weave import private_origins
+    from firefly_weave.connectors.egress import PinnedTransport
 
-    return private_origins.active().permits_plaintext(purpose, base_url)
+    return isinstance(transport, PinnedTransport) and private_origins.active().permits_plaintext(purpose, base_url)
 
 
 class AsyncTokenProvider(Protocol):
@@ -188,7 +190,7 @@ class WeaveClient:
         private_origin: Purpose | None = None,
     ) -> None:
         """``private_origin`` names the purpose of an approved private-origin entry: plain HTTP outside loopback is
-        accepted only with it, a ``transport`` (the pinned one) and an exact entry of that purpose for this origin."""
+        accepted only with it, a ``PinnedTransport`` and an exact entry of that purpose for this origin."""
         target = urlsplit(base_url)
         if (
             target.scheme not in {"https", "http"}

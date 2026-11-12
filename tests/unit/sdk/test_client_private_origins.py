@@ -21,9 +21,9 @@ import pytest
 
 from firefly_weave import private_origins as po
 from firefly_weave.sdk.client import WeaveClient
+from firefly_weave.sdk.worker_auth import private_transport
 
 ORIGIN = "http://weave-api.weave-system.svc:8000"
-TRANSPORT = httpx.MockTransport(lambda request: httpx.Response(204))
 
 
 def policy(*entries):
@@ -34,6 +34,12 @@ def entry(origin=ORIGIN, purpose="runner"):
     return po.PrivateOrigin(origin=origin, purpose=purpose, networks=("10.89.0.0/24",), credentials="bridge")
 
 
+def pinned():
+    """The DNS-pinned transport the runner builds for its approved origin."""
+    with po.installed(policy(entry())):
+        return private_transport(ORIGIN, "runner")
+
+
 def refused(**options):
     with pytest.raises(ValueError, match="TLS is required outside loopback development"):
         WeaveClient(ORIGIN, lambda: "token", None, **options)
@@ -41,7 +47,7 @@ def refused(**options):
 
 def test_plain_http_outside_loopback_is_refused_without_a_private_origin_purpose():
     with po.installed(policy(entry())):
-        refused(transport=TRANSPORT)
+        refused(transport=pinned())
 
 
 def test_plain_http_outside_loopback_is_refused_without_a_pinned_transport():
@@ -51,15 +57,22 @@ def test_plain_http_outside_loopback_is_refused_without_a_pinned_transport():
 
 def test_plain_http_outside_loopback_needs_an_entry_for_its_own_purpose():
     with po.installed(policy(entry(purpose="platform-api"))):
-        refused(transport=TRANSPORT, private_origin="runner")
+        refused(transport=pinned(), private_origin="runner")
 
 
 def test_a_runner_entry_for_another_host_does_not_open_this_one():
     with po.installed(policy(entry(origin="http://other.weave-system.svc:8000"))):
-        refused(transport=TRANSPORT, private_origin="runner")
+        refused(transport=pinned(), private_origin="runner")
 
 
-async def test_an_approved_runner_origin_with_its_transport_is_accepted():
+def test_a_transport_that_is_not_pinned_is_refused_even_for_an_approved_origin():
+    plain = httpx.MockTransport(lambda request: httpx.Response(204))
     with po.installed(policy(entry())):
-        async with WeaveClient(ORIGIN, lambda: "token", None, transport=TRANSPORT, private_origin="runner") as client:
+        refused(transport=plain, private_origin="runner")
+
+
+async def test_an_approved_runner_origin_with_its_pinned_transport_is_accepted():
+    transport = pinned()
+    with po.installed(policy(entry())):
+        async with WeaveClient(ORIGIN, lambda: "token", None, transport=transport, private_origin="runner") as client:
             assert client.base_url == ORIGIN
