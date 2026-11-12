@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import signal
 from pathlib import Path
 from typing import Any, Self, cast
@@ -26,6 +27,7 @@ from urllib.parse import urlsplit
 
 from pydantic import Field, model_validator
 
+from firefly_weave import private_origins
 from firefly_weave.contracts.access import Scope
 from firefly_weave.contracts.definitions import ContractModel
 from firefly_weave.contracts.deployments import (
@@ -37,7 +39,23 @@ from firefly_weave.contracts.deployments import (
 from firefly_weave.deployment_runner.policy import DestinationPolicy
 from firefly_weave.deployment_runner.runtime import InfrastructureAdapter, OperationsRunner
 from firefly_weave.sdk.client import AsyncTokenProvider, WeaveClient
-from firefly_weave.sdk.worker_auth import ClientCredentialsTokenProvider, _read_mount
+from firefly_weave.sdk.token_relay import start_relay
+from firefly_weave.sdk.worker_auth import ClientCredentialsTokenProvider, _read_mount, private_transport
+
+LOOPBACK = frozenset({"localhost", "127.0.0.1", "::1"})
+# Set in a cluster: the Keycloak address the loopback token relay forwards to, and the file a liveness probe reads.
+TOKEN_RELAY = "WEAVE_TOKEN_RELAY"
+HEARTBEAT_FILE = "WEAVE_RUNNER_HEARTBEAT_FILE"
+
+
+def _private_plaintext(base_url: str) -> bool:
+    """Plain HTTP outside loopback, approved by an exact runner entry of the active private-origin policy."""
+    target = urlsplit(base_url)
+    return (
+        target.scheme == "http"
+        and target.hostname not in LOOPBACK
+        and private_origins.active().permits_plaintext("runner", base_url)
+    )
 
 
 class RunnerConfiguration(ContractModel):
@@ -59,7 +77,7 @@ class RunnerConfiguration(ContractModel):
             or target.query
             or target.fragment
             or target.path not in {"", "/"}
-            or (target.scheme == "http" and target.hostname not in {"localhost", "127.0.0.1", "::1"})
+            or (target.scheme == "http" and target.hostname not in LOOPBACK and not _private_plaintext(self.base_url))
             or self.scope.project_id is None
             or self.scope.environment_id is None
             or bool(self.oauth_file) == bool(self.token_file)
@@ -114,6 +132,17 @@ def runner_registration(destination: Any) -> RunnerRegistration:
     )
 
 
+def _beat(path: Path | None) -> None:
+    """Touch the heartbeat file (0600) after the platform answered; a liveness probe restarts a silent runner."""
+    if path is None:
+        return
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        os.utime(descriptor)
+    finally:
+        os.close(descriptor)
+
+
 async def serve(config: RunnerConfiguration, *, once: bool = False) -> None:
     adapter = adapter_for(config.destination)
     provider: AsyncTokenProvider
@@ -122,28 +151,49 @@ async def serve(config: RunnerConfiguration, *, once: bool = False) -> None:
     else:
         assert config.token_file is not None
         provider = MountedToken(config.base_url, Path(config.token_file))
-    async with WeaveClient(config.base_url, provider, config.scope, timeout=20) as client:
-        registration = cast(
-            DeploymentRunner,
-            await client.invoke(
-                "deployment_runners.create",
-                body=runner_registration(config.destination),
-            ),
-        )
-        runner = OperationsRunner(client, config.destination, adapter)
-        loop, task = asyncio.get_running_loop(), asyncio.current_task()
-        assert task is not None
-        loop.add_signal_handler(signal.SIGTERM, task.cancel)
-        try:
-            while True:
-                lease = cast(
-                    DeploymentLease | None,
-                    await client.invoke("deployment_runners.claim", body=RunnerClaimRequest(runner_id=registration.id)),
-                )
-                if lease is not None:
-                    await runner.execute(lease)
-                if once:
-                    return
-                await asyncio.sleep(config.poll_seconds)
-        finally:
-            loop.remove_signal_handler(signal.SIGTERM)
+    heartbeat = Path(os.environ[HEARTBEAT_FILE]) if os.environ.get(HEARTBEAT_FILE) else None
+    # In a cluster the API is plain HTTP on the cluster network: only through its runner entry and the pinned,
+    # peer-checked transport. HTTPS and loopback keep the client's own transport.
+    plain = _private_plaintext(config.base_url)
+    transport = private_transport(config.base_url, "runner") if plain else None
+    relay = await start_relay(os.environ[TOKEN_RELAY]) if os.environ.get(TOKEN_RELAY) else None
+    try:
+        async with WeaveClient(
+            config.base_url,
+            provider,
+            config.scope,
+            timeout=20,
+            transport=transport,
+            private_origin="runner" if plain else None,
+        ) as client:
+            registration = cast(
+                DeploymentRunner,
+                await client.invoke(
+                    "deployment_runners.create",
+                    body=runner_registration(config.destination),
+                ),
+            )
+            runner = OperationsRunner(client, config.destination, adapter, on_contact=lambda: _beat(heartbeat))
+            loop, task = asyncio.get_running_loop(), asyncio.current_task()
+            assert task is not None
+            loop.add_signal_handler(signal.SIGTERM, task.cancel)
+            try:
+                while True:
+                    lease = cast(
+                        DeploymentLease | None,
+                        await client.invoke(
+                            "deployment_runners.claim", body=RunnerClaimRequest(runner_id=registration.id)
+                        ),
+                    )
+                    _beat(heartbeat)
+                    if lease is not None:
+                        await runner.execute(lease)
+                    if once:
+                        return
+                    await asyncio.sleep(config.poll_seconds)
+            finally:
+                loop.remove_signal_handler(signal.SIGTERM)
+    finally:
+        if relay is not None:
+            relay.close()
+            await relay.wait_closed()

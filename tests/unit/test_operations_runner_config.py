@@ -65,3 +65,27 @@ def test_configuration_file_is_bounded(tmp_path):
     path.write_bytes(b" " * (256 * 1024 + 1))
     with pytest.raises(ValueError):
         load_configuration(path)
+
+
+def test_plain_http_reaches_the_api_only_through_a_runner_entry():
+    """In a cluster the runner reaches the platform over plain HTTP on the cluster network, approved by an exact
+    runner entry. A platform-api entry alone is not enough, and loopback keeps working without any entry."""
+    from firefly_weave import private_origins as po
+
+    origin = "http://weave-api.weave-system.svc:8000"
+    data = json.dumps({**configuration(), "base_url": origin})
+
+    def entry(purpose):
+        return po.PrivateOrigin(origin=origin, purpose=purpose, networks=("10.89.0.0/24",), credentials="bridge")
+
+    with po.installed(po.PrivateOrigins(platform=po.PLATFORM).with_entries([entry("runner")])):
+        assert RunnerConfiguration.model_validate_json(data).base_url == origin
+    for policy in (
+        po.PrivateOrigins.empty(),
+        po.PrivateOrigins(platform=po.PLATFORM).with_entries([entry("platform-api")]),
+    ):
+        with po.installed(policy), pytest.raises(ValidationError, match="Use one mounted machine identity"):
+            RunnerConfiguration.model_validate_json(data)
+    with po.installed(po.PrivateOrigins.empty()):
+        loopback = json.dumps({**configuration(), "base_url": "http://127.0.0.1:8000"})
+        assert RunnerConfiguration.model_validate_json(loopback).base_url == "http://127.0.0.1:8000"

@@ -377,3 +377,123 @@ async def test_a_report_refused_for_any_other_reason_is_not_sent_again(monkeypat
     await OperationsRunner(client, policy, adapter).execute(lease)
     assert len(refused) == 1
     assert client.reports[-1].state == "reconciliation_required"
+
+
+def served(monkeypatch):
+    """Replace the SDK client serve() builds: record how it was built, register, and claim nothing."""
+    from types import SimpleNamespace
+
+    from firefly_weave.deployment_runner import application
+
+    built = []
+
+    class Client:
+        def __init__(self, base_url, provider, scope, *, timeout, transport=None, private_origin=None):
+            built.append({"base_url": base_url, "transport": transport, "private_origin": private_origin})
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def invoke(self, operation, *, body=None):
+            if operation == "deployment_runners.create":
+                return SimpleNamespace(id=uuid4())
+            assert operation == "deployment_runners.claim"
+            return None
+
+    monkeypatch.setattr(application, "WeaveClient", Client)
+    monkeypatch.delenv("WEAVE_TOKEN_RELAY", raising=False)
+    monkeypatch.delenv("WEAVE_RUNNER_HEARTBEAT_FILE", raising=False)
+    return built
+
+
+def runner_configuration(base_url):
+    from firefly_weave.deployment_runner.application import RunnerConfiguration
+
+    return RunnerConfiguration.model_validate(
+        {
+            "base_url": base_url,
+            "scope": Scope(tenant_id=uuid4(), project_id=uuid4(), environment_id=uuid4()),
+            "token_file": "/run/weave/secrets/token",
+            "destination": DestinationPolicy.model_validate_json(
+                __import__("json").dumps(
+                    {
+                        "target_id": str(uuid4()),
+                        "adapter": "kubernetes",
+                        "external_identity": "namespace-uid",
+                        "boundary": "weave-workers",
+                        "executable": "/usr/local/bin/kubectl",
+                        "context": "weave-runner",
+                        "capabilities": ["observe"],
+                        "components": [
+                            {"name": "weave-worker", "container": "worker", "kind": "worker", "configuration": "local"}
+                        ],
+                        "image_repositories": ["127.0.0.1:5000/example-sleep"],
+                    }
+                )
+            ),
+        }
+    )
+
+
+async def test_the_runner_uses_the_pinned_transport_for_a_plain_http_api(monkeypatch):
+    from firefly_weave import private_origins as po
+    from firefly_weave.deployment_runner.application import serve
+
+    built = served(monkeypatch)
+    origin = "http://weave-api.weave-system.svc:8000"
+    entry = po.PrivateOrigin(origin=origin, purpose="runner", networks=("10.89.0.0/24",), credentials="bridge")
+    with po.installed(po.PrivateOrigins(platform=po.PLATFORM).with_entries([entry])):
+        for base_url in (origin, "https://weave.example", "http://127.0.0.1:8000"):
+            await serve(runner_configuration(base_url), once=True)
+    # Only the approved private origin gets the DNS-pinned transport; HTTPS and loopback stay as they were.
+    assert [(item["transport"] is not None, item["private_origin"]) for item in built] == [
+        (True, "runner"),
+        (False, None),
+        (False, None),
+    ]
+
+
+async def test_the_runner_writes_its_heartbeat_after_a_claim(monkeypatch, tmp_path):
+    import stat
+
+    from firefly_weave.deployment_runner.application import serve
+
+    served(monkeypatch)
+    beat = tmp_path / "heartbeat"
+    monkeypatch.setenv("WEAVE_RUNNER_HEARTBEAT_FILE", str(beat))
+    await serve(runner_configuration("https://weave.example"), once=True)
+    assert stat.S_IMODE(beat.stat().st_mode) == 0o600
+
+
+async def test_lease_renewals_during_a_job_count_as_contact():
+    """A restart can run 330 s, longer than the liveness probe allows, so every renewal refreshes the heartbeat."""
+    lease, policy = fixture()
+    client, adapter, contacts = Client(lease), Adapter(lease), []
+    await OperationsRunner(client, policy, adapter, on_contact=lambda: contacts.append(True)).execute(lease)
+    assert client.renewals >= 1 and len(contacts) == client.renewals
+
+
+async def test_the_runner_starts_the_token_relay_when_asked(monkeypatch):
+    from firefly_weave.deployment_runner import application
+
+    served(monkeypatch)
+    started, closed = [], []
+
+    class Relay:
+        def close(self):
+            closed.append(True)
+
+        async def wait_closed(self):
+            return None
+
+    async def start_relay(destination, *, listen=8080):
+        started.append((destination, listen))
+        return Relay()
+
+    monkeypatch.setattr(application, "start_relay", start_relay)
+    monkeypatch.setenv("WEAVE_TOKEN_RELAY", "weave-api.weave-system.svc:8080")
+    await application.serve(runner_configuration("https://weave.example"), once=True)
+    assert started == [("weave-api.weave-system.svc:8080", 8080)] and closed == [True]

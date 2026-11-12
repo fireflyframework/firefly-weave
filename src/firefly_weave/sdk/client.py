@@ -151,7 +151,18 @@ from firefly_weave.triggers.models import Trigger, TriggerRequest
 if TYPE_CHECKING:
     import httpx
 
+    from firefly_weave.private_origins import Purpose
+
 Collection = Literal["workflows", "actions", "connectors", "decision-tables"]
+
+
+def _approved_plaintext(base_url: str, transport: object, purpose: Purpose | None) -> bool:
+    """Plain HTTP to a private origin: a purpose, a transport, and an exact entry of that purpose for this origin."""
+    if purpose is None or transport is None:
+        return False
+    from firefly_weave import private_origins
+
+    return private_origins.active().permits_plaintext(purpose, base_url)
 
 
 class AsyncTokenProvider(Protocol):
@@ -174,7 +185,10 @@ class WeaveClient:
         *,
         timeout: float = 30,
         transport: httpx.AsyncBaseTransport | None = None,
+        private_origin: Purpose | None = None,
     ) -> None:
+        """``private_origin`` names the purpose of an approved private-origin entry: plain HTTP outside loopback is
+        accepted only with it, a ``transport`` (the pinned one) and an exact entry of that purpose for this origin."""
         target = urlsplit(base_url)
         if (
             target.scheme not in {"https", "http"}
@@ -186,7 +200,11 @@ class WeaveClient:
             or target.path not in {"", "/"}
         ):
             raise ValueError("An absolute API origin is required")
-        if target.scheme == "http" and target.hostname not in {"localhost", "127.0.0.1", "::1"}:
+        if (
+            target.scheme == "http"
+            and target.hostname not in {"localhost", "127.0.0.1", "::1"}
+            and not _approved_plaintext(base_url, transport, private_origin)
+        ):
             raise ValueError("TLS is required outside loopback development")
         if not 0 < timeout <= 300:
             raise ValueError("A bounded request timeout is required")
