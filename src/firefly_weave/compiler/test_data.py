@@ -186,9 +186,10 @@ def agent_turns_target(workflow: JsonObject, step: JsonObject, catalog: CatalogS
     base = "/properties/turns/items/anyOf/0/properties/toolCalls/items/anyOf"
     for tool in tools:
         parameters = _tool_parameters(tool, catalog)
-        if parameters is None:
+        # A draft tool may not have its name yet; its calls can't be checked until it does.
+        name = cast(JsonObject, tool).get("name")
+        if parameters is None or not isinstance(name, str):
             return None
-        name = cast(JsonObject, tool)["name"]
         calls.append(
             {
                 "type": "object",

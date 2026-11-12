@@ -18,7 +18,7 @@
 
 import json
 
-from test_agent_workflows import catalog, workflow
+from test_agent_workflows import LOOKUP, agent, catalog, workflow
 
 from firefly_weave.compiler.test_data import check_test_data
 from firefly_weave.contracts.studio_documents import StudioTestData
@@ -118,3 +118,14 @@ def test_an_ai_tasks_saved_turns_keep_todays_checks():
     found = dict(check_test_data(workflow(step), data(aiTurns={"summarize": {"turns": []}}), catalog()))
 
     assert found == {"/aiTurns/summarize": "WV-STUDIO-TESTDATA-UNRESOLVED"}
+
+
+def test_saved_turns_of_an_agent_with_a_nameless_draft_tool_are_unresolved():
+    # Studio checks drafts, and a tool being written may not have its name yet.
+    nameless = {key: value for key, value in LOOKUP.items() if key != "name"}
+    draft = workflow(agent(tools=[nameless]), profile=PROFILE)
+    turns = {"turns": [{"toolCalls": [LOOKUP_CALL]}, {"final": "Order A-17 has shipped."}]}
+
+    found = dict(check_test_data(draft, data(aiTurns={"support": turns}), catalog()))
+
+    assert found == {"/aiTurns/support": "WV-STUDIO-TESTDATA-UNRESOLVED"}
