@@ -184,6 +184,17 @@ async def test_the_role_check_accepts_the_step_tester_and_nothing_new(upgraded):
     assert sqlstate(refused.value) == "23514"
 
 
+async def test_the_role_check_names_every_role_the_code_grants(upgraded):
+    engine, _ = upgraded
+    async with engine.begin() as connection:
+        definition = await connection.scalar(
+            text("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname='role_bindings_role_check'")
+        )
+    from firefly_weave.access.roles import ROLE_CAPABILITIES
+
+    assert {role for role in ROLE_CAPABILITIES if f"'{role}'" in definition} == set(ROLE_CAPABILITIES)
+
+
 @pytest.mark.parametrize(
     "statement",
     [
