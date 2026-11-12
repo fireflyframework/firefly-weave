@@ -193,9 +193,7 @@ def deadline_order(node_id: str, due: datetime, duration_nodes: set[str]) -> tup
 def duration_steps(ir: WorkflowIR) -> set[str]:
     """Steps whose deadlines elapse and continue the run: duration waits, loops resuming after a yield, the hold
     and settle deadlines of transactions, and an AI agent's own deadline and its reviews'."""
-    return {
-        node.id for node in ir.graph.nodes if isinstance(node, (WaitNode, ForEachNode, TransactionNode, AgentNode))
-    }
+    return {node.id for node in ir.graph.nodes if isinstance(node, (WaitNode, ForEachNode, TransactionNode, AgentNode))}
 
 
 def unsettled(state: RunState) -> bool:
