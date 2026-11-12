@@ -504,6 +504,26 @@ describe("the list", () => {
     await state.more();
     expect(state.items()).toHaveLength(120);
   });
+
+  it("drops a list answer that arrives after the account or environment changed", async () => {
+    const { platform, env, state, host } = await started();
+    const rows = state.rows().length;
+    platform.hold = (path) => path.includes(LIST);
+    await env.advance(5000);
+    // While that page is read, the session moves to another environment.
+    host.setScope("account-a|env-2");
+    platform.hold = null;
+    platform.release();
+    await settle();
+    // The late page isn't shown, and nothing of the old environment stays.
+    expect(state.items()).toEqual([]);
+    expect(state.rows()).toEqual([]);
+    expect(state.state()).not.toBe("ready");
+    // The next read is the new environment's.
+    await env.advance(5000);
+    expect(state.rows()).toHaveLength(rows);
+    expect(state.state()).toBe("ready");
+  });
 });
 
 describe("the chosen run", () => {
@@ -719,6 +739,57 @@ describe("the chosen run", () => {
     expect(state.state()).toBe("ready");
     expect(state.chosen()?.record?.id).toBe(fixtureIds.failed);
     expect(state.chosen()?.overlay?.canvas.done).toEqual(["fetch"]);
+  });
+
+  it("drops a followed run's answer that arrives after the run was left", async () => {
+    const { state, platform, env } = await started();
+    const running = summaryOf(platform.data, fixtureIds.running);
+    await state.choose(running.id);
+    const data = state.chosen()!.data!;
+    const stamp = data.version();
+    platform.hold = (path) => path.endsWith(`/runs/${running.id}`);
+    await env.advance(2000);
+    state.leave();
+    // Another run is shown before the late answer arrives.
+    platform.hold = null;
+    await state.choose(fixtureIds.failed);
+    const shown = state.chosen()!;
+    platform.views.set(
+      running.id,
+      viewOf(
+        { ...running, status: "succeeded" },
+        { steps: { support: { output: {} } } },
+      ),
+    );
+    platform.release();
+    await settle();
+    expect(state.chosen()).toBe(shown);
+    expect(shown.data?.iterations("support")).toEqual([]);
+    // The data shown before isn't updated with the late answer.
+    expect(data.version()).toBe(stamp);
+    // And the run left isn't read again.
+    const reads = platform.count(new RegExp(`/runs/${running.id}$`));
+    await env.advance(10_000);
+    expect(platform.count(new RegExp(`/runs/${running.id}$`))).toBe(reads);
+  });
+
+  it("drops a run whose version arrives after the environment changed", async () => {
+    const { state, platform, host } = await started();
+    const failed = summaryOf(platform.data, fixtureIds.failed);
+    platform.hold = (path) => path.endsWith("/export");
+    const pending = state.choose(failed.id);
+    await settle();
+    expect(platform.count("/export")).toBe(1);
+    host.setScope("account-a|env-2");
+    platform.hold = null;
+    platform.release();
+    await pending;
+    expect(state.chosen()).toBeNull();
+    expect(state.rows()).toEqual([]);
+    // Chosen in the new environment, its version is read there again.
+    await state.choose(failed.id);
+    expect(state.chosen()?.record?.id).toBe(failed.id);
+    expect(platform.count("/export")).toBe(2);
   });
 
   it("reads at most 2,000 step instances", async () => {
