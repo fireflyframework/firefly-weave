@@ -66,7 +66,10 @@ def _free(slots: threading.BoundedSemaphore) -> None:
             if not queue:
                 del _waiting[slots]
         if loop is current:
-            _hand_over(slots, woken)
+            # Passed over in this loop, not by recursion: thousands of requests may have stopped waiting at once.
+            if woken.done():
+                continue
+            woken.set_result(None)
             return
         try:
             loop.call_soon_threadsafe(_hand_over, slots, woken)
@@ -101,8 +104,18 @@ async def _admitted(slots: threading.BoundedSemaphore) -> bool:
             await woken
         return True
     except TimeoutError:
-        # A slot handed over just as the wait ran out belongs to this request; refusing would lose it.
-        return woken.done() and not woken.cancelled()
+        if woken.done() and not woken.cancelled():
+            # A slot handed over just as the wait ran out belongs to this request; refusing would lose it.
+            return True
+        # The wait ran out, but a slot may have freed while the event loop was busy. Leave the list first; with nobody
+        # else waiting, taking a free slot keeps the arrival order.
+        with _waiting_lock:
+            queue = _waiting.get(slots)
+            if queue is not None and entry in queue:
+                queue.remove(entry)
+                if not queue:
+                    del _waiting[slots]
+            return slots not in _waiting and slots.acquire(blocking=False)
     except BaseException:
         if woken.done() and not woken.cancelled():
             # Handed a slot, then cancelled before it could use it: the slot goes to the next waiting request.

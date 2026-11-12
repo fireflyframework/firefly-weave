@@ -233,6 +233,8 @@ async def test_a_request_that_stops_waiting_leaves_the_freed_slot_to_the_next_on
             if moment == "before the slot frees":
                 tasks[0].cancel()
                 await asyncio.gather(tasks[0], return_exceptions=True)
+                # It left the list as it stopped, so cancelled requests never pile up while the slots stay held.
+                assert len(execution._waiting[execution._work_slots]) == 1
                 await holders.pop().__aexit__(None, None, None)
             elif moment == "just after it stopped waiting":
                 # Still listed when the slot frees, since it has not run since it was cancelled.
@@ -321,6 +323,83 @@ async def test_a_slot_freed_by_a_pure_call_that_outlived_its_request_goes_to_a_w
         release.set()
         async with asyncio.timeout(5):
             assert await tasks[1] == "waiting"
+    finally:
+        release.set()
+        await ended(tasks, holders)
+
+
+async def test_a_slot_freed_after_thousands_of_requests_stopped_waiting_reaches_the_next_one(monkeypatch):
+    """Passing over many requests that stopped waiting neither fails the finishing request nor loses its slot."""
+    from firefly_weave.operations import execution
+    from firefly_weave.operations.execution import WORK_SLOTS
+
+    monkeypatch.setattr(execution, "REQUEST_SLOT_WAIT_SECONDS", 30, raising=False)
+    holders = await hold_work_slots()
+    gone = [asyncio.create_task(admitted(index)) for index in range(2000)]
+    tasks = [*gone, asyncio.create_task(admitted("last"))]
+    try:
+        await waiting(tasks[-1])
+        # A burst of cancellations: every one of them is still listed when the slot frees.
+        for task in gone:
+            task.cancel()
+        await holders.pop().__aexit__(None, None, None)
+        async with asyncio.timeout(5):
+            assert await tasks[-1] == "last"
+        await asyncio.gather(*gone, return_exceptions=True)
+    finally:
+        await ended(tasks, holders)
+    assert execution._work_slots._value == WORK_SLOTS
+
+
+async def test_requests_whose_wait_ran_out_during_a_stall_take_slots_freed_meanwhile(monkeypatch):
+    """The event loop stalls: the waits run out and slots free before the waiting requests run again."""
+    from firefly_weave.operations import execution
+
+    monkeypatch.setattr(execution, "REQUEST_SLOT_WAIT_SECONDS", 0, raising=False)
+    holders = await hold_work_slots()
+    tasks = [asyncio.create_task(admitted(index)) for index in range(5)]
+    try:
+        await waiting(tasks[0])
+        # With no wait left, each timeout runs on the next turn of the loop, before these requests run again.
+        await asyncio.sleep(0)
+        while holders:
+            await holders.pop().__aexit__(None, None, None)
+        async with asyncio.timeout(5):
+            assert await asyncio.gather(*tasks) == list(range(5))
+    finally:
+        await ended(tasks, holders)
+
+
+async def test_a_slot_freed_on_a_pure_execution_thread_passes_over_a_request_that_stopped_waiting(monkeypatch):
+    """The thread hands the slot to a request cancelled a moment before; the event loop passes it to the next one."""
+    from firefly_weave.operations import execution
+    from firefly_weave.operations.execution import request_execution
+
+    monkeypatch.setattr(execution, "REQUEST_SLOT_WAIT_SECONDS", 30, raising=False)
+    entered, release = threading.Event(), threading.Event()
+
+    async def outlived():
+        async with request_execution():
+            await execute_pure(lambda: (entered.set(), release.wait(10)))
+
+    holders = await hold_work_slots()
+    await holders.pop().__aexit__(None, None, None)
+    tasks = [asyncio.create_task(outlived())]
+    try:
+        assert await asyncio.to_thread(entered.wait, 5)
+        tasks[0].cancel()
+        await asyncio.gather(tasks[0], return_exceptions=True)
+        for name in ("gone", "next"):
+            tasks.append(asyncio.create_task(admitted(name)))
+            await waiting(tasks[-1])
+        # Cancelled but not yet run, so still listed: the thread frees the slot while the event loop is held here.
+        tasks[1].cancel()
+        release.set()
+        for thread in threading.enumerate():
+            if thread.name == "weave-pure":
+                thread.join(5)
+        async with asyncio.timeout(5):
+            assert await tasks[2] == "next"
     finally:
         release.set()
         await ended(tasks, holders)
