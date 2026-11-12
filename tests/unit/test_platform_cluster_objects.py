@@ -24,6 +24,7 @@ import time
 from pathlib import Path
 from uuid import UUID
 
+import pytest
 import yaml
 
 from firefly_weave import private_origins as po
@@ -450,3 +451,29 @@ def test_a_widened_secret_volume_mode_is_reported():
     identity = next(volume for volume in live["spec"]["template"]["spec"]["volumes"] if volume["name"] == "identity")
     identity["secret"]["defaultMode"] = 0o444
     assert objects.worker_drift(live, target()) == ["spec.template.spec.volumes[identity].defaultMode"]
+
+
+# One edit each to a live worker's pod spec, and the one field it must be reported by.
+WEAKENED = {
+    "allowed to run as root": (
+        lambda pod: pod["securityContext"].update(runAsNonRoot=False),
+        "spec.template.spec.securityContext.runAsNonRoot",
+    ),
+    "given a service account token": (
+        lambda pod: pod.update(automountServiceAccountToken=True),
+        "spec.template.spec.automountServiceAccountToken",
+    ),
+    "on the host network": (lambda pod: pod.update(hostNetwork=True), "spec.template.spec.hostNetwork"),
+    "given a host path volume": (
+        lambda pod: pod["volumes"].append({"name": "host", "hostPath": {"path": "/"}}),
+        "spec.template.spec.volumes[host]",
+    ),
+}
+
+
+@pytest.mark.parametrize("change", list(WEAKENED))
+def test_a_live_worker_edited_one_way_reports_that_field_alone(change):
+    edit, field = WEAKENED[change]
+    live = stored(objects.worker_deployment(target()))
+    edit(live["spec"]["template"]["spec"])
+    assert objects.worker_drift(live, target()) == [field]
