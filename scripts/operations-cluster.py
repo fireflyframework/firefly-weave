@@ -37,7 +37,7 @@ import sys
 import tempfile
 import time
 from collections.abc import Iterator
-from contextlib import contextmanager, suppress
+from contextlib import contextmanager
 from pathlib import Path
 
 from firefly_weave.sdk import platform_cluster_tools as tools
@@ -74,6 +74,21 @@ class Refused(Exception):
     """One sentence for the developer; nothing more was changed."""
 
 
+class NotReady(Exception):
+    """The new cluster's nodes didn't become Ready in time."""
+
+
+def exists(provider: str, name: str, context: str) -> bool:
+    """Whether a cluster of this name already has node containers on the context, running or not."""
+    label = clusters.NODE_LABELS[provider]
+    found = run(
+        ["docker", "--context", context, "ps", "--all", "--filter", f"label={label}={name}", "--format", "{{.Names}}"],
+        env=environment(context),
+        timeout=30,
+    )
+    return bool(found.strip())
+
+
 def free_port() -> int:
     """A free TCP port on this computer's loopback, for k3d's API server."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
@@ -82,8 +97,9 @@ def free_port() -> int:
 
 
 def environment(context: str, **extra: str) -> dict[str, str]:
-    """The tools' environment: this context for every Docker call, never an inherited Docker setting."""
-    env = {key: value for key, value in os.environ.items() if not key.startswith("DOCKER_")}
+    """The tools' environment: this context for every Docker call, and no other inherited Docker setting except the
+    folder that holds the contexts (DOCKER_CONFIG)."""
+    env = {key: value for key, value in os.environ.items() if not key.startswith("DOCKER_") or key == "DOCKER_CONFIG"}
     env["DOCKER_CONTEXT"] = context
     env.update(extra)
     return env
@@ -96,7 +112,10 @@ def network(provider: str, name: str) -> str:
 def docker_host(context: str) -> str:
     """k3d talks to the Docker API directly, so it gets the context's endpoint."""
     described = strict_json(run(["docker", "context", "inspect", context], env=environment(context), timeout=30))
-    return str(described[0]["Endpoints"]["docker"]["Host"])
+    try:
+        return str(described[0]["Endpoints"]["docker"]["Host"])
+    except (KeyError, IndexError, TypeError):
+        raise Refused(f"Docker context {context} has no Docker endpoint k3d can use; nothing was changed.") from None
 
 
 def check_disk(context: str) -> None:
@@ -178,7 +197,7 @@ def wait_ready(provider: str, name: str, context: str, directory: Path) -> None:
         if rows and all(len(row) == 2 and row[1] == "True" for row in rows):
             return
         if clock() >= deadline:
-            raise Refused(f"The cluster's nodes weren't Ready within {READY_SECONDS} s; the cluster was deleted.")
+            raise NotReady()
         sleep(2)
 
 
@@ -205,14 +224,28 @@ def up(provider: str, name: str, context: str, directory: Path, *, connect: bool
     if connect:
         # TODO(T-g8fz7adl1o8): connect the new cluster with platform_clusters.connect once it exists.
         raise Refused("Connecting from this script isn't available yet; run up with --no-connect.")
+    if exists(provider, name, context):
+        raise Refused(f"A cluster named {name} already exists on context {context}; nothing was changed.")
     check_disk(context)
+    # kind and k3d remove what a failed create made; only a cluster this run created is deleted here.
+    create(provider, name, context, directory)
     try:
-        create(provider, name, context, directory)
         wait_ready(provider, name, context, directory)
-    except BaseException:
-        # Never leave a half-created cluster on the shared VM; the first error is the one reported.
-        with suppress(Exception):
+    except BaseException as error:
+        # Never leave a half-ready cluster on the shared VM.
+        try:
             delete(provider, name, context, directory)
+        except Exception:
+            if isinstance(error, NotReady):
+                raise Refused(
+                    f"The cluster's nodes weren't Ready within {READY_SECONDS} s, and deleting the cluster failed; "
+                    "run down with the same arguments to remove it."
+                ) from None
+            raise
+        if isinstance(error, NotReady):
+            raise Refused(
+                f"The cluster's nodes weren't Ready within {READY_SECONDS} s; the cluster was deleted."
+            ) from None
         raise
     return {"cluster": name, "context": f"{provider}-{name}", "network": network(provider, name)}
 

@@ -24,6 +24,7 @@ from pathlib import Path
 import pytest
 
 from firefly_weave.sdk import platform_cluster_tools as tools
+from firefly_weave.sdk.deployment import DeploymentError
 
 ROOT = Path(__file__).resolve().parents[2]
 GIB = 1024**3
@@ -220,3 +221,89 @@ def test_a_bad_name_refuses_before_any_command(script, world, capsys):
         str(directory),
     )
     assert code == 1 and "Use --provider kind or k3d" in err and recorder.calls == []
+
+
+def test_a_failed_up_never_deletes_a_cluster_that_already_existed(script, world, capsys):
+    recorder, directory = world
+    original = recorder.__call__
+
+    def existing(argv, **kwargs):
+        if "create" in argv and "cluster" in argv:
+            recorder.calls.append((list(argv), dict(kwargs.get("env") or {})))
+            raise DeploymentError('node(s) already exist for a cluster with the name "weave-o4-abc123"')
+        return original(argv, **kwargs)
+
+    script.run = existing
+    code, out, _ = up(script, capsys, directory)
+    assert code == 1 and out == ""
+    assert recorder.find("create", "cluster")
+    assert not recorder.find("delete", "cluster", "--name", "weave-o4-abc123")
+
+
+@pytest.mark.parametrize("provider", ["kind", "k3d"])
+def test_up_refuses_a_cluster_name_that_already_exists_on_the_context(script, world, capsys, provider):
+    recorder, directory = world
+    original = recorder.__call__
+    label = {"kind": "label=io.x-k8s.kind.cluster=weave-o4-abc123", "k3d": "label=k3d.cluster=weave-o4-abc123"}[
+        provider
+    ]
+
+    def existing(argv, **kwargs):
+        if "ps" in argv and label in argv:
+            recorder.calls.append((list(argv), dict(kwargs.get("env") or {})))
+            return b"weave-o4-abc123-control-plane\n"
+        return original(argv, **kwargs)
+
+    script.run = existing
+    code, out, err = up(script, capsys, directory, provider)
+    assert code == 1 and out == ""
+    assert (
+        err.strip()
+        == "A cluster named weave-o4-abc123 already exists on context colima-weave-tests; nothing was changed."
+    )
+    assert not recorder.find("create") and not recorder.find("delete")
+
+
+def test_a_failed_wait_says_when_the_cleanup_failed_too(script, world, capsys):
+    recorder, directory = world
+    recorder.ready = False
+    original = recorder.__call__
+
+    def stuck(argv, **kwargs):
+        if "delete" in argv:
+            recorder.calls.append((list(argv), dict(kwargs.get("env") or {})))
+            raise DeploymentError("delete failed")
+        return original(argv, **kwargs)
+
+    script.run = stuck
+    code, _, err = up(script, capsys, directory)
+    assert code == 1 and recorder.find("delete", "cluster", "--name", "weave-o4-abc123")
+    assert "was deleted" not in err
+    assert err.strip() == (
+        "The cluster's nodes weren't Ready within 180 s, and deleting the cluster failed; run down with the same "
+        "arguments to remove it."
+    )
+
+
+def test_the_tools_keep_the_docker_configuration_but_no_other_docker_setting(script, world, capsys, monkeypatch):
+    recorder, directory = world
+    monkeypatch.setenv("DOCKER_CONFIG", "/Users/me/.docker-weave")
+    monkeypatch.setenv("DOCKER_HOST", "tcp://elsewhere:2375")
+    up(script, capsys, directory)
+    ((_, env),) = [(argv, env) for argv, env in recorder.calls if "create" in argv]
+    assert env["DOCKER_CONFIG"] == "/Users/me/.docker-weave" and "DOCKER_HOST" not in env
+
+
+def test_a_context_without_a_docker_endpoint_is_refused_in_one_sentence(script, world, capsys):
+    recorder, directory = world
+    original = recorder.__call__
+
+    def endpointless(argv, **kwargs):
+        if "context" in argv and "inspect" in argv:
+            return b'[{"Endpoints": {}}]'
+        return original(argv, **kwargs)
+
+    script.run = endpointless
+    code, _, err = up(script, capsys, directory, "k3d")
+    assert code == 1 and not recorder.find("create")
+    assert err.strip() == "Docker context colima-weave-tests has no Docker endpoint k3d can use; nothing was changed."
