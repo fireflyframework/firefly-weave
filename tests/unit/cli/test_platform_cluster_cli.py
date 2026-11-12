@@ -352,6 +352,32 @@ def test_an_installation_folder_that_others_can_open_is_refused_before_any_comma
     assert commands.calls == []
 
 
+def test_delete_refuses_a_cluster_that_still_has_connected_targets(world):
+    directory, commands, _ = world
+    target = {
+        "target_id": "0f8fad5b-d9cb-469f-a165-70867728950e",
+        "target_name": f"kind-{NAME}",
+        "pair": 1,
+        "state": "connected",
+    }
+    record = {
+        "provider": "kind",
+        "cluster": NAME,
+        "context": f"kind-{NAME}",
+        "docker_context": "colima-weave-tests",
+        "network": f"weave-kind-{NAME}",
+        "subnet": "172.30.0.0/16",
+        "api_address": "172.30.0.5",
+        "registry_address": "172.30.0.6",
+        "targets": {"weave-workers": target},
+    }
+    clusters.save(directory, {"format": clusters.FORMAT, "clusters": {f"kind-{NAME}": record}})
+    result = invoke(directory, "delete")
+    assert result.exit_code != 0
+    assert "This cluster still has connected targets; disconnect them first. Nothing was deleted." in result.output
+    assert not calls(commands, "delete")
+
+
 def test_deleting_a_kind_cluster_also_removes_its_own_network(world):
     """kind leaves the network it made for KIND_EXPERIMENTAL_DOCKER_NETWORK behind; k3d removes its own."""
     directory, commands, _ = world
