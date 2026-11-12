@@ -150,9 +150,10 @@ def without_thinking(text: str, *, split: bool = False) -> str:
     return _REASONING_REMAINDER.sub("", text, count=1) if split else text
 
 
-def estimate_tokens(*parts: str) -> int:
-    """An approximate token count: one token per four characters, rounded up. Endpoints other than Ollama refuse a
-    prompt longer than their context themselves, so this rough count is enough for them."""
+def rough_tokens(*parts: str) -> int:
+    """An approximate token count for the generate task: one token per four characters, rounded up. Endpoints other
+    than Ollama refuse a prompt longer than their context themselves, so this rough count is enough for them. A turn
+    is counted with the contract's ``turn_tokens`` instead, the count the kernel trims with."""
     return -(-sum(len(part) for part in parts) // 4)
 
 
@@ -244,7 +245,7 @@ async def run_model(
     if context_tokens is not None:
         # Ollama silently truncates a prompt beyond its context, so refuse it before any request.
         schema = "" if text_result(profile.output_schema) else json.dumps(provider_schema(profile.output_schema))
-        estimate = (conservative_tokens if ollama else estimate_tokens)(instructions, prompt, schema)
+        estimate = (conservative_tokens if ollama else rough_tokens)(instructions, prompt, schema)
         if estimate + profile.options.max_tokens > context_tokens:
             raise ConnectorFailure("LLM_CONTEXT_LIMIT", "not_started")
     try:

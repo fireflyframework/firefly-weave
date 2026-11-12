@@ -25,12 +25,13 @@ versioned by ``TURN_RULES`` so a recorded run replays with the rules it ran unde
 """
 
 import json
-import math
+import re
 from collections.abc import Mapping
+from functools import lru_cache
 from types import MappingProxyType
 from typing import Annotated, Final, Literal, Self, cast
 
-from pydantic import ConfigDict, Field, model_validator
+from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from firefly_weave.ai_policy import Provider
 from firefly_weave.compiler.catalog import TaskCapability
@@ -57,6 +58,7 @@ DATA_NOTICES: Final[Mapping[int, str]] = MappingProxyType(
 )
 # The output tool a structured final answer is given through; no step tool may use the name.
 FINAL_RESULT_TOOL: Final = "final_result"
+FINAL_RESULT_DESCRIPTION: Final = "Give the final answer as the result fields."
 MAX_TURN_TOOL_CALLS: Final = 16
 MAX_TURN_TOOLS: Final = 32
 MAX_TURN_TEXT: Final = 20_000
@@ -72,6 +74,9 @@ TURN_RETRY: Final[Mapping[str, int]] = MappingProxyType(
     {"maxAttempts": 3, "initialDelaySeconds": 2, "maxDelaySeconds": 20}
 )
 TURN_TIMEOUT_SECONDS: Final = 600
+# Rule 1's allowance for the chat template a model wraps around the counted text: per turn, per message, per tool
+# call and per tool definition (the final tool included). Measured: 113 tokens on a one-tool turn; this gives 224.
+TEMPLATE_TOKENS: Final[Mapping[str, int]] = MappingProxyType({"turn": 128, "message": 16, "call": 16, "tool": 32})
 
 _INSTRUCTIONS_LENGTH = MAX_INSTRUCTIONS + 2 + max(len(notice) for notice in DATA_NOTICES.values())
 _CALL_ID = r"^t[1-9][0-9]{0,3}c[1-9][0-9]{0,3}$"
@@ -155,6 +160,17 @@ class TurnInput(_Wire):
     tools_enabled: bool = Field(default=True, alias="toolsEnabled")
     turn: int = Field(ge=1, le=9999)
     limits: TurnLimits
+    # The version of every rule that shaped this input (the data notice, the token count); the kernel copies it from
+    # the agent's state, so the input digest covers it.
+    rules: Literal[1]
+
+    @field_validator("rules", mode="before")
+    @classmethod
+    def integer_rules(cls, value: object) -> object:
+        # A literal accepts True for 1; the wire's schema does not, and the digest would differ.
+        if type(value) is not int:
+            raise ValueError("A turn's rules are an integer version")
+        return value
 
     @model_validator(mode="after")
     def one_request(self) -> Self:
@@ -213,12 +229,77 @@ def call_id(turn: int, index: int) -> str:
     return f"t{turn}c{index}"
 
 
-def estimate_tokens(value: JsonValue, rules: int = TURN_RULES) -> int:
-    """Rule 1's token estimate: a quarter of the UTF-8 bytes of the value's canonical compact JSON, rounded up."""
+def wire_json(value: JsonValue) -> str:
+    """The one rendering of a JSON value for a model and for its count: compact, sorted keys, text kept as UTF-8."""
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+# Rule 1's count follows how byte-level BPE tokenizers (Qwen's, measured) split text. Printable ASCII and its
+# whitespace are cut into pieces by `` ?[A-Za-z]+| ?[0-9]| ?[^A-Za-z0-9\s]+|\s`` (a single leading space joins the
+# piece after it): a digit, a mark and a whitespace character count one each, and a word counts 0.4 per letter (0.7
+# per letter in a run of two or more capitals), rounded up and at least one, or one per letter when it is longer than
+# 12 letters or switches from lowercase to uppercase more than once. Every other character counts its UTF-8 bytes and
+# ends the word before it. Summed, that is: the UTF-8 bytes, less the letters and the joined spaces, plus each word's
+# count, which is how it is computed (in linear time, with no backtracking).
+_WORD = re.compile(r"[A-Za-z]+")
+_JOINED_SPACE = re.compile(r" (?=[!-~])")
+_CASE_SWITCH = re.compile(r"[a-z][A-Z]")
+_CAPITALS = re.compile(r"[A-Z]{2,}")
+_LETTERS = bytes(range(ord("A"), ord("Z") + 1)) + bytes(range(ord("a"), ord("z") + 1))
+
+
+@lru_cache(maxsize=4096)
+def _word_tokens(word: str) -> int:
+    if len(word) > 12 or len(_CASE_SWITCH.findall(word)) > 1:
+        return len(word)
+    capitals = sum(len(run) for run in _CAPITALS.findall(word))
+    return max(1, -(-((len(word) - capitals) * 4 + capitals * 7) // 10))
+
+
+def text_tokens(text: str, rules: int) -> int:
+    """The tokens a model counts for ``text`` at most, under the turn's rules; never below a measured local model.
+
+    Measured on Qwen's tokenizer: exact on digits and escaped newlines, 1.1 to 2.4 times the real count on UUIDs,
+    base64, records, API payloads and prose, up to 4.75 times on Chinese and 29 times on long runs of spaces.
+    """
     if rules != 1:
         raise ValueError(f"Unknown turn rules {rules}")
-    text = json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
-    return math.ceil(len(text.encode()) / 4)
+    encoded = text.encode("utf-8", "surrogatepass")
+    letters = len(encoded) - len(encoded.translate(None, _LETTERS))
+    words = sum(map(_word_tokens, _WORD.findall(text)))
+    return len(encoded) - letters - len(_JOINED_SPACE.findall(text)) + words
+
+
+def _final_tool(profile: LLMProfile) -> JsonObject:
+    parameters = _object({"result": cast(JsonValue, profile.output_schema)}, ["result"])
+    return {"name": FINAL_RESULT_TOOL, "description": FINAL_RESULT_DESCRIPTION, "parameters": parameters}
+
+
+def turn_tokens(turn: TurnInput) -> int:
+    """The prompt tokens of one turn under its rules: every text a model reads, as it is sent, plus the template."""
+    rules, template = turn.rules, TEMPLATE_TOKENS
+    total = template["turn"] + text_tokens(turn.instructions, rules)
+    for message in turn.messages:
+        total += template["message"]
+        if isinstance(message, UserMessage):
+            total += text_tokens(message.content, rules)
+        elif isinstance(message, AssistantMessage):
+            total += text_tokens(message.content, rules)
+            total += sum(
+                template["call"] + text_tokens(call.name + wire_json(call.arguments), rules)
+                for call in message.tool_calls
+            )
+        else:
+            total += text_tokens(wire_json(message.content), rules)
+    tools: list[JsonValue] = [tool.model_dump(mode="json") for tool in turn.tools] if turn.tools_enabled else []
+    tools.append(_final_tool(turn.profile))
+    return total + sum(template["tool"] + text_tokens(wire_json(tool), rules) for tool in tools)
+
+
+def turn_fits(turn: TurnInput) -> bool:
+    """Whether the prompt and its largest answer fit the context; the kernel trims to it, the worker checks it."""
+    output = min(turn.limits.max_output_tokens, turn.limits.remaining_tokens)
+    return turn_tokens(turn) + output <= turn.limits.context_tokens
 
 
 def _string(maximum: int, minimum: int = 0) -> JsonObject:
@@ -293,8 +374,9 @@ def turn_input_schema() -> JsonObject:
             "toolsEnabled": {"type": "boolean"},
             "turn": _count(1, 9999),
             "limits": limits,
+            "rules": {"type": "integer", "const": TURN_RULES},
         },
-        ["profile", "instructions", "messages", "turn", "limits"],
+        ["profile", "instructions", "messages", "turn", "limits", "rules"],
     )
     schema["$defs"] = generate["$defs"]
     return schema

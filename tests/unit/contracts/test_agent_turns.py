@@ -16,19 +16,37 @@
 
 """The model turn task's wire contract: what the kernel sends the agentic worker and what comes back."""
 
+import json
+import math
+import re
+from fractions import Fraction
+from pathlib import Path
+
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 from pydantic import ValidationError
 
 from firefly_weave.compiler.schemas import validate_payload, validate_schema
 from firefly_weave.contracts.agent_turns import (
     DATA_NOTICES,
     MAX_TURN_TOOL_CALLS,
+    TEMPLATE_TOKENS,
     TurnInput,
     TurnOutput,
     call_id,
-    estimate_tokens,
+    text_tokens,
+    turn_fits,
     turn_input_schema,
     turn_output_schema,
+    turn_tokens,
+    wire_json,
+)
+
+# Written by the live shape check (workers/agentic/tests/live/test_token_shapes.py): each shape's text and the
+# prompt tokens each local model counted for it.
+SHAPES = json.loads(
+    (Path(__file__).parents[2] / "fixtures" / "agent_turns" / "token_shapes.json").read_text(encoding="utf-8")
 )
 
 PROFILE = {
@@ -62,6 +80,7 @@ def turn_input(**changes):
         "toolsEnabled": True,
         "turn": 2,
         "limits": {"maxOutputTokens": 1024, "remainingTokens": 50000, "contextTokens": 8192},
+        "rules": 1,
     }
     value.update(changes)
     return value
@@ -155,11 +174,118 @@ def test_a_turn_may_carry_at_most_16_tool_calls():
     assert validate_payload(turn_output_schema({}), {**value, "toolCalls": calls}, {})
 
 
-def test_token_estimates_are_stable_across_key_order():
-    # Canonical compact JSON, {"a":"xx","b":1}, is 16 bytes: four tokens at four bytes each.
-    assert estimate_tokens({"b": 1, "a": "xx"}) == estimate_tokens({"a": "xx", "b": 1}) == 4
-    # Counted in UTF-8 bytes, not characters: two quotes and four two-byte letters.
-    assert estimate_tokens("é" * 4) == 3
+def test_token_counts_are_stable_across_key_order():
+    # {"a":"xx","b":1}: the marks {" ":" "," ": } and the digit count one each; a, xx and b one each.
+    assert text_tokens(wire_json({"b": 1, "a": "xx"}), 1) == text_tokens(wire_json({"a": "xx", "b": 1}), 1) == 15
+
+
+def test_digits_count_one_token_each():
+    assert text_tokens("[1,2,3]", 1) == 7
+
+
+def test_a_32_kib_compact_record_result_counts_between_the_model_and_the_window():
+    records = SHAPES["shapes"]["orders_32k"]["text"]
+    assert len(records.encode()) == 32_975
+    # 15,031 is what qwen3:4b counted for it; 27,000 leaves a 32,768 context room for the rest of a turn.
+    assert 15_031 <= text_tokens(records, 1) <= 27_000
+
+
+def test_every_whitespace_character_counts():
+    assert text_tokens("x" + " " * 89 + "x", 1) >= 90
+    assert text_tokens("a" + "\n" * 8 + "b", 1) == 10
+
+
+def test_text_outside_ascii_counts_its_bytes_and_splits_words():
+    # Two bytes for é; "caf" and "teria" are separate words of two each; a space before é still counts.
+    assert text_tokens("caf\u00e9teria", 1) == 2 + 2 + 2
+    assert text_tokens("a \u00e9", 1) == 1 + 1 + 2
+
+
+@pytest.mark.parametrize("name", sorted(SHAPES["shapes"]))
+def test_the_count_never_falls_below_a_measured_model(name):
+    shape = SHAPES["shapes"][name]
+    assert set(shape["counts"]) == set(SHAPES["models"])
+    assert text_tokens(shape["text"], 1) >= max(shape["counts"].values())
+
+
+def _pieces(plain):
+    total = 0
+    for piece in re.findall(r" ?[A-Za-z]+| ?[0-9]| ?[^A-Za-z0-9\s]+|\s", plain):
+        word = piece[1:] if len(piece) > 1 and piece[0] == " " else piece
+        if not word[0].isalpha():
+            total += 1 if word[0].isdigit() or word.isspace() else len(word)
+        elif len(word) > 12 or len(re.findall("[a-z][A-Z]", word)) > 1:
+            total += len(word)
+        else:
+            capitals = sum(map(len, re.findall("[A-Z]{2,}", word)))
+            total += max(1, math.ceil(Fraction(4, 10) * (len(word) - capitals) + Fraction(7, 10) * capitals))
+    return total
+
+
+def piece_count(text):
+    """Rule 1 as Ruling 31 states it, piece by piece: the reference for the contract's closed form."""
+    total, plain = 0, ""
+    for character in text:
+        if character in "\t\n\r" or " " <= character <= "~":
+            plain += character
+        else:
+            total += _pieces(plain) + len(character.encode("utf-8", "surrogatepass"))
+            plain = ""
+    return total + _pieces(plain)
+
+
+TEXT = st.text(
+    alphabet=st.one_of(
+        st.sampled_from('aZqQxXyY09 \t\n\r!{}":,-_.@'),
+        st.characters(codec="utf-8"),
+        st.characters(max_codepoint=127),
+    ),
+    max_size=80,
+)
+
+
+@given(TEXT)
+def test_the_count_is_rule_1s_piece_count(text):
+    assert text_tokens(text, 1) == piece_count(text)
+
+
+def test_an_unknown_rule_version_has_no_count():
+    with pytest.raises(ValueError):
+        text_tokens("x", 2)
+
+
+def test_a_turn_fits_exactly_when_its_count_and_output_fit_the_context():
+    parsed = TurnInput.model_validate(turn_input())
+    counted = turn_tokens(parsed)
+    for remaining, reserved in ((50000, 1024), (300, 300)):
+        limits = {"maxOutputTokens": 1024, "remainingTokens": remaining, "contextTokens": counted + reserved}
+        assert turn_fits(TurnInput.model_validate(turn_input(limits=limits)))
+        limits["contextTokens"] -= 1
+        assert not turn_fits(TurnInput.model_validate(turn_input(limits=limits)))
+
+
+def test_a_turns_count_covers_its_template_and_tools():
+    assert dict(TEMPLATE_TOKENS) == {"turn": 128, "message": 16, "call": 16, "tool": 32}
+    full = turn_tokens(TurnInput.model_validate(turn_input()))
+    without_tools = turn_tokens(TurnInput.model_validate(turn_input(toolsEnabled=False)))
+    # The one tool's definition and its template share; the final tool still counts.
+    assert full - without_tools == text_tokens(wire_json(LOOKUP), 1) + 32
+    # One user message, then four messages with one call: every part counts at least its template share.
+    alone = turn_input(messages=[{"role": "user", "content": "Where is order A-17?"}], turn=1)
+    assert full - turn_tokens(TurnInput.model_validate(alone)) >= 3 * 16 + 16
+    assert turn_tokens(TurnInput.model_validate(alone)) >= 128 + 16 + 2 * 32
+
+
+@pytest.mark.parametrize("rules", [2, 0, True, "1", None], ids=["two", "zero", "bool", "text", "null"])
+def test_the_turn_input_carries_its_rules(rules):
+    with pytest.raises(ValidationError):
+        TurnInput.model_validate(turn_input(rules=rules))
+    missing = turn_input()
+    del missing["rules"]
+    with pytest.raises(ValidationError):
+        TurnInput.model_validate(missing)
+    assert "rules" in turn_input_schema()["required"]
+    assert validate_payload(turn_input_schema(), missing, {})
 
 
 def test_call_ids_are_the_kernels():

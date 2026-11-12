@@ -19,10 +19,11 @@
 import ast
 import asyncio
 import json
+import random
 from pathlib import Path
 
 import pytest
-from firefly_weave.contracts.agent_turns import DATA_NOTICES, TurnInput, TurnOutput
+from firefly_weave.contracts.agent_turns import DATA_NOTICES, TurnInput, TurnOutput, turn_fits, turn_tokens
 from firefly_weave.contracts.connectors import ConnectorFailure
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import (
@@ -75,6 +76,7 @@ def turn(messages=None, *, schema=TEXT, tools=(LOOKUP, CANCEL), number=1, **chan
         "tools": list(tools),
         "turn": number,
         "limits": limits,
+        "rules": 1,
         **changes,
     }
     return TurnInput.model_validate(value)
@@ -306,12 +308,76 @@ async def test_a_prompt_larger_than_the_context_is_refused_before_any_request():
     assert seen == []
 
 
+def compact_result(rng):
+    """A compact JSON tool result of digits, UUIDs or words, the shapes whose counts differ most."""
+    kind, size = rng.choice(["digits", "uuids", "words"]), rng.randint(0, 600)
+    if kind == "digits":
+        return {"values": [rng.randint(0, 99999) for _ in range(size // 6)]}
+    if kind == "uuids":
+        return {"ids": [f"{rng.getrandbits(128):032x}" for _ in range(size // 36)]}
+    letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    return {
+        "notes": [" ".join("".join(rng.choice(letters) for _ in range(rng.randint(1, 14))) for _ in range(size // 8))]
+    }
+
+
+def random_turn(rng):
+    """A turn whose context sits a few tokens either side of what its count and its answer need."""
+    messages, groups = [{"role": "user", "content": "Summarize the orders below."}], rng.randint(0, 3)
+    for group in range(1, groups + 1):
+        call = {"id": f"t{group}c1", "name": "lookup_order", "arguments": {"id": f"A-{rng.randint(1, 999)}"}}
+        messages.append({"role": "assistant", "content": "", "toolCalls": [call]})
+        messages.append({"role": "tool", "callId": call["id"], "name": "lookup_order", "content": compact_result(rng)})
+    limits = {"maxOutputTokens": rng.randint(1, 1024), "remainingTokens": rng.randint(1, 2000), "contextTokens": 8192}
+    probe = turn(messages, number=groups + 1, limits=limits, toolsEnabled=rng.random() < 0.8)
+    needed = turn_tokens(probe) + min(limits["maxOutputTokens"], limits["remainingTokens"])
+    limits["contextTokens"] = max(1, needed + rng.randint(-40, 40))
+    return turn(messages, number=groups + 1, limits=limits, toolsEnabled=probe.tools_enabled)
+
+
+async def test_the_worker_refuses_exactly_what_does_not_fit():
+    rng, outcomes = random.Random(20261111), {True: 0, False: 0}
+    for index in range(400):
+        case = random_turn(rng)
+        ollama = rng.random() < 0.5
+        policy = rng.choice([None, case.limits.context_tokens, case.limits.context_tokens + rng.randint(1, 4096)])
+        model, seen = scripted(respond(TextPart("Done."), input_tokens=turn_tokens(case)))
+        replay = (
+            f"case {index} (seed 20261111), ollama={ollama}, policy={policy}: {case.model_dump_json(by_alias=True)}"
+        )
+        try:
+            await run(case, model, context_tokens=policy, ollama=ollama)
+            refused = False
+        except ConnectorFailure as failure:
+            assert (failure.code, failure.outcome, seen) == ("LLM_CONTEXT_LIMIT", "not_started", []), replay
+            refused = True
+        assert refused is not turn_fits(case), replay
+        outcomes[refused] += 1
+    # Both sides of the boundary were exercised, so the property is not vacuous.
+    assert min(outcomes.values()) >= 100, outcomes
+
+
 async def test_an_answer_to_a_prompt_ollama_cut_is_not_used():
     model, _ = scripted(respond(TextPart("Shipped."), input_tokens=4))
     with pytest.raises(ConnectorFailure) as failed:
         long = turn([{"role": "user", "content": "Where is my order? " * 20}])
         await run(long, model, context_tokens=8192, ollama=True)
     assert (failed.value.code, failed.value.outcome) == ("LLM_CONTEXT_LIMIT", "failed")
+
+
+async def test_a_cut_prompt_discards_the_whole_answer():
+    calls = [ToolCallPart("lookup_order", {"id": "A-17"}, "p1"), ToolCallPart("cancel_order", {"id": "A-17"}, "p2")]
+    model, seen = scripted(respond(*calls, finish_reason="tool_call", input_tokens=4))
+    with pytest.raises(ConnectorFailure) as failed:
+        await run(turn(), model, context_tokens=8192, ollama=True)
+    assert (failed.value.code, failed.value.outcome, len(seen)) == ("LLM_CONTEXT_LIMIT", "failed", 1)
+
+
+async def test_a_policy_context_below_the_turns_is_refused_before_any_request():
+    model, seen = scripted(respond(TextPart("never")))
+    with pytest.raises(ConnectorFailure) as failed:
+        await run(turn(limits={"contextTokens": 8192}), model, context_tokens=8191, ollama=True)
+    assert (failed.value.code, failed.value.outcome, seen) == ("LLM_CONTEXT_LIMIT", "not_started", [])
 
 
 async def test_no_tool_support_is_its_own_code():

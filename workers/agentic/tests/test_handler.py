@@ -1095,6 +1095,7 @@ def turn_lease(*, model="qwen2.5:1.5b", **profile):
             ],
             "turn": 1,
             "limits": {"maxOutputTokens": 256, "remainingTokens": 60000, "contextTokens": 8192},
+            "rules": 1,
         },
     )
 

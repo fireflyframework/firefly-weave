@@ -35,6 +35,7 @@ from typing import Any, Literal, cast
 from firefly_weave.compiler.expressions import measure_value
 from firefly_weave.compiler.schemas import validate_payload
 from firefly_weave.contracts.agent_turns import (
+    FINAL_RESULT_DESCRIPTION,
     FINAL_RESULT_TOOL,
     MAX_CALLED_NAME,
     MAX_TURN_TEXT,
@@ -46,6 +47,9 @@ from firefly_weave.contracts.agent_turns import (
     TurnOutput,
     UserMessage,
     call_id,
+    turn_fits,
+    turn_tokens,
+    wire_json,
 )
 from firefly_weave.contracts.connectors import ConnectorFailure
 from firefly_weave.contracts.values import JsonValue, validate_json_value
@@ -70,9 +74,7 @@ from pydantic_ai.tools import ToolDefinition
 
 from weave_agentic_worker.errors import classify
 from weave_agentic_worker.execution import (
-    conservative_tokens,
     cut,
-    estimate_tokens,
     private_framework_logging,
     provider_schema,
     text_result,
@@ -82,10 +84,6 @@ from weave_agentic_worker.execution import (
 # The one message of the formatting request, sent after a text answer when the result must be structured.
 FORMAT_REQUEST = "Give your final answer again as the result fields, with nothing else."
 _FENCED = re.compile(r"\A\s*```(?:json)?\s*(.*?)\s*```\s*\Z", re.DOTALL)
-
-
-def _json(value: JsonValue) -> str:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
 def to_messages(turn: TurnInput) -> list[ModelMessage]:
@@ -107,9 +105,9 @@ def to_messages(turn: TurnInput) -> list[ModelMessage]:
         elif isinstance(message, UserMessage):
             parts.append(UserPromptPart(message.content))
         elif isinstance(message, ContextMessage):
-            parts.append(UserPromptPart(_json(message.content)))
+            parts.append(UserPromptPart(wire_json(message.content)))
         elif isinstance(message, ToolMessage):
-            parts.append(ToolReturnPart(message.name, _json(message.content), message.call_id))
+            parts.append(ToolReturnPart(message.name, wire_json(message.content), message.call_id))
     if not parts:
         # A transcript ends with what the model answers next; an assistant message last has nothing to answer.
         raise ConnectorFailure("LLM_INPUT", "not_started")
@@ -118,7 +116,9 @@ def to_messages(turn: TurnInput) -> list[ModelMessage]:
 
 
 def _sent_arguments(arguments: JsonValue) -> dict[str, Any] | str:
-    return arguments if isinstance(arguments, dict) else arguments if isinstance(arguments, str) else _json(arguments)
+    return (
+        arguments if isinstance(arguments, dict) else arguments if isinstance(arguments, str) else wire_json(arguments)
+    )
 
 
 def _written_arguments(part: ToolCallPart) -> JsonValue:
@@ -134,7 +134,7 @@ def _written_arguments(part: ToolCallPart) -> JsonValue:
     try:
         return cast(JsonValue, validate_json_value(raw))
     except ValueError:
-        return _json(cast(JsonValue, repr(raw)))
+        return wire_json(cast(JsonValue, repr(raw)))
 
 
 def _text(response: ModelResponse) -> str:
@@ -164,7 +164,7 @@ def _parameters(turn: TurnInput, output_mode: str, structured: bool) -> ModelReq
 def _final_tool(turn: TurnInput) -> ToolDefinition:
     return ToolDefinition(
         name=FINAL_RESULT_TOOL,
-        description="Give the final answer as the result fields.",
+        description=FINAL_RESULT_DESCRIPTION,
         parameters_json_schema=provider_schema(turn.profile.output_schema),
         strict=False,
     )
@@ -197,21 +197,17 @@ def _formatted(response: ModelResponse, output_mode: str) -> JsonValue:
     return value["result"]
 
 
-def _estimate(turn: TurnInput, structured: bool, ollama: bool) -> tuple[int, str]:
-    """The prompt's token estimate and the text a model counts at least, for the context checks."""
+def _sent(turn: TurnInput) -> str:
+    """The text of the turn as sent, which a model that saw all of it counts at least ``fewest_tokens`` of."""
     texts = [turn.instructions]
     for message in turn.messages:
         if isinstance(message, UserMessage | AssistantMessage):
             texts.append(message.content)
         if isinstance(message, ContextMessage | ToolMessage):
-            texts.append(_json(message.content))
+            texts.append(wire_json(message.content))
         if isinstance(message, AssistantMessage):
-            texts += [call.name + _json(call.arguments) for call in message.tool_calls]
-    sent = "".join(texts)
-    extra = [_json(tool.model_dump(mode="json")) for tool in turn.tools if turn.tools_enabled]
-    if structured:
-        extra.append(_json(cast(JsonValue, provider_schema(turn.profile.output_schema))))
-    return (conservative_tokens if ollama else estimate_tokens)(sent, *extra), sent
+            texts += [call.name + wire_json(call.arguments) for call in message.tool_calls]
+    return "".join(texts)
 
 
 async def run_turn(
@@ -224,17 +220,20 @@ async def run_turn(
     ollama: bool,
 ) -> JsonValue:
     """One turn as a ``TurnOutput`` dump. ``context_tokens`` is the endpoint's context from the AI policy, if known;
-    ``ollama`` turns on the checks for endpoints that cut a long prompt silently."""
+    ``ollama`` turns on the checks for endpoints that cut a long prompt silently.
+
+    The turn is refused before any request exactly when the contract's ``turn_fits`` is false, the same count the
+    kernel trims with, or when the endpoint's context is smaller than the turn's.
+    """
     private_framework_logging()
     profile = turn.profile
     structured = not text_result(profile.output_schema)
     if output_mode in {"native", "prompted"} and not model.profile.get("supports_json_schema_output", False):
         output_mode = "prompted"
     max_tokens = min(turn.limits.max_output_tokens, turn.limits.remaining_tokens)
-    window = min(turn.limits.context_tokens, context_tokens or turn.limits.context_tokens)
-    estimate, sent = _estimate(turn, structured, ollama)
-    if estimate + max_tokens > window:
+    if not turn_fits(turn) or (context_tokens is not None and context_tokens < turn.limits.context_tokens):
         raise ConnectorFailure("LLM_CONTEXT_LIMIT", "not_started")
+    estimate, sent = turn_tokens(turn), _sent(turn)
     parameters = _parameters(turn, output_mode, structured)
     if (parameters.function_tools or parameters.output_tools) and not model.profile.get("supports_tools", True):
         raise ConnectorFailure("LLM_NO_TOOL_SUPPORT", "not_started")

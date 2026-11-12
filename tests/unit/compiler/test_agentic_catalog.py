@@ -119,8 +119,8 @@ def test_catalog_documents_keep_their_digests():
 
 
 # Recorded when the model turn task was added; the documents above keep their digests.
-TURN_ACTION_DIGEST = "b581a66adb081a56f52d927a4d29a2b82a2802976a7b99a3ba3c1da402147dbd"
-TURN_CAPABILITY_DIGEST = "1dbd02851acde6d611acf2f228cb54d5d67aba1ac27508ab7d89ecaefa9e7f6d"
+TURN_ACTION_DIGEST = "105fe2df28474f761455b359edf78a5ab982845d404bf86553737742d8e89ee8"
+TURN_CAPABILITY_DIGEST = "ca5f85310239c910bb72084d1f6fba2e3b47cfb3e93be651a028f058053176a3"
 
 
 def test_the_turn_action_is_idempotent_with_three_attempts():

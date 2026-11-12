@@ -126,6 +126,7 @@ def turn_input(document: dict[str, Any], case: dict[str, Any], model: str) -> di
             "remainingTokens": STEP_BUDGET,
             "contextTokens": case.get("context_tokens", DEFAULT_CONTEXT),
         },
+        "rules": TURN_RULES,
     }
 
 
