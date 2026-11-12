@@ -340,9 +340,11 @@ def called_workflow(ir: WorkflowIR, node: CallWorkflowNode) -> tuple[str, JsonOb
     return dependency.reference, cast(JsonObject, dependency.document["spec"])
 
 
-def call_result(ir: WorkflowIR, node: CallWorkflowNode, data: JsonObject) -> JsonValue | None:
-    """The output a ``call_completed`` event gives its call step, or None when the run fails with the child.
+def call_result(ir: WorkflowIR, node: CallWorkflowNode, data: JsonObject) -> tuple[JsonValue, JsonObject | None]:
+    """What a ``call_completed`` event gives its call step: ``(output, None)``, or ``(None, failure)`` to fail the run.
 
+    The output is any JSON value the called workflow may return, null included, so only the failure says the run
+    fails with the child: a failed child of a call that stops on failure, as its code and message.
     The child's output is validated against the called workflow's own output schema before it is used or wrapped
     in the envelope of a call that continues on failure; error objects carry a code and a message.
     """
@@ -351,26 +353,26 @@ def call_result(ir: WorkflowIR, node: CallWorkflowNode, data: JsonObject) -> Jso
     if data.get("reconciled") is True:
         # An operator's reconciled result: the called workflow's output, or the whole envelope when it continues.
         validate(ir, call_output_schema(node.mode, node.on_failure, output_schema), value)
-        return value
+        return value, None
     status, child = data.get("status"), data.get("child_run_id")
     if not isinstance(child, str):
         raise KernelError("WV-RUNTIME-EVENT")
     if status == "succeeded":
         validate(ir, output_schema, value)
         if node.on_failure != "continue":
-            return value
+            return value, None
         envelope: JsonObject = {"status": status, "runId": child, "output": value}
     elif status in {"failed", "cancelled", "timed_out"}:
         validate(ir, CALL_ERROR_SCHEMA, value)
         if node.on_failure != "continue":
             if status != "failed":
                 raise KernelError("WV-RUNTIME-EVENT")
-            return None
+            return None, cast(JsonObject, value)
         envelope = {"status": status, "runId": child, "error": value}
     else:
         raise KernelError("WV-RUNTIME-EVENT")
     validate(ir, call_output_schema(node.mode, node.on_failure, output_schema), envelope)
-    return envelope
+    return envelope, None
 
 
 def validate_action(
@@ -1676,11 +1678,10 @@ def _advance_owned(
                     generation,
                 )
                 return
-            value = call_result(ir, node, completion.data)
-            if value is None:
+            value, failure = call_result(ir, node, completion.data)
+            if failure is not None:
                 # A waiting call that stops on failure fails the run with the child's code and message.
                 current = identifier
-                failure = cast(JsonObject, completion.data["output"])
                 current_state.active.remove(identifier)
                 end_run("failed", cast(str, failure["code"]), failure)
                 return

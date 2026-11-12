@@ -69,11 +69,8 @@ def test_a_session_steps_one_boundary_at_a_time_and_continues_to_a_breakpoint():
     assert sessions.read(session.id, now=4).revision == paused.revision
 
 
-def test_a_called_workflow_that_returns_null_stops_the_session_with_a_refusal_not_a_crash():
-    callee = callee_definition()
-    callee["spec"]["output"] = {"literal": None}
-    sessions = HostSessions()
-    session = sessions.create(
+def calling_session(sessions: HostSessions, callee: dict):
+    return sessions.create(
         request(
             workflow(CALL),
             definitions=[ACTION, callee],
@@ -83,9 +80,30 @@ def test_a_called_workflow_that_returns_null_stops_the_session_with_a_refusal_no
         None,
         now=0,
     )
+
+
+def test_a_called_workflow_that_returns_null_completes_the_session_with_null():
+    callee = callee_definition()
+    callee["spec"]["output"] = {"literal": None}
+    sessions = HostSessions()
+    session = calling_session(sessions, callee)
+    finished = sessions.command(session.id, 1, DebugCommand(kind="continue"), now=1)
+    assert (finished.view.status, finished.view.variables["steps"]["enrich"]["output"]) == ("succeeded", None)
+
+
+def test_a_step_the_simulator_cant_carry_on_with_stops_the_session_with_a_refusal_not_a_crash(monkeypatch):
+    from firefly_weave.runtime import kernel
+
+    def defect(*_: object) -> None:
+        raise TypeError("a defect in the runtime")
+
+    # No valid workflow trips the simulator on purpose: a defect stands in where the called run's result arrives.
+    monkeypatch.setattr(kernel, "call_result", defect)
+    sessions = HostSessions()
+    session = calling_session(sessions, callee_definition())
     stopped = refusal(lambda: sessions.command(session.id, 1, DebugCommand(kind="continue"), now=1))
     assert (stopped.status, stopped.code) == (422, "WV-STUDIO-SIMULATION")
-    assert "enrich" in stopped.message
+    assert stopped.message == "Studio couldn't simulate step enrich, so the simulated run stopped there."
 
 
 def test_session_commands_need_the_current_revision():
